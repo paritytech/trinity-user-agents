@@ -1,6 +1,6 @@
 use super::*;
 use std::fs::read_to_string;
-use truapi::platform::ProductId;
+use truapi::{latest::ChatMessageContent, platform::ProductId};
 
 fn product() -> ProductContext {
 	ProductContext::new(ProductId::for_test("chat.dot"))

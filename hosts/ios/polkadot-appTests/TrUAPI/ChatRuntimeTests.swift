@@ -587,8 +587,8 @@ struct ChatRuntimeTests {
     /// neither its input nor its card must say why in the host log, once per
     /// card rather than on every feed update.
     @Test func aCardDockedUnderTheNativeRuntimeIsLoggedAsRefused() throws {
-        let runtime = ManagedChatRuntime(
-            productId: try ProductId("test.dot"),
+        let runtime = try ManagedChatRuntime(
+            productId: ProductId("test.dot"),
             manager: FakeWorkerManager(worker: FakeChatWorker())
         )
         let logger = RecordingLogger()

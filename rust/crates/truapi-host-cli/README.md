@@ -29,6 +29,7 @@ One binary, `truapi-host`:
 | `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
+| `materials` | `resolve` a card face's materials as a phone would: each node loading, ready with its shaders, or drawn plain and why. Checks a material end to end without a phone. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -280,6 +281,9 @@ Commands always start with `/`:
 | `/log <level>` | Save tracing as `error`, `warn`, `info`, `debug`, or `trace`, and apply it now. |
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
+| `/profile` | Resolve the active identity's public avatar metadata from dotNS (signing host). |
+| `/profile <username>` | Resolve another username's public avatar metadata without provisioning an identity (signing host). |
+| `/profile upload <image>` | Publish a local PNG, JPEG, GIF, or WebP image as the active identity's avatar (signing host). |
 | `/session` | Show the current session name, path, and user id (signing host). |
 | `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
@@ -290,6 +294,19 @@ Commands always start with `/`:
 | `/clear` | Clear the visible transcript. |
 | `/copy` | Copy the retained transcript to the system clipboard. |
 | `/quit` | Shut down cleanly. |
+
+`/profile upload` requires an existing identity with a username. It accepts the
+images the core loads: up to 2 MiB and 4096 pixels on each side. Quote paths
+containing spaces, for example `/profile upload "pictures/my avatar.png"`.
+
+The command acts as the identity's Humanity product, `peopl.<network TLD>`. It
+calls the core's TrUAPI methods for that product in process, the same calls the
+product makes: a smart contract allowance for account 0, then a preimage upload
+of the image to Bulletin. Both go through the normal permission and confirmation
+flow. It then updates the username's dotNS `profile` text record, signed with the
+identity key. Unrelated entries are kept, and the record is not overwritten if it
+changed during the upload. Profile reads and uploads also work through
+`signing-host exec`, for example `truapi-host signing-host exec '/profile alice.01'`.
 
 ### Pasting a pairing QR image
 
@@ -318,8 +335,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` completes filesystem paths. Enter submits `/session <name>` as
-typed; use Tab first to insert a suggested exact session name.
+and `/script` and `/profile upload` complete filesystem paths. Profile uploads
+also complete quoted directories containing spaces. Enter submits `/session <name>`
+as typed; use Tab first to insert a suggested exact session name.
 Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a
@@ -796,8 +814,13 @@ Scripts under `js/scripts/` include:
   only execution Pocket is served to. It seeds the in-memory Pocket host from
   `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), so one card is
   removable and one privileged, and records every removal the host is asked for
-  in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
-  host and the product agree rather than resting on the product's word.
+  in `TRUAPI_POCKET_LOG`. As the product connects, the host opens a render
+  stream for each card, as a phone does when a card comes on screen, and closes
+  it when the card is removed. It resolves the materials of every face the
+  product draws, reports each fallback through
+  `Renderer::failure_subscribe`, and records each result in the same transcript.
+  The cases read that transcript, so a pass means the host and the product agree
+  rather than resting on the product's word.
 
   The funding phase builds the host with `--features test-host` and installs
   a scripted funding overlay: each request the product makes is answered with
@@ -961,6 +984,22 @@ That report is the reason the flag needs no build gate: a stale exported
 Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
+
+## Materials
+
+`truapi-host materials resolve` checks a material the way a phone uses it: fetched
+from Bulletin (or kept from a file), checked, limited and built into shaders by
+the same core:
+
+```sh
+truapi-host materials resolve face.json --out shaders            # fetches from Bulletin
+truapi-host materials resolve face.json --materials ./materials  # keeps local files first
+truapi-host materials resolve face.json --metal --out shaders    # iOS shaders instead of Android's
+```
+
+`face.json` is a card face as the generated client writes a renderer tree, with
+`Materials` nodes naming material IDs. Each line of the output is a node:
+`ready`, `loading`, or `plain` with its reason. See [SPEC.md](SPEC.md#68-top-level-materials).
 
 ## Trinity stacks
 

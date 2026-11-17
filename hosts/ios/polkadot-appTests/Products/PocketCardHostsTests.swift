@@ -4,137 +4,53 @@ import Products
 import Testing
 @testable import polkadot_app
 
-/// A web view and a page load are what a card costs to open, so a card opened
-/// again is worth not paying twice. One is held at a time, which is the bound
-/// that keeps a Pocket full of cards from becoming a web view each.
+/// The navigation stack owns the opened card's screen, so closing the card frees its web view and runtime.
 @MainActor
 struct PocketCardHostsTests {
-    /// The surface is how a warm page reaches whichever screen shows it next,
-    /// so the card reopened must find the one its page was built with.
     @Test
-    func opensACardOnceAndReusesItAfterwards() {
+    func closingTheCardFreesIt() {
         let hosts = PocketCardHosts()
-        let factory = CountingFactory()
+        var view = hosts.open(loyalty, make: { StubExpandedPocketCardView() })
+        weak var opened = view
 
-        let first = hosts.product(for: loyalty, make: factory.make)
-        let second = hosts.product(for: loyalty, make: factory.make)
+        view = nil
 
-        #expect(factory.built == 1)
-        #expect(first?.view === second?.view)
-        #expect(second?.surface === factory.surfaces.first)
+        #expect(opened == nil)
+        #expect(!hosts.isOnDisplay(loyalty))
+        #expect(hosts.hostSessionID(for: loyalty) == nil)
     }
 
-    /// A reopened card shows the page an earlier tap built, so the reopen is
-    /// reported under that page's host session id, not the new tap's.
+    /// A link to the card on screen reports under the host session id of the page
+    /// already there, not the new tap's, and a reload keeps that id.
     @Test
-    func aReusedProductKeepsTheSessionIDItWasBuiltWith() throws {
+    func theCardOnScreenKeepsTheSessionIDItWasBuiltWith() {
         let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        let firstTap = UUID()
-        let secondTap = UUID()
+        let tap = UUID()
+        let view = hosts.open(loyalty, hostSessionID: tap, make: { StubExpandedPocketCardView() })
 
-        let first = hosts.product(for: loyalty, hostSessionID: firstTap, make: factory.make)
-        let reused = hosts.product(for: loyalty, hostSessionID: secondTap, make: factory.make)
         hosts.reload(loyalty, at: "open=prizes") { _ in }
 
-        #expect(first?.hostSessionID == firstTap)
-        #expect(reused?.hostSessionID == firstTap)
-        #expect(hosts.hostSessionID(for: loyalty) == firstTap)
+        #expect(hosts.hostSessionID(for: loyalty) == tap)
         #expect(hosts.hostSessionID(for: trophy) == nil)
-    }
-
-    /// A page is loaded with the params of the link that opened it, so a link
-    /// with other params, or a tap with none, has to load the page again.
-    @Test
-    func reusesAPageOnlyForTheParamsItWasOpenedWith() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-
-        let linked = hosts.product(for: loyalty, pageQuery: "open=scratch", make: factory.make)
-        let linkedAgain = hosts.product(for: loyalty, pageQuery: "open=scratch", make: factory.make)
-        let tapped = hosts.product(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 2)
-        #expect(linked?.view === linkedAgain?.view)
-        #expect(tapped?.view !== linked?.view)
+        withExtendedLifetime(view) {}
     }
 
     /// A link to the card on screen cannot open a second screen, so its params
     /// are loaded into the page already there. The same params leave the page
     /// where the user took it.
     @Test
-    func loadsNewParamsIntoTheHeldPage() {
+    func loadsNewParamsIntoThePageOnScreen() {
         let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        let held = hosts.product(for: loyalty, pageQuery: "open=scratch", make: factory.make)
+        let view = hosts.open(loyalty, pageQuery: "open=scratch", make: { StubExpandedPocketCardView() })
         var loaded: [String] = []
 
         hosts.reload(loyalty, at: "open=scratch") { _ in loaded.append("open=scratch") }
         hosts.reload(loyalty, at: "open=prizes") { _ in loaded.append("open=prizes") }
+        hosts.reload(loyalty, at: "open=prizes") { _ in loaded.append("open=prizes again") }
         hosts.reload(trophy, at: "open=prizes") { _ in loaded.append("trophy") }
-        let reopened = hosts.product(for: loyalty, pageQuery: "open=prizes", make: factory.make)
 
         #expect(loaded == ["open=prizes"])
-        #expect(factory.built == 1)
-        #expect(reopened?.view === held?.view)
-    }
-
-    /// One at a time: a second card takes the first down rather than adding to
-    /// it. Each has its own surface, since another card's page must never move
-    /// this card's face.
-    @Test
-    func openingAnotherCardTakesTheFirstDown() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-
-        let first = hosts.product(for: loyalty, make: factory.make)
-        let second = hosts.product(for: trophy, make: factory.make)
-        let loyaltyAgain = hosts.product(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 3)
-        #expect(first?.view !== loyaltyAgain?.view)
-        #expect(first?.surface !== second?.surface)
-    }
-
-    /// A card the collection no longer holds has no next tap, so the product
-    /// behind it is given up rather than kept warm.
-    @Test
-    func givesUpAProductWhoseCardIsGone() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        _ = hosts.product(for: loyalty, make: factory.make)
-
-        hosts.keepOnly { $0 != loyalty }
-        _ = hosts.product(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 2)
-    }
-
-    /// The product is wired to the runtime provider of the session that opened
-    /// it, so one kept across a sign-out would be handed to the next session
-    /// still talking to the last one's core.
-    @Test
-    func buildsAgainAfterTheSessionLetItGo() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        _ = hosts.product(for: loyalty, make: factory.make)
-
-        hosts.release()
-        _ = hosts.product(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 2)
-    }
-
-    @Test
-    func keepsAProductWhoseCardIsStillHeld() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        _ = hosts.product(for: loyalty, make: factory.make)
-
-        hosts.keepOnly { $0 == loyalty }
-        _ = hosts.product(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 1)
+        withExtendedLifetime(view) {}
     }
 }
 
@@ -142,14 +58,3 @@ struct PocketCardHostsTests {
 
 private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 private let trophy = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy"))
-
-@MainActor
-private final class CountingFactory {
-    private(set) var surfaces: [PocketCardSurface] = []
-    var built: Int { surfaces.count }
-
-    func make(surface: PocketCardSurface) -> SPAViewProtocol? {
-        surfaces.append(surface)
-        return StubSPAView()
-    }
-}

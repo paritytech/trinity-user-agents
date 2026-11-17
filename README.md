@@ -229,6 +229,11 @@ The core requests product worker transitions through `requestWorkerTransition`
 A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+
+`HostAccounts` serves every product account operation on both host roles: it checks access, confirms signing and allocation requests with the user, keeps the grants it was issued in its `HostGrantStore`, and signs with delegated keys. Wallet work sits behind an `AccountHolder`: `WalletAccountHolder` on a signing host, or `RemoteAccountHolder` on a paired host, which sends wallet operations to the phone; the phone confirms signing, transaction, VRF and allocation requests again. `RemoteAccountHolder` derives entropy and contact handles from the paired session itself and refuses exact statement proofs, which a paired host signs only with a kept AutoSigning key. One `ProductConsent` per runtime holds account-access decisions and runs their prompts. `PairingHost` and `SigningHost` build these parts for their role. `SigningHost` owns login, logout and the wallet lifecycle; on a paired host `SsoRequestService` owns login and the paired session, and `PairingHost` owns logout; see [runtime ownership and lifecycle](rust/crates/truapi/RUNTIME.md#the-two-roles).
+
+Each product connection is served by a `ProductRuntimeHost`, which combines `HostAccounts`, a `HostSession` (`SigningHost` or `SsoRequestService`) for login, disconnect and identity lookup, and a per-product `ProductConnection` for adapters, permissions and action streams.
+
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
@@ -442,13 +447,53 @@ request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
 host's disk cache. JavaScript bindings are deferred.
 
-For avatars, `resolvePublicProfile(username, force)` resolves a
-[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-record). Native
-hosts cache records for one hour; `force` refreshes them. The returned avatar CID
-selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
-resolver reads the chain on each call.
+`observe_public_profile(username, options)` streams
+[dotNS profile metadata](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
+Native hosts emit cached metadata, then refresh missing or expired records
+(one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
+suppresses expired cached values (false in app callers). Streams emit up to two
+distinct profiles; cancellation or drop stops resolution. Invalid usernames
+return an error subscription. SQLite stores full records and keeps the
+1,000 most recently used. Cache reads use the reader pool; recency updates are
+batched with profile writes or after one second. Avatar CIDs key the image cache;
+only misses call `loadImage`.
+WASM resolves once without caching. A lookup requires the stack's Asset Hub.
 
-Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
+finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
+explicitly supply both resolution options.
+
+Android avatar views collect the profile stream for their composition's lifetime.
+Each distinct avatar becomes a Coil request whose data is the canonical
+`ImageReference.Bulletin`; metadata resolution runs independently of image loading.
+Conversation entry forces freshness, while list and search loads use ordinary freshness. All
+callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
+on disk and decoded variants in memory without an image freshness expiry. The
+displayed image remains visible during replacement, metadata errors or image errors; a profile
+without an avatar restores the letter tile. Changing the username or removing the
+view cancels observation and image loading. The shared Coil loader is installed
+before startup initializers.
+
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+Only avatar changes trigger image requests.
+The public-profile factory returns `AnyImageViewModel`, which shared image views
+use to retain requests while the image identity and processing settings match.
+`ChatIconViewModelFactory` selects product icons or public-profile avatars for chats and contact lists.
+New chat headers explicitly request forced
+freshness; cells and search explicitly use the ordinary policy. All app callers
+explicitly set `skipStale` to false. A cancelled header
+observation retains its forced intent until an observation completes or fails.
+[The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
+uses Kingfisher's cache without a freshness expiry, including on cache hits,
+with a 100 MiB disk budget configured during root setup, before onboarding. It keeps
+the current image while loading; avatar views cancel metadata observation and image work
+when their view is reused or released.
+
+The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
+avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
+avatar as the identity's Humanity product, calling the core's TrUAPI resource
+allocation and preimage methods directly.
 
 ### Trinity stack descriptors
 
@@ -458,7 +503,8 @@ A stack descriptor describes one deployment of chains and services, as
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
-The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
+The core takes all of its chain configuration from one stack, and fetches newer copies of its descriptor through the
+host while it runs. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 
@@ -567,7 +613,9 @@ The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from
 `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), which is what makes one
 card removable and one privileged, and records every removal it is asked for in
-the transcript named by `TRUAPI_POCKET_LOG`. The cases read that transcript, so
+the transcript named by `TRUAPI_POCKET_LOG`. As the product connects, the host
+renders each card, resolves the materials of every face, reports each fallback
+to the product and records each result in the same transcript. The cases read that transcript, so
 a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
@@ -745,9 +793,15 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
-- `test`, the unit test suite
+- `test`, the [unit test suite](hosts/ios/polkadot-appTests/)
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
+
+The `iOS SwiftLint` job, also part of `CI Status`, lints the app tree on ubuntu
+and fails on any SwiftLint error, and on any warning the committed baseline
+does not list. It runs on pull requests whose changes can affect the app and in
+the merge queue, where it catches two pull requests that each pass but break a
+rule together, such as a file's length.
 
 Pull requests that build the app carry a comment linking the build for its head
 commit, updated in place as the branch moves. To run one:
@@ -832,7 +886,9 @@ when `main` has not moved past what their last successful run built. `android-de
 on every push to `main`, and answers what `main` does right now. It builds the
 pushed commit, the one that landed. A push rather than the pull request's merge
 event, because the Firebase identity is bound to `main`, and a pull request
-event's token never matches that binding.
+event's token never matches that binding. A manual run of either with
+`deliver` off builds and checks any branch without sending it to testers or
+publishing it.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that

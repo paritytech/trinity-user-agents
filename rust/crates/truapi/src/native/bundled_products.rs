@@ -9,20 +9,13 @@ use tracing::warn;
 
 use crate::{
 	host_internal::product_manifest::ProductBrand,
-	host_logic::{
-		dev_server::DevServerProduct,
-		dotns::ProductLink,
-		funding_providers::{FundingProviderApp, FundingProviderEntry, FundingProviderOrigin},
-		worker_manifest::WorkerManifest,
-	},
+	host_logic::{dev_server::DevServerProduct, dotns::ProductLink},
 	image_loader::ImageReference,
 	platform::ProductId,
 };
 
 /// A product's root manifest, relative to its directory.
 const ROOT_MANIFEST: &str = "manifest.json";
-/// A product's Worker manifest, relative to its directory.
-const WORKER_MANIFEST: &str = "worker-manifest.json";
 /// A product's Worker script, relative to its directory.
 const WORKER_SCRIPT: &str = "worker/index.js";
 /// A product's App entry page, relative to its directory.
@@ -179,44 +172,6 @@ fn cid_of(icon: ImageReference) -> String {
 	}
 }
 
-/// The funding providers bundled under `root`, as entries for
-/// `set_funding_provider_config`.
-///
-/// Each is a product shipping a Worker whose manifest serves Funding, with
-/// that manifest, its root manifest and whether it ships an App. A Worker
-/// manifest that does not parse leaves its product out, logged.
-#[uniffi::export]
-pub fn bundled_funding_providers(
-	root: String,
-	reader: Box<dyn BundleReader>,
-) -> Vec<FundingProviderEntry> {
-	products(&root, reader.as_ref())
-		.into_iter()
-		.filter(|product| product.has_worker)
-		.filter_map(|product| {
-			let json = reader.read_text(join(&product.path, WORKER_MANIFEST))?;
-			match WorkerManifest::parse(&json) {
-				Ok(manifest) if manifest.funding.is_some() => Some(FundingProviderEntry {
-					product_id: product.product_id,
-					worker_manifest: Some(json),
-					root_manifest: reader.read_text(join(&product.path, ROOT_MANIFEST)),
-					origin: FundingProviderOrigin::Bundled,
-					app: if product.has_app {
-						FundingProviderApp::Shipped
-					} else {
-						FundingProviderApp::Absent
-					},
-				}),
-				Ok(_) => None,
-				Err(error) => {
-					warn!(product = %product.product_id, %error, "bundled worker manifest does not parse");
-					None
-				},
-			}
-		})
-		.collect()
-}
-
 /// The file in the archive at `root` that answers `request_path`, the same
 /// for a bundled App and a published archive.
 ///
@@ -278,18 +233,29 @@ fn mime_for(path: &str) -> &'static str {
 		Some("css") => "text/css",
 		Some("html" | "htm") => "text/html",
 		Some("json" | "map") => "application/json",
+		Some("webmanifest") => "application/manifest+json",
 		Some("wasm") => "application/wasm",
+		Some("xml") => "application/xml",
+		Some("pdf") => "application/pdf",
+		Some("txt") => "text/plain",
+		Some("csv") => "text/csv",
 		Some("svg") => "image/svg+xml",
 		Some("png") => "image/png",
 		Some("jpg" | "jpeg") => "image/jpeg",
 		Some("gif") => "image/gif",
 		Some("webp") => "image/webp",
+		Some("avif") => "image/avif",
 		Some("ico") => "image/x-icon",
-		Some("txt") => "text/plain",
+		Some("mp4") => "video/mp4",
+		Some("webm") => "video/webm",
+		Some("mp3") => "audio/mpeg",
+		Some("ogg") => "audio/ogg",
+		Some("wav") => "audio/wav",
 		Some("woff") => "font/woff",
 		Some("woff2") => "font/woff2",
 		Some("ttf") => "font/ttf",
 		Some("otf") => "font/otf",
+		Some("eot") => "application/vnd.ms-fontobject",
 		_ => "application/octet-stream",
 	}
 }

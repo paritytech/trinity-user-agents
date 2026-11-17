@@ -19,13 +19,12 @@ use tracing::warn;
 
 use super::{
 	funding::lock,
-	product_manifest::{product_brand, worker_manifest},
+	product_manifest::{DotnsRead, CachePolicy, product_brand, read_worker_manifest},
 	services::RuntimeServices,
 };
 use crate::{
 	host_internal::product_manifest::ProductBrand,
 	host_logic::{
-		funding::FundingSessionError,
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
 			FundingOptions, FundingProviderApp, FundingProviderEntry, FundingProviderOrigin,
@@ -308,12 +307,13 @@ impl Drop for ManifestRead {
 impl RuntimeServices {
 	/// Replace the funding providers the host offers, and start reading their
 	/// manifests, telling the feed when the providers listed changed. A
-	/// shipped manifest that does not parse is refused, and nothing changes.
+	/// provider whose shipped manifest does not parse is left out; the rest
+	/// are still offered.
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
-	) -> Result<(), FundingSessionError> {
-		let offered = self.funding_providers().offer(offered_providers(entries)?);
+	) {
+		let offered = self.funding_providers().offer(offered_providers(entries));
 		if offered.manifests_changed {
 			self.funding_providers_changed();
 		}
@@ -323,24 +323,22 @@ impl RuntimeServices {
 			feed.funding_providers_changed();
 		}
 		self.refresh_funding_providers();
-		Ok(())
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
-	/// then the `bundled` ones it does not name, telling the feed when the
-	/// list changed. A name that is not a product id is skipped and logged.
-	/// A call listing what the last one did changes nothing the host sees,
-	/// so the host can call it on every refresh.
+	/// without a TLD, read on the network the stack is on, telling the feed
+	/// when the list changed. A name that is not a product id, or that names
+	/// a TLD, is skipped and logged. A call listing what the last one did changes
+	/// nothing the host sees, so the host can call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
-		bundled: Vec<FundingProviderEntry>,
-	) -> Result<(), FundingSessionError> {
-		let (entries, invalid) = provider_config(&published_names, bundled);
+	) {
+		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
-		self.set_funding_providers(entries)
+		self.set_funding_providers(entries);
 	}
 
 	/// Record what the user picked in session `intent`'s overlay, and send
@@ -560,13 +558,25 @@ impl RuntimeServices {
 	/// Read `product_id`'s Worker manifest and brand into what the core goes
 	/// by.
 	async fn read_provider_manifest(self: &Arc<Self>, product_id: &ProductId) {
-		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-		let mut changed =
-			read.is_ok_and(|manifest| self.funding_providers().answered(product_id, manifest));
-		if let Ok(Some(brand)) = product_brand(self, self.platform.as_ref(), product_id).await {
+		let platform = self.platform.as_ref();
+		let read = read_worker_manifest(self, platform, product_id, CachePolicy::UseCache).await;
+		let cached = matches!(read, Ok((_, DotnsRead::Cached { .. })));
+		let mut changed = read
+			.is_ok_and(|(manifest, _)| self.funding_providers().answered(product_id, manifest));
+		if let Ok(Some(brand)) = product_brand(self, platform, product_id).await {
 			changed |= self.funding_providers().branded(product_id, brand);
 		}
 		if changed {
+			self.funding_providers_changed();
+		}
+		// A cached copy can predate a redeploy, and the cache lives a day: the
+		// cached routes show at once, then dotNS is read again so a provider
+		// that now serves more, or less, is offered as it publishes.
+		if cached &&
+			let Ok((manifest, _)) =
+				read_worker_manifest(self, platform, product_id, CachePolicy::Refresh).await &&
+			self.funding_providers().answered(product_id, manifest)
+		{
 			self.funding_providers_changed();
 		}
 	}
@@ -592,25 +602,23 @@ struct Offered {
 }
 
 /// The host's `entries` with their shipped manifests read, in its order,
-/// each product once.
-fn offered_providers(
-	entries: Vec<FundingProviderEntry>,
-) -> Result<Vec<OfferedProvider>, FundingSessionError> {
+/// each product once. An entry whose shipped manifest does not parse, or a
+/// bundled one shipped without its manifest, is the host's mistake for that
+/// provider alone: it is logged and left out, and the rest are still offered.
+fn offered_providers(entries: Vec<FundingProviderEntry>) -> Vec<OfferedProvider> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
 		let product_id = entry.product_id;
-		let snapshot = entry
-			.worker_manifest
-			.as_deref()
-			.map(WorkerManifest::parse)
-			.transpose()
-			.map_err(|reason| FundingSessionError::InvalidProvider {
-				reason: format!("{product_id}: {reason}"),
-			})?;
+		let snapshot = match entry.worker_manifest.as_deref().map(WorkerManifest::parse).transpose() {
+			Ok(snapshot) => snapshot,
+			Err(reason) => {
+				warn!(%product_id, %reason, "shipped worker manifest does not parse; provider left out");
+				continue;
+			},
+		};
 		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
-			return Err(FundingSessionError::InvalidProvider {
-				reason: format!("{product_id}: a bundled provider needs its manifest"),
-			});
+			warn!(%product_id, "bundled provider shipped without its manifest; provider left out");
+			continue;
 		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
 			let brand = entry.root_manifest.as_deref().and_then(|json| {
@@ -631,7 +639,7 @@ fn offered_providers(
 			});
 		}
 	}
-	Ok(offered)
+	offered
 }
 
 /// The networks `candidates`' crypto routes declare in `direction`, each

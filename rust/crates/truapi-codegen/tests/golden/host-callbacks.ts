@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -254,7 +255,13 @@ export type CoreStorageKey =
    * A product's App executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "AppManifest"; value: { productLabel: string } };
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -327,18 +334,7 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ExecutableKind = "App" | "Widget" | "Worker";
-
-/**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export type ExpandedCardFaceOutcome =
   | "Applied"
@@ -1113,6 +1109,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
     }),
 );
 
@@ -1178,20 +1178,7 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
-);
-
-/**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
@@ -1941,7 +1928,7 @@ export interface CoreStorage {
 }
 
 /**
- * Host control of the card face drawn above an opened card's Widget.
+ * Host control of the card face drawn under an opened card's Widget.
  *
  * Carried per connection on `ConnectionAdapters`, because the host owns one
  * drawer per product execution. A connection without one tells products
@@ -1949,7 +1936,7 @@ export interface CoreStorage {
  */
 export interface ExpandedCardHost {
   /**
-   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   * Uncover (`true`) or cover (`false`) the face under the calling Widget.
    */
   setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
 }
@@ -1995,12 +1982,22 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
+   * `provider` asked to show a screen for session `intent`. The core
+   * holds it until the host calls `open_provider_frame(intent)`, which
+   * the host does at once while the user looks at the session, or once
+   * the user taps a notice that the provider wants to show something.
+   * A worker never puts a screen in front of the user on its own.
+   */
+  providerFrameRequested(provider: ProductContext, intent: string): void;
+
+  /**
    * Show `target` for `provider`'s session `intent` in a frame the host
-   * owns, and answer once it closes. A page is an https URL the core has
-   * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL. The core closes the
-   * frame itself, through
-   * `Self::close_provider_frame`, once the session's payment moved.
+   * owns, and answer once it closes. Called only once the host opened the
+   * request `Self::provider_frame_requested` announced. A page is an
+   * https URL the core has checked: the host shows its origin, and closes
+   * the frame with `Returned` when the page reaches its return URL. The
+   * core closes the frame itself, through `Self::close_provider_frame`,
+   * once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,

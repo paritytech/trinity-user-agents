@@ -113,6 +113,10 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 - It does **not** route your chats and calls through any 1st or 3rd party messaging servers — messages travel through the public chain, voice and video calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
 
+### Centralised dependencies
+
+- **Runtime configuration (Firebase Remote Config).** The chain list and RPC nodes, the identity-backend URL, DotNS and other contract addresses, the IPFS gateway and the on/off-ramp URLs are fetched from Firebase Remote Config. This repository ships no defaults: the first start needs a successful fetch, and later starts use the last fetched values while a new fetch runs in the background. So the owner of the Firebase project can change these values without an app update, and a fresh install cannot start without Firebase. Forks point the same build at their own project ([docs/PUBLISHING.md §3](./docs/PUBLISHING.md#remote-config-parameters)). This is a known trade-off, tracked in [#414](https://github.com/paritytech/polkadot-ios-community/issues/414).
+
 ### Under the hood
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.

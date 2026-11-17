@@ -7,8 +7,8 @@ import UIKit
 /// Opens the card's product, at the page the card names, on a screen the card
 /// itself heads.
 ///
-/// An expanded card runs the product's app, the one executable every product
-/// publishes. The origin stays the product's base domain, so the card sees the
+/// An expanded card runs the product's widget, or its app when it publishes no
+/// widget. The origin stays the product's base domain, so the card sees the
 /// same grants and storage its worker does.
 @MainActor
 struct PocketCardOpening {
@@ -41,32 +41,23 @@ struct PocketCardOpening {
                 return
             }
 
-            // A product the Pocket still holds is shown again without a new page, so the tap joins the session of
-            // the page it shows; a page built here adopts the tap's own id.
-            var builtPage = false
-            guard let product = pocket.cardHosts.product(
-                for: card.key,
-                pageQuery: pageQuery,
-                hostSessionID: tap.sessionID,
-                make: { _ in
-                    builtPage = true
-                    return makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
-                }
-            ) else { return }
-            recordOpened(tap.showing(sessionID: product.hostSessionID), reused: !builtPage)
+            guard
+                let view = pocket.cardHosts.open(card.key, pageQuery: pageQuery, hostSessionID: tap.sessionID, make: {
+                    makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
+                }),
+                let screen = view.controller as? PocketItemScreen
+            else { return }
+            recordOpened(tap, reused: false)
 
-            let origin = wallet.viewControllers.first as? PocketOrigin
-            let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {
-                product.surface.claim(screen)
-            }
+            view.origin = wallet.viewControllers.first as? PocketOrigin
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
 
-            Task { [weak screen] in
+            Task { [weak view] in
                 let shown = await PocketCardFaceOnOpen.faceShown(
                     for: card.key,
                     cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
                 )
-                screen?.applyOpeningFace(shown: shown)
+                view?.applyOpeningFace(shown: shown)
             }
         }
     }
@@ -104,19 +95,16 @@ private extension PocketCardOpening {
         page: ProductPage,
         pageQuery: String,
         tap: HostOpenTap
-    ) -> SPAViewProtocol? {
+    ) -> ExpandedPocketCardViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
-        let configuration = SPAConfiguration(
-            title: card.title,
-            isRootScreen: false,
-            showMoreButton: false,
+
+        return ExpandedPocketCardViewFactory.createView(
+            card: card,
             page: page,
             contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
-            openTap: tap
+            openTap: tap,
+            flowState: flowState
         )
-
-        // A page loaded by its address goes to the Rust runtime on its own.
-        return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
     }
 
     func debugWidgetURL(for key: PocketCardKey, pageQuery: String) -> URL? {

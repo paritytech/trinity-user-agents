@@ -315,6 +315,11 @@ enum FundingFrameOutcome {
 }
 ```
 
+- A worker never puts a screen in front of the user on its own. The core holds the call and tells the host
+  (`provider_frame_requested`); the host opens it (`open_provider_frame`) at once while the user looks at the session,
+  or shows a notice that the provider wants to show something and opens it when the user taps. Until then the call
+  waits. One screen waits per session: a newer call replaces it, and the replaced one answers `Dismissed`;
+  `close_frame`, the payment moving or the session ending drops a waiting screen with `Closed`.
 - A provider's App is optional. An App route from a provider that ships no App fails with `NoApp`; such a provider
   shows external pages, or no screen at all.
 - A page and its return URL must be https URLs with a host and no credentials; anything else fails with `InvalidUrl`
