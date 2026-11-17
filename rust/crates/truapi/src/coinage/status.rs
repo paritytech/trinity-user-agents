@@ -70,6 +70,9 @@ pub struct Progress {
 	pub settled: u64,
 	/// Still in flight.
 	pub in_flight: u64,
+	/// Of `in_flight`, what succeeded on the best chain, not yet finally:
+	/// provisional (invariant 2).
+	pub provisional: u64,
 }
 
 /// One item of an operation's status stream.
@@ -238,9 +241,18 @@ fn in_flight_status(view: &Snapshot, records: &[&RecordFacts]) -> Status {
 	}
 	let usable = records.iter().any(|facts| {
 		facts.state.status == DurableTxStatus::PendingSubmission &&
+			!waits_for_funds(facts) &&
 			facts.depends_on.iter().all(|record| view.registrations().record(*record).is_some_and(final_success))
 	});
 	if usable { Status::Preparing } else { Status::Waiting }
+}
+
+/// Whether a record is a load, whose input is its funding account's funds:
+/// nothing here reads them, and C2 builds the load as soon as they cover it,
+/// so a load waiting to be built is waiting for its funds.
+fn waits_for_funds(facts: &RecordFacts) -> bool {
+	let params = facts.state.plan.as_ref().and_then(|plan| RecordParams::from_params(&plan.params));
+	params.is_some_and(|params| matches!(params.call, Call::Load(_)))
 }
 
 /// Why records that all failed failed: a cancellation, a record given up,
@@ -285,6 +297,8 @@ fn records_progress(view: &Snapshot, records: &[&RecordFacts]) -> Progress {
 			Progress { settled: progress.settled + value, ..progress }
 		} else if stable(facts) {
 			progress
+		} else if matches!(facts.state.status, DurableTxStatus::PendingSuccess { .. }) {
+			Progress { in_flight: progress.in_flight + value, provisional: progress.provisional + value, ..progress }
 		} else {
 			Progress { in_flight: progress.in_flight + value, ..progress }
 		}
@@ -308,11 +322,11 @@ fn export_item(view: &Snapshot, operation: &OperationRecord, records: &[&RecordF
 	let committed = operation.exported.iter().all(|(coin, _)| view.mark(coin) == Some(Mark::Committed));
 	if !committed {
 		let item = records_item(view, operation, records);
-		let progress = Progress { settled: 0, in_flight: item.progress.in_flight + unchanged };
+		let progress = Progress { settled: 0, in_flight: item.progress.in_flight + unchanged, ..item.progress };
 		return StatusItem { status: Status::Preparing, progress };
 	}
 	if records.is_empty() {
-		return StatusItem { status: Status::Done, progress: Progress { settled: unchanged, in_flight: 0 } };
+		return StatusItem { status: Status::Done, progress: Progress { settled: unchanged, ..Progress::default() } };
 	}
 	let item = records_item(view, operation, records);
 	let progress = Progress { settled: item.progress.settled + unchanged, ..item.progress };
@@ -327,8 +341,8 @@ fn export_item(view: &Snapshot, operation: &OperationRecord, records: &[&RecordF
 /// by the value offboarded; progress counts only that value.
 fn offload_item(view: &Snapshot, operation: &OperationRecord, records: &[&RecordFacts]) -> StatusItem {
 	let settled = super::offload::offboarded(view, &operation.key);
-	let in_flight: u64 = records.iter().filter(|facts| !stable(facts)).map(|facts| record_value(view, facts)).sum();
-	let progress = Progress { settled, in_flight };
+	let in_flight = records_progress(view, records);
+	let progress = Progress { settled, ..in_flight };
 	let status = match operation.end {
 		Some(OperationEnd::Done) => Status::Done,
 		Some(_) if settled > 0 => Status::PartiallyDone,
