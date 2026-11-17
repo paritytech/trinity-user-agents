@@ -15,7 +15,7 @@ use super::clearing;
 use crate::coinage::{
 	classification::ExportStatus,
 	layer::{Error, ExportedCoinStatus},
-	status::{CoinResult, Status, StatusItem},
+	status::{CoinResult, Progress, Status, StatusItem},
 };
 
 /// A cheque's value by what became of its coins, in cents (RFC deviations,
@@ -161,18 +161,21 @@ pub fn payment_status(item: StatusItem, amount: u64, unit: u128) -> HostPaymentS
 }
 
 /// A top-up's RFC-6 status, with its amount in cents and the asset's unit:
-/// `Detecting` while it waits for the source, `Claiming` while it is built
-/// or submitted, `Claimed { finalized: false }` once it took effect and
+/// `Claimed { finalized: false }` once the value that succeeded, on the best
+/// chain or finally, reaches the amount, otherwise `Detecting` while it
+/// waits for the source and `Claiming` while it is built or submitted; and
 /// `Claimed { finalized: true }` at layer 1's `Done` with the full amount.
 pub fn top_up_status(item: StatusItem, amount: u64, unit: u128) -> HostPaymentTopUpStatusSubscribeItem {
-	let claimed = u128::from(item.progress.settled).saturating_mul(unit);
+	let Progress { settled, provisional, .. } = item.progress;
 	match item.status {
+		Status::Done if settled >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
+		status if status.is_terminal() && settled > 0 => {
+			HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { actual_claimed: u128::from(settled).saturating_mul(unit) }
+		},
+		status if status.is_terminal() => HostPaymentTopUpStatusSubscribeItem::NotClaimed,
+		_ if settled + provisional >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
 		Status::Waiting => HostPaymentTopUpStatusSubscribeItem::Detecting,
-		Status::Preparing | Status::Submitted => HostPaymentTopUpStatusSubscribeItem::Claiming,
-		Status::Settling => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
-		Status::Done if item.progress.settled >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
-		_ if item.progress.settled > 0 => HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { actual_claimed: claimed },
-		_ => HostPaymentTopUpStatusSubscribeItem::NotClaimed,
+		_ => HostPaymentTopUpStatusSubscribeItem::Claiming,
 	}
 }
 
