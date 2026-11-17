@@ -63,9 +63,10 @@ const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 /// refuses every request once it owes 1024 frames, and the WebSocket transport
 /// closes the connection once 1024 requests queue unsent. A burst past either
 /// fails every caller on the connection, so a request waits here for a slot
-/// instead. The margin below 1024 leaves room for unsubscribes and other
-/// fire-and-forget sends, which take no slot. A request the transport never
-/// answers keeps its slot until the connection closes.
+/// instead. The margin below 1024 leaves room for the requests that take no
+/// slot: unsubscribes, other fire-and-forget sends, and the subscription
+/// upkeep in [`takes_slot`]. A request the transport never answers keeps its
+/// slot until the connection closes.
 const MAX_REQUESTS_IN_FLIGHT: usize = 512;
 
 /// JSON-RPC client backed by a host-owned [`JsonRpcConnection`].
@@ -228,7 +229,7 @@ struct PendingRequest {
 	sent_at: Instant,
 	/// Freed when the answer arrives or the connection closes, not when the
 	/// caller stops waiting, because the request is owed until then.
-	_slot: SemaphoreGuardArc,
+	_slot: Option<SemaphoreGuardArc>,
 }
 
 #[derive(Debug, derive_more::Display, derive_more::Error)]
@@ -414,7 +415,11 @@ impl HostRpcClientInner {
 		params: Option<Box<RawValue>>,
 	) -> Result<Box<RawValue>, RpcError> {
 		// A caller that stops waiting here has sent nothing.
-		let slot = self.request_slots.acquire_arc().await;
+		let slot = if takes_slot(method) {
+			Some(self.request_slots.acquire_arc().await)
+		} else {
+			None
+		};
 		let id = self.next_request_id();
 		let (tx, rx) = oneshot::channel();
 		{
@@ -663,6 +668,12 @@ impl Stream for SubscriptionStream {
 
 fn raw_value_from_json(value: &serde_json::Value) -> Result<Box<RawValue>, RpcError> {
 	RawValue::from_string(value.to_string()).map_err(RpcError::Deserialization)
+}
+
+/// Whether `method` waits for a request slot. Unpin and stopOperation release
+/// what a follow holds, so they never queue behind the reads that fill it.
+fn takes_slot(method: &str) -> bool {
+	!matches!(method, "chainHead_v1_unpin" | "chainHead_v1_stopOperation")
 }
 
 /// PAPI's modern middleware requires the array variant even though Subxt emits

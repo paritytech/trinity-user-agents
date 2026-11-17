@@ -515,7 +515,7 @@ fn waiting_request(client: &HostRpcClient, sent_at: Instant) {
 			method: "chainHead_v1_call".to_string(),
 			tx,
 			sent_at,
-			_slot: client.inner.request_slots.try_acquire_arc().expect("a free slot"),
+			_slot: client.inner.request_slots.try_acquire_arc(),
 		},
 	);
 }
@@ -849,6 +849,23 @@ fn a_request_past_the_limit_waits_for_an_answer_not_for_a_caller_to_give_up() {
 
 	assert_eq!(sent_before_the_answer, 2);
 	drop(second);
+}
+
+/// Unpin and stopOperation release what a follow holds, so they go out even
+/// while reads fill every slot.
+#[test]
+fn subscription_upkeep_goes_out_while_every_slot_is_taken() {
+	let connection = TrackingConnection::new();
+	let client =
+		HostRpcClient::with_limits(connection.clone(), Spawner::for_test(), REQUEST_SILENCE_DEADLINE, 1);
+	let mut read: RequestFuture<'_> = Box::pin(client.inner.request("chainHead_v1_storage", None));
+	poll_until(&mut read, || connection.sent().len() == 1);
+
+	let mut unpin: RequestFuture<'_> = Box::pin(client.inner.request("chainHead_v1_unpin", None));
+	poll_until(&mut unpin, || connection.sent().len() == 2);
+	let mut stop: RequestFuture<'_> =
+		Box::pin(client.inner.request("chainHead_v1_stopOperation", None));
+	poll_until(&mut stop, || connection.sent().len() == 3);
 }
 
 /// Closing the connection frees every slot, so a caller waiting for one fails
