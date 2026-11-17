@@ -177,7 +177,7 @@ fn exponent(chain_value: i8, params: ChainParams) -> Option<Exponent>;       // 
 
 #### A2 · Namespace
 
-**Owns** nothing. **Band:** pure. A2 defines the derivation paths and computes keys from them. It stores nothing: B2 stores which installation is current, and earlier installations are published on chain (F4).
+**Owns** nothing. **Band:** pure. A2 defines the derivation paths and computes keys from them, including the key the installation registry's records are sealed under. It stores nothing: B2 stores which installation is current, and earlier installations are published on chain (F4).
 
 Every coin account and every recycler-entry key is derived from the user's recovery phrase. A key is identified by a tree and three values:
 
@@ -204,13 +204,21 @@ type EntryKey      = [u8; 32];   // an entry's public member key, as a ring list
 fn coin_key(e: Entropy, purse: PurseId, installation: InstallationId, item: u32) -> (CoinSecret, AccountId);
 fn entry_key(e: Entropy, purse: PurseId, installation: InstallationId, item: u32) -> (EntrySeed, EntryKey);
 fn datastore_key(e: Entropy) -> (Sr25519Secret, AccountId);
+
+// the installation registry's records (F4 invariant 4)
+type RegistryKey        = [u8; 32];
+type SealedInstallation = [u8; 60];                                    // nonce(12) ‖ ciphertext(32) ‖ tag(16)
+fn registry_key(datastore: Sr25519Secret) -> Option<RegistryKey>;      // none: not a valid sr25519 secret
+fn seal_installation(key: RegistryKey, id: InstallationId) -> SealedInstallation;   // the payload of E1's Call::AppendRegistryRecord
+fn open_installation(key: RegistryKey, record: Vec<u8>) -> Option<InstallationId>;  // none: not sealed under `key`, or malformed
 ```
 
 - **`coin_key`** computes the key of the coin path `//coinage//<purse>//<installation>/<item>` by the rules below, and returns the coin secret and the coin's account, which is its public key. The scalar half of the secret and the account are the same on every call. The nonce half differs between calls, because the rules do not fix the nonce of a soft-derived key.
 - **`entry_key`** computes the seed `eₙ` of the entry path `//coinage-ring-vrf//<purse>//<installation>//<item>` and the entry's public member key, the public key of the secret that `eₙ` gives. Both are the same on every call.
 - **`datastore_key`** computes the key of `//datastore` and its account.
+- **`registry_key`**, **`seal_installation`** and **`open_installation`** compute the key the registry's records are sealed under, seal an installation identifier, and open a record, as *The registry's records* below defines. `seal_installation` is deterministic, so sealing one identifier twice gives the same bytes. `open_installation` reads the nonce from the record itself, so a record another platform sealed with a random nonce opens too. C2's registry policy seals with them, and F4 opens with them.
 
-The operations take `E` itself. The host supplies `E` through the `Seed` interface given to `start` (G1 `Interfaces`), G3 holds that interface for the running layer, and A2 keeps nothing. E2 uses these operations to sign, G1's export to hand out coin secrets, and F1 and F4 to name the accounts and member keys they read. No operation returns a key above a coin or an entry in the tree.
+The key operations take `E` itself. The host supplies `E` through the `Seed` interface given to `start` (G1 `Interfaces`), G3 holds that interface for the running layer, and A2 keeps nothing. E2 uses these operations to sign, G1's export to hand out coin secrets, and F1 and F4 to name the accounts and member keys they read. No operation returns a key above a coin or an entry in the tree.
 
 **The derivation, exactly.** Both shipped apps compute these rules. A2 invariant 1 holds only if every implementation computes exactly these rules.
 
@@ -250,6 +258,8 @@ The reference implementation of these rules is the `schnorrkel` library [schnorr
 3. The entry's secret scalar is computed from the 32-byte seed `eₙ` by the function `Secret::from_seed` of the `ark-vrf` library, version 0.5.1, for the suite `Bandersnatch-SHA512-ELL2-v1` [ark-vrf]. No specification defines this function apart from that implementation, so the design pins its version. The Android app and this repository's core both reach it through the `verifiable` library's `new_secret`.
 
 
+*The registry's records.* The installation registry (F4 invariant 4) is the shipped wallet's, so its record format is fixed by compatibility (§5). Each installation identifier is sealed with ChaCha20-Poly1305 [RFC 8439] as `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, with no associated data. The key is `K = BLAKE2b-256("encryption", key = S)`, where `S` is the `//datastore` sr25519 secret in its 64-byte ed25519-compatible form: the secret scalar multiplied by 8, as 32 little-endian bytes, followed by the 32-byte nonce half of the secret. This is the form polkadot-js and the Android SDK hold; the iOS app converts its canonical secret to it. The nonce is the first 12 bytes of `BLAKE2b-256("nonce" ‖ id, key = BLAKE2b-256("nonce-key", key = K))`, so registering one installation twice writes the same bytes. In each `BLAKE2b-256(m, key = k)`, `m` is the message, hashed as its ASCII bytes where it is a label, and `k` is BLAKE2b's key parameter. A record that does not open under `K` is not this seed's.
+
 *Test vectors*, from the Android app's tests, for the phrase `bottom drive obey lake curtain smoke basket hold race lonely fit walk`:
 - `//datastore` has the public key `0x82fde43d07766255566803c486f9427cfb7026328a3d87cddd34b362acbdb54d`.
 - The coin of the main purse, installation `0x5a` repeated 32 times, item 7, has the public key `0x4eced11d18ac64e54559cc45eb79415ca66d9354e74394dc8729b69a0fbd9107`.
@@ -264,7 +274,7 @@ The reference implementation of these rules is the `schnorrkel` library [schnorr
 
 **Why installations exist.** The rule that no derived key is used twice must hold even after the local store is lost. A counter alone cannot guarantee that, because the counter is kept in the local store and is lost with it. After a reinstall on the same seed, allocation would restart at zero and re-derive items whose coin secrets were already handed to payees, which would give those payees keys to coins they do not own. A fresh random installation identifier puts the new instance's allocations in a namespace where nothing was allocated before, whatever its counter says. So the rule needs no record of how far the previous instance allocated; it needs only that the two installations' namespaces differ.
 
-**Verified by** fixed derivation vectors for both trees, and a property test that no two distinct `(purse, installation, item)` triples collide.
+**Verified by** fixed derivation vectors for both trees; a property test that no two distinct `(purse, installation, item)` triples collide; and fixed vectors for `seal_installation` and `open_installation`, including a record sealed with a random nonce.
 
 **Open question.** The safety of the soft junction for coin items rests on an argument, not on a proof, and this document records no review of the argument. By step 3, a coin's secret scalar is `k_coin = k_inst + s`, where `k_inst` is the installation node's secret scalar and the tweak `s` is computed from the coin's chain code and the installation node's public key `P_inst`. A payee who receives a coin secret learns `k_coin`. If the payee also knew `P_inst`, the payee could compute `s`, then `k_inst = k_coin − s`, and from `k_inst` the secret of every coin under that installation. The design's argument is that nobody outside the layer can learn `P_inst`. The layer never publishes it (the third condition above). It cannot be computed from the root public key, because the installation node lies below three hard junctions. And it cannot be computed from coin public keys or coin secrets, because each coin public key is `P_inst + s·B`, where `s` is itself a hash of `P_inst`. A cryptographer should review whether the argument holds against an attacker who holds the secrets of many coins under one installation, their public keys and their item numbers. If the argument fails, one coin secret exposes every coin under the same installation.
 
@@ -311,9 +321,11 @@ enum RecycleAge { Age(u32), CutoffDividedBy(u32) }
 enum HeldBackSpend { Never, AfterConfirmation, Always }
 enum Initiator { User, Product }            // who asked for a spend (G1 export and offload)
 enum PolicyError { NoReadyRule, PercentAbove100, ZeroDivisor }
+enum PrivacyPreset { Fastest, Balanced, MostPrivate }   // the three presets below
 
 fn check(policy: PrivacyPolicy) -> Result<(), PolicyError>;
 fn effective(policy: PrivacyPolicy, params: ChainParams) -> PrivacyPolicy;
+fn preset_policy(preset: PrivacyPreset) -> PrivacyPolicy;   // the preset's column of the table below
 ```
 
 - **`ready_when`**: when an entry counts as ready (B1). A rule holds when the ring's root includes at least `members` members, and `dwell` has passed since the entry's own key was first observed included in that root. `Count(n)` is `n` members. `PercentOfRingSize(p)` is `p` percent of the recycler ring size A3 gives, rounded up. The pallet sizes the rings of every denomination alike, from its one `RecyclerRingExponent`. An entry is ready when any rule holds.
@@ -452,7 +464,7 @@ The order decides the overlaps. For example, a coin still minting may already be
 
 A coin is selectable (`Now`) when it is `Available`, any chain lock on it has elapsed, its age is below the age cutoff (A3), and `recycle_due` does not return it. The age matters because every use except recycling transfers or splits the coin. `Exported` is checked first, so a coin whose secret was handed out is never `Available` again, whatever happens to its transactions, and nothing selects it. An exported coin must be below the age cutoff when it is minted, including a coin that a split produces for the export, because the payee's claim is one more transfer.
 
-**A coin a peer sent is not one of this layer's assets.** It has no index here (C1 invariant 6), it is only an input of its import, and it counts in no bucket. The import's outputs count like any other output. They count at the exponent observed on chain once they land, never at the value the sender declared.
+**A coin a peer sent is not one of this layer's assets.** It has no index here (C1 invariant 6), it is only an input of its import, and it counts in no bucket. The import's outputs count like any other output. They count at the exponent observed on chain once they land, never at the value the sender declared. So an import reads its coins at the finalized head before it registers its claims, and E1 plans each output at its coin's observed exponent. An output whose coin is not on chain yet is the one asset whose denomination is not known when it is allocated: it counts provisionally at the smallest denomination, and F1 fixes its denomination when it first observes the coin present, before C2 can build the claim, which waits for that observation.
 
 **An exported coin is still observed.** Once its secret has been handed out, it is never selectable again (C1 invariant 4). But the layer keeps observing its account until the coin has either been claimed or come back. The sender needs to know whether the payee claimed it, and only an unclaimed coin is worth reclaiming. Its export status is one of:
 
@@ -460,7 +472,7 @@ A coin is selectable (`Now`) when it is `Available`, any chain lock on it has el
 |---|---|
 | Not yet minted | The transaction creating it has not finally succeeded |
 | Awaiting the payee | Present on chain |
-| Claimed | Moved by the payee, by the named transaction: either the transaction that emptied the account, as observed, or this layer's own import of the coin. Final once that move is stable |
+| Claimed | Moved by the payee, by the named transaction: either the transaction that emptied the account, as observed (F1), or this layer's own import of the coin. Final once that move is stable: for an observed move, once the block that included it is finalized |
 | Reclaimed | Moved back by this layer's reclaim. Final once the reclaim is stable |
 | Never minted | The transaction creating it failed, or a reclaim cancelled it. The secret controls nothing |
 
@@ -520,7 +532,9 @@ What the chain reported, and whether it reported at all, are stored separately. 
 ---
 #### B2 · The ledger
 
-**Owns** what only this layer knows about its purses and assets: every purse's metadata and state, every coin and entry's identity (purse, installation, index, kind, denomination), what the chain last showed for each asset and for each unload-token identity, the instant each entry's key was first observed included in its ring's root, the secrets of the peer coins an import is claiming until each claim is final (G1 invariant 5), the derivation counters, which installation is current, which earlier installations are known and how far each has been scanned, the disclosure marks, the privacy policy (A4), and the counter for the ids of the layer's own operations (F2 invariant 3). **Band:** stateful, effect-free.
+**Owns** what only this layer knows about its purses and assets: every purse's metadata and state, every coin and entry's identity (purse, installation, index, kind, denomination), what the chain last showed for each asset and for each unload-token identity, the instant each entry's key was first observed included in its ring's root, the secrets of the peer coins an import is claiming until each claim is final (G1 invariant 5), the derivation counters, which installation is current, which earlier installations are known and how far each has been scanned, the disclosure marks, the privacy policy (A4), the counter for the ids of the layer's own operations (F2 invariant 3), and the hand-over record of a wallet a shipped app moved into the layer (below). **Band:** stateful, effect-free.
+
+**The hand-over.** A host app that ran a coinage engine of its own before it used this layer hands that engine's wallet over once, when the layer first starts (G3 step 2, [`native-interface.md`](native-interface.md) V3). The hand-over carries what the app knew and the chain does not: every installation the app allocated under, with its two **high-water marks** (the lowest coin index and the lowest entry index the app never allocated in the main purse); every **outstanding payment**, a payment whose coin secrets the app sent and whose coins it has not seen claimed or reclaimed, named by an id and the coin accounts of its secrets; and every **incoming payment**, a payment the app received and has not seen claimed, with its id, its claim deadline and its coin secrets. B2 keeps the record, without the incoming payments whose imports have started (G3 invariant 8).
 
 None of this state survives a wipe, except the purse metadata, which may be backed up (§1). The rest is not meant to survive. A reconstruction finds earlier namespaces through the **installation registry**, which is published on chain rather than held here (F4).
 
@@ -545,16 +559,18 @@ struct Facts { at: BlockRef, reads: Vec<(Subject, Read)> }
 enum Subject { Asset(Asset), Token(TokenId) }
 enum Read {
     Failed,                                         // the read did not return (invariant 6)
-    Coin { now: Option<CoinOnChain>, emptied_by: Option<TxHash> },   // now None: the account is empty;
+    Coin { now: Option<CoinOnChain>, emptied_by: Option<Emptied> },   // now None: the account is empty;
                                                     // emptied_by: for an exported coin, the transaction that emptied it
     Entry(Option<EntryOnChain>),                    // None: the key is in no ring
     Token { consumed: bool },
 }
+struct Emptied { by: TxHash, stable: bool }      // stable: its block was finalized at the read
 struct CoinOnChain { exponent: Exponent, age: u32, locked_until: Option<Time> }
 struct EntryOnChain {
     ring: u32, revision: u32, page: u32, position: u32,     // §1: a position is reported within its page
-    members: u32, included: u32, closed: bool, expires_at: Time,
+    members: u32, included: u32, closed: bool, expires_at: Option<Time>,   // expires_at: once the ring is closed
     locked_until: Option<Time>,
+    unloaded: Option<u32>,      // aliases an unload marked in the ring; none when the runtime keeps no count or the read failed
 }
 
 enum Mark { Uncommitted, Committed }
@@ -589,6 +605,7 @@ fn mark(asset: Asset) -> Option<Mark>;
 
 // installations, policy, ids, backup
 fn current_installation() -> Option<InstallationId>;
+fn minted_at() -> Option<Time>;                     // when the current installation was minted
 fn mint_installation(txn: StoreTxn, id: InstallationId, policy: PrivacyPolicy, backup: Option<Vec<u8>>) -> Result<(), Error>;
 fn add_installations(txn: StoreTxn, ids: Vec<InstallationId>);
 fn installations() -> Vec<(InstallationId, ScanProgress)>;
@@ -598,8 +615,16 @@ fn policy() -> PrivacyPolicy;
 fn next_operation_id(txn: StoreTxn) -> [u8; 32];
 fn purse_backup() -> Vec<u8>;
 
+// the hand-over (types: G1)
+fn record_hand_over(txn: StoreTxn, hand_over: Handover);
+fn hand_over() -> Option<Handover>;
+fn forget_incoming(txn: StoreTxn, id: [u8; 32]);
+fn adopt_disclosed(txn: StoreTxn, payment: [u8; 32], coin: Asset, exponent: Exponent);   // F4
+fn hand_over_progress(view: Snapshot) -> HandOverProgress;
+
 // reads for others
 fn balance(view: Snapshot, purse: PurseId, now: Time, params: ChainParams) -> Balance;     // G1's type
+fn holdings(view: Snapshot, purse: PurseId, now: Time, params: ChainParams) -> Holdings;   // G1's type
 fn snapshot() -> Snapshot;
 ```
 
@@ -612,19 +637,23 @@ An operation that takes neither a `Snapshot` nor a `StoreTxn`, here and in B4 an
 - **`allocate`** records one fresh asset per output in `purse` under the current installation, at the next indices, with the output's exponent, and returns them in order (invariant 4). E3 calls it in step 2. **`adopt`** records assets a reconstruction found, under their own installation, without advancing any counter.
 - **`keep_secrets`** stores the secrets of the peer coins an import claims; E3 calls it in the import's registration (step 2). **`secret`** returns the stored secret of a peer coin's account, which C2's `prepare` passes to E2 to sign the claim. **`forget_secrets`** deletes them; F2 calls it once each claim is final (G1 invariant 5).
 - **`asset`** / **`assets`** read asset identities. For the main purse, `assets` also returns every asset under an earlier installation, whatever purse identifier it was found under (invariant 5).
-- **`observe`** stores what F1 reported. For each read it sets the third axis of B1: a value read at a block not older than the stored one replaces the stored value and makes the asset *observed at* that block; a `Failed` read, or a read at an older block, leaves the stored value and makes the asset *read failed since* the stored block (invariant 6). The first time an entry's key is seen included in its ring's root, its inclusion instant is set to `now`. A `Token` read is stored for the token identity, and D1's `token_state` reads it.
+- **`observe`** stores what F1 reported. For each read it sets the third axis of B1: a value read at a block not older than the stored one replaces the stored value and makes the asset *observed at* that block; a `Failed` read, or a read at an older block, leaves the stored value and makes the asset *read failed since* the stored block (invariant 6). The first time an entry's key is seen included in its ring's root, its inclusion instant is set to `now`. An entry's read carries its ring's unloaded count, which `holdings` reads. A `Token` read is stored for the token identity, and D1's `token_state` reads it.
 - **`mark_disclosed`** writes uncommitted marks. For a coin an export hands out as it is, which no registration holds, it refuses a coin that is already marked or held, in the same store transaction (invariant 2). **`commit_disclosed`** makes marks committed. **`release_disclosed`** deletes uncommitted marks and leaves committed ones; G1's `release_export` and G3's start sequence (G3 invariant 5, using `uncommitted`) call it.
-- **`mint_installation`** records a fresh installation as current, stores the initial policy, and restores the purse backup if one is given, all in `txn` (G3 invariant 3). It fails with `UndecodableStore` if the backup does not decode. **`add_installations`** records earlier installations a reconstruction learned (F4); **`record_scan`** stores F4's scan progress for an installation.
+- **`mint_installation`** records a fresh installation as current, with the instant it was minted (`minted_at`), stores the initial policy, and restores the purse backup if one is given, all in `txn` (G3 invariant 3). It fails with `UndecodableStore` if the backup does not decode. **`add_installations`** records earlier installations a reconstruction learned (F4); **`record_scan`** stores F4's scan progress for an installation.
 - **`set_policy`** replaces the stored policy; nothing stored changes with it (invariant 1). **`next_operation_id`** returns the next id from the counter for the layer's own operations.
 - **`purse_backup`** returns `SCALE(Vec<PurseRecord>)` of every purse ever created, closed ones included, so that a restored backup keeps both the owners and the drain targets, and allocation continues past every identifier.
+- **`record_hand_over`** runs in the store transaction that mints the installation (G3 step 2). It adds every installation the hand-over lists (`add_installations`), begins one export under the key `OpKey { scope: "coinage/app", id }` for each outstanding payment, with the payment's accounts as its arguments and no coins yet (B4 `begin`), and stores the record. A payment id listed twice is begun once, for its first listing, and the repeat is logged. **`hand_over`** returns the stored record. **`forget_incoming`** deletes one incoming payment, and its secrets, from the record.
+- **`adopt_disclosed`** runs in the store transaction of a scan's batch that adopted `coin` (F4). It gives the coin a committed disclosure mark and adds it, with its exponent, to the coins of the export under `OpKey { scope: "coinage/app", id: payment }`. A coin that is already marked or held is left as it is.
+- **`hand_over_progress`** is `None` when no hand-over is stored, `Scanning` while an installation the hand-over lists has not completed its first scan (F4 invariant 5), and `Done` once every one has.
 - **`balance`** computes the three-way partition below from `view` at `now` with `params`. It takes each asset's bucket from B1's `selectability`, and counts an entry as *spendable* only while D1's supply for the current period (D1 `supply`, from the same snapshot) can give it a free token. Tokens are assigned across purses in one fixed order: the main purse first, then purses by identifier.
+- **`holdings`** returns `balance` together with one row per coin or entry of the purse that B1 does not classify `Never`, all from `view`, so a screen that shows the balance and the rows never shows them disagreeing. A row's `ready` is B1's `Now`: an entry that is ready but has no free token this period is counted as *arriving* in the balance. A coin's `age` is the age the chain last showed. A coin is `batch_unloaded` when an unload of this layer created it (C1 `creator`) and its age is 1. `fungibility` is how much of a ring's anonymity the row hides in, as both shipped wallets compute it: `round(100 · (I² − U²) / (I · L))`, where `L` is the recycler ring size (A3), `I` the members the ring's root includes, and `U` the ring's unloaded count, clamped to `I`, and zero when `I` or `L` is zero. For an entry it is the ring the entry was last observed in. For a coin an unload created, it is the ring the unload's first input entry was last observed in. It is none for every other coin, and when the ring or its unloaded count is unknown.
 - **`snapshot`** returns a consistent read-only view (invariant 3).
 
 **Invariants**
 1. **Nothing here duplicates a fact owned elsewhere.** B2 stores no asset status: no reservation flag and no spent flag. Conflicts between operations are excluded by C1's registration check, inside the same store transaction, instead of by keeping two copies of a status consistent. B2 does not store a classification either. Classifications are recomputed from the current records, because they depend on the current balance ratio and on the ages of other holdings. So a change of policy changes the classifications and requires no change to any stored record.
 2. **A disclosure mark has two phases.** It is written *uncommitted* when an export reserves its coins. It becomes *committed* inside the store transaction in which the caller makes the secrets durable (G1 invariant 3). An export may hand out a coin as it is, with no transaction, and then no registration covers the coin. For such a coin, the mark is checked and written in one store transaction, so no other operation can select the coin in between. Every uncommitted mark is deleted at start (G3 invariant 5). A committed mark is never deleted.
 3. The ledger serves a **consistent read-only snapshot** to a reader that is not the code changing it, because the durability layer's completion oracle needs one.
-4. Allocation is monotonic per `(purse, installation)`, never reissues an index, and happens only in the current installation (A2). Every field that records what has been used is **append-only**: a known installation is never removed, a counter never decreases, and a committed mark is never removed.
+4. Allocation is monotonic per `(purse, installation)`, never reissues an index, and happens only in the current installation (A2). Every field that records what has been used is **append-only**: a known installation is never removed, a counter never decreases, and a committed mark is never removed. The hand-over record is written once, and afterwards only loses incoming payments.
 5. **A purse holds only the coins and entries under the current installation.** Everything under an earlier installation counts toward the main purse, whatever purse identifier it was found under: the main purse's balance includes it, and the main purse's selection may spend it. This also applies to a purse restored from the metadata backup: the purse comes back with its owner, but without the value it held before. So a purse identifier that appears again after a reinstall never gives a caller value from before the reinstall. A reinstall without a usable backup can at most lose the record of which caller a purse belonged to. It never loses the assets, and it never gives them to the wrong caller.
 6. **A failed read never overwrites a stored value.** This one rule covers two failures that look unrelated. A lagging read must not remove a coin from a balance by reading it as zero. And a failed read of an unloaded count must not be taken as "nothing unloaded", which would overstate privacy. A reading at an older block than the block a stored value rests on counts as failed, so a lagging node never moves an observation back in time.
 7. **A purse's state only moves forward**, from `Open` to `Deleting` to `Closed`, and a purse is never reopened. A deletion's target is fixed when the deletion begins and is `Open` at that moment. So following targets never returns to a purse already passed, and `resolve_purse` always ends at an open purse.
@@ -685,15 +714,15 @@ Selection may take inputs that are not usable yet but will become usable without
 
 The operation registers such inputs at once, which holds them (B1 invariant 2), and its transactions wait to be built until the inputs are usable (B4 `Waiting`). So a payment from value that is still settling starts, and its secrets are released, instead of being refused.
 
-With `held_back`, every held-back input (B1 `HeldBack`) counts as usable now: an entry inside its dwell, an entry whose ring has not reached any rule's member count, and a coin the recycling sweep would take. E3 and F3 set it only as the policy allows (A4).
+With `held_back`, every held-back input (B1 `HeldBack`) counts as usable now: an entry inside its dwell, an entry whose ring has not reached any rule's member count, and a coin the recycling sweep would take. E3 and F3 set it only as the policy allows (A4). Entries that are usable without `held_back` are still taken before held-back entries, as the shipped wallet spends entries that are already private before those still gaining privacy. The strategies' own order applies within each of the two groups.
 
-Selection tries three strategies, first over the inputs usable now and then over all inputs (invariant 5). Each time it tries them in a fixed order, and the first that succeeds is used: with `entries_first`, unload entries first, then spend coins that already sum to the amount, then split coins; otherwise coins that already sum, then split coins, then unload entries. The three strategies are: spend coins that already sum to the amount; reshape coins by splitting them (A5); unload recycler entries, which costs one unload token per unload transaction (E1 invariant 4). When neither coins nor entries alone cover the amount, the last strategy takes both.
+Selection tries three strategies, first over the inputs usable now and then over all inputs (invariant 5). Each time it tries them in a fixed order, and the first that succeeds is used: with `entries_first`, unload entries first, then spend coins that already sum to the amount, then split coins; otherwise coins that already sum, then split coins, then unload entries. The three strategies are: spend coins that already sum to the amount; reshape coins by splitting them (A5); unload recycler entries, the largest first until they cover the amount, which costs one unload token per unload transaction (E1 invariant 4). When neither coins nor entries alone cover the amount, a last strategy takes both, as the shipped wallet does: it spends every coin whole, since together they fall short of the amount, and unloads entries for the rest as the entry strategy chooses them. The unload's surplus returns to the purse as change, so no more entries are unloaded, and no more tokens presented, than the rest needs. When the free tokens do not reach those entries' unload transactions, selection fails with `NoUnloadToken`.
 
 **Invariants**
 1. **Selection reads a classification, never a policy.** Readiness is defined by B1 and computed at the time given to selection, so an entry's state already includes A4's thresholds. A chain lock is likewise already part of selectability. Selection applies no threshold of its own.
 2. **The order of the strategies is fixed by who asked for the spend**, as in the shipped wallet (§5), and the policy does not set it (A4 invariant 2). A spend layer 2 makes for a product takes entries first, because spending an entry that is already private is better than creating one; every other spend takes coins first. After invariant 5's preference, this order is the sort key. Selection's own tie-breaks come after it and decide every remaining tie, so two implementations with the same records and the same request choose the same records. This is required for conformance, not for performance.
 3. Selection does **not** decide how to reshape coins. It establishes that the coins cover the amount, hands the per-exponent counts to A5, and applies A5's plan exactly as returned (A5, What it relies on). It chooses which individual coin of each exponent is consumed, using its own ordering.
-4. **Selection fails only for lack of value or of unload tokens.** It fails when the purse's value does not cover the request, counting everything the purse may take now or later. It also fails when only entries cover the request and D1 cannot promise their tokens (D1 invariant 1). No request fails because of the denominations of its coins. Every operation accepts any coins that sum to its amount, and a split can always produce such coins from larger ones (A5's precondition).
+4. **Selection fails only for lack of value or of unload tokens.** It fails when the purse's value does not cover the request, counting everything the purse may take now or later. It also fails when the request needs entries, alone or with every coin, and D1 cannot promise their tokens (D1 invariant 1). No request fails because of the denominations of its coins. Every operation accepts any coins that sum to its amount, and a split can always produce such coins from larger ones (A5's precondition).
 5. **Usable now comes before usable later.** Among inputs that would cover the request, selection prefers those usable at once. This preference applies before the policy's spend order and before the tie-breaks of invariant 2. A payment waits only when nothing usable now covers it. With `held_back`, held-back inputs are usable now.
 
 **Verified by** the determinism property, by exhaustively checking which purses fail over generated purses, and by checking a returned plan's outputs sum to the request.
@@ -740,7 +769,7 @@ fn open_operations(view: Snapshot) -> Vec<OpKey>;
 | Some waiting to be built, the inputs of one of them usable | `Preparing` |
 | Otherwise: waiting to be built, no inputs yet usable (B3) | `Waiting` |
 
-`Waiting` names no time. When a wait ends depends on rings, token periods and other operations, and the layer promises nothing about it. A record that failed while its rebuild policy allows another attempt is back to *waiting to be built*, so the operation returns to `Preparing` or `Waiting`.
+`Waiting` names no time. When a wait ends depends on rings, token periods and other operations, and the layer promises nothing about it. A load's input is its funding account's funds, which the status does not read, and C2 builds a load as soon as they cover it. So a load waiting to be built has no usable input, and a top-up waiting for its funds is `Waiting`. A record that failed while its rebuild policy allows another attempt is back to *waiting to be built*, so the operation returns to `Preparing` or `Waiting`.
 
 For three kinds of operation, the status depends on more than the records.
 
@@ -758,7 +787,7 @@ An **offload** is `Waiting` between its phases (F3) until its stored end decides
 3. `Done` means every transaction succeeded finally. `PartiallyDone` means some did and the rest failed. Partial success is a normal outcome, not an error. **`PartiallyDone(amount)`** is a status, not only a detail of the receipt. Its amount is read back from the records rather than accumulated in memory, so a caller that reconnects does not have to work out how far the operation got.
 4. A receipt records only outcomes that reached a **stable** verdict, and its block references are always finalized ones.
 5. **Calling again with the pair of a completed operation returns its completion. It never starts a second operation**, however late the call is. A caller that crashed while its payment was settling finds the operation and joins it, instead of starting it again and paying twice.
-6. **Every status carries the operation's value progress**: the value already settled on a stable verdict, and the value still in flight, both read back from the records. An operation of many transactions settles in steps. A caller that reports progress, as RFC-17's `Clearing { clearing, cleared }` does, needs both numbers at every step, not only at the end.
+6. **Every status carries the operation's value progress**: the value already settled on a stable verdict, the value still in flight, and, of the value in flight, the part whose transaction succeeded on the best chain but not yet finally, all read back from the records. An operation of many transactions settles in steps. A caller that reports progress, as RFC-17's `Clearing { clearing, cleared }` does, needs the first two numbers at every step, not only at the end. A caller that reports a provisional outcome, as RFC-6's `Claimed { finalized: false }` does, needs the third: one transaction that succeeded on the best chain does not mean the whole amount did (invariant 2).
 
 **Verified by** checking every combination of record statuses against the derived status, that a repeated `begin` with the same arguments joins and with different arguments is refused, and that cancellation is accepted until the terminal status for every operation but an export and the layer's own.
 
@@ -842,10 +871,15 @@ struct CoinageDeps {
     clock: Clock,
     people: Chain,            // state reads and heads of the People chain, which runs the coinage pallet
     people_genesis: [u8; 32],
-    asset_hub: Chain,         // state reads and heads of Asset Hub, which runs the installation registry
-    asset_hub_genesis: [u8; 32],
-    config: ChainConfig,      // A3: the instance served and the limits the runtime does not publish
+    asset_hub_genesis: [u8; 32],   // Asset Hub, which runs the installation registry
+    extrinsics: Extrinsics,   // the core's extrinsic builder, which E2 signs through
+    personhood: Personhood,   // the person whose free tokens pay for unloads (D1) and whose ring proof claims PGAS (F4 invariant 4)
     running: Running,
+    registry: Option<RegistryWriter>,   // builds the registry's appends; none when no registry is configured
+}
+
+trait RegistryWriter {
+    fn append(datastore: CoinSecret, record: SealedInstallation) -> Result<Vec<u8>, String>;   // signed bytes; Err: not buildable yet
 }
 
 fn with_coinage(list: DurableRegistry, deps: CoinageDeps) -> DurableRegistry;
@@ -853,6 +887,8 @@ fn with_coinage(list: DurableRegistry, deps: CoinageDeps) -> DurableRegistry;
 
 - **`with_coinage`** returns `list` with both domains added: `coinage`, on the chain whose genesis is `people_genesis`, and `coinage-registry`, on the chain whose genesis is `asset_hub_genesis`, each with the completion oracle and the rebuild policy below. The two names are constants of C2 and never change (§1).
 - **`Running`** is the one piece of in-memory state the plug-ins share with the layer. The core creates it closed and gives the same handle to `with_coinage` and to G3's `start`. G3 opens it at the end of its start sequence (G3 invariant 5). Once open, it gives the `ChainParams` of the last runtime check that passed, whether the latest check failed (G3), and the `Funding` capability of each top-up that has not ended (G1 invariant 6). G1 and G3 write it; the plug-ins only read it. While it is closed, `prepare` answers no record (invariant 6).
+
+- **`RegistryWriter`** builds the signed contract call that appends `record` to the list of the `//datastore` account whose secret is `datastore` (F4 invariant 4). Before it builds the call, it claims PGAS for that account with the person's ring proof, unless the account already holds one claim's worth, which covers the call's fee and storage deposit. It fails while the call cannot be built yet, for example while the person's ring is unavailable, and `prepare` then asks again later. The core passes a writer exactly when a registry contract is configured (G3 invariant 4).
 
 `CoinageDeps` holds only what exists before this layer starts. It holds no `ChainParams`, because they exist only after G3's runtime check; everything in C2 that needs them is in `prepare`, behind the gate.
 
@@ -887,9 +923,10 @@ fn prepare(batch: Vec<Waiting>) -> Vec<(RecordId, Build)>;   // a record without
 
 The effectful half of each plug-in is its reads: `open_pass` reads one snapshot and the chain at the pass's two heads; `prepare` reads one snapshot, the clock, the `ChainParams` and a top-up's `Funding` capability through `Running`, and E2's context. Each answer is a pure function of what was read. `can_retry` reads nothing (invariant 3). The plug-ins read the clock themselves, because deadlines, margins and periods need it.
 
-**The `coinage` oracle.** For each record, `open_pass` reads from one snapshot (B2 invariant 3) the record's rows (C1), the disclosure marks on its inputs and outputs (B2), every record that has one of its outputs as an input (C1 `consumers`), every record it depends on, and the statuses of all of these (§1). From the chain, at each head, it reads: for each coin among the inputs and outputs, the coin at its account and, for an input, the lock on that account; for each entry, its ring membership and, for an input whose ring position F1 has observed, the state of its alias; and, for a record that presents an unload token, whether the chain records the token as consumed and whether the token's period is still accepted. Each chain read is *present* with a value, *absent*, or *unknown*. A coin present with a value other than the one its asset record gives, or an entry in the ring of another exponent, is read as unknown and logged.
+**The `coinage` oracle.** For each record, `open_pass` reads from one snapshot (B2 invariant 3) the record's rows (C1), the disclosure marks on its inputs and outputs (B2), every record that has one of its outputs as an input (C1 `consumers`), every record it depends on, and the statuses of all of these (§1). From the chain, at each head, it reads: for each coin among the inputs and outputs, the coin at its account and, for an input, the lock on that account; for each entry, its ring membership and its position in its recycler collection and, for an input in a ring at that head, the state of its alias in that ring; and, for a record that presents an unload token, whether the chain records the token as consumed and whether the token's period is still accepted. Each chain read is *present* with a value, *absent*, or *unknown*. A coin present with a value other than the one its asset record gives, or an entry in the ring of another exponent, is read as unknown and logged.
 
 These terms apply to one record at one head:
+- An entry's alias is **not unloaded** when the entry is onboarding, because an unload proves membership of a ring and an onboarding entry was never in one, or when the entry is in a ring and its alias state there is read and is not unloaded. For a suspended entry, which holds no ring index to read the alias under, and for any read that failed, it is unknown.
 - An input is **available** when it is a coin present at its account, or an entry whose membership is present and whose alias is not unloaded. A coin a peer sent and an input with a disclosure mark are never available, because someone else holds their key and could have spent them and sent another coin to the same account.
 - An output is **untouched** when it has no disclosure mark and no record that has not failed has it as an input, records waiting to be built included.
 - An input is **settled** when it is a coin this layer minted (C1 `creator`), with no disclosure mark, and the record that minted it has succeeded finally and its window is closed at the finalized head.
@@ -908,7 +945,7 @@ These terms apply to one record at one head:
 
 Each of the three rests on a fact that cannot reverse. A spent input never returns, because no key is used twice (P5) and nobody else holds the key. An untouched output can be created only by this record, and nothing could have spent it. A failed record created nothing (§1), so an input it would have minted never exists. The condition that no failed dispatch shows keeps the durability layer from recording a failed dispatch as an expiry (invariant 3).
 
-**The `coinage-registry` oracle.** `open_pass` reads, at each head, the records the installation registry returns (F4 invariant 4). `proven_completed` holds when the sealed record the transaction appends is among them. `proven_not_completed` never holds; the durability layer decides an append that did not complete by searching the finalized blocks of its window (§1).
+**The `coinage-registry` domain.** Its oracle proves nothing: `proven_completed` and `proven_not_completed` never hold, and the durability layer decides an append by following its attempt and by searching the finalized blocks of its window (§1). Its rebuild policy shares `can_retry` with the `coinage` domain. Its `prepare` answers no record while `Running` is closed, while the seed is unavailable, or when the core passed no `RegistryWriter`. Otherwise it gives up a record whose call is not `Call::AppendRegistryRecord`, and builds every other one through the writer, from the installation the call names, sealed under the seed's registry key (A2 `registry_key`, `seal_installation`). When the writer fails for one record, `prepare` answers none of the batch, and they wait.
 
 ```
 waiting to be built ──prepare: bytes──▶ submitted ──▶ succeeded on best chain ──▶ succeeded finally
@@ -925,7 +962,7 @@ waiting to be built ──prepare: bytes──▶ submitted ──▶ succeeded 
 2. **The oracle claims only what the evidence proves.** Every rule needs each read it uses to be present or absent; an unknown read makes the rule not hold, so a failed read never becomes evidence. *Not completed* rests only on facts that cannot reverse (above). The oracle draws nothing from the absence of an entry or an alias state, because ring cleanup removes them (§1). It reads a token as not consumed only while the token's period is still accepted, because cleanup removes a consumption only after that (§1).
 3. **`can_retry` reads no chain and no store.** The durability layer asks it just before it records a failure, and it answers at once from the failure and from the retry policy the record carries (E3). A failure that would happen again on the same inputs is not retried without limit, because nothing else would stop the loop. For a transaction that presents an unload token, it answers *no* to `DispatchFailed`: that attempt reached the chain and spent the token, and every attempt presents the same token (invariant 5). `Expired` and `Rejected` mean no attempt reached the chain: the durability layer records *expired* either from a search of every finalized block of the window or from the oracle's *not completed*, and the oracle claims that only when no failed dispatch shows. A cancellation is handled by `prepare`, which gives the record up at its next build (invariant 5). For a record whose policy parameters do not decode, it answers *no* (E3).
 4. **Both plug-ins are read-only and never re-enter the layer.** They never submit, never write this layer's state, and never call back into the layer. They read one committed snapshot per call (B2 invariant 3).
-5. **`prepare` builds exactly what was registered.** Every attempt of one transaction consumes the same inputs and creates the same outputs. An attempt that would change either is a different transaction and needs its own registration. `prepare` decides each record from the record itself, the store and the chain, never from which other records the batch holds, because the batch need not hold every record that is waiting (§1). It may wait for inputs to become usable. It may also wait for an earlier-registered transaction of the same signing account to reach a stable status, because the layer builds at most one transaction per signing account at a time, in registration order (E2 invariant 4). It does not answer an export that is not yet committed, so no minting is built before its handoff is committed (G1 invariant 3). It also does not answer a top-up whose funding account cannot cover it yet, nor any record while the current runtime fails A3's check (G3 invariant 7). Not answering is not a verdict: the record stays *waiting to be built*. `prepare` gives up on a record in these cases: its policy parameters do not decode (E3); its inputs, or a top-up's funds, are gone past the operation's deadline; its operation's cancellation was requested (B4 invariant 1); the record mints an export that was released, or that was not committed before a restart (G3 invariant 5); the record mints a coin that a reclaim names, in which case the coin is never minted and the record's inputs are freed; a token it presents belongs to a period that has ended; it needs a funding signature that the signer declines or that the layer no longer has (G1 `Funding`, invariant 6); and, for an ordinary record, an input entry's ring comes within the rescue margin (F2 invariant 1), in which case giving up frees the entry for the rescue sweep.
+5. **`prepare` builds exactly what was registered.** Every attempt of one transaction consumes the same inputs and creates the same outputs. An attempt that would change either is a different transaction and needs its own registration. `prepare` decides each record from the record itself, the store and the chain, never from which other records the batch holds, because the batch need not hold every record that is waiting (§1). It may wait for inputs to become usable. It may also wait for an earlier-registered transaction of the same signing account to reach a stable status, because the layer builds at most one transaction per signing account at a time, in registration order (E2 invariant 4). It does not answer an export that is not yet committed, so no minting is built before its handoff is committed (G1 invariant 3). It also does not answer a top-up whose funding account cannot cover it yet, nor any record while the current runtime fails A3's check (G3 invariant 7), nor any record while a registry is configured and the current installation's registration has not succeeded finally (G3 invariant 4). Not answering is not a verdict: the record stays *waiting to be built*. `prepare` gives up on a record in these cases: its policy parameters do not decode (E3); past the operation's deadline, an input is gone, which F1 reads as an empty account and never infers from an input it has not read (until then a late record is still built whenever its inputs are usable); the record is a top-up's load past the operation's deadline, whatever its funding account holds, so the account is not charged for a top-up its caller has written off; its operation's cancellation was requested (B4 invariant 1); the record mints an export that was released, or that was not committed before a restart (G3 invariant 5); the record mints a coin that a reclaim names, in which case the coin is never minted and the record's inputs are freed; a token it presents belongs to a period that has ended; it needs a funding signature that the signer declines or that the layer no longer has (G1 `Funding`, invariant 6); and, for an ordinary record, an input entry's ring comes within the rescue margin (F2 invariant 1), in which case giving up frees the entry for the rescue sweep.
 6. **Building waits for the start sequence.** While `Running` is closed, that is, until G3 has run its start sequence (G3 invariant 5), `prepare` answers no record. The durability layer can call the plug-ins from the moment the core creates it, which is before this layer has started (§1). Without the gate, an export that the last run left uncommitted could be minted before G3 gives it up. The oracle and `can_retry` need no gate: they build nothing and write nothing, and a disclosure mark that G3 has not yet deleted only removes evidence.
 
 **Not here:** how a status is reached. Submission, following an attempt, recovery passes, reorganisation handling and the search over blocks belong to the durability layer. Also not handled: a coin-origin attempt whose dispatch failed and whose same bytes are included again after the coin's lock has expired, inside their window (§1). The durability layer records a failed dispatch read in a finalized block as final at once, so such a later success is not recorded (§5).
@@ -1112,7 +1149,7 @@ The registration is made in the domain the plan belongs to (§1): `coinage-regis
 
 | Instance | Behaviour | Why |
 |---|---|---|
-| Until a time | Rebuild until a time the caller sets | An interactive send that the user expects to complete, or a claim due by a deadline |
+| Until a time | Rebuild while the inputs are on chain; past a time the caller sets, give up once an input is gone, and give a top-up's load up at once | An interactive send that the user expects to complete, or a claim due by a deadline whose coin may still arrive |
 | Expiry-only | Rebuild after expiry; give up after a dispatch failure or a rejection | An expired attempt says nothing about whether the request is valid; a rejected one does |
 | None | Fail on the first unsuccessful verdict | A flow whose caller prefers a quick failure to a wait |
 
@@ -1139,14 +1176,14 @@ For the other failures, whether to retry depends on **why** an attempt failed. A
 
 **Owns** nothing; it feeds B2. **Band:** effectful. It reads the chain, writes only B2's observation, and publishes through G2.
 
-F1 keeps B2's observation current. It follows the chain's new blocks, reads at each block every piece of chain state that backs a record (coin storage and coin locks, ring membership and status, entry identity state, and consumed-token state), and hands the result to B2. It also reads the runtime version, so that a new runtime is checked (G3 invariant 1).
+F1 keeps B2's observation current. The core calls it for each finalized head of the People chain (F2 invariant 2). At each block it reads every piece of chain state that backs a record (coin storage and coin locks, ring membership and status, each ring's unloaded count, entry identity state, and consumed-token state), and hands the result to B2. It also reads the runtime version, so that a new runtime is checked (G3 invariant 1).
 
 ```rust
-fn on_block(block: BlockRef, now: Time);   // called by the chain subscription for each new block
+fn on_block(block: BlockRef, now: Time);   // called by the core for each new finalized head
 fn observe_now(now: Time);                 // the same reads at the latest finalized block, for a deployment that polls
 ```
 
-- **`on_block`** reads, at `block`, the facts of every coin, entry and unload-token identity B2 holds, and passes them to B2 `observe(txn, facts, now)` as one `Facts` value read at that block, in one store transaction (B2). For an exported coin whose account is empty, the facts include the transaction that emptied it (B1). An item whose read failed is passed as `Read::Failed`, never as absent, so the last stored value stands (B2 invariant 6). If the runtime version at `block` differs from the version of G3's latest check, F1 then calls G3 `revalidate(block)`. Finally it publishes `Event::NewBlock(block)` through G2, on which the host's entry point is called (F2 invariant 2).
+- **`on_block`** reads, at `block`, the facts of every coin, entry and unload-token identity B2 holds, and passes them to B2 `observe(txn, facts, now)` as one `Facts` value read at that block, in one store transaction (B2). For an entry in a ring, the facts include the ring's unloaded count, none when the runtime keeps no such count or its read failed. For an exported coin whose account is empty, the facts include the transaction that emptied it (B1): the transaction the coin signed in the first block, after the account was last read holding the coin (or after the coin was minted), at which the account is empty. It is stable once that block is at or below the finalized height, and a move found stable is not searched for again. An exported coin still being minted, or moved by one of this layer's own records, is not searched for. In the same store transaction, the first read of a peer coin present fixes the denomination of the output its waiting claim mints (B1). An item whose read failed is passed as `Read::Failed`, never as absent, so the last stored value stands (B2 invariant 6). If the runtime version at `block` differs from the version of G3's latest check, F1 then calls G3 `revalidate(block)`. Finally it publishes `Event::NewBlock(block)` through G2, on which the host's entry point is called (F2 invariant 2).
 - **`observe_now`** does the same reads at the latest finalized block. It exists for a deployment that cannot subscribe (invariant 6).
 
 **Invariants**
@@ -1187,14 +1224,14 @@ Both thresholds come from A4. When a coin is old enough to recycle is a privacy 
   5. and, in one store transaction, it deletes the secret of every peer coin whose claim transaction has succeeded finally or whose import has ended (B2 `forget_secrets`).
 
   An asset under an earlier installation belongs to the main purse, so a sweep's outputs for it land there (B2 invariant 5). The layer's own operations take their ids from B2's counter.
-- It returns `Due`: `started` lists the operations it started, `cannot_tell` lists the purses for which it cannot tell what is due (invariant 5), and `call_again_within` is the time until the earliest instant at which something becomes due from the current records: an entry's ring reaching its rescue margin, a coin reaching the effective `recycle_at` (A4) or the age cutoff, an offload's wait ending, or the default reconstruction becoming due. `call_again_within` is zero when `cannot_tell` is not empty.
+- It returns `Due`: `started` lists the operations it started, `cannot_tell` lists the purses for which it cannot tell what is due (invariant 5), and `call_again_within` is the time until the earliest instant at which something becomes due from the current records: an entry's ring reaching its rescue margin, a coin reaching the effective `recycle_at` (A4) or the age cutoff, an offload's wait ending, or the default reconstruction becoming due. It is none when no such instant exists, and zero when `cannot_tell` is not empty or the current runtime fails A3's check.
 
 **Invariants**
 1. **The rescue sweep prevents loss; the coin-age sweep keeps value spendable.** Ring expiry happens on the clock, so the rescue sweep protects value even when nobody uses the wallet. Without the rescue sweep, an idle user's entries are lost without any warning. This is the only way value disappears from a wallet whose seed and chain identity are intact. The rescue sweep unloads an entry once its ring is within the **rescue margin** of its expiry; the rescue margin is a per-network duration (A3). A coin at the age cutoff can still be recycled, so the coin-age sweep does not prevent any loss. It recycles a coin no later than the cutoff, so that the coin's value comes back as entries in the background and does not stay unspendable.
 2. **Scheduling is a host obligation.** The layer is given the current time (§1), but nothing wakes it up: it can say what is due now, but it cannot arrange to be called. So it provides an entry point that runs whatever is due at a given instant and reports how long the host may wait before calling again. If a host never calls the entry point, the wallet loses value once a ring expires.
 
    Three mechanisms invoke the layer, and each covers a case the others do not:
-   - **While the layer is running and subscribed** (F1 invariant 6), each new block counts as a call: F1 publishes `Event::NewBlock`, and the host's entry point is called on it, so a host in the foreground does not need to poll.
+   - **While the layer is running and subscribed** (F1 invariant 6), each new block counts as a call: the core follows the chain's finalized heads, F1 observes each one and publishes `Event::NewBlock`, and the core calls the entry point (layer 2's `run_due`) on it, so a host in the foreground does not need to poll.
    - **While any transaction is open**, the durability layer keeps running in the background where the platform allows it (§1), so a registered payment or sweep completes even with the application closed.
    - **The host's periodic call** covers the remaining case: an idle wallet with no transaction in flight. That is exactly when a ring can expire without anyone noticing, so neither of the other two mechanisms can replace the periodic call.
 
@@ -1250,7 +1287,7 @@ The **deficit** is the remaining amount minus the value of the entries of `from`
 
 #### F4 · Wallet reconstruction
 
-**Owns** nothing; it repopulates B2. **Band:** effectful. It reads the chain and writes only B2. F4 also defines the installation registry's format, which G3's registration writes.
+**Owns** nothing; it repopulates B2. **Band:** effectful. It reads the chain and writes only B2. F4 also defines the installation registry, where its records live and who appends them, which G3's registration writes; A2 defines the records' format.
 
 F4 rebuilds a wallet from the seed when the durable local state is lost. This is different from what C2 does: C2 decides the outcome of transactions that are still open, while F4 finds assets that the local store no longer knows about. F4 is the behaviour of G1's `reconstruct(op, purses, deep)`, and of the default reconstruction the entry point starts (invariant 5).
 
@@ -1263,15 +1300,13 @@ struct ScanConfig {          // part of the layer's configuration, given at star
 }
 
 // the installation registry
-type SealedInstallation = [u8; 60];                               // nonce(12) ‖ ciphertext(32) ‖ tag(16)
-fn seal_installation(id: InstallationId) -> SealedInstallation;   // the payload of E1's Call::AppendRegistryRecord
-fn open_installation(record: Vec<u8>) -> Option<InstallationId>;  // none: not sealed under this seed's key, or malformed
 fn read_registry(at: BlockRef) -> Option<Vec<Vec<u8>>>;           // all records; none: the read failed
 ```
 
-- **`reconstruct(op, purses, deep)`** (G1) is an operation with no transaction of its own (B4): it is `Preparing` while it scans and `Done` when every namespace it covers is scanned. It first reads the registry (`read_registry`), opens every record (`open_installation`), and adds every installation identifier B2 does not know (B2 `add_installations`). Then it scans the namespace `(purse, installation)` of every purse in `purses` (the main purse always included; for `Purses::Walk`, product purses from zero upwards until `purse_gap` consecutive purses are empty) under every known installation, the current one included. Scanning continues from the progress B2 stores for each installation (B2 `installations`), and records progress after every batch (B2 `record_scan`), so a restart resumes where it stopped. F4 defines `ScanProgress.resume` as the purse, the index space and the next index being scanned under that installation, and sets `first_scan_done` once every namespace of the installation has been scanned once.
+- **`reconstruct(op, purses, deep)`** (G1) is an operation with no transaction of its own (B4): it is `Preparing` while it scans and `Done` when every namespace it covers is scanned. It first reads the registry (`read_registry`), opens every record under this seed's registry key (A2 `registry_key`, `open_installation`), skips a record that does not open, and adds every installation identifier B2 does not know (B2 `add_installations`). Then it scans the namespace `(purse, installation)` of every purse in `purses` (the main purse always included; for `Purses::Walk`, product purses from zero upwards until `purse_gap` consecutive purses are empty) under every known installation, the current one included. Scanning continues from the progress B2 stores for each installation (B2 `installations`), and records progress after every batch (B2 `record_scan`), so a restart resumes where it stopped. F4 defines `ScanProgress.resume` as the purse, the index space and the next index being scanned under that installation, and sets `first_scan_done` once every namespace of the installation has been scanned once.
 - **Scanning one namespace** treats its two index spaces, coins and entries, separately, because A2 derives them under separate trees, so an index in one space cannot name an object in the other. For each space it derives `batch` consecutive accounts or member keys, reads them in one request at a finalized block, and adopts every index for which the chain returns something and which B2 does not already hold (B2 `adopt`), with the exponent the chain shows (invariant 3). An entry stays a ring member after it is unloaded, because an unload names only the entry's alias, never its member key. So for an entry in a ring, the scan also reads its alias there and skips the entry when the alias is unloaded. A batch whose members are all skipped counts as empty. Adopting never advances a counter, because what F4 finds was allocated by an earlier instance. The space is done after `gap` consecutive empty batches, or `deep_gap` when `deep` is set.
-- **`seal_installation`** seals an installation identifier as invariant 4 describes. It is deterministic, so sealing one identifier twice gives the same bytes. **`open_installation`** reverses it under this seed's key. **`read_registry`** returns the records `getCoinageInstallations` returns for the `//datastore` address.
+- **Scanning a handed-over installation** (B2's hand-over) differs in two ways. In the main purse's namespace, the scan of a space does not end before its next index reaches the space's high-water mark; empty batches below the mark still count toward the gap, so past the mark the scan ends as soon as the last `gap` batches were empty. And when the scan adopts a coin whose account an outstanding payment lists, it calls B2 `adopt_disclosed` in the same store transaction, so the coin is never selected, its payment's export status reports it, and a reclaim of that export takes it back. A listed account the scan does not find held no coin when it was read: the payee had claimed it, or it was never minted. Such a coin is not part of the export, so the export status of a handed-over payment covers only the coins the scan adopted, and it is complete once B2's `hand_over_progress` is `Done`.
+- **`read_registry`** returns the records `getCoinageInstallations` returns for the `//datastore` address.
 
 **Invariants**
 1. **Reads are bulk; derivation is not.** One request reads a whole batch, but every index needs its own local key derivation, and the entry side uses the slower scheme. So concluding that a namespace is *empty* costs a full run of batches before any useful answer.
@@ -1282,16 +1317,16 @@ fn read_registry(at: BlockRef) -> Option<Vec<Vec<u8>>>;           // all records
    The registry is the shipped wallet's, and its format is fixed by compatibility (§5): a seed recovered on one platform must find the installations that another platform registered.
    - **Where.** The *AccountDataStore* contract on Asset Hub [AccountDataStore]: `registerCoinageInstallation(bytes)` appends a record, `getCoinageInstallations(address)` returns them all.
    - **Who.** A dedicated `//datastore` sr25519 account derived from the seed, mapped for the contract runtime. It pays for the call and the storage deposit in PGAS, which it claims with a ring proof of the user's personhood. As with the unload tokens, nothing needs funding from outside (D1).
-   - **What.** Each identifier is sealed with ChaCha20-Poly1305 [RFC 8439] as `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, with no associated data. The key is `K = BLAKE2b-256("encryption", key = S)`, where `S` is the `//datastore` sr25519 secret in its 64-byte ed25519-compatible form: the secret scalar multiplied by 8, as 32 little-endian bytes, followed by the 32-byte nonce half of the secret. This is the form polkadot-js and the Android SDK hold; the iOS app converts its canonical secret to it. The nonce is the first 12 bytes of `BLAKE2b-256("nonce" ‖ id, key = BLAKE2b-256("nonce-key", key = K))`, so registering one installation twice writes the same bytes. In each `BLAKE2b-256(m, key = k)`, `m` is the message, hashed as its ASCII bytes where it is a label, and `k` is BLAKE2b's key parameter. To open a record, F4 reads the nonce from the record itself, so a record written with a random nonce by another platform opens too. A record that does not open under this seed's key is skipped.
+   - **What.** Each record is one installation identifier, sealed under the `//datastore` account's registry key as A2 defines (A2 `seal_installation`).
 
    Anyone who knows the `//datastore` address can count the records, and learn nothing more: the records hold no purse, no index and no amount, and the identifiers are encrypted. The registry also does not reveal the installation node's public key, which A2 requires to stay private: an installation *identifier* is a chain-code segment, not the installation node's public key. Deriving anything under an installation still needs the seed.
-5. **An installation that is registered but never scanned looks the same as one that holds nothing**, so scan progress is tracked per installation, and an installation is not considered done until its first scan completes. A failed read of the registry only delays discovery: installations learned on an earlier run are still scanned. The default reconstruction covers the main purse and every purse a restored metadata backup lists. It is due whenever the registry lists an installation not yet scanned (the shipped wallet does this at each launch), and the entry point starts it (F2 invariant 3). So a wipe is followed by recovery without any caller, before the rings of forgotten entries expire without being rescued. The default reconstruction is due no earlier than one longest validity window, finalized, after the current installation was minted, so that every transaction from before the wipe has landed or died first.
+5. **An installation that is registered but never scanned looks the same as one that holds nothing**, so scan progress is tracked per installation, and an installation is not considered done until its first scan completes. A failed read of the registry only delays discovery: installations learned on an earlier run are still scanned. The default reconstruction covers the main purse and every purse a restored metadata backup lists. Only a read of the registry tells whether it lists an installation not yet scanned, so the default reconstruction is needed once after each start of the layer, to read the registry as the shipped wallet does at each launch, and while a known installation's first scan has not completed. It scans only the installations whose first scan has not completed, so an installation scanned once is not scanned again at the next launch; a reconstruction G1's `reconstruct` starts scans every known installation. The entry point starts it (F2 invariant 3), under the layer's own scope, and resumes it, like every reconstruction, while it is open: a scan that fails leaves it open for the next call. So a wipe is followed by recovery without any caller, before the rings of forgotten entries expire without being rescued. The default reconstruction is due no earlier than one longest validity window, finalized, after the current installation was minted (B2 `minted_at`), so that every transaction from before the wipe has landed or died first.
 
 **What the registry does not carry, and the consequences.** Three kinds of information are lost with the store. Each leaves a residual risk that the design accepts and does not remove:
 
-**The high-water marks are lost, so the rule for stopping a scan works worse the more the wallet has been used.** A high-water mark records how far an index space was allocated. A consumed index leaves nothing a scan adopts: a spent coin's account is empty, and an unloaded entry's alias is marked unloaded in its ring until the ring is cleaned up. Both index spaces therefore become sparse from the bottom as the wallet is used, and the sparse part only grows. A scan that stops after a run of empty batches therefore stops at the first long run of consumed indices, and the holder cannot tell a short result from a complete one. The mitigation is to make the scan's bound explicit: the default scan stops after `gap` empty batches, and the holder can request a deeper scan (`deep`, stopping after `deep_gap`) that goes further and takes longer. Publishing the high-water marks instead would reveal the wallet's transaction count without making anything safer.
+**The high-water marks are lost, so the rule for stopping a scan works worse the more the wallet has been used.** A high-water mark records how far an index space was allocated. A consumed index leaves nothing a scan adopts: a spent coin's account is empty, and an unloaded entry's alias is marked unloaded in its ring until the ring is cleaned up. Both index spaces therefore become sparse from the bottom as the wallet is used, and the sparse part only grows. A scan that stops after a run of empty batches therefore stops at the first long run of consumed indices, and the holder cannot tell a short result from a complete one. The mitigation is to make the scan's bound explicit: the default scan stops after `gap` empty batches, and the holder can request a deeper scan (`deep`, stopping after `deep_gap`) that goes further and takes longer. Publishing the high-water marks instead would reveal the wallet's transaction count without making anything safer. A hand-over (B2) is the one source of high-water marks: an installation it lists is scanned at least up to them, so this risk does not apply to it.
 
-**The disclosure marks are lost, so a rescan cannot tell an owned coin from a coin whose secret was given away.** An exported coin's account still holds its coin. That is what makes export cheap: a coin that already has the needed denomination leaves under its own secret, with no transaction. The only record that control was shared is the disclosure mark of C1 invariant 4, and that mark is local. So a reconstruction adopts every coin the wallet ever exported, which overstates the balance and can eventually select value that a third party can spend. The alternatives are worse: publishing the marks would reveal exactly which coins were handed over and to how many parties, and moving a coin out of the namespace before disclosing its secret costs one transaction per export.
+**The disclosure marks are lost, so a rescan cannot tell an owned coin from a coin whose secret was given away.** An exported coin's account still holds its coin. That is what makes export cheap: a coin that already has the needed denomination leaves under its own secret, with no transaction. The only record that control was shared is the disclosure mark of C1 invariant 4, and that mark is local. So a reconstruction adopts every coin the wallet ever exported, which overstates the balance and can eventually select value that a third party can spend. The alternatives are worse: publishing the marks would reveal exactly which coins were handed over and to how many parties, and moving a coin out of the namespace before disclosing its secret costs one transaction per export. A hand-over's outstanding payments are the one exception: their coins are adopted with committed marks (above).
 
 **Purse identifiers are lost, and finding them again is possible but expensive.** Nothing on chain lists purse identifiers, and publishing them would link a seed to the products that asked for them. But unlike an installation identifier, a purse identifier is not random: product purses count up from zero (A2). So a reconstruction can walk purse identifiers the way it walks indices, and stop after `purse_gap` empty ones. The cost is why this remains a residual risk: each candidate purse needs a full scan of both index spaces before it can be called empty (invariant 1), so the work multiplies by the number of purses probed. The same gap problem also applies at the purse level: if the only surviving purse lies well past a run of closed purses, the reconstruction does not find it.
 
@@ -1299,7 +1334,7 @@ So the default reconstruction recovers the main purse and every purse the backup
 
 Allocation does not need the reconstruction to be complete. A purse holds only the current installation's coins, so an identifier reused after a reinstall cannot show earlier value in that purse, wherever the scan stopped.
 
-**Verified by** seeding a model chain from a known seed, discarding local state, reconstructing from seed and registry alone, and comparing against the original records, including the adversarial cases: a wallet with several registered installations, one whose live records sit beyond the gap bound, and one containing a previously exported coin; and by fixed vectors for `seal_installation` and `open_installation`, including a record sealed with a random nonce.
+**Verified by** seeding a model chain from a known seed, discarding local state, reconstructing from seed and registry alone, and comparing against the original records, including the adversarial cases: a wallet with several registered installations, one whose live records sit beyond the gap bound, and one containing a previously exported coin.
 
 ---
 ### Band G — Surface
@@ -1350,9 +1385,13 @@ struct Interfaces {            // §1's interfaces, supplied by the host
     clock: Clock,              // the current time
     seed: Seed,                // the root entropy, or a handle to it
     randomness: Randomness,    // the installation identifier draw
+    personhood: Personhood,    // the person whose free tokens pay for unloads (D1)
+    registry: Registry,        // F4 read_registry; a host with no registry contract supplies one whose read always fails
     policy: PrivacyPolicy,     // A4: the initial policy, stored only on a fresh store
+    hand_over: Option<Handover>,   // B2: recorded only on a fresh store (G3 step 2)
 }
 trait Chain {} trait Durability {} trait Store {} trait Clock {} trait Seed {} trait Randomness {}   // §1 says what each supplies
+trait Personhood {} trait Registry {}
 trait Layer {}                 // the running layer; every function below is called on it
 
 fn start(env: Interfaces, config: ChainConfig, scan: ScanConfig,
@@ -1360,7 +1399,16 @@ fn start(env: Interfaces, config: ChainConfig, scan: ScanConfig,
 enum StartError {              // G3 invariant 1
     UnsupportedRuntime { check: String },   // A3 validate: the check that failed
     UndecodableStore,
+    Unavailable,               // the seed is unavailable when the registration is due (G3 step 4)
+    Store(String),             // the store failed
 }
+
+// ---- The hand-over of a shipped app's wallet (B2) ----
+struct Handover { installations: Vec<AppInstallation>, outstanding: Vec<OutstandingPayment>, incoming: Vec<IncomingPayment> }
+struct AppInstallation { id: InstallationId, next_coin: u32, next_entry: u32 }   // the two high-water marks
+struct OutstandingPayment { id: [u8; 32], accounts: Vec<AccountId> }            // its export's key: OpKey { scope: "coinage/app", id }
+struct IncomingPayment { id: [u8; 32], claim_by: Time, coins: Vec<CoinSecret> }  // its import's key: OpKey { scope: "coinage/app", id }
+enum HandOverProgress { None, Scanning, Done }   // None: no hand-over is stored
 
 // ---- Purses ----
 fn create_purse(name: String, tag: Vec<u8>) -> Result<PurseId, Error>;     // B2
@@ -1372,6 +1420,15 @@ fn delete_purse(op: Op, purse: PurseId, drain_into: PurseId) -> Result<Started, 
 
 struct PurseInfo { id: PurseId, name: String, created: Time, tag: Vec<u8>, balance: Balance }
 struct Balance { spendable: Amount, held_back: Amount, arriving: Amount }   // B2's partition
+struct Holdings { balance: Balance, rows: Vec<Holding> }                    // B2 holdings: both from one snapshot
+struct Holding {
+    asset: Asset,                 // identifies the row across changes
+    exponent: Exponent,
+    ready: bool,                  // B1 Now
+    age: Option<u32>,             // a coin's age as the chain last showed it; none for an entry
+    batch_unloaded: bool,         // a coin an unload of this layer created, at age 1
+    fungibility: Option<u8>,      // percent (B2 holdings)
+}
 
 // ---- Value in and out of coinage ----
 fn top_up(op: Op, into: PurseId, amount: Amount,
@@ -1388,6 +1445,7 @@ fn commit_export(export: OpKey, within: Option<StoreTxn>) -> Result<(), Error>; 
 fn release_export(export: OpKey) -> Result<(), Error>;                     // invariant 3: never committed
 fn reclaim(op: Op, export: OpKey, into: PurseId) -> Result<Started, Error>;  // C1 invariant 4: `into` must be open
 fn import(op: Op, into: PurseId, coins: Vec<CoinSecret>) -> Result<Started, Error>;
+fn importing(coins: Vec<CoinSecret>) -> bool;  // a claim without a stable verdict holds one of them (C1)
 
 struct Export { started: Started, coins: Vec<ExportedCoin> }   // the same coins however often it is joined
 struct ExportedCoin { account: AccountId, secret: CoinSecret, exponent: Exponent }
@@ -1398,7 +1456,7 @@ fn run_due(now: Time) -> Due;          // F2; called by layer 2's run_due, which
 struct Due {                           // F2 invariant 5: both lists empty means nothing was due
     started: Vec<OpKey>,
     cannot_tell: Vec<PurseId>,
-    call_again_within: Duration,
+    call_again_within: Option<Duration>,   // none: nothing becomes due from the current records
 }
 
 fn reconstruct(op: Op, purses: Purses, deep: bool) -> Result<Started, Error>;  // F4
@@ -1410,18 +1468,22 @@ fn purse_backup() -> Vec<u8>;                  // §1: the one part of the store
 fn asset_unit() -> u128;                       // A3: the external asset's amount in one cent, the instance's unit
 fn recoverable() -> Recoverability;            // G3 invariant 4
 enum Recoverability { Registered, Pending { since: Time } }
+fn hand_over_progress() -> HandOverProgress;   // B2
 
 // ---- Following an operation (G2) ----
 fn status(op: OpKey) -> Result<Stream<StatusItem>, Error>;   // current item first, then changes
 fn completion(op: OpKey) -> Option<Completion>;               // B4 invariant 5
 fn cancel(op: OpKey) -> Result<(), Error>;                    // B4 invariant 1
 fn balance(purse: PurseId) -> Result<Stream<Balance>, Error>;  // G2 invariant 1
-fn export_status(export: OpKey) -> Result<Stream<Vec<(AccountId, Exponent, ExportStatus)>>, Error>;
+fn holdings(purse: PurseId) -> Result<Stream<Holdings>, Error>;  // under balance's rules
+fn export_status(export: OpKey) -> Result<Stream<Vec<ExportedCoinStatus>>, Error>;
+fn hand_over() -> Stream<HandOverProgress>;
 fn events() -> Stream<Event>;                                  // changes only, never replayed
 
+struct ExportedCoinStatus { account: AccountId, exponent: Exponent, status: ExportStatus }
 struct StatusItem { status: Status, progress: Progress }
 enum Status { Preparing, Waiting, Submitted, Settling, Done, PartiallyDone, Failed(Failure) } // B4
-struct Progress { settled: Amount, in_flight: Amount }   // B4 invariant 6; PartiallyDone's amount is `settled`
+struct Progress { settled: Amount, in_flight: Amount, provisional: Amount }   // B4 invariant 6; PartiallyDone's amount is `settled`
 
 struct Completion {                                       // B4
     key: OpKey,
@@ -1459,6 +1521,9 @@ enum Error {                          // failing to start, or a query that canno
     NotAnExport(OpKey),               // commit, release or reclaim on an operation that is not an export
     ExportClosed(OpKey),              // commit of an export already released or ended, or release after the commit
     ExportNotCommitted(OpKey),        // reclaim of an export not yet committed: release it instead
+    EmptyRequest,                     // a zero amount, or an import of no coins
+    Unavailable,                      // the seed is unavailable, a chain read failed, or the durability layer did not take the request
+    Store(String),                    // the store failed
 }
 enum Failure {                        // why a started operation ended Failed
     Cancelled,                        // B4 invariant 1
@@ -1482,7 +1547,7 @@ enum Event {
 }
 ```
 
-**Behaviour of each primitive.** Every long-running primitive (one that takes an `Op`) first checks its arguments, then asks B4 to start the operation under `op.key` or to join the one it already names (B4). Only a new operation goes on to the step described below; a joined one returns `Joined`, and a completed one returns `Finished`. A caller's `op.key` with the empty scope is refused (`ReservedScope`): that scope is reserved for the operations the layer starts itself, the sweeps, offload phases, reconstructions and the installation registration. While the current runtime fails A3's check, every primitive that starts an operation fails with `UnsupportedRuntime` (G3 invariant 1).
+**Behaviour of each primitive.** Every long-running primitive (one that takes an `Op`) first checks its arguments: `rebalance`, `top_up`, `offload` and `export` refuse a zero amount, and `import` an empty list of coins (`EmptyRequest`). It then asks B4 to start the operation under `op.key` or to join the one it already names (B4). Only a new operation goes on to the step described below; a joined one returns `Joined`, and a completed one returns `Finished`. A caller's `op.key` with the empty scope is refused (`ReservedScope`): that scope is reserved for the operations the layer starts itself, the sweeps, offload phases, reconstructions and the installation registration. While the current runtime fails A3's check, every primitive that starts an operation fails with `UnsupportedRuntime` (G3 invariant 1).
 
 - **`start`** constructs the layer, as G3 describes, and returns only after G3 invariant 5's start sequence has finished. So no other primitive can be called before the layer accepts operations.
 - **`create_purse`** allocates a purse in B2 and returns its identifier. It emits `PurseCreated` and `PurseMetadataChanged`.
@@ -1490,20 +1555,21 @@ enum Event {
 - **`resolve_purse`** returns the purse a purse's value goes to: the purse itself while it is open, otherwise the purse its deletion drains into, followed through repeated deletions until an open purse (B2). It fails with `PurseNotFound` only for an identifier that never named a purse.
 - **`rebalance`** moves `amount` from `from` to `to`. Both must be open, and neither may have a deletion open (`PurseNotFound(to)`, `DeletionOpen(from)`). It starts the operation through E3 with `Request::Select { from, amount, to: Destination::Purse(to), initiator: None, confirmed: false }`. Whether the value moves by a direct transfer or through the recycler follows A4's `move_through_recycler` (E1).
 - **`delete_purse`** refuses the main purse (`MainPurse`), a purse that is unknown or closed (`PurseNotFound(purse)`), a purse that already has a deletion open (`DeletionOpen(purse)`), a `drain_into` that equals `purse`, is not open or has a deletion open (`PurseNotFound(drain_into)`), and a purse holding value that cannot move (`PurseHoldsUnmovableValue`). Otherwise it records in B2 that the purse has a deletion open, with `drain_into` as its target (B2 `begin_delete`), and starts one operation through E3 that selects everything the purse holds into `drain_into` (invariant 4). The operation ends once B2 records the purse closed (B2 `close_purse`), and the layer then emits `PurseDeleted` and `PurseMetadataChanged`.
-- **`top_up`** loads `amount` cents into recycler entries of `into`, paid from the funding account in the external asset at the instance's `asset_unit` (A3). It starts the operation through E3 with `Request::Given(PlanInput::Load { from: funding.account(), amount, into })`; E1 plans one load per transaction (§6). While the funding account cannot cover a load, `prepare` waits (C2 invariant 5), until the retry policy's deadline. `Funding::sign` is called once per attempt, when E2 assembles it. If the signer declines, the record is given up and the operation ends `Failed(GivenUp)`; after a restart the capability is gone and the same happens (invariant 6).
-- **`offload`** moves `amount` out of `from` to the external account `to`, through the recycler, in the phases F3 describes. It refuses an amount that could not lift an empty destination to the external asset's minimum balance (`BelowMinimumBalance`, F3 invariant 5). Before B4 `begin`, it fails with `NeedsConfirmation` when F3's `needs_confirmation` holds. F3 starts each phase's transactions under the operation's key, and B4 stores the offload's wait and end.
+- **`top_up`** loads `amount` cents into recycler entries of `into`, paid from the funding account in the external asset at the instance's `asset_unit` (A3). It starts the operation through E3 with `Request::Given(PlanInput::Load { from: funding.account(), amount, into })`; E1 plans one load per transaction (§6). While the funding account cannot cover a load, `prepare` waits (C2 invariant 5), until the retry policy's deadline. An account covers a load when it holds, at the finalized head, the load's value in the external asset and the asset's minimum balance besides, because a load keeps the paying account alive. The loads of one funding account are built one at a time, in registration order (E2 invariant 4). `Funding::sign` is called once per attempt, when E2 assembles it. If the signer declines, the record is given up and the operation ends `Failed(GivenUp)`; after a restart the capability is gone and the same happens (invariant 6).
+- **`offload`** moves `amount` out of `from` to the external account `to`, through the recycler, in the phases F3 describes. It refuses an amount that could not lift an empty destination to the external asset's minimum balance (`BelowMinimumBalance`, F3 invariant 5). Before B4 `begin`, it fails with `InsufficientFunds` when `from` cannot cover `amount` even counting value held back or still arriving (B3 invariant 4), so a spend that can never complete is refused rather than started to fail, and with `NeedsConfirmation` when F3's `needs_confirmation` holds. F3 starts each phase's transactions under the operation's key, and B4 stores the offload's wait and end.
 - **`export`** fails with `NeedsConfirmation` before B4 `begin` when E3's `needs_confirmation` holds. Otherwise it starts the operation through E3 with `Request::Select { from, amount, to: Destination::Export(from), initiator: Some(initiator), confirmed }` and returns the coins and their secrets at once, with uncommitted disclosure marks (invariant 3, E3 invariant 4). Joining an export returns the same coins.
 - **`commit_export`** commits the export's disclosure marks (B2) inside `within`, or in a store transaction of its own when `within` is none (invariant 3). Committing again returns `Ok`. It fails with `ExportClosed` for an export that was released or has ended, and with `NotAnExport` or `UnknownOperation` for any other key.
 - **`release_export`** gives up an export that was not committed: its uncommitted marks are deleted (B2 `release_disclosed`, B4 `record_release`), its minting records are given up at their next build (C2 invariant 5), and the export ends `Failed(NotCommitted)`. Releasing it again returns `Ok`. After the commit it fails with `ExportClosed`; a committed export is ended by `reclaim`.
 - **`reclaim`** takes back the coins of a committed export into fresh accounts of `into`, which must be open. It fails with `ExportNotCommitted` before the commit. It starts the operation through E3 with `Request::Given(PlanInput::Reclaim { coins, into })`, registered with `Admission::Reclaim` (C1 invariant 4). A coin not yet minted is reclaimed by giving up its minting (C2 invariant 5). The result is judged per coin (B4): `Moved` when taken back or never minted, `TakenByOther` when the payee claimed first.
-- **`import`** claims each coin into a fresh account of `into`, which must be open. It refuses the whole call with `InvalidSecret(i)` if the secret at position `i` is not a canonical key (invariant 5). It starts the operation through E3 with `Request::Given(PlanInput::Import { coins, into })`, registered with `Admission::Import`. A coin not yet on chain is waited for while the retry policy allows. A coin of another instance or with a negative exponent is left where it is and reported `NotClaimed` (invariant 5). The result is judged per coin (B4).
+- **`import`** claims each coin into a fresh account of `into`, which must be open. It refuses the whole call with `InvalidSecret(i)` if the secret at position `i` is not a canonical key (invariant 5). It first reads the coins at the finalized head (F1), so that each claim's output is planned at its coin's observed exponent (B1). It starts the operation through E3 with `Request::Given(PlanInput::Import { coins, into })`, registered with `Admission::Import`. A coin not yet on chain is waited for while the retry policy allows. A coin of another instance or with a negative exponent is left where it is and reported `NotClaimed` (invariant 5). The result is judged per coin (B4).
 - **`run_due`** runs whatever maintenance is due at `now` (F2).
 - **`reconstruct`** starts a reconstruction of the purses named (F4).
 - **`set_policy`** refuses a policy that A4's `check` refuses (`PolicyError`). Otherwise it stores the policy in B2 exactly as given (B2 `set_policy`), and every reader applies A4's `effective` to it, so the outer limits hold without changing what is stored. Classifications change with it; no record changes (A4).
 - **`purse_backup`** returns B2's purse backup: `SCALE(Vec<PurseRecord>)` of every purse ever created, closed ones included (B2 `purse_backup`). The caller stores these bytes and hands them back to `start`; it never interprets them. `PurseMetadataChanged` says when to take a new backup.
 - **`asset_unit`** returns the instance's unit from the `ChainParams` G3 holds.
-- **`recoverable`** reports whether the current installation's registration has succeeded (G3 invariant 4).
-- **`status`**, **`balance`**, **`export_status`** and **`events`** open the streams G2 describes. `status` and `export_status` fail with `UnknownOperation`, and `balance` with `PurseNotFound`.
+- **`recoverable`** reports whether the current installation's registration has succeeded (G3 invariant 4). While it has not, `since` is when the main purse was created.
+- **`hand_over_progress`** reads B2's `hand_over_progress` from the latest committed state.
+- **`status`**, **`balance`**, **`holdings`**, **`export_status`**, **`hand_over`** and **`events`** open the streams G2 describes. `status` and `export_status` fail with `UnknownOperation`, `export_status` also with `NotAnExport`, and `balance` and `holdings` with `PurseNotFound`.
 - **`completion`** returns an operation's completion once it has ended, and none before (B4).
 - **`cancel`** requests the cancellation of an operation (B4 invariant 1). It fails with `NotCancellable` for an export and for the layer's own operations, and with `UnknownOperation` for an unknown key. Cancelling an operation that has already ended returns `Ok` and changes nothing.
 
@@ -1526,7 +1592,7 @@ Three rules are not visible in the signatures:
 5. The export/import pair is the **only** place where coin secrets cross the API, and no primitive returns a key above a coin or an entry in the derivation tree, including the installation node's public key (A2). Export treats a coin that already has the needed denomination as needing no transaction: control passes with the secret. Import keeps a supplied secret only until its claim is final, because every rebuild of the claim transaction signs with it (C2 invariant 5). An import leaves a coin with a negative exponent (A1), or a coin of another instance (§1), where it is.
 
    **Every 64-byte sr25519 coin secret is in the canonical layout, and only that layout is read**: a coin secret in an export, an import or a cheque. The canonical layout is the 32-byte encoding of the secret scalar `k` (little-endian, `k < ℓ`, as in A2), followed by the 32-byte nonce. Both shipped apps write and read this layout. A second layout is in use for sr25519 secrets, the ed25519-compatible one, which stores `8·k` in place of `k`, so the same key has two byte forms. Accepting both layouts would be ambiguous: about one in eight byte strings in the ed25519-compatible layout is also a valid canonical key, but for a different key. A secret that is not a canonical key is refused, never reinterpreted. The nonce is not checked: a payee accepts any 32 nonce bytes, because a coin's nonce is not fixed by its derivation (A2).
-6. Funding for a top-up arrives as a signing capability, not as key material, so the funding account's secrets never enter the layer. The capability does not survive a restart, so a top-up still waiting to be built gives up after a restart (C2 invariant 5).
+6. Funding for a top-up arrives as a signing capability, not as key material, so the funding account's secrets never enter the layer. The capability does not survive a restart, so a top-up still waiting to be built gives up after a restart (C2 invariant 5). Nor does it outlive its top-up: `run_due` drops the capability of every top-up whose status is terminal, since nothing builds its loads again, and a capability can hold a key a product handed over.
 7. **Every exported coin reports its export status** (B1) until the status is final. The export status is how a sender tells a payment that is still waiting apart from one that is lost, and reclaim is only worth attempting for a payment that is still waiting.
 
 **Verified by** checking each primitive against the rules above and the components it points at; that each primitive returns exactly the errors and failures enumerated; and that every status, outcome and event above traces to a state the cited component defines.
@@ -1537,18 +1603,20 @@ Three rules are not visible in the signatures:
 
 **Owns** nothing beyond the streams it serves, each with the last value it emitted (§2). **Band:** effectful.
 
-G2 serves G1's four streams: `status(op)`, `balance(purse)`, `export_status(export)` and `events()`. Their signatures are in G1's API block.
+G2 serves G1's six streams: `status(op)`, `balance(purse)`, `holdings(purse)`, `export_status(export)`, `hand_over()` and `events()`. Their signatures are in G1's API block.
 
 - **`status`** emits the operation's current `StatusItem` at once, then each change. After the terminal item it closes (invariant 2).
 - **`balance`** emits the purse's current `Balance` at once, then each new value. A value is re-evaluated whenever a record or an observation changes, at every `run_due` call, and on every new block F1 observes; it is emitted only when it differs from the last one emitted (invariant 1). The stream closes when the purse closes (G1 invariant 4).
+- **`holdings`** emits the purse's current `Holdings` (B2 `holdings`) at once, then each new value, under the same rules as `balance`.
 - **`export_status`** emits every coin's current export status at once, then each change. It closes once every coin's status is final (G1 invariant 7).
+- **`hand_over`** emits B2's current `hand_over_progress` at once, then each change. It does not close while the layer runs.
 - **`events`** emits `Resynced` first, then every later change as it is committed (invariant 5). It does not close while the layer runs.
 
 **Invariants**
 1. A balance stream **must not be driven by state changes alone.** A balance is computed from records, and some of its inputs change with the clock, for example an entry's dwell passing or a coin's lock expiring. So the balance is re-evaluated against the clock and emitted when its value changed, whether or not a record changed. Balances derived from events alone would miss these clock-driven changes. The layer has nothing that wakes it at a given instant (F2 invariant 2), so a change caused by the clock alone is emitted at the next `run_due` call or new block, not at the instant it happens.
 2. **Events follow commits, and an event is never the only place an outcome exists.** An event reports a committed change and may be delivered more than once, so a subscriber must tolerate duplicates. A subscriber that is attached learns of a change promptly from the event; one that was not attached reads the same outcome from the records, which are never deleted (B4). So a stream that nobody was listening to loses nothing. An operation's status stream emits its terminal item exactly once and then closes.
 3. **A provisional verdict that is later withdrawn appears as a status that goes backwards, and the surface must not hide it.** A caller shown "succeeded" and then "pending" is being told the truth. Keeping the first "succeeded" would report a success that may never happen.
-4. The value streams (balance, operation status and export status) emit the current value when a subscriber subscribes. The event stream does not, because an event is a change, not a value.
+4. The value streams (balance, holdings, operation status, export status and hand-over progress) emit the current value when a subscriber subscribes. The event stream does not, because an event is a change, not a value.
 5. Subscriptions do not survive a restart, and callers subscribe again. Every event stream starts with one `Resynced` event, and every event after it is a live change; a caller that needs the state at that point reads it from the value streams. Dropping a subscription never affects the layer.
 
 **Verified by** checking that a clock advance with no record change still emits when a balance moved, and that a terminal receipt is observable by a subscriber attached before termination.
@@ -1557,7 +1625,7 @@ G2 serves G1's four streams: `status(op)`, `balance(purse)`, `export_status(expo
 
 #### G3 · Initialization
 
-**Owns**, in memory, what the running layer holds: the interfaces and the `ScanConfig` given to `start`, the runtime version of the latest check, the `ChainParams` from the last check that passed, and whether the latest check failed. The last two, and whether the start sequence has run, are kept in the `Running` handle that `start` receives, which C2's plug-ins read (C2). None of it is stored: `start` receives it again, and the check runs again, at every start. G3 is G1's `start`, and it re-checks the runtime when F1 observes a new version. **Band:** effectful.
+**Owns**, in memory, what the running layer holds: the interfaces given to `start` (except the hand-over, which B2 stores), the `ScanConfig`, the runtime version of the latest check, the `ChainParams` from the last check that passed, and whether the latest check failed. The last two, and whether the start sequence has run, are kept in the `Running` handle that `start` receives, which C2's plug-ins read (C2). None of it is stored: `start` receives it again, and the check runs again, at every start. G3 is G1's `start`, and it re-checks the runtime when F1 observes a new version. **Band:** effectful.
 
 **`start(env, config, scan, purse_backup, running)`** runs these steps, and returns the `Layer` only after the last one:
 
@@ -1567,11 +1635,13 @@ G2 serves G1's four streams: `status(op)`, `balance(purse)`, `export_status(expo
               → on failure: StartError::UnsupportedRuntime { check }       (invariant 1)
 2. Open       open the store; an undecodable store → StartError::UndecodableStore (invariant 1)
               on a fresh store, in one store transaction (B2 mint_installation): mint the installation, store env.policy,
-              restore purse_backup if given (invariant 3); purse_backup is ignored otherwise
+              restore purse_backup if given (invariant 3), and record env.hand_over if given (B2 record_hand_over);
+              purse_backup and hand_over are ignored otherwise
 3. Sequence   delete every uncommitted disclosure mark and give up its export
               (B2 uncommitted, B2 release_disclosed, B4 record_release);
               open Running, so that prepare starts building                  (invariant 5)
 4. Register   start the installation's registration, unless one succeeded or is open (invariant 4)
+5. Import     start or join the import of each incoming payment the hand-over record still holds (invariant 8)
 ```
 
 ```rust
@@ -1588,12 +1658,13 @@ fn revalidate(at: BlockRef);   // F1 calls it when it observes a new runtime ver
    A missing installation is the right trigger only because the store is never restored (§1). Under that obligation, a store that names no installation is a store that has never been written, so minting when the installation is missing is the same as minting whenever the store does not continue from an earlier state. Without the obligation, this trigger would not work: a restored store names an installation and carries counters, so no new installation is minted, and the instance moves its counters back and derives again items that the original instance already issued.
 
    On a fresh store, minting the installation, storing the initial policy (§1) and restoring a purse-metadata backup, if one exists, happen in one store transaction. So a crash cannot leave an installation without its backup, and allocation starts past every identifier the backup lists.
-4. **The current installation is registered on chain** by an ordinary operation, not by a side channel of initialization: E3's `start` with `Request::Given(PlanInput::RegisterInstallation(id))`, under the layer's reserved scope, with the retry policy `ExpiryOnly`. F4 defines the registry, the record's sealing and the append call, and how the `//datastore` account pays for it (F4 invariant 4). At every start, after invariant 5's sequence, a registration is started unless one has already succeeded or is still open. So neither a crash before the registration started nor a failed registration leaves the installation unregistered.
+4. **The current installation is registered on chain** by an ordinary operation, not by a side channel of initialization: E3's `start` with `Request::Given(PlanInput::RegisterInstallation(id))`, under the layer's reserved scope, with the retry policy `ExpiryOnly`. F4 defines the registry and the append call, and how the `//datastore` account pays for it (F4 invariant 4); A2 defines how the record is sealed. At every start, after invariant 5's sequence, a registration is started unless one has already succeeded or is still open. So neither a crash before the registration started nor a failed registration leaves the installation unregistered.
 
-   When a registry is configured, C2's `prepare` builds no record of the `coinage` domain until the registration is finalized, so no value reaches the chain under an installation the registry does not list. Without a registry nothing waits, and the installation is never registered. Operations still start and their records wait to be built (C2 invariant 5). `recoverable()` reports the registration's progress (G1), so the user can be told why a payment has not left yet.
+   A registry is configured when the host names a registry contract or the stack the core runs names one; the host's takes precedence. When a registry is configured, C2's `prepare` builds no record of the `coinage` domain until the registration is finalized, so no value reaches the chain under an installation the registry does not list, as in both shipped wallets. After a hand-over the layer is the only engine on the seed, so a wipe before the registration landed would otherwise lose what it placed on chain. Without a registry nothing waits: the registration is started, but its record is never built, so the installation is never registered and `recoverable()` stays `Pending`. Operations still start and their records wait to be built (C2 invariant 5). `recoverable()` reports the registration's progress (G1), so the user can be told why a payment has not left yet.
 5. **Start sequence.** It is the one ordering rule that the whole design assumes: construct → delete every uncommitted disclosure mark and give up the exports they belonged to (B2 invariant 2, C2 invariant 5) → open `Running` → *only then* accept a new operation. The middle step cannot be skipped: an uncommitted export left in place would mint coins whose secrets reached nobody, or would keep its inputs held forever. The core creates the durability layer with C2's plug-ins before this layer starts (§1), so the durability layer may already ask `prepare` to build while the sequence runs. `Running` is what holds building back: until G3 opens it, `prepare` answers no record (C2 invariant 6).
 6. The local store is confidential. The storage layer beneath it encrypts it at rest (store contract, item 5); this layer does not. The store holds the seed or a handle to it, C1's rows, which are more sensitive than the asset records alone (C1 invariant 6), and imported secrets until their claims are final (G1 invariant 5). Nothing the store holds, and no key the layer derives above a coin or an entry, is written to a log or a diagnostic.
 7. **A runtime upgrade neither strands nor corrupts registered work.** While the new runtime fails A3's check, no record is built and none is given up because of the check: `prepare` answers no record, so records wait, and their own deadlines and cancellations still apply. Attempts already in flight settle by their status. Once a check passes, every later attempt is built with the new `ChainParams`. Records store their call by name (E3) and signed bytes are never stored (§1), so a record registered before the upgrade is built against the new call and origin indices, never against stale ones.
+8. **A hand-over is recorded once, and its incoming payments are claimed.** B2 records the hand-over only in step 2's store transaction, so only on a fresh store, before the start sequence and before any reconstruction can run. On every later start an installation exists and a hand-over in `env` is ignored, so a host turns the layer on for the first time together with its hand-over. At every start, step 5 calls G1's `import` for each incoming payment the record still holds, under `OpKey { scope: "coinage/app", id }` into the main purse with `Retry::Until(claim_by)`, and then deletes the payment from the record (B2 `forget_incoming`): from then on B2 holds its secrets for the import (G1 invariant 5). A payment whose import cannot start now, because the layer is `Unavailable`, the store failed or the runtime fails A3's check, stays in the record for the next start. A payment `import` refuses for any other reason, for example because a secret is not a canonical key (`InvalidSecret`), is deleted from the record and logged; nobody can claim such a coin. A coin that already left its account, through a claim the app submitted before the hand-over or through the payer's reclaim, is reported `TakenByOther`; a coin the app's own claim moved is found by the scan (F4). Since the hand-over is recorded in the transaction that mints the installation, the default reconstruction scans the handed-over installations no earlier than one longest validity window after it (F4 invariant 5), so every transaction the app submitted before the hand-over has landed or expired by then.
 
 **Verified by** attempting construction under each refusal condition; checking that no primitive is accepted before invariant 5's sequence completes; and, for invariant 7, failing and then passing the runtime check with changed call indices while records wait, and checking that no bytes are built in between and that the next bytes use the new indices.
 
@@ -1605,7 +1676,7 @@ Some parts of this design are fixed rather than chosen, because the shipped mobi
 
 Where the design departs from RFC-6 or RFC-17, [`rfc-deviations.md`](rfc-deviations.md) records each departure and the RFC amendment that would remove it.
 
-**Bound by compatibility, so they cannot change without a migration:** two separate roots (`//coinage` and `//coinage-ring-vrf`); the main purse as `u32::MAX` rather than `0`; the installation segment as a 32-byte identifier; the coin item junction being soft while every other junction is hard; and the installation registry, meaning its contract, the `//datastore` account and the sealed record format (F4 invariant 4).
+**Bound by compatibility, so they cannot change without a migration:** two separate roots (`//coinage` and `//coinage-ring-vrf`); the main purse as `u32::MAX` rather than `0`; the installation segment as a 32-byte identifier; the coin item junction being soft while every other junction is hard; and the installation registry, meaning its contract, the `//datastore` account and the sealed record format (F4 invariant 4, A2).
 
 The soft coin item junction matters most, because it is a security property, not a naming choice. It was chosen deliberately, for speed: deriving a soft child from a cached parent is one cheap operation, and reconstruction derives thousands of coin indices per namespace. A2 states the condition under which the soft junction is safe, and A2's open question says plainly that this condition needs a cryptographer's judgement.
 
@@ -1618,12 +1689,14 @@ The soft coin item junction matters most, because it is a security property, not
 - the rule that a missing or failed read never overwrites a stored value;
 - **asset state derived, never stored** (B1), because a stored status drifts away from the transactions it summarises; the wallet first stored a status and later removed it;
 - **a durability layer that runs the retry loop** and asks the domain for a decision and for bytes (§1, C2), so that no domain coordinates its own retries;
-- **a handoff committed in the caller's own transaction** (G1 invariant 3), so that a payment message and its commit are durable together;
+- **a handoff committed in the caller's own transaction** (G1 invariant 3), so that a cheque and its commit are durable together;
 - **background execution while any transaction is open** (F2 invariant 2).
 
 **Matched to the wallet's behaviour**, so that the same privacy setting does the same thing on every host: the three presets and their values (A4); readiness as alternative rules, with the dwell counted from the key's inclusion in the ring root (B1); no random delay on entries; holding back the coins the recycling sweep takes, and the sweep's cap, which counts value still minting and admits a coin while any headroom is left (B1 `recycle_due`); the age cutoff two below the runtime's maximum, with a configured fallback (A3); spending held-back value only as the policy allows, with the user's confirmation where it says so (E3, F3); the order of selection's strategies by who asked for the spend (B3); and a token reserve that only stops the recycling the policy asks for (D1).
 
 **Where this design goes further than the wallet:** reclaiming an unclaimed payment, on request or after a claim deadline (C1 invariant 4); and holding an export's inputs from the moment the export starts, whereas the wallet only checks them at commit and rolls the message back if another payment took them.
+
+**Moving a shipped wallet onto this layer.** The hand-over (B2) carries what the wallet knows and the chain does not: each installation's high-water marks, the payments it sent that are not settled, and the payments it received and has not claimed. With it, the layer finds every asset the wallet held without relying on F4's gap rule, and without F4's residual risks of lost high-water marks and lost disclosure marks for those installations and payments (F4, G3 invariant 8). The wallet's operations in flight when it stops are not handed over: transactions it already submitted land or expire, and the scan finds the value they leave, but an operation of several steps, such as an offload between its phases, does not complete.
 
 **What matters for the Android wallet's durability code.** The Android wallet decides its coinage transactions with a completion oracle of its own (`CoinageResourceOracle` and `CoinageRules`) inside a durability engine shaped like the one in §1. Comparing it with C2 shows three points the wallet should check:
 - **A coin-origin transaction can be replayed after a failed dispatch.** The wallet records a failed dispatch read in a finalized block as final at once, both when it follows an attempt and when it searches blocks. For a coin origin, the coin is returned and locked, and once the lock has expired the same bytes can be included again while their window is open (§1). If that later inclusion succeeds, the wallet has already freed the inputs and treats the outputs as never minted. This design has the same gap (C2, *Not here*).
@@ -1641,7 +1714,7 @@ The soft coin item junction matters most, because it is a security property, not
 - **Three obligations on the environment**: the shared store (§1), something that invokes the coinage layer periodically (F2 invariant 2), and a subscription surface for continuous observation (F1 invariant 6). The durability layer's background execution covers open transactions only; it does not cover the rings of a wallet with nothing in flight.
 - **The layer runs only where the seed is.** It derives every key itself (A2), so it runs on the device that holds the seed: a signing host such as the phone or the command-line host. A host paired with that device runs no coinage layer of its own.
 - **One live installation per seed.** A second device on the same seed sees the first device's installation in the registry as an earlier one, reconstructs it and spends its coins, and the two devices then compete on chain for the same coins. Running one seed on two devices at once is outside this design.
-- **The app's own wallet runs on this layer.** A host app's wallet screens (the balance, sending, receiving, the chat's payments) call this layer through the core's native interface, which exposes G1's primitives and G2's subscriptions to the app, and the app runs no coinage engine of its own. Two engines on one seed derive the same keys and compete for the same coins, as two devices do (the item above). So a host turns coinage on in the core only once its wallet screens use that interface, and stops running its own engine in the same release. The shape of the native interface is not decided here.
+- **The app's own wallet runs on this layer.** A host app's wallet screens (the balance, sending, receiving, the chat's payments) call this layer through the core's native interface ([`native-interface.md`](native-interface.md)), which exposes G1's primitives and G2's subscriptions to the app, and the app runs no coinage engine of its own. Two engines on one seed derive the same keys and compete for the same coins, as two devices do (the item above). So a host turns coinage on in the core only once its wallet screens use that interface, stops running its own engine in the same release, and hands its engine's wallet over at the first start (B2, G3 invariant 8).
 - **Runtime features left for later.** The coinage pallet [coinage pallet] has features this design does not use, and allows situations this design assumes away. Each item below is a later extension:
   - **Several instances.** The layer serves one instance, fixed by configuration (A3). Serving several means purses that hold coins of several assets and units.
   - **Archived rings.** The chain archives an expired ring and lets its entries be unloaded later from the archive, for a fee. The design ignores this and treats an expired ring as destroying its entries (F2, P1), so it can only overstate the loss, never understate it.
@@ -1689,7 +1762,7 @@ Each argument names the property, **lists the ways it could fail**, and shows wh
 | A purse is closed while value is still in it | G1 invariant 4: closing discards the purse's records, so the purse closes only after the chain confirms the value has left, and a purse holding value that cannot move is refused |
 | The layer itself builds a transaction that destroys value | A5 contract 1: each split conserves value. E1 invariant 3: each unload group's outputs equal its inputs, and the group's own change takes the remainder |
 | A transaction submitted before a wipe lands after the reconstruction | F4 invariant 5: the default reconstruction starts only after every such transaction has landed or died |
-| An export's minting lands although its secrets reached nobody | G1 invariant 3: the commit is atomic with the caller's message. C2 invariant 5: nothing is built before the commit |
+| An export's minting lands although its secrets reached nobody | G1 invariant 3: the commit is atomic with the caller's record of the secrets, or, for a caller outside the shared store, comes before it, and then a reclaim takes the coins back. C2 invariant 5: nothing is built before the commit |
 
 **Five residuals, and they are of two kinds.** The first kind is an external dependency, and two rows are of this kind. The row in which nothing invokes the layer is the layer's largest external dependency: a host that never invokes the layer loses value once a ring expires, and no invariant here prevents that. The row about a runtime upgrade that fails A3's check is similar: the layer refuses to build against a runtime it cannot check, so it depends on an implementation that supports the new runtime arriving before a ring's rescue margin runs out.
 
@@ -1733,8 +1806,8 @@ The layer changes durable state in few places, and each change is one store tran
 | Before registration | Nothing | Nothing to do |
 | During registration | Nothing, or the complete records and C1's rows | One store transaction (C1 invariant 1) |
 | After an export registered, before its commit | Uncommitted marks; records waiting for the commit | G3 invariant 5 deletes the marks and gives the export up; nothing was built (C2 invariant 5) |
-| During the commit | Nothing, or the commit together with the caller's message | One store transaction (G1 invariant 3) |
-| During the first start | Nothing, or the installation together with the initial policy and the restored backup | One store transaction (G3 invariant 3) |
+| During the commit | Nothing, or the commit together with the caller's record of the secrets | One store transaction (G1 invariant 3); a caller outside the shared store commits first, and reclaims after a crash before its own write |
+| During the first start | Nothing, or the installation together with the initial policy, the restored backup and the hand-over | One store transaction (G3 invariant 3, G3 invariant 8) |
 | While an attempt is being built | Nothing durable | The durability layer asks `prepare` again, which rebuilds the transaction from C1's rows and the call stored with the record (C2 `prepare`); the bytes are not stored, since the plug-ins never write (C2 invariant 4) |
 | While an attempt is submitted | The record, *submitted* | The durability layer settles it, and the layer reads the outcome |
 | While a status is being written | Handled by the durability layer | A stable status never changes once written (§1) |
