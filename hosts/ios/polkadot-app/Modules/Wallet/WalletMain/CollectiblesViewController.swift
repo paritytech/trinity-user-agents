@@ -114,6 +114,14 @@ extension CollectiblesViewController: PocketItemScreen {
     }
 }
 
+// MARK: - NavigationBarHiding
+
+extension CollectiblesViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
+}
+
 // MARK: - NavigationTransitionAnimating
 
 extension CollectiblesViewController: NavigationTransitionAnimating {
