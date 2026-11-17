@@ -287,6 +287,7 @@ enum Action { Query, Receive, Spend, TopUp }
 enum Decision { Allowed, Ask(Question), Denied }
 enum Question {
     CoinPayment,                               // a stored permission: RFC-17's CoinPayment permission
+    BalanceAccess,                             // a stored permission: RFC-6's balance access
     Purse { purse: PurseId, action: Action },  // a stored permission: one action on a purse another product created
     Spend { purse: PurseId, amount: Amount },  // a one-off confirmation of one spend
 }
@@ -298,8 +299,9 @@ fn authorize(product: ProductId, purse: PurseId, action: Action, amount: Amount,
   1. Without the `CoinPayment` permission, `Ask(CoinPayment)`, or `Denied` if the user refused it, except for an RFC-6 call on the main purse (invariant 5).
   2. A top-up is `Allowed` (invariant 3).
   3. A query or a receive on a purse the product created is `Allowed` (invariant 1).
-  4. A query, a receive or a spend on a purse another product created, or on the main purse, needs the stored permission for that purse and action: `Ask(Purse { purse, action })` while none is stored, `Denied` if the user refused it.
-  5. A spend that passed rule 4, or on the product's own purse, is `Ask(Spend { purse, amount })` (invariant 4).
+  4. An RFC-6 query of the main purse needs RFC-6's balance access: `Ask(BalanceAccess)` while none is stored, `Denied` if the user refused it. N2 asks for the same permission before it calls `authorize`, so the user is asked once (invariant 6).
+  5. A query, a receive or a spend on a purse another product created, or on the main purse, needs the stored permission for that purse and action: `Ask(Purse { purse, action })` while none is stored, `Denied` if the user refused it.
+  6. A spend that passed rule 5, or on the product's own purse, is `Ask(Spend { purse, amount })` (invariant 4).
 
   N1 and N2 put an `Ask` to the user: a stored permission through the permission service, which stores the answer, and a spend through the one-off confirmation, which stores nothing. A refusal is `Denied`.
 
@@ -311,6 +313,7 @@ The permission service already holds a product's permissions per product and kin
 3. A top-up only adds value for the user, so it needs no consent (RFC-6).
 4. **Every spend is confirmed by the user**, whoever created the purse. Whether a spend needs explicit confirmation is the user agent's decision, not the product's (RFC-17), and this user agent always asks.
 5. **No product reaches a purse without RFC-17's `CoinPayment` permission.** The shipped wire has no call that requests this permission, so the user agent asks the user on the first call that needs it (RFC deviations, entry 17). RFC-6 calls on the main purse do not need this permission.
+6. **One question per fact.** Reading the main purse's balance through RFC-6 needs RFC-6's balance access and nothing else, so the user is never asked twice to let a product see the balance.
 
 ---
 
@@ -623,7 +626,7 @@ N2's operations are RFC-6's calls, served as the table says after J1's authoriza
 
 **Invariants**
 1. A call that names no purse acts on the main purse.
-2. An RFC-6 call is authorized exactly as an RFC-17 call on the same purse, except for the `CoinPayment` permission of J1 invariant 5 (RFC-17, behavioural requirement 17).
+2. An RFC-6 call is authorized exactly as an RFC-17 call on the same purse, except for the `CoinPayment` permission of J1 invariant 5 (RFC-17, behavioural requirement 17), and except that reading the main purse needs RFC-6's balance access instead of a purse permission (J1 invariant 6).
 3. **The id the product chose is the key of the operation.** The key of a payment or top-up is that id hashed together with the product, as the core runtime passes the product on. The key lives in the product's own layer-1 scope and is recorded before the operation starts (section 1). A call whose id already names an operation is refused (`AlreadyExists`), before the user is asked to confirm anything, because the refused call could spend nothing. So a product that lost the response can retry safely: the retry is refused without a second prompt, and the product follows the first operation through its status. The record written before the operation starts still refuses an id that two calls race for. Another product cannot name the operation at all.
 4. A top-up from coins (RFC-0021) is an import: the product hands coin secrets in and never receives any. A top-up from a product account or a private key does not fail while the source lacks the funds. It waits for them (`Detecting`) until the top-up window passes (section 1). Only one top-up per source runs at a time; another one is refused (`SourceBusy`). For coins, the source is busy while a claim without a stable verdict holds one of them (layer 1 `importing`), so a top-up that shares even one coin with a running import is refused before anything is recorded. This matches layer 1, which builds one transaction per signing account at a time (layer 1, C2 invariant 5). A private key must be a 64-byte sr25519 secret in the canonical layout, read the same way layer 1 reads a coin secret (layer 1, G1 invariant 5). A key in any other layout is refused (`InvalidSource`), and so is a coin secret that layer 1's `import` refuses as not canonical (layer 1, G1 `InvalidSecret`).
 5. **Amounts are in the payment asset's own units** (RFC-6). Coinage counts whole cents, so the balance is converted from cents into the asset's units with the instance's `asset_unit` (layer 1, A3). A top-up or a payment moves its amount rounded down to a whole cent. If it moves less than was requested, it ends `ClaimedPartially`. A zero amount is refused (`InvalidAmount`).
