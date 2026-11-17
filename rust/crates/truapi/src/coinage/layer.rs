@@ -114,7 +114,7 @@ pub struct Interfaces {
 	/// The initial policy, stored only on a fresh store.
 	pub policy: PrivacyPolicy,
 	/// A wallet a shipped app hands over, recorded only on a fresh store,
-	/// with its installation (native interface, section 5).
+	/// with its installation (G3 step 2).
 	pub hand_over: Option<Handover>,
 }
 
@@ -136,42 +136,6 @@ pub enum StartError {
 	Unavailable,
 	/// The store failed.
 	Store(DbError),
-}
-
-/// Why the coinage layer does not serve the host (native interface,
-/// section 2).
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, uniffi::Error)]
-pub enum CoinageUnavailable {
-	/// The host did not turn coinage on, the runtime has no local session,
-	/// or the stack runs no coinage.
-	#[display("coinage is off")]
-	Off,
-	/// A3's check failed for the current runtime.
-	#[display("unsupported runtime: {check}")]
-	UnsupportedRuntime {
-		/// The check that failed.
-		check: String,
-	},
-	/// The local store does not decode.
-	#[display("the local store does not decode")]
-	UndecodableStore,
-	/// The layer could not start for another reason, such as an
-	/// unavailable seed or a store failure.
-	#[display("the coinage layer did not start: {reason}")]
-	NotStarted {
-		/// What went wrong.
-		reason: String,
-	},
-}
-
-impl From<StartError> for CoinageUnavailable {
-	fn from(error: StartError) -> Self {
-		match error {
-			StartError::UnsupportedRuntime { check } => Self::UnsupportedRuntime { check },
-			StartError::UndecodableStore => Self::UndecodableStore,
-			other => Self::NotStarted { reason: other.to_string() },
-		}
-	}
 }
 
 /// A failure to start an operation, or a query that cannot be answered.
@@ -1090,8 +1054,7 @@ impl Layer {
 	/// After the start sequence: starts or joins the import of each payment
 	/// the hand-over recorded as received, and forgets its secrets once the
 	/// import has started or was refused. A payment whose import cannot be
-	/// started now is tried again at the next start (native interface,
-	/// section 5).
+	/// started now is tried again at the next start (G3 invariant 8).
 	async fn import_handed_over(&self) -> Result<(), StartError> {
 		let Some(hand_over) = self.0.store.read(handover::read).await.map_err(undecodable)? else { return Ok(()) };
 		for payment in hand_over.incoming {
@@ -1107,8 +1070,8 @@ impl Layer {
 		Ok(())
 	}
 
-	/// How far the scan of a handed-over wallet has come (native interface,
-	/// section 5).
+	/// How far the scan of a handed-over wallet has come (B2
+	/// `hand_over_progress`).
 	pub async fn hand_over_progress(&self) -> Result<HandOverProgress, Error> {
 		Ok(self.view().await?.hand_over_progress())
 	}
