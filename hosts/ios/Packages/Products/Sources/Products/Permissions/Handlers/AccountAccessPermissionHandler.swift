@@ -1,8 +1,9 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Seam over account-access permission requests so consumers stay testable.
 public protocol AccountAccessPermissionHandling: Sendable {
-    func request(productId: String, targetProductId: String) async throws -> Bool
+    func request(productId: ProductId, targetProductId: ProductId) async throws -> Bool
 }
 
 /// Handles `.accountAccess` permissions: same-product auto-grant, otherwise
@@ -20,8 +21,8 @@ public final class AccountAccessPermissionHandler: AccountAccessPermissionHandli
     }
 
     public func isGranted(
-        productId: String,
-        targetProductId: String
+        productId: ProductId,
+        targetProductId: ProductId
     ) async throws -> Bool {
         let state = try await getPermissionState(
             productId: productId,
@@ -31,7 +32,7 @@ public final class AccountAccessPermissionHandler: AccountAccessPermissionHandli
         return state.isAllowed
     }
 
-    public func request(productId: String, targetProductId: String) async throws -> Bool {
+    public func request(productId: ProductId, targetProductId: ProductId) async throws -> Bool {
         let state = try await getPermissionState(productId: productId, targetProductId: targetProductId)
 
         switch state {
@@ -48,8 +49,8 @@ public final class AccountAccessPermissionHandler: AccountAccessPermissionHandli
 
 private extension AccountAccessPermissionHandler {
     func getPermissionState(
-        productId: String,
-        targetProductId: String
+        productId: ProductId,
+        targetProductId: ProductId
     ) async throws -> ProductPermissionState {
         if targetProductId == productId { return .allowedAlways }
 
@@ -59,7 +60,7 @@ private extension AccountAccessPermissionHandler {
         )
     }
 
-    func promptPermission(productId: String, targetProductId: String) async throws -> Bool {
+    func promptPermission(productId: ProductId, targetProductId: ProductId) async throws -> Bool {
         let permission = ProductPermission.accountAccess(targetProductId: targetProductId)
 
         switch await requester.prompt(productId: productId, permission: permission) {

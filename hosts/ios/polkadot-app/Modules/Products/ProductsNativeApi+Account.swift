@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 
@@ -34,20 +35,23 @@ extension ProductsNativeApi {
     }
 
     func accountGetAlias(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation
     ) async throws -> AccountGetAliasResult {
-        let alias = try await aliasHandler.getContextualAlias(context: context, ring: ring)
+        let alias = try await aliasHandler.getContextualAlias(keyHandle: keyHandle, context: context, ring: ring)
 
         return AccountGetAliasResult(context: alias.context, alias: alias.alias)
     }
 
     func accountCreateProof(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation,
         message: Data
     ) async throws -> RingVrfProofResult {
         let proof = try await createProofHandler.createProof(
+            keyHandle: keyHandle,
             context: context,
             ring: ring,
             message: message
@@ -62,6 +66,13 @@ extension ProductsNativeApi {
             ringIndex: proof.ringIndex,
             ringRevision: proof.ringRevision
         )
+    }
+
+    func listRingVrfKeys(
+        owner: ProductId,
+        disclosure _: RingVrfKeyDisclosure
+    ) async throws -> [RegisteredRingVrfKey] {
+        try await listRingVrfKeysHandler.listRingVrfKeys(owner: owner)
     }
 
     func getNonProductAccounts() async throws -> [LegacyAccountResult] {

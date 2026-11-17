@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.list.models
 
 import androidx.compose.runtime.Immutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 @Immutable
 data class ProductListItemUiModel(

@@ -96,6 +96,13 @@ struct ChatAcceptanceOutgoingStoreTests {
         #expect(try await isAcknowledged())
     }
 
+    @Test func peerAcceptanceDoesNotAcknowledge() async throws {
+        try await insertAcceptance()
+        try await insert(peerAcceptance())
+
+        #expect(try await !isAcknowledged())
+    }
+
     // Stored before the acceptance, so a peer clock ahead of ours must not make it an acknowledgement.
     @Test func earlierOrUnconfirmedTrafficDoesNotAcknowledge() async throws {
         try await insertAcceptance(storingFirst: message(status: .incoming(.seen), timestamp: acceptanceTimestamp + 1))
@@ -200,6 +207,27 @@ private extension ChatAcceptanceOutgoingStoreTests {
             status: status,
             timestamp: timestamp,
             content: .text("hi"),
+            reactions: [],
+            compactionId: nil,
+            relatedMessages: []
+        )
+    }
+
+    func peerAcceptance() -> Chat.LocalMessage {
+        Chat.LocalMessage(
+            messageId: UUID().uuidString,
+            chatId: chatId,
+            origin: .contact(peer),
+            creationSource: .localDevice,
+            status: .incoming(.new),
+            timestamp: acceptanceTimestamp + 1,
+            content: .multiChatAccepted(.init(
+                requestId: "our-request",
+                device: Chat.PeerDevice(
+                    statementAccountId: Data(repeating: 4, count: 32),
+                    encryptionPublicKey: Data(repeating: 5, count: 32)
+                )
+            )),
             reactions: [],
             compactionId: nil,
             relatedMessages: []

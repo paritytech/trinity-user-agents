@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import Keystore_iOS
@@ -54,7 +55,7 @@ struct ChatExtensionRoomMetadataTests {
     func aRoomWithARemoteIconShowsTheManifestIcon() {
         let chat = room(icon: "https://example.com/icon.png")
 
-        #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .product(domain: bot.identifier))
+        #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == bot.peerMetadata.icon)
     }
 }
 
@@ -117,7 +118,7 @@ private final class StubRoomBot: ChatExtensionBotProtocol {
     var peerMetadata: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: "Jollity",
-            icon: .product(domain: identifier),
+            icon: .product(domain: try! ProductId(identifier)),
             input: .empty,
             moreActions: []
         )

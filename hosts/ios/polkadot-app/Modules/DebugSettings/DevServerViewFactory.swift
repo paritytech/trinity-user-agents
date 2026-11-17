@@ -25,14 +25,14 @@
 
             // The page's host only gives the screen its structure; the product runs under
             // `productId`. `resolveHost(label:)` takes a bare label, so separators become hyphens.
-            let label = "dev-" + String(product.productId.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+            let label = "dev-" + String(product.productId.rawValue.map { $0.isLetter || $0.isNumber ? $0 : "-" })
 
             guard let host = try await flowState.hostProvider.resolveHost(label: label) else {
                 return nil
             }
 
             let configuration = SPAConfiguration(
-                title: product.productId,
+                title: product.productId.rawValue,
                 isRootScreen: false,
                 showMoreButton: true,
                 page: ProductPage(host: host),

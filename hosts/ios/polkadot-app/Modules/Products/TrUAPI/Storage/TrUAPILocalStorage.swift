@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 protocol TrUAPILocalStoring: AnyObject, Sendable {
@@ -36,11 +37,11 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
     /// another product on a granted foreign read. Writes and clears stay in
     /// `productId`'s store.
     static func createProductLocalStorage(
-        productId: String,
+        productId: ProductId,
         defaults: UserDefaults = .standard
     ) -> TrUAPILocalStorage {
         let ownPrefix = "\(productKeyPrefix).\(productId)"
-        let ownId = ProductStorageKey.normalize(productId)
+        let ownId = productId
         return TrUAPILocalStorage(keyPrefix: ownPrefix, defaults: defaults) { key in
             guard let owner = ProductStorageKey.owner(of: key), owner != ownId else { return ownPrefix }
             return "\(productKeyPrefix).\(owner)"
@@ -78,7 +79,7 @@ enum ProductStorageKey {
     private static let prefix = "truapi:product-storage:v1:"
 
     /// The owning product id, or nil when `key` has any other shape.
-    static func owner(of key: String) -> String? {
+    static func owner(of key: String) -> ProductId? {
         guard key.hasPrefix(prefix) else { return nil }
         let rest = key.utf8.dropFirst(prefix.utf8.count)
         guard let colon = rest.firstIndex(of: UInt8(ascii: ":")),
@@ -89,15 +90,9 @@ enum ProductStorageKey {
         let start = rest.index(after: colon)
         guard let end = rest.index(start, offsetBy: length, limitedBy: rest.endIndex),
               end < rest.endIndex,
-              rest[end] == UInt8(ascii: ":")
+              rest[end] == UInt8(ascii: ":"),
+              let input = String(bytes: rest[start ..< end], encoding: .utf8)
         else { return nil }
-        return String(rest[start ..< end])
-    }
-
-    /// Matches the normalization in the core's `ProductId::parse`, the form written into keys.
-    static func normalize(_ productId: String) -> String {
-        productId.trimmingCharacters(in: .whitespacesAndNewlines)
-            .precomposedStringWithCanonicalMapping
-            .lowercased()
+        return try? ProductId(input)
     }
 }

@@ -38,10 +38,11 @@ use web_time::Instant;
 use crate::{
 	platform::{
 		ChatFieldError, ChatPlatform, normalize_chat_identifier, validate_chat_feed_update,
-		validate_chat_icon, validate_chat_message_content, validate_chat_name,
+		validate_chat_custom_message, validate_chat_icon, validate_chat_message_content,
+		validate_chat_name,
 		validate_chat_room_metadata, validate_chat_room_preview,
 	},
-	runtime::{ProductRuntimeHost, chat::ChatRateLimiter, versioning::version},
+	runtime::{AccountHolder, ProductRuntimeHost, chat::ChatRateLimiter, versioning::version},
 };
 
 /// The participant id of the host's user, which a product cannot write as.
@@ -52,8 +53,8 @@ const USER_PARTICIPANT_ID: &str = "user";
 /// is the payload of a first-version `Custom` message.
 const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
 
-#[truapi::async_trait]
-impl Chat for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
 	async fn create_room(
 		&self,
@@ -216,6 +217,17 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
+				// A docked card is screened as a posted custom message is.
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer =
+						latest::ChatRoomFooter::Card(validate_chat_custom_message(card).map_err(
+							|error| {
+								CallError::Domain(latest::HostChatSetRoomFooterError::Unknown {
+									reason: error.to_string(),
+								})
+							},
+						)?);
+				}
 				request.room_id =
 					self.hosted_room(&platform, &request.room_id).await.map_err(footer_refusal)?;
 				platform.set_chat_room_footer(&self.connection.product, request).await.map_err(
@@ -492,7 +504,7 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 	})
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// The normalized id of a room this product hosts.
 	///
 	/// The room list is read once for each call, so every host answers a room
@@ -535,11 +547,13 @@ mod tests {
 	use super::*;
 	use crate::{
 		platform::{
-			CHAT_FEED_UPDATES_PER_SECOND, CHAT_PREVIEW_UPDATES_PER_SECOND, ProductContext,
-			ProductExecutionKind, ProductId,
+			CHAT_FEED_UPDATES_PER_SECOND, CHAT_PREVIEW_UPDATES_PER_SECOND, ExecutableKind,
+			ProductContext, ProductId,
 		},
-		runtime::{PairingHostRole, RuntimeServices},
-		test_support::{runtime_config, session_info, stub_platform, test_spawner},
+		runtime::{
+			PairingHostRole, RemoteAccountHolder, RuntimeServices, tests::install_pairing_session,
+		},
+		test_support::{runtime_config, session_info, stub_platform},
 	};
 
 	/// A chat host that keeps rooms and configurations in memory and records
@@ -591,7 +605,7 @@ mod tests {
 		}
 	}
 
-	#[truapi::async_trait]
+	#[async_trait::async_trait]
 	impl ChatPlatform for RecordingHost {
 		async fn create_chat_room(
 			&self,
@@ -700,19 +714,17 @@ mod tests {
 		}
 	}
 
-	fn chat_runtime(chat: Arc<RecordingHost>) -> ProductRuntimeHost {
+	fn chat_runtime(chat: Arc<RecordingHost>) -> ProductRuntimeHost<RemoteAccountHolder> {
 		let (host_config, _) = runtime_config("chat.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("chat.dot"),
-			ProductExecutionKind::Worker,
+			ExecutableKind::Worker,
 		);
 		let services = RuntimeServices::new(
 			stub_platform(),
 			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
-			test_spawner(),
+			host_config.stack.clone(),
+			crate::Spawner::for_test(),
 		);
 		let pairing_host = PairingHostRole::new(services.clone(), host_config);
 		let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
@@ -720,11 +732,11 @@ mod tests {
 		let host = ProductRuntimeHost::from_services(
 			services,
 			adapters,
-			pairing_host.clone(),
+			pairing_host.accounts().clone(),
 			pairing_host.session().clone(),
 			product,
 		);
-		host.test_session_state().set_session(session_info());
+		install_pairing_session(&host, session_info());
 		host
 	}
 
@@ -747,7 +759,7 @@ mod tests {
 	}
 
 	fn update_feed(
-		runtime: &ProductRuntimeHost,
+		runtime: &ProductRuntimeHost<RemoteAccountHolder>,
 		room_id: &str,
 		update: latest::ChatFeedUpdate,
 	) -> Result<HostChatUpdateFeedResponse, CallError<HostChatUpdateFeedError>> {
@@ -762,7 +774,7 @@ mod tests {
 	}
 
 	fn set_preview(
-		runtime: &ProductRuntimeHost,
+		runtime: &ProductRuntimeHost<RemoteAccountHolder>,
 		room_id: &str,
 		preview: latest::ChatRoomPreview,
 	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatSetRoomPreviewError>> {

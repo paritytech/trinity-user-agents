@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 public enum DevicePermissionRequestError: Error {
@@ -21,7 +22,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
         self.osAsker = osAsker
     }
 
-    public func isGranted(productId: String, capability: DeviceCapabilityType) async throws -> Bool {
+    public func isGranted(productId: ProductId, capability: DeviceCapabilityType) async throws -> Bool {
         let osPermission = await osAsker.checkPermission(for: capability)
 
         guard osPermission.isAllowed else {
@@ -37,7 +38,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
         return permissionState.isAllowed
     }
 
-    public func request(productId: String, capability: DeviceCapabilityType) async throws -> Bool {
+    public func request(productId: ProductId, capability: DeviceCapabilityType) async throws -> Bool {
         let osPermission = await osAsker.checkPermission(for: capability)
 
         if osPermission.isDenied {
@@ -67,7 +68,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
     }
 
     public func requestDecision(
-        productId: String,
+        productId: ProductId,
         capability: DeviceCapabilityType
     ) async throws -> PermissionDecision {
         let osPermission = await osAsker.checkPermission(for: capability)
@@ -93,7 +94,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
 }
 
 private extension DeviceCapabilityPermissionHandler {
-    func promptAppLevelPermission(productId: String, permission: ProductPermission) async throws -> Bool {
+    func promptAppLevelPermission(productId: ProductId, permission: ProductPermission) async throws -> Bool {
         let decision = await requester.prompt(productId: productId, permission: permission)
 
         switch decision {

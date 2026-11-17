@@ -11,12 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -118,39 +115,29 @@ object ChainHealthBarDefaults {
     val ContentHeight = ChainIndicatorSize.Bar.diameter
 }
 
-/** Always-on, transparent, overlaid at the very top like the system status indicators. */
+/** The indicators with the tooltip that explains them, shown below the indicators. */
 @Composable
-fun ChainHealthBar(
+fun ChainHealthIndicatorsWithTooltip(
     model: ChainHealthIndicatorsModel,
     tooltipVisible: Boolean,
     onTooltipDismiss: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .height(ChainHealthBarDefaults.ContentHeight)
-            .padding(horizontal = PolkadotTheme.spacings.medium),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box {
-            ChainHealthIndicators(model = model)
+    Box {
+        ChainHealthIndicators(model = model)
 
-            PolkadotTooltip(
-                expanded = tooltipVisible,
+        PolkadotTooltip(
+            expanded = tooltipVisible,
+            onDismiss = onTooltipDismiss,
+            arrowVisible = true,
+            alignment = TooltipAlignment.Bottom,
+            shape = PolkadotTheme.shapes.tiny,
+            properties = NonFocusablePopupProperties,
+        ) {
+            PolkadotTooltipContent(
+                title = stringResource(RCommon.string.chain_health_tooltip_title),
+                message = stringResource(RCommon.string.chain_health_tooltip_message),
                 onDismiss = onTooltipDismiss,
-                arrowVisible = true,
-                alignment = TooltipAlignment.Bottom,
-                shape = PolkadotTheme.shapes.tiny,
-                properties = NonFocusablePopupProperties,
-            ) {
-                PolkadotTooltipContent(
-                    title = stringResource(RCommon.string.chain_health_tooltip_title),
-                    message = stringResource(RCommon.string.chain_health_tooltip_message),
-                    onDismiss = onTooltipDismiss,
-                )
-            }
+            )
         }
     }
 }

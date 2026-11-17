@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation
 
 object ChatTestTags {
-    const val CHATS_TITLE = "chats_title"
     const val NEW_CHAT_BUTTON = "chats_new_chat_button"
     const val NEW_REQUESTS_ITEM = "chat_new_requests"
     const val CHAT_REQUEST_LIST_ITEM = "chat_request_list_item"

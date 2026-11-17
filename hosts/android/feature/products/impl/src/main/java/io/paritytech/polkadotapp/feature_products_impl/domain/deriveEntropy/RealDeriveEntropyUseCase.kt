@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.requireMetaAccountPassphrase
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 private val DOMAIN_SEPARATOR = "product-entropy-derivation".toByteArray(Charsets.UTF_8)

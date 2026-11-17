@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.model
 
 import io.paritytech.polkadotapp.common.utils.Identifiable
+import uniffi.truapi.ProductId
 
 // Must stay a data class — the product extension provider diffs on it.
 data class Product(

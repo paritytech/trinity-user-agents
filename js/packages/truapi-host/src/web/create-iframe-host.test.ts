@@ -12,7 +12,9 @@ function setupFakeDom() {
   const iframeListeners = new Map<string, (event: unknown) => void>();
   const windowListeners = new Map<string, (event: unknown) => void>();
   const windowRemove = mock((_name: string, _fn: unknown) => {});
-  const contentPostMessage = mock((_body: unknown, _origin: string) => {});
+  const contentPostMessage = mock(
+    (_body: unknown, _origin: string, _transfer?: MessagePort[]) => {},
+  );
 
   const contentWindow = {
     postMessage: contentPostMessage,
@@ -184,14 +186,153 @@ describe("createIframeHost", () => {
     const [body, origin] = contentPostMessage.mock.calls[0];
     expect(body).toEqual({ type: "truapi-init" });
     expect(origin).toBe("http://localhost:5174");
+  });
 
-    // The handshake is idempotent across repeated ready events too.
-    onMessage!({
-      source: contentWindow,
-      origin: "http://localhost:5174",
-      data: { type: "truapi-ready" },
+  describe("a product that loads a new document", () => {
+    // Real ports: what is under test is which port carries the product's
+    // frames, so the fake channel's shared pair cannot stand in.
+    beforeEach(() => {
+      restoreGlobal("MessageChannel");
     });
-    expect(contentPostMessage.mock.calls.length).toBe(1);
+
+    const ready = (dom: ReturnType<typeof setupFakeDom>) =>
+      dom.windowListeners.get("message")!({
+        source: dom.contentWindow,
+        origin: "http://localhost:5174",
+        data: { type: "truapi-ready" },
+      });
+    const offered = (dom: ReturnType<typeof setupFakeDom>, call: number) =>
+      dom.contentPostMessage.mock.calls[call]![2]![0]!;
+    const waitForPort = async (ports: MessagePort[], count: number) => {
+      while (ports.length < count) await Bun.sleep(0);
+      return ports[count - 1]!;
+    };
+    const nextMessage = (port: MessagePort) =>
+      new Promise<unknown>((resolve) => {
+        port.onmessage = (event) => resolve(event.data);
+      });
+
+    it("keeps the connection when a ready follows the one it answered", async () => {
+      const ports: MessagePort[] = [];
+      const retired = mock(() => {});
+      createIframeHost({
+        iframeUrl: "http://localhost:5174/",
+        container: { appendChild: () => {} } as unknown as HTMLElement,
+        onPort: (port) => {
+          ports.push(port);
+          return retired;
+        },
+      });
+      ready(dom);
+      // A product repeats ready until it holds a port, so one more can
+      // arrive from the document that already took the first.
+      ready(dom);
+      expect(dom.contentPostMessage.mock.calls.length).toBe(2);
+
+      const product = offered(dom, 0);
+      const received = nextMessage(ports[0]!);
+      product.postMessage("still here");
+      expect(await received).toBe("still here");
+      expect(ports.length).toBe(1);
+      expect(retired.mock.calls.length).toBe(0);
+    });
+
+    it("closes the oldest unused ports from a product that never connects", async () => {
+      const ports: MessagePort[] = [];
+      createIframeHost({
+        iframeUrl: "http://localhost:5174/",
+        container: { appendChild: () => {} } as unknown as HTMLElement,
+        onPort: (port) => {
+          ports.push(port);
+        },
+      });
+      for (let i = 0; i < 40; i++) ready(dom);
+      // Before any offer is used: only the cap can have closed this one.
+      offered(dom, 1).postMessage("stale");
+      await Bun.sleep(20);
+      expect(ports.length).toBe(1);
+      // The newest offer still connects.
+      offered(dom, 39).postMessage("late document");
+      expect(await nextMessage(await waitForPort(ports, 2))).toBe(
+        "late document",
+      );
+    });
+
+    it("connects only the first document in an opaque sandbox", () => {
+      createIframeHost({
+        iframeUrl: "http://localhost:5174/",
+        container: { appendChild: () => {} } as unknown as HTMLElement,
+        sandbox: "allow-forms allow-scripts",
+        onPort: () => {},
+      });
+      const opaqueReady = () =>
+        dom.windowListeners.get("message")!({
+          source: dom.contentWindow,
+          origin: "null",
+          data: { type: "truapi-ready" },
+        });
+      opaqueReady();
+      // Any page the frame navigates to reports "null" as well, so a later
+      // ready is not answered.
+      opaqueReady();
+      expect(dom.contentPostMessage.mock.calls.length).toBe(1);
+    });
+
+    it("moves on even when the previous teardown throws", async () => {
+      const ports: MessagePort[] = [];
+      const error = console.error;
+      console.error = () => {};
+      try {
+        createIframeHost({
+          iframeUrl: "http://localhost:5174/",
+          container: { appendChild: () => {} } as unknown as HTMLElement,
+          onPort: (port) => {
+            ports.push(port);
+            return () => {
+              throw new Error("teardown failed");
+            };
+          },
+        });
+        ready(dom);
+        ready(dom);
+        offered(dom, 1).postMessage("first frame");
+        expect(await nextMessage(await waitForPort(ports, 2))).toBe(
+          "first frame",
+        );
+      } finally {
+        console.error = error;
+      }
+    });
+
+    it("moves to the new document's port once a frame arrives on it", async () => {
+      const ports: MessagePort[] = [];
+      const retired: ReturnType<typeof mock>[] = [];
+      const host = createIframeHost({
+        iframeUrl: "http://localhost:5174/",
+        container: { appendChild: () => {} } as unknown as HTMLElement,
+        onPort: (port) => {
+          ports.push(port);
+          const retire = mock(() => {});
+          retired.push(retire);
+          return retire;
+        },
+      });
+      ready(dom);
+      ready(dom);
+      const next = offered(dom, 1);
+      next.postMessage("first frame");
+      await waitForPort(ports, 2);
+      expect(retired[0]!.mock.calls.length).toBe(1);
+      // The frame that revealed the new document reaches the new port, even
+      // though the caller attaches to it only now.
+      expect(await nextMessage(ports[1]!)).toBe("first frame");
+      const reply = nextMessage(next);
+      ports[1]!.postMessage("reply");
+      expect(await reply).toBe("reply");
+
+      host.dispose();
+      expect(retired[1]!.mock.calls.length).toBe(1);
+    });
   });
 
   it("rejects opaque product-ready for the default same-origin sandbox", () => {

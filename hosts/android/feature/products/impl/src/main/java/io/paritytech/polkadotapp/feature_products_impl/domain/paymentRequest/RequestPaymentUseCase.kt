@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.WhitelistedProductsProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
@@ -22,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /** Which side hides a short balance from a product that lacks BalanceAccess. */

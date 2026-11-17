@@ -1,9 +1,10 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import PolkadotUI
 import Products
 
 protocol AppsListViewModelMaking {
-    func createItems(from products: [ResolvedProduct]) -> [AppsListViewLayout.Item]
+    func createItems(from products: [ResolvedProduct]) -> [AppsListViewLayout<ProductId>.Item]
 }
 
 final class AppsListViewModelFactory {
@@ -15,14 +16,14 @@ final class AppsListViewModelFactory {
 }
 
 extension AppsListViewModelFactory: AppsListViewModelMaking {
-    func createItems(from products: [ResolvedProduct]) -> [AppsListViewLayout.Item] {
+    func createItems(from products: [ResolvedProduct]) -> [AppsListViewLayout<ProductId>.Item] {
         products.map { product in
-            AppsListViewLayout.Item(
+            AppsListViewLayout<ProductId>.Item(
                 id: product.id,
                 name: product.displayName,
                 subtitle: product.domainSubtitle,
                 avatar: product.placeholderAvatar,
-                icon: iconViewModelFactory.createViewModel(for: product.id)
+                icon: AnyImageViewModel(iconViewModelFactory.createViewModel(for: product.id))
             )
         }
     }

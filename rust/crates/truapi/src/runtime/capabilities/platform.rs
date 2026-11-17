@@ -1,6 +1,8 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::{PermissionAuthorizationStatus, ProductId};
+use std::sync::Arc;
+
+use crate::platform::{ExecutableKind, PermissionAuthorizationStatus};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -28,7 +30,8 @@ use truapi::{
 		system::{
 			HostFeatureSupportedError, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 			HostGetProductContextError, HostGetProductContextRequest,
-			HostGetProductContextResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
+			HostGetProductContextResponse, HostHandshakeError, HostHandshakeRequest,
+			HostHandshakeResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
 			HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
@@ -46,11 +49,42 @@ use crate::{
 		dotns::{NavigateDecision, parse_navigate},
 		features::feature_supported,
 	},
-	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost, versioning::version},
+	runtime::{AccountHolder, PERMISSION_DENIED_REASON, ProductRuntimeHost, versioning::version},
 };
 
-#[truapi::async_trait]
-impl System for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> System for ProductRuntimeHost<H> {
+	#[instrument(skip_all, fields(runtime.method = "system.handshake"))]
+	async fn handshake(
+		&self,
+		_cx: &CallContext,
+		request: HostHandshakeRequest,
+	) -> Result<HostHandshakeResponse, CallError<HostHandshakeError>> {
+		let HostHandshakeRequest::V1(version) = request;
+		if version.codec_version != truapi::WIRE_CODEC_VERSION {
+			return Err(CallError::Domain(HostHandshakeError::V1(
+				truapi::v01::HostHandshakeError::UnsupportedProtocolVersion,
+			)));
+		}
+		// A worker that agreed the codec can take the core's calls, so a
+		// funding provider's is handed the sessions it serves. Its own calls
+		// are refused while no user session is current, so that waits for one.
+		if self.connection.product.execution_kind == ExecutableKind::Worker {
+			let connection = Arc::downgrade(&self.connection);
+			let mut changes = self.connection.session_state.subscribe();
+			self.connection.services.spawner.spawn(async move {
+				while changes.next().await.is_some() {
+					let Some(connection) = connection.upgrade() else { return };
+					if connection.session_state.current().is_some() {
+						connection.services.funding().connected(&connection.product.product_id);
+						return;
+					}
+				}
+			});
+		}
+		Ok(HostHandshakeResponse::V1)
+	}
+
 	#[instrument(skip_all, fields(runtime.method = "system.feature_supported"))]
 	async fn feature_supported(
 		&self,
@@ -59,9 +93,14 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
 		version(request)
 			.exec(|inner| async move {
-				feature_supported(self.connection.platform.as_ref(), inner)
-					.await
-					.map_err(CallError::Domain)
+				let services = &self.connection.services;
+				feature_supported(
+					self.connection.platform.as_ref(),
+					|version, features| services.draws_materials(version, features),
+					inner,
+				)
+				.await
+				.map_err(CallError::Domain)
 			})
 			.await
 	}
@@ -150,8 +189,8 @@ impl System for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl Permissions for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Permissions for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorize_device_permission"))]
 	async fn authorize_device_permission(
 		&self,
@@ -237,8 +276,8 @@ impl Permissions for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl LocalStorage for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "local_storage.read"))]
 	async fn read(
 		&self,
@@ -255,8 +294,6 @@ impl LocalStorage for ProductRuntimeHost {
 					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
-						let target =
-							target.parse::<ProductId>().map_err(|_| access_not_granted())?;
 						if !self
 							.connection
 							.holds_cross_product_scope(&target, Granted::Storage)
@@ -357,8 +394,8 @@ impl LocalStorage for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl Worker for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Worker for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "worker.begin_operation"))]
 	async fn begin_operation(
 		&self,
@@ -399,8 +436,8 @@ impl Worker for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl Theme for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Theme for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "theme.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -421,8 +458,8 @@ impl Theme for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl Locale for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Locale for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "locale.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -446,8 +483,8 @@ impl Locale for ProductRuntimeHost {
 // `Notifications` delegates to the platform so hosts can own scheduling and
 // cancellation while the core preserves the typed TrUAPI wire shape.
 
-#[truapi::async_trait]
-impl Notifications for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "notifications.send_push_notification"))]
 	async fn send_push_notification(
 		&self,

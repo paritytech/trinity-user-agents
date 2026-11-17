@@ -3,13 +3,13 @@
 
 use truapi::{
 	latest::{CodeFormat, GenericError, HostScannerScanRequest},
-	platform::{HostScan, ProductContext, ScannerPlatform, async_trait},
+	platform::{HostScan, ProductContext, ScannerPlatform},
 };
 
 /// A scanner that answers every scan from the environment.
 pub struct CliScannerHost;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ScannerPlatform for CliScannerHost {
 	async fn scan_code(
 		&self,

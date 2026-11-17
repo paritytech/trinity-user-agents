@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SubstrateSdk
 
@@ -6,13 +7,13 @@ import SubstrateSdk
 extension ProductProofContext: ScaleCodable {
     public init(scaleDecoder: any ScaleDecoding) throws {
         try self.init(
-            productId: String(scaleDecoder: scaleDecoder),
+            productId: ProductId(String(scaleDecoder: scaleDecoder)),
             suffix: ProductAccountSelector(scaleDecoder: scaleDecoder)
         )
     }
 
     public func encode(scaleEncoder: any ScaleEncoding) throws {
-        try productId.encode(scaleEncoder: scaleEncoder)
+        try productId.rawValue.encode(scaleEncoder: scaleEncoder)
         try suffix.encode(scaleEncoder: scaleEncoder)
     }
 }

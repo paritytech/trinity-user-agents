@@ -8,9 +8,10 @@ import coil.fetch.Fetcher
 import coil.request.Options
 import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 private const val PRODUCT_ICON_SCHEME = "product-icon"
@@ -32,7 +33,7 @@ internal class ProductIconFetcher(
 ) : Fetcher {
     override suspend fun fetch(): FetchResult? {
         val tld = dotNsTldProvider.getTld().getOrThrow()
-        val productId = ProductId.fromString(productName, tld).getOrThrow()
+        val productId = productIdFromHost(productName, tld).getOrThrow()
         val icon = resolveProduct.resolve(productId).getOrNull()?.product?.icon
             ?: throw IllegalStateException("${productId.value} has no manifest icon")
         val gatewayUrl = ipfsContentLookup.gatewayUrlOf(icon)

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 @testable import polkadot_app
 import Foundation
 import KeyDerivation
@@ -8,9 +9,9 @@ import SubstrateSdk
 import StatementStore
 
 final class MockChatScriptStorage: ChatScriptStorageProtocol {
-    private let scripts: [String: String]
+    private let scripts: [ProductId: String]
 
-    init(scripts: [String: String]) {
+    init(scripts: [ProductId: String]) {
         self.scripts = scripts
     }
 

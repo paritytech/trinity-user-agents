@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import Keystore_iOS
@@ -13,7 +14,7 @@ import Testing
 /// draws the row from the product itself, and each bot takes its row over as soon as it is built.
 @Suite("Product chat rows before the bot is built")
 struct ChatExtensionStoreTests {
-    private let product = Product(id: "dim2.paseo", name: "Jollity")
+    private let product = Product(id: try! ProductId("dim2.paseo"), name: "Jollity")
     private let provider = StubProductBotProvider()
 
     /// A cold start paints the list before any manifest is read; the row must not wait for the bot.
@@ -30,7 +31,7 @@ struct ChatExtensionStoreTests {
         #expect(registry.getChatExtensionBot(for: product.extensionId) == nil)
         #expect(registry.peerListMetadata(for: product.extensionId) == Chat.PeerListMetadata(
             name: "Jollity",
-            icon: .product(domain: "dim2.paseo")
+            icon: .product(domain: try! ProductId("dim2.paseo"))
         ))
     }
 
@@ -79,7 +80,7 @@ struct ChatExtensionStoreTests {
         provider.emit(.listed([]))
         _ = try await changes.next()
         provider.emit(.botBuilt(makeBot()))
-        provider.emit(.listed([Product(id: "other.paseo", name: "Other")]))
+        provider.emit(.listed([Product(id: try! ProductId("other.paseo"), name: "Other")]))
 
         #expect(try await changes.next() == .enabled(["other.paseo"]))
         #expect(registry.getChatExtensionBot(for: product.extensionId) == nil)

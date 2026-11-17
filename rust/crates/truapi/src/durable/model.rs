@@ -71,8 +71,10 @@ impl GroupId {
 	}
 }
 
-/// Where a transaction stands, with the evidence for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where a transaction stands, with the evidence for it. Its `&'static str`
+/// form is the `status` column value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum DurableTxStatus {
 	/// Waiting for its policy to build an attempt. Live, but nothing on chain
 	/// can decide it.
@@ -182,7 +184,7 @@ pub enum VerdictFailureKind {
 }
 
 /// Which head a question is asked at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum HeadKind {
 	/// The finalized head.
 	Finalized,
@@ -246,7 +248,7 @@ pub struct DurableTxState {
 
 /// A decision about one transaction, written only against the status and
 /// attempt it was derived from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verdict {
 	/// The status to write.
 	pub status: VerdictStatus,

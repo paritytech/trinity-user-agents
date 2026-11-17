@@ -3,10 +3,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
@@ -24,12 +24,13 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
 
 class ProductChatHostBridgeTest {
-    private val productId = ProductId.fromStoredValue("dim2.dot")
+    private val productId = ProductId.parse("dim2.dot").getOrThrow()
 
     @Test
     fun `a text message is posted to the room the core names`() = runTest {
@@ -58,7 +59,7 @@ class ProductChatHostBridgeTest {
 
         val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi"), alt = null) }.exceptionOrNull()
         val created = runCatching { bridge.createRoom("", "Jollity", "") }.exceptionOrNull()
-        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.EMPTY) }.exceptionOrNull()
+        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.Empty) }.exceptionOrNull()
 
         assertTrue(posted is HostRejection)
         assertTrue(posted!!.message!!.contains("a chat message needs a room"))
@@ -153,15 +154,20 @@ class ProductChatHostBridgeTest {
     }
 
     @Test
-    fun `setRoomFooter maps the core footer onto the room's text input`() = runTest {
+    fun `setRoomFooter maps the core footer onto the room`() = runTest {
         val api = FakeChatMessaging()
         val bridge = bridge(api)
 
-        bridge.setRoomFooter(ROOM, ChatRoomFooter.EMPTY)
-        bridge.setRoomFooter(ROOM, ChatRoomFooter.TEXT_INPUT)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.Empty)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.TextInput)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.Card(ChatCustomMessage("register", byteArrayOf(1))))
 
         assertEquals(
-            listOf(ProductChatIdParameter(ROOM) to false, ProductChatIdParameter(ROOM) to true),
+            listOf(
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.Empty,
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.TextInput,
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray()),
+            ),
             api.footers,
         )
     }

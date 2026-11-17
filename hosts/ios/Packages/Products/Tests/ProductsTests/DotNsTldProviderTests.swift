@@ -186,6 +186,25 @@ struct DotNsTldProviderTests {
         #expect(provider.currentTld() == "dot")
     }
 
+    @Test func currentTldElseResolveAnswersFromThePersistedTldOffline() async throws {
+        let stub = StubTldReader()
+        stub.readTldResult = .failure(DotNsContractError.contentHashNotFound)
+        let store = StubDotNsTldStore()
+        store.loadedTld = "dot"
+        let provider = DotNsTldProvider(reader: stub, store: store)
+
+        #expect(try await provider.currentTldElseResolve() == "dot")
+    }
+
+    @Test func currentTldElseResolveReadsTheChainOnceWhenNothingIsKnown() async throws {
+        let stub = StubTldReader()
+        stub.readTldResult = .success("dot")
+        let provider = DotNsTldProvider(reader: stub)
+
+        #expect(try await provider.currentTldElseResolve() == "dot")
+        #expect(stub.readTldCallCount == 1)
+    }
+
     @Test func successfulResolvePersistsValue() async throws {
         let stub = StubTldReader()
         stub.readTldResult = .success("dot")

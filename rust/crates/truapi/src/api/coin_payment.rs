@@ -26,7 +26,7 @@ use crate::{
 /// TrUAPI represents those as subscriptions whose items are the RFC status
 /// updates.
 #[wire_trait(id = 5)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait CoinPayment: Send + Sync {
 	/// Create a new firewalled CoinPayment purse.
 	///

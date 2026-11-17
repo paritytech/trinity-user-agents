@@ -10,17 +10,25 @@ class ChatDisplayUiModel(
     val avatarModel: AvatarUiModel
 )
 
-fun ChatDisplay.toUi(): ChatDisplayUiModel {
+fun ChatDisplay.toUi(forceFresh: Boolean): ChatDisplayUiModel {
     return ChatDisplayUiModel(
         username = name,
-        avatarModel = avatar.toUi()
+        avatarModel = avatar.toUi(forceFresh = forceFresh)
     )
 }
 
-fun ChatAvatar.toUi(): AvatarUiModel {
+fun ChatAvatar.toUi(forceFresh: Boolean): AvatarUiModel {
     return when (this) {
         is ChatAvatar.Account -> toNameUi()
-        is ChatAvatar.Url -> AvatarUiModel.Image(url, placeholder = placeholder?.toNameUi())
+        is ChatAvatar.Url -> AvatarUiModel.Image(
+            url,
+            placeholder = placeholder?.toNameUi()
+        )
+        is ChatAvatar.PublicProfile -> AvatarUiModel.PublicProfile(
+            username = username,
+            placeholder = placeholder.toNameUi(),
+            forceFresh = forceFresh
+        )
     }
 }
 
