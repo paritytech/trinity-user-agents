@@ -225,6 +225,29 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     ]);
   });
 
+  it("tells a host without fetchStackDescriptor the status at start", async () => {
+    // stackChanged is documented to report the status at start. A host that
+    // does not fetch the descriptor still shows which stack it runs.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+        stackChanged: (status: StackStatus) => statuses.push(status),
+      },
+      hostConfig,
+    );
+
+    expect(statuses).toEqual([runtime.stackStatus()]);
+    expect(statuses[0].lastRefresh).toBeUndefined();
+  });
+
   it("isolates one real-core boot from the next through reset()", async () => {
     // The surface-agreement test proves the Rust and JS mocks expose the same
     // control methods. It cannot prove those methods hold against a real core.

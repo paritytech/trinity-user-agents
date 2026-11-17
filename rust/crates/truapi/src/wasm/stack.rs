@@ -1,7 +1,7 @@
 //! The stack a browser host runs, and the JS callbacks that refresh it.
 //!
-//! [`stack_from_js`] resolves `runtimeConfig.stack` and, when the host passes
-//! `fetchStackDescriptor`, starts refreshing the descriptor through it.
+//! [`stack_from_js`] resolves `runtimeConfig.stack`, and [`start_refresh`]
+//! keeps its descriptor current through the host's callbacks.
 
 use std::sync::Arc;
 
@@ -12,8 +12,12 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use super::{
 	await_optional_promise, call_js_function, get_optional_bool_at, get_optional_function,
-	get_optional_string_at, get_required_object, get_required_string_at,
+	get_optional_string_at, get_required_object, get_required_string_at, js_to_string,
 };
+#[cfg(feature = "test-host")]
+use super::{get_optional_object, get_required_bytes32_at};
+#[cfg(feature = "test-host")]
+use crate::platform::StackChains;
 use crate::{
 	Spawner,
 	platform::{
@@ -23,53 +27,23 @@ use crate::{
 	time::{RealTimer, SystemClock},
 };
 
-/// The stack a runtime was built on, and its refresh when the stack came
-/// from a descriptor.
-pub struct WasmStack {
-	/// The stack the runtime runs.
-	pub stack: Stack,
-	/// The refresh of the stack's descriptor. A test stack built from its
-	/// parts has no descriptor to refresh.
-	pub refresh: Option<StackRefresh>,
-}
-
-impl WasmStack {
-	/// The stack's status as the `stackChanged` callback receives it, or
-	/// `undefined` for a test stack.
-	pub fn status(&self) -> JsValue {
-		self.refresh
-			.as_ref()
-			.map_or(JsValue::UNDEFINED, |refresh| status_to_js(&refresh.status()))
-	}
-
-	/// Fetches the descriptor now. Does nothing for a test stack or a host
-	/// without `fetchStackDescriptor`.
-	pub fn refresh_now(&self) {
-		if let Some(refresh) = &self.refresh {
-			refresh.refresh_now();
-		}
-	}
-}
-
-/// The stack `runtimeConfig` names: `stack`, the pointer and descriptor copy a
-/// host build bundles, or, in a test-host build only, `testStack`, built from
-/// its parts because a test host has no descriptor to bundle.
+/// The stack `runtimeConfig` names, and the refresh of its descriptor, not
+/// started yet: `stack`, the pointer and descriptor copy a host build
+/// bundles, or, in a test-host build only, `testStack`, built from its parts
+/// because a test host has no descriptor to bundle. A test stack has no
+/// refresh.
 ///
 /// The core keeps the last descriptor it verified in `storage`, and starts
-/// from it when it is newer than the bundled copy. With a
-/// `fetchStackDescriptor` callback the core refreshes the descriptor through it
-/// and reports each change to `stackChanged`.
+/// from it when it is newer than the bundled copy.
 pub async fn stack_from_js(
 	runtime_config: &JsValue,
-	callbacks: &JsValue,
 	storage: Arc<dyn CoreStorage>,
-	spawner: &Spawner,
-) -> Result<WasmStack, JsValue> {
+) -> Result<(Stack, Option<StackRefresh>), JsValue> {
 	#[cfg(feature = "test-host")]
 	if let Some(test_stack) =
-		super::get_optional_object(runtime_config, "testStack", "runtimeConfig.testStack")?
+		get_optional_object(runtime_config, "testStack", "runtimeConfig.testStack")?
 	{
-		return Ok(WasmStack { stack: super::test_stack_from_js(&test_stack)?, refresh: None });
+		return Ok((test_stack_from_js(&test_stack)?, None));
 	}
 	let stack = get_required_object(runtime_config, "stack", "runtimeConfig.stack")?;
 	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
@@ -91,15 +65,76 @@ pub async fn stack_from_js(
 	)
 	.await
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))?;
-	if let Some(fetch) = get_optional_function(callbacks, "fetchStackDescriptor")? {
-		let host = JsStackHost {
-			fetch: SendWrapper::new(fetch),
-			changed: get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new),
-		};
-		let started = refresh.start(Box::new(host), spawner);
-		debug_assert!(started, "a refresh that was just loaded has not started");
+	Ok((refresh.stack(), Some(refresh)))
+}
+
+/// Starts keeping `refresh` current through the host's `fetchStackDescriptor`
+/// callback, and reports the status to `stackChanged` at start and on each
+/// change. A host without `fetchStackDescriptor` gets the status once, at
+/// start: nothing changes it after that.
+pub fn start_refresh(
+	refresh: &StackRefresh,
+	callbacks: &JsValue,
+	spawner: &Spawner,
+) -> Result<(), JsValue> {
+	let changed = get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new);
+	match get_optional_function(callbacks, "fetchStackDescriptor")? {
+		Some(fetch) => {
+			let host = JsStackHost { fetch: SendWrapper::new(fetch), changed };
+			let started = refresh.start(Box::new(host), spawner);
+			debug_assert!(started, "a refresh that was just loaded has not started");
+		},
+		None => {
+			if let Some(changed) = &changed {
+				report_status(changed, &refresh.status());
+			}
+		},
 	}
-	Ok(WasmStack { stack: refresh.stack(), refresh: Some(refresh) })
+	Ok(())
+}
+
+/// The stack's status as the `stackChanged` callback receives it, or
+/// `undefined` for a test stack, which has no refresh.
+pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
+	refresh.map_or(JsValue::UNDEFINED, |refresh| status_to_js(&refresh.status()))
+}
+
+/// `runtimeConfig.testStack`: `network`, `tld`, `assetHub`, `people`,
+/// `bulletin` and the optional `relay`, each `{ genesisHash }`, and
+/// `allowsReservedValues`, which defaults to false.
+#[cfg(feature = "test-host")]
+fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
+	let genesis = |role: &str| {
+		let path = format!("runtimeConfig.testStack.{role}");
+		get_optional_object(stack, role, &path)?
+			.map(|chain| {
+				get_required_bytes32_at(&chain, "genesisHash", &format!("{path}.genesisHash"))
+			})
+			.transpose()
+	};
+	let required = |role: &str| {
+		genesis(role)?.ok_or_else(|| {
+			JsValue::from_str(&format!("runtimeConfig.testStack.{role} is required"))
+		})
+	};
+	let chains = StackChains {
+		relay: genesis("relay")?,
+		asset_hub: required("assetHub")?,
+		people: required("people")?,
+		bulletin: required("bulletin")?,
+	};
+	Stack::new(
+		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
+		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
+		chains,
+		get_optional_bool_at(
+			stack,
+			"allowsReservedValues",
+			"runtimeConfig.testStack.allowsReservedValues",
+		)?
+		.unwrap_or(false),
+	)
+	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
 }
 
 /// `runtimeConfig.stack.<name>` as bytes, or `None` when it is not set.
@@ -166,10 +201,16 @@ impl StackHost for JsStackHost {
 	}
 
 	fn stack_changed(&self, status: StackStatus) {
-		let Some(changed) = &self.changed else { return };
-		if let Err(error) = changed.call1(&JsValue::NULL, &status_to_js(&status)) {
-			web_sys::console::error_1(&error);
+		if let Some(changed) = &self.changed {
+			report_status(changed, &status);
 		}
+	}
+}
+
+/// Calls the host's `stackChanged` with `status`, logging what it throws.
+fn report_status(changed: &Function, status: &StackStatus) {
+	if let Err(error) = changed.call1(&JsValue::NULL, &status_to_js(status)) {
+		web_sys::console::error_1(&error);
 	}
 }
 
@@ -197,8 +238,7 @@ fn request_to_js(request: &StackFetchRequest) -> JsValue {
 fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 	const PATH: &str = "fetchStackDescriptor result";
 	let string_at = |name: &str| {
-		get_optional_string_at(response, name, &format!("{PATH}.{name}"))
-			.map_err(super::js_to_string)
+		get_optional_string_at(response, name, &format!("{PATH}.{name}")).map_err(js_to_string)
 	};
 	let status = string_at("status")?.ok_or_else(|| format!("{PATH}.status is required"))?;
 	match status.as_str() {
@@ -214,9 +254,9 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 	}
 }
 
-/// `{ descriptor, stale, expired, restartRequired, newGeneration,
+/// `{ descriptor, generation, stale, expired, restartRequired,
 /// lastRefresh? }`, where `lastRefresh` is `{ outcome, reason? }` and
-/// `outcome` is `current`, `unreachable` or `refused`.
+/// `outcome` is `current`, `unreachable`, `refused` or `notStored`.
 fn status_to_js(status: &StackStatus) -> JsValue {
 	let StackStatus { descriptor, generation, stale, expired, restart_required, last_refresh } =
 		status;

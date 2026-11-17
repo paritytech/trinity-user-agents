@@ -155,12 +155,17 @@ export interface StackCallbacks {
   /**
    * Fetch the stack's descriptor over HTTP. Throw or reject when the server
    * gave no usable answer: the core keeps its copy and reports
-   * `unreachable`. The core gives up after 30 seconds.
+   * `unreachable`. The core gives up after 30 seconds. It asks once its
+   * copy is an hour old, which is at start unless the copy it stored was
+   * fetched less than an hour ago.
    */
   fetchStackDescriptor?(
     request: StackFetchRequest,
   ): StackFetchResponse | Promise<StackFetchResponse>;
-  /** The stack's status when the runtime starts, and on each change. */
+  /**
+   * The stack's status when the runtime starts, and on each change. A host
+   * without `fetchStackDescriptor` gets the one at start.
+   */
   stackChanged?(status: StackStatus): void;
 }
 
