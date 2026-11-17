@@ -29,6 +29,11 @@ final class StatusStripContainerView: UIView {
         }
 
         let content = (controller as? UINavigationController)?.topViewController ?? controller
-        interaction.scrollView = content?.contentScrollView(for: .top)
+        let scrollView = content?.contentScrollView(for: .top)
+        if scrollView === interaction.scrollView {
+            return
+        }
+        scrollView?.topEdgeEffect.style = .soft
+        interaction.scrollView = scrollView
     }
 }

@@ -69,6 +69,10 @@ final class AssetDetailsScreenViewController: UIViewController {
         origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
         origin.setOpenItem(nil)
     }
+
+    override func contentScrollView(for edge: NSDirectionalRectEdge) -> UIScrollView? {
+        hosting.contentScrollView(for: edge) ?? super.contentScrollView(for: edge)
+    }
 }
 
 extension AssetDetailsScreenViewController: PocketFlightScreen {
@@ -173,7 +177,6 @@ private struct AssetDetailsScreenRoot: View {
     let state: AssetDetailsScreenState
 
     @State private var overscroll = DSOverscroll()
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         ScrollView {
@@ -189,7 +192,6 @@ private struct AssetDetailsScreenRoot: View {
             .padding(.top, 16)
         }
         .modifier(OverscrollReader(overscroll: overscroll))
-        .modifier(OpaqueTopEdgeHidden(reduceTransparency: reduceTransparency))
     }
 }
 
@@ -206,22 +208,6 @@ private struct OverscrollReader: ViewModifier {
                 } action: { _, newValue in
                     overscroll.distance = newValue
                 }
-        } else {
-            content
-        }
-    }
-}
-
-/// On iOS 26 with Reduce Transparency, the top scroll edge effect is drawn opaque and its height follows the
-/// content, so it covers the top of the card. It is hidden there.
-private struct OpaqueTopEdgeHidden: ViewModifier {
-    let reduceTransparency: Bool
-
-    func body(content: Content) -> some View {
-        if #available(iOS 27, *) {
-            content
-        } else if #available(iOS 26, *) {
-            content.scrollEdgeEffectHidden(reduceTransparency, for: .top)
         } else {
             content
         }
