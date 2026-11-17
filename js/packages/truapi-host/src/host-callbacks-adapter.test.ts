@@ -469,6 +469,11 @@ describe("createWasmRawCallbacks", () => {
       roomIdSource: "support",
       name: "Support",
       icon: "",
+      config: {
+        productSource: false,
+        reactionDetails: false,
+        reportSeen: false,
+      },
     });
     const response = await raw.createChatRoom!(product, "0x01", request);
 

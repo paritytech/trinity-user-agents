@@ -126,7 +126,11 @@ suite("worker serving a signing host", () => {
         roomIdSource: "lobby",
         name: "Lobby",
         icon: "",
-        config: { productSource: false, reactionDetails: false, reportSeen: false },
+        config: {
+          productSource: false,
+          reactionDetails: false,
+          reportSeen: false,
+        },
       });
       const { status, roomId } = created._unsafeUnwrap();
       expect(status).toBe("New");
