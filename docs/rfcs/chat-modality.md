@@ -532,6 +532,8 @@ struct AggregatedReaction {
     // Another participant reacted to the user's message, and the user has
     // not seen the message since.
     unseen: bool,
+    // The user's own reaction has not left yet.
+    pending: bool,
 }
 
 // In a room with more than one other participant, `Delivered` and `Read`
@@ -560,6 +562,8 @@ struct Message {
     buttons: Vec<Vec<MessageButton>>,
     last_edited: Option<Timestamp>,
     edit_count: u32,
+    // The status of the newest own edit while it differs from `status`.
+    edit_status: Option<MessageStatus>,
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
     extensions: Vec<Extension>,
