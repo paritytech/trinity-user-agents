@@ -32,8 +32,9 @@ use crate::{
 	chain::{ExtrinsicService, Heads},
 	chain_runtime::RuntimeFailure,
 	durable::{
-		CompletionOracle, DeferredDurableTx, DurableRegistry, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind,
-		PassScope, PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable, VerdictFailureKind,
+		self, CompletionOracle, DeferredDurableTx, DurableRegistry, DurableTxEntry, DurableTxId, DurableTxStatus,
+		HeadKind, PassScope, PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable,
+		VerdictFailureKind, Window,
 	},
 	runtime::{
 		Vrf, load_vrf,
@@ -438,6 +439,7 @@ impl CompletionOracle for CoinageOracle {
 		let now = (deps.clock)();
 		let records: Vec<&RecordFacts> =
 			transactions.iter().filter_map(|entry| view.registrations().record(entry.id)).collect();
+		let windows = minter_windows(&deps.store, &records, &view).await;
 		let keys = AssetKeys::derive(&records, &view, &entropy, &vrf);
 		let finalized = Reads::at(deps.people.as_ref(), heads.finalized.hash, &keys).await;
 		let best = Reads::at(deps.people.as_ref(), heads.best.hash, &keys).await;
@@ -445,7 +447,8 @@ impl CompletionOracle for CoinageOracle {
 		let mut proven = HashMap::new();
 		for facts in records {
 			for (head, reads) in [(HeadKind::Finalized, &finalized), (HeadKind::Best, &best)] {
-				let judge = Judge { facts, view: &view, keys: &keys, reads, now };
+				let judge =
+					Judge { facts, view: &view, keys: &keys, reads, now, finalized: heads.finalized.number, windows: &windows };
 				let guard = token_guard.get(&facts.record).copied().unwrap_or(true);
 				let finalized = matches!(head, HeadKind::Finalized);
 				proven.insert((facts.record, finalized), (judge.completed(), guard && judge.not_completed()));
@@ -467,6 +470,25 @@ impl PassScope for Proven {
 	fn proven_not_completed(&self, tx: &DurableTxEntry, head: HeadKind) -> bool {
 		self.0.get(&(tx.id, matches!(head, HeadKind::Finalized))).is_some_and(|(_, not_completed)| *not_completed)
 	}
+}
+
+/// The window of each record that finally minted an input of `records`. A
+/// window that cannot be read is left out, so its input is not settled.
+async fn minter_windows(store: &Db, records: &[&RecordFacts], view: &Snapshot) -> HashMap<DurableTxId, Window> {
+	let minters: HashSet<DurableTxId> = records
+		.iter()
+		.flat_map(|facts| &facts.rows.inputs)
+		.filter_map(|input| view.registrations().creator(input))
+		.filter(|minter| matches!(minter.state.status, DurableTxStatus::FinalizedSuccess { .. }))
+		.map(|minter| minter.record)
+		.collect();
+	let read = store.read(move |conn| {
+		Ok(minters
+			.into_iter()
+			.filter_map(|minter| Some((minter, durable::entry(conn, minter).ok()??.window)))
+			.collect::<HashMap<_, _>>())
+	});
+	read.await.unwrap_or_default()
 }
 
 /// The account of every coin and the keys of every entry the pass's records
@@ -580,6 +602,10 @@ struct Judge<'a> {
 	keys: &'a AssetKeys,
 	reads: &'a Reads,
 	now: u64,
+	/// The finalized head's number.
+	finalized: u64,
+	/// The window of each record that finally minted an input.
+	windows: &'a HashMap<DurableTxId, Window>,
 }
 
 impl Judge<'_> {
@@ -660,14 +686,15 @@ impl Judge<'_> {
 	}
 
 	/// A coin this layer minted, never disclosed, whose minter succeeded
-	/// finally.
+	/// finally and whose minter's window is closed at the finalized head: one
+	/// block past its death, as the durability layer closes a window.
 	fn settled(&self, input: &Asset) -> bool {
 		matches!(input, Asset::Coin { .. }) &&
 			self.view.mark(input).is_none() &&
-			self.view
-				.registrations()
-				.creator(input)
-				.is_some_and(|minter| matches!(minter.state.status, DurableTxStatus::FinalizedSuccess { .. }))
+			self.view.registrations().creator(input).is_some_and(|minter| {
+				matches!(minter.state.status, DurableTxStatus::FinalizedSuccess { .. }) &&
+					self.windows.get(&minter.record).is_some_and(|window| self.finalized > window.death())
+			})
 	}
 }
 
