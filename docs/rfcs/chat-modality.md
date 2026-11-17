@@ -541,6 +541,8 @@ struct Message {
     silent: bool,
     expires_at: Option<Timestamp>,
     forward: Option<ForwardSource>,
+    // Rows of buttons under the message (5.3).
+    buttons: Vec<Vec<MessageButton>>,
     last_edited: Option<Timestamp>,
     edit_count: u32,
     reactions: Map<Emoji, AggregatedReaction>,
@@ -651,6 +653,7 @@ enum UserChatAction {
         silent: bool,
         expires_at: Option<Timestamp>,
         forward: Option<ForwardSource>,
+        buttons: Vec<Vec<MessageButton>>,
     },
     // Changes only the text of `Text` or `RichText` (and keeps the media),
     // or the point of a live `Location`. A reader drops any other edit,
@@ -718,6 +721,9 @@ enum UserChatAction {
     // The indexes of the chosen options. It replaces an earlier answer of
     // the same participant.
     Answer { message_id: MessageId, choices: Vec<u32> },
+
+    // Answered with `Toast` or `Acknowledged`.
+    PressButton { message_id: MessageId, button_id: String },
 }
 
 enum CallSignalKind {
@@ -734,6 +740,8 @@ enum CallSignalKind {
 enum UserChatActionResult {
     MessageCreated(Message),
     InviteCreated(Invite),
+    // A short text that the Host shows for a moment.
+    Toast(String),
     Acknowledged,
 }
 
@@ -915,6 +923,27 @@ enum ProductMessageActionHandler {
 // If not called, Host uses default built-in actions.
 fn handle_message_actions(
     get_message_actions: fn(Message) -> MessageActions
+);
+```
+
+#### 5.3 Buttons and Commands
+
+A message can carry buttons, for example from a bot. A press goes to the Product as `PressButton`. A room can offer commands, which the Host lists when the user types `/`.
+
+```rust
+struct MessageButton {
+    id: String,
+    label: String,
+}
+
+struct ChatCommand {
+    name: String,
+    description: String,
+}
+
+fn handle_chat_commands(
+    room_id: RoomId,
+    get_commands: fn() -> Vec<ChatCommand>,
 );
 ```
 
@@ -1143,6 +1172,7 @@ When a Product does **not** register a handler, the Host applies these defaults:
 | Unread count | Derived from read status vs total message count |
 | Message actions | Copy, Reply, Edit (own messages only), Reaction (all emoji) |
 | Toolbar actions | None |
+| Commands | None |
 | Chat footer | Default input, payment disabled, default attachments |
 | Participants | Two participants: user and Product |
 | Participant actions | Based on participant type (open contact, open product info) |
@@ -1191,9 +1221,10 @@ This RFC follows the same transport and serialization rules as the Host API prot
 24. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
 25. **Links and invites**: Links to a room, a message, a call or an invite, join requests, and consent before an add.
 26. **Polls**: Questions with options, quizzes and anonymous polls, with one tally for every Product.
-27. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
-28. **Stories**: Posts that expire, for an audience, with views and replies.
-29. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
+27. **Buttons and commands**: Buttons on a message with an answer to a press, and the commands of a room.
+28. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+29. **Stories**: Posts that expire, for an audience, with views and replies.
+30. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
@@ -1242,7 +1273,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows text edits that keep the media.
 
-2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
+2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Buttons and commands (5.3) give a bot its messages; bot registration is deferred to a future RFC.
 
 3. **Text size**: Long pastes, code blocks and Markdown can be over 16 KiB. Should the limit be 64 KiB, or should a longer text go as a text file?
 
