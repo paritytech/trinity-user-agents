@@ -25,6 +25,7 @@ mod frame_server;
 mod funding_host;
 mod game;
 mod installation;
+mod materials;
 mod network;
 mod platform;
 mod pocket;
@@ -339,6 +340,11 @@ enum Command {
 		#[command(subcommand)]
 		command: stack::StackCommand,
 	},
+	/// Resolve card faces' materials as a phone would, to check materials without one.
+	Materials {
+		#[command(subcommand)]
+		command: materials::MaterialsCommand,
+	},
 }
 
 /// Execution kind the CLI serves a product as.
@@ -532,6 +538,9 @@ fn command_base_path(command: &Command) -> PathBuf {
 		Command::PairingHost(args) => args.base_path.clone(),
 		Command::Dev(args) => args.base_path.clone(),
 		Command::SigningHost(args) => args.base_path.clone(),
+		Command::Materials { command: materials::MaterialsCommand::Resolve { base_path, .. } } => {
+			base_path.clone()
+		},
 		_ => None,
 	};
 	state_base_path(base_path)
@@ -694,6 +703,7 @@ async fn dispatch(
 			Ok(())
 		},
 		Command::Stack { command } => stack::run(command).await,
+		Command::Materials { command } => materials::run(command, &source.resolve().await?).await,
 	}
 }
 
@@ -5159,6 +5169,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 			vec!["truapi-host", "pairing-host", "--base-path", "custom-state"],
 			vec!["truapi-host", "signing-host", "--base-path", "custom-state"],
 			vec!["truapi-host", "dev", "--base-path", "custom-state"],
+			vec!["truapi-host", "materials", "resolve", "face.json", "--base-path", "custom-state"],
 		] {
 			let cli = Cli::try_parse_from(arguments).expect("host command should parse");
 

@@ -1769,6 +1769,77 @@ fn the_materials_answer_does_not_wait_for_the_core_database() {
 	assert!(runtime.services.draws_materials(1, &[]));
 }
 
+/// The CLI resolves faces from material files, so a material kept by hand
+/// draws in the first update, without Bulletin. A file the core cannot read is refused
+/// with the reason a fetched one would get.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_material_kept_by_hand_draws_without_bulletin() {
+	use truapi::latest::{MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
+	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
+	let no_entry_point = b"// @material 1\nfloat shade(vec2 uv) {\n  return 1.0;\n}\n";
+	let keep = |runtime: &SigningHostRuntime, text: &[u8]| {
+		match futures::executor::block_on(runtime.keep_material(text.to_vec())) {
+			Err(crate::KeepMaterialError::Refused(failure)) => Err(failure),
+			kept => Ok(kept.expect("the database saves it")),
+		}
+	};
+	let (without_database, _platform) = test_signing_runtime();
+	without_database.services.enable_materials();
+	assert_eq!(keep(&without_database, text), Err(MaterialFailure::Unsupported));
+
+	let (runtime, _platform) = test_signing_runtime();
+	runtime.set_core_db(crate::store::open_memory_core_db());
+	runtime.start_core_services();
+	assert_eq!(
+		keep(&runtime, text),
+		Err(MaterialFailure::Unsupported),
+		"a host that draws no materials keeps none"
+	);
+	runtime.services.enable_materials();
+	let id = keep(&runtime, text).expect("a material is kept");
+	assert_eq!(id, crate::host_internal::bulletin::preimage_key(text));
+	assert_eq!(keep(&runtime, no_entry_point), Err(MaterialFailure::InvalidMaterial));
+
+	let face = RendererNode::Materials {
+		props: MaterialsProps { layers: vec![MaterialInstance { material: id, args: Vec::new() }] },
+		children: Vec::new(),
+	};
+	let card = truapi::latest::RenderContext::PocketCard { card_id: "card".to_string() };
+	let language = crate::ShaderLanguage::GlslEs;
+	let mut resolution = runtime.resolve_materials(&face, &card, language, true, Box::new(|_| {}));
+	let materials = crate::test_support::next(&mut resolution).expect("an update");
+	assert!(
+		matches!(materials.nodes[..], [crate::NodeMaterials::Ready { .. }]),
+		"{:?}",
+		materials.nodes
+	);
+}
+
+/// A material reported kept has to draw on later runs without Bulletin, so one
+/// the database does not save is an error rather than an ID.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_material_the_database_does_not_save_is_not_reported_kept() {
+	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
+	let (runtime, _platform) = test_signing_runtime();
+	let db = crate::store::open_memory_core_db();
+	runtime.set_core_db(db.clone());
+	runtime.start_core_services();
+	runtime.services.enable_materials();
+	futures::executor::block_on(db.write(|tx| {
+		Ok(tx.execute_batch(
+			"CREATE TRIGGER fail BEFORE INSERT ON material
+				BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+		)?)
+	}))
+	.expect("trigger created");
+
+	let kept = futures::executor::block_on(runtime.keep_material(text.to_vec()));
+
+	assert!(matches!(kept, Err(crate::KeepMaterialError::NotSaved(_))), "{kept:?}");
+}
+
 /// The runtime keeps one set of materials, so every renderer tree shares
 /// the fetches the start-up fetch began, and a second start begins none.
 #[cfg(not(target_arch = "wasm32"))]
