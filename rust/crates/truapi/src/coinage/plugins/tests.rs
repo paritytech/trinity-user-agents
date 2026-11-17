@@ -1,5 +1,6 @@
 mod assets;
 mod evidence;
+mod fuzz;
 mod reorgs;
 mod rules;
 mod submission;

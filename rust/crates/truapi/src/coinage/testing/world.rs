@@ -64,13 +64,14 @@ const ASSET_HUB_GENESIS: H256 = H256([0xcd; 32]);
 /// The installation every world asset belongs to, as [`TestWallet`] mints it.
 const INSTALLATION: InstallationId = InstallationId([9; 32]);
 
-/// The exponent of every coin a world mints.
+/// The exponent of a coin a scenario names without one.
 pub const COIN_EXPONENT: u8 = 2;
 
-/// The exponent of every entry a world places.
+/// The exponent of an entry a scenario names without one.
 pub const ENTRY_EXPONENT: u8 = 3;
 
-/// The window period of a scripted first attempt, in blocks.
+/// The window period of a scripted first attempt, in blocks, unless a
+/// scenario sets another with [`World::set_period`].
 pub const PERIOD: u64 = 128;
 
 /// The seconds a block takes, by which each new block moves the clock.
@@ -139,10 +140,15 @@ pub struct World {
 	oracle: Arc<dyn CompletionOracle>,
 	recovery_requests: futures::channel::mpsc::Receiver<()>,
 	vrf: Vrf,
+	/// Each coin's account, derived once: a derivation is slow.
+	accounts: Mutex<HashMap<Asset, [u8; 32]>>,
+	/// Each entry's member key and alias, derived once.
+	entry_keys: Mutex<HashMap<Asset, [[u8; 32]; 2]>>,
 	coins: HashMap<u32, Asset>,
 	entries: HashMap<u32, Asset>,
 	operations: u32,
 	extrinsics: u32,
+	period: u64,
 }
 
 impl Default for World {
@@ -177,10 +183,13 @@ impl World {
 			oracle,
 			recovery_requests,
 			vrf: block_on(load_vrf()).expect("the ring-VRF operations load"),
+			accounts: Mutex::default(),
+			entry_keys: Mutex::default(),
 			coins: HashMap::new(),
 			entries: HashMap::new(),
 			operations: 0,
 			extrinsics: 0,
+			period: PERIOD,
 		}
 	}
 
@@ -238,14 +247,27 @@ impl World {
 		asset
 	}
 
-	/// Own entry `n`, allocated in the main purse at its first mention.
+	/// Own entry `n` of [`ENTRY_EXPONENT`], allocated in the main purse at
+	/// its first mention.
 	pub fn entry(&mut self, n: u32) -> Asset {
+		self.entry_of(n, ENTRY_EXPONENT)
+	}
+
+	/// Own entry `n`, allocated in the main purse with `exponent` at its
+	/// first mention.
+	pub fn entry_of(&mut self, n: u32, exponent: u8) -> Asset {
 		if let Some(asset) = self.entries.get(&n) {
 			return *asset;
 		}
-		let asset = self.allocate(AssetKind::Entry, ENTRY_EXPONENT);
+		let asset = self.allocate(AssetKind::Entry, exponent);
 		self.entries.insert(n, asset);
 		asset
+	}
+
+	/// An own asset's exponent, as the chain stores it.
+	pub fn exponent_of(&self, asset: Asset) -> i8 {
+		let exponent = self.view().asset(&asset).expect("an own asset").exponent.get();
+		i8::try_from(exponent).expect("a small exponent")
 	}
 
 	/// Coin `n` of a peer, whose secret the wallet keeps for an import.
@@ -263,13 +285,13 @@ impl World {
 
 	/// The account a coin's key controls on chain.
 	pub fn account(&self, coin: Asset) -> [u8; 32] {
-		match coin {
+		*self.accounts.lock().entry(coin).or_insert_with(|| match coin {
 			Asset::Coin { purse, installation, index } => {
 				coin_key(&ENTROPY, purse, installation, index).expect("the entropy derives keys").1
 			},
 			Asset::PeerCoin(account) => account,
 			Asset::Entry { .. } => panic!("an entry has no account"),
-		}
+		})
 	}
 
 	/// `coin` as the chain stores it once minted: a peer's coin has
@@ -281,10 +303,13 @@ impl World {
 
 	/// An entry's member key and its alias for unloading.
 	pub fn entry_keys(&self, entry: Asset) -> ([u8; 32], [u8; 32]) {
-		let Asset::Entry { purse, installation, index } = entry else { panic!("not an entry") };
-		let seed = entry_seed(&ENTROPY, purse, installation, index);
-		let member = self.vrf.member(&seed.0).expect("a member key");
-		let alias = self.vrf.alias(&seed.0, &crate::coinage::assembly::UNLOADING_RECYCLER_CONTEXT).expect("an alias");
+		let [member, alias] = *self.entry_keys.lock().entry(entry).or_insert_with(|| {
+			let Asset::Entry { purse, installation, index } = entry else { panic!("not an entry") };
+			let seed = entry_seed(&ENTROPY, purse, installation, index);
+			let member = self.vrf.member(&seed.0).expect("a member key");
+			let alias = self.vrf.alias(&seed.0, &crate::coinage::assembly::UNLOADING_RECYCLER_CONTEXT).expect("an alias");
+			[member, alias]
+		});
 		(member, alias)
 	}
 
@@ -352,7 +377,7 @@ impl World {
 	pub fn position(&self, entry: Asset, position: RingPosition, finality: Finality) {
 		let (member, _) = self.entry_keys(entry);
 		self.produce(finality, |state| {
-			state.members.insert(member, (entry_exponent(), position));
+			state.members.insert(member, (self.exponent_of(entry), position));
 		});
 	}
 
@@ -374,7 +399,7 @@ impl World {
 	pub fn unload_alias_in(&self, entry: Asset, ring: u32, finality: Finality) {
 		let (_, alias) = self.entry_keys(entry);
 		self.produce(finality, |state| {
-			state.aliases.insert((entry_exponent(), ring, alias), AliasState::Unloaded);
+			state.aliases.insert((self.exponent_of(entry), ring, alias), AliasState::Unloaded);
 		});
 	}
 
@@ -406,7 +431,7 @@ impl World {
 					Asset::Entry { .. } => {
 						let (_, alias) = self.entry_keys(*input);
 						let ring = ring.expect("an unloaded entry is in a ring");
-						state.aliases.insert((entry_exponent(), ring, alias), AliasState::Unloaded);
+						state.aliases.insert((self.exponent_of(*input), ring, alias), AliasState::Unloaded);
 					},
 					_ => {
 						state.coins.remove(&self.account(*input));
@@ -417,7 +442,7 @@ impl World {
 				match output {
 					Asset::Entry { .. } => {
 						let (member, _) = self.entry_keys(*output);
-						state.members.insert(member, (entry_exponent(), RingPosition::Onboarding));
+						state.members.insert(member, (self.exponent_of(*output), RingPosition::Onboarding));
 					},
 					_ => {
 						state.coins.insert(self.account(*output), self.chain_coin(*output));
@@ -457,6 +482,12 @@ impl World {
 	}
 
 	// ---- registering -------------------------------------------------------
+
+	/// Gives every later scripted attempt a window of `period` blocks, a
+	/// power of two from 4.
+	pub fn set_period(&mut self, period: u64) {
+		self.period = period;
+	}
 
 	/// Registers one record taking `inputs` and creating `outputs`, with the
 	/// call their shape implies and no retries, and waits for its scripted
@@ -531,7 +562,7 @@ impl World {
 		let birth = self.chain.tree().finalized();
 		MortalExtrinsic {
 			extrinsic: EncodedExtrinsic::new(bytes),
-			mortality: Mortality::new(birth, PERIOD).expect("a legal era"),
+			mortality: Mortality::new(birth, self.period).expect("a legal era"),
 		}
 	}
 
@@ -694,8 +725,13 @@ impl World {
 
 	/// `id`'s current attempt.
 	pub fn attempt(&self, id: DurableTxId) -> DurableTxEntry {
+		self.try_attempt(id).expect("the record has an attempt")
+	}
+
+	/// `id`'s current attempt, or none before its first.
+	pub fn try_attempt(&self, id: DurableTxId) -> Option<DurableTxEntry> {
 		let read = self.wallet.db.read(move |conn| durable::entry(conn, id));
-		block_on(read).expect("the ledger reads").expect("the record has an attempt")
+		block_on(read).expect("the ledger reads")
 	}
 
 	/// What `id` consumes, creates and presents.
@@ -858,10 +894,6 @@ fn rows(inputs: &[Asset], outputs: &[Asset]) -> Rows {
 	Rows { inputs: inputs.to_vec(), outputs: outputs.to_vec(), tokens: Vec::new() }
 }
 
-
-fn entry_exponent() -> i8 {
-	i8::try_from(ENTRY_EXPONENT).expect("small")
-}
 
 /// A ring place that includes its member.
 pub fn ring_place(ring: u32) -> RingPlace {

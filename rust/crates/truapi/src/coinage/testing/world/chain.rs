@@ -126,6 +126,16 @@ impl Tree {
 		&self.best_block().state
 	}
 
+	/// The coinage state at the finalized head.
+	pub fn finalized_state(&self) -> &CoinageState {
+		&self.blocks[self.best[usize::try_from(self.finalized).expect("a small chain")]].state
+	}
+
+	/// The extrinsics `block` includes, in order.
+	pub fn body(&self, block: H256) -> Vec<H256> {
+		self.block(block).map(|block| block.body.clone()).unwrap_or_default()
+	}
+
 	/// The outcome `block` recorded for `tx`, reorged out or not.
 	pub fn outcome_in(&self, block: H256, tx: H256) -> Option<DispatchOutcome> {
 		self.block(block)?.outcomes.get(&tx).cloned()
