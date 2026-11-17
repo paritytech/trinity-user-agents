@@ -159,7 +159,13 @@ struct RoomMetadata {
 }
 
 enum RoomKind {
+    // Its parent can be a Channel: then it is the inbox of one reader to
+    // the admins of the Channel.
+    Direct,
     Group,
+    // A Group of posts with `only_admins_post`. The comments of a post are
+    // a Thread on it.
+    Channel,
     Space,
     Category,
     // Each child room is a topic.
@@ -175,6 +181,8 @@ struct RoomSettings {
     slow_mode: u32,
     // A text that a member can read after the join.
     welcome: Option<String>,
+    // A reader drops a message from a participant who is not an admin.
+    only_admins_post: bool,
 }
 
 enum ChatRoomPreviewOrder {
@@ -227,7 +235,8 @@ This is the core of v2. The Product can either rely on the Host's built-in messa
 ```rust
 // Unique in the room.
 MessageId = String
-// "user" is the user and "product" is the Product. A participant with an
+// "user" is the user and "product" is the Product. "room" is the room
+// itself, for a post of a Channel with no author. A participant with an
 // account is the hex of its AccountId.
 ChatParticipantId = String
 Timestamp = u64
@@ -334,6 +343,8 @@ struct Message {
     extensions: Vec<Extension>,
     // The thread whose root is this message.
     thread: Option<ThreadSummary>,
+    // The readers of a post of a Channel.
+    views: Option<u32>,
 }
 
 struct ThreadSummary {
