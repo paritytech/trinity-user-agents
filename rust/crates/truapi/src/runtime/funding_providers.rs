@@ -308,12 +308,13 @@ impl Drop for ManifestRead {
 impl RuntimeServices {
 	/// Replace the funding providers the host offers, and start reading their
 	/// manifests, telling the feed when the providers listed changed. A
-	/// shipped manifest that does not parse is refused, and nothing changes.
+	/// provider whose shipped manifest does not parse is left out; the rest
+	/// are still offered.
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
-		let offered = self.funding_providers().offer(offered_providers(entries)?);
+		let offered = self.funding_providers().offer(offered_providers(entries));
 		if offered.manifests_changed {
 			self.funding_providers_changed();
 		}
@@ -603,25 +604,23 @@ struct Offered {
 }
 
 /// The host's `entries` with their shipped manifests read, in its order,
-/// each product once.
-fn offered_providers(
-	entries: Vec<FundingProviderEntry>,
-) -> Result<Vec<OfferedProvider>, FundingSessionError> {
+/// each product once. An entry whose shipped manifest does not parse, or a
+/// bundled one shipped without its manifest, is the host's mistake for that
+/// provider alone: it is logged and left out, and the rest are still offered.
+fn offered_providers(entries: Vec<FundingProviderEntry>) -> Vec<OfferedProvider> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
 		let product_id = entry.product_id;
-		let snapshot = entry
-			.worker_manifest
-			.as_deref()
-			.map(WorkerManifest::parse)
-			.transpose()
-			.map_err(|reason| FundingSessionError::InvalidProvider {
-				reason: format!("{product_id}: {reason}"),
-			})?;
+		let snapshot = match entry.worker_manifest.as_deref().map(WorkerManifest::parse).transpose() {
+			Ok(snapshot) => snapshot,
+			Err(reason) => {
+				warn!(%product_id, %reason, "shipped worker manifest does not parse; provider left out");
+				continue;
+			},
+		};
 		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
-			return Err(FundingSessionError::InvalidProvider {
-				reason: format!("{product_id}: a bundled provider needs its manifest"),
-			});
+			warn!(%product_id, "bundled provider shipped without its manifest; provider left out");
+			continue;
 		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
 			let brand = entry.root_manifest.as_deref().and_then(|json| {
@@ -642,7 +641,7 @@ fn offered_providers(
 			});
 		}
 	}
-	Ok(offered)
+	offered
 }
 
 /// The networks `candidates`' crypto routes declare in `direction`, each
