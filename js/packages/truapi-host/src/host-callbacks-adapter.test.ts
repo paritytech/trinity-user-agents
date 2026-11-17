@@ -24,6 +24,7 @@ import type {
 import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
   AuthState,
+  CoreStorageKey,
   StackStorageKey,
   PermissionDecision,
   ProductContext,
@@ -449,6 +450,26 @@ describe("createWasmRawCallbacks", () => {
     ]);
 
     disposePreimages?.();
+  });
+
+  // A JS host that never stored core state under a slot alone may leave the
+  // three callbacks for it out. The core asks for them on a miss and on every
+  // clear, sign-out included, so their absence must read as "nothing there".
+  it("treats missing slot-alone storage callbacks as holding nothing", async () => {
+    const host = makeHostCallbacks();
+    const { readCoreStorage, writeCoreStorage, clearCoreStorage } =
+      host.coreStorage;
+    const raw = createWasmRawCallbacks({
+      ...host,
+      coreStorage: { readCoreStorage, writeCoreStorage, clearCoreStorage },
+    } as typeof host);
+    const slot = CoreStorageKey.enc({ tag: "AuthSession" });
+
+    expect([
+      await raw.readUnscopedCoreStorage(slot),
+      await raw.writeUnscopedCoreStorage(slot, new Uint8Array([1])),
+      await raw.clearUnscopedCoreStorage(slot),
+    ]).toEqual([undefined, undefined, undefined]);
   });
 
   it("omits the chat callbacks when the host does not serve chat", () => {

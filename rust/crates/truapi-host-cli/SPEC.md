@@ -1549,9 +1549,14 @@ Before the first resolved user, pairing state uses
   file of its own yet.
 
 For the first bootstrap migration, in-memory bootstrap product values and core
-values move into the resolved user's directory. The core values are the
-stack's own and those stored with no stack id; another stack's stay where it
-looks for them.
+values move into the resolved user's directory, and the core values leave the
+bootstrap `core-storage.json`. The core values are the stack's own, which
+replace the user's, and, when the stack is the recorded
+`UnscopedEntriesOwner`, those stored with no stack id as the bootstrap file
+holds them then, which do not replace an entry the user's directory already
+holds. Another stack's entries, and entries stored with no stack id that
+another stack holds or that no stack has claimed yet, stay in the bootstrap
+directory.
 
 When switching from one resolved user to another, only transient authentication
 keys move:
@@ -1651,14 +1656,17 @@ hex values are ignored with warnings.
 A key is a slot together with the identity of the stack it belongs to, so a
 fork and its source keep separate entries in one file. A write replaces only
 the writing stack's entries and leaves the rest as the file has them. Every
-read, change and write of the file holds an exclusive lock on
-`core-storage.json.lock` beside it, so two hosts on a fork and its source can
-run at once without losing each other's writes.
+change of the file, and every read of an entry keyed by a slot alone, holds an
+exclusive lock on `core-storage.json.lock` beside it from its read to its
+write, so two hosts on a fork and its source can run at once without losing
+each other's writes. The copy loaded at start is read without the lock; a
+write replaces the file whole, so that read never sees half of one.
 
 An entry keyed by a slot alone was written before keys had a stack id. Those
 entries belong to the first stack that looks for one, which records its id
 under `UnscopedEntriesOwner` in the install's `device-storage.json`; other
-stacks never read them.
+stacks never read them. A record already there is kept, so of two stacks
+claiming at once only the first takes the entries.
 
 Core state includes auth sessions, pairing bootstrap material, permission
 state, and other role-owned runtime data.
@@ -1840,8 +1848,9 @@ namespace is its full `id`, so it does not share the `polkadot` namespace.
 The stack's id, which the core takes with the descriptor's `generation`, is the
 key of the link when it has one, and otherwise the URL. The URL of a built-in
 stack with no key is read with that stack's key, so it is verified and is the
-same stack as under its network name. A local file's id is its canonical path:
-two files are two stacks, and a file that moves becomes another stack.
+same stack as under its network name. A local file's id is `file:` followed by
+its canonical path: two files are two stacks, and a file that moves becomes
+another stack.
 
 #### `network-check`
 

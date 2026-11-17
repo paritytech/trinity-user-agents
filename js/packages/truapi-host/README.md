@@ -62,8 +62,10 @@ stored a slot under before is `CoreStorageKey.enc(slot)`. The first stack to
 run after the update takes those values and records that through
 `writeUnscopedCoreStorage`; other stacks never see them.
 `describeCoreStorageKey` also describes such a key, without a `stack`, so a
-sweep of a product's state finds both. `createHeadlessHostCallbacks` treats a
-host without the three as holding nothing.
+sweep of a product's state finds both. `createHeadlessHostCallbacks` and the
+web worker runtime treat a host without the three as holding nothing. A host
+that reads but drops what `writeUnscopedCoreStorage` writes cannot record
+which stack took those values, so no stack reads them.
 
 After a wipe a stack has the same id and new chains. The core sees that by the
 `generation` and the Asset Hub, People and Bulletin genesis hashes, and stops

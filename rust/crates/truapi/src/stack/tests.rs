@@ -302,12 +302,14 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	);
 }
 
-/// [`MemoryCoreStorage`] whose clears under a stack's key fail, or that
-/// keeps nothing written under a slot alone.
+/// [`MemoryCoreStorage`] whose clears under a stack's key fail, that cannot
+/// read which stack holds the values under a slot alone, or that keeps
+/// nothing written under a slot alone.
 #[derive(Default)]
 struct FailingStorage {
 	memory: MemoryCoreStorage,
 	fail_clears: bool,
+	fail_owner_reads: bool,
 	drop_unscoped_writes: bool,
 }
 
@@ -339,6 +341,9 @@ impl CoreStorage for FailingStorage {
 		&self,
 		slot: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
+		if self.fail_owner_reads && slot == CoreStorageKey::UnscopedEntriesOwner {
+			return Err(GenericError { reason: "read failed".to_string() });
+		}
 		self.memory.read_unscoped_core_storage(slot).await
 	}
 
@@ -485,6 +490,34 @@ fn a_slot_cleared_while_it_is_read_stays_cleared() {
 	});
 }
 
+/// Signing out clears the session slot. A host that cannot say, this once,
+/// which stack holds the values stored with no stack id must not keep the
+/// user signed in: the stack's value goes, and so does the one under the slot
+/// alone.
+#[test]
+fn a_slot_is_cleared_when_the_owner_of_values_with_no_stack_id_cannot_be_read() {
+	let slot = CoreStorageKey::AuthSession;
+	let host = FailingStorage { fail_owner_reads: true, ..Default::default() };
+	host.memory.store_unscoped(slot.clone(), b"older".to_vec());
+	let key = || StackStorageKey { stack: "stack".to_string(), slot: slot.clone() };
+
+	futures::executor::block_on(async {
+		host.memory
+			.write_core_storage(key(), b"session".to_vec())
+			.await
+			.expect("memory writes");
+		let cleared = test_stack("stack").storage(&host).clear(slot.clone()).await;
+		assert_eq!(
+			(
+				cleared,
+				host.memory.read_core_storage(key()).await,
+				host.memory.read_unscoped_core_storage(slot.clone()).await,
+			),
+			(Ok(()), Ok(None), Ok(None))
+		);
+	});
+}
+
 /// Signing out clears the session slot. If only the stack's copy went, the
 /// value still held under the slot alone would sign the user back in on the
 /// next read. A failed clear of the stack's copy must not leave that either.
@@ -558,5 +591,36 @@ fn a_stamped_value_is_read_back_in_its_own_run_only() {
 			run.read_stamped(&other_version).map(<[u8]>::to_vec),
 		],
 		[Some(b"value".to_vec()), Some(b"value".to_vec()), None, None, None]
+	);
+}
+
+/// A descriptor refresh the core takes while it runs, such as new RPC
+/// endpoints, keeps the stack and so the run its stored values carry. One that
+/// restarts the chains, by a new generation or a new genesis hash, waits for
+/// the next start and is another run, so that start ignores what the old run
+/// stored.
+#[test]
+fn a_refresh_changes_the_run_exactly_when_it_restarts_the_chains() {
+	let base = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let edited = |edit: fn(&mut serde_json::Value)| {
+		let mut descriptor = base.clone();
+		edit(&mut descriptor);
+		bundled(&descriptor, false).expect("stack is valid")
+	};
+	let running = bundled(&base, false).expect("stack is valid");
+	let refreshed = [
+		edited(|descriptor| {
+			descriptor["chains"][1]["rpc"] = serde_json::json!(["wss://other.test.invalid"]);
+		}),
+		edited(|descriptor| descriptor["generation"] = "next".into()),
+		edited(|descriptor| {
+			descriptor["chains"][2]["genesisHash"] =
+				format!("0x{}", hex::encode([0xa9; 32])).into();
+		}),
+	];
+
+	assert_eq!(
+		refreshed.map(|stack| (stack == running, stack.run() == running.run())),
+		[(true, true), (false, false), (false, false)]
 	);
 }

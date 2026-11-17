@@ -146,7 +146,7 @@ export function createWasmRawCallbacks(
   const scanner = callbacks.scanner;
   return {
     authStateChanged: async (state) =>
-      await callbacks.auth.authStateChanged(AuthState.dec(state)),
+      await callbacks.auth.authStateChanged?.(AuthState.dec(state)),
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
@@ -206,16 +206,16 @@ export function createWasmRawCallbacks(
     clearCoreStorage: async (key) =>
       await callbacks.coreStorage.clearCoreStorage(StackStorageKey.dec(key)),
     readUnscopedCoreStorage: async (slot) =>
-      await callbacks.coreStorage.readUnscopedCoreStorage(
+      await callbacks.coreStorage.readUnscopedCoreStorage?.(
         CoreStorageKey.dec(slot),
       ),
     writeUnscopedCoreStorage: async (slot, value) =>
-      await callbacks.coreStorage.writeUnscopedCoreStorage(
+      await callbacks.coreStorage.writeUnscopedCoreStorage?.(
         CoreStorageKey.dec(slot),
         value,
       ),
     clearUnscopedCoreStorage: async (slot) =>
-      await callbacks.coreStorage.clearUnscopedCoreStorage(
+      await callbacks.coreStorage.clearUnscopedCoreStorage?.(
         CoreStorageKey.dec(slot),
       ),
     transactionExtensionVersions: async () =>
@@ -253,7 +253,7 @@ export function createWasmRawCallbacks(
         ),
       ),
     cancelNotification: async (id) =>
-      await callbacks.notifications.cancelNotification(id),
+      await callbacks.notifications.cancelNotification?.(id),
     ...(permissionStatus
       ? {
           devicePermissionStatus: async (request) =>

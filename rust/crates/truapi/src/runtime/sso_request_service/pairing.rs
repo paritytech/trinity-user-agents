@@ -241,7 +241,8 @@ impl<'a> SsoPairingFlow<'a> {
 			_ = deadline => return Err(pairing_deadline_reason()),
 			response_result = pairing_response => response_result?,
 		};
-		write_last_processed_pairing_statement(&self.host.services.storage(), &response.statement).await;
+		write_last_processed_pairing_statement(&self.host.services.storage(), &response.statement)
+			.await;
 		let sso = establish_sso_session_info(
 			bootstrap,
 			response.peer_statement_account_id,

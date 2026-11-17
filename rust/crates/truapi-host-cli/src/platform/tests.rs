@@ -883,10 +883,11 @@ async fn values_stored_with_no_stack_id_go_to_one_of_two_stacks_started_at_once(
 
 /// Before the first pairing resolves a user, the host keeps its state in the
 /// bootstrap directory, values stored with no stack id included. Those have
-/// to follow the stack into the user's directory, or a user who updated
-/// loses the session and grants they had before.
+/// to move into the user's directory, or a user who updated loses the
+/// session and grants they had before, and must leave the bootstrap
+/// directory, where the next first pairing would carry them again.
 #[tokio::test]
-async fn values_stored_with_no_stack_id_follow_the_first_pairing() {
+async fn values_stored_with_no_stack_id_move_with_the_first_pairing() {
 	let temporary = tempdir().expect("create pairing storage root");
 	let network_dir = temporary.path().join("testnet");
 	let bootstrap_dir = network_dir.join("pairing-host");
@@ -895,12 +896,141 @@ async fn values_stored_with_no_stack_id_follow_the_first_pairing() {
 		.expect("seed core storage");
 	let network = test_network();
 	let platform = pairing_platform(&network, &network_dir);
+	let stack = core_stack(&network);
+	let restored = stack.storage(platform.as_ref()).read(CoreStorageKey::AuthSession).await;
 
 	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 
+	let session = stack.storage(platform.as_ref()).read(CoreStorageKey::AuthSession).await;
+	let left_behind = load_hex_key_map(&bootstrap_dir.join("core-storage.json"));
+	let stored = Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe]));
+	assert_eq!((restored, session, left_behind), (stored.clone(), stored, HashMap::new()));
+}
+
+/// The copy of the bootstrap file a host loaded at start can still hold a
+/// value stored with no stack id that has been cleared since, as by a sign-out
+/// from another run. The first pairing must not bring that value back.
+#[tokio::test]
+async fn the_first_pairing_moves_only_what_the_bootstrap_file_still_holds() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let bootstrap_dir = network_dir.join("pairing-host");
+	std::fs::create_dir_all(&bootstrap_dir).expect("bootstrap dir");
+	std::fs::write(bootstrap_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed core storage");
+	let network = test_network();
+	let pairing = pairing_platform(&network, &network_dir);
+	let signing_out = pairing_platform(&network, &network_dir);
+	core_stack(&network)
+		.storage(signing_out.as_ref())
+		.clear(CoreStorageKey::AuthSession)
+		.await
+		.expect("sign out");
+
+	pairing.switch_pairing_user_storage("alice.dot").expect("select alice");
+
 	let session = core_stack(&network)
-		.storage(platform.as_ref())
+		.storage(pairing.as_ref())
 		.read(CoreStorageKey::AuthSession)
 		.await;
-	assert_eq!(session, Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])));
+	assert_eq!(session, Ok(None));
+}
+
+/// A fork and its source share the bootstrap directory. When the fork pairs
+/// first, the values stored with no stack id that the source holds must stay
+/// where the source looks for them.
+#[tokio::test]
+async fn the_first_pairing_leaves_values_another_stack_holds() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let bootstrap_dir = network_dir.join("pairing-host");
+	std::fs::create_dir_all(&bootstrap_dir).expect("bootstrap dir");
+	std::fs::write(bootstrap_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed core storage");
+	let (source, fork) = (test_network(), fork_network());
+	let on_source = pairing_platform(&source, &network_dir);
+	let on_fork = pairing_platform(&fork, &network_dir);
+	let restored = core_stack(&source)
+		.storage(on_source.as_ref())
+		.read(CoreStorageKey::AuthSession)
+		.await;
+
+	on_fork.switch_pairing_user_storage("bob.dot").expect("select bob");
+	on_source.switch_pairing_user_storage("alice.dot").expect("select alice");
+
+	let stored = Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe]));
+	let sessions = (
+		core_stack(&source)
+			.storage(on_source.as_ref())
+			.read(CoreStorageKey::AuthSession)
+			.await,
+		core_stack(&fork)
+			.storage(on_fork.as_ref())
+			.read(CoreStorageKey::AuthSession)
+			.await,
+	);
+	assert_eq!((restored, sessions), (stored.clone(), (stored, Ok(None))));
+}
+
+/// A user's directory written before the update holds that user's own values
+/// stored with no stack id. The bootstrap directory's may be older, so they
+/// must not replace them.
+#[tokio::test]
+async fn the_first_pairing_keeps_the_users_values_stored_with_no_stack_id() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let bootstrap_dir = network_dir.join("pairing-host");
+	let alice_dir = network_dir.join("alice.dot_pairing_host");
+	std::fs::create_dir_all(&bootstrap_dir).expect("bootstrap dir");
+	std::fs::create_dir_all(&alice_dir).expect("alice dir");
+	std::fs::write(bootstrap_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed bootstrap core storage");
+	std::fs::write(alice_dir.join("core-storage.json"), r#"{"values":{"00":"0a0b"}}"#)
+		.expect("seed alice core storage");
+	let network = test_network();
+	let platform = pairing_platform(&network, &network_dir);
+	let stack = core_stack(&network);
+	stack
+		.storage(platform.as_ref())
+		.read(CoreStorageKey::AuthSession)
+		.await
+		.expect("the core claims the values stored with no stack id");
+
+	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
+
+	let session = stack.storage(platform.as_ref()).read(CoreStorageKey::AuthSession).await;
+	assert_eq!(session, Ok(Some(vec![0x0a, 0x0b])));
+}
+
+/// A fork and its source started at once can both find no owner recorded
+/// and both write their own. The first write has to stay, so that each reads
+/// back the same owner and only one takes the values.
+#[tokio::test]
+async fn of_two_stacks_claiming_at_once_the_first_keeps_the_values() {
+	use parity_scale_codec::Encode;
+	use truapi::platform::CoreStorage;
+
+	let temporary = tempdir().expect("create storage root");
+	let state_dir = temporary.path().join("state");
+	let paths = || CliStoragePaths::new(state_dir.clone(), state_dir.join("storage"));
+	let (source, fork) = (test_network(), fork_network());
+	let on_source = CliPlatform::new(&source, Some(paths()), ApprovalPolicy::AutoAccept, None);
+	let on_fork = CliPlatform::new(&fork, Some(paths()), ApprovalPolicy::AutoAccept, None);
+	let owner = CoreStorageKey::UnscopedEntriesOwner;
+	let source_id = source.identity().id.encode();
+
+	for (platform, network) in [(&on_source, &source), (&on_fork, &fork)] {
+		platform
+			.write_unscoped_core_storage(owner.clone(), network.identity().id.encode())
+			.await
+			.expect("write");
+	}
+
+	assert_eq!(
+		(
+			on_source.read_unscoped_core_storage(owner.clone()).await,
+			on_fork.read_unscoped_core_storage(owner).await,
+		),
+		(Ok(Some(source_id.clone())), Ok(Some(source_id)))
+	);
 }
