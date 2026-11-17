@@ -232,8 +232,9 @@ fn strategies(pool: &[Candidate], amount: u64, request: SelectRequest, tokens: u
 	if let Some(selection) = found {
 		return Outcome::Selected(selection);
 	}
-	if let Some(selection) = both(&coins, &entries, amount, tokens, params) {
-		return Outcome::Selected(selection);
+	match both(&coins, &entries, amount, tokens, params) {
+		Ok(selection) => return Outcome::Selected(selection),
+		Err(short) => short_of_tokens |= short,
 	}
 	if short_of_tokens { Outcome::ShortOfTokens } else { Outcome::Uncovered }
 }
@@ -336,20 +337,21 @@ fn unload(entries: &[Candidate], amount: u64, tokens: usize, params: &ChainParam
 	})
 }
 
-/// Every entry, and coins for what they leave.
-fn both(coins: &[Candidate], entries: &[Candidate], amount: u64, tokens: usize, params: &ChainParams) -> Option<Selection> {
-	let entry_value: u64 = entries.iter().map(|entry| entry.exponent.value()).sum();
-	if entries.is_empty() || coins.is_empty() || entry_value >= amount || unload_transactions(entries, params) > tokens {
-		return None;
+/// Every coin, which together fall short of the amount, spent whole, and the
+/// entries [`unload`] chooses for the rest. Err(true) when the free tokens do
+/// not reach those entries' unload transactions.
+fn both(coins: &[Candidate], entries: &[Candidate], amount: u64, tokens: usize, params: &ChainParams) -> Result<Selection, bool> {
+	let coin_value: u64 = coins.iter().map(|coin| coin.exponent.value()).sum();
+	if coins.is_empty() || coin_value >= amount {
+		return Err(false);
 	}
-	let rest = amount - entry_value;
-	let coin_part = exact(coins, rest).or_else(|| split(coins, rest, params))?;
-	Some(Selection {
+	let unloaded = unload(entries, amount - coin_value, tokens, params)?;
+	Ok(Selection {
 		purse: PurseId::MAIN,
-		inputs: coin_part.inputs.into_iter().chain(entries.iter().map(|entry| entry.asset)).collect(),
-		splits: coin_part.splits,
-		outputs: coin_part.outputs.into_iter().chain(denominations(entry_value, params)).collect(),
-		depends_on: coin_part.depends_on,
+		inputs: coins.iter().map(|coin| coin.asset).chain(unloaded.inputs).collect(),
+		splits: Vec::new(),
+		outputs: coins.iter().map(|coin| coin.exponent).chain(unloaded.outputs).collect(),
+		depends_on: dependencies(coins),
 	})
 }
 
