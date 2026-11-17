@@ -13,8 +13,7 @@ internal fun Modifier.shrinkAboveDocklet(
 ): Modifier = layout { measurable, constraints ->
     val systemBottom = maxOf(navigationBars.getBottom(this), ime.getBottom(this))
     val lift = visibleDockletBandPx(barInsets.getBottom(this), systemBottom, hiddenFraction())
-    val placeable = measurable.measure(
-        constraints.copy(minHeight = 0, maxHeight = (constraints.maxHeight - lift).coerceAtLeast(0))
-    )
+    val height = (constraints.maxHeight - lift).coerceAtLeast(0)
+    val placeable = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
     layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(0, 0) }
 }
