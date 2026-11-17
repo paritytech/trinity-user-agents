@@ -203,7 +203,6 @@ private extension SPAViewController {
 // MARK: - SPAViewProtocol
 
 extension SPAViewController: SPAViewProtocol {
-    var pageScrollView: UIScrollView { rootView.webView.scrollView }
     var pageWebView: WKWebView { rootView.webView }
 
     func navigate(to url: URL) {

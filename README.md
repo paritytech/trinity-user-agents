@@ -501,7 +501,8 @@ A stack descriptor describes one deployment of chains and services, as
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
-The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
+The core takes all of its chain configuration from one stack, and fetches newer copies of its descriptor through the
+host while it runs. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 
@@ -881,7 +882,9 @@ when `main` has not moved past what their last successful run built. `android-de
 on every push to `main`, and answers what `main` does right now. It builds the
 pushed commit, the one that landed. A push rather than the pull request's merge
 event, because the Firebase identity is bound to `main`, and a pull request
-event's token never matches that binding.
+event's token never matches that binding. A manual run of either with
+`deliver` off builds and checks any branch without sending it to testers or
+publishing it.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that
