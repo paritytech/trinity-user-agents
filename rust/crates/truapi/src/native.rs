@@ -50,7 +50,7 @@ pub use bundled_products::{
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeTopUpCallbacks,
+	NativeStackCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
@@ -85,17 +85,20 @@ use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns, stack
 
 /// The stack a host build bundles, opened before the runtime starts.
 ///
-/// A host opens it once from the same [`BundledStack`] it passes in
+/// A host opens it from the same [`BundledStack`] it passes in
 /// [`HostRuntimeConfig`], so its link and trust checks judge product ids by
-/// the stack the core runs, even before the runtime is built.
+/// the build's stack even before the runtime is built. The runtime starts
+/// from that copy or from a newer one it stored, which
+/// [`StackStatus`](crate::platform::StackStatus) reports.
 #[uniffi::export]
 impl Stack {
-	/// Open `stack` as the runtime opens it. Fails `Invalid` when the descriptor
-	/// does not verify under the pointer's key or breaks the build's
-	/// reserved-value rule.
+	/// Open the bundled copy alone, under the same checks the runtime applies
+	/// to it. Fails `Invalid` when the descriptor does not verify under the
+	/// pointer's key or breaks the build's reserved-value rule.
 	#[uniffi::constructor]
 	pub fn open_bundled(stack: BundledStack) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		stack.open().map(Arc::new)
+		let BundledStack { pointer, descriptor, allows_reserved_values } = stack;
+		Ok(Arc::new(Self::bundled(&pointer, &descriptor, allows_reserved_values)?))
 	}
 
 	/// Classify a navigation input exactly like the core's internal navigate
