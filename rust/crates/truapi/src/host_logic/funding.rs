@@ -340,8 +340,9 @@ pub struct FundingProgress {
 /// ended ones under "Completed", where `{moment}` reads "Today at 12:45",
 /// "Yesterday at 12:45", "Jun 12 at 16:40" or, in another year,
 /// "Jun 12, 2025".
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingStatus {
 	/// Inbound bank: waiting for the user's transfer.
 	///
@@ -506,8 +507,9 @@ pub struct FundingProgressStep {
 }
 
 /// A milestone a session reaches, labelled on its timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingStep {
 	/// The session was opened.
 	///
@@ -702,8 +704,9 @@ pub enum FundingCancel {
 }
 
 /// What a user's cancel did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum CancelOutcome {
 	/// The session ended as cancelled: no provider serves it, or no money
 	/// moved and its provider was asked once already.
@@ -719,8 +722,9 @@ pub enum CancelOutcome {
 }
 
 /// What the user's answer to a cancel offer did.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum CancelConfirmation {
 	/// The offer was accepted and passed to the provider to settle.
 	Accepted,
@@ -1869,16 +1873,8 @@ impl FundingSession {
 				true
 			},
 			answer => {
-				let kind = match answer {
-					FundingCancelAnswer::Stopped => "stopped",
-					FundingCancelAnswer::Offer { .. } => "offer",
-					FundingCancelAnswer::Refused { .. } => "refused",
-				};
-				error!(
-					target: crate::markers::FUNDING_CANCEL_ANSWER_INVALID.target,
-					kind,
-					"a provider's cancel answer does not fit"
-				);
+				let kind: &'static str = (&answer).into();
+				error!(kind, "a provider's cancel answer does not fit");
 				self.cancel = Some(FundingCancel::Refused { reason: String::new() });
 				true
 			},
@@ -2088,7 +2084,10 @@ impl FundingDeposit {
 }
 
 /// Why a session operation failed.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(
+	Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error, strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingSessionError {
 	/// The core database failed, or none is configured.
 	#[display("funding session storage failed: {reason}")]
@@ -2129,19 +2128,6 @@ pub enum FundingSessionError {
 		/// The stored format.
 		format: u16,
 	},
-}
-
-impl FundingSessionError {
-	/// The error's kind, without the ids or amounts it carries.
-	pub fn kind(&self) -> &'static str {
-		match self {
-			Self::Storage { .. } => "storage",
-			Self::InvalidProvider { .. } => "invalid_provider",
-			Self::UnknownQuote { .. } => "unknown_quote",
-			Self::QuoteAmountMismatch { .. } => "quote_amount_mismatch",
-			Self::NewerFormat { .. } => "newer_format",
-		}
-	}
 }
 
 /// `target` as the host may show it: an App route must be a relative route

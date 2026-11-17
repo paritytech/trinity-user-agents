@@ -150,7 +150,6 @@ fn scan<T: Decode>(
 			Ok(stored) if stored < table.format => match older(stored, input) {
 				Some(value) if input.is_empty() => scanned.records.push(value),
 				_ => error!(
-					target: crate::markers::FUNDING_RECORD_UNREADABLE.target,
 					table = table.name,
 					stored,
 					format = table.format,
@@ -169,7 +168,6 @@ fn scan<T: Decode>(
 
 fn unreadable(table: &Table, record: &[u8]) {
 	error!(
-		target: crate::markers::FUNDING_RECORD_UNREADABLE.target,
 		table = table.name,
 		bytes = record.len(),
 		"funding record does not decode; leaving it in place"

@@ -27,7 +27,9 @@ pub struct FundingAssignment {
 /// How the user pays or is paid.
 ///
 /// Parses from the name a Worker manifest's route `mode` uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
+#[derive(
+	Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString, strum::IntoStaticStr,
+)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum FundingRail {
@@ -436,7 +438,8 @@ pub struct ProductFundingCancelRequest {
 }
 
 /// How a provider answers a cancel.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingCancelAnswer {
 	/// No money had moved and the provider stopped. The core ends the
 	/// session as cancelled.

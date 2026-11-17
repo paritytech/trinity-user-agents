@@ -41,11 +41,7 @@ pub fn write_resume_marker(database_directory: &Path, in_progress: bool) {
 		}
 	};
 	if let Err(error) = written {
-		tracing::error!(
-			target: crate::markers::FUNDING_RESUME_MARKER_FAILED.target,
-			%error,
-			"funding resume marker not written"
-		);
+		tracing::error!(%error, "funding resume marker not written");
 	}
 }
 

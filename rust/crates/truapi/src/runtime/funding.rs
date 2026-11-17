@@ -85,6 +85,7 @@ use crate::{
 		},
 		funding_providers::FundingSelection,
 	},
+	markers,
 	platform::{
 		ExecutableKind, FundingPlatform, FundingPresentOutcome, FundingPresentation,
 		ProductContext, ProductId,
@@ -833,14 +834,15 @@ impl FundingRegistry {
 		target: FrameTarget,
 	) -> FrameTicket<'_> {
 		let frame = self.next_frame.fetch_add(1, Ordering::Relaxed);
-		self.telemetry().frame_requested(intent, frame, target, current_unix_millis());
 		let (sender, receiver) = oneshot::channel();
 		let replaced = self.lock_frames().entry(intent.to_string()).or_default().waiting.replace((
 			frame,
 			provider.clone(),
 			sender,
 		));
-		let requested = FundingFact::FrameRequested { target, replaced: replaced.is_some() };
+		let requested = FundingFact::new(markers::FUNDING_FRAME_REQUESTED)
+			.tag("target", target)
+			.flag("replaced", replaced.is_some());
 		if let Some((_, _, replaced)) = replaced {
 			let _ = replaced.send(FrameGate::Answer(FundingFrameOutcome::Dismissed));
 		}
@@ -863,6 +865,9 @@ impl FundingRegistry {
 			intent: intent.to_string(),
 			frame,
 			receiver: Some(receiver),
+			target,
+			requested_ms: current_unix_millis(),
+			opened_ms: None,
 			shown: None,
 		}
 	}
@@ -956,22 +961,15 @@ impl FundingRegistry {
 			};
 			let present = matches!(gate, FrameGate::Present);
 			let answered = waiting.send(gate).is_ok();
-			let opened = answered && present;
-			if opened {
+			if answered && present {
 				session.open = Some((number, provider));
 			}
 			if session.is_empty() {
 				frames.remove(intent);
 			}
-			(answered, opened.then_some(number))
+			answered
 		};
 		self.retell(intent);
-		let (answered, opened) = answered;
-		let opened =
-			opened.and_then(|number| self.telemetry().frame_opened(number, current_unix_millis()));
-		if let Some((intent, fact)) = opened {
-			self.report_facts(&intent, None, None, vec![fact]);
-		}
 		answered
 	}
 
@@ -1121,11 +1119,10 @@ impl FundingRegistry {
 			if outcome == CancelOutcome::Requested {
 				self.telemetry().cancel_asked(intent, now_ms);
 			}
-			let asked = FundingFact::CancelRequested {
-				result: outcome,
-				status_at: super::funding_telemetry::status_name(&before.status(now_ms)),
-				money_moved: before.money_moved(),
-			};
+			let asked = FundingFact::new(markers::FUNDING_CANCEL_REQUESTED)
+				.tag("result", outcome)
+				.tag("status_at", before.status(now_ms))
+				.flag("money_moved", before.money_moved());
 			self.report_facts(intent, None, None, vec![asked]);
 		}
 		if let (CancelOutcome::Requested, Some(provider)) = (outcome, provider) {
@@ -1160,8 +1157,9 @@ impl FundingRegistry {
 			})
 			.await?;
 		if self.get(intent).is_some() {
-			let result = confirmation.clone();
-			self.report_facts(intent, None, None, vec![FundingFact::CancelConfirmed { result }]);
+			let confirmed =
+				FundingFact::new(markers::FUNDING_CANCEL_CONFIRMED).tag("result", &confirmation);
+			self.report_facts(intent, None, None, vec![confirmed]);
 		}
 		if let Some((provider, call)) = call {
 			self.call(&provider, vec![ProviderCall::Cancel(intent.to_string(), call)]);
@@ -1311,7 +1309,7 @@ impl FundingRegistry {
 		let mut lapsed = Vec::new();
 		// The write lock keeps every commit out until this one is done, so
 		// what the draft was copied from is still current when it lands.
-		let (result, mut changed, mut update, transitions) = {
+		let (result, mut changed, mut update) = {
 			let held = self.lock_held();
 			let mut draft = Draft {
 				sessions: held.sessions.clone(),
@@ -1349,14 +1347,6 @@ impl FundingRegistry {
 					}));
 				}
 			}
-			// Each session this commit changes, with what it was, for
-			// telemetry once the change is stored.
-			let transitions: Vec<_> = draft
-				.sessions
-				.values()
-				.filter(|session| held.sessions.get(&session.intent) != Some(*session))
-				.map(|session| (held.sessions.get(&session.intent).cloned(), session.clone()))
-				.collect();
 			let Draft { sessions, presenting, repacked, .. } = draft;
 			let edits = announces ||
 				!repacked.is_empty() ||
@@ -1364,18 +1354,34 @@ impl FundingRegistry {
 				presenting.len() != held.presenting.len() ||
 				presenting.keys().any(|intent| !held.presenting.contains_key(intent));
 			let update = edits.then(|| held.update(sessions, presenting, repacked, now_ms));
-			(result, changed, update, transitions)
+			(result, changed, update)
 		};
 		if let Some(update) = update.as_mut().filter(|update| update.writes()) {
 			let put: Vec<&FundingSession> =
 				update.put.iter().filter_map(|intent| update.kept.get(intent)).collect();
 			store::write(db, &put, core::mem::take(&mut update.removed), &update.packed).await?;
 		}
-		let taking_longer = {
+		let (taking_longer, transitions) = {
 			// Replaced and fanned out under one lock, so a subscriber either
 			// reads the sessions before this commit and hears it, or reads
 			// them after and does not.
 			let mut held = self.lock_held();
+			// What each stored session was before, for telemetry: those the
+			// write changed, and those it compacted as they ended.
+			let transitions: Vec<_> = update
+				.iter()
+				.flat_map(|update| {
+					update
+						.put
+						.iter()
+						.filter_map(|intent| update.kept.get(intent))
+						.chain(&update.ended)
+				})
+				.filter_map(|session| {
+					let before = held.sessions.get(&session.intent);
+					(before != Some(session)).then(|| (before.cloned(), session.clone()))
+				})
+				.collect();
 			let mut ending = update.map(|update| held.apply(update)).unwrap_or_default();
 			// Each session once, even when an edit and its expiry both name it.
 			let mut announced = HashSet::new();
@@ -1397,7 +1403,7 @@ impl FundingRegistry {
 					self.tell_host(&held, session);
 				}
 			}
-			taking_longer
+			(taking_longer, transitions)
 		};
 		drop(writes);
 		self.report_changes(transitions, taking_longer, now_ms);
@@ -1449,7 +1455,7 @@ impl FundingRegistry {
 				// Left for the newer app that wrote them; nothing runs on them.
 				Err(FundingSessionError::NewerFormat { .. }) => return None,
 				Err(error) => {
-					tracing::warn!(target: crate::markers::FUNDING_SWEEP_FAILED.target, %error, "funding sweep failed");
+					tracing::warn!(%error, "funding sweep failed");
 					if self.loaded.load(Ordering::Acquire) {
 						self.reconcile_work(services, now_ms);
 					}
@@ -1760,15 +1766,16 @@ impl FundingRegistry {
 					return false;
 				};
 				let target = intent.clone();
-				self.commit(current_unix_millis(), move |draft| {
-					let now_ms = current_unix_millis();
-					let changed = draft
-						.sessions
-						.get_mut(&target)
-						.is_some_and(|session| session.answer_cancel(answer, now_ms));
-					((), if changed { vec![target] } else { Vec::new() })
-				})
-				.await
+				self
+					.commit(current_unix_millis(), move |draft| {
+						let now_ms = current_unix_millis();
+						let changed = draft
+							.sessions
+							.get_mut(&target)
+							.is_some_and(|session| session.answer_cancel(answer, now_ms));
+						((), if changed { vec![target] } else { Vec::new() })
+					})
+					.await
 			},
 			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
 				let heard =
@@ -1780,23 +1787,20 @@ impl FundingRegistry {
 					return false;
 				}
 				let target = intent.clone();
-				self.commit(current_unix_millis(), move |draft| {
-					if let Some(session) = draft.sessions.get_mut(&target) {
-						session.cancel_settled(&decision);
-					}
-					((), Vec::new())
-				})
-				.await
+				self
+					.commit(current_unix_millis(), move |draft| {
+						if let Some(session) = draft.sessions.get_mut(&target) {
+							session.cancel_settled(&decision);
+						}
+						((), Vec::new())
+					})
+					.await
 			},
 		};
 		match answered {
 			Ok(()) => true,
 			Err(error) => {
-				tracing::warn!(
-					target: crate::markers::FUNDING_CANCEL_ANSWER_STORE_FAILED.target,
-					%error,
-					"storing a provider's cancel answer failed"
-				);
+				tracing::warn!(%error, "storing a provider's cancel answer failed");
 				false
 			},
 		}
@@ -1988,13 +1992,9 @@ impl FundingRegistry {
 		let session_ref = self.telemetry().session_ref(intent);
 		for fact in facts {
 			let event = fact.event(&common, &session_ref);
-			match crate::funding_events::emit(&event) {
-				Ok(_) => {
-					#[cfg(test)]
-					lock(&self.logged).push(event);
-				},
-				Err(refused) => tracing::error!(%refused, "a funding fact left unlogged"),
-			}
+			event.log();
+			#[cfg(test)]
+			lock(&self.logged).push(event);
 		}
 	}
 
@@ -2007,16 +2007,16 @@ impl FundingRegistry {
 		now_ms: u64,
 	) {
 		for session in taking_longer {
-			let fact = self.telemetry().flagged(
-				&session,
-				super::funding_telemetry::Flag::TakingLonger,
-				now_ms,
-			);
+			let flag = super::funding_telemetry::Flag::TakingLonger;
+			let fact = self.telemetry().flagged(&session, flag);
 			self.report_facts(&session.intent, Some(&session), None, Vec::from_iter(fact));
 		}
 		for (before, after) in changed {
 			let facts = self.telemetry().changed(before.as_ref(), &after, now_ms);
-			let ended = facts.iter().any(|fact| matches!(fact, FundingFact::Ended(_)));
+			let ended = facts.iter().any(|fact| {
+				[markers::FUNDING_ENDED, markers::FUNDING_ENDED_UNEXPECTEDLY]
+					.contains(&fact.marker())
+			});
 			self.report_facts(&after.intent, Some(&after), None, facts);
 			if ended {
 				self.telemetry().forget(&after.intent);
@@ -2032,7 +2032,13 @@ pub struct FrameTicket<'a> {
 	intent: String,
 	frame: u64,
 	receiver: Option<oneshot::Receiver<FrameGate>>,
-	/// How the frame closed once shown, for telemetry.
+	/// What the frame shows, for telemetry.
+	target: FrameTarget,
+	/// When the provider asked for it, in Unix milliseconds.
+	requested_ms: u64,
+	/// When the host opened it, in Unix milliseconds.
+	opened_ms: Option<u64>,
+	/// How it closed once shown.
 	shown: Option<FrameClose>,
 }
 
@@ -2046,7 +2052,16 @@ impl FrameTicket<'_> {
 	/// otherwise the provider gets the outcome and nothing goes on screen.
 	pub async fn opened(&mut self) -> Option<FundingFrameOutcome> {
 		let receiver = self.receiver.take()?;
-		match receiver.await {
+		let gate = receiver.await;
+		if let Ok(FrameGate::Present) = gate {
+			let now_ms = current_unix_millis();
+			self.opened_ms = Some(now_ms);
+			let opened = FundingFact::new(markers::FUNDING_FRAME_OPENED)
+				.tag("target", self.target)
+				.measure("wait_ms", now_ms.saturating_sub(self.requested_ms));
+			self.registry.report_facts(&self.intent, None, None, vec![opened]);
+		}
+		match gate {
 			// The payment may have moved, or the worker closed the frame,
 			// between the host opening it and the worker running again.
 			Ok(FrameGate::Present)
@@ -2065,13 +2080,17 @@ impl FrameTicket<'_> {
 
 impl Drop for FrameTicket<'_> {
 	fn drop(&mut self) {
-		let closed =
-			self.registry
-				.telemetry()
-				.frame_closed(self.frame, self.shown, current_unix_millis());
-		if let Some((intent, fact)) = closed {
-			self.registry.report_facts(&intent, None, None, vec![fact]);
-		}
+		let outcome = match (self.opened_ms, self.shown) {
+			(None, _) => FrameClose::DroppedUnopened,
+			(Some(_), Some(shown)) => shown,
+			(Some(_), None) => FrameClose::ClosedByCore,
+		};
+		let open_ms = self.opened_ms.map(|opened| current_unix_millis().saturating_sub(opened));
+		let closed = FundingFact::new(markers::FUNDING_FRAME_CLOSED)
+			.tag("target", self.target)
+			.tag("outcome", outcome)
+			.measure("open_ms", open_ms);
+		self.registry.report_facts(&self.intent, None, None, vec![closed]);
 		let dropped_waiting = {
 			let mut frames = self.registry.lock_frames();
 			let Some(session) = frames.get_mut(&self.intent) else {
@@ -2257,7 +2276,8 @@ pub(crate) async fn engine_holds(
 }
 
 /// Why a session could not be opened.
-#[derive(Debug, derive_more::Display)]
+#[derive(Debug, derive_more::Display, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum OpenFundingError {
 	/// The host has no funding surface.
 	#[display("host has no funding surface")]
@@ -2281,21 +2301,6 @@ pub enum OpenFundingError {
 	/// The host failed to show the overlay.
 	#[display("{}", _0.reason)]
 	Present(GenericError),
-}
-
-impl OpenFundingError {
-	/// The error's kind, without what the host or the session said.
-	pub fn kind(&self) -> &'static str {
-		match self {
-			Self::Unsupported => "unsupported",
-			Self::Dismissed => "dismissed",
-			Self::InvalidAmount => "invalid_amount",
-			Self::AlreadyExists => "already_exists",
-			Self::Stopped => "stopped",
-			Self::Session(error) => error.kind(),
-			Self::Present(_) => "present",
-		}
-	}
 }
 
 /// A fresh session id.
@@ -2385,11 +2390,7 @@ impl RuntimeServices {
 						// Left for the newer app that wrote them; retrying cannot
 						// read them.
 						Err(error @ FundingSessionError::NewerFormat { .. }) => {
-							tracing::error!(
-								target: crate::markers::FUNDING_NEWER_FORMAT.target,
-								%error,
-								"funding stays unavailable"
-							);
+							tracing::warn!(%error, "funding stays unavailable");
 							ControlFlow::Break(())
 						},
 						Err(error) => ControlFlow::Continue(error),
@@ -2397,12 +2398,7 @@ impl RuntimeServices {
 				},
 				|error| {
 					let retry_in = pauses.next_pause();
-					tracing::warn!(
-						target: crate::markers::FUNDING_SESSIONS_LOAD_FAILED.target,
-						%error,
-						?retry_in,
-						"loading funding sessions failed"
-					);
+					tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
 					retry_in
 				},
 			)
@@ -2572,12 +2568,7 @@ impl RuntimeServices {
 						break;
 					};
 					let retry_in = pauses.next_pause();
-					tracing::warn!(
-						target: crate::markers::FUNDING_SETTLE_FAILED.target,
-						%error,
-						?retry_in,
-						"settling a funding session failed"
-					);
+					tracing::warn!(%error, ?retry_in, "settling a funding session failed");
 					futures_timer::Delay::new(retry_in).await;
 				}
 			}
@@ -2609,7 +2600,6 @@ impl RuntimeServices {
 			Ok(false) => (None, Some(lapse_ms)),
 			Err(reason) => {
 				tracing::warn!(
-					target: crate::markers::FUNDING_FUNDS_READ_FAILED.target,
 					reason = %crate::logging::HostText::new(&reason),
 					"reading recorded funds from the host failed"
 				);
@@ -2637,11 +2627,7 @@ impl RuntimeServices {
 					.await;
 				written
 					.inspect_err(|error| {
-						tracing::warn!(
-							target: crate::markers::FUNDING_FUNDS_STORE_FAILED.target,
-							%error,
-							"storing where recorded funds stand failed"
-						);
+						tracing::warn!(%error, "storing where recorded funds stand failed");
 					})
 					.err()
 					.map(|_| retry_ms)
@@ -2665,10 +2651,7 @@ impl RuntimeServices {
 			let read = match direction {
 				FundingDirection::In => {
 					let Some(platform) = self.top_up_platform() else {
-						tracing::error!(
-							target: crate::markers::FUNDING_PLATFORM_MISSING.target,
-							"no top-up platform to follow a funding session's claims"
-						);
+						tracing::warn!("no top-up platform to follow a funding session's claims");
 						return None;
 					};
 					let statuses = platform.subscribe_top_up_status(provider, funds.host_id);
@@ -2676,10 +2659,7 @@ impl RuntimeServices {
 				},
 				FundingDirection::Out => {
 					let Some(platform) = self.payment_platform() else {
-						tracing::error!(
-							target: crate::markers::FUNDING_PLATFORM_MISSING.target,
-							"no payment platform to follow a funding session's payment"
-						);
+						tracing::warn!("no payment platform to follow a funding session's payment");
 						return None;
 					};
 					let statuses = platform.subscribe_payment_status(provider, funds.host_id);
@@ -2752,13 +2732,9 @@ impl RuntimeServices {
 		if !presented {
 			return Err(OpenFundingError::AlreadyExists);
 		}
-		registry.telemetry().overlay_opened(&session.intent, now_ms);
-		registry.report_facts(
-			&session.intent,
-			Some(&session),
-			None,
-			vec![FundingFact::OverlayOpened { amount_preset: amount.is_some() }],
-		);
+		let opened = FundingFact::new(markers::FUNDING_OVERLAY_OPENED)
+			.flag("amount_preset", amount.is_some());
+		registry.report_facts(&session.intent, Some(&session), None, vec![opened]);
 		// The overlay runs on its own task, so nobody has to wait on it: the
 		// task starts or discards the session, and watchers hear the outcome.
 		let (finished, outcome) = oneshot::channel();
@@ -2769,11 +2745,7 @@ impl RuntimeServices {
 			if let Err(error @ (OpenFundingError::Present(_) | OpenFundingError::Session(_))) =
 				&result
 			{
-				tracing::warn!(
-					target: crate::markers::FUNDING_OVERLAY_FAILED.target,
-					error = error.kind(),
-					"the funding overlay failed"
-				);
+				tracing::warn!(error = <&str>::from(error), "the funding overlay failed");
 			}
 			// A caller that does not wait for the result has nothing to hear.
 			let _ = finished.send(result);
@@ -2790,12 +2762,10 @@ impl RuntimeServices {
 	) {
 		use super::funding_telemetry::{Furthest, OverlayOutcome};
 		let registry = self.funding();
-		let (overlay_ms, quoted) =
-			registry.telemetry().overlay_closed(intent, current_unix_millis());
 		let furthest = if registry.get(intent).is_some_and(|session| session.provider_id.is_some())
 		{
 			Furthest::Provider
-		} else if quoted {
+		} else if registry.telemetry().quoted(intent) {
 			Furthest::Quotes
 		} else if registry.selection(intent).is_some() {
 			Furthest::Rail
@@ -2807,12 +2777,10 @@ impl RuntimeServices {
 			Ok(FundingPresentOutcome::Dismissed) => OverlayOutcome::Dismissed,
 			Err(_) => OverlayOutcome::Failed,
 		};
-		registry.report_facts(
-			intent,
-			None,
-			None,
-			vec![FundingFact::OverlayClosed { outcome, furthest, overlay_ms }],
-		);
+		let closed = FundingFact::new(markers::FUNDING_OVERLAY_CLOSED)
+			.tag("outcome", outcome)
+			.tag("furthest", furthest);
+		registry.report_facts(intent, None, None, vec![closed]);
 	}
 
 	/// Show the overlay for presented `session`, then start or discard it by
@@ -2909,7 +2877,6 @@ async fn top_up_moved(
 			},
 			Err(HostPaymentTopUpStatusSubscribeError::Unknown { reason }) => {
 				tracing::warn!(
-					target: crate::markers::FUNDING_STATUS_READ_FAILED.target,
 					reason = %crate::logging::HostText::new(&reason),
 					"reading a top-up's status failed"
 				);
@@ -2945,7 +2912,6 @@ async fn payment_moved(
 			},
 			Err(HostPaymentStatusSubscribeError::Unknown { reason }) => {
 				tracing::warn!(
-					target: crate::markers::FUNDING_STATUS_READ_FAILED.target,
 					reason = %crate::logging::HostText::new(&reason),
 					"reading a payment's status failed"
 				);

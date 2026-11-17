@@ -847,7 +847,6 @@ cfg_select! {
 		pub mod host_logic;
 		mod host_rpc_client;
 		mod interrupt;
-		pub mod funding_events;
 		pub mod logging;
 		pub mod platform;
 		mod protocol_error;

@@ -12749,28 +12749,21 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 	"q-test".to_string()
 }
 
-type LoggedFact = crate::funding_events::FundingEvent;
-
-/// The value of tag `key` on `event`.
-fn event_tag<'a>(event: &'a LoggedFact, key: &str) -> Option<&'a str> {
-	event.tag(key)
-}
-
-/// The value of measure `key` on `event`.
-fn event_measure(event: &LoggedFact, key: &str) -> Option<u64> {
-	event.measure(key)
-}
-
-/// The events logged under `marker`.
-fn events_named<'a>(events: &'a [LoggedFact], marker: &str) -> Vec<&'a LoggedFact> {
+/// The facts logged under `marker`.
+fn events_named<'a>(
+	events: &'a [crate::runtime::funding_telemetry::FundingEvent],
+	marker: &str,
+) -> Vec<&'a crate::runtime::funding_telemetry::FundingEvent> {
 	events.iter().filter(|event| event.marker.target == marker).collect()
 }
 
-/// Assert no logged line names `secrets`, and every one is registered.
-fn assert_events_carry_none_of(events: &[LoggedFact], secrets: &[&str]) {
+/// Assert no logged line names `secrets`.
+fn assert_events_carry_none_of(
+	events: &[crate::runtime::funding_telemetry::FundingEvent],
+	secrets: &[&str],
+) {
 	for event in events {
-		assert_eq!(crate::funding_events::check(event), Ok(()), "{:?} is refused", event.marker);
-		let line = format!("{}: {}", event.marker.target, event.detail());
+		let line = format!("{}: {}", event.marker.target, event.detail);
 		for secret in secrets {
 			assert!(!line.contains(secret), "a line carries {secret}: {line}");
 		}
@@ -12801,11 +12794,11 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	);
 	assert_eq!(
 		(
-			event_tag(&opened[0], "amount_preset"),
-			event_tag(&opened[0], "amount_bucket"),
-			event_tag(&opened[0], "opener"),
-			event_tag(&opened[1], "outcome"),
-			event_tag(&opened[1], "furthest"),
+			opened[0].value("amount_preset"),
+			opened[0].value("amount_bucket"),
+			opened[0].value("opener"),
+			opened[1].value("outcome"),
+			opened[1].value("furthest"),
 		),
 		(Some("true"), Some("50-100"), Some("host"), Some("started"), Some("amount"))
 	);
@@ -12868,23 +12861,23 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	let chosen = events_named(&events, "truapi.funding.provider_chosen")[0];
 	assert_eq!(
 		(
-			event_tag(chosen, "best"),
-			event_tag(chosen, "provider"),
-			event_tag(chosen, "rail"),
-			event_tag(chosen, "asset"),
-			event_measure(chosen, "rank"),
-			event_measure(chosen, "quote_count"),
+			chosen.value("best"),
+			chosen.value("provider"),
+			chosen.value("rail"),
+			chosen.value("asset"),
+			chosen.value("rank"),
+			chosen.value("quote_count"),
 		),
-		(Some("false"), Some("ramp.dot"), Some("card"), Some("eur"), Some(1), Some(1))
+		(Some("false"), Some("ramp.dot"), Some("card"), Some("eur"), Some("1"), Some("1"))
 	);
 	let steps: Vec<_> = events_named(&events, "truapi.funding.step_reached")
 		.into_iter()
-		.map(|event| event_tag(event, "step"))
+		.map(|event| event.value("step"))
 		.collect();
 	assert_eq!(steps, [Some("received"), Some("added")]);
 	let cancel = events_named(&events, "truapi.funding.cancel_requested")[0];
 	assert_eq!(
-		(event_tag(cancel, "money_moved"), event_tag(cancel, "result")),
+		(cancel.value("money_moved"), cancel.value("result")),
 		(
 			Some("true"),
 			Some(if cancelled == crate::host_logic::funding::CancelOutcome::Requested {
@@ -12896,22 +12889,14 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	);
 	let ended = events_named(&events, "truapi.funding.ended")[0];
 	assert_eq!(
-		(
-			event_tag(ended, "outcome"),
-			event_tag(ended, "reason"),
-			event_tag(ended, "expected"),
-			event_tag(ended, "money_moved"),
-			ended.marker,
-		),
-		(
-			Some("topped_up"),
-			Some("none"),
-			Some("true"),
-			Some("true"),
-			crate::markers::FUNDING_ENDED
-		)
+		(ended.value("outcome"), ended.value("reason"), ended.value("money_moved"), ended.marker,),
+		(Some("topped_up"), Some("none"), Some("true"), crate::markers::FUNDING_ENDED)
 	);
-	assert!(events.iter().all(|event| event.session_ref == events[0].session_ref));
+	assert!(
+		events
+			.iter()
+			.all(|event| event.value("funding.ref") == events[0].value("funding.ref"))
+	);
 	assert_events_carry_none_of(
 		&events,
 		&[&intent, "q-test", "75000000", "tx-secret", "ref-secret"],
@@ -12949,15 +12934,15 @@ fn a_settled_quote_request_reports_its_counts_once() {
 	assert_eq!(settled.len(), 1);
 	assert_eq!(
 		(
-			event_tag(settled[0], "region"),
-			event_tag(settled[0], "superseded"),
-			event_tag(settled[0], "issue"),
-			event_measure(settled[0], "asked"),
-			event_measure(settled[0], "quoted"),
-			event_measure(settled[0], "pending"),
-			event_measure(settled[0], "first_quote_ms").is_some(),
+			settled[0].value("region"),
+			settled[0].value("superseded"),
+			settled[0].value("issue"),
+			settled[0].value("asked"),
+			settled[0].value("quoted"),
+			settled[0].value("pending"),
+			settled[0].value("first_quote_ms").is_some(),
 		),
-		(Some("eu"), Some("false"), Some("none"), Some(1), Some(1), Some(0), true)
+		(Some("eu"), Some("false"), Some("none"), Some("1"), Some("1"), Some("0"), true)
 	);
 	assert_events_carry_none_of(&events, &[&intent, "q1", "\"DE\""]);
 }
@@ -12985,13 +12970,12 @@ fn an_expired_session_reports_an_expected_ending() {
 	assert_eq!(ended.len(), 1);
 	assert_eq!(
 		(
-			event_tag(ended[0], "outcome"),
-			event_tag(ended[0], "expected"),
-			event_tag(ended[0], "direction"),
-			event_tag(ended[0], "amount_bucket"),
+			ended[0].value("outcome"),
+			ended[0].value("direction"),
+			ended[0].value("amount_bucket"),
 			ended[0].marker,
 		),
-		(Some("expired"), Some("true"), Some("out"), Some("unset"), crate::markers::FUNDING_ENDED)
+		(Some("expired"), Some("out"), Some("unset"), crate::markers::FUNDING_ENDED)
 	);
 	assert_events_carry_none_of(&events, &[&intent]);
 }
@@ -13032,10 +13016,8 @@ fn provider_frames_report_their_lifecycle() {
 		.map(|event| {
 			(
 				event.marker.target.to_string(),
-				event_tag(&event, "target").map(str::to_string),
-				event_tag(&event, "outcome")
-					.or(event_tag(&event, "replaced"))
-					.map(str::to_string),
+				event.value("target").map(str::to_string),
+				event.value("outcome").or(event.value("replaced")).map(str::to_string),
 			)
 		})
 		.collect();

@@ -117,141 +117,103 @@ markers! {
 	/// message, which is written for operators and names no person.
 	TRACING_ERROR = "truapi.tracing.error" => Export(Error);
 
-	// ------------------------------------------------------------- funding
-	//
-	// Health of the funding modality. No detail names a session, a quote, an
-	// amount or an account; a reason a host gave is bounded.
-	// Funding's flow facts are the markers after these.
-
-	/// The expiry sweep could not store its result. Detail carries the
-	/// storage error.
-	FUNDING_SWEEP_FAILED = "truapi.funding.sweep_failed" => Export(Warn);
-
-	/// Loading the stored sessions failed and is retried. Detail carries the
-	/// storage error and the pause before the retry.
-	FUNDING_SESSIONS_LOAD_FAILED = "truapi.funding.sessions_load_failed" => Export(Warn);
-
-	/// The stored sessions were written by a newer app, so funding stays
-	/// unavailable. Detail carries the stored format number.
-	FUNDING_NEWER_FORMAT = "truapi.funding.newer_format" => Export(Error);
-
-	/// A stored session record does not decode, or is of a format this app
-	/// cannot upgrade. Detail names the table, the format and the size.
-	FUNDING_RECORD_UNREADABLE = "truapi.funding.record_unreadable" => Export(Error);
-
-	/// Storing a session's outcome once its funds moved failed, and is
-	/// retried. Detail carries the storage error and the pause.
-	FUNDING_SETTLE_FAILED = "truapi.funding.settle_failed" => Export(Warn);
-
-	/// Storing a provider's answer to a cancel failed. Detail carries the
-	/// storage error.
-	FUNDING_CANCEL_ANSWER_STORE_FAILED = "truapi.funding.cancel_answer_store_failed" => Export(Warn);
-
-	/// A provider answered a cancel with something it may not, which counts
-	/// as a refusal. Detail names the answer's kind only.
-	FUNDING_CANCEL_ANSWER_INVALID = "truapi.funding.cancel_answer_invalid" => Export(Error);
-
-	/// Asking the host whether it holds funds a provider started failed.
-	/// Detail carries the host's reason, bounded.
-	FUNDING_FUNDS_READ_FAILED = "truapi.funding.funds_read_failed" => Export(Warn);
-
-	/// Storing whether the host holds those funds failed. Detail carries the
-	/// storage error.
-	FUNDING_FUNDS_STORE_FAILED = "truapi.funding.funds_store_failed" => Export(Warn);
-
-	/// Reading a top-up's or payment's status from the host failed. Detail
-	/// carries the host's reason, bounded.
-	FUNDING_STATUS_READ_FAILED = "truapi.funding.status_read_failed" => Export(Warn);
-
-	/// A session's funds cannot be followed, as the host installed no top-up
-	/// or payment platform.
-	FUNDING_PLATFORM_MISSING = "truapi.funding.platform_missing" => Export(Error);
-
-	/// The overlay could not be shown or its session stored. Detail names the
-	/// error's kind only.
-	FUNDING_OVERLAY_FAILED = "truapi.funding.overlay_failed" => Export(Warn);
-
-	/// A session armed to start on its best quote did not. Detail names the
-	/// error's kind only.
-	FUNDING_AUTO_START_FAILED = "truapi.funding.auto_start_failed" => Export(Warn);
-
-	/// The host's funding provider configuration names something that is not
-	/// a product. Detail carries that name, from the host's own config.
-	FUNDING_PROVIDER_CONFIG_INVALID = "truapi.funding.provider_config_invalid" => Export(Warn);
-
-	/// Storing what providers' quotes showed they serve failed. Detail
-	/// carries the storage error.
-	FUNDING_SUPPORT_STORE_FAILED = "truapi.funding.support_store_failed" => Export(Warn);
-
-	/// Reading what providers' quotes showed they serve failed, or the
-	/// records did not decode. Detail carries the error.
-	FUNDING_SUPPORT_READ_FAILED = "truapi.funding.support_read_failed" => Export(Warn);
-
-	/// The launch marker that resumes funding was not written. Detail carries
-	/// the I/O error, not the path.
-	FUNDING_RESUME_MARKER_FAILED = "truapi.funding.resume_marker_failed" => Export(Error);
-
 	// ------------------------------------------------------- funding facts
 	//
-	// The funding flow, one line per fact. Each detail is
-	// `funding.ref=<ref> key=value ...`: a random per-session reference, then
-	// only the keys `crate::funding_events` lists for the marker, every value
-	// from a closed set, amounts as buckets and a country as its region.
+	// One line per fact of a funding session, built in
+	// `runtime/funding_telemetry.rs`. Each detail reads
+	// `funding.ref=<ref> key=value ...`: a random reference drawn per session
+	// and kept in memory only, then tags, then measures. Every value comes
+	// from a closed set or is a count or milliseconds; never an intent, a
+	// quote, transaction or reference id, an address, an exact amount, fee or
+	// limit, a provider's own text, or a URL.
+	//
+	// Every detail first carries the session's tags: `direction` (`in`,
+	// `out`), `opener` (`host`, `product`), `product` (a first-party
+	// product's dotNS label, `third_party`, `none`), `rail` (`card`, `bank`,
+	// `crypto`, `none`), `provider` (a provider the host lists, `other`,
+	// `none`), `asset` and `network` (a short plain identifier a provider
+	// route declares, `other`, `none`), `amount_bucket` (CASH: `<10`,
+	// `10-50`, `50-100`, `100-250`, `250-500`, `500-1k`, `1k-5k`, `5k+`,
+	// `unset`), then `age_ms` after the fact's own tags. A session the core
+	// no longer holds carries `session=unknown` instead.
 
-	/// The funding overlay opened on a new session. Detail:
-	/// `crate::funding_events::OVERLAY_OPENED`.
+	/// The overlay opened on a new session. `amount_preset`: `true` when the
+	/// opener named the amount.
 	FUNDING_OVERLAY_OPENED = "truapi.funding.overlay_opened" => Export(Info);
 
-	/// The funding overlay closed, and how far the user got. Detail:
-	/// `crate::funding_events::OVERLAY_CLOSED`.
+	/// The overlay closed. `outcome`: `started`, `dismissed`, `failed`.
+	/// `furthest`, how far the user got: `amount`, `rail`, `quotes`,
+	/// `provider`. `age_ms` is how long it was up.
 	FUNDING_OVERLAY_CLOSED = "truapi.funding.overlay_closed" => Export(Info);
 
-	/// Every provider asked for one quote request answered, or a newer request replaced it. Detail:
-	/// `crate::funding_events::QUOTES_SETTLED`.
+	/// Every provider asked for one quote request answered, or a newer
+	/// request replaced it first. `region`: `eu`, `uk`, `us`, `other`,
+	/// `unset`. `issue`: `none`, `not_enough_balance`, `below_minimum`,
+	/// `above_maximum`. `superseded`. Counts `asked`, `quoted`,
+	/// `refused_country`, `refused_min`, `refused_max`,
+	/// `refused_unavailable`, `refused_other`, `timed_out`, `pending`;
+	/// `first_quote_ms` and `settle_ms` from the request.
 	FUNDING_QUOTES_SETTLED = "truapi.funding.quotes_settled" => Export(Info);
 
-	/// A session was handed to a provider on one of its quotes. Detail:
-	/// `crate::funding_events::PROVIDER_CHOSEN`.
+	/// The session was handed to a provider on one of its quotes. `best`.
+	/// `fee_bucket`, fees against what the user sends in basis points:
+	/// `<50`, `50-100`, `100-200`, `200-500`, `500+`. `eta_bucket`: `<1m`,
+	/// `1-10m`, `10-60m`, `1-24h`, `1d+`, `unknown`. `rank` by what the user
+	/// gets, and `quote_count`.
 	FUNDING_PROVIDER_CHOSEN = "truapi.funding.provider_chosen" => Export(Info);
 
-	/// A provider's worker took its session, or first failed to. Detail:
-	/// `crate::funding_events::PROVIDER_TOOK`.
+	/// The provider's worker took the session, or first failed to.
+	/// `outcome`: `taken`, `not_taken`. `take_ms` since it was handed over.
 	FUNDING_PROVIDER_TOOK = "truapi.funding.provider_took" => Export(Info);
 
-	/// A session first reached a milestone. Detail: `crate::funding_events::STEP_REACHED`.
+	/// The session first reached a milestone. `step`: `received`, `added`,
+	/// `sent`. `since_prev_ms` since the milestone before.
 	FUNDING_STEP_REACHED = "truapi.funding.step_reached" => Export(Info);
 
-	/// A session first showed a warning state. Detail: `crate::funding_events::STATUS_FLAG`.
+	/// The session first showed a warning state. `flag`: `taking_longer`,
+	/// `retrying`, `retrying_payout`.
 	FUNDING_STATUS_FLAG = "truapi.funding.status_flag" => Export(Info);
 
-	/// A provider is done with a session, on an ending that is no fault. Detail:
-	/// `crate::funding_events::ENDED`.
+	/// The provider is done with the session, on an ending that is no fault.
+	/// `outcome`: `topped_up`, `sent`, `refunded`, `failed`, `expired`,
+	/// `cancelled`, `paid_out_after_cancel`. `reason`: `none`, a failure's
+	/// kind such as `declined`, the core's `not_claimed` or `payment_failed`,
+	/// or `provider_other`. `money_moved`, `region`, and `to_received_ms`;
+	/// `age_ms` is the session's whole run.
 	FUNDING_ENDED = "truapi.funding.ended" => Export(Info);
 
-	/// A provider is done with a session, on an ending that is a fault. Detail:
-	/// `crate::funding_events::ENDED_UNEXPECTEDLY`.
+	/// An ending that is a fault: failed, a failed payout, or expired once
+	/// money moved, and not the user's or the rules' doing. Carries what
+	/// `truapi.funding.ended` does.
 	FUNDING_ENDED_UNEXPECTEDLY = "truapi.funding.ended_unexpectedly" => Export(Error);
 
-	/// The user asked to cancel a session. Detail: `crate::funding_events::CANCEL_REQUESTED`.
+	/// The user asked to cancel. `result`: `ended`, `requested`, `pending`,
+	/// `too_late`, `refused`. `status_at`: the status variant when asked,
+	/// such as `waiting_for_payment`. `money_moved`.
 	FUNDING_CANCEL_REQUESTED = "truapi.funding.cancel_requested" => Export(Info);
 
-	/// A provider answered a cancel, or its worker first failed to. Detail:
-	/// `crate::funding_events::CANCEL_ANSWERED`.
+	/// The provider answered a cancel, or its worker first failed to.
+	/// `answer`: `offered`, `refused`, `stopped`, `no_answer`. `fee_bucket`:
+	/// an offer's fee against its total, as on `provider_chosen`, or `none`.
+	/// `answer_ms` since the cancel was asked.
 	FUNDING_CANCEL_ANSWERED = "truapi.funding.cancel_answered" => Export(Info);
 
-	/// The user answered a provider's cancel offer. Detail:
-	/// `crate::funding_events::CANCEL_CONFIRMED`.
+	/// The user answered a cancel offer. `result`: `accepted`, `declined`,
+	/// `lapsed`, `no_offer`, `too_late`.
 	FUNDING_CANCEL_CONFIRMED = "truapi.funding.cancel_confirmed" => Export(Info);
 
-	/// A provider asked to show a screen. Detail: `crate::funding_events::FRAME_REQUESTED`.
+	/// The provider asked to show a screen. `target`: `app`, `page`.
+	/// `replaced`: whether it replaced one still waiting.
 	FUNDING_FRAME_REQUESTED = "truapi.funding.frame_requested" => Export(Info);
 
-	/// The host opened a screen a provider asked for. Detail:
-	/// `crate::funding_events::FRAME_OPENED`.
+	/// The host opened a screen the provider asked for. `target`, and
+	/// `wait_ms` since it was asked for.
 	FUNDING_FRAME_OPENED = "truapi.funding.frame_opened" => Export(Info);
 
-	/// A provider's screen closed, or was dropped before the user opened it. Detail:
-	/// `crate::funding_events::FRAME_CLOSED`.
+	/// A provider's screen closed. `target`. `outcome`: `closed`,
+	/// `dismissed`, `returned` or `failed` once shown, `closed_by_core` when
+	/// withdrawn before it showed, `dropped_unopened` when the user never
+	/// opened it. `open_ms` on screen.
 	FUNDING_FRAME_CLOSED = "truapi.funding.frame_closed" => Export(Info);
 
 	// ------------------------------------------------- native host callbacks

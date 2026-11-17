@@ -159,7 +159,7 @@ The benefit is that the number of places the rule is written stays at one as hos
 
 Funding's flow facts leave the core as exported markers, on the log path every other core marker takes. The core logs them; a host forwards them with its core log lines, so they reach Sentry Logs only from builds that are not released, through the gates the hosts already have. Nothing about them crosses the host boundary but the log line, and no host code is written for them. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
 
-**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest.
+**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. Each entry's doc comment lists the keys its detail carries and the closed set each takes, as for every other marker.
 
 | Marker | Logged when |
 |---|---|
@@ -170,7 +170,7 @@ Funding's flow facts leave the core as exported markers, on the log path every o
 | `provider_took` | the provider's worker takes the session, or first fails to |
 | `step_reached` | a milestone (received, added, sent) is first reached |
 | `status_flag` | taking longer, retrying or retrying a payout first shows |
-| `ended`, `ended_unexpectedly` | the provider is done with the session: outcome, reason class, whether it was expected |
+| `ended`, `ended_unexpectedly` | the provider is done with the session: outcome and reason class |
 | `cancel_requested` | the user asks to cancel |
 | `cancel_answered` | the provider answers a cancel, or its worker first fails to |
 | `cancel_confirmed` | the user answers a cancel offer |
@@ -178,18 +178,20 @@ Funding's flow facts leave the core as exported markers, on the log path every o
 
 Each is logged once, on a change a commit stored or on the call that made it, never on loading sessions after a restart.
 
-**The detail.** A line reads `funding.ref=<ref> key=value ...`: a random per-session reference, then the tags, then the measures (counts, and durations in milliseconds). `rust/crates/truapi/src/funding_events.rs` lists, per marker, the keys its detail may carry and the closed set each takes, and `funding_events::check` refuses a key the entry does not name or a detail longer than `HOST_SINK_DETAIL_MAX_CHARS`, so nothing is cut on the way. The facts are built from typed values in `runtime/funding_telemetry.rs`: closed enums and fixed buckets, never a string a provider, a product or a manifest wrote. Every line carries the session's direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when they are plain identifiers, an amount bucket and its age. A Sentry Logs query on the marker and its detail attributes is how these are counted.
+**The detail.** A line reads `funding.ref=<ref> key=value ...`: a random per-session reference, the session's tags (direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when they are plain identifiers, amount bucket), the fact's own tags, the session's age in milliseconds, then the fact's counts and durations. The facts are built in `runtime/funding_telemetry.rs` from closed enums and fixed buckets, never a string a provider, a product or a manifest wrote. The layer refuses a `truapi.*` target the table does not list and bounds the detail like any other.
 
-**Privacy.** No line carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. The reference is drawn at random per session and kept in memory only, so it joins a session's lines without leading back to the session; a session resumed after a restart draws a new one.
+```
+truapi.funding.overlay_opened: funding.ref=V1StGXR8_Z5jdHi6 direction=in opener=host product=none rail=none provider=none asset=none network=none amount_bucket=50-100 amount_preset=true age_ms=0
+```
+
+**Privacy.** No line carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. The reference is drawn at random per session and kept in memory only, so it joins a session's lines without leading back to the session; a session resumed after a restart draws a new one. Funding's own warnings leave as `truapi.tracing.warn` and name no session either.
 
 **Production.** The hosts' log forwarding sends nothing from release builds, and there is no consent screen behind it. Funding telemetry from production needs consent and a policy decision first.
-
-**Health.** Funding's own warnings and errors are `truapi.funding.*` markers in the same table, with names apart from the facts', and none of their details names a session.
 
 ## Open questions
 
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
-2. ~~Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?~~ Settled for funding: its facts are markers in the same table, with a second table of the keys each detail may carry, as above. Metrics still ride on events.
+2. ~~Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?~~ Settled for funding: its facts are markers in the same table, each documenting its detail's keys, as above. Metrics still ride on events.
 3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
 4. Does Android route an info host event to Sentry Logs the way iOS does, which means `HostEvent` grows a level there?
 
