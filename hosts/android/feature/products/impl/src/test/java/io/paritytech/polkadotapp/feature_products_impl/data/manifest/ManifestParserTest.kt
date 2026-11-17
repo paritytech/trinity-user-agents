@@ -164,10 +164,6 @@ class ManifestParserTest {
         val fundingOnly = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}""")
         assertEquals(false, fundingOnly?.includesChat)
         assertEquals(false, fundingOnly?.includesPocket)
-
-        val noIncludes = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}""")
-        assertEquals(false, noIncludes?.includesChat)
-        assertEquals(false, noIncludes?.includesPocket)
     }
 
     @Test
@@ -297,6 +293,7 @@ class ManifestParserTest {
     @Test
     fun `executables that do not conform are rejected`() {
         rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}""", ExecutableKind.WORKER)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}""", ExecutableKind.WORKER)
         // A record read from worker.<base> that declares kind=app must not load as a worker.
         rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.WORKER)
         rejectsExecutable("""{"${'$'}v":2,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.APP)

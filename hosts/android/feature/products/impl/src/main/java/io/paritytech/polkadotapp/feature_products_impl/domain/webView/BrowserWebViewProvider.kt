@@ -22,7 +22,6 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
-import io.paritytech.polkadotapp.feature_products_impl.data.bundled.ProductContents
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.firstPartyOrigin
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider

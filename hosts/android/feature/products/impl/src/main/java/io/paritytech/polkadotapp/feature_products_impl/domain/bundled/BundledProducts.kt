@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
+import io.paritytech.polkadotapp.common.utils.flatten
+import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.mapError
 import io.paritytech.polkadotapp.feature_dotns_api.domain.ArchiveFiles
+import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -9,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.RootManifest
+import timber.log.Timber
 import uniffi.truapi.BundleEntry
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
@@ -45,11 +50,14 @@ class BundledProducts @Inject internal constructor(
 
     /**
      * [entry] resolved from its files as a published product resolves from dotNS: the root manifest it ships names it,
-     * else its id does, and a manifest the parser rejects fails the resolve.
+     * else its id does. A root manifest the parser rejects fails the resolve; a Worker manifest that is missing or
+     * rejected leaves the product without a Worker.
      */
-    fun resolved(entry: BundleEntry): Result<ResolvedProduct> = runCatching {
-        val root = files.readText("${entry.path}/$ROOT_MANIFEST")?.let { manifestParser.parseRoot(it).getOrThrow() }
-            ?: RootManifest(displayName = entry.productId.value, description = null, icon = null)
+    fun resolved(entry: BundleEntry): Result<ResolvedProduct> =
+        // runCatching guards reading the files; a manifest the parser rejects fails as a Result.
+        runCatching { rootManifest(entry).map { root -> resolvedProduct(entry, root) } }.flatten()
+
+    private fun resolvedProduct(entry: BundleEntry, root: RootManifest) =
         ResolvedProduct(
             product = Product(id = entry.productId, name = root.displayName, icon = root.icon),
             description = root.description,
@@ -59,12 +67,25 @@ class BundledProducts @Inject internal constructor(
                 worker = if (entry.hasWorker) worker(entry) else null,
             ),
         )
+
+    private fun rootManifest(entry: BundleEntry): Result<RootManifest> {
+        val text = files.readText("${entry.path}/$ROOT_MANIFEST")
+            ?: return Result.success(RootManifest(displayName = entry.productId.value, description = null, icon = null))
+
+        return manifestParser.parseRoot(text)
+            .logFailure("Rejected bundled product manifest for ${entry.productId.value}")
+            .mapError { ProductResolutionError.MalformedManifest }
     }
 
-    private fun worker(entry: BundleEntry): ProductExecutable.Worker {
-        val manifest = requireNotNull(workerManifest(entry)) { "Bundled ${entry.productId.value} ships no Worker manifest" }
-        return manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(entry.workerHost)).getOrThrow()
-            as ProductExecutable.Worker
+    private fun worker(entry: BundleEntry): ProductExecutable.Worker? {
+        val manifest = workerManifest(entry) ?: run {
+            Timber.w("Bundled %s ships no Worker manifest", entry.productId.value)
+            return null
+        }
+
+        return manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(entry.workerHost))
+            .logFailure("Rejected bundled Worker manifest for ${entry.productId.value}")
+            .getOrNull() as? ProductExecutable.Worker
     }
 
     private companion object {

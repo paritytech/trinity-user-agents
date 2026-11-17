@@ -66,7 +66,7 @@ class RealResolveProductUseCaseTest {
     }
 
     @Test
-    fun `a bundled Worker manifest the parser rejects fails the resolve`() = runBlocking {
+    fun `a bundled Worker manifest the parser rejects leaves the product without a Worker`() = runBlocking {
         val resolved = useCase(
             mapOf(
                 "bundled-products/$base/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker"}""",
@@ -74,7 +74,8 @@ class RealResolveProductUseCaseTest {
             ),
         ).resolve(productId)
 
-        assertTrue(resolved.isFailure)
+        assertEquals(null, resolved.getOrNull()?.executables?.worker)
+        assertTrue(resolved.isSuccess)
     }
 
     private fun appJson() = """{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}"""

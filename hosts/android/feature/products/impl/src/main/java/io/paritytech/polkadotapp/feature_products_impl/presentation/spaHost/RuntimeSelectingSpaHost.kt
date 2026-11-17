@@ -6,11 +6,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRunt
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
-import io.paritytech.polkadotapp.feature_products_impl.domain.browser.needsTrUAPI
 import javax.inject.Inject
 
 /**
- * Picks the host runtime per session: the mode is read at [createSession], so
+ * Picks the host runtime per session from [ProductRuntimeSettings]: the mode is read at [createSession], so
  * flipping the debug toggle affects the next session, never a live one.
  */
 class RuntimeSelectingSpaHost @Inject constructor(
@@ -21,8 +20,8 @@ class RuntimeSelectingSpaHost @Inject constructor(
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
     override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
-        val source = productSources.of(initialUrl)
-        return if (runtimeSettings.isTrUAPIRuntimeEnabled() || source.needsTrUAPI) {
+        val source = productSources.ofSpaPage(initialUrl)
+        return if (runtimeSettings.isTrUAPIRuntimeEnabledFor(source)) {
             truapi.createSession(initialUrl, underCard, source)
         } else {
             native.createSession(initialUrl)
