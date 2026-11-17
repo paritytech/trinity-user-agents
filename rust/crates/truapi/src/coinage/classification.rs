@@ -436,7 +436,7 @@ fn export_status(asset: &Asset, view: &Snapshot, observation: Option<&Observatio
 		}
 	}
 	match observation.and_then(|observation| observation.value.as_ref()) {
-		Some(Read::Coin { now: None, emptied_by: Some(by) }) => ExportStatus::Claimed { stable: true, by: *by },
+		Some(Read::Coin { now: None, emptied_by: Some(emptied) }) => ExportStatus::Claimed { stable: emptied.stable, by: emptied.by },
 		_ => ExportStatus::AwaitingPayee,
 	}
 }

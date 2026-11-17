@@ -302,6 +302,7 @@ pub fn entry_read(ring: u32) -> Read {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 
