@@ -4,34 +4,27 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Rect
-import android.net.Uri
 import android.os.Build
 import android.os.Message
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
-import android.view.View
-import android.view.ViewGroup
-import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.core.view.ViewCompat
-import androidx.webkit.WebViewCompat
-import androidx.webkit.WebViewFeature
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayPage
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayWebLayout
 import timber.log.Timber
-import java.io.ByteArrayInputStream
 
 /**
  * A transparent webview where the composer would be, showing the product's own page.
  *
  * The page reports through `window.ProductFooter`: an action goes to the product as a press in the room footer, a haptic
- * plays, and `ready` sizes and reveals it. The webview stays within the footer.
+ * plays, `sendOverlay` shows another of the product's pages over the whole screen for a moment, and `ready` sizes and
+ * reveals it. The webview stays within the footer; the overlay is a webview of its own.
  */
 @SuppressLint("ViewConstructor")
 class ProductRoomFooterWebLayout(
@@ -43,9 +36,9 @@ class ProductRoomFooterWebLayout(
     private val onHeight: (Int) -> Unit,
     private val onRevealed: () -> Unit = {},
 ) : FrameLayout(context) {
-    private val origin = ProductRoomFooterWebPage.origin(productId)
     private var webView: WebView = createWebView()
     private var isRevealed = false
+    private var overlay: ProductOverlayWebLayout? = null
     private val revealFallback = Runnable { reveal() }
 
     init {
@@ -64,7 +57,7 @@ class ProductRoomFooterWebLayout(
 
     fun release() {
         removeCallbacks(revealFallback)
-        destroy(webView)
+        destroyProductPage(webView)
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
@@ -77,11 +70,28 @@ class ProductRoomFooterWebLayout(
         when (message) {
             is ProductFooterMessage.Action -> onAction(message)
             is ProductFooterMessage.Haptic -> playHaptic(message.style)
+            is ProductFooterMessage.SendOverlay -> showOverlay(message.path)
             is ProductFooterMessage.Ready -> {
                 ProductRoomFooterWebPage.height(message.height)?.let(onHeight)
                 reveal()
             }
         }
+    }
+
+    /**
+     * Shows the product's page at [path] over the screen, one at a time. It outlives this footer: a footer the product
+     * replaces mid-effect does not cut it short, and it always ends with its page or at its limit.
+     */
+    private fun showOverlay(path: String) {
+        if (overlay?.isShowing == true) {
+            Timber.d("Web footer of %s refused an overlay: one is already showing", productId)
+            return
+        }
+        val url = ProductOverlayPage.url(path, productId) ?: run {
+            Timber.w("Web footer of %s refused an overlay that is no page of the product: %s", productId, path)
+            return
+        }
+        overlay = ProductOverlayWebLayout.show(this, productId, url, content)
     }
 
     private fun reveal() {
@@ -102,33 +112,10 @@ class ProductRoomFooterWebLayout(
         performHapticFeedback(constant)
     }
 
-    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
+    @SuppressLint("ClickableViewAccessibility")
     private fun createWebView(): WebView = WebView(context).apply {
-        setBackgroundColor(Color.TRANSPARENT)
+        applyProductPageSettings()
         alpha = 0f
-        isVerticalScrollBarEnabled = false
-        isHorizontalScrollBarEnabled = false
-        overScrollMode = View.OVER_SCROLL_NEVER
-        isLongClickable = false
-        setOnLongClickListener { true }
-        isHapticFeedbackEnabled = false
-        settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = false
-            allowFileAccess = false
-            allowContentAccess = false
-            javaScriptCanOpenWindowsAutomatically = false
-            setSupportMultipleWindows(false)
-            setGeolocationEnabled(false)
-            setSupportZoom(false)
-            builtInZoomControls = false
-            displayZoomControls = false
-            mediaPlaybackRequiresUserGesture = true
-            // The slot's height is the product's, so the page lays its text out for that height. The system font
-            // scale would otherwise grow the text past it (two lines at 2.0x no longer fit the pill), and iOS does
-            // not scale the page either. Screen readers still read the page's label.
-            textZoom = 100
-        }
         // Parents that would take the drag for a scroll or a swipe never get to intercept one that starts here.
         setOnTouchListener { view, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) view.parent?.requestDisallowInterceptTouchEvent(true)
@@ -136,69 +123,12 @@ class ProductRoomFooterWebLayout(
         }
         webViewClient = FooterWebViewClient()
         webChromeClient = FooterChromeClient()
-        installBridge(this)
-    }
-
-    private fun installBridge(view: WebView) {
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            // Injected only into documents of the product's origin; the listener also sees which frame posted.
-            WebViewCompat.addWebMessageListener(view, ProductFooterMessage.BRIDGE_NAME, setOf(origin)) { _, message, sourceOrigin, isMainFrame, _ ->
-                receive(message.data, sourceOrigin, isMainFrame)
-            }
-        } else {
-            // No frame can host a sender here: navigation stays on the product's origin and the document's CSP refuses
-            // iframes, so the posting document is the main frame, which is checked against the origin on the UI thread.
-            view.addJavascriptInterface(LegacyBridge(), ProductFooterMessage.BRIDGE_NAME)
+        ProductPageBridge.install(this, ProductFooterMessage.BRIDGE_NAME, productId, LABEL) { data ->
+            ProductFooterMessage.parse(data)?.let(::handle) ?: Timber.d("Web footer of %s dropped an unreadable message", productId)
         }
     }
 
-    private fun receive(data: String?, sourceOrigin: Uri?, isMainFrame: Boolean) {
-        val fromProductPage = isMainFrame && sourceOrigin?.toString()?.trimEnd('/').equals(origin, ignoreCase = true)
-        if (!fromProductPage) {
-            Timber.w("Web footer of %s dropped a message from outside the product page", productId)
-            return
-        }
-        val parsed = data?.let(ProductFooterMessage::parse) ?: run {
-            Timber.d("Web footer of %s dropped an unreadable message", productId)
-            return
-        }
-        handle(parsed)
-    }
-
-    private inner class LegacyBridge {
-        @JavascriptInterface
-        fun postMessage(data: String?) {
-            post {
-                val url = webView.url
-                val sourceOrigin = url?.takeIf { ProductRoomFooterWebPage.isProductOrigin(it, productId) }?.let { Uri.parse(origin) }
-                receive(data, sourceOrigin, isMainFrame = true)
-            }
-        }
-    }
-
-    private inner class FooterWebViewClient : WebViewClient() {
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val url = request.url.toString()
-            val allowed = ProductRoomFooterWebPage.isAllowedNavigation(url, productId)
-            if (!allowed) Timber.w("Web footer of %s refused to leave the product origin for %s", productId, url)
-            return !allowed
-        }
-
-        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-            val url = request.url
-            if (!ProductRoomFooterWebPage.isProductOrigin(url.toString(), productId)) {
-                Timber.w("Web footer of %s refused a request off the product origin: %s", productId, url)
-                return refusedResponse()
-            }
-            // A missing footer page must stay missing, not fall back to the product's SPA index.
-            if (request.isForMainFrame) {
-                val archive = content.resolveHostFile(url)
-                if (content.resolveFile(archive, url.path.orEmpty().removePrefix("/")) == null) return refusedResponse()
-            }
-            // Nothing on the product's origin is ever fetched from the network.
-            return content.shouldInterceptRequest(view, request) ?: refusedResponse()
-        }
-
+    private inner class FooterWebViewClient : ProductPageWebViewClient(productId, content, LABEL) {
         override fun onPageFinished(view: WebView, url: String?) {
             if (view === webView) reveal()
         }
@@ -216,7 +146,7 @@ class ProductRoomFooterWebLayout(
     private fun replaceDeadWebView() {
         val dead = webView
         removeView(dead)
-        destroy(dead)
+        destroyProductPage(dead)
         webView = createWebView()
         addView(webView, webViewLayoutParams())
         isRevealed = false
@@ -224,20 +154,10 @@ class ProductRoomFooterWebLayout(
         postDelayed(revealFallback, REVEAL_FALLBACK_MILLIS)
     }
 
-    private fun destroy(view: WebView) {
-        view.stopLoading()
-        view.webViewClient = WebViewClient()
-        (view.parent as? ViewGroup)?.removeView(view)
-        view.destroy()
-    }
-
     private fun webViewLayoutParams() = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.BOTTOM)
 
-    private fun refusedResponse() = WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0))).apply {
-        setStatusCodeAndReasonPhrase(404, "Not Found")
-    }
-
     private companion object {
+        const val LABEL = "Web footer"
         const val REVEAL_FALLBACK_MILLIS = 2_000L
         const val REVEAL_ANIMATION_MILLIS = 150L
     }

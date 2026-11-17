@@ -125,6 +125,14 @@ struct ProductFooterMessageTests {
         #expect(ProductFooterMessage(body: ["kind": "action", "actionId": long] as [String: Any]) == nil)
     }
 
+    @Test func anOverlayPathUpToTheLimitIsRead() {
+        let path = String(repeating: "p", count: ProductFooterMessage.overlayPathMaxBytes)
+
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay", "path": path] as [String: Any]) ==
+            .sendOverlay(path: path))
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay", "path": path + "p"] as [String: Any]) == nil)
+    }
+
     @Test func anOversizedPayloadIsDropped() {
         let payload = String(repeating: "a", count: ProductFooterMessage.payloadMaxBytes + 1)
 
@@ -137,6 +145,9 @@ struct ProductFooterMessageTests {
         #expect(ProductFooterMessage(body: ["kind": "haptic", "style": "success"] as [String: Any]) ==
             .haptic(style: "success"))
         #expect(ProductFooterMessage(body: ["kind": "haptic"] as [String: Any]) == .haptic(style: "success"))
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay",
+                                            "path": "confetti-overlay.html?seed=7"] as [String: Any]) ==
+                .sendOverlay(path: "confetti-overlay.html?seed=7"))
         #expect(ProductFooterMessage(body: ["kind": "ready", "height": 104] as [String: Any]) == .ready(height: 104))
         #expect(ProductFooterMessage(body: ["kind": "ready"] as [String: Any]) == .ready(height: nil))
     }
@@ -145,6 +156,9 @@ struct ProductFooterMessageTests {
         #expect(ProductFooterMessage(body: ["kind": "navigate", "url": "https://evil.invalid"] as [String: Any]) == nil)
         // The footer never stretches over the chat: an overlay is not a footer message.
         #expect(ProductFooterMessage(body: ["kind": "overlay", "on": true] as [String: Any]) == nil)
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay"] as [String: Any]) == nil)
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay", "path": " "] as [String: Any]) == nil)
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay", "path": 7] as [String: Any]) == nil)
         #expect(ProductFooterMessage(body: 42) == nil)
         #expect(ProductFooterMessage(body: "not json") == nil)
         #expect(ProductFooterMessage(body: ["actionId": "go"] as [String: Any]) == nil)
