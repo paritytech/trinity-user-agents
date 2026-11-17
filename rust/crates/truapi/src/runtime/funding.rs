@@ -433,11 +433,8 @@ pub struct FundingRegistry {
 	/// The number the next provider frame takes, so a frame that replaced
 	/// another outlives it.
 	next_frame: AtomicU64,
-	/// Whether the host asked for funding events. Until it does, the core
-	/// builds none and keeps nothing for them.
-	events: AtomicBool,
 	/// What funding telemetry keeps across facts. Taken after `held` when
-	/// both are, never before, and with no other lock taken under it.
+	/// both are, never before.
 	telemetry: Mutex<Telemetry>,
 }
 
@@ -470,12 +467,7 @@ impl FundingRegistry {
 	/// Install the host's funding surface. Set-once; returns whether this call
 	/// installed it.
 	pub fn install_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
-		let events = platform.funding_events_enabled();
-		let installed = self.platform.set(platform).is_ok();
-		if installed {
-			self.events.store(events, Ordering::Release);
-		}
-		installed
+		self.platform.set(platform).is_ok()
 	}
 
 	/// The host's funding surface, when one is installed.
@@ -837,20 +829,18 @@ impl FundingRegistry {
 		target: FrameTarget,
 	) -> FrameTicket<'_> {
 		let frame = self.next_frame.fetch_add(1, Ordering::Relaxed);
+		self.telemetry().frame_requested(intent, frame, target, current_unix_millis());
 		let (sender, receiver) = oneshot::channel();
 		let replaced = self.lock_frames().entry(intent.to_string()).or_default().waiting.replace((
 			frame,
 			provider.clone(),
 			sender,
 		));
-		let replacing = replaced.is_some();
+		let requested = FundingFact::FrameRequested { target, replaced: replaced.is_some() };
 		if let Some((_, _, replaced)) = replaced {
 			let _ = replaced.send(FrameGate::Answer(FundingFrameOutcome::Dismissed));
 		}
-		self.report_facts(intent, None, None, |telemetry| {
-			telemetry.frame_requested(frame, target, current_unix_millis());
-			vec![FundingFact::FrameRequested { target, replaced: replacing }]
-		});
+		self.report_facts(intent, None, None, vec![requested]);
 		// The payment may have moved before the frame was held, when
 		// `close_moved_frame` found nothing to drop.
 		if self.frame_done(intent) {
@@ -973,10 +963,10 @@ impl FundingRegistry {
 		};
 		self.retell(intent);
 		let (answered, opened) = answered;
-		if let Some(number) = opened {
-			self.report_facts(intent, None, None, |telemetry| {
-				Vec::from_iter(telemetry.frame_opened(number, current_unix_millis()))
-			});
+		let opened =
+			opened.and_then(|number| self.telemetry().frame_opened(number, current_unix_millis()));
+		if let Some((intent, fact)) = opened {
+			self.report_facts(&intent, None, None, vec![fact]);
 		}
 		answered
 	}
@@ -1103,7 +1093,7 @@ impl FundingRegistry {
 		intent: &str,
 	) -> Result<CancelOutcome, FundingSessionError> {
 		let target = intent.to_string();
-		let before = self.events_on().then(|| self.get(intent)).flatten();
+		let before = self.get(intent);
 		let (outcome, provider) = self
 			.commit(now_ms, move |draft| {
 				if draft.presenting.contains_key(&target) {
@@ -1124,16 +1114,15 @@ impl FundingRegistry {
 			})
 			.await?;
 		if let Some(before) = before {
-			self.report_facts(intent, None, None, |telemetry| {
-				if outcome == CancelOutcome::Requested {
-					telemetry.cancel_asked(intent, now_ms);
-				}
-				vec![FundingFact::CancelRequested {
-					result: outcome,
-					status_at: super::funding_telemetry::status_name(&before.status(now_ms)),
-					money_moved: before.money_moved(),
-				}]
-			});
+			if outcome == CancelOutcome::Requested {
+				self.telemetry().cancel_asked(intent, now_ms);
+			}
+			let asked = FundingFact::CancelRequested {
+				result: outcome,
+				status_at: super::funding_telemetry::status_name(&before.status(now_ms)),
+				money_moved: before.money_moved(),
+			};
+			self.report_facts(intent, None, None, vec![asked]);
 		}
 		if let (CancelOutcome::Requested, Some(provider)) = (outcome, provider) {
 			self.call(
@@ -1166,10 +1155,9 @@ impl FundingRegistry {
 				((confirmation, call), vec![target])
 			})
 			.await?;
-		if self.events_on() && self.get(intent).is_some() {
-			self.report_facts(intent, None, None, |_| {
-				vec![FundingFact::CancelConfirmed { result: confirmation.clone() }]
-			});
+		if self.get(intent).is_some() {
+			let result = confirmation.clone();
+			self.report_facts(intent, None, None, vec![FundingFact::CancelConfirmed { result }]);
 		}
 		if let Some((provider, call)) = call {
 			self.call(&provider, vec![ProviderCall::Cancel(intent.to_string(), call)]);
@@ -1362,9 +1350,7 @@ impl FundingRegistry {
 			let transitions: Vec<_> = draft
 				.sessions
 				.values()
-				.filter(|session| {
-					self.events_on() && held.sessions.get(&session.intent) != Some(*session)
-				})
+				.filter(|session| held.sessions.get(&session.intent) != Some(*session))
 				.map(|session| (held.sessions.get(&session.intent).cloned(), session.clone()))
 				.collect();
 			let Draft { sessions, presenting, repacked, .. } = draft;
@@ -1752,16 +1738,10 @@ impl FundingRegistry {
 				if !taken {
 					tracing::debug!(%intent, "a provider's worker did not take its session");
 				}
-				if self.events_on() &&
-					let Some(session) = self.get(&intent)
-				{
-					self.report_facts(&intent, Some(&session), None, |telemetry| {
-						Vec::from_iter(telemetry.provider_took(
-							&session,
-							taken,
-							current_unix_millis(),
-						))
-					});
+				if let Some(session) = self.get(&intent) {
+					let took =
+						self.telemetry().provider_took(&session, taken, current_unix_millis());
+					self.report_facts(&intent, Some(&session), None, Vec::from_iter(took));
 				}
 				return taken;
 			},
@@ -1770,9 +1750,9 @@ impl FundingRegistry {
 					within(CALL_TIMEOUT, link.cancel(intent.clone())).await.flatten()
 				else {
 					tracing::debug!(%intent, "a provider's worker did not answer a cancel");
-					self.report_facts(&intent, None, None, |telemetry| {
-						Vec::from_iter(telemetry.cancel_unanswered(&intent, current_unix_millis()))
-					});
+					let unanswered =
+						self.telemetry().cancel_unanswered(&intent, current_unix_millis());
+					self.report_facts(&intent, None, None, Vec::from_iter(unanswered));
 					return false;
 				};
 				let target = intent.clone();
@@ -1960,41 +1940,28 @@ impl FundingRegistry {
 		lock(&self.holding)
 	}
 
-	/// Whether the host asked for funding events, which it does through
-	/// [`FundingPlatform::funding_events_enabled`].
-	pub(crate) fn events_on(&self) -> bool {
-		self.events.load(Ordering::Acquire)
+	/// What funding telemetry keeps, for the facts the registry's callers
+	/// report.
+	pub(crate) fn telemetry(&self) -> MutexGuard<'_, Telemetry> {
+		lock(&self.telemetry)
 	}
 
-	/// What funding telemetry keeps, or `None` while the host has not asked
-	/// for funding events, when nothing is kept.
-	pub(crate) fn telemetry(&self) -> Option<MutexGuard<'_, Telemetry>> {
-		self.events_on().then(|| lock(&self.telemetry))
-	}
-
-	/// Report the facts `facts` builds about session `intent` to the host,
-	/// tagged from `session`, or from the session the registry holds when
-	/// `None`, with the route `route` asks when given. `facts` runs only
-	/// while the host asked for funding events, under the telemetry lock, so
-	/// it takes no other lock. Called with no lock held, as the host may
-	/// call back in.
+	/// Report `facts` about session `intent` to the host, tagged from
+	/// `session`, or from the session the registry holds when `None`, with
+	/// the route `route` asks when given. Called with no lock held, as the
+	/// host may call back in.
 	pub(crate) fn report_facts(
 		&self,
 		intent: &str,
 		session: Option<&FundingSession>,
 		route: Option<&FundingQuoteAsk>,
-		facts: impl FnOnce(&mut Telemetry) -> Vec<FundingFact>,
+		facts: Vec<FundingFact>,
 	) {
-		let Some(platform) = self.platform().filter(|_| self.events_on()) else {
+		if facts.is_empty() {
 			return;
-		};
-		let (facts, session_ref) = {
-			let mut telemetry = lock(&self.telemetry);
-			let facts = facts(&mut telemetry);
-			if facts.is_empty() {
-				return;
-			}
-			(facts, telemetry.session_ref(intent))
+		}
+		let Some(platform) = self.platform() else {
+			return;
 		};
 		let held = match session {
 			Some(_) => None,
@@ -2011,6 +1978,7 @@ impl FundingRegistry {
 			},
 			current_unix_millis(),
 		);
+		let session_ref = self.telemetry().session_ref(intent);
 		for fact in facts {
 			let event = fact.event(&common, &session_ref);
 			match crate::funding_events::check(&event) {
@@ -2028,20 +1996,24 @@ impl FundingRegistry {
 		taking_longer: Vec<FundingSession>,
 		now_ms: u64,
 	) {
+		if self.platform.get().is_none() {
+			return;
+		}
 		for session in taking_longer {
-			self.report_facts(&session.intent, Some(&session), None, |telemetry| {
-				let flag = super::funding_telemetry::Flag::TakingLonger;
-				Vec::from_iter(telemetry.flagged(&session, flag, now_ms))
-			});
+			let fact = self.telemetry().flagged(
+				&session,
+				super::funding_telemetry::Flag::TakingLonger,
+				now_ms,
+			);
+			self.report_facts(&session.intent, Some(&session), None, Vec::from_iter(fact));
 		}
 		for (before, after) in changed {
-			self.report_facts(&after.intent, Some(&after), None, |telemetry| {
-				let facts = telemetry.changed(before.as_ref(), &after, now_ms);
-				if facts.iter().any(|fact| matches!(fact, FundingFact::Ended(_))) {
-					telemetry.forget(&after.intent);
-				}
-				facts
-			});
+			let facts = self.telemetry().changed(before.as_ref(), &after, now_ms);
+			let ended = facts.iter().any(|fact| matches!(fact, FundingFact::Ended(_)));
+			self.report_facts(&after.intent, Some(&after), None, facts);
+			if ended {
+				self.telemetry().forget(&after.intent);
+			}
 		}
 	}
 }
@@ -2086,10 +2058,13 @@ impl FrameTicket<'_> {
 
 impl Drop for FrameTicket<'_> {
 	fn drop(&mut self) {
-		let (frame, shown) = (self.frame, self.shown);
-		self.registry.report_facts(&self.intent, None, None, |telemetry| {
-			Vec::from_iter(telemetry.frame_closed(frame, shown, current_unix_millis()))
-		});
+		let closed =
+			self.registry
+				.telemetry()
+				.frame_closed(self.frame, self.shown, current_unix_millis());
+		if let Some((intent, fact)) = closed {
+			self.registry.report_facts(&intent, None, None, vec![fact]);
+		}
 		let dropped_waiting = {
 			let mut frames = self.registry.lock_frames();
 			let Some(session) = frames.get_mut(&self.intent) else {
@@ -2510,23 +2485,18 @@ impl RuntimeServices {
 				});
 			}
 		}
-		let chosen = registry
-			.events_on()
-			.then(|| (self.funding_quotes().list(intent), choice.clone()));
+		let shown = self.funding_quotes().list(intent);
+		let chosen = super::funding_quotes::chosen_fact(
+			session.direction,
+			shown.as_ref(),
+			provider_id,
+			&choice,
+		);
 		let assigned = registry
 			.select_provider(current_unix_millis(), intent, provider_id, choice)
 			.await?;
 		if assigned {
-			if let Some((shown, choice)) = chosen {
-				registry.report_facts(intent, None, None, |_| {
-					vec![super::funding_quotes::chosen_fact(
-						session.direction,
-						shown.as_ref(),
-						provider_id,
-						&choice,
-					)]
-				});
-			}
+			registry.report_facts(intent, None, None, vec![chosen]);
 			// The others' answers can no longer be used, so the quotes still
 			// asked of them stop and let their workers go.
 			self.funding_quotes().end(intent);
@@ -2775,10 +2745,13 @@ impl RuntimeServices {
 		if !presented {
 			return Err(OpenFundingError::AlreadyExists);
 		}
-		registry.report_facts(&session.intent, Some(&session), None, |telemetry| {
-			telemetry.overlay_opened(&session.intent, now_ms);
-			vec![FundingFact::OverlayOpened { amount_preset: amount.is_some() }]
-		});
+		registry.telemetry().overlay_opened(&session.intent, now_ms);
+		registry.report_facts(
+			&session.intent,
+			Some(&session),
+			None,
+			vec![FundingFact::OverlayOpened { amount_preset: amount.is_some() }],
+		);
 		// The overlay runs on its own task, so nobody has to wait on it: the
 		// task starts or discards the session, and watchers hear the outcome.
 		let (finished, outcome) = oneshot::channel();
@@ -2810,26 +2783,29 @@ impl RuntimeServices {
 	) {
 		use super::funding_telemetry::{Furthest, OverlayOutcome};
 		let registry = self.funding();
-		if !registry.events_on() {
-			return;
-		}
-		let assigned = registry.get(intent).is_some_and(|session| session.provider_id.is_some());
-		let selected = registry.selection(intent).is_some();
+		let (overlay_ms, quoted) =
+			registry.telemetry().overlay_closed(intent, current_unix_millis());
+		let furthest = if registry.get(intent).is_some_and(|session| session.provider_id.is_some())
+		{
+			Furthest::Provider
+		} else if quoted {
+			Furthest::Quotes
+		} else if registry.selection(intent).is_some() {
+			Furthest::Rail
+		} else {
+			Furthest::Amount
+		};
 		let outcome = match presented {
 			Ok(FundingPresentOutcome::Started) => OverlayOutcome::Started,
 			Ok(FundingPresentOutcome::Dismissed) => OverlayOutcome::Dismissed,
 			Err(_) => OverlayOutcome::Failed,
 		};
-		registry.report_facts(intent, None, None, |telemetry| {
-			let (overlay_ms, quoted) = telemetry.overlay_closed(intent, current_unix_millis());
-			let furthest = match (assigned, quoted, selected) {
-				(true, _, _) => Furthest::Provider,
-				(false, true, _) => Furthest::Quotes,
-				(false, false, true) => Furthest::Rail,
-				(false, false, false) => Furthest::Amount,
-			};
-			vec![FundingFact::OverlayClosed { outcome, furthest, overlay_ms }]
-		});
+		registry.report_facts(
+			intent,
+			None,
+			None,
+			vec![FundingFact::OverlayClosed { outcome, furthest, overlay_ms }],
+		);
 	}
 
 	/// Show the overlay for presented `session`, then start or discard it by
@@ -2873,9 +2849,7 @@ impl RuntimeServices {
 			},
 			outcome => {
 				if registry.discard(&session.intent).await {
-					if let Some(mut telemetry) = registry.telemetry() {
-						telemetry.forget(&session.intent);
-					}
+					registry.telemetry().forget(&session.intent);
 					return Err(match outcome {
 						Ok(_) => OpenFundingError::Dismissed,
 						Err(error) => OpenFundingError::Present(error),

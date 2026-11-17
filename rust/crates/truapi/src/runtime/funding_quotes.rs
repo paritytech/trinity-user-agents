@@ -346,9 +346,12 @@ impl RuntimeServices {
 			self.funding().get(intent).map_or(ask.direction, |session| session.direction);
 		let ask = FundingQuoteAsk { direction, ..ask };
 		let (request_id, registration) = self.funding_quotes().start(intent, ask.clone());
-		self.funding().report_facts(intent, None, Some(&ask), |telemetry| {
-			Vec::from_iter(telemetry.quotes_requested(intent, request_id, current_unix_millis()))
-		});
+		let superseded =
+			self.funding()
+				.telemetry()
+				.quotes_requested(intent, request_id, current_unix_millis());
+		self.funding()
+			.report_facts(intent, None, Some(&ask), Vec::from_iter(superseded));
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
@@ -374,9 +377,7 @@ impl RuntimeServices {
 			None => self.detected_funding_country().await,
 		};
 		let ask = FundingQuoteAsk { country, ..ask };
-		if let Some(mut telemetry) = self.funding().telemetry() {
-			telemetry.asked_in(&intent, Region::of(ask.country.as_deref()));
-		}
+		self.funding().telemetry().asked_in(&intent, Region::of(ask.country.as_deref()));
 		let mut rows: Vec<FundingQuoteRow> = Vec::new();
 		loop {
 			// The providers changing starts the next round at once, so one
@@ -536,12 +537,15 @@ impl RuntimeServices {
 		if !self.funding_quotes().publish(intent, list, quotable) {
 			return false;
 		}
-		if self.funding().events_on() {
+		let settled = self.funding().telemetry().quotes_shown(intent, list, current_unix_millis());
+		if settled.is_some() {
 			let asked = self.funding_quotes().asked(intent);
-			self.funding()
-				.report_facts(intent, Some(&session), asked.as_ref(), |telemetry| {
-					Vec::from_iter(telemetry.quotes_shown(intent, list, current_unix_millis()))
-				});
+			self.funding().report_facts(
+				intent,
+				Some(&session),
+				asked.as_ref(),
+				Vec::from_iter(settled),
+			);
 		}
 		if let Some(platform) = self.funding().platform() {
 			platform.funding_quotes_changed(intent.to_string(), Some(list.clone()));

@@ -752,8 +752,6 @@ pub struct FundingCallbackPlatform {
 	pub funding: Arc<dyn NativeFundingCallbacks>,
 	/// The core database directory, which holds the resume marker.
 	pub database_directory: std::path::PathBuf,
-	/// Whether the host's configuration turned funding events on.
-	pub events: bool,
 }
 
 #[async_trait::async_trait]
@@ -804,10 +802,6 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		_quotes: Option<crate::platform::FundingQuoteList>,
 	) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
-	}
-
-	fn funding_events_enabled(&self) -> bool {
-		self.events
 	}
 
 	fn funding_event(&self, event: crate::platform::FundingEvent) {

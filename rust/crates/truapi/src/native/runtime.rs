@@ -82,8 +82,6 @@ pub struct NativeTrUApiHostRuntime {
 	pocket: PocketCards,
 	/// The core database directory, which holds the funding resume marker.
 	database_directory: std::path::PathBuf,
-	/// Whether the host turned funding events on in its configuration.
-	funding_events: bool,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
 	_host_sink: crate::logging::HostSinkRegistration,
 }
@@ -196,7 +194,6 @@ impl NativeTrUApiHostRuntime {
 			balance: OnceLock::new(),
 			pocket,
 			database_directory: runtime_config.database_directory.clone(),
-			funding_events: runtime_config.funding_events,
 			_host_sink: host_sink,
 		}))
 	}
@@ -322,7 +319,6 @@ impl NativeTrUApiHostRuntime {
 		let platform = Arc::new(FundingCallbackPlatform {
 			funding: callbacks,
 			database_directory: self.database_directory.clone(),
-			events: self.funding_events,
 		});
 		self.runtime.set_funding_feed(platform.clone()) &&
 			self.runtime.set_funding_platform(platform)
