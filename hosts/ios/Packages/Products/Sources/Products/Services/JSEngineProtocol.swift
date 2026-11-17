@@ -44,6 +44,10 @@ public protocol JSEngineProtocol: AnyObject {
     /// stays unusable, and only a fresh one runs its scripts again. A death during
     /// `initialize` is reported by `initialize` throwing instead.
     func onTermination(_ handler: @escaping @Sendable () -> Void) async
+
+    /// Runs `handler` each time the engine's page commits a main-frame navigation: the new document has
+    /// replaced the old one. An engine with no page to show has nothing to report.
+    func onMainFrameCommit(_ handler: @escaping @Sendable () -> Void) async
 }
 
 public extension JSEngineProtocol {
@@ -52,4 +56,6 @@ public extension JSEngineProtocol {
     }
 
     func onTermination(_: @escaping @Sendable () -> Void) async {}
+
+    func onMainFrameCommit(_: @escaping @Sendable () -> Void) async {}
 }

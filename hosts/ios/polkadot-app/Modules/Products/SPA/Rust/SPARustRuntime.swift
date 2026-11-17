@@ -125,6 +125,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
             openTap: openTap
         ))
 
+        // Before the disposed check below, so no suspension sits between it and the return.
+        await observeFirstVisibleCommit(of: engine)
+
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
         guard !disposed else {
@@ -136,7 +139,6 @@ extension SPARustRuntime: SPARuntimeProtocol {
         monitor.start()
         engineMonitor = monitor
         self.engine = engine
-        observeFirstVisibleCommit(of: engine)
 
         logger.debug("SPA(rust): runtime started for \(configuration.page.host.name)")
 
@@ -260,10 +262,8 @@ private extension SPARustRuntime {
     }
 
     /// The clock is read where the commit happens, before the hop onto this actor.
-    func observeFirstVisibleCommit(of engine: JSEngineProtocol) {
-        guard let reporter = engine as? MainFrameCommitReporting else { return }
-
-        reporter.onMainFrameCommit = { [weak self] in
+    func observeFirstVisibleCommit(of engine: JSEngineProtocol) async {
+        await engine.onMainFrameCommit { [weak self] in
             let committedAtMilliseconds = HostEventClock.monotonicMilliseconds()
             Task { await self?.pageDidCommit(monotonicMilliseconds: committedAtMilliseconds) }
         }

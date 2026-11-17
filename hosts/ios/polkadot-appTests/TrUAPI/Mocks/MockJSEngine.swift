@@ -2,9 +2,7 @@ import Foundation
 import Products
 @testable import polkadot_app
 
-final class MockJSEngine: JSEngineProtocol, MainFrameCommitReporting, @unchecked Sendable {
-    var onMainFrameCommit: (@Sendable () -> Void)?
-
+final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     var evaluatedScripts: [String] = []
     private(set) var initializedScripts: [JSEngineScript] = []
     private(set) var destroyCallCount = 0
@@ -77,8 +75,14 @@ final class MockJSEngine: JSEngineProtocol, MainFrameCommitReporting, @unchecked
         handler?()
     }
 
+    private var mainFrameCommitHandler: (@Sendable () -> Void)?
+
+    func onMainFrameCommit(_ handler: @escaping @Sendable () -> Void) async {
+        mainFrameCommitHandler = handler
+    }
+
     /// Commits the main frame the way a web view does when its page first becomes visible.
     func commitMainFrame() {
-        onMainFrameCommit?()
+        mainFrameCommitHandler?()
     }
 }
