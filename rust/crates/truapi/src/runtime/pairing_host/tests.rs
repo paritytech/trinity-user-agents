@@ -716,12 +716,13 @@ fn installed_username(pairing_host: &PairingHost) -> Option<Option<String>> {
 
 /// After a wipe a stack keeps its id and its chains are new. A username read
 /// from the old chains names an account that may not exist on the new ones,
-/// so the stored session comes back at once without it, to be looked up
-/// again. A session stored before the core recorded runs keeps its username
-/// until a lookup answers, and so does one recorded in this run. Here the
-/// lookup fails, as on a device that is offline, so nothing is rewritten.
+/// so the session comes back at once without it, to be looked up again. A
+/// blob with nothing recorded, stored before the core recorded runs or kept by
+/// a host that hands it over itself, keeps its username until a lookup
+/// answers, and so does one recorded in this run. The stored and the external
+/// path agree, so a host that starts offline still shows the username.
 #[test]
-fn a_stored_session_comes_back_at_once_with_only_the_usernames_it_may_keep() {
+fn a_session_comes_back_at_once_with_only_the_usernames_it_may_keep() {
 	let (current, earlier) = current_and_earlier_stack();
 	let blob = alices_session_blob();
 	for (record, kept) in [
@@ -732,17 +733,17 @@ fn a_stored_session_comes_back_at_once_with_only_the_usernames_it_may_keep() {
 		let storage = Arc::new(MemoryCoreStorage::default());
 		store_session(&storage, &blob, record);
 
-		let pairing_host = pairing_host_on_unserved_asset_hub(storage.clone());
-		futures::executor::block_on(pairing_host.session().activate_stored_session())
+		let stored = pairing_host_on_unserved_asset_hub(storage.clone());
+		futures::executor::block_on(stored.session().activate_stored_session())
 			.expect("the stored session activates");
+		let external = pairing_host_on_unserved_asset_hub(storage);
+		futures::executor::block_on(external.session().activate_external_session(&blob))
+			.expect("the external session activates");
 
-		let stored = futures::executor::block_on(
-			test_storage(storage.as_ref()).read(CoreStorageKey::AuthSession),
-		)
-		.expect("memory storage reads");
+		let username = Some(kept.then(|| "alice".to_string()));
 		assert_eq!(
-			(installed_username(&pairing_host), stored),
-			(Some(kept.then(|| "alice".to_string())), Some(blob.clone())),
+			(installed_username(&stored), installed_username(&external)),
+			(username.clone(), username),
 			"kept: {kept}"
 		);
 	}
@@ -785,12 +786,13 @@ fn a_session_the_host_keeps_never_brings_back_a_username_from_before_a_wipe() {
 /// A session is installed without waiting for its usernames, which can take
 /// the whole lookup budget on a slow chain. A host that activates a session
 /// only to sign it out, or restores one after an update, must not wait on
-/// dotNS. Here no spawned task ever runs, so a lookup is never answered.
+/// dotNS, and neither must a session whose account has no username. Here no
+/// spawned task ever runs, so a lookup is never answered.
 #[test]
 fn activating_a_session_does_not_wait_for_its_usernames() {
-	let storage = Arc::new(MemoryCoreStorage::default());
-	store_session(&storage, &alices_session_blob(), None);
 	let blob = crate::host_logic::session::encode_persisted_session(&external_sso_session_info());
+	let storage = Arc::new(MemoryCoreStorage::default());
+	store_session(&storage, &blob, Some(usernames_record(&paseo_test_stack(), &blob)));
 	let platform =
 		Arc::new(StubPlatform { core_storage_override: Some(storage), ..StubPlatform::default() });
 	let never_run = Arc::new(Mutex::new(Vec::new()));

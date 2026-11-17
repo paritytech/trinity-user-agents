@@ -58,6 +58,26 @@ enum BlobUsernames {
 	Stale,
 }
 
+impl BlobUsernames {
+	/// The session to install from a blob whose usernames are `self`, and
+	/// whether its usernames are to be looked up once it is installed.
+	///
+	/// Nothing waits on dotNS: usernames the core vouches for are installed as
+	/// stored, and looked up only when there are none. Unrecorded ones, which
+	/// an install stored before runs were recorded or a host keeps itself, are
+	/// kept until a lookup answers. Stale ones are dropped.
+	fn session_to_install(self, session: SessionInfo) -> (SessionInfo, bool) {
+		match self {
+			Self::Current => {
+				let look_up = !session.has_username();
+				(session, look_up)
+			},
+			Self::Unrecorded => (session, true),
+			Self::Stale => (without_usernames(session), true),
+		}
+	}
+}
+
 /// The [`CoreStorageKey::SessionUsernamesRun`] value for `blob` in `run`: the
 /// run and a hash of the blob, so the record vouches for that blob only.
 fn usernames_record(run: StackRun, blob: &[u8]) -> Vec<u8> {
@@ -397,28 +417,15 @@ impl SsoRequestService {
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
-		let current = self.blob_usernames(blob).await == BlobUsernames::Current;
+		let (session, look_up) = self.blob_usernames(blob).await.session_to_install(session);
 		self.invalidate_login_attempts();
 		let activation_epoch = self.advance_session_lifecycle();
-		// A blob the core did not vouch for is installed at once without its
-		// usernames, which are looked up after it is installed.
-		let session = if current {
-			resolve_session_identity_with_chain(
-				&self.dotns_reads,
-				&self.chain,
-				self.host_config.stack.chains().asset_hub,
-				session,
-			)
-			.await
-		} else {
-			without_usernames(session)
-		};
 		#[cfg(test)]
 		self.wait_at_external_session_activation_pause().await;
 		let installed = self
 			.set_connected_session_if_current(session.clone(), activation_epoch, true)
 			.await;
-		if installed && !current {
+		if installed && look_up {
 			self.look_up_usernames_in_background(session, None);
 		}
 		Ok(())
@@ -474,23 +481,8 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		// Usernames the core has not vouched for in this run are looked up after
-		// the session is installed. Unrecorded ones are kept meanwhile, as an
-		// install stored them before runs were recorded; stale ones are not.
 		let usernames = self.blob_usernames(&blob).await;
-		let resolved = match usernames {
-			BlobUsernames::Current => {
-				resolve_session_identity_with_chain(
-					&self.dotns_reads,
-					&self.chain,
-					self.host_config.stack.chains().asset_hub,
-					session,
-				)
-				.await
-			},
-			BlobUsernames::Unrecorded => session,
-			BlobUsernames::Stale => without_usernames(session),
-		};
+		let (resolved, look_up) = usernames.session_to_install(session);
 		let barrier = self.owner.write_barrier().await;
 		self.drain_session_deletions(&barrier).await;
 		if self.session_epoch() != activation_epoch {
@@ -518,10 +510,16 @@ impl SsoRequestService {
 		if !self.install_session_if_current(resolved.clone(), activation_epoch, false, None) {
 			return Err(StoredSessionActivationError::Changed);
 		}
-		if usernames != BlobUsernames::Current {
-			self.look_up_usernames_in_background(resolved, Some(blob));
-		} else if resolved_blob != blob && self.session_epoch() == activation_epoch {
-			let _ = self.store_session(resolved_blob).await;
+		// Only a blob the core vouches for is rewritten now, as when an older
+		// layout is stored again in the current one; any other is rewritten
+		// once its usernames are read.
+		let rewritten = usernames == BlobUsernames::Current &&
+			resolved_blob != blob &&
+			self.session_epoch() == activation_epoch &&
+			self.store_session(resolved_blob.clone()).await.is_ok();
+		if look_up {
+			let in_slot = if rewritten { resolved_blob } else { blob };
+			self.look_up_usernames_in_background(resolved, Some(in_slot));
 		}
 		self.drain_session_deletions(&barrier).await;
 		Ok(())

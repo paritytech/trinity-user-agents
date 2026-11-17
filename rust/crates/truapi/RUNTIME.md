@@ -437,7 +437,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   record, so it is kept, without the rings on chains the stack no longer
   runs. The `SessionUsernamesRun` slot records the run in which the
   usernames of the `AuthSession` blob were read, with a hash of that blob.
-  A session whose blob it does not vouch for is installed at once and its
+  A session is installed without waiting on dotNS, whether it is restored
+  from the slot or passed to `activate_external_session`. When the record
+  does not vouch for its blob, or vouches for a blob with no username, its
   usernames are looked up afterwards: they are kept meanwhile when nothing is
   recorded, and dropped when the record names another run or blob. A lookup
   that fails changes nothing. The session and the stored permissions are

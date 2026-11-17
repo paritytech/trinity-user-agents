@@ -81,7 +81,8 @@ The core vouches for the usernames in an `AuthSession` blob through the
 that blob. A host that keeps the `AuthSession` value under a key of its own,
 such as one shared between origins, keeps `SessionUsernamesRun` next to it. A
 blob passed to `activateExternalSession` that the slot does not vouch for has
-its usernames looked up again on every activation.
+its usernames looked up again on every activation; when nothing is recorded,
+its usernames are shown until that lookup answers.
 
 An install updated to this version with no wipe loses only this: a pairing
 host asks for each product's allowance again, because the stored keys carry no
