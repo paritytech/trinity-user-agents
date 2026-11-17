@@ -3,7 +3,7 @@ use futures::executor::block_on;
 use super::*;
 use crate::coinage::{
 	PrivacyPolicy,
-	chain::ChainCoin,
+	chain::{ChainCoin, RingPlace},
 	namespace::datastore_key,
 	testing::{ENTROPY, FakeChain, FixedSeed, TestWallet, chain_params},
 };
@@ -112,4 +112,33 @@ fn a_failed_registry_read_still_scans_the_installations_already_known() {
 	let config = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
 	assert_eq!(block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap(), 0);
 	assert!(wallet.view().installations().iter().all(|(_, progress)| progress.first_scan_done));
+}
+
+/// An unload names only the alias, so an entry the wallet already unloaded is
+/// still a ring member; adopting it would count value that is gone.
+#[test]
+fn a_reconstruction_skips_entries_whose_alias_is_unloaded() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let chain = Arc::new(FakeChain::default());
+	let vrf = block_on(load_vrf()).unwrap();
+	let seed = |index| entry_seed(&ENTROPY, PurseId::MAIN, EARLIER, index).0;
+	let place = RingPlace { ring: 3, page: 0, position: 0, members: 8, included: 8, immutable_since: None, revision: 1 };
+	for index in [0, 1] {
+		chain.places.lock().insert(vrf.member(&seed(index)).unwrap(), (2, place));
+	}
+	chain.unplaced.lock().insert(vrf.member(&seed(2)).unwrap(), (2, RingPosition::Onboarding));
+	let unloaded = vrf.alias(&seed(0), &UNLOADING_RECYCLER_CONTEXT).unwrap();
+	chain.aliases.lock().insert(unloaded, AliasState::Unloaded);
+	let deps = ReconstructionDeps {
+		store: wallet.db.clone(),
+		seed: Arc::new(FixedSeed),
+		chain,
+		registry: Arc::new(Registry(Some(vec![key().seal(EARLIER).to_vec()]))),
+	};
+	let config = ScanConfig { batch: 4, gap: 2, deep_gap: 4, purse_gap: 1 };
+	assert_eq!(block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap(), 2);
+	let mut adopted: Vec<Asset> = wallet.view().all_assets().map(|record| record.asset).collect();
+	adopted.sort();
+	let entry = |index| Asset::Entry { purse: PurseId::MAIN, installation: EARLIER, index };
+	assert_eq!(adopted, vec![entry(1), entry(2)]);
 }
