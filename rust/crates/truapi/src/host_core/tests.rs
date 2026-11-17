@@ -1796,7 +1796,7 @@ fn the_durable_engine_serves_the_coinage_domains_once_the_host_turns_coinage_on(
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn the_coinage_layer_says_why_it_does_not_run() {
-	use crate::coinage::layer::CoinageUnavailable;
+	use crate::runtime::CoinageUnavailable;
 
 	let reason = |stack, enabled: bool| {
 		let (runtime, _platform) = signing_runtime_on(stack);
