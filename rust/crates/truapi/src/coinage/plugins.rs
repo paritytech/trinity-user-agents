@@ -235,7 +235,8 @@ impl CoinagePolicy {
 		let cancelled =
 			view.operation(&facts.operation).is_some_and(|operation| operation.cancel_requested || operation.released);
 		let past_deadline = matches!(params.retry, Retry::Until(deadline) if now > deadline);
-		if cancelled || (past_deadline && facts.rows.inputs.iter().any(|input| gone(input, view))) {
+		let inputs_gone = matches!(params.call, Call::Load(_)) || facts.rows.inputs.iter().any(|input| gone(input, view));
+		if cancelled || (past_deadline && inputs_gone) {
 			return Some(Preparation::GiveUp);
 		}
 		let uncommitted_export = facts.rows.outputs.iter().any(|output| view.mark(output) == Some(Mark::Uncommitted));
