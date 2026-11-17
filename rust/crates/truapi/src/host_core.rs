@@ -924,8 +924,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names)?)
+	) {
+		self.services.set_funding_provider_config(published_names);
 	}
 
 	/// Record that the host told the user how ended session `intent` went.
@@ -957,10 +957,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_providers(
 		&self,
 		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), v01::GenericError> {
-		self.services
-			.set_funding_providers(providers)
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	) {
+		self.services.set_funding_providers(providers);
 	}
 
 	/// Quotes of `amount` for funding session `intent` on the rail, asset,

@@ -25,7 +25,6 @@ use super::{
 use crate::{
 	host_internal::product_manifest::ProductBrand,
 	host_logic::{
-		funding::FundingSessionError,
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
 			FundingOptions, FundingProviderApp, FundingProviderEntry, FundingProviderOrigin,
@@ -313,7 +312,7 @@ impl RuntimeServices {
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
-	) -> Result<(), FundingSessionError> {
+	) {
 		let offered = self.funding_providers().offer(offered_providers(entries));
 		if offered.manifests_changed {
 			self.funding_providers_changed();
@@ -324,7 +323,6 @@ impl RuntimeServices {
 			feed.funding_providers_changed();
 		}
 		self.refresh_funding_providers();
-		Ok(())
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
@@ -335,12 +333,12 @@ impl RuntimeServices {
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
-	) -> Result<(), FundingSessionError> {
+	) {
 		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
-		self.set_funding_providers(entries)
+		self.set_funding_providers(entries);
 	}
 
 	/// Record what the user picked in session `intent`'s overlay, and send

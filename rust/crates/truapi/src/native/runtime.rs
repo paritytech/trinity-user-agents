@@ -421,8 +421,8 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names)?)
+	) {
+		self.runtime.set_funding_provider_config(published_names);
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
