@@ -535,6 +535,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		pinned_pocket_cards: Vec::new(),
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
+		coinage: None,
 	}
 }
 
@@ -3493,4 +3494,33 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 		Some(&MarkerClass::Export { severity: Severity::Warn })
 	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
+}
+
+/// A host that turns coinage on learns how the layer's start ended; this
+/// stub serves no chain, so the runtime check refuses it.
+#[test]
+fn coinage_reports_how_its_start_ended() {
+	use crate::coinage::layer::CoinageUnavailable;
+
+	let mut descriptor = crate::test_support::test_descriptor("paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32]);
+	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor["contracts"] = serde_json::json!({ "accountDataStore": "0x58c9963308c7735cf72ab633e8a9d892f5ab9e05" });
+	let config = HostRuntimeConfig {
+		stack: native_bundled_stack(&descriptor),
+		coinage: Some(CoinageConfig { hand_over: None, registry_contract: None }),
+		..native_host_runtime_config()
+	};
+	let on = NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config).unwrap();
+	let off = NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), native_host_runtime_config()).unwrap();
+	let reason = |host: &NativeTrUApiHostRuntime| futures::executor::block_on(host.coinage()).err();
+	let malformed = HostRuntimeConfig {
+		coinage: Some(CoinageConfig { hand_over: None, registry_contract: Some("0x1234".into()) }),
+		..native_host_runtime_config()
+	};
+	assert!(matches!(
+		NativeResolvedHostRuntimeConfig::try_from(malformed),
+		Err(NativeRuntimeConfigError::Invalid { .. })
+	));
+	assert!(matches!(reason(&on), Some(CoinageUnavailable::UnsupportedRuntime { .. })), "{:?}", reason(&on));
+	assert_eq!(reason(&off), Some(CoinageUnavailable::Off));
 }

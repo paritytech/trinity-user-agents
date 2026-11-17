@@ -19,6 +19,7 @@ use parity_scale_codec::Encode;
 use truapi::{Bytes32, v01, versioned::IntoLatest};
 
 use super::{
+	coinage::NativeCoinage,
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
 	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
@@ -28,6 +29,7 @@ use super::{
 use crate::{
 	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
 	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
+	coinage::layer::CoinageUnavailable,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -171,6 +173,9 @@ impl NativeTrUApiHostRuntime {
 			runtime.set_encrypted_storage(platform),
 			"a freshly built runtime installs its encrypted storage once"
 		);
+		if let Some(coinage) = runtime_config.coinage.filter(|_| runtime_config.local_session_secret.is_some()) {
+			runtime.enable_coinage(coinage);
+		}
 		runtime.start_core_services();
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
@@ -313,6 +318,15 @@ pub struct NativeAnnouncedPairing {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
+	/// The coinage layer, once it has started, as the app's wallet screens
+	/// and chat use it; or why it does not run (coinage native interface,
+	/// section 2). A failed start is answered until the runtime is
+	/// constructed again.
+	pub async fn coinage(&self) -> Result<Arc<NativeCoinage>, CoinageUnavailable> {
+		let layer = self.runtime.coinage_layer().await?;
+		Ok(Arc::new(NativeCoinage::new(layer, self.spawner.clone())))
+	}
+
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {

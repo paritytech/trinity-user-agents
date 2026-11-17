@@ -6,6 +6,7 @@ use crate::{
 		RuntimeConfigValidationError, SigningHostConfig, Stack,
 	},
 	pocket_cards::PinnedPocketCard,
+	runtime::CoinageOptions,
 };
 use truapi::latest::HostPlatform;
 
@@ -44,6 +45,42 @@ pub struct HostRuntimeConfig {
 	/// Optional lite username attached to the local signing-host session.
 	#[uniffi(default)]
 	pub local_session_lite_username: Option<String>,
+	/// Turns the coinage layer on, on a runtime with a local session. A host
+	/// whose app still runs a coinage engine of its own leaves it off.
+	#[uniffi(default)]
+	pub coinage: Option<CoinageConfig>,
+}
+
+/// How a native host turns the coinage layer on (coinage native interface,
+/// section 2).
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct CoinageConfig {
+	/// The wallet of the coinage engine the app ran until now, which the
+	/// layer records on a fresh store (section 5).
+	#[uniffi(default)]
+	pub hand_over: Option<crate::coinage::handover::Handover>,
+	/// The installation registry's `AccountDataStore` contract, `0x` and
+	/// 40 hex digits, from the app's remote config; it overrides the stack's.
+	/// Without either, the wallet runs but cannot be recovered from the seed.
+	#[uniffi(default)]
+	pub registry_contract: Option<String>,
+}
+
+impl TryFrom<CoinageConfig> for CoinageOptions {
+	type Error = NativeRuntimeConfigError;
+
+	fn try_from(config: CoinageConfig) -> Result<Self, Self::Error> {
+		let registry = config
+			.registry_contract
+			.map(|contract| {
+				let bytes = hex::decode(contract.trim_start_matches("0x")).ok();
+				bytes.and_then(|bytes| <[u8; 20]>::try_from(bytes).ok()).ok_or_else(|| NativeRuntimeConfigError::Invalid {
+					reason: format!("the registry contract {contract} is not 20 hex bytes"),
+				})
+			})
+			.transpose()?;
+		Ok(Self { hand_over: config.hand_over, registry })
+	}
 }
 
 /// The stack a host build ships: its pointer, its signed descriptor, and
@@ -83,6 +120,8 @@ pub struct NativeResolvedHostRuntimeConfig {
 	pub database_directory: PathBuf,
 	/// Cards the host pins in the Pocket.
 	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
+	/// How the coinage layer is turned on; none leaves it off.
+	pub coinage: Option<CoinageOptions>,
 }
 
 /// Why a native runtime or product configuration was refused.
@@ -153,6 +192,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			signing,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
+			coinage: config.coinage.map(CoinageOptions::try_from).transpose()?,
 			database_directory: PathBuf::from(config.database_directory),
 			pinned_pocket_cards: config
 				.pinned_pocket_cards

@@ -18,6 +18,7 @@
 
 mod bundled_products;
 mod callbacks;
+mod coinage;
 mod config;
 mod engine_follow;
 mod errors;
@@ -52,8 +53,12 @@ pub use callbacks::{
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
 	NativeTopUpCallbacks,
 };
+pub use coinage::{
+	NativeBalanceObserver, NativeCoinage, NativeEventObserver, NativeExportStatusObserver, NativeFunding,
+	NativeHandOverObserver, NativeHoldingsObserver, NativeStatusObserver,
+};
 pub use config::{
-	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
+	BundledStack, CoinageConfig, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
 };
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
