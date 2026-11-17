@@ -48,8 +48,11 @@ pub enum Requirement {
 /// 1. the `CoinPayment` permission, except for RFC-6 on the main purse;
 /// 2. nothing more for a top-up (invariant 3), or a query or a receive on a
 ///    purse the product created (invariant 1);
-/// 3. otherwise the permission for that purse and action;
-/// 4. and, for a spend, the user's confirmation (invariant 4).
+/// 3. RFC-6's balance access for an RFC-6 query of the main purse, the grant
+///    the payment capability asks for first, so the user is asked once
+///    (invariant 6);
+/// 4. otherwise the permission for that purse and action;
+/// 5. and, for a spend, the user's confirmation (invariant 4).
 pub fn requirements(
 	product: &[u8],
 	purse: PurseId,
@@ -67,7 +70,9 @@ pub fn requirements(
 		Action::Receive => CoinPaymentPurseAction::Receive,
 		Action::Spend => CoinPaymentPurseAction::Spend,
 	};
-	if creator != Some(product) {
+	if surface == Surface::Rfc6 && purse == PurseId::MAIN && action == Action::Query {
+		needed.push(Requirement::Permission(RemotePermission::BalanceAccess));
+	} else if creator != Some(product) {
 		needed.push(Requirement::Permission(RemotePermission::CoinPaymentPurse { purse: purse.0, action: purse_action }));
 	}
 	if action == Action::Spend {
