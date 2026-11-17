@@ -357,6 +357,7 @@ struct ChatMedia {
     // The same bytes from one or more sources, in the order to try.
     sources: Vec<ResourceUri>,
     // What the Host draws before the bytes arrive:
+    file_name: Option<String>,
     mime_type: String,
     size: Option<u64>,
     // The size as shown, after any rotation.
