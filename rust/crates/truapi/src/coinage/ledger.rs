@@ -215,6 +215,9 @@ pub struct EntryOnChain {
 	pub expires_at: Option<u64>,
 	/// When the entry's alias lock ends, in Unix seconds.
 	pub locked_until: Option<u64>,
+	/// How many aliases an unload has marked in the ring; none when the
+	/// runtime keeps no such count, or the read failed.
+	pub unloaded: Option<u32>,
 }
 
 impl EntryOnChain {

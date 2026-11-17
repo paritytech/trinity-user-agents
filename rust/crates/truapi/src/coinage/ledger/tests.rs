@@ -138,6 +138,7 @@ fn an_entry_records_when_its_key_was_first_seen_included() {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	};
 	let report = |at: u32, now: u64, included: u32| {
 		let facts = Facts { at: block(at), reads: vec![(Subject::Asset(entry), Read::Entry(Some(in_ring(included))))] };
