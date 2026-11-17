@@ -1,4 +1,4 @@
-//! Schema version 12: the cheques products created from NFT purses.
+//! Schema version 14: the cheques products created from NFT purses.
 
 use rusqlite_migration::M;
 

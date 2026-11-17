@@ -84,6 +84,17 @@ struct OutgoingStatementRenewerTests {
         #expect(summary == expected)
     }
 
+    @Test func retiredRenewalIsNotMarkedFailed() async {
+        store.setCandidates([candidate("A", period: 9)])
+        let delivery = makeDelivery()
+        await delivery.retire("A")
+
+        _ = await makeRenewer(delivery: delivery).renew()
+
+        #expect(store.failed.isEmpty)
+        #expect(service.publishes.isEmpty)
+    }
+
     @Test func terminalResolutionMarksStatementFailed() async {
         store.setCandidates([candidate("A", period: 9)])
         resolver.fail("A", with: TestTerminalError())
@@ -100,8 +111,8 @@ private extension OutgoingStatementRenewerTests {
         PublishedStatement(input: TestInput(statementId: id), period: period, createdAt: now.addingTimeInterval(-age))
     }
 
-    func makeRenewer(bound: TimeInterval? = nil) -> OutgoingStatementRenewer<TestInput> {
-        let delivery = OutgoingStatementDeliveryService(
+    func makeDelivery() -> OutgoingStatementDeliveryService<TestInput> {
+        OutgoingStatementDeliveryService(
             dependencies: OutgoingStatementDeliveryDependencies(
                 store: store,
                 resolver: resolver,
@@ -115,13 +126,18 @@ private extension OutgoingStatementRenewerTests {
             ),
             diagnostics: .silent
         )
+    }
 
-        return OutgoingStatementRenewer(
+    func makeRenewer(
+        bound: TimeInterval? = nil,
+        delivery: OutgoingStatementDeliveryService<TestInput>? = nil
+    ) -> OutgoingStatementRenewer<TestInput> {
+        OutgoingStatementRenewer(
             dependencies: OutgoingStatementRenewalDependencies(
                 store: store,
                 resolver: resolver,
                 service: service,
-                delivery: delivery
+                delivery: delivery ?? makeDelivery()
             ),
             bound: bound,
             dateProvider: FixedDateProvider(now),
