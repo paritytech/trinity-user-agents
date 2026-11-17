@@ -80,7 +80,7 @@ fun PolkadotAvatar(
                     PublicProfileAvatarSourceEntryPoint::class.java
                 ).publicProfileAvatarSource()
             }
-            PublicProfileAvatar(model, source, modifier, onClick)
+            PublicProfileAvatar(modifier, model, source, onClick)
         }
 
         is AvatarUiModel.Name -> LetterAvatar(
@@ -125,9 +125,9 @@ private fun ImageAvatar(
 /** Follows metadata independently of image loading for the lifetime of this avatar. */
 @Composable
 fun PublicProfileAvatar(
+    modifier: Modifier,
     model: AvatarUiModel.PublicProfile,
     source: PublicProfileAvatarSource,
-    modifier: Modifier,
     onClick: (() -> Unit)? = null
 ) {
     var request by remember(model.username) { mutableStateOf<ImageRequest?>(null) }
