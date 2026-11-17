@@ -1,5 +1,4 @@
 import Foundation
-import FoundationExt
 import IssueMonitoring
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -17,28 +16,25 @@ struct PocketOpenServiceTests {
         #expect(try await seen.answer() == .presented(cardId: "loyalty"))
     }
 
-    /// An open link is the user's tap for its page, so the page is timed from the moment the link reaches
-    /// the handler, before the hops onto the main actor that present it.
+    /// An open link is the user's tap for its page. Handed straight here, its arrival is read inside `handle`,
+    /// before the hops onto the main actor that present it. The test holds the main actor from `handle` to the
+    /// read count, so a reading taken in the dispatched task would count 0 there.
+    @MainActor
     @Test
     func anOpenLinkIsTimedFromWhenItArrives() async throws {
         let (taps, continuation) = AsyncStream<HostOpenTap>.makeStream()
-        let clock = StoppedClock(now: Date(timeIntervalSince1970: 1_793_900_000.123))
-        let service = PocketOpenService(present: { _, tap in continuation.yield(tap) }, dateProvider: clock)
+        let arrival = LinkArrival(date: Date(timeIntervalSince1970: 1_793_900_000.123), monotonicMilliseconds: 4_200)
+        let clock = RecordingArrivalClock(arrival: arrival)
+        let service = PocketOpenService(present: { _, tap in continuation.yield(tap) }, arrivalClock: clock)
 
-        let before = HostEventClock.monotonicMilliseconds()
         #expect(service.handle(url: URL(string: "polkadotapp://pocket/open?product=game.dot&card=loyalty")!))
-        let handled = HostEventClock.monotonicMilliseconds()
+        #expect(clock.reads == 1)
 
-        let tap = try await withTimeout(.hangGuard) {
-            for await tap in taps {
-                return tap
-            }
-            throw CancellationError()
-        }
+        let tap = try await firstTap(of: taps)
         #expect(tap.source == .deeplink)
         #expect(tap.openedAtEpochMilliseconds == 1_793_900_000_123)
-        #expect(tap.openedAtMonotonicMilliseconds >= before)
-        #expect(tap.openedAtMonotonicMilliseconds <= handled)
+        #expect(tap.openedAtMonotonicMilliseconds == 4_200)
+        #expect(clock.reads == 1)
     }
 
     /// A bare `polkadotapp://pocket` is the host's to answer: it opens the Pocket,
@@ -109,8 +105,34 @@ struct PocketOpenServiceTests {
     }
 }
 
-private struct StoppedClock: CurrentDateProviding {
-    let now: Date
+/// Hands out one arrival and counts how often it was read.
+final class RecordingArrivalClock: LinkArrivalClock, @unchecked Sendable {
+    private let arrival: LinkArrival
+    private let lock = NSLock()
+    private var readCount = 0
+
+    init(arrival: LinkArrival) {
+        self.arrival = arrival
+    }
+
+    var reads: Int {
+        lock.withLock { readCount }
+    }
+
+    func read() -> LinkArrival {
+        lock.withLock { readCount += 1 }
+        return arrival
+    }
+}
+
+/// The first tap a service presents; fails rather than hangs if none arrives.
+func firstTap(of taps: AsyncStream<HostOpenTap>) async throws -> HostOpenTap {
+    try await withTimeout(.hangGuard) {
+        for await tap in taps {
+            return tap
+        }
+        throw CancellationError()
+    }
 }
 
 private final class Recorder: @unchecked Sendable {

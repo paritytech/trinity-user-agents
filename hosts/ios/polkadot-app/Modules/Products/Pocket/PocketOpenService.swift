@@ -1,5 +1,4 @@
 import Foundation
-import FoundationExt
 import IssueMonitoring
 import Products
 import UIKit
@@ -14,32 +13,41 @@ import UIKit
 /// Pocket link it cannot make sense of, including an action it does not serve.
 /// All three are the host's to answer. A link to anything else is not ours.
 ///
-/// A Pocket link is the user's tap for the page it opens, so its `HostOpenTap` is read here, where the link
-/// arrives, and not after the hops onto the main actor that follow.
+/// A Pocket link is the user's tap for the page it opens, so its `HostOpenTap` is built from the link's
+/// arrival: the one `DeferredLinkHandler` carried from where the system handed the link over, or, for a link
+/// handed straight here, one read before the hops onto the main actor that follow.
 final class PocketOpenService: URLHandlingServiceProtocol {
     private let parser = PocketDeeplinkParser()
     private let present: @MainActor (PocketDeeplink, HostOpenTap) -> Void
     private let openCollection: @MainActor () -> Void
     private let refuse: @MainActor (String) -> Void
-    /// The tap's wall clock, read synchronously as the link arrives: an async `DateProviding` read would add a hop.
-    private let dateProvider: CurrentDateProviding
+    /// Read synchronously as a link arrives with no arrival of its own: an async `DateProviding` read would add a hop.
+    private let arrivalClock: LinkArrivalClock
 
     init(
         present: @escaping @MainActor (PocketDeeplink, HostOpenTap) -> Void,
         openCollection: @escaping @MainActor () -> Void = {},
         refuse: @escaping @MainActor (String) -> Void = { _ in },
-        dateProvider: CurrentDateProviding = NowDateProvider()
+        arrivalClock: LinkArrivalClock = SystemLinkArrivalClock()
     ) {
         self.present = present
         self.openCollection = openCollection
         self.refuse = refuse
-        self.dateProvider = dateProvider
+        self.arrivalClock = arrivalClock
     }
 
     func handle(url: URL) -> Bool {
+        handle(url: url, arrival: arrivalClock.read())
+    }
+
+    func handle(url: URL, arrival: LinkArrival) -> Bool {
         switch parser.classify(url) {
         case let .pocket(link):
-            let tap = HostOpenTap(source: .deeplink, openedAt: dateProvider.now)
+            let tap = HostOpenTap(
+                source: .deeplink,
+                openedAt: arrival.date,
+                openedAtMonotonicMilliseconds: arrival.monotonicMilliseconds
+            )
             Task { @MainActor in present(link, tap) }
             return true
         case .collection:
