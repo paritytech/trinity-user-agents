@@ -9,7 +9,10 @@ use std::sync::Mutex;
 
 use crate::platform::{ChainProvider, JsonRpcConnection};
 
-use crate::{config::ChainSource, error::ProviderError};
+use crate::{
+	config::{ChainSource, ResolvedChain},
+	error::ProviderError,
+};
 
 /// Lock a mutex, recovering the guard if a previous holder panicked.
 #[cfg(feature = "smoldot")]
@@ -224,46 +227,30 @@ impl EmbeddedChainProvider {
 		self.chains.contains_key(&genesis_hash)
 	}
 
-	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
-	/// the light backend the relay to sync it through.
-	///
-	/// The relay's source is resolved and warm-start-seeded here, so a blob
-	/// registered for a relay applies whether it is connected directly or
-	/// brought up implicitly behind one of its parachains.
-	#[cfg_attr(not(feature = "smoldot"), allow(unused_variables))]
-	async fn connect_source(
-		&self,
-		genesis_hash: [u8; 32],
-		source: &ChainSource,
-		chains: &HashMap<[u8; 32], ChainSource>,
-		relay: Option<[u8; 32]>,
-	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		match source {
-			#[cfg(feature = "ws")]
-			ChainSource::RpcNode { url } => crate::ws::connect(url.clone()).await,
-			#[cfg(feature = "smoldot")]
-			ChainSource::LightClient { .. } => {
-				let relay = match relay {
-					None => None,
-					Some(relay_genesis) => Some(self.resolve_relay(chains, relay_genesis)?),
-				};
-				self.light.connect(genesis_hash, source, relay).await
-			},
+	/// What a connect to `genesis_hash` goes through: the chain registered for
+	/// it, then the catalog.
+	fn resolve(&self, genesis_hash: [u8; 32]) -> Result<ResolvedChain, ProviderError> {
+		if let Some(source) = self.chains.get(&genesis_hash) {
+			return Ok(ResolvedChain {
+				source: source.clone(),
+				#[cfg(feature = "smoldot")]
+				relay: relay_source(&self.chains, source, self.relays.get(&genesis_hash).copied())?,
+			});
 		}
-	}
-
-	/// Resolve a parachain's relay to the source the light backend should add
-	/// it under, carrying any warm-start blob registered for the relay.
-	#[cfg(feature = "smoldot")]
-	fn resolve_relay(
-		&self,
-		chains: &HashMap<[u8; 32], ChainSource>,
-		relay_genesis: [u8; 32],
-	) -> Result<([u8; 32], ChainSource), ProviderError> {
-		let source = chains
-			.get(&relay_genesis)
-			.ok_or(ProviderError::UnknownRelay { relay: relay_genesis })?;
-		Ok((relay_genesis, self.with_seeded_database(relay_genesis, source.clone())))
+		#[cfg(feature = "networks")]
+		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
+			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
+				tracing::info!(network, service, "connecting via light client");
+			}
+			let source = catalog
+				.get(&genesis_hash)
+				.expect("catalog_network_chains includes the queried genesis");
+			return Ok(ResolvedChain {
+				source: source.clone(),
+				relay: relay_source(&catalog, source, relay)?,
+			});
+		}
+		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
 	}
 
 	/// Apply a seeded warm-start database blob to `source` if one exists for
@@ -287,6 +274,23 @@ impl EmbeddedChainProvider {
 	#[cfg(not(feature = "smoldot"))]
 	fn with_seeded_database(&self, _genesis_hash: [u8; 32], source: ChainSource) -> ChainSource {
 		source
+	}
+}
+
+/// The relay `source` syncs through, looked up in `chains`. Only a
+/// light-client chain has one.
+#[cfg(feature = "smoldot")]
+fn relay_source(
+	chains: &HashMap<[u8; 32], ChainSource>,
+	source: &ChainSource,
+	relay: Option<[u8; 32]>,
+) -> Result<Option<([u8; 32], ChainSource)>, ProviderError> {
+	match (source, relay) {
+		(ChainSource::LightClient { .. }, Some(relay)) => {
+			let source = chains.get(&relay).ok_or(ProviderError::UnknownRelay { relay })?;
+			Ok(Some((relay, source.clone())))
+		},
+		_ => Ok(None),
 	}
 }
 
@@ -596,38 +600,29 @@ impl ChainProvider for EmbeddedChainProvider {
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		// Explicit registrations win; otherwise the catalog resolves the whole
-		// network from the genesis hash alone.
-		if let Some(source) = self.chains.get(&genesis_hash) {
-			let source = self.with_seeded_database(genesis_hash, source.clone());
+		let resolved = self.resolve(genesis_hash)?;
+		match self.with_seeded_database(genesis_hash, resolved.source) {
+			#[cfg(feature = "ws")]
+			ChainSource::RpcNode { url } => crate::ws::connect(url).await,
 			#[cfg(feature = "smoldot")]
-			let relay = self.relays.get(&genesis_hash).copied();
-			#[cfg(not(feature = "smoldot"))]
-			let relay = None;
-			let connected = self.connect_source(genesis_hash, &source, &self.chains, relay).await;
-			#[cfg(feature = "smoldot")]
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
+			source @ ChainSource::LightClient { .. } => {
+				let relay = resolved
+					.relay
+					.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source)));
+				let connected = self.light.connect(genesis_hash, &source, relay.as_ref()).await;
+				if connected.is_err() {
+					self.return_seed(genesis_hash, source);
+					// A relay that is running took its seed on the add that
+					// started it.
+					if let Some((genesis, source)) = relay &&
+						!self.light.is_added(genesis)
+					{
+						self.return_seed(genesis, source);
+					}
+				}
+				connected
+			},
 		}
-		#[cfg(feature = "networks")]
-		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
-			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
-				tracing::info!(network, service, "connecting via light client");
-			}
-			let source = catalog
-				.get(&genesis_hash)
-				.expect("catalog_network_chains includes the queried genesis")
-				.clone();
-			let source = self.with_seeded_database(genesis_hash, source);
-			let connected = self.connect_source(genesis_hash, &source, &catalog, relay).await;
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
-		}
-		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
 	}
 }
 
