@@ -442,6 +442,8 @@ struct AggregatedReaction {
     unseen: bool,
 }
 
+// In a room with more than one other participant, `Delivered` and `Read`
+// mean every recipient. `Message.receipts` gives the counts.
 enum MessageStatus {
     // Message is visible to sender but not yet ready for delivery.
     // e.g. media is still uploading.
@@ -466,6 +468,7 @@ struct Message {
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
     extensions: Vec<Extension>,
+    receipts: Option<ReceiptSummary>,
     // The thread whose root is this message.
     thread: Option<ThreadSummary>,
     // The readers of a post of a Channel.
@@ -488,6 +491,12 @@ struct ForwardSource {
 struct ThreadSummary {
     room_id: RoomId,
     replies: u32,
+}
+
+struct ReceiptSummary {
+    recipients: u32,
+    delivered: u32,
+    read: u32,
 }
 ```
 
@@ -579,6 +588,9 @@ enum UserChatAction {
     EditRoom(RoomMetadata),
     // The user started (true) or stopped (false) typing.
     Typing(bool),
+    // Between Products only (4.6): the newest message of each origin that
+    // the user saw. It marks every earlier message of that origin as seen.
+    Seen(Vec<MessageId>),
 
     // A step of the call of a `Call` message. `payload` is for the call
     // transport, and the Host does not read it.
@@ -624,30 +636,46 @@ fn handle_chat_messages_source(
     // Host calls this when the user performs a chat action (send, edit, react).
     on_user_action: fn(UserChatAction) -> UserChatActionResult,
 
-    // Host calls this when the user has seen a message.
-    // Product can update its unread counter accordingly.
+    // Host calls this when the user has seen a message, and with it every
+    // earlier message. Product can update its unread counter accordingly.
     on_user_seen_message: fn(Message),
 );
 ```
 
 - Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
-#### 4.4 Reaction Details
+#### 4.4 Message Details
 
-When a user taps on a reaction to see who reacted, the Host requests the full list from the Product. This is **not paginated** — for large chats where tracking individual reactors is impractical, the Product returns `NotAvailable`.
+When a user taps on a reaction to see who reacted, or on a status to see who read, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
 
 ```rust
-enum MessageReactionsErr {
-    // The Product cannot provide individual reaction details
+enum MessageDetailsKind {
+    Reactions,
+    Receipts,
+}
+
+enum MessageDetails {
+    Reactions(Vec<MessageReaction>),
+    Receipts(Vec<MessageReceipt>),
+}
+
+struct MessageReceipt {
+    participant_id: ChatParticipantId,
+    delivered_at: Option<Timestamp>,
+    read_at: Option<Timestamp>,
+}
+
+enum MessageDetailsErr {
+    // The Product cannot provide individual details
     // (e.g. chat is too large).
     NotAvailable,
     Unknown(GenericErr),
 }
 
-// Register a handler to load individual reactions for a message.
-// If not registered, the Host does not offer a "see who reacted" UI.
-fn handle_message_reactions_detail(
+// Register a handler to load the details of a message.
+// If not registered, the Host offers no "see who reacted" or "see who read" UI.
+fn handle_message_details(
     room_id: RoomId,
-    get_reactions: fn(MessageId) -> Result<Vec<MessageReaction>, MessageReactionsErr>,
+    get_details: fn(MessageId, MessageDetailsKind) -> Result<MessageDetails, MessageDetailsErr>,
 );
 ```
 
@@ -980,7 +1008,7 @@ When a Product does **not** register a handler, the Host applies these defaults:
 | Chat footer | Default input, payment disabled, default attachments |
 | Participants | Two participants: user and Product |
 | Participant actions | Based on participant type (open contact, open product info) |
-| Reaction details | Not available — no "see who reacted" UI |
+| Message details | Not available: no "see who reacted" or "see who read" UI |
 | Placeholder | None |
 
 ### 11. Transport & Serialization
@@ -1010,7 +1038,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 9. **Reply threads**: Reply to a specific message.
 10. **Emoji reactions**: Place and remove emoji reactions on messages. Aggregated counts displayed inline; detailed reaction lists available on demand.
 11. **Unread counter**: Track and display unread message count per room — either Host-derived or Product-controlled.
-12. **Message status**: Track message lifecycle (preparing, delivered, read).
+12. **Message status**: Track message lifecycle (preparing, delivered, read), with read receipts in groups.
 13. **Typing indicator**: Preview text with `ongoing` flag for "User is typing..." style animations, and the participants who type in a room.
 14. **Participants**: List, paginate, and resolve participants. Support multiple identity types (Person, LitePerson, Contact, Product, Custom).
 15. **Per-message actions**: Configurable long-press menu — built-in actions (copy, reply, edit, react) extensible with Product-defined actions.
