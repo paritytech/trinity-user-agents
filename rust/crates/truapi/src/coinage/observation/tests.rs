@@ -79,3 +79,23 @@ fn an_entry_is_observed_in_its_ring_with_its_expiry() {
 	assert!(on_chain.closed);
 	assert_eq!(on_chain.expires_at, Some(NOW + 90 * 24 * 3600));
 }
+
+/// A claim waits on the peer's coin, so F1 reads the account of every coin
+/// a record imports.
+#[test]
+fn a_peer_coin_a_record_imports_is_observed() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let output = wallet.coin(3);
+	let peer = Asset::PeerCoin([8; 32]);
+	let engine = crate::coinage::testing::unbuilt_engine(wallet.db.clone());
+	let rows = crate::coinage::registration::Rows { inputs: vec![peer], outputs: vec![output], tokens: Vec::new() };
+	let operation = crate::coinage::operation::OpKey::own([1; 32]);
+	let admission = crate::coinage::registration::Admission::Import;
+	crate::coinage::testing::register_rows(&engine, &operation, admission, vec![rows]).unwrap();
+	let chain = Arc::new(FakeChain::default());
+	chain.coins.lock().insert([8; 32], ChainCoin { instance: 0, value: 3, age: 1, locked_until: None });
+	block_on(on_block(&deps(&wallet, chain), block(22), NOW, &chain_params())).unwrap();
+	let observation = wallet.view().observation(&Subject::Asset(peer)).cloned().unwrap();
+	let expected = CoinOnChain { exponent: Exponent::new(3).unwrap(), age: 1, locked_until: None };
+	assert_eq!(observation.value, Some(Read::Coin { now: Some(expected), emptied_by: None }));
+}

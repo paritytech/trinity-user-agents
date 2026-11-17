@@ -103,3 +103,31 @@ fn record_params_carry_their_layout_version() {
 	unknown.0[0] = PARAMS_VERSION + 1;
 	assert_eq!(RecordParams::from_params(&unknown), None);
 }
+
+/// Every retry policy survives the round trip through the stored params.
+#[test]
+fn record_params_round_trip_under_every_retry_policy() {
+	let calls = [Call::Transfer, Call::Split, Call::Load([4; 32]), Call::UnloadToExternal([6; 32])];
+	for call in calls {
+		for retry in [Retry::Until(1_700_000_000), Retry::ExpiryOnly, Retry::Never] {
+			let params = RecordParams { call, retry };
+			assert_eq!(RecordParams::from_params(&params.to_params()), Some(params));
+		}
+	}
+}
+
+/// Params already stored by a release keep decoding: version 1, the call by
+/// its index, then the retry policy.
+#[test]
+fn stored_version_one_params_decode() {
+	let transfer_until = [1, 1, 0, 0x10, 0x27, 0, 0, 0, 0, 0, 0];
+	let split_expiry_only = [1, 0, 1];
+	let unload_never = [1, 3, 2];
+	let decoded = [&transfer_until[..], &split_expiry_only, &unload_never]
+		.map(|bytes| RecordParams::from_params(&PolicyParams(bytes.to_vec())));
+	assert_eq!(decoded, [
+		Some(RecordParams { call: Call::Transfer, retry: Retry::Until(10_000) }),
+		Some(RecordParams { call: Call::Split, retry: Retry::ExpiryOnly }),
+		Some(RecordParams { call: Call::UnloadToCoins, retry: Retry::Never }),
+	]);
+}

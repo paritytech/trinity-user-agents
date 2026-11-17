@@ -2,6 +2,7 @@ mod assets;
 mod evidence;
 mod reorgs;
 mod rules;
+mod submission;
 mod system;
 mod vouchers;
 mod watches;
