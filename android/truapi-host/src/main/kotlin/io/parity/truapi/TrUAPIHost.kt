@@ -32,9 +32,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.RenderContext
+import uniffi.truapi.NativeMaterialsObserver
+import uniffi.truapi.NativeMaterialsResolution
+import uniffi.truapi.ResolvedMaterials
+import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
@@ -66,9 +75,11 @@ import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
 import uniffi.truapi.PublicProfile
 import uniffi.truapi.PublicProfileException
+import uniffi.truapi.PublicProfileResolutionOptions
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
+import uniffi.truapi.NativePublicProfileObserver
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.NativeSubscription
 import uniffi.truapi.PocketAddException
@@ -1197,10 +1208,36 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
 
-    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
-    @Throws(PublicProfileException::class)
-    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
-        inner.resolvePublicProfile(username, force)
+    /**
+     * Profile metadata using [options] to force a lookup or suppress stale cached values.
+     * Emits stored metadata when eligible, then a resolved value only when it differs or no
+     * stored value was emitted. At most two values precede completion or a
+     * [PublicProfileException]. Cancelling collection stops the core observation.
+     */
+    fun observePublicProfile(username: String, options: PublicProfileResolutionOptions): Flow<PublicProfile> =
+        callbackFlow {
+            val subscription = inner.observePublicProfile(
+                username,
+                options,
+                object : NativePublicProfileObserver {
+                    override fun onProfile(profile: PublicProfile) {
+                        runCatching { trySend(profile) }
+                    }
+
+                    override fun onComplete() {
+                        runCatching { close() }
+                    }
+
+                    override fun onError(error: PublicProfileException) {
+                        runCatching { close(error) }
+                    }
+                },
+            )
+            awaitClose {
+                subscription.cancel()
+                subscription.close()
+            }
+        }.buffer(2)
 
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and
@@ -1209,6 +1246,16 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     @Throws(ImageException::class)
     suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
+
+    /**
+     * The materials of [tree], a saved face or a preview, in [context]: for each
+     * `Materials` node, whether it loads, draws its layers or draws plain.
+     * Unless [floatFilterable], the shaders filter 32-bit float images
+     * themselves. To resolve a new tree for the same body, start its resolution
+     * before closing the old one.
+     */
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 
     /**
      * The Pocket collection, pinned cards first, now and after every change. A
@@ -1360,6 +1407,48 @@ private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscriptio
         }
     }.conflate()
 
+/**
+ * The resolved materials of one tree, now and after each change, and the
+ * reports the app makes against them. Close it to stop.
+ */
+class MaterialsResolution internal constructor(
+    subscribe: (NativeMaterialsObserver) -> NativeMaterialsResolution,
+) : AutoCloseable {
+    private val latest = MutableStateFlow<ResolvedMaterials?>(null)
+    private var closed = false
+
+    /** The newest materials, `null` until the first. */
+    val resolved: StateFlow<ResolvedMaterials?> = latest.asStateFlow()
+
+    private val handle: NativeMaterialsResolution =
+        subscribe(
+            object : NativeMaterialsObserver {
+                // Declared infallible by the core, so a throw here would abort the process.
+                override fun onResolved(materials: ResolvedMaterials) {
+                    runCatching { latest.value = materials }
+                }
+            },
+        )
+
+    /**
+     * Draws node [node] plain for the rest of this resolution: its shader did not
+     * compile ([MaterialFailure.UNSUPPORTED]), or an image argument could not
+     * be used (`checkMaterialImage`'s reason, or [MaterialFailure.NOT_FOUND]).
+     */
+    @Synchronized
+    fun report(node: UInt, material: ByteArray?, reason: MaterialFailure) {
+        if (!closed) handle.report(node, material, reason)
+    }
+
+    @Synchronized
+    override fun close() {
+        if (closed) return
+        closed = true
+        handle.cancel()
+        handle.close()
+    }
+}
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1450,6 +1539,14 @@ class TrUAPIProductExecution internal constructor(
     fun publishRendererAction(item: HostRendererActionSubscribeItem) {
         inner.publishRendererAction(item)
     }
+
+    /**
+     * The materials of [tree], a body this execution's product rendered in
+     * [context], as [TrUAPIHostRuntime.resolveMaterials]. A node that falls back is
+     * also reported to the product.
+     */
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 
     /** Read the active session's X25519 chat identity private key, if any. */
     @Throws(HostRejection::class)

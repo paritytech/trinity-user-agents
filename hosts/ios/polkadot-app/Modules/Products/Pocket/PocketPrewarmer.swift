@@ -34,10 +34,9 @@ final class PocketPrewarmer {
         }
     }
 
-    /// The app, because that is what a pressed card opens.
     private func warm(_ productId: ProductId) async {
         do {
-            try await warmer.warm(productId, serving: .fixed(.app))
+            try await warmer.warm(productId, serving: .withAppFallback(.widget))
             warmed.insert(productId)
             logger.debug("[pocket] warmed \(productId)'s archive")
         } catch {

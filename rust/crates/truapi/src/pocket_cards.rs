@@ -20,7 +20,7 @@ use futures::{
 	stream::BoxStream,
 };
 use parity_scale_codec::{DecodeLimit, Encode};
-use rusqlite::{OptionalExtension, Row, Transaction, named_params, types::Type};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Type};
 use truapi::latest::{
 	GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
 	HostPocketRemoveCardRequest, PocketCard, RendererNode,
@@ -247,11 +247,7 @@ impl PocketCards {
 				Ok(conn.prepare_cached(FACE)?.query_row(params, |row| row.get(0)).optional()?)
 			})
 			.await?;
-		Ok(kept.and_then(|bytes| {
-			RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
-				.inspect_err(|error| tracing::warn!(%error, "a kept Pocket face no longer decodes"))
-				.ok()
-		}))
+		Ok(kept.and_then(|bytes| decode_face(&bytes)))
 	}
 
 	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the newest
@@ -391,11 +387,30 @@ const DELETE: &str = "DELETE FROM pocket_card WHERE product_id = :product AND ca
 const FACE: &str = "SELECT face FROM pocket_card_face
 	WHERE product_id = :product AND card_id = :card AND side = :side";
 
+const ALL_FACES: &str = "SELECT face FROM pocket_card_face";
+
 const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, side, face, draw_order)
 	SELECT :product, :card, :side, :face, :draw_order WHERE EXISTS
 		(SELECT 1 FROM pocket_card WHERE product_id = :product AND card_id = :card)
 	ON CONFLICT (product_id, card_id, side) DO UPDATE SET face = excluded.face, draw_order = excluded.draw_order
 		WHERE excluded.draw_order > pocket_card_face.draw_order";
+
+/// Every face kept for a card, in a read or inside a write. One that no longer
+/// decodes is left out.
+pub fn saved_faces(conn: &Connection) -> Result<Vec<RendererNode>, DbError> {
+	let mut faces = conn.prepare_cached(ALL_FACES)?;
+	let mut decoded = Vec::new();
+	for bytes in faces.query_map([], |row| row.get::<_, Vec<u8>>(0))? {
+		decoded.extend(decode_face(&bytes?));
+	}
+	Ok(decoded)
+}
+
+fn decode_face(bytes: &[u8]) -> Option<RendererNode> {
+	RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut &*bytes)
+		.inspect_err(|error| tracing::warn!(%error, "a kept Pocket face no longer decodes"))
+		.ok()
+}
 
 fn upsert_face(
 	tx: &Transaction<'_>,

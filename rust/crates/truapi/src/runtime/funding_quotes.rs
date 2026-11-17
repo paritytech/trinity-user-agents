@@ -36,10 +36,7 @@ use truapi::latest::{
 	FundingRail,
 };
 
-use super::{
-	funding::{lock, within},
-	services::RuntimeServices,
-};
+use super::{funding::lock, services::RuntimeServices};
 use crate::{
 	host_logic::{
 		funding::FundingChoice,
@@ -49,6 +46,7 @@ use crate::{
 	platform::{
 		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
 	},
+	time::within,
 	unix_time::current_unix_millis,
 };
 
@@ -459,7 +457,7 @@ impl RuntimeServices {
 			if let Err(error) =
 				services.select_funding_provider(&intent, &provider_id, &quote_id).await
 			{
-				warn!(%intent, %error, "funding session not started when quoted");
+				warn!(%error, "funding session not started when quoted");
 			}
 		});
 	}

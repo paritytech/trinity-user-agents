@@ -32,7 +32,10 @@ pub use crate::{
 		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
-	stack::{Stack, StackChains, StackError},
+	stack::{
+		Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse, StackHost,
+		ReplaceCheck, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+	},
 };
 
 use truapi::{
@@ -102,6 +105,8 @@ pub struct SigningHostConfig {
 	/// derives ends in its TLD, which has to equal the People chain's
 	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
 	pub stack: Stack,
+	/// Whether the host draws materials. Off by default: `new` leaves it off.
+	pub materials_enabled: bool,
 }
 
 /// Product identity attached to one product-facing TrUAPI connection.
@@ -197,7 +202,11 @@ impl SigningHostConfig {
 		platform_info: PlatformInfo,
 		stack: Stack,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self { host: HostIdentity::new(host_info, platform_info)?, stack })
+		Ok(Self {
+			host: HostIdentity::new(host_info, platform_info)?,
+			stack,
+			materials_enabled: false,
+		})
 	}
 }
 
@@ -2360,7 +2369,7 @@ pub trait PermissionStatusHost: Send + Sync {
 	) -> Result<DevicePermissionStatus, GenericError>;
 }
 
-/// What the host did with a request to show or hide the expanded card face.
+/// What the host did with a request to cover or uncover the expanded card face.
 #[derive(Debug, Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ExpandedCardFaceOutcome {
@@ -2368,9 +2377,9 @@ pub enum ExpandedCardFaceOutcome {
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face or turning the card, so the request had no effect.
+	/// The user is moving or turning the card, so the request had no effect.
 	UserMoving,
-	/// The host cannot move the face at all.
+	/// The host draws no card face.
 	Unsupported,
 }
 
@@ -2382,7 +2391,7 @@ pub enum ExpandedCardTurnOutcome {
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the face or turning the card, so the request had no effect.
+	/// The user is moving or turning the card, so the request had no effect.
 	UserMoving,
 	/// The host cannot turn cards at all.
 	Unsupported,
@@ -2390,14 +2399,14 @@ pub enum ExpandedCardTurnOutcome {
 	NoBack,
 }
 
-/// Host control of the card face drawn above an opened card's Widget.
+/// Host control of the card face drawn under an opened card's Widget.
 ///
 /// Carried per connection on `ConnectionAdapters`, because the host owns one
 /// drawer per product execution. A connection without one tells products
 /// `Unsupported`.
 #[async_trait::async_trait]
 pub trait ExpandedCardHost: Send + Sync {
-	/// Show (`true`) or hide (`false`) the face above the calling Widget.
+	/// Uncover (`true`) or cover (`false`) the face under the calling Widget.
 	async fn set_expanded_card_face_shown(
 		&self,
 		shown: bool,
