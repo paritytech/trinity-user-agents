@@ -175,6 +175,23 @@ async fn rfc6_balance_is_the_spendable_value_of_the_main_purse_in_asset_units() 
 	assert_eq!(first.available, 8 * UNIT);
 }
 
+/// Seeing the main purse's balance is one fact, so the user is asked once:
+/// for RFC-6's balance access, not again for the purse.
+#[tokio::test]
+async fn rfc6_balance_asks_the_user_once() {
+	let platform = Arc::new(StubPlatform::default());
+	let (wallet, host) = coinage_host(platform.clone()).await;
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, coin_read(3));
+	let request = truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+		v01::HostPaymentBalanceSubscribeRequest { purse: None },
+	);
+	let mut balances = truapi::api::Payment::balance_subscribe(&host, &CallContext::default(), request).await;
+	balances.next().await.expect("a balance").expect("no failure");
+	let asked: Vec<_> =
+		platform.remote_permission_requests.lock().unwrap().iter().map(|request| request.permission.clone()).collect();
+	assert_eq!(asked, vec![v01::RemotePermission::BalanceAccess]);
+}
+
 #[tokio::test]
 async fn an_rfc6_payment_the_user_declines_or_below_a_cent_is_refused() {
 	let (wallet, host) = coinage_host(Arc::new(StubPlatform::default())).await;
