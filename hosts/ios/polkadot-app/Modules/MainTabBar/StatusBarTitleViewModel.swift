@@ -4,6 +4,7 @@ struct StatusBarTitleViewModel {
     let title: String
     let showsLogo: Bool
     let menu: UIMenu?
+    let backAction: (() -> Void)?
 }
 
 @MainActor

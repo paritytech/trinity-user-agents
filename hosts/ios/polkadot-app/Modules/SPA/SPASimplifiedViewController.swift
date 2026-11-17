@@ -217,7 +217,8 @@ private extension SPASimplifiedViewController {
         rootView.statusBarTitleButton.bind(viewModel: StatusBarTitleViewModel(
             title: navigationItem.title ?? configuration.page.host.name,
             showsLogo: true,
-            menu: makeStatusBarMenu()
+            menu: makeStatusBarMenu(),
+            backAction: nil
         ))
     }
 

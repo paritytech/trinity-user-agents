@@ -30,4 +30,7 @@ protocol PocketOrigin: AnyObject {
 @MainActor
 protocol PocketItemScreen: UIViewController {
     var pocketItem: PocketItem { get }
+
+    /// The title the status strip shows while this screen is up.
+    var statusStripTitle: String { get }
 }

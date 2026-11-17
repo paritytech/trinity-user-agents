@@ -18,10 +18,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private let titleLabel: PolkadotUI.Label = .create { view in
-        view.typography = .headlineSmall
-        view.textColor = .fgPrimary
-    }
 
     private var isInFlight = false
 
@@ -41,21 +37,8 @@ final class AssetDetailsScreenViewController: UIViewController {
         super.viewDidLoad()
 
         view.backgroundColor = .bgSurfaceMain
-        setupTitle()
         setupHosting()
         pullDown.install()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(reduceTransparencyDidChange),
-            name: UIAccessibility.reduceTransparencyStatusDidChangeNotification,
-            object: nil
-        )
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-
-        applyBarBackground()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -95,6 +78,10 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
         .balance
     }
 
+    var statusStripTitle: String {
+        String(localized: .walletMainPurse)
+    }
+
     /// The card's frame on screen, wherever scrolling and a pull have moved it. The flight uses its top-left corner.
     func itemFrame(in view: UIView) -> CGRect {
         let card = state.cardFrame.offsetBy(dx: hosting.view.transform.tx, dy: hosting.view.transform.ty)
@@ -132,6 +119,14 @@ extension AssetDetailsScreenViewController: PocketFlightScreen {
     }
 }
 
+// MARK: - NavigationBarHiding
+
+extension AssetDetailsScreenViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
+    }
+}
+
 // MARK: - NavigationTransitionAnimating
 
 extension AssetDetailsScreenViewController: NavigationTransitionAnimating {
@@ -155,26 +150,6 @@ private extension AssetDetailsScreenViewController {
         navigationController?.popViewController(animated: true)
     }
 
-    func setupTitle() {
-        let title = String(localized: .walletMainPurse)
-        navigationItem.style = .navigator
-
-        guard #available(iOS 26, *) else {
-            navigationItem.title = title
-            return
-        }
-
-        titleLabel.typography = .titleLarge
-        titleLabel.attributedText = CashLogo.styled(
-            title,
-            symbol: PaymentAssetBranding.shared.current.symbol,
-            font: UIFont.app(.titleLarge)
-        )
-        titleLabel.accessibilityLabel = title
-        titleLabel.sizeToFit()
-        navigationItem.titleView = titleLabel
-    }
-
     func setupHosting() {
         addChild(hosting)
         view.addSubview(hosting.view)
@@ -183,27 +158,6 @@ private extension AssetDetailsScreenViewController {
             make.edges.equalToSuperview()
         }
         hosting.didMove(toParent: self)
-    }
-
-    /// On iOS 26 with Reduce Transparency, the scroll edge effect that backs the bar is hidden, so the bar draws
-    /// its own opaque background there.
-    func applyBarBackground() {
-        guard #unavailable(iOS 27), UIAccessibility.isReduceTransparencyEnabled else {
-            navigationItem.standardAppearance = nil
-            navigationItem.scrollEdgeAppearance = nil
-            return
-        }
-
-        let appearance = (navigationController?.navigationBar.standardAppearance ?? UINavigationBarAppearance()).copy()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = .bgSurfaceMain
-        appearance.shadowColor = nil
-        navigationItem.standardAppearance = appearance
-        navigationItem.scrollEdgeAppearance = appearance
-    }
-
-    @objc func reduceTransparencyDidChange() {
-        applyBarBackground()
     }
 }
 

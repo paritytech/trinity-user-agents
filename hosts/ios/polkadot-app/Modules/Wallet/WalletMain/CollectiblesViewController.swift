@@ -108,6 +108,10 @@ extension CollectiblesViewController: PocketItemScreen {
     var pocketItem: PocketItem {
         .collectibles
     }
+
+    var statusStripTitle: String {
+        String(localized: .Products.collectibles)
+    }
 }
 
 // MARK: - NavigationTransitionAnimating
