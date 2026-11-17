@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay
 
-import android.net.Uri
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
@@ -9,13 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web.ProductRoomFooterWebPage
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -68,7 +60,8 @@ class ProductOverlayWebLayoutTest {
 
     @Test
     fun theOverlayCoversTheScreenTakesNoTouchAndGoesWhenItsPageIsDone() {
-        val overlay = show("done.html")
+        // A limit well past the wait below, so only the page saying it is done can end the overlay in time.
+        val overlay = show("done.html", limitMillis = 60_000)
         assertNotNull(overlay)
 
         instrumentation.runOnMainSync {
@@ -123,21 +116,10 @@ class ProductOverlayWebLayoutTest {
         val url = requireNotNull(ProductRoomFooterWebPage.url(page, PRODUCT))
         var overlay: ProductOverlayWebLayout? = null
         instrumentation.runOnMainSync {
-            overlay = ProductOverlayWebLayout.show(underneath, PRODUCT, url, content(), limitMillis)
+            overlay = ProductOverlayWebLayout.show(underneath, PRODUCT, url, archiveContent(archive), limitMillis)
         }
         instrumentation.waitForIdleSync()
         return overlay
-    }
-
-    private fun content(): DotNsWebViewClient {
-        val resolver = mockk<DotNsResolver> {
-            coEvery { resolveToLocalUri(any()) } returns Result.success(Uri.fromFile(archive))
-        }
-        val tld = mockk<DotNsTldProvider> {
-            coEvery { getTld() } returns Result.success(DotNsTld.parse("dot")!!)
-            every { currentTldOrNull() } returns DotNsTld.parse("dot")
-        }
-        return DotNsWebViewClient(resolver, tld)
     }
 
     /** A finger down and up in the middle of [screen], through the screen as the system would deliver it. */
