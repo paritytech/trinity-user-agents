@@ -368,6 +368,8 @@ struct ThreadSummary {
 }
 ```
 
+The text of `Text` and `RichText` is Markdown that every Host draws in the same way: CommonMark with the GFM strikethrough, limited to emphasis, strong text (`**x**` and `__x__`), strikethrough, inline code, links (`http`, `https` and `mailto`), fenced code blocks, quote blocks (`> `) and lists of two levels. Every line break is a line break. Any other construct, raw HTML and images show as typed. There is no underline and no spoiler mark.
+
 #### 4.2 Message Feed Updates
 
 The Product notifies the Host when the message feed changes. This is the **primary method** for pushing message data to the Host.
