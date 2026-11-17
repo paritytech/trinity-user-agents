@@ -17,6 +17,7 @@ use super::{
 
 /// A purse's holdings, partitioned.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct Balance {
 	/// Selectable now, under the effective policy.
 	pub spendable: u64,
