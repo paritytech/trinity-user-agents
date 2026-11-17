@@ -75,6 +75,7 @@ runtime = [
     "dep:base64",
     "dep:rand",
     "dep:libc",
+    "dep:naga",
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
@@ -153,6 +154,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macro
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"], optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
+naga = { workspace = true, optional = true }
 # The material format reads numbers to the last digit, as JavaScript does.
 serde_json = { workspace = true, features = ["float_roundtrip"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }

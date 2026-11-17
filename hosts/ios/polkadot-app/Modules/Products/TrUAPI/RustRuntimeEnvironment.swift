@@ -53,6 +53,15 @@ struct RustRuntimeEnvironment {
         try makeExecution(productId: productId, routers: routers, purpose: .app)
     }
 
+    /// A Widget execution even for an app archive, so the page can call `ExpandedCard`.
+    func makeExpandedCardExecution(
+        productId: ProductId,
+        routers: ProductRoutersFacadeProtocol,
+        face: any ExpandedCardFaceShowing
+    ) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, purpose: .expandedCard(face: face))
+    }
+
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
     /// execution per product and closes the previous one when another opens, so
     /// every modality is served from this one: the chat bridge is handed over
@@ -73,8 +82,8 @@ struct RustRuntimeEnvironment {
 
 /// What one execution serves, which decides the bridge the core calls back on.
 enum ExecutionPurpose {
-    /// A product's app, on its own screen or under the face of a Pocket card.
     case app
+    case expandedCard(face: any ExpandedCardFaceShowing)
     /// The product's one worker, serving its chat bot and its Pocket cards.
     case worker(chatMessaging: any ProductChatMessaging)
 }
@@ -160,6 +169,7 @@ extension ExecutionPurpose {
     var executionKind: ExecutableKind {
         switch self {
         case .app: .app
+        case .expandedCard: .widget
         case .worker: .worker
         }
     }
@@ -173,6 +183,8 @@ private extension ExecutionPurpose {
         switch self {
         case .app:
             return (RustProductExecutionBridge(dependencies: dependencies), nil)
+        case let .expandedCard(face):
+            return (RustProductExecutionBridge(dependencies: dependencies, cardFace: face), nil)
         case let .worker(chatMessaging):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
             return (chat, chat)

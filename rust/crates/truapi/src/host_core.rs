@@ -777,6 +777,9 @@ impl SigningHostRuntime {
 		if let Some(contacts_platform) = contacts_platform {
 			services.install_contacts_platform(contacts_platform);
 		}
+		if config.materials_enabled {
+			services.enable_materials();
+		}
 		let signing_host = SigningHostRole::new(services.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
@@ -1269,6 +1272,28 @@ impl SigningHostRuntime {
 		self.image_loader.load(reference).await
 	}
 
+	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		let Some(materials) = self.services.materials() else {
+			tracing::warn!("no core database, so every material node draws plain");
+			return crate::MaterialsResolution::plain(tree, context, failures);
+		};
+		let enabled = self.services.materials_enabled();
+		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
+		materials.resolve(tree, context, settings, failures)
+	}
+
 	/// Build a product-facing runtime from this signing host.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
 	pub fn product_runtime(
@@ -1558,13 +1583,13 @@ impl SigningHostRuntime {
 	}
 }
 
-/// Installs the materials on the device over `db`, and fetches what saved
-/// Pocket faces draw and `db` lacks. Does nothing when materials are already
-/// installed.
+/// Installs the materials on the device over `db` and, when the host draws
+/// them, fetches what saved Pocket faces draw and `db` lacks. Does nothing
+/// when materials are already installed.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
 	let materials = materials(services, db);
-	if services.install_materials(materials.clone()) {
+	if services.install_materials(materials.clone()) && services.materials_enabled() {
 		services.spawner.spawn(materials.fetch_saved());
 	}
 }
@@ -1781,9 +1806,11 @@ pub struct ConnectionAdapters {
 	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
 	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+	pub renderer_failures:
+		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
@@ -1797,6 +1824,7 @@ impl ConnectionAdapters {
 			permission_grants: Arc::default(),
 			chat: Arc::new(ActionChannel::chat()),
 			renderer: Arc::new(ActionChannel::renderer()),
+			renderer_failures: Arc::new(ActionChannel::renderer_failures()),
 			pocket_platform: services.pocket_platform(),
 			expanded_card: None,
 			game_platform: services.game_platform(),
