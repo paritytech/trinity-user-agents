@@ -148,6 +148,33 @@ export interface ChainExtensionVersion {
 }
 
 /**
+ * Review shown before value leaves a coinage purse: every spend is
+ * confirmed, whoever created the purse.
+ */
+export interface CoinPaymentSpendReview {
+  /**
+   * Product making the request.
+   */
+  callingProductId: ProductId;
+
+  /**
+   * Purse the value leaves.
+   */
+  fromPurse: number;
+
+  /**
+   * How much leaves it, in the payment asset's own units.
+   */
+  amount: bigint;
+
+  /**
+   * Whether the spend also takes value that is still gaining privacy,
+   * which the user agrees to separately.
+   */
+  takesHeldBackValue: boolean;
+}
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -978,7 +1005,11 @@ export type UserConfirmationReview =
   /**
    * Move items out of an NFT purse the product does not own.
    */
-  | { tag: "NftPurseDrain"; value: NftPurseDrainReview };
+  | { tag: "NftPurseDrain"; value: NftPurseDrainReview }
+  /**
+   * Spend value from a coinage purse.
+   */
+  | { tag: "CoinPaymentSpend"; value: CoinPaymentSpendReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -1032,6 +1063,20 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
       genesisHash: Bytes32,
       extensionVersion: S.u8,
     }) as S.Codec<ChainExtensionVersion>,
+);
+
+/**
+ * Review shown before value leaves a coinage purse: every spend is
+ * confirmed, whoever created the purse.
+ */
+export const CoinPaymentSpendReview: S.Codec<CoinPaymentSpendReview> = S.lazy(
+  (): S.Codec<CoinPaymentSpendReview> =>
+    S.Struct({
+      callingProductId: ProductId,
+      fromPurse: S.u32,
+      amount: S.u128,
+      takesHeldBackValue: S.bool,
+    }) as S.Codec<CoinPaymentSpendReview>,
 );
 
 /**
@@ -1600,6 +1645,7 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       SignVrf: [10, SignVrfReview] as const,
       ProductSubtree: [11, ProductSubtreeReview] as const,
       NftPurseDrain: [12, NftPurseDrainReview] as const,
+      CoinPaymentSpend: [13, CoinPaymentSpendReview] as const,
     }),
 );
 
