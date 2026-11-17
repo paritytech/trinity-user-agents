@@ -2,7 +2,7 @@ import BigInt
 import Foundation
 import TrUAPIHost
 
-public enum CoinageCoreError: Swift.Error {
+public enum CoinageCoreError: Error {
     /// The core reported an asset unit that is not a number.
     case invalidAssetUnit(String)
 }
@@ -40,7 +40,7 @@ public final class CoinageCore: Sendable {
     public func observe<Item: Sendable>(
         _ open: @escaping @Sendable (NativeCoinage, @escaping @Sendable (Item) -> Void) async throws
             -> NativeSubscription
-    ) -> AsyncThrowingStream<Item, Swift.Error> {
+    ) -> AsyncThrowingStream<Item, Error> {
         AsyncThrowingStream { continuation in
             let holder = SubscriptionHolder()
             let task = Task { [handle] in

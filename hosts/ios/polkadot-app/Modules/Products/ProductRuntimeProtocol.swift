@@ -28,7 +28,7 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
     func start(messagingSupport: ProductsNativeApi.MessagingSupport) async throws
     func onUserMessage(text: String, roomId: String?) async throws
     func renderMessage(roomId: String?, messageId: String, messageType: String, messageData: Data) async
-        -> AsyncThrowingStream<ChatRendererOutput, Swift.Error>
+        -> AsyncThrowingStream<ChatRendererOutput, Error>
     func dispatchEvent(
         roomId: String?,
         messageId: String,

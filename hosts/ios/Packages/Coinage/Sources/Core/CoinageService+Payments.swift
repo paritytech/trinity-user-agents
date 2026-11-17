@@ -68,7 +68,7 @@ extension CoinageService {
                         if item.status.isTerminal { break }
                     }
                     continuation.finish()
-                } catch where NativeCoinage.isUnknownOperation(error) {
+                } catch CoinageError.UnknownOperation {
                     continuation.finish(throwing: IncomingPaymentError.notFound(paymentId))
                 } catch {
                     continuation.finish(throwing: error)
@@ -132,7 +132,7 @@ extension CoinageService {
                         if status != .processing { break }
                     }
                     continuation.finish()
-                } catch where NativeCoinage.isUnknownOperation(error) {
+                } catch CoinageError.UnknownOperation {
                     continuation.finish(throwing: ExternalPaymentError.notFound)
                 } catch {
                     continuation.finish(throwing: error)

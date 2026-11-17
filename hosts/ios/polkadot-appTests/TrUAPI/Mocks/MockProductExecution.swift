@@ -26,10 +26,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private(set) var renderRequests: [ProductRendererRenderRequest] = []
     /// The continuation behind each stream `render` returned, in order, so a
     /// test can push a face into a stream that is already being drained.
-    private(set) var renderContinuations: [AsyncThrowingStream<RendererNode, Swift.Error>.Continuation] = []
+    private(set) var renderContinuations: [AsyncThrowingStream<RendererNode, Error>.Continuation] = []
     /// Errors thrown by successive `render` calls, consumed in order; once
     /// empty the call succeeds. Lets tests drive the startup retry loop.
-    var renderErrors: [Swift.Error] = []
+    var renderErrors: [Error] = []
     /// Nodes the render stream yields before finishing.
     var renderNodes: [RendererNode] = []
     /// Keeps the render stream open after those nodes, the way a live worker
@@ -89,7 +89,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         publishedChatActions.append(item)
     }
 
-    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Swift.Error> {
+    func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
         renderRequests.append(request)
         if !renderErrors.isEmpty {
             renderSignal.yield()
@@ -98,7 +98,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
         let nodes = renderNodes
         let staysOpen = keepsRenderStreamOpen
-        let stream = AsyncThrowingStream<RendererNode, Swift.Error> { continuation in
+        let stream = AsyncThrowingStream<RendererNode, Error> { continuation in
             nodes.forEach { continuation.yield($0) }
             if !staysOpen { continuation.finish() }
             self.renderContinuations.append(continuation)

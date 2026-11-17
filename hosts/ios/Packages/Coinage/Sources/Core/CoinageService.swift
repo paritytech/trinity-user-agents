@@ -198,7 +198,7 @@ extension CoinageService {
     func followOperation(
         _ id: CoinageOperationId,
         start: @escaping @Sendable (NativeCoinage) async throws -> Started
-    ) -> AsyncThrowingStream<CoinageTransferDetection, Swift.Error> {
+    ) -> AsyncThrowingStream<CoinageTransferDetection, Error> {
         let core = core
 
         return AsyncThrowingStream { continuation in
@@ -218,7 +218,7 @@ extension CoinageService {
     }
 
     /// Follows the operation `id`, already started, until its terminal status.
-    static func follow(_ id: CoinageOperationId, core: CoinageCore) -> AsyncThrowingStream<CoinageTransferDetection, Swift.Error> {
+    static func follow(_ id: CoinageOperationId, core: CoinageCore) -> AsyncThrowingStream<CoinageTransferDetection, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {

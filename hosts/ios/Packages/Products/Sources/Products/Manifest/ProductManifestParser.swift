@@ -241,7 +241,7 @@ private extension ProductManifestParser {
     }
 }
 
-private enum PocketCardManifestError: Swift.Error, CustomStringConvertible {
+private enum PocketCardManifestError: Error, CustomStringConvertible {
     case missingField(String)
 
     var description: String {

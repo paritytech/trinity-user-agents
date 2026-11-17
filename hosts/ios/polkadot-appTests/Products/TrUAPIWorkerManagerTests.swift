@@ -346,7 +346,7 @@ private func execution(
 
 /// Waits for the product's worker to be cleared, failing rather than hanging if it never is.
 private func noExecution(of productId: ProductId, in manager: TrUAPIWorkerManager) async throws {
-    struct StreamEnded: Swift.Error {}
+    struct StreamEnded: Error {}
     try await withTimeout(.hangGuard) {
         for try await execution in manager.executions(of: productId) where execution == nil {
             return

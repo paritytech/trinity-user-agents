@@ -5,7 +5,7 @@ import Testing
 @testable import Products
 
 final class ProductExecutableCacheTests {
-    private struct Unreachable: Swift.Error {}
+    private struct Unreachable: Error {}
 
     private static let appHash = Data(repeating: 0xA1, count: 34)
     private static let updatedAppHash = Data(repeating: 0xA2, count: 34)
@@ -179,7 +179,7 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
         contracts.failAllReads(with: Unreachable())
 
-        await #expect(throws: (any Swift.Error).self) {
+        await #expect(throws: (any Error).self) {
             try await self.makeLoader().openWorker(self.baseName, policy: .attempts(1))
         }
     }

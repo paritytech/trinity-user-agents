@@ -3,7 +3,7 @@ import PolkadotUI
 import Products
 import TrUAPIHost
 
-enum PocketPublishError: Swift.Error, Equatable, CustomStringConvertible {
+enum PocketPublishError: Error, Equatable, CustomStringConvertible {
     case noPocket
     case unknownCard
     /// The product answered with a manifest nothing can read. A settled answer

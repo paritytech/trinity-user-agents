@@ -3,7 +3,7 @@ import Products
 import KeyDerivation
 import TrUAPIHost
 
-enum TrUAPIReviewMappingError: Swift.Error, Equatable {
+enum TrUAPIReviewMappingError: Error, Equatable {
     case invalidDerivationIndexLength(Int)
     case notASigningReview
     case invalidAmount(String)

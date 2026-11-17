@@ -3,38 +3,38 @@ import TrUAPIHost
 
 /// The core's streams, each as an `AsyncThrowingStream` that ends the subscription when it terminates.
 public extension CoinageCore {
-    func balances() -> AsyncThrowingStream<Balance, Swift.Error> {
+    func balances() -> AsyncThrowingStream<Balance, Error> {
         observe { coinage, push in
             try await coinage.observeBalance(observer: BalanceObserver(push: push))
         }
     }
 
-    func holdings() -> AsyncThrowingStream<Holdings, Swift.Error> {
+    func holdings() -> AsyncThrowingStream<Holdings, Error> {
         observe { coinage, push in
             try await coinage.observeHoldings(observer: HoldingsObserver(push: push))
         }
     }
 
     /// The status of the app's operation `id`, until the stream is cancelled.
-    func statuses(of id: CoinageOperationId) -> AsyncThrowingStream<StatusItem, Swift.Error> {
+    func statuses(of id: CoinageOperationId) -> AsyncThrowingStream<StatusItem, Error> {
         observe { coinage, push in
             try await coinage.observeStatus(id: id.value, observer: StatusObserver(push: push))
         }
     }
 
-    func exportStatuses(of id: CoinageOperationId) -> AsyncThrowingStream<[ExportedCoinStatus], Swift.Error> {
+    func exportStatuses(of id: CoinageOperationId) -> AsyncThrowingStream<[ExportedCoinStatus], Error> {
         observe { coinage, push in
             try await coinage.observeExportStatus(id: id.value, observer: ExportStatusObserver(push: push))
         }
     }
 
-    func events() -> AsyncThrowingStream<Event, Swift.Error> {
+    func events() -> AsyncThrowingStream<Event, Error> {
         observe { coinage, push in
             try await coinage.observeEvents(observer: EventObserver(push: push))
         }
     }
 
-    func handOverProgress() -> AsyncThrowingStream<HandOverProgress, Swift.Error> {
+    func handOverProgress() -> AsyncThrowingStream<HandOverProgress, Error> {
         observe { coinage, push in
             coinage.observeHandOver(observer: HandOverObserver(push: push))
         }

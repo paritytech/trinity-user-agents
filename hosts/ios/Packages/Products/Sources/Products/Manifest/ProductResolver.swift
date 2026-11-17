@@ -2,7 +2,7 @@ import TrUAPIHost
 import Foundation
 import SDKLogger
 
-public enum ProductResolutionError: Swift.Error {
+public enum ProductResolutionError: Error {
     case malformedManifest(ProductId)
     case productNotOnNetwork(ProductId)
     case missingExecutable(ProductId, ExecutableKind)
@@ -28,7 +28,7 @@ public actor ProductResolver: ProductResolving {
 
     // Successful resolutions only, so a transient read failure stays retryable.
     private var cache: [ProductId: ProductManifest] = [:]
-    private var inFlight: [ProductId: Task<ProductManifest, Swift.Error>] = [:]
+    private var inFlight: [ProductId: Task<ProductManifest, Error>] = [:]
 
     public init(
         metadataRepository: ProductMetadataRepositoryProtocol,

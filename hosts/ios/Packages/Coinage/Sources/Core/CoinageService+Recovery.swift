@@ -112,7 +112,7 @@ private extension CoinageService {
     }
 
     /// The current installation's recoverability, read again whenever the core reports it may have changed.
-    func recoverability() -> AsyncThrowingStream<Recoverability, Swift.Error> {
+    func recoverability() -> AsyncThrowingStream<Recoverability, Error> {
         let core = core
 
         return AsyncThrowingStream { continuation in
