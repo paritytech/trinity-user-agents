@@ -1813,8 +1813,9 @@ descriptor a built-in network runs on in
 `<base-path>/<version>/stacks/<network>.json`.
 While the published descriptor cannot be fetched, and when it is refused or
 older than that copy, the host starts from that copy, under the same rules as a
-fetched one, so one older than the bundled copy is not used. A host that ran on a stack after a wipe therefore does not go back
-to the bundled copy's chains, which the core would take for another wipe.
+fetched one, so one older than the bundled copy is not used. A host that ran
+on a stack after a wipe therefore does not go back to the bundled copy's
+chains, which the core would take for another wipe.
 
 Before a command runs, every endpoint of a stack-derived network (a built-in or a
 `--stack`) reached over RPC is asked for its genesis in parallel, and People, on
