@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.runtime.Composable
@@ -133,6 +134,8 @@ fun RootNavBarOverlay(
         val drawbridge = remember(dock, maxWidth, maxHeight) { DockletDrawbridge(dock, maxWidth, maxHeight) }
         val scope = rememberCoroutineScope()
         val density = LocalDensity.current
+        val ime = WindowInsets.ime
+        val keyboardUp by remember(ime, density) { derivedStateOf { ime.getBottom(density) > 0 } }
         val nubPx = with(density) { NUB_WIDTH.toPx() }
         val flingVelocityPx = with(density) { FLING_VELOCITY_THRESHOLD.toPx() }
         val pull = remember(scope, nubPx, flingVelocityPx) { TabBarPullState(scope, nubPx, flingVelocityPx) }
@@ -150,15 +153,13 @@ fun RootNavBarOverlay(
         LaunchedEffect(Unit) {
             snapshotFlow { pull.visibleWidthPx }.collect { onOffset(with(density) { it.toDp() }) }
         }
-        // Both intrusions have to be surrendered on hide, not just the horizontal one: the height is only ever
-        // measured while the bar is composed, so without this screens keep reserving the band it used to
-        // occupy — and ChatExtensionOverlayHost reads a non-zero height as "a bar is there" and drops its own
-        // navigation-bar padding.
+        val restingHeight = maxHeight - dock.top + DockletGeometry.PillProud
+        // A hidden bar reports no width and no height: ChatExtensionOverlayHost reads a non-zero height as a bar being there.
         LaunchedEffect(barShown) {
-            if (!barShown) {
-                onOffset(0.dp)
-                onBarHeight(0.dp)
-            }
+            if (!barShown) onOffset(0.dp)
+        }
+        LaunchedEffect(barShown, restingHeight) {
+            onBarHeight(if (barShown) restingHeight else 0.dp)
         }
 
         val openCard: (DockletStep) -> Unit = { step ->
@@ -323,7 +324,6 @@ fun RootNavBarOverlay(
                         onAppClose = onAppClose,
                         onScanHandled = { navigate -> pull.collapsePanels(); navigate?.invoke() },
                         onScannerTooltipDismiss = onScannerTooltipDismiss,
-                        onRestingHeightChange = { if (barShown) onBarHeight(it) },
                         onBarWidthChange = pull::setBarWidth,
                     )
                 }
@@ -334,6 +334,7 @@ fun RootNavBarOverlay(
                     hideState = hideState,
                     enabled = dockletAutoHideEnabled,
                     searchOpen = pull.scanExpanded,
+                    keyboardUp = keyboardUp,
                     tipShown = (hideState.countsAsHidden && dockletTip != null) || tooltipVisible,
                     panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
                     dockletAreas = { dockletAreas },
@@ -345,7 +346,9 @@ fun RootNavBarOverlay(
                         HiddenDockBack(hideState = hideState, restoresOnBack = barMode == TabBarMode.Main)
                     }
                 }
-                HiddenDockGlow(hideState = hideState, glowMasks = glowMasks, dockletTip = dockletTip, onTipDismiss = onDockletTipDismiss)
+                if (!keyboardUp) {
+                    HiddenDockGlow(hideState = hideState, glowMasks = glowMasks, dockletTip = dockletTip, onTipDismiss = onDockletTipDismiss)
+                }
             }
         }
     }

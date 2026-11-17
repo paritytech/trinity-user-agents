@@ -3,8 +3,6 @@ package io.paritytech.polkadotapp.app.root.presentation.root.compose
 import android.os.SystemClock
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -50,6 +48,7 @@ fun DockletAutoHideEffect(
     hideState: DockletHideState,
     enabled: Boolean,
     searchOpen: Boolean,
+    keyboardUp: Boolean,
     tipShown: Boolean,
     panelExpanded: Boolean,
     dockletAreas: () -> List<DockletFrame>,
@@ -59,8 +58,6 @@ fun DockletAutoHideEffect(
     val talkBack = rememberTouchExplorationEnabled()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val resumed = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
-    val ime = WindowInsets.ime
-    val imeUp by remember(ime, density) { derivedStateOf { ime.getBottom(density) > 0 } }
     val shownAtRest by remember(hideState) { derivedStateOf { hideState.isShownAtRest } }
     val scope = rememberCoroutineScope()
     val autoHide = remember(hideState, scope) { DockletAutoHide(scope) { hideState.quietHide() } }
@@ -70,7 +67,7 @@ fun DockletAutoHideEffect(
         enabled = enabled,
         shownAtRest = shownAtRest,
         searchOpen = searchOpen,
-        keyboardUp = imeUp,
+        keyboardUp = keyboardUp,
         tipShown = tipShown,
         panelExpanded = panelExpanded,
         touchExploration = talkBack,
