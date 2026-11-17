@@ -7,7 +7,7 @@ import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.feature_settings_api.data.storage.DockletAutoHideStorage
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import io.paritytech.polkadotapp.feature_settings_impl.data.repository.RealAppLanguageProvider
-import io.paritytech.polkadotapp.feature_settings_impl.data.storage.PreferencesDockletAutoHideStorage
+import io.paritytech.polkadotapp.feature_settings_impl.data.storage.RealDockletAutoHideStorage
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -16,5 +16,5 @@ internal interface SettingsDataModule {
     fun bindAppLanguageProvider(impl: RealAppLanguageProvider): AppLanguageProvider
 
     @Binds
-    fun bindDockletAutoHideStorage(impl: PreferencesDockletAutoHideStorage): DockletAutoHideStorage
+    fun bindDockletAutoHideStorage(impl: RealDockletAutoHideStorage): DockletAutoHideStorage
 }

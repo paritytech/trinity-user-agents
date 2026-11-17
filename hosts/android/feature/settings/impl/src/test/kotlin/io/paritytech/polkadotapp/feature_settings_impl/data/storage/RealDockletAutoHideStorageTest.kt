@@ -10,14 +10,14 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class PreferencesDockletAutoHideStorageTest {
+class RealDockletAutoHideStorageTest {
     private val stored = mutableMapOf<String, Boolean>()
     private val preferences = mockk<Preferences> {
         every { getBoolean(any(), any()) } answers { stored[firstArg()] ?: secondArg() }
         every { booleanFlow(any(), any()) } answers { MutableStateFlow(stored[firstArg()] ?: secondArg()) }
         every { putBoolean(any(), any()) } answers { stored[firstArg()] = secondArg() }
     }
-    private val storage = PreferencesDockletAutoHideStorage(preferences)
+    private val storage = RealDockletAutoHideStorage(preferences)
 
     @Test
     fun `auto-hide is enabled when nothing was stored`() = runBlocking<Unit> {

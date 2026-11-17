@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.feature_settings_api.data.storage.DockletAutoHi
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 
-class PreferencesDockletAutoHideStorage @Inject constructor(
+class RealDockletAutoHideStorage @Inject constructor(
     private val preferences: Preferences,
 ) : DockletAutoHideStorage {
     override fun isEnabled(): Boolean = preferences.getBoolean(ENABLED_KEY, DEFAULT_ENABLED)

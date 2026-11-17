@@ -75,7 +75,7 @@ fun DockletAutoHideEffect(
     )
     SideEffect { autoHide.blocked = blockers.blocked }
 
-    // The tap that turns auto-hide off is itself an outside touch, which has already started tucking the Docklet.
+    // Turning auto-hide off brings back a Docklet it hid, including the one this very tap, an outside touch, started tucking.
     val currentEnabled by rememberUpdatedState(enabled)
     LaunchedEffect(hideState) {
         snapshotFlow { currentEnabled }.drop(1).collect { if (!it) hideState.undoQuietHide() }
