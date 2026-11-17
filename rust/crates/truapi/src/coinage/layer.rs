@@ -175,8 +175,11 @@ impl From<StartError> for CoinageUnavailable {
 }
 
 /// A failure to start an operation, or a query that cannot be answered.
+///
+/// It crosses UniFFI as `CoinageError`: a bare `Error` would shadow Swift's
+/// own `Error` in every file that imports the bindings.
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From, uniffi::Error)]
-#[uniffi(flat_error)]
+#[uniffi(flat_error, name = "CoinageError")]
 pub enum Error {
 	/// The purse is unknown, closed, or, as a destination, being deleted.
 	#[display("purse {} not found", _0.0)]
