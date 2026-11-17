@@ -38,6 +38,10 @@ pub struct HostRuntimeConfig {
 	/// user added it.
 	#[uniffi(default)]
 	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
+	/// Whether the host draws materials. Off by default, which draws every
+	/// `Materials` node plain and answers no to products that ask.
+	#[uniffi(default)]
+	pub materials_enabled: bool,
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
@@ -77,6 +81,8 @@ pub struct NativeResolvedHostRuntimeConfig {
 	/// The stack the host build ships. The runtime resolves it when it is
 	/// built, and refreshes it while it runs.
 	pub stack: BundledStack,
+	/// Whether the host draws materials.
+	pub materials_enabled: bool,
 	/// Entropy to activate a local signing session with at construction.
 	pub local_session_secret: Option<Vec<u8>>,
 	/// Lite username attached to that local session.
@@ -156,6 +162,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 		Ok(Self {
 			host,
 			stack: config.stack,
+			materials_enabled: config.materials_enabled,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),

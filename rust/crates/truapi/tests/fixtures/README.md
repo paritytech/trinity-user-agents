@@ -89,6 +89,17 @@ with every case.
 | `materials/body-seed.v1.json` | `main` at `66dd4552` | the noise seed of a body's id |
 | `materials/noise.v1.json` | `main` at `66dd4552` | the noise image of a seed |
 
+`materials/compiled.v9.json` is not a vector but Shaderlab's own output: the shaders its
+compile step (`packages/shader/src/compiler.js` on `main`) writes for each material the
+shader tests use. The vertex shader and the float fallback's helpers, the same for every
+material, are written once. Regenerate it from a shaderlab-spa checkout of `main`:
+
+```bash
+( cd <shaderlab-spa> && bun install --ignore-scripts --filter @shaderlab/shader )
+bun scripts/shaderlab-shader-fixtures.ts <shaderlab-spa> > \
+  rust/crates/truapi/tests/fixtures/materials/compiled.v9.json
+```
+
 ## Recapturing
 
 A re-captured fixture can change shape silently. Two tests exist to catch that rather than
