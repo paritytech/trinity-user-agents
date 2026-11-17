@@ -198,19 +198,24 @@ markers! {
 	// only the keys `crate::funding_events` lists for the marker, every value
 	// from a closed set, amounts as buckets and a country as its region.
 
-	/// The funding overlay opened on a new session. Detail: `crate::funding_events::OVERLAY_OPENED`.
+	/// The funding overlay opened on a new session. Detail:
+	/// `crate::funding_events::OVERLAY_OPENED`.
 	FUNDING_OVERLAY_OPENED = "truapi.funding.overlay_opened" => Export(Info);
 
-	/// The funding overlay closed, and how far the user got. Detail: `crate::funding_events::OVERLAY_CLOSED`.
+	/// The funding overlay closed, and how far the user got. Detail:
+	/// `crate::funding_events::OVERLAY_CLOSED`.
 	FUNDING_OVERLAY_CLOSED = "truapi.funding.overlay_closed" => Export(Info);
 
-	/// Every provider asked for one quote request answered, or a newer request replaced it. Detail: `crate::funding_events::QUOTES_SETTLED`.
+	/// Every provider asked for one quote request answered, or a newer request replaced it. Detail:
+	/// `crate::funding_events::QUOTES_SETTLED`.
 	FUNDING_QUOTES_SETTLED = "truapi.funding.quotes_settled" => Export(Info);
 
-	/// A session was handed to a provider on one of its quotes. Detail: `crate::funding_events::PROVIDER_CHOSEN`.
+	/// A session was handed to a provider on one of its quotes. Detail:
+	/// `crate::funding_events::PROVIDER_CHOSEN`.
 	FUNDING_PROVIDER_CHOSEN = "truapi.funding.provider_chosen" => Export(Info);
 
-	/// A provider's worker took its session, or first failed to. Detail: `crate::funding_events::PROVIDER_TOOK`.
+	/// A provider's worker took its session, or first failed to. Detail:
+	/// `crate::funding_events::PROVIDER_TOOK`.
 	FUNDING_PROVIDER_TOOK = "truapi.funding.provider_took" => Export(Info);
 
 	/// A session first reached a milestone. Detail: `crate::funding_events::STEP_REACHED`.
@@ -219,28 +224,34 @@ markers! {
 	/// A session first showed a warning state. Detail: `crate::funding_events::STATUS_FLAG`.
 	FUNDING_STATUS_FLAG = "truapi.funding.status_flag" => Export(Info);
 
-	/// A provider is done with a session, on an ending that is no fault. Detail: `crate::funding_events::ENDED`.
+	/// A provider is done with a session, on an ending that is no fault. Detail:
+	/// `crate::funding_events::ENDED`.
 	FUNDING_ENDED = "truapi.funding.ended" => Export(Info);
 
-	/// A provider is done with a session, on an ending that is a fault. Detail: `crate::funding_events::ENDED_UNEXPECTEDLY`.
+	/// A provider is done with a session, on an ending that is a fault. Detail:
+	/// `crate::funding_events::ENDED_UNEXPECTEDLY`.
 	FUNDING_ENDED_UNEXPECTEDLY = "truapi.funding.ended_unexpectedly" => Export(Error);
 
 	/// The user asked to cancel a session. Detail: `crate::funding_events::CANCEL_REQUESTED`.
 	FUNDING_CANCEL_REQUESTED = "truapi.funding.cancel_requested" => Export(Info);
 
-	/// A provider answered a cancel, or its worker first failed to. Detail: `crate::funding_events::CANCEL_ANSWERED`.
+	/// A provider answered a cancel, or its worker first failed to. Detail:
+	/// `crate::funding_events::CANCEL_ANSWERED`.
 	FUNDING_CANCEL_ANSWERED = "truapi.funding.cancel_answered" => Export(Info);
 
-	/// The user answered a provider's cancel offer. Detail: `crate::funding_events::CANCEL_CONFIRMED`.
+	/// The user answered a provider's cancel offer. Detail:
+	/// `crate::funding_events::CANCEL_CONFIRMED`.
 	FUNDING_CANCEL_CONFIRMED = "truapi.funding.cancel_confirmed" => Export(Info);
 
 	/// A provider asked to show a screen. Detail: `crate::funding_events::FRAME_REQUESTED`.
 	FUNDING_FRAME_REQUESTED = "truapi.funding.frame_requested" => Export(Info);
 
-	/// The host opened a screen a provider asked for. Detail: `crate::funding_events::FRAME_OPENED`.
+	/// The host opened a screen a provider asked for. Detail:
+	/// `crate::funding_events::FRAME_OPENED`.
 	FUNDING_FRAME_OPENED = "truapi.funding.frame_opened" => Export(Info);
 
-	/// A provider's screen closed, or was dropped before the user opened it. Detail: `crate::funding_events::FRAME_CLOSED`.
+	/// A provider's screen closed, or was dropped before the user opened it. Detail:
+	/// `crate::funding_events::FRAME_CLOSED`.
 	FUNDING_FRAME_CLOSED = "truapi.funding.frame_closed" => Export(Info);
 
 	// ------------------------------------------------- native host callbacks

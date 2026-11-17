@@ -24,8 +24,7 @@ fn every_event_is_an_exported_funding_marker() {
 	let errors: Vec<&str> = FUNDING_EVENTS
 		.iter()
 		.filter(|spec| {
-			spec.marker.class ==
-				markers::MarkerClass::Export { severity: markers::Severity::Error }
+			spec.marker.class == markers::MarkerClass::Export { severity: markers::Severity::Error }
 		})
 		.map(|spec| spec.marker.target)
 		.collect();

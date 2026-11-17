@@ -26,15 +26,15 @@ use crate::{
 ///
 /// - `direction`: `in`, `out`.
 /// - `opener`: `host`, `product`.
-/// - `product`: the opening product's dotNS label when it is a first-party
-///   product, `third_party`, or `none` when the host opened it.
+/// - `product`: the opening product's dotNS label when it is a first-party product, `third_party`,
+///   or `none` when the host opened it.
 /// - `rail`: `card`, `bank`, `crypto`, `none`.
-/// - `provider`: the provider's product id when the host lists it as a
-///   funding provider, `other`, or `none` before one is chosen.
-/// - `asset`, `network`: the symbol or network id a provider route declares
-///   when it is a short plain identifier, `other`, or `none`.
-/// - `amount_bucket`: the session's CASH amount as `<10`, `10-50`, `50-100`,
-///   `100-250`, `250-500`, `500-1k`, `1k-5k`, `5k+`, or `unset`.
+/// - `provider`: the provider's product id when the host lists it as a funding provider, `other`,
+///   or `none` before one is chosen.
+/// - `asset`, `network`: the symbol or network id a provider route declares when it is a short
+///   plain identifier, `other`, or `none`.
+/// - `amount_bucket`: the session's CASH amount as `<10`, `10-50`, `50-100`, `100-250`, `250-500`,
+///   `500-1k`, `1k-5k`, `5k+`, or `unset`.
 pub const COMMON_TAGS: &[&str] =
 	&["direction", "opener", "product", "rail", "provider", "asset", "network", "amount_bucket"];
 
@@ -96,164 +96,164 @@ macro_rules! funding_events {
 }
 
 funding_events! {
-	/// The overlay opened on a new session. `amount_preset`: `true`
-	/// when the opener named the amount, `false` when the user picks it.
-	OVERLAY_OPENED = FUNDING_OVERLAY_OPENED {
-		tags: ["amount_preset"],
-		measures: [],
-	};
+/// The overlay opened on a new session. `amount_preset`: `true`
+/// when the opener named the amount, `false` when the user picks it.
+OVERLAY_OPENED = FUNDING_OVERLAY_OPENED {
+	tags: ["amount_preset"],
+	measures: [],
+};
 
-	/// The overlay closed. `outcome`: `started`, `dismissed`,
-	/// `failed`. `furthest`, how far the user got: `amount`, `rail`,
-	/// `quotes`, `provider`. `overlay_bucket` and `overlay_ms`:
-	/// how long it was up.
-	OVERLAY_CLOSED = FUNDING_OVERLAY_CLOSED {
-		tags: ["outcome", "furthest", "overlay_bucket"],
-		measures: ["overlay_ms"],
-	};
+/// The overlay closed. `outcome`: `started`, `dismissed`,
+/// `failed`. `furthest`, how far the user got: `amount`, `rail`,
+/// `quotes`, `provider`. `overlay_bucket` and `overlay_ms`:
+/// how long it was up.
+OVERLAY_CLOSED = FUNDING_OVERLAY_CLOSED {
+	tags: ["outcome", "furthest", "overlay_bucket"],
+	measures: ["overlay_ms"],
+};
 
-	/// Every provider asked for one quote request answered, or a newer
-	/// request replaced it first (`superseded`: `true`, `false`).
-	/// `region`: `eu`, `uk`, `us`, `other`, `unset`.
-	/// `issue`, what the refusals say about the amount: `none`,
-	/// `not_enough_balance`, `below_minimum`, `above_maximum`, never the
-	/// limit itself. `latency_bucket`: how long the answers took.
-	/// Measures count the rows by how each ended, and time the first quote
-	/// and the last answer from the request.
-	QUOTES_SETTLED = FUNDING_QUOTES_SETTLED {
-		tags: ["region", "issue", "superseded", "latency_bucket"],
-		measures: [
-			"asked",
-			"quoted",
-			"refused_country",
-			"refused_min",
-			"refused_max",
-			"refused_unavailable",
-			"refused_other",
-			"timed_out",
-			"pending",
-			"first_quote_ms",
-			"settle_ms",
-		],
-	};
+/// Every provider asked for one quote request answered, or a newer
+/// request replaced it first (`superseded`: `true`, `false`).
+/// `region`: `eu`, `uk`, `us`, `other`, `unset`.
+/// `issue`, what the refusals say about the amount: `none`,
+/// `not_enough_balance`, `below_minimum`, `above_maximum`, never the
+/// limit itself. `latency_bucket`: how long the answers took.
+/// Measures count the rows by how each ended, and time the first quote
+/// and the last answer from the request.
+QUOTES_SETTLED = FUNDING_QUOTES_SETTLED {
+	tags: ["region", "issue", "superseded", "latency_bucket"],
+	measures: [
+		"asked",
+		"quoted",
+		"refused_country",
+		"refused_min",
+		"refused_max",
+		"refused_unavailable",
+		"refused_other",
+		"timed_out",
+		"pending",
+		"first_quote_ms",
+		"settle_ms",
+	],
+};
 
-	/// The session was handed to a provider on one of its quotes.
-	/// `best`: whether it was the best quote. `fee_bucket`:
-	/// the quote's fees against what the user sends, in basis points, `<50`,
-	/// `50-100`, `100-200`, `200-500`, `500+`. `eta_bucket`: the
-	/// quote's time, `<1m`, `1-10m`, `10-60m`, `1-24h`, `1d+`, `unknown`.
-	/// Measures: the quote's rank by what the user gets, and how many quoted.
-	PROVIDER_CHOSEN = FUNDING_PROVIDER_CHOSEN {
-		tags: ["best", "fee_bucket", "eta_bucket"],
-		measures: ["rank", "quote_count"],
-	};
+/// The session was handed to a provider on one of its quotes.
+/// `best`: whether it was the best quote. `fee_bucket`:
+/// the quote's fees against what the user sends, in basis points, `<50`,
+/// `50-100`, `100-200`, `200-500`, `500+`. `eta_bucket`: the
+/// quote's time, `<1m`, `1-10m`, `10-60m`, `1-24h`, `1d+`, `unknown`.
+/// Measures: the quote's rank by what the user gets, and how many quoted.
+PROVIDER_CHOSEN = FUNDING_PROVIDER_CHOSEN {
+	tags: ["best", "fee_bucket", "eta_bucket"],
+	measures: ["rank", "quote_count"],
+};
 
-	/// The provider's worker took the session, or first failed to.
-	/// `outcome`: `taken`, `not_taken`. `take_bucket` and
-	/// `take_ms`: time since the session was handed over.
-	PROVIDER_TOOK = FUNDING_PROVIDER_TOOK {
-		tags: ["outcome", "take_bucket"],
-		measures: ["take_ms"],
-	};
+/// The provider's worker took the session, or first failed to.
+/// `outcome`: `taken`, `not_taken`. `take_bucket` and
+/// `take_ms`: time since the session was handed over.
+PROVIDER_TOOK = FUNDING_PROVIDER_TOOK {
+	tags: ["outcome", "take_bucket"],
+	measures: ["take_ms"],
+};
 
-	/// The session first reached a milestone. `step`: `received`,
-	/// `added`, `sent`. Measures: time since it opened and since the
-	/// milestone before.
-	STEP_REACHED = FUNDING_STEP_REACHED {
-		tags: ["step"],
-		measures: ["since_start_ms", "since_prev_ms"],
-	};
+/// The session first reached a milestone. `step`: `received`,
+/// `added`, `sent`. Measures: time since it opened and since the
+/// milestone before.
+STEP_REACHED = FUNDING_STEP_REACHED {
+	tags: ["step"],
+	measures: ["since_start_ms", "since_prev_ms"],
+};
 
-	/// The session first showed a warning state. `flag`:
-	/// `taking_longer`, `retrying`, `retrying_payout`.
-	STATUS_FLAG = FUNDING_STATUS_FLAG {
-		tags: ["flag"],
-		measures: ["since_start_ms"],
-	};
+/// The session first showed a warning state. `flag`:
+/// `taking_longer`, `retrying`, `retrying_payout`.
+STATUS_FLAG = FUNDING_STATUS_FLAG {
+	tags: ["flag"],
+	measures: ["since_start_ms"],
+};
 
-	/// The provider is done with the session, on an ending that is no fault. `outcome`:
-	/// `topped_up`, `sent`, `refunded`, `payout_failed`, `failed`, `expired`,
-	/// `cancelled`, `paid_out_after_cancel`. `reason`: `none`, a
-	/// failure's kind such as `region_unavailable` or `declined`, the core's
-	/// own `not_claimed` or `payment_failed`, or `provider_other` for a
-	/// provider's own code. `expected`: whether the ending is the
-	/// user's or the rules' rather than a fault. `money_moved`,
-	/// `region`, `duration_bucket`. Measures: time to the end
-	/// and to the payment's arrival.
-	ENDED = FUNDING_ENDED {
-		tags: [
-			"outcome",
-			"reason",
-			"expected",
-			"money_moved",
-			"region",
-			"duration_bucket",
-		],
-		measures: ["duration_ms", "to_received_ms"],
-	};
+/// The provider is done with the session, on an ending that is no fault. `outcome`:
+/// `topped_up`, `sent`, `refunded`, `payout_failed`, `failed`, `expired`,
+/// `cancelled`, `paid_out_after_cancel`. `reason`: `none`, a
+/// failure's kind such as `region_unavailable` or `declined`, the core's
+/// own `not_claimed` or `payment_failed`, or `provider_other` for a
+/// provider's own code. `expected`: whether the ending is the
+/// user's or the rules' rather than a fault. `money_moved`,
+/// `region`, `duration_bucket`. Measures: time to the end
+/// and to the payment's arrival.
+ENDED = FUNDING_ENDED {
+	tags: [
+		"outcome",
+		"reason",
+		"expected",
+		"money_moved",
+		"region",
+		"duration_bucket",
+	],
+	measures: ["duration_ms", "to_received_ms"],
+};
 
-	/// An ending that is a fault: failed, a failed payout, or expired with
-	/// money moved, and not the user's or the rules' doing. Carries what
-	/// `ENDED` does.
-	ENDED_UNEXPECTEDLY = FUNDING_ENDED_UNEXPECTEDLY {
-		tags: [
-			"outcome",
-			"reason",
-			"expected",
-			"money_moved",
-			"region",
-			"duration_bucket",
-		],
-		measures: ["duration_ms", "to_received_ms"],
-	};
+/// An ending that is a fault: failed, a failed payout, or expired with
+/// money moved, and not the user's or the rules' doing. Carries what
+/// `ENDED` does.
+ENDED_UNEXPECTEDLY = FUNDING_ENDED_UNEXPECTEDLY {
+	tags: [
+		"outcome",
+		"reason",
+		"expected",
+		"money_moved",
+		"region",
+		"duration_bucket",
+	],
+	measures: ["duration_ms", "to_received_ms"],
+};
 
-	/// The user asked to cancel. `result`: `ended`, `requested`,
-	/// `pending`, `too_late`, `refused`. `status_at`: the session's
-	/// status variant when asked, such as `waiting_for_payment`.
-	/// `money_moved`.
-	CANCEL_REQUESTED = FUNDING_CANCEL_REQUESTED {
-		tags: ["result", "status_at", "money_moved"],
-		measures: [],
-	};
+/// The user asked to cancel. `result`: `ended`, `requested`,
+/// `pending`, `too_late`, `refused`. `status_at`: the session's
+/// status variant when asked, such as `waiting_for_payment`.
+/// `money_moved`.
+CANCEL_REQUESTED = FUNDING_CANCEL_REQUESTED {
+	tags: ["result", "status_at", "money_moved"],
+	measures: [],
+};
 
-	/// The provider answered a cancel, or its worker first failed to.
-	/// `answer`: `offered`, `refused`, `stopped`, `no_answer`.
-	/// `fee_bucket`: an offer's fee against its total, as on
-	/// `provider_chosen`, or `none`. `answer_ms`: time since asked.
-	CANCEL_ANSWERED = FUNDING_CANCEL_ANSWERED {
-		tags: ["answer", "fee_bucket"],
-		measures: ["answer_ms"],
-	};
+/// The provider answered a cancel, or its worker first failed to.
+/// `answer`: `offered`, `refused`, `stopped`, `no_answer`.
+/// `fee_bucket`: an offer's fee against its total, as on
+/// `provider_chosen`, or `none`. `answer_ms`: time since asked.
+CANCEL_ANSWERED = FUNDING_CANCEL_ANSWERED {
+	tags: ["answer", "fee_bucket"],
+	measures: ["answer_ms"],
+};
 
-	/// The user answered a cancel offer. `result`: `accepted`,
-	/// `declined`, `lapsed`, `no_offer`, `too_late`.
-	CANCEL_CONFIRMED = FUNDING_CANCEL_CONFIRMED {
-		tags: ["result"],
-		measures: [],
-	};
+/// The user answered a cancel offer. `result`: `accepted`,
+/// `declined`, `lapsed`, `no_offer`, `too_late`.
+CANCEL_CONFIRMED = FUNDING_CANCEL_CONFIRMED {
+	tags: ["result"],
+	measures: [],
+};
 
-	/// The provider asked to show a screen. `target`: `app`, `page`.
-	/// `replaced`: whether it replaced one still waiting.
-	FRAME_REQUESTED = FUNDING_FRAME_REQUESTED {
-		tags: ["target", "replaced"],
-		measures: [],
-	};
+/// The provider asked to show a screen. `target`: `app`, `page`.
+/// `replaced`: whether it replaced one still waiting.
+FRAME_REQUESTED = FUNDING_FRAME_REQUESTED {
+	tags: ["target", "replaced"],
+	measures: [],
+};
 
-	/// The host opened a screen the provider asked for. `wait_bucket`
-	/// and `wait_ms`: time since it was asked for.
-	FRAME_OPENED = FUNDING_FRAME_OPENED {
-		tags: ["target", "wait_bucket"],
-		measures: ["wait_ms"],
-	};
+/// The host opened a screen the provider asked for. `wait_bucket`
+/// and `wait_ms`: time since it was asked for.
+FRAME_OPENED = FUNDING_FRAME_OPENED {
+	tags: ["target", "wait_bucket"],
+	measures: ["wait_ms"],
+};
 
-	/// A provider's screen closed. `outcome`: `closed`, `dismissed`,
-	/// `returned`, `failed` once shown; `closed_by_core` when opened but
-	/// withdrawn before it showed; `dropped_unopened` when the user never saw
-	/// it. `open_ms`: time on screen.
-	FRAME_CLOSED = FUNDING_FRAME_CLOSED {
-		tags: ["target", "outcome"],
-		measures: ["open_ms"],
-	};}
+/// A provider's screen closed. `outcome`: `closed`, `dismissed`,
+/// `returned`, `failed` once shown; `closed_by_core` when opened but
+/// withdrawn before it showed; `dropped_unopened` when the user never saw
+/// it. `open_ms`: time on screen.
+FRAME_CLOSED = FUNDING_FRAME_CLOSED {
+	tags: ["target", "outcome"],
+	measures: ["open_ms"],
+};}
 
 /// The entry for the marker `target`, or `None` when the table does not
 /// list it.
@@ -291,12 +291,18 @@ impl FundingEvent {
 
 	/// The tag `key`, when the event carries it.
 	pub fn tag(&self, key: &str) -> Option<&str> {
-		self.tags.iter().find(|(tagged, _)| *tagged == key).map(|(_, value)| value.as_str())
+		self.tags
+			.iter()
+			.find(|(tagged, _)| *tagged == key)
+			.map(|(_, value)| value.as_str())
 	}
 
 	/// The measure `key`, when the event carries it.
 	pub fn measure(&self, key: &str) -> Option<u64> {
-		self.measures.iter().find(|(measured, _)| *measured == key).map(|(_, value)| *value)
+		self.measures
+			.iter()
+			.find(|(measured, _)| *measured == key)
+			.map(|(_, value)| *value)
 	}
 }
 

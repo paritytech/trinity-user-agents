@@ -12903,7 +12903,13 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 			event_tag(ended, "money_moved"),
 			ended.marker,
 		),
-		(Some("topped_up"), Some("none"), Some("true"), Some("true"), crate::markers::FUNDING_ENDED)
+		(
+			Some("topped_up"),
+			Some("none"),
+			Some("true"),
+			Some("true"),
+			crate::markers::FUNDING_ENDED
+		)
 	);
 	assert!(events.iter().all(|event| event.session_ref == events[0].session_ref));
 	assert_events_carry_none_of(
@@ -12931,7 +12937,10 @@ fn a_settled_quote_request_reports_its_counts_once() {
 	answer_quotes(&services, "ramp.dot", card_quote("q1"));
 	answered_quotes(&services, &intent, card_ask(Some("DE")), Duration::from_secs(5));
 	wait_until(
-		|| !events_named(&services.funding().logged_facts(), "truapi.funding.quotes_settled").is_empty(),
+		|| {
+			!events_named(&services.funding().logged_facts(), "truapi.funding.quotes_settled")
+				.is_empty()
+		},
 		"quotes settled",
 	);
 

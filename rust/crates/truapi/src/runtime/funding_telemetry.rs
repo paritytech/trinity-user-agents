@@ -608,11 +608,7 @@ impl FundingFact {
 			),
 			Self::ProviderChosen { best, rank, quote_count, fee_bucket, eta_bucket } => (
 				Info,
-				vec![
-					("best", yes(*best)),
-					("fee_bucket", fee_bucket),
-					("eta_bucket", eta_bucket),
-				],
+				vec![("best", yes(*best)), ("fee_bucket", fee_bucket), ("eta_bucket", eta_bucket)],
 				vec![("rank", Some(*rank)), ("quote_count", Some(*quote_count))],
 			),
 			Self::ProviderTook { taken, take_ms } => (
@@ -631,11 +627,9 @@ impl FundingFact {
 					("since_prev_ms", Some(*since_prev_ms)),
 				],
 			),
-			Self::StatusFlag { flag, since_start_ms } => (
-				Info,
-				vec![("flag", flag.into())],
-				vec![("since_start_ms", Some(*since_start_ms))],
-			),
+			Self::StatusFlag { flag, since_start_ms } => {
+				(Info, vec![("flag", flag.into())], vec![("since_start_ms", Some(*since_start_ms))])
+			},
 			Self::Ended(ending) => {
 				let faulty = !ending.expected &&
 					matches!(
@@ -675,17 +669,12 @@ impl FundingFact {
 			Self::CancelConfirmed { result } => {
 				(Info, vec![("result", confirmation_tag(result))], vec![])
 			},
-			Self::FrameRequested { target, replaced } => (
-				Info,
-				vec![("target", target.into()), ("replaced", yes(*replaced))],
-				vec![],
-			),
+			Self::FrameRequested { target, replaced } => {
+				(Info, vec![("target", target.into()), ("replaced", yes(*replaced))], vec![])
+			},
 			Self::FrameOpened { target, wait_ms } => (
 				Info,
-				vec![
-					("target", target.into()),
-					("wait_bucket", duration_bucket(*wait_ms)),
-				],
+				vec![("target", target.into()), ("wait_bucket", duration_bucket(*wait_ms))],
 				vec![("wait_ms", Some(*wait_ms))],
 			),
 			Self::FrameClosed { target, outcome, open_ms } => (
