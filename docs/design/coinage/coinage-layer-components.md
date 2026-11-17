@@ -460,7 +460,7 @@ A coin is selectable (`Now`) when it is `Available`, any chain lock on it has el
 |---|---|
 | Not yet minted | The transaction creating it has not finally succeeded |
 | Awaiting the payee | Present on chain |
-| Claimed | Moved by the payee, by the named transaction: either the transaction that emptied the account, as observed, or this layer's own import of the coin. Final once that move is stable |
+| Claimed | Moved by the payee, by the named transaction: either the transaction that emptied the account, as observed (F1), or this layer's own import of the coin. Final once that move is stable: for an observed move, once the block that included it is finalized |
 | Reclaimed | Moved back by this layer's reclaim. Final once the reclaim is stable |
 | Never minted | The transaction creating it failed, or a reclaim cancelled it. The secret controls nothing |
 
@@ -545,11 +545,12 @@ struct Facts { at: BlockRef, reads: Vec<(Subject, Read)> }
 enum Subject { Asset(Asset), Token(TokenId) }
 enum Read {
     Failed,                                         // the read did not return (invariant 6)
-    Coin { now: Option<CoinOnChain>, emptied_by: Option<TxHash> },   // now None: the account is empty;
+    Coin { now: Option<CoinOnChain>, emptied_by: Option<Emptied> },   // now None: the account is empty;
                                                     // emptied_by: for an exported coin, the transaction that emptied it
     Entry(Option<EntryOnChain>),                    // None: the key is in no ring
     Token { consumed: bool },
 }
+struct Emptied { by: TxHash, stable: bool }      // stable: its block was finalized at the read
 struct CoinOnChain { exponent: Exponent, age: u32, locked_until: Option<Time> }
 struct EntryOnChain {
     ring: u32, revision: u32, page: u32, position: u32,     // §1: a position is reported within its page
@@ -1146,7 +1147,7 @@ fn on_block(block: BlockRef, now: Time);   // called by the chain subscription f
 fn observe_now(now: Time);                 // the same reads at the latest finalized block, for a deployment that polls
 ```
 
-- **`on_block`** reads, at `block`, the facts of every coin, entry and unload-token identity B2 holds, and passes them to B2 `observe(txn, facts, now)` as one `Facts` value read at that block, in one store transaction (B2). For an exported coin whose account is empty, the facts include the transaction that emptied it (B1). An item whose read failed is passed as `Read::Failed`, never as absent, so the last stored value stands (B2 invariant 6). If the runtime version at `block` differs from the version of G3's latest check, F1 then calls G3 `revalidate(block)`. Finally it publishes `Event::NewBlock(block)` through G2, on which the host's entry point is called (F2 invariant 2).
+- **`on_block`** reads, at `block`, the facts of every coin, entry and unload-token identity B2 holds, and passes them to B2 `observe(txn, facts, now)` as one `Facts` value read at that block, in one store transaction (B2). For an exported coin whose account is empty, the facts include the transaction that emptied it (B1): the transaction the coin signed in the first block, after the account was last read holding the coin (or after the coin was minted), at which the account is empty. It is stable once that block is at or below the finalized height, and a move found stable is not searched for again. An exported coin still being minted, or moved by one of this layer's own records, is not searched for. An item whose read failed is passed as `Read::Failed`, never as absent, so the last stored value stands (B2 invariant 6). If the runtime version at `block` differs from the version of G3's latest check, F1 then calls G3 `revalidate(block)`. Finally it publishes `Event::NewBlock(block)` through G2, on which the host's entry point is called (F2 invariant 2).
 - **`observe_now`** does the same reads at the latest finalized block. It exists for a deployment that cannot subscribe (invariant 6).
 
 **Invariants**

@@ -79,3 +79,5 @@ fn an_entry_is_observed_in_its_ring_with_its_expiry() {
 	assert!(on_chain.closed);
 	assert_eq!(on_chain.expires_at, Some(NOW + 90 * 24 * 3600));
 }
+
+mod use_cases;
