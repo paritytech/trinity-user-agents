@@ -254,6 +254,7 @@ enum ChatMediaKind {
     File,
 }
 
+// One extended grapheme cluster.
 Emoji = String
 
 struct MessageReaction {
@@ -264,6 +265,9 @@ struct MessageReaction {
 struct AggregatedReaction {
     count: u32,
     reacted_by_me: bool,
+    // Another participant reacted to the user's message, and the user has
+    // not seen the message since.
+    unseen: bool,
 }
 
 enum MessageStatus {
@@ -349,6 +353,8 @@ enum UserChatAction {
         message_id: MessageId,
         new_content: MessageContent,
     },
+    // Adds one emoji and never replaces another: a participant may place
+    // several. A Host that allows one for each user first removes the old.
     ReactionPlaced {
         message_id: MessageId,
         reaction: MessageReaction,
@@ -787,6 +793,15 @@ This RFC follows the same transport and serialization rules as the Host API prot
 3. **Product script lifecycle**: Products are JS scripts executed from scratch on each app start. The Host MUST delay rendering until initialization completes.
 4. **Room ID scoping**: Room IDs are computed by the Host via `blake2b("product" ++ productId ++ room_id_source)` to guarantee cross-Product uniqueness.
 5. **Resource URIs**: Binary resources are referenced inline, by Preimage CID or by a Product source. No direct URL references.
+
+#### Limits
+
+A Product refuses an action over a limit, and a reader drops a record over it.
+
+| Item | Limit |
+|---|---|
+| One reaction (`Emoji`) | 64 bytes |
+| Distinct reactions on one message | 64 |
 
 ## Drawbacks
 
