@@ -1,7 +1,7 @@
 import TrUAPIHost
 
-/// Shows or hides the face of the Pocket card a page is opened under, at that page's request.
+/// `shown: false` means the page covers the face; the face itself never moves.
 @MainActor
-protocol ExpandedCardFaceShowing {
+protocol ExpandedCardFaceShowing: AnyObject {
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
 }

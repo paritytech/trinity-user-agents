@@ -10,7 +10,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.milliseconds
@@ -18,8 +19,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /** What the viewfinder shows: who is asking, and what they accept. */
 class ProductScanRequest(
-    val productId: String,
-    val executionKind: ProductExecutionKind,
+    val productId: ProductId,
+    val executionKind: ExecutableKind,
     val request: HostScannerScanRequest,
 )
 
@@ -37,16 +38,16 @@ class TrUAPIProductScans @Inject constructor(
 ) : TrUAPIPrompts<ProductScanRequest, HostScan>(unanswered = HostScan.Dismissed, notShown = HostScan.NotVisible),
     ScannerHostBridge {
     override suspend fun scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest,
     ): HostScan = ask(ProductScanRequest(productId, executionKind, request))
 
     override suspend fun canShow(question: ProductScanRequest): Boolean = withContext(dispatchers.main) {
         when (question.executionKind) {
-            ProductExecutionKind.WORKER ->
+            ExecutableKind.WORKER ->
                 contextManager.getActivity()?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
-            ProductExecutionKind.APP, ProductExecutionKind.WIDGET -> pageOnScreen(question.productId)
+            ExecutableKind.APP, ExecutableKind.WIDGET -> pageOnScreen(question.productId)
         }
     }
 
@@ -55,7 +56,7 @@ class TrUAPIProductScans @Inject constructor(
     override suspend fun close() = productsRouter.closeTrUAPIProductScan()
 
     // A host screen closing over the page, such as the last scanner, holds focus for a moment.
-    private suspend fun pageOnScreen(productId: String) = withTimeoutOrNull(FOCUS_RETURN_TIMEOUT) {
+    private suspend fun pageOnScreen(productId: ProductId) = withTimeoutOrNull(FOCUS_RETURN_TIMEOUT) {
         while (!visibleProducts.isOnScreen(productId)) delay(FOCUS_POLL_INTERVAL)
     } != null
 

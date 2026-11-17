@@ -5,7 +5,6 @@ import android.webkit.WebView
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +16,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WebViewProviderTest {
@@ -67,7 +67,7 @@ class WebViewProviderTest {
         dispatchers: CoroutineDispatchers,
         private val views: Iterator<WebView>,
     ) : WebViewProvider(dispatchers) {
-        override val callingProductIdProvider = FixedProductId(ProductId.fromStoredValue("product.paseo"))
+        override val callingProductIdProvider = FixedProductId(ProductId.parse("product.paseo").getOrThrow())
 
         override suspend fun createWebView(): WebView = views.next()
 

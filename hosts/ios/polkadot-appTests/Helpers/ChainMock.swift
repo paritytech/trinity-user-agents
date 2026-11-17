@@ -12,6 +12,7 @@ enum ChainMock {
     static func makeRemoteChain(
         id: String? = nil,
         name: String,
+        genesisHash: String? = nil,
         options: [String]? = nil
     ) -> RemoteChainModel {
         let chainId = id ?? randomChainId()
@@ -23,13 +24,34 @@ enum ChainMock {
             nodes: [RemoteChainNodeModel(url: "wss://\(chainId).example.com", name: "Node", features: nil)],
             nodeSelectionStrategy: nil,
             addressPrefix: 42,
-            genesisHash: nil,
+            genesisHash: genesisHash,
             types: nil,
             icon: nil,
             options: options,
             externalApi: nil,
             explorers: nil,
             additional: nil
+        )
+    }
+
+    static func makeChain(id: ChainModel.Id) -> ChainModel {
+        ChainModel(
+            chainId: id,
+            parentId: nil,
+            name: id,
+            assets: [],
+            nodes: [],
+            nodeSwitchStrategy: .roundRobin,
+            addressPrefix: 0,
+            explicitGenesisHash: nil,
+            types: nil,
+            icon: nil,
+            options: nil,
+            externalApis: nil,
+            explorers: nil,
+            order: 0,
+            additional: nil,
+            syncMode: .full
         )
     }
 

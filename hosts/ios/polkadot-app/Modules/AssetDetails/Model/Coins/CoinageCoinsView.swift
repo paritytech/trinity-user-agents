@@ -46,6 +46,10 @@ struct CoinageCoinsView: UIViewRepresentable {
     let coins: [CoinageScene.Coin]
     let isExpanded: Bool
     var focus: CoinageArrangement.Focus?
+    /// The studio held where a hand would otherwise turn it, and every coin leaned the same way,
+    /// from the debug dials. Nil follows the phone, which is how the coins ship.
+    var fixedLight: CoinageTilt.Turn?
+    var fixedLean: CoinageTilt.Turn?
     var coinSet: CoinageScene.CoinSet = .shipped
     @Binding var metrics: Metrics
     var stripHeight: CGFloat = CoinageStripLayout.Options().height
@@ -86,7 +90,9 @@ struct CoinageCoinsView: UIViewRepresentable {
         // top left it is simply drawn where it already was, at its own size, and the grid replaces
         // it on the next frame.
         view.layer.contentsGravity = .topLeft
-        view.preferredFramesPerSecond = 60
+        // The display's own rate, 120 on a ProMotion phone: every stage between the wrist and the
+        // pixel quantises to a frame, and the light is meant to feel attached to the hand.
+        view.preferredFramesPerSecond = UIScreen.main.maximumFramesPerSecond
         // Driven by the display link, paused the moment the springs settle, so coins at rest cost
         // nothing. `enableSetNeedsDisplay` would switch the link off and leave the view drawing one
         // frame per change, which renders correctly and never animates.
@@ -114,6 +120,8 @@ struct CoinageCoinsView: UIViewRepresentable {
         context.coordinator.onTap = onTap
         context.coordinator.onSwipe = onSwipe
         context.coordinator.coinSet = coinSet
+        context.coordinator.fixedLight = fixedLight
+        context.coordinator.fixedLean = fixedLean
         context.coordinator.update(coins: coins, isExpanded: isExpanded, focus: focus)
     }
 
@@ -147,6 +155,9 @@ extension CoinageCoinsView {
                 run()
             }
         }
+
+        var fixedLight: CoinageTilt.Turn? { didSet { if fixedLight != oldValue { run() } } }
+        var fixedLean: CoinageTilt.Turn? { didSet { if fixedLean != oldValue { run() } } }
 
         var window: CGFloat = 0 {
             didSet { if window != oldValue { run() } }
@@ -269,7 +280,9 @@ extension CoinageCoinsView {
                 in: view,
                 viewport: Self.viewport(of: view),
                 dpr: view.contentScaleFactor,
-                light: tilt.turn,
+                light: fixedLight ?? tilt.turn,
+                lean: fixedLean ?? .zero,
+                coinSet: coinSet,
                 withinTransaction: (view as? CoinageMetalView)?.isDrawingWithinTransaction == true
             )
 

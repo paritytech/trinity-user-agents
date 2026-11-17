@@ -1,9 +1,5 @@
 //! Product-facing signing capability adapters.
 
-use crate::platform::{
-	CreateTransactionReview, CrossProductSignatureKind, SignPayloadReview, SignRawReview,
-	UserConfirmationReview,
-};
 use tracing::{debug, instrument};
 use truapi::{
 	CallContext, CallError,
@@ -22,18 +18,18 @@ use truapi::{
 };
 
 use crate::runtime::{
-	ContactResolutionError, LEGACY_ACCOUNT_UNAVAILABLE_REASON,
+	AccountHolder, ContactResolutionError, LEGACY_ACCOUNT_UNAVAILABLE_REASON,
 	LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON, LegacySigner, ProductRuntimeHost,
 	authority::{
-		AuthorityError, AuthoritySession, AutoSigningGrant, CreateTransactionAuthorityRequest,
-		SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+		AuthorityError, CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
+		SignRawAuthorityRequest,
 	},
-	remote_authority_call, remote_authority_context, signing_call_error, transaction_call_error,
+	legacy_transaction_call_error, signing_call_error, transaction_call_error,
 	versioning::version,
 };
 
-#[truapi::async_trait]
-impl Signing for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_payload"))]
 	async fn sign_payload(
 		&self,
@@ -54,30 +50,10 @@ impl Signing for ProductRuntimeHost {
 				if !self.may_use_product_account(&owner, cx).await {
 					return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 				}
-				let grant = self
-					.auto_signing_status(&session, &inner.account)
+				self.accounts
+					.sign_payload(&session, cx, SignPayloadAuthorityRequest::Product(inner))
 					.await
-					.map_err(signing_call_error)?;
-				if grant == AutoSigningGrant::Absent {
-					let review = UserConfirmationReview::SignPayload(SignPayloadReview::Product {
-						calling_product_id: Some(self.connection.product_id().clone()),
-						request: inner.clone(),
-					});
-					self.confirm_signature(cx, CrossProductSignatureKind::Payload, &owner, review)
-						.await
-						.map_err(signing_call_error)?;
-				}
-				let cx = remote_authority_context(cx);
-				remote_authority_call(
-					&cx,
-					self.accounts.sign_payload(
-						&session,
-						&cx,
-						SignPayloadAuthorityRequest::Product(inner),
-					),
-				)
-				.await
-				.map_err(signing_call_error)
+					.map_err(signing_call_error)
 			})
 			.await
 	}
@@ -131,7 +107,6 @@ impl Signing for ProductRuntimeHost {
 						latest::HostCreateTransactionError::PermissionDenied,
 					));
 				}
-				let names_contacts = !inner.contacts.is_empty();
 				inner.call_data = self
 					.substitute_declared_contacts(inner.call_data, &inner.contacts)
 					.await
@@ -154,41 +129,14 @@ impl Signing for ProductRuntimeHost {
 						};
 						CallError::Domain(error)
 					})?;
-				let grant = self
-					.auto_signing_status(&session, &inner.signer)
-					.await
-					.map_err(transaction_call_error)?;
-				if grant == AutoSigningGrant::Absent || names_contacts {
-					let review = UserConfirmationReview::CreateTransaction(
-						CreateTransactionReview::Product {
-							calling_product_id: Some(self.connection.product_id().clone()),
-							payload: inner.clone(),
-						},
-					);
-					if names_contacts {
-						self.confirm(cx, review).await
-					} else {
-						self.confirm_signature(
-							cx,
-							CrossProductSignatureKind::Transaction,
-							&owner,
-							review,
-						)
-						.await
-					}
-					.map_err(transaction_call_error)?;
-				}
-				let cx = remote_authority_context(cx);
-				remote_authority_call(
-					&cx,
-					self.accounts.create_transaction(
+				self.accounts
+					.create_transaction(
 						&session,
-						&cx,
+						cx,
 						CreateTransactionAuthorityRequest::Product(inner),
-					),
-				)
-				.await
-				.map_err(transaction_call_error)
+					)
+					.await
+					.map_err(transaction_call_error)
 			})
 			.await
 	}
@@ -216,35 +164,25 @@ impl Signing for ProductRuntimeHost {
 							err.into_host_error(LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON),
 						)
 					})?;
-				if !matches!(signer, LegacySigner::Product) {
+				let LegacySigner::Product(product_account) = signer else {
 					return Err(CallError::Domain(latest::HostSignPayloadError::Unknown {
 						reason: LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON.to_string(),
 					}));
-				}
+				};
 				self.connection
 					.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 					.await?;
-				let review = UserConfirmationReview::SignPayload(SignPayloadReview::LegacyAccount(
-					inner.clone(),
-				));
-				self.confirm(cx, review).await.map_err(signing_call_error)?;
-				let cx = remote_authority_context(cx);
-				remote_authority_call(
-					&cx,
-					self.accounts.sign_payload(
+				self.accounts
+					.sign_payload(
 						&session,
-						&cx,
+						cx,
 						SignPayloadAuthorityRequest::LegacyAccount {
-							product_account: latest::ProductAccountId {
-								dot_ns_identifier: self.connection.product_id().clone(),
-								derivation_index: latest::DerivationIndex::Index(0),
-							},
+							product_account,
 							request: inner,
 						},
-					),
-				)
-				.await
-				.map_err(signing_call_error)
+					)
+					.await
+					.map_err(signing_call_error)
 			})
 			.await
 	}
@@ -291,62 +229,48 @@ impl Signing for ProductRuntimeHost {
 	> {
 		version(request)
 			.exec(|inner| async move {
-				let session = self
-					.accounts
-					.current_session()
-					.ok_or(CallError::Domain(latest::HostCreateTransactionError::Rejected))?;
+				let session = self.accounts.current_session().ok_or(CallError::Domain(
+					latest::HostCreateTransactionWithLegacyAccountError::Rejected,
+				))?;
 				let signer = self
 					.classify_legacy_signer(cx, &session, inner.signer)
 					.await
 					.map_err(|err| {
-						CallError::Domain(latest::HostCreateTransactionError::Unknown {
-							reason: err.into_reason(LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON),
-						})
+						CallError::Domain(
+							latest::HostCreateTransactionWithLegacyAccountError::Unknown {
+								reason: err.into_reason(LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON),
+							},
+						)
 					})?;
 				self.connection
-					.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
+					.require_chain_submit(
+						latest::HostCreateTransactionWithLegacyAccountError::PermissionDenied,
+					)
 					.await?;
-				let review = UserConfirmationReview::CreateTransaction(
-					CreateTransactionReview::LegacyAccount(inner.clone()),
-				);
-				self.confirm(cx, review).await.map_err(transaction_call_error)?;
-				let cx = remote_authority_context(cx);
 				let authority_request = match signer {
-					LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
-						product_account: latest::ProductAccountId {
-							dot_ns_identifier: self.connection.product_id().clone(),
-							derivation_index: latest::DerivationIndex::Index(0),
-						},
-						request: inner,
+					LegacySigner::Product(product_account) => {
+						CreateTransactionAuthorityRequest::LegacyAccount {
+							product_account,
+							request: inner,
+						}
 					},
 					LegacySigner::Identity(_) => {
 						CreateTransactionAuthorityRequest::IdentityAccount(inner)
 					},
 				};
-				remote_authority_call(
-					&cx,
-					self.accounts.create_transaction(&session, &cx, authority_request),
-				)
-				.await
-				.map(|response| latest::HostCreateTransactionWithLegacyAccountResponse {
-					transaction: response.transaction,
-				})
-				.map_err(transaction_call_error)
+				self.accounts
+					.create_transaction(&session, cx, authority_request)
+					.await
+					.map(|response| latest::HostCreateTransactionWithLegacyAccountResponse {
+						transaction: response.transaction,
+					})
+					.map_err(legacy_transaction_call_error)
 			})
 			.await
 	}
 }
 
-impl ProductRuntimeHost {
-	/// Whether the local authority can sign without confirmation.
-	async fn auto_signing_status(
-		&self,
-		session: &AuthoritySession,
-		account: &latest::ProductAccountId,
-	) -> Result<AutoSigningGrant, AuthorityError> {
-		self.accounts.auto_signing_status(session, account).await
-	}
-
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	async fn sign_raw_with_watermark(
 		&self,
 		cx: &CallContext,
@@ -366,38 +290,10 @@ impl ProductRuntimeHost {
 		if !self.may_use_product_account(&owner, cx).await {
 			return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 		}
-		let grant = if watermarked {
-			self.auto_signing_status(&session, &inner.account)
-				.await
-				.map_err(signing_call_error)?
-		} else {
-			AutoSigningGrant::Absent
-		};
-		if grant == AutoSigningGrant::Absent {
-			let review = UserConfirmationReview::SignRaw(SignRawReview::Product {
-				calling_product_id: Some(self.connection.product_id().clone()),
-				request: inner.clone(),
-				watermarked,
-			});
-			if watermarked {
-				self.confirm_signature(cx, CrossProductSignatureKind::Raw, &owner, review).await
-			} else {
-				self.confirm(cx, review).await
-			}
-			.map_err(raw_signing_call_error)?;
-		}
-		let cx = remote_authority_context(cx);
-		remote_authority_call(
-			&cx,
-			self.accounts.sign_raw(
-				&session,
-				&cx,
-				SignRawAuthorityRequest::Product(inner),
-				watermarked,
-			),
-		)
-		.await
-		.map_err(signing_call_error)
+		self.accounts
+			.sign_raw(&session, cx, SignRawAuthorityRequest::Product(inner), watermarked)
+			.await
+			.map_err(raw_signing_call_error)
 	}
 
 	async fn sign_raw_with_legacy_account_with_watermark(
@@ -418,30 +314,18 @@ impl ProductRuntimeHost {
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
-		let review = UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
-			request: inner.clone(),
-			watermarked,
-		});
-		self.confirm(cx, review).await.map_err(raw_signing_call_error)?;
-		let cx = remote_authority_context(cx);
 		let authority_request = match signer {
-			LegacySigner::Product => SignRawAuthorityRequest::Product(latest::HostSignRawRequest {
-				account: latest::ProductAccountId {
-					dot_ns_identifier: self.connection.product_id().clone(),
-					derivation_index: latest::DerivationIndex::Index(0),
-				},
-				payload: inner.payload,
-			}),
+			LegacySigner::Product(product_account) => {
+				SignRawAuthorityRequest::LegacyAccount { product_account, request: inner }
+			},
 			LegacySigner::Identity(account) => {
-				SignRawAuthorityRequest::LegacyAccount { account, request: inner }
+				SignRawAuthorityRequest::IdentityAccount { account, request: inner }
 			},
 		};
-		remote_authority_call(
-			&cx,
-			self.accounts.sign_raw(&session, &cx, authority_request, watermarked),
-		)
-		.await
-		.map_err(signing_call_error)
+		self.accounts
+			.sign_raw(&session, cx, authority_request, watermarked)
+			.await
+			.map_err(raw_signing_call_error)
 	}
 }
 

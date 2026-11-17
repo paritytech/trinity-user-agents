@@ -3,6 +3,7 @@
 // declaration in `src/wasm/web/truapi_server.d.ts` types that module against
 // these interfaces so the worker can name it in a statically analysable import.
 
+import type { ProductId } from "@parity/truapi";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 
 /** Cancellable handle on one live render stream inside the core. */
@@ -59,11 +60,11 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
    * Take one reference on the product's worker. The first one reports
    * `"Start"` through the runtime's `requestWorkerTransition` callback.
    */
-  acquireWorker(productId: string): void;
+  acquireWorker(productId: ProductId): void;
   /**
    * Release one reference. The last one reports `"Stop"` the same way.
    */
-  releaseWorker(productId: string): void;
+  releaseWorker(productId: ProductId): void;
   free(): void;
 }
 
@@ -75,7 +76,7 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   deviceStatementKey(): Uint8Array | undefined;
   deviceEncryptionKey(): Promise<Uint8Array>;
   productSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
@@ -92,7 +93,7 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
   /** Derived from the active session root, so it never waits. */
-  productSubtreePublicKey(productId: string): Uint8Array | undefined;
+  productSubtreePublicKey(productId: ProductId): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   /** Only on a core built with `wasm-signing-host`. */
   setGrantAllowancesUnchecked?(granted: boolean): void;
@@ -112,6 +113,8 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
 /** Module surface the wasm-pack glue exports. */
 export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
+  /** Validate and normalize an identifier using the core's canonical parser. */
+  parseProductId: (value: string) => ProductId;
   WasmPairingHostRuntime: new (
     callbacks: unknown,
     hostConfig: unknown,

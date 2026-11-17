@@ -1,7 +1,8 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, UserConfirmationReview,
+	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
+	StackFetchResponse, StackStatus, UserConfirmationReview,
 };
-use truapi::v01;
+use truapi::latest;
 
 use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
@@ -37,12 +38,12 @@ pub trait HostCallbacks: Send + Sync {
 	fn on_core_log(&self, marker: String, detail: String);
 
 	/// Open a URL in the system browser.
-	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError>;
+	async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError>;
 
 	/// Deliver a push notification.
 	async fn push_notification(
 		&self,
-		request: v01::HostPushNotificationRequest,
+		request: latest::HostPushNotificationRequest,
 	) -> Result<u32, HostRejection>;
 
 	/// Cancel a notification by id.
@@ -54,7 +55,7 @@ pub trait HostCallbacks: Send + Sync {
 	async fn device_permission(
 		&self,
 		product: ProductExecutionConfig,
-		request: v01::HostDevicePermissionRequest,
+		request: latest::HostDevicePermissionRequest,
 	) -> Result<PermissionDecision, HostRejection>;
 
 	/// Report the OS status of a device capability without prompting.
@@ -69,15 +70,14 @@ pub trait HostCallbacks: Send + Sync {
 	/// `UNUserNotificationCenter.getNotificationSettings(completionHandler:)`.
 	async fn device_permission_status(
 		&self,
-		request: v01::HostDevicePermissionRequest,
+		request: latest::HostDevicePermissionRequest,
 	) -> Result<DevicePermissionStatus, HostRejection>;
 
-	/// Show (`true`) or hide (`false`) the face above this execution's
-	/// expanded card.
+	/// Uncover (`true`) or cover (`false`) the face under this execution's
+	/// page.
 	///
 	/// Answer `NotPresented` when the execution is not under its card and
-	/// `UserMoving` while the user drags it. Return without waiting for the
-	/// animation to finish.
+	/// `UserMoving` while the user moves the card.
 	async fn set_expanded_card_face_shown(
 		&self,
 		shown: bool,
@@ -87,7 +87,7 @@ pub trait HostCallbacks: Send + Sync {
 	async fn remote_permission(
 		&self,
 		product: ProductExecutionConfig,
-		request: v01::RemotePermission,
+		request: latest::RemotePermission,
 	) -> Result<PermissionDecision, HostRejection>;
 
 	/// Observe an auth state change, in transition order: render `Pairing` as
@@ -117,6 +117,7 @@ pub trait HostCallbacks: Send + Sync {
 	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
 
 	/// Send one JSON-RPC request over a previously opened chain connection.
+	/// A rejection loses the request, so the core closes the connection.
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection>;
 
 	/// Close a previously opened chain connection.
@@ -141,22 +142,17 @@ pub trait HostCallbacks: Send + Sync {
 
 	/// Current host theme, named variant included. The native shim emits this
 	/// as the current item in its subscription stream.
-	fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection>;
+	fn current_theme(&self) -> Result<latest::HostThemeSubscribeItem, HostRejection>;
 
 	/// Locale the host currently presents its interface in. The native shim
 	/// emits this as the current item in its subscription stream.
-	fn current_locale(&self) -> Result<v01::HostLocaleSubscribeItem, HostRejection>;
+	fn current_locale(&self) -> Result<latest::HostLocaleSubscribeItem, HostRejection>;
 
 	/// Answer a feature-support query.
 	async fn feature_supported(
 		&self,
-		request: v01::HostFeatureSupportedRequest,
+		request: latest::HostFeatureSupportedRequest,
 	) -> Result<bool, HostRejection>;
-
-	/// Enumerate the chains this host serves (RFC 0026): its environment plus
-	/// one entry per chain role. Invoked on the dispatcher thread; must return
-	/// promptly.
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
 
 	/// The chains the host builds as V5 general transactions, each with its
 	/// transaction extension pipeline. A chain not listed is built as V4.
@@ -180,6 +176,12 @@ pub trait HostCallbacks: Send + Sync {
 	/// thread and re-entrantly: hand the transition off rather than blocking
 	/// on another thread from inside it.
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
+
+	/// The product's worker crashed `crashes` times in a row while it was
+	/// needed: tell the user that product is not working. The core keeps
+	/// starting it again, waiting longer each time, so this needs no answer.
+	/// Can arrive on any thread.
+	fn worker_crashing(&self, product_id: ProductId, crashes: u32);
 
 	/// A device finished pairing with this signing host.
 	///
@@ -238,19 +240,24 @@ pub trait HostCallbacks: Send + Sync {
 	/// with.
 	async fn encrypted_storage_delete(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
+	// The host answers storage calls with v01's error: `latest` names v02's,
+	// which UniFFI does not export.
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
 		&self,
 		key: String,
-	) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError>;
+	) -> Result<Option<Vec<u8>>, truapi::v01::HostLocalStorageReadError>;
 	/// Write a value to the host's scoped key-value store.
 	async fn local_storage_write(
 		&self,
 		key: String,
 		value: Vec<u8>,
-	) -> Result<(), v01::HostLocalStorageReadError>;
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 	/// Clear a value from the host's scoped key-value store.
-	async fn local_storage_clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError>;
+	async fn local_storage_clear(
+		&self,
+		key: String,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Record a pending operation, whose id keeps the product's worker alive
 	/// until it ends.
@@ -280,7 +287,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection>;
+	) -> Result<latest::ChatRoomRegistrationStatus, HostRejection>;
 
 	/// Register or resolve a native product Chat bot.
 	async fn register_bot(
@@ -288,7 +295,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 		bot_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatBotRegistrationStatus, HostRejection>;
+	) -> Result<latest::ChatBotRegistrationStatus, HostRejection>;
 
 	/// Persist a product-authored message in native Chat storage. A host that
 	/// cannot render a given content variant returns a rejection for it.
@@ -303,7 +310,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn post_message(
 		&self,
 		room_id: String,
-		content: v01::ChatMessageContent,
+		content: latest::ChatMessageContent,
 		alt: Option<String>,
 	) -> Result<String, HostRejection>;
 
@@ -314,43 +321,11 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: latest::ChatRoomFooter,
 	) -> Result<(), HostRejection>;
 
 	/// Return the current product-scoped native Chat room list.
-	async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
-}
-
-/// Native Pocket collection adapter. Hosts with a Pocket surface pass an
-/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`]; hosts
-/// without one pass `None`. `list_cards` runs inline on the core runtime
-/// shared by every product execution, so it must return promptly;
-/// `remove_card` is awaited and may suspend while the host's storage works.
-///
-/// The host decides a removal and reports what it did, so the check and the
-/// removal happen together under whatever lock it holds. A card cannot be
-/// pinned between the two.
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativePocketCallbacks: Send + Sync {
-	/// Return the product's cards as this host currently holds them, each with
-	/// the flag saying whether the host pinned it.
-	fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection>;
-
-	/// Remove one of the product's cards, reporting whether the card was
-	/// taken out, was already gone, or is pinned and stays.
-	async fn remove_card(&self, card_id: String) -> Result<NativePocketRemoval, HostRejection>;
-}
-
-/// What a host did with a removal request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum NativePocketRemoval {
-	/// The card was present and not pinned, and the host took it out.
-	Removed,
-	/// The host does not hold the card, so it is already gone.
-	Absent,
-	/// The host pins the card and keeps it.
-	Privileged,
+	async fn list_rooms(&self) -> Result<Vec<latest::ChatRoom>, HostRejection>;
 }
 
 /// Native game-reminder adapter. Hosts that can hold reminders pass an
@@ -404,8 +379,10 @@ pub trait NativeContactsCallbacks: Send + Sync {
 
 /// Native payment engine, which pays from the user's balance to an account.
 /// A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_payment_callbacks`] and reports each later
-/// status with [`NativeTrUApiHostRuntime::notify_payment_status`].
+/// [`NativeTrUApiHostRuntime::set_payment_callbacks`]. The core decides which
+/// payments to follow and asks through [`Self::follow_payment`]; the host
+/// pushes what its engine reports with
+/// [`NativeTrUApiHostRuntime::notify_payment_status`].
 ///
 /// [`NativeTrUApiHostRuntime::set_payment_callbacks`]: super::NativeTrUApiHostRuntime::set_payment_callbacks
 /// [`NativeTrUApiHostRuntime::notify_payment_status`]: super::NativeTrUApiHostRuntime::notify_payment_status
@@ -419,22 +396,26 @@ pub trait NativePaymentCallbacks: Send + Sync {
 	async fn request_payment(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError>;
+		request: latest::HostPaymentRequest,
+	) -> Result<(), latest::HostPaymentError>;
 
-	/// The current status of `product_id`'s payment `id`, or `None` when the
-	/// host holds no such payment.
-	fn payment_status(
+	/// Follow `product_id`'s payment `id` on the engine, pushing each status
+	/// it reports through `notify_payment_status`, and return when the
+	/// engine's stream ends. `PaymentNotFound` when the engine holds no such
+	/// payment. The core drops the call once it has a final status.
+	async fn follow_payment(
 		&self,
 		product_id: ProductId,
 		id: crate::Bytes32,
-	) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection>;
+	) -> Result<(), latest::HostPaymentStatusSubscribeError>;
 }
 
 /// Native top-up engine, which claims a source's funds into the user's
 /// balance. A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`] and reports each later
-/// status with [`NativeTrUApiHostRuntime::notify_top_up_status`].
+/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`]. The core decides which
+/// top-ups to follow and asks through [`Self::follow_top_up`]; the host pushes
+/// what its engine reports with
+/// [`NativeTrUApiHostRuntime::notify_top_up_status`].
 ///
 /// [`NativeTrUApiHostRuntime::set_top_up_callbacks`]: super::NativeTrUApiHostRuntime::set_top_up_callbacks
 /// [`NativeTrUApiHostRuntime::notify_top_up_status`]: super::NativeTrUApiHostRuntime::notify_top_up_status
@@ -446,38 +427,36 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 	async fn top_up(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError>;
+		request: latest::HostPaymentTopUpRequest,
+	) -> Result<(), latest::HostPaymentTopUpError>;
 
-	/// The current status of `product_id`'s top-up `id`, or `None` when the
-	/// host holds no such top-up.
-	fn top_up_status(
+	/// Follow `product_id`'s top-up `id` on the engine, pushing each status
+	/// it reports through `notify_top_up_status`, and return when the
+	/// engine's stream ends. `TopUpNotFound` when the engine holds no such
+	/// top-up. The core drops the call once it has a final status.
+	async fn follow_top_up(
 		&self,
 		product_id: ProductId,
 		id: crate::Bytes32,
-	) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection>;
+	) -> Result<(), latest::HostPaymentTopUpStatusSubscribeError>;
 }
 
 /// Native balance view, which shares the user's spendable balance with a
 /// product. A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_balance_callbacks`] and reports each change
-/// with [`NativeTrUApiHostRuntime::notify_balance`].
+/// [`NativeTrUApiHostRuntime::set_balance_callbacks`]. The core follows the
+/// balance while a product does, through [`Self::follow_balance`]; the host
+/// pushes each balance with [`NativeTrUApiHostRuntime::notify_balance`].
 ///
 /// [`NativeTrUApiHostRuntime::set_balance_callbacks`]: super::NativeTrUApiHostRuntime::set_balance_callbacks
 /// [`NativeTrUApiHostRuntime::notify_balance`]: super::NativeTrUApiHostRuntime::notify_balance
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeBalanceCallbacks: Send + Sync {
-	/// The current balance of `purse` (`None` for the main purse), as a
-	/// decimal string of CASH units: what a payment request can spend right
-	/// now. The balance is the user's, the same for every product;
-	/// `product_id` names the asking product only for the host's own records.
-	/// The core has already checked the product's balance access.
-	async fn balance(
-		&self,
-		product_id: ProductId,
-		purse: Option<u32>,
-	) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
+	/// Follow the user's spendable balance, pushing the current one and each
+	/// change through `notify_balance`, and return when the stream ends. The
+	/// core drops the call once no product follows the balance, and calls
+	/// again when one does.
+	async fn follow_balance(&self) -> Result<(), HostRejection>;
 }
 
 /// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
@@ -490,9 +469,32 @@ pub trait NativeScannerCallbacks: Send + Sync {
 	async fn scan_code(
 		&self,
 		product_id: ProductId,
-		execution_kind: crate::platform::ProductExecutionKind,
-		request: truapi::latest::HostScannerScanRequest,
+		execution_kind: crate::platform::ExecutableKind,
+		request: latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
+}
+
+/// Native side of the stack's descriptor refresh. A host passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_stack_callbacks`]; without
+/// one the core stays on the copy it started from.
+///
+/// [`NativeTrUApiHostRuntime::set_stack_callbacks`]: super::NativeTrUApiHostRuntime::set_stack_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeStackCallbacks: Send + Sync {
+	/// Fetch the stack's descriptor over HTTP, as `request` describes, with
+	/// the host's HTTP client. Fail when the server gave no usable answer:
+	/// the status reports the failure's reason. The core awaits this on a
+	/// background thread, and counts a fetch that takes too long as failed.
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection>;
+
+	/// The stack's status, once when the callbacks are installed and again
+	/// whenever it changes. Arrives on a core thread: hand it off rather than
+	/// blocking.
+	fn stack_changed(&self, status: StackStatus);
 }
 
 /// Native funding overlay. A host with a funding modality passes an
@@ -511,10 +513,42 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		&self,
 		product_id: Option<ProductId>,
 		intent: String,
-		direction: v01::FundingDirection,
+		direction: latest::FundingDirection,
 		amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
 
-	/// A session's status changed, for host UI such as the in-flight pill.
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
+	/// Provider `provider_id` asked to show a screen for session `intent`.
+	/// The core holds it until the host calls `open_provider_frame(intent)`:
+	/// at once while the user looks at the session, otherwise once the user
+	/// taps a notice that the provider wants to show something.
+	fn provider_frame_requested(&self, provider_id: ProductId, intent: String);
+
+	/// Show `target` for provider `provider_id`'s session `intent` in a frame
+	/// the host owns, and report how it closed. Called only once the host
+	/// opened the request `provider_frame_requested` announced. A page is a
+	/// checked https URL: answer `Returned` when it reaches its return URL.
+	/// The core closes the frame through `close_provider_frame` once the
+	/// session's payment moved.
+	async fn present_provider_frame(
+		&self,
+		provider_id: ProductId,
+		intent: String,
+		target: latest::FundingFrameTarget,
+	) -> Result<latest::FundingFrameOutcome, HostRejection>;
+
+	/// Close the frame `present_provider_frame` shows for provider
+	/// `provider_id`'s session `intent`, answering that call `Closed`. Does
+	/// nothing when no frame is open for it.
+	fn close_provider_frame(&self, provider_id: ProductId, intent: String);
+
+	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
+	/// the device's coarse location when already permitted, then its SIM or
+	/// network country, then its locale's region. Never asks for a
+	/// permission. `None` when nothing says.
+	async fn detected_country(&self) -> Option<String>;
+
+	/// Funding state the host reads back from the runtime changed: `kind`
+	/// says what, `intent` which session, `None` for `Providers`. The core has updated what the
+	/// runtime answers before it calls.
+	fn funding_changed(&self, intent: Option<String>, kind: super::funding_feed::FundingChangeKind);
 }

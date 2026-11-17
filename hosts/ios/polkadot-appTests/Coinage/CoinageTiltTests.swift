@@ -97,15 +97,20 @@ struct CoinageTiltTests {
         }
     }
 
-    @Test("A sideways movement yaws the studio about the vertical, as the room stays put")
-    func sidewaysYawsAboutTheVertical() {
+    @Test("A tilt turns the studio about an axis level with the floor, and leans it nowhere else")
+    func tiltTurnsAboutTheHorizontal() {
+        // The fault this replaces: dipping an edge with the phone leaned back also read as a
+        // pitch forward, the same whichever edge dipped, so on the dim side of the room tilting
+        // right looked like tilting down.
         for lean in [0.0, 0.5, 0.9, 1.4] {
-            // A roll in the plane of the screen leaves the lean alone, so it is pure yaw.
-            let turn = pose(rolled(0, lean)).turn(to: pose(rolled(0.4, lean)))
+            for gesture in [rolled, lifted] {
+                let neutral = pose(gesture(0, lean))
+                let tilted = pose(gesture(0.4, lean))
+                let turn = neutral.turn(to: tilted)
 
-            #expect(magnitude(turn) > 1e-6)
-            #expect(abs(turn.x) < 1e-9)
-            #expect(abs(turn.z) < 1e-9)
+                #expect(abs(dot(turn, neutral.down)) < 1e-9)
+                #expect(abs(dot(turn, tilted.down)) < 1e-9)
+            }
         }
     }
 
@@ -244,6 +249,6 @@ struct CoinageParamsTests {
         #expect(bytes % CoinageAssetStore.Params.alignment == 0)
         // CoinParams in CoinageCoin.metal. Recheck with a static_assert in a scratch .metal file if
         // a field is added and this starts failing.
-        #expect(bytes == 200)
+        #expect(bytes == 272)
     }
 }

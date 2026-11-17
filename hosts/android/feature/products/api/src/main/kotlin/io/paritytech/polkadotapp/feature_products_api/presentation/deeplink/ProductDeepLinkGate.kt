@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.deeplink
 
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * Which products the host opens deeplinks for. Off the arbitrary-products flag only the app's own

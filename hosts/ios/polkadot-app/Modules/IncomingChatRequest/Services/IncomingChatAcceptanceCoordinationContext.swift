@@ -81,12 +81,17 @@ extension IncomingChatAcceptanceCoordinationContext {
             return nil
         }
 
+        guard request.status == .outgoing(.pending) else {
+            logger.debug("Skipping acceptance of a cancelled request")
+            return nil
+        }
+
         do {
             try await requestStoreService.acceptOutgoingRequest(
                 requestId,
                 remoteIncoming: nil,
                 acceptorDevice: nil,
-                peerDevice: peerDevice
+                peerAcceptance: ChatRequest.PeerAcceptance(device: peerDevice, message: acceptance.message)
             )
         } catch {
             // Let the next copy of the acceptance retry the save.

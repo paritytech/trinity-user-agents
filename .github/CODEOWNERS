@@ -15,6 +15,7 @@
 # The shared core. A change here reaches every host at once, which is why it is
 # named separately even though it resolves to the same reviewers today.
 /rust/crates/           @paritytech/host-sdk-team @paritytech/hosts-team
+/stacks/                @paritytech/host-sdk-team @paritytech/hosts-team
 
 # The hosts, kept apart from each other rather than treated as one area.
 /hosts/ios/             @paritytech/host-sdk-team @paritytech/hosts-team

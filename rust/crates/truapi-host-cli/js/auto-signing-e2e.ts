@@ -9,7 +9,7 @@
 // consulted is on disk by the time the call returns: an empty `sign_vrf`
 // window proves no prompt fired anywhere.
 import { existsSync, readFileSync } from "node:fs";
-import type { TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
+import type { ProductId, TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 
 export const VRF_APPROVAL_ACTION = "sign VRF transcript";
@@ -40,7 +40,7 @@ export function actionLines(lines: string[], action: string): string[] {
  */
 export async function runAutoSigningE2e(
   client: TrUApiClient,
-  productId: string,
+  productId: ProductId,
   approvalsLogPath: string | undefined,
 ): Promise<DiagnosisRow> {
   const startedAt = performance.now();

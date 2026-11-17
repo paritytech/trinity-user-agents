@@ -25,10 +25,10 @@ extension BulletInAllowanceManager {
             return nil
         }
 
-        let keyResolver = BandersnatchKeyResolver(
+        guard let keyResolver = try? BandersnatchKeyResolver(
             liteKeyManager: BandersnatchKeyManager.litePerson(for: tld, entropyManager: entropyManager),
             fullKeyManager: BandersnatchKeyManager.fullPerson(for: tld, entropyManager: entropyManager)
-        )
+        ) else { return nil }
 
         let storageRequestFactory = StorageRequestFactory(
             remoteFactory: StorageKeyFactory(),

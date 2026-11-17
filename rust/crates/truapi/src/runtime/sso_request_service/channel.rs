@@ -8,15 +8,16 @@ use std::sync::{
 use super::{
 	super::{
 		sso_remote::{
-			RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SsoRemoteResponseError, SsoSessionKey,
-			fresh_statement_expiry, reply_matcher, sso_message_id, statement_subscription_stream,
-			subscribe_statement_topic, wait_for_sso_remote_response,
+			CancelError, RemoteResponseWait, SSO_LOCAL_DISCONNECT_REASON, SsoRemoteResponseError,
+			SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
+			statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 		},
-		statement_store_rpc::{self, StatementStoreRpc},
+		statement_store_rpc::{self, StatementStoreRpc, StatementSubmitError},
 	},
 	SsoRequestService,
 };
 use crate::{
+	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
 		sso_messages::{
 			RemoteMessage, RemoteMessageData, SsoSessionStatement, Withdrawal,
@@ -28,6 +29,7 @@ use crate::{
 		session::{SessionInfo, SsoSessionInfo},
 		statement_store::parse_new_statements_result,
 	},
+	time::RealTimer,
 };
 
 use futures::{
@@ -35,7 +37,7 @@ use futures::{
 	future::{AbortHandle, Abortable},
 };
 use tracing::{debug, instrument, warn};
-use truapi::{CallContext, CancellationReason};
+use truapi::{CallContext, CancellationReason, CancellationToken};
 
 /// Active peer-disconnect watcher for one SSO session; aborts on drop.
 pub struct SsoDisconnectMonitor {
@@ -49,93 +51,126 @@ impl Drop for SsoDisconnectMonitor {
 	}
 }
 
-impl SsoRequestService {
-	fn stop_disconnect_monitor(&self) {
-		self.disconnect_monitor
-			.lock()
-			.expect("SSO disconnect monitor mutex poisoned")
-			.take();
-	}
+struct RequestWithdrawal<'a> {
+	service: &'a SsoRequestService,
+	session: &'a SsoSessionInfo,
+	message_id: &'a str,
+	call: &'a CallContext,
+	submitting: &'a AtomicBool,
+	armed: bool,
+}
 
-	/// Watch the session's topics for a peer disconnect statement, replacing
-	/// any monitor for a different session. No-op when one is already running
-	/// for this session.
-	pub fn start_disconnect_monitor(&self, session: &SessionInfo) {
-		let Some(sso) = session.sso.clone() else {
-			self.stop_disconnect_monitor();
+impl Drop for RequestWithdrawal<'_> {
+	fn drop(&mut self) {
+		if self.armed &&
+			self.call.cancel().reason() == Some(CancellationReason::Cancelled) &&
+			self.submitting.load(Ordering::Acquire) &&
+			SsoSessionKey::from_session(self.session).matches(&self.service.session_state)
+		{
+			self.service.withdraw_request(self.session, self.message_id);
+		}
+	}
+}
+
+/// Watch the session's topics for a peer disconnect statement, replacing
+/// any monitor for a different session. No-op when one is already running
+/// for this session.
+pub fn start_disconnect_monitor(service: &SsoRequestService, session: &SessionInfo) {
+	let Some(sso) = session.sso.clone() else {
+		return;
+	};
+	let key = SsoSessionKey::from_session(&sso);
+
+	let (registration, spawner, previous) = {
+		let _selection = service.selection.lock().expect("session selection mutex poisoned");
+		if !service.current_sso_session_matches(key) {
+			return;
+		}
+		let mut current = service
+			.disconnect_monitor
+			.lock()
+			.expect("SSO disconnect monitor mutex poisoned");
+		if current.as_ref().is_some_and(|active| active.key == key) {
+			return;
+		}
+		let (abort, registration) = AbortHandle::new_pair();
+		let previous = current.replace(SsoDisconnectMonitor { key, abort });
+		(registration, service.spawner.clone(), previous)
+	};
+	drop(previous);
+
+	let statement_store = service.statement_store.clone();
+	let service = service.weak_self.clone();
+	let future = async move {
+		let result = wait_for_sso_peer_disconnect(statement_store, sso).await;
+		let Some(service) = service.upgrade() else {
 			return;
 		};
-		let key = SsoSessionKey::from_session(&sso);
-
-		let (registration, spawner) = {
-			let mut current =
-				self.disconnect_monitor.lock().expect("SSO disconnect monitor mutex poisoned");
-			if current.as_ref().is_some_and(|active| active.key == key) {
-				return;
+		{
+			let mut active = service
+				.disconnect_monitor
+				.lock()
+				.expect("SSO disconnect monitor mutex poisoned");
+			if active.as_ref().is_some_and(|active| active.key == key) {
+				*active = None;
 			}
-			let (abort, registration) = AbortHandle::new_pair();
-			*current = Some(SsoDisconnectMonitor { key, abort });
-			(registration, self.spawner.clone())
-		};
-
-		let statement_store = self.statement_store.clone();
-		let service = self.weak_self.clone();
-		let future = async move {
-			let result = wait_for_sso_peer_disconnect(statement_store, sso).await;
-			let Some(service) = service.upgrade() else {
-				return;
-			};
-			{
-				let mut active = service
-					.disconnect_monitor
-					.lock()
-					.expect("SSO disconnect monitor mutex poisoned");
-				if active.as_ref().is_some_and(|active| active.key == key) {
-					*active = None;
-				}
-			}
-			match result {
-				Ok(()) => {
-					service.handle_signing_host_disconnected(key).await;
-				},
-				Err(reason) => {
-					warn!(%reason, "SSO peer disconnect monitor stopped");
-				},
-			}
-		};
-		spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
-	}
-
-	/// Stop channel work for a cleared session: wake its in-flight waiters
-	/// with a local disconnect, then drop the peer-disconnect monitor.
-	pub fn stop_session_channel(&self, session: Option<&SessionInfo>) {
-		if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
-			self.session_disconnects.notify(sso, SSO_LOCAL_DISCONNECT_REASON);
 		}
-		*self.newest_request.lock().expect("newest request mutex poisoned") = None;
-		if let Some(owner) = self.owner.upgrade() {
-			owner.session_ended(session);
+		match result {
+			Ok(()) => {
+				service.handle_signing_host_disconnected(key).await;
+			},
+			Err(reason) => {
+				warn!(%reason, "SSO peer disconnect monitor stopped");
+			},
 		}
-		self.stop_disconnect_monitor();
-	}
+	};
+	spawner.spawn(Abortable::new(future, registration).map(|_| ()));
+}
 
-	/// Best-effort `Disconnected` notification to the SSO peer.
-	#[instrument(skip_all, fields(runtime.method = "sso.disconnect.submit"))]
-	pub async fn submit_disconnected_message(&self, session: &SessionInfo) -> Result<(), String> {
-		let sso = session.sso.as_ref().ok_or_else(|| "No SSO session state".to_string())?;
-		let message_id = sso_message_id();
-		let message = RemoteMessage {
-			message_id: message_id.clone(),
-			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-		};
-		let statement = self.build_request_channel_statement(sso, message_id, message, None)?;
-		self.statement_store
-			.submit_fire_and_forget(statement, "SSO statement-store")
-			.await
-			.map_err(|err| format!("SSO statement submit failed: {err}"))?;
-		Ok(())
-	}
+/// Detach channel state while session selection is locked.
+pub fn detach_session_channel(service: &SsoRequestService) -> Option<SsoDisconnectMonitor> {
+	*service.newest_request.lock().expect("newest request mutex poisoned") = None;
+	service
+		.disconnect_monitor
+		.lock()
+		.expect("SSO disconnect monitor mutex poisoned")
+		.take()
+}
 
+/// Wake detached channel work after releasing the lifecycle lock.
+pub fn stop_session_channel(
+	service: &SsoRequestService,
+	session: Option<&SessionInfo>,
+	monitor: Option<SsoDisconnectMonitor>,
+) {
+	drop(monitor);
+	if let Some(sso) = session.and_then(|session| session.sso.as_ref()) {
+		service.session_disconnects.notify(sso, SSO_LOCAL_DISCONNECT_REASON);
+	}
+}
+
+/// Best-effort `Disconnected` notification to the SSO peer.
+#[instrument(skip_all, fields(runtime.method = "sso.disconnect.submit"))]
+pub async fn submit_disconnected_message(
+	service: &SsoRequestService,
+	session: &SessionInfo,
+) -> Result<(), String> {
+	let sso = session.sso.as_ref().ok_or_else(|| "No SSO session state".to_string())?;
+	let message_id = sso_message_id();
+	let message = RemoteMessage {
+		message_id: message_id.clone(),
+		data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+	};
+	let statement = service.build_request_channel_statement(sso, message_id, message, None)?;
+	service
+		.statement_store
+		.submit_fire_and_forget(statement, "SSO statement-store")
+		.await
+		.map_err(|err| format!("SSO statement submit failed: {err}"))?;
+	Ok(())
+}
+
+impl SsoRequestService {
 	/// Build a statement on the session's request channel, recording
 	/// `newest` as the request the channel now carries.
 	///
@@ -189,7 +224,7 @@ impl SsoRequestService {
 		};
 		let statement_store = self.statement_store.clone();
 		let message_id = message_id.to_string();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let submitted = match withdrawal {
 				Ok(statement) => {
 					statement_store.submit_fire_and_forget(statement, "SSO statement-store").await
@@ -199,7 +234,7 @@ impl SsoRequestService {
 			if let Err(reason) = submitted {
 				warn!(%message_id, %reason, "could not withdraw the SSO request");
 			}
-		}));
+		});
 	}
 
 	/// Send `request` to the paired signing host and await its typed answer.
@@ -234,20 +269,14 @@ impl SsoRequestService {
 			.client("SSO statement-store")
 			.await
 			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
-		let own_subscription = subscribe_statement_topic(&rpc_client, sso.session_id_own)
-			.await
-			.map_err(|err| {
-				SsoRemoteResponseError::Failure(format!(
-					"SSO own statement-store subscribe failed: {err}"
-				))
-			})?;
-		let peer_subscription = subscribe_statement_topic(&rpc_client, sso.session_id_peer)
-			.await
-			.map_err(|err| {
-			SsoRemoteResponseError::Failure(format!(
-				"SSO peer statement-store subscribe failed: {err}"
-			))
-		})?;
+		let own_subscription =
+			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
+				.await
+				.map_err(|err| subscribe_error(cx, &message_id, "own", &err))?;
+		let peer_subscription =
+			subscribe_statement_topic(&rpc_client, sso.session_id_peer, cx.cancel())
+				.await
+				.map_err(|err| subscribe_error(cx, &message_id, "peer", &err))?;
 		let submit_client = rpc_client.clone();
 		let session_state = self.session_state.clone();
 		let submitting = Arc::new(AtomicBool::new(false));
@@ -257,15 +286,37 @@ impl SsoRequestService {
 				return Err(SsoRemoteResponseError::LocalDisconnected);
 			}
 			submit_started.store(true, Ordering::Release);
-			statement_store_rpc::submit_sso(&submit_client, statement, "pairing-host request")
-				.await
-				.map_err(|err| {
-					SsoRemoteResponseError::Failure(format!("SSO statement submit failed: {err}"))
-				})
+			let submit_statement = || {
+				statement_store_rpc::submit_sso(&submit_client, &statement, "pairing-host request")
+			};
+			retry_while_halted(
+				submit_statement,
+				StatementSubmitError::reached_no_peer,
+				&RealTimer,
+				&CancellationToken::default(),
+			)
+			.await
+			.map_err(|err| {
+				let reason = format!("SSO statement submit failed: {err}");
+				// A statement no peer received never reached the signing host.
+				if err.reached_no_peer() {
+					SsoRemoteResponseError::ChainUnavailable(reason)
+				} else {
+					SsoRemoteResponseError::Failure(reason)
+				}
+			})
 		}
 		.boxed();
 		let action = R::NAME;
 		debug!(action, %message_id, "submitted SSO remote message, awaiting response");
+		let mut withdrawal = RequestWithdrawal {
+			service: self,
+			session: sso,
+			message_id: &message_id,
+			call: cx,
+			submitting: &submitting,
+			armed: true,
+		};
 		let result = wait_for_sso_remote_response(
 			RemoteResponseWait {
 				own_statements: statement_subscription_stream(own_subscription, "own"),
@@ -280,29 +331,55 @@ impl SsoRequestService {
 			reply_matcher::<R>(&message_id),
 		)
 		.await;
-		let result = result.map_err(|reason| match reason {
-			SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
-				SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
-			},
-			reason => reason,
-		});
+		withdrawal.armed = matches!(
+			&result,
+			Err(SsoRemoteResponseError::Cancelled(error))
+				if error.reason() == CancellationReason::Cancelled
+		);
+		let result = result.map_err(|reason| with_caller_request_id(cx, reason));
 		match &result {
 			Ok(_) => debug!(action, %message_id, "SSO remote response received"),
 			Err(reason) => warn!(action, %message_id, %reason, "SSO remote message failed"),
-		}
-		// A request whose submit never started is not on the channel, and a
-		// `Cancel` for it would replace whatever older request is.
-		if let Err(SsoRemoteResponseError::Cancelled(err)) = &result &&
-			err.reason() == CancellationReason::Cancelled &&
-			submitting.load(Ordering::Acquire) &&
-			key.matches(&self.session_state)
-		{
-			self.withdraw_request(sso, &message_id);
 		}
 		if matches!(&result, Err(SsoRemoteResponseError::PeerDisconnected)) {
 			self.handle_signing_host_disconnected(key).await;
 		}
 		result.map(|response| response.payload)
+	}
+}
+
+/// `reason`, with a cancellation naming the caller's request when it has one.
+fn with_caller_request_id(
+	cx: &CallContext,
+	reason: SsoRemoteResponseError,
+) -> SsoRemoteResponseError {
+	match reason {
+		SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
+			SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
+		},
+		reason => reason,
+	}
+}
+
+/// The error for a failed `label` subscribe: `Cancelled` if the caller gave
+/// up, `ChainUnavailable` if the chain stayed halted, otherwise `Failure`.
+fn subscribe_error(
+	cx: &CallContext,
+	message_id: &str,
+	label: &str,
+	err: &subxt_rpcs::Error,
+) -> SsoRemoteResponseError {
+	if let Some(reason) = cx.cancel().reason() {
+		return with_caller_request_id(
+			cx,
+			SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id)),
+		);
+	}
+	let reason = format!("SSO {label} statement-store subscribe failed: {err}");
+	if says_chain_halted(err) {
+		SsoRemoteResponseError::ChainUnavailable(reason)
+	} else {
+		SsoRemoteResponseError::Failure(reason)
 	}
 }
 
@@ -340,4 +417,38 @@ async fn wait_for_sso_peer_disconnect(
 		}
 	}
 	Err("SSO disconnect monitor response stream ended".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::{
+		runtime::authority::AuthorityError,
+		test_support::{chain_halted_rpc_error, rpc_refusal},
+	};
+
+	/// Only a lasting halt is retryable, since the request was never sent.
+	#[test]
+	fn only_a_halted_subscribe_is_reported_as_chain_unavailable() {
+		let reason = |err| format!("SSO own statement-store subscribe failed: {err}");
+		let reported = [chain_halted_rpc_error(), rpc_refusal(None)]
+			.iter()
+			.map(|err| {
+				AuthorityError::from(subscribe_error(
+					&CallContext::default(),
+					"request",
+					"own",
+					err,
+				))
+			})
+			.collect::<Vec<_>>();
+
+		assert_eq!(
+			reported,
+			vec![
+				AuthorityError::ChainUnavailable { reason: reason(chain_halted_rpc_error()) },
+				AuthorityError::Unknown { reason: reason(rpc_refusal(None)) },
+			]
+		);
+	}
 }

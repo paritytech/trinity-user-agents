@@ -16,10 +16,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.icon
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.subtitle
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.title
+import uniffi.truapi.ProductId
 
 @Composable
 internal fun SinglePromptContent(
-    productId: String,
+    productId: ProductId,
     permission: ProductPermission,
 ) {
     NovaIcon(
@@ -54,7 +55,7 @@ private fun SinglePromptContentPreview() {
     PolkadotTheme {
         Column {
             SinglePromptContent(
-                productId = "alice.dot",
+                productId = ProductId.parse("alice.dot").getOrThrow(),
                 permission = ProductPermission.BalanceAccess,
             )
         }

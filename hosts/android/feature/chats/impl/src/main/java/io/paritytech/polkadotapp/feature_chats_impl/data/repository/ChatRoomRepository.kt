@@ -73,6 +73,11 @@ class RealChatRoomRepository @Inject constructor(
         return chatRoomDao.subscribeChatSummaries()
     }
 
+    override suspend fun getRoomsByExtension(extensionId: ChatExtensionId): List<ChatId> {
+        val prefix = ChatId.extensionPrefixBytes(extensionId).decodeToString()
+        return chatRoomDao.getRoomsByPrefix(prefix).map { ChatId.fromRawValue(it.id) }
+    }
+
     override fun subscribeRoomsByExtension(extensionId: ChatExtensionId): Flow<List<ChatId>> {
         val prefix = ChatId.extensionPrefixBytes(extensionId).decodeToString()
         return chatRoomDao.subscribeRoomsByPrefix(prefix)

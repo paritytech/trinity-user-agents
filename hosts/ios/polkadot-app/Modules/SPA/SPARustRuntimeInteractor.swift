@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -10,51 +11,62 @@ final class SPARustRuntimeInteractor {
     weak var presenter: SPAInteractorOutputProtocol?
 
     private let runtimeFactory: SPARuntimeFactoryProtocol
-    private let productResolver: ProductResolving
-    private let contentLoader: ProductContentLoading
+    private let presenceRegistry: ProductPresenceRegistering?
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
     private let chatProviderFactory: ChatContactDataProviderMaking
+    private let chainStatusProvider: ChainStatusProviding?
 
     private var runtime: SPARuntimeProtocol?
     private var jsEngine: JSEngineProtocol?
     // Held so the synchronous `hasChatEntry` can answer from the manifest without re-resolving.
     private var resolvedProduct: ResolvedProduct?
+    private var servedContent: ProductContent?
     private var isServing = false
+    private var presenceId: UUID?
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
+    private var chainStatusTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
-        productResolver: ProductResolving,
-        contentLoader: ProductContentLoading,
+        presenceRegistry: ProductPresenceRegistering?,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
-        chatProviderFactory: ChatContactDataProviderMaking
+        chatProviderFactory: ChatContactDataProviderMaking,
+        chainStatusProvider: ChainStatusProviding?
     ) {
         self.runtimeFactory = runtimeFactory
-        self.productResolver = productResolver
-        self.contentLoader = contentLoader
+        self.presenceRegistry = presenceRegistry
         self.configuration = configuration
         self.logger = logger
         self.productRepository = productRepository
         self.chatProviderFactory = chatProviderFactory
+        self.chainStatusProvider = chainStatusProvider
     }
 
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
+        chainStatusTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
+
+        if let presenceId, let presenceRegistry {
+            Task { @MainActor in presenceRegistry.unregister(presenceId) }
+        }
     }
 }
 
 extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func setup(engine: JSEngineProtocol) {
         jsEngine = engine
+        subscribeToChainStatus()
 
         startRuntime(engine: engine)
     }
@@ -62,6 +74,7 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func retry() {
         guard let engine = jsEngine else { return }
 
+        reloadTask?.cancel()
         let previousRuntime = runtime
         runtime = nil
         Task { await previousRuntime?.dispose() }
@@ -76,7 +89,22 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
             return
         }
 
-        presenter?.didRequestReload()
+        guard servedContent != nil else {
+            presenter?.didRequestReload()
+            return
+        }
+
+        if let servedContentId, presenceRegistry?.applyPendingUpdate(of: servedContentId) == true {
+            return
+        }
+
+        serveAppliedBuild()
+    }
+
+    func checkForNewBuild() {
+        guard servedContent != nil else { return }
+
+        presenceRegistry?.requestRefresh(of: configuration.productDomain)
     }
 
     func hasChatEntry() -> Bool {
@@ -114,40 +142,36 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
 }
 
 private extension SPARustRuntimeInteractor {
-    /// A dotNS page is its manifest, so a resolution failure is the page failing. A direct URL is
-    /// its own content and the manifest only names it, so a label that holds no records — a local
-    /// server opened from debug settings — still opens, unnamed. A development server page is not
-    /// published content, so nothing is resolved for it.
-    func resolveProduct() async throws -> ResolvedProduct? {
-        let domain = configuration.page.host.toDotDomain()
+    func subscribeToChainStatus() {
+        guard let chainStatusProvider else { return }
 
-        switch configuration.contentSource {
-        case .dotNs:
-            return try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler()).resolved
-        case .directURL:
-            return try? await productResolver.resolve(domain)
-        #if DEBUG
-            case .devServer:
-                return nil
-        #endif
+        chainStatusTask = Task { [weak self, chainStatusProvider, logger] in
+            do {
+                for try await rows in chainStatusProvider.statusStream() {
+                    self?.presenter?.didReceiveChainStatus(rows)
+                }
+            } catch {
+                logger.error("SPA(rust): Chain status stream failed: \(error)")
+            }
         }
     }
 
     func startRuntime(engine: JSEngineProtocol) {
         setupTask?.cancel()
         isServing = false
+        servedContent = nil
 
         do {
             let newRuntime = try runtimeFactory.createRuntime(for: configuration.productId)
             runtime = newRuntime
 
+            let onPhase = phaseHandler()
             setupTask = Task { [weak self] in
                 do {
-                    self?.resolvedProduct = try await self?.resolveProduct()
-
-                    let url = try await newRuntime.start(with: engine)
-                    self?.presenter?.didRequestNavigation(to: url)
-                    self?.isServing = true
+                    let start = try await newRuntime.start(with: engine, onPhase: onPhase)
+                    self?.resolvedProduct = start.resolution.product
+                    self?.presenter?.didRequestNavigation(to: start.url)
+                    self?.didStartServing(start.resolution.content)
                 } catch is CancellationError {
                     // Superseded by retry/teardown — the replacement reports.
                 } catch {
@@ -163,7 +187,7 @@ private extension SPARustRuntimeInteractor {
 
     func enableProduct() async throws -> ChatExtension.Id {
         let product = Product(
-            id: configuration.page.host.toDotDomain(),
+            id: configuration.productDomain,
             name: resolvedProduct?.displayName ?? configuration.page.host.name
         )
         let extensionId = product.extensionId
@@ -192,10 +216,53 @@ private extension SPARustRuntimeInteractor {
     }
 }
 
+extension SPARustRuntimeInteractor: SPAProductReloading {
+    var servedContentHash: String? {
+        servedContent?.archive.contentHash
+    }
+
+    func serveAppliedBuild() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self, runtime] in
+            do {
+                let served = try await runtime?.useLatestBuild()
+
+                guard !Task.isCancelled else { return }
+
+                self?.servedContent = served
+                self?.presenter?.didRequestReload()
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                self?.logger.error("SPA(rust): Failed to serve the applied build: \(error)")
+                self?.presenter?.didFail(error: error)
+            }
+        }
+    }
+}
+
 private extension SPARustRuntimeInteractor {
+    var servedContentId: ProductId? {
+        try? servedContent?.contentId
+    }
+
     func phaseHandler() -> ProductLoadPhaseHandler {
         { [weak self] phase in
             Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
         }
+    }
+
+    func didStartServing(_ content: ProductContent?) {
+        isServing = true
+        servedContent = content
+
+        guard servedContent != nil, presenceId == nil, let servedContentId else { return }
+
+        presenceId = presenceRegistry?.register(
+            productId: configuration.productDomain,
+            contentId: servedContentId,
+            displayName: resolvedProduct?.displayName ?? configuration.page.host.name,
+            reloader: self
+        )
     }
 }

@@ -15,7 +15,7 @@ fn granting_platform() -> Arc<StubPlatform> {
 
 /// Ask for `resources` and return the per-resource outcomes.
 fn allocate(
-	runtime: &ProductRuntimeHost,
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
 	resources: Vec<v01::AllocatableResource>,
 ) -> Vec<v01::AllocationOutcome> {
 	let response = futures::executor::block_on(ResourceAllocation::request(
@@ -92,7 +92,7 @@ fn a_later_set_replaces_the_earlier_one() {
 }
 
 /// Ask for a statement proof the way `createProofAuthorized` does.
-fn proof_is_signed(runtime: &ProductRuntimeHost) -> bool {
+fn proof_is_signed(runtime: &ProductRuntimeHost<WalletAccountHolder>) -> bool {
 	futures::executor::block_on(StatementStore::create_proof_authorized(
 		runtime,
 		&CallContext::default(),
@@ -141,17 +141,20 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-	let session = activation.current_session().expect("the session just made");
+	let session = activation.accounts().current_session().expect("the session just made");
 	let cx = CallContext::default();
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 
 	let keys = futures::executor::block_on(async {
 		[
 			activation
-				.bulletin_allowance_key(&cx, &session, &ProductId::for_test("myapp.dot"))
+				.accounts()
+				.bulletin_allowance_key(&cx, &session, &product)
 				.await
 				.is_ok(),
 			activation
-				.refresh_bulletin_allowance_key(&cx, &session, &ProductId::for_test("myapp.dot"))
+				.accounts()
+				.refresh_bulletin_allowance_key(&cx, &session, &product)
 				.await
 				.is_ok(),
 		]

@@ -13,6 +13,7 @@
     "nightly-toolchain",
     "Makefile",
     "scripts/",
+    "stacks/",
     "package.json",
     "package-lock.json",
     ".github/actions/rust-nightly/",
@@ -32,6 +33,7 @@
         "Makefile",
         "nightly-toolchain",
         "scripts/",
+        "stacks/",
         "package.json",
         "package-lock.json",
         ".github/actions/rust-nightly/"
@@ -55,7 +57,9 @@
         "android/truapi-host/",
         "android/truapi-container.gradle"
       ],
-      "full": [],
+      "full": [
+        "stacks/"
+      ],
       "ci": [
         ".github/workflows/android-app.yml",
         ".github/actions/setup-android-build/",
@@ -76,6 +80,7 @@
       "rust/crates/truapi-verifiable/",
       "rust/crates/uniffi-bindgen-cli/",
       "scripts/codegen.sh",
+      "stacks/",
       "nightly-toolchain",
       "Makefile",
       "Cargo.toml",

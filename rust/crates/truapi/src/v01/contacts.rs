@@ -9,7 +9,7 @@ use crate::Bytes32;
 /// build a valid-looking transfer to an address nobody controls. A handle is
 /// not an address, and the type is where that is said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ContactHandle {
 	/// The handle's bytes.
 	pub bytes: Bytes32,
@@ -19,7 +19,7 @@ pub struct ContactHandle {
 ///
 /// Distinguishing these matters to a product deciding what to do next: a
 /// dismissal is worth retrying, an empty list is not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum ContactPickOutcome {
 	/// The user chose someone.
 	///
@@ -41,11 +41,11 @@ pub enum ContactPickOutcome {
 ///
 /// Carries no arguments: the host owns the overlay, draws it from its own chat
 /// contacts, and nothing the product supplies appears in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostContactsPickRequest {}
 
 /// Outcome of a pick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostContactsPickResponse {
 	/// How the pick ended.
 	pub outcome: ContactPickOutcome,

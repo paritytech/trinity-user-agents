@@ -43,9 +43,9 @@ class BindableProductsBotApi(
         )
     }
 
-    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit> {
         return chatSlot.tryUse().fold(
-            onSuccess = { it.setRoomFooter(chatIdParameter, showsTextInput) },
+            onSuccess = { it.setRoomFooter(chatIdParameter, footer) },
             onFailure = { messagingNotSupported() },
         )
     }

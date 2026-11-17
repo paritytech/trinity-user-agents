@@ -6,9 +6,9 @@ extension BandersnatchKeyManager {
     static func fullPerson(
         for tld: String,
         entropyManager: RootEntropyManaging = RootEntropyManager.shared
-    ) -> BandersnatchKeyManager {
-        BandersnatchKeyManager(
-            entropyDeriver: RingVrfEntropyDeriver(domain: BuiltInProduct.personhood(for: tld), index: 0),
+    ) throws -> BandersnatchKeyManager {
+        try BandersnatchKeyManager(
+            entropyDeriver: RingVrfEntropyDeriver(domain: BuiltInProduct.personhood(for: tld).rawValue, index: 0),
             entropyManager: entropyManager
         )
     }
@@ -17,9 +17,9 @@ extension BandersnatchKeyManager {
     static func litePerson(
         for tld: String,
         entropyManager: RootEntropyManaging = RootEntropyManager.shared
-    ) -> BandersnatchKeyManager {
-        BandersnatchKeyManager(
-            entropyDeriver: RingVrfEntropyDeriver(domain: BuiltInProduct.personhood(for: tld), index: 1),
+    ) throws -> BandersnatchKeyManager {
+        try BandersnatchKeyManager(
+            entropyDeriver: RingVrfEntropyDeriver(domain: BuiltInProduct.personhood(for: tld).rawValue, index: 1),
             entropyManager: entropyManager
         )
     }
