@@ -18,6 +18,7 @@ use crate::{durable::GroupId, store::DbError};
 /// keeps the caller's own callers apart. The layer gives the scope no
 /// meaning; its own operations use the empty scope.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+#[derive(uniffi::Record)]
 pub struct OpKey {
 	/// The caller's scope, such as the product.
 	pub scope: Vec<u8>,
@@ -45,6 +46,7 @@ impl OpKey {
 
 /// When a failed attempt of an operation's transaction is built again (E3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(uniffi::Enum)]
 pub enum Retry {
 	/// Until this time, in Unix seconds.
 	Until(u64),
@@ -252,7 +254,8 @@ pub fn all(conn: &Connection) -> Result<Vec<OperationRecord>, DbError> {
 const SELECT: &str =
 	"SELECT scope, id, kind, arguments, cancel_requested, released, offload_wait, ended, exported";
 
-fn read(conn: &Connection, key: &OpKey) -> Result<Option<OperationRecord>, DbError> {
+/// The operation `key` names, if one was begun.
+pub fn read(conn: &Connection, key: &OpKey) -> Result<Option<OperationRecord>, DbError> {
 	let found = conn
 		.query_row(
 			&format!("{SELECT} FROM coinage_operation WHERE scope = :scope AND id = :id"),

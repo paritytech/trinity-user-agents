@@ -10,6 +10,7 @@ pub mod balance;
 pub mod chain;
 pub mod classification;
 pub mod denominations;
+pub mod handover;
 pub mod ledger;
 pub mod namespace;
 pub mod operation;
