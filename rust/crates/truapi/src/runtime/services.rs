@@ -12,7 +12,7 @@ use std::{
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::coinage::{
-	layer::{CoinageUnavailable, Layer},
+	layer::{Layer, StartError},
 	payments::flows::Payments,
 	plugins::Running,
 };
@@ -27,6 +27,43 @@ pub struct CoinageOptions {
 	/// The installation registry's contract, which a host reads from its
 	/// own configuration; it overrides the stack's.
 	pub registry: Option<[u8; 20]>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// Why the coinage layer does not serve the host (V1).
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, uniffi::Error)]
+pub enum CoinageUnavailable {
+	/// The host did not turn coinage on, the runtime has no local session,
+	/// or the stack runs no coinage.
+	#[display("coinage is off")]
+	Off,
+	/// A3's check failed for the current runtime.
+	#[display("unsupported runtime: {check}")]
+	UnsupportedRuntime {
+		/// The check that failed.
+		check: String,
+	},
+	/// The local store does not decode.
+	#[display("the local store does not decode")]
+	UndecodableStore,
+	/// The layer could not start for another reason, such as an
+	/// unavailable seed or a store failure.
+	#[display("the coinage layer did not start: {reason}")]
+	NotStarted {
+		/// What went wrong.
+		reason: String,
+	},
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<StartError> for CoinageUnavailable {
+	fn from(error: StartError) -> Self {
+		match error {
+			StartError::UnsupportedRuntime { check } => Self::UnsupportedRuntime { check },
+			StartError::UndecodableStore => Self::UndecodableStore,
+			other => Self::NotStarted { reason: other.to_string() },
+		}
+	}
 }
 
 /// The outcome of the coinage layer's start, which every caller of

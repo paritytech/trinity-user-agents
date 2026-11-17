@@ -1,5 +1,6 @@
 //! A2 · Namespace: the derivation paths of coin and entry keys, and the keys
-//! computed from them.
+//! computed from them, including the key the installation registry's records
+//! are sealed under ([`RegistryKey`]).
 //!
 //! ```text
 //! coins      //coinage //<purse> //<installation> /<item>             sr25519; the item junction is soft
@@ -11,6 +12,10 @@
 //! never by parsing a path string: `sp-core`'s parser would read the
 //! installation's hex as text and derive different keys.
 
+use chacha20poly1305::{
+	ChaCha20Poly1305, Nonce,
+	aead::{Aead, KeyInit},
+};
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{
 	ExpansionMode, Keypair,
@@ -125,6 +130,57 @@ pub fn coin_key(
 pub fn datastore_key(entropy: &[u8]) -> Result<(CoinSecret, [u8; 32]), InvalidEntropy> {
 	let keypair = hard_path(root(entropy)?, &[Junction::Name(DATASTORE)]);
 	Ok((CoinSecret(keypair.secret.to_bytes()), keypair.public.to_bytes()))
+}
+
+/// The key the installation registry's records are sealed under, shared
+/// with the shipped wallets so each opens the records the others wrote.
+pub struct RegistryKey([u8; 32]);
+
+impl RegistryKey {
+	/// The key of the seed whose `//datastore` secret is `datastore`.
+	pub fn of(datastore: &CoinSecret) -> Option<Self> {
+		let secret = schnorrkel::SecretKey::from_bytes(&datastore.0).ok()?;
+		Some(Self::from_ed25519_secret(&secret.to_ed25519_bytes()))
+	}
+
+	/// `BLAKE2b-256("encryption", key = secret)`, where `secret` is the
+	/// `//datastore` sr25519 secret in its ed25519-compatible form: the scalar
+	/// times 8, then the nonce half.
+	pub fn from_ed25519_secret(secret: &[u8; 64]) -> Self {
+		Self(keyed_hash(secret, b"encryption"))
+	}
+
+	/// `installation` sealed for the registry: `nonce(12) ‖ ciphertext(32) ‖
+	/// tag(16)`, with the nonce a keyed hash of the identifier, so sealing one
+	/// identifier twice gives the same bytes.
+	pub fn seal(&self, installation: InstallationId) -> [u8; 60] {
+		let nonce_key = keyed_hash(&self.0, b"nonce-key");
+		let nonce_hash = keyed_hash(&nonce_key, &[b"nonce".as_slice(), &installation.0].concat());
+		let nonce = Nonce::from_slice(&nonce_hash[..12]);
+		let cipher = ChaCha20Poly1305::new((&self.0).into());
+		let ciphertext = cipher.encrypt(nonce, installation.0.as_slice()).expect("a 32-byte message encrypts");
+		let mut sealed = [0u8; 60];
+		sealed[..12].copy_from_slice(nonce);
+		sealed[12..].copy_from_slice(&ciphertext);
+		sealed
+	}
+
+	/// The identifier in `record`, whatever its nonce; none when it does not
+	/// open under this key or is malformed.
+	pub fn open(&self, record: &[u8]) -> Option<InstallationId> {
+		if record.len() != 60 {
+			return None;
+		}
+		let cipher = ChaCha20Poly1305::new((&self.0).into());
+		let plaintext = cipher.decrypt(Nonce::from_slice(&record[..12]), &record[12..]).ok()?;
+		Some(InstallationId(plaintext.try_into().ok()?))
+	}
+}
+
+/// `BLAKE2b-256(message, key = key)`.
+fn keyed_hash(key: &[u8], message: &[u8]) -> [u8; 32] {
+	let hash = blake2b_simd::Params::new().hash_length(32).key(key).hash(message);
+	hash.as_bytes().try_into().expect("the hash is 32 bytes")
 }
 
 /// The seed of the entry at `item` of `purse` under `installation`: the
