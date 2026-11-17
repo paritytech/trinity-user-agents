@@ -27,9 +27,13 @@ fn a_coin_account_matches_the_shipped_wallet() {
 /// The vector the shipped wallets are to pin as well, so a recovered seed
 /// finds the entries another platform loaded.
 #[test]
-fn an_entry_seed_is_pinned_for_the_shipped_wallets() {
-	let seed = entry_seed(&entropy(), PurseId::MAIN, InstallationId([0x5a; 32]), 7);
-	assert_eq!(hex(&seed.0), "7c9e2011ed19b98e95bd8d2bfcbbfb9cedca4617061d2388b58cf68ff0b96754");
+fn an_entry_key_is_pinned_for_the_shipped_wallets() {
+	let vrf = futures::executor::block_on(crate::runtime::load_vrf()).unwrap();
+	let (seed, member) = entry_key(&entropy(), PurseId::MAIN, InstallationId([0x5a; 32]), 7, &vrf).unwrap();
+	assert_eq!(
+		(hex(&seed.0), hex(&member)),
+		("7c9e2011ed19b98e95bd8d2bfcbbfb9cedca4617061d2388b58cf68ff0b96754".into(), "a5bf72cafdadedc0bfff5cb777fc2b8e697b8fbb61cfda3abdb83647eadb2153".into())
+	);
 }
 
 #[test]
