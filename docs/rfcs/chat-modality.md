@@ -256,6 +256,9 @@ enum MessageContent {
     RichText {
         text: Option<String>,  // Markdown-enabled
         media: Vec<ChatMedia>,
+        // Made by the sender. A Host does not fetch a link of a room that a
+        // Product serves: the site would learn who reads the message.
+        link_preview: Option<LinkPreview>,
     },
 
     // preview_text: Human-readable summary for chat list preview
@@ -302,6 +305,14 @@ enum ChatMediaKind {
     Image,
     Video,
     File,
+}
+
+struct LinkPreview {
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    site: Option<String>,
+    image: Option<ChatMedia>,
 }
 
 // One extended grapheme cluster.
