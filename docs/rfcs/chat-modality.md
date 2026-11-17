@@ -258,6 +258,7 @@ enum MessageContent {
         media: Vec<ChatMedia>,
         // The text goes above the media.
         text_above: bool,
+        entities: Vec<TextEntity>,
         // Made by the sender. A Host does not fetch a link of a room that a
         // Product serves: the site would learn who reads the message.
         link_preview: Option<LinkPreview>,
@@ -310,6 +311,8 @@ struct ChatMedia {
     // Audio: the peaks that the Host draws.
     waveform: Option<Vec<u8>>,
     caption: Option<String>,
+    // Hidden until the user taps it.
+    spoiler: bool,
 }
 
 enum ChatMediaKind {
@@ -333,8 +336,37 @@ struct LinkPreview {
     image: Option<ChatMedia>,
 }
 
-// One extended grapheme cluster.
-Emoji = String
+enum Emoji {
+    // One extended grapheme cluster.
+    Unicode(String),
+    Custom(CustomEmoji),
+}
+
+struct CustomEmoji {
+    id: String,
+    name: String,
+    image: ResourceUri,
+}
+
+// A range of the text, in UTF-8 bytes, with a meaning that the Host draws.
+struct TextEntity {
+    start: u32,
+    end: u32,
+    kind: TextEntityKind,
+}
+
+enum TextEntityKind {
+    Mention(MentionTarget),
+    CustomEmoji(CustomEmoji),
+    Spoiler,
+}
+
+enum MentionTarget {
+    Participant(ChatParticipantId),
+    Role(Role),
+    Everyone,
+    Room(RoomId),
+}
 
 struct MessageReaction {
     origin: MessageOrigin,
@@ -382,7 +414,7 @@ struct ThreadSummary {
 }
 ```
 
-The text of `Text` and `RichText` is Markdown that every Host draws in the same way: CommonMark with the GFM strikethrough, limited to emphasis, strong text (`**x**` and `__x__`), strikethrough, inline code, links (`http`, `https` and `mailto`), fenced code blocks, quote blocks (`> `) and lists of two levels. Every line break is a line break. Any other construct, raw HTML and images show as typed. There is no underline and no spoiler mark.
+The text of `Text` and `RichText` is Markdown that every Host draws in the same way: CommonMark with the GFM strikethrough, limited to emphasis, strong text (`**x**` and `__x__`), strikethrough, inline code, links (`http`, `https` and `mailto`), fenced code blocks, quote blocks (`> `) and lists of two levels. Every line break is a line break. Any other construct, raw HTML and images show as typed. There is no underline. Mentions, custom emoji and spoilers are `entities`, not marks.
 
 #### 4.2 Message Feed Updates
 
@@ -440,6 +472,8 @@ enum UserChatAction {
     NewMessage {
         content: MessageContent,
         reply_to: Option<MessageId>,
+        // Notify the author of `reply_to`.
+        reply_ping: bool,
     },
     EditMessage {
         message_id: MessageId,
@@ -898,7 +932,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 | Item | Limit |
 |---|---|
-| One reaction (`Emoji`) | 64 bytes |
+| One `Emoji::Unicode` | 64 bytes |
 | Distinct reactions on one message | 64 |
 | The text of a message | 16 KiB |
 
