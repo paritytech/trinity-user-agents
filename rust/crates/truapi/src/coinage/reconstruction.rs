@@ -13,6 +13,7 @@ use chacha20poly1305::{
 	ChaCha20Poly1305, Nonce,
 	aead::{Aead, KeyInit},
 };
+use parity_scale_codec::{Decode, Encode};
 
 use super::{
 	Asset, ChainParams, CoinSecret, Exponent, PurseId,
@@ -134,10 +135,30 @@ fn keyed_hash(key: &[u8], message: &[u8]) -> [u8; 32] {
 	hash.as_bytes().try_into().expect("the hash is 32 bytes")
 }
 
+/// Where an interrupted scan of one installation resumes (F4): the purse,
+/// the index space and the next index, SCALE-encoded as the installation's
+/// `ScanProgress::resume`. An empty or unreadable `resume`, or one naming a
+/// purse the reconstruction does not list, starts the scan from the
+/// beginning.
+#[derive(Clone, Copy, Encode, Decode)]
+struct Position {
+	purse: PurseId,
+	space: Space,
+	next: u32,
+}
+
+/// A namespace's two index spaces, in the order a scan reads them.
+#[derive(Clone, Copy, PartialEq, PartialOrd, Encode, Decode)]
+enum Space {
+	Coins,
+	Entries,
+}
+
 /// Reconstructs `purses` under every known installation: adds the
 /// installations the registry lists, then scans each namespace's coins and
 /// entries, adopting what the chain shows. Returns how many assets it
-/// adopted.
+/// adopted. Each installation's scan continues from the progress B2 stores
+/// for it, which is recorded after every batch.
 pub async fn reconstruct(
 	deps: &ReconstructionDeps,
 	purses: Purses,
@@ -156,7 +177,7 @@ pub async fn reconstruct(
 	let at = deps.chain.heads().await.map_err(|_| ReconstructError::Unavailable)?.finalized.hash;
 	let context = ScanContext { entropy: &entropy, at, gap: if deep { config.deep_gap } else { config.gap }, batch: config.batch, params };
 	let mut adopted = 0;
-	for (installation, _) in view.installations().to_vec() {
+	for (installation, progress) in view.installations().to_vec() {
 		let mut scanned: Vec<PurseId> = match &purses {
 			Purses::MainOnly | Purses::Walk => vec![PurseId::MAIN],
 			Purses::These(listed) => core::iter::once(PurseId::MAIN).chain(listed.iter().copied()).collect(),
@@ -164,14 +185,21 @@ pub async fn reconstruct(
 		scanned.extend(view.purses().map(|purse| purse.id).filter(|id| *id != PurseId::MAIN));
 		scanned.sort();
 		scanned.dedup();
-		for purse in scanned {
-			adopted += scan(deps, &context, purse, installation).await?;
+		let resume = Position::decode(&mut progress.resume.as_slice())
+			.ok()
+			.filter(|position| scanned.contains(&position.purse));
+		let first_scan_done = progress.first_scan_done;
+		let skipped = |purse: &PurseId| resume.is_some_and(|position| position.purse != *purse);
+		for purse in scanned.iter().copied().skip_while(skipped) {
+			let namespace = Namespace { purse, installation, first_scan_done };
+			adopted += scan(deps, &context, namespace, resume.filter(|position| position.purse == purse)).await?;
 		}
 		if purses == Purses::Walk {
 			let mut empty = 0;
 			let mut purse = 0;
 			while empty < config.purse_gap {
-				let found = scan(deps, &context, PurseId(purse), installation).await?;
+				let namespace = Namespace { purse: PurseId(purse), installation, first_scan_done };
+				let found = scan(deps, &context, namespace, None).await?;
 				adopted += found;
 				empty = if found == 0 { empty + 1 } else { 0 };
 				purse += 1;
@@ -192,25 +220,39 @@ struct ScanContext<'a> {
 	params: &'a ChainParams,
 }
 
-/// Scans one namespace's coin and entry spaces, batch by batch, until `gap`
-/// consecutive batches are empty, adopting every index the chain shows and
-/// the ledger does not hold.
+/// One namespace, with whether its installation's first scan has completed,
+/// which the progress recorded after each batch keeps.
+#[derive(Clone, Copy)]
+struct Namespace {
+	purse: PurseId,
+	installation: InstallationId,
+	first_scan_done: bool,
+}
+
+/// Scans one namespace's coin and entry spaces, batch by batch, from
+/// `resume` when given, until `gap` consecutive batches are empty, adopting
+/// every index the chain shows and the ledger does not hold, and recording
+/// after each batch where the scan resumes.
 async fn scan(
 	deps: &ReconstructionDeps,
 	context: &ScanContext<'_>,
-	purse: PurseId,
-	installation: InstallationId,
+	namespace: Namespace,
+	resume: Option<Position>,
 ) -> Result<usize, ReconstructError> {
 	let ScanContext { entropy, at, gap, batch, params } = *context;
+	let Namespace { purse, installation, first_scan_done } = namespace;
 	let vrf = load_vrf().await.map_err(|_| ReconstructError::Unavailable)?;
 	let instance = params.config().instance;
 	let mut adopted = 0;
-	for coins in [true, false] {
+	for space in [Space::Coins, Space::Entries] {
+		if resume.is_some_and(|position| space < position.space) {
+			continue;
+		}
 		let mut empty = 0;
-		let mut start = 0u32;
+		let mut start = resume.filter(|position| position.space == space).map_or(0, |position| position.next);
 		while empty < gap {
 			let indices: Vec<u32> = (start..start.saturating_add(batch)).collect();
-			let found: Vec<AssetRecord> = if coins {
+			let found: Vec<AssetRecord> = if space == Space::Coins {
 				let accounts: Vec<[u8; 32]> = indices
 					.iter()
 					.filter_map(|index| coin_key(entropy, purse, installation, *index).ok().map(|(_, account)| account))
@@ -245,10 +287,14 @@ async fn scan(
 			};
 			empty = if found.is_empty() { empty + 1 } else { 0 };
 			adopted += found.len();
-			if !found.is_empty() {
-				deps.store.write(move |tx| ledger::adopt(tx, &found)).await?;
-			}
 			start = start.saturating_add(batch);
+			let progress = ScanProgress { first_scan_done, resume: Position { purse, space, next: start }.encode() };
+			deps.store
+				.write(move |tx| {
+					ledger::adopt(tx, &found)?;
+					ledger::record_scan(tx, installation, &progress)
+				})
+				.await?;
 		}
 	}
 	Ok(adopted)
