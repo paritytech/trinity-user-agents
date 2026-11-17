@@ -342,34 +342,7 @@ the product as a host failure carrying its reason.
 
 ## Payments
 
-A host with a wallet serves top-ups, payments and the spendable balance by
-installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
-on the runtime, before any product opens. A runtime without one answers the
-matching calls `Unsupported`.
-
-```swift
-runtime.setTopUp(wallet)
-runtime.setPayments(wallet)
-runtime.setBalance(wallet)
-
-// While the core follows an id or the balance:
-runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
-runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
-runtime.notifyBalance(available: "1500000000")
-```
-
-The core checks the session, the source keys, a positive amount and the
-product's balance access, so the host never prompts for balance access. A
-payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
-which the core turns into `Rejected` for a product without balance access. The
-balance is what a payment can spend now, as a decimal string of CASH units.
-
-The core decides which ids to follow. It calls `followTopUp`,
-`followPayment` and `followBalance`, and the host follows its engine's stream,
-pushing what it reports through `notifyTopUpStatus`, `notifyPaymentStatus` and
-`notifyBalance` until the call returns. The core keeps the latest status per
-id, relays it to the products following that id and cancels the call once it
-has a final status.
+The core serves products' top-ups, payments, balances and coin payments from its own coinage layers; a host installs no payment engine. They run once the runtime is constructed with `HostRuntimeConfig.coinage` and a local session, and the app's own wallet screens use them through `coinage()`. Without them, every payment call answers `Unsupported`.
 
 ## Architecture
 

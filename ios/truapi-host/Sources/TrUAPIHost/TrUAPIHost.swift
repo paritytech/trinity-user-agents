@@ -337,67 +337,6 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: ProductId) async throws -> HostContactPick
 }
 
-/// Host-implemented top-up engine: claims a source's funds into the user's
-/// balance.
-///
-/// Installed once on the runtime with ``TrUAPIHostRuntime/setTopUp(_:)``.
-/// The core has already checked the session and the source keys; a
-/// `productAccount` source arrives as its derivation index for the host to
-/// derive. The host owns claiming, retries, partial claims, persistence and
-/// scoping ids to the product. A runtime without one answers `topUp` and
-/// `topUpStatusSubscribe` with `Unsupported`.
-public protocol TopUpHostBridge: AnyObject, Sendable {
-    /// Start `request` for `productId`, returning once the host has accepted
-    /// it. Throw a `HostPaymentTopUpError` to answer with its code; anything
-    /// else reaches the product as `Unknown`.
-    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws
-
-    /// Follow `productId`'s top-up `id` on the engine, pushing each status
-    /// it reports with
-    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``, and
-    /// return when the engine's stream ends. Throw `TopUpNotFound` when the
-    /// engine holds no such top-up. The core cancels the call once it has a
-    /// final status.
-    func followTopUp(productId: ProductId, id: Data) async throws
-}
-
-/// Host-implemented payment engine: pays from the user's balance to an
-/// account once the user approves.
-///
-/// Installed once on the runtime with ``TrUAPIHostRuntime/setPayments(_:)``.
-/// Answer `InsufficientBalance` whenever the balance is short: the core turns
-/// it into `Rejected` for a product without balance access. A runtime without
-/// one answers `request` and `statusSubscribe` with `Unsupported`.
-public protocol PaymentHostBridge: AnyObject, Sendable {
-    /// Ask the user to approve `request` for `productId`, returning once the
-    /// user authorized it and the host took it on. Throw a `HostPaymentError`
-    /// to answer with its code; anything else reaches the product as
-    /// `Unknown`.
-    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws
-
-    /// Follow `productId`'s payment `id` on the engine, pushing each status
-    /// it reports with
-    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``, and
-    /// return when the engine's stream ends. Throw `PaymentNotFound` when the
-    /// engine holds no such payment. The core cancels the call once it has a
-    /// final status.
-    func followPayment(productId: ProductId, id: Data) async throws
-}
-
-/// Host-implemented balance view: what a payment request can spend right now.
-///
-/// Installed once on the runtime with ``TrUAPIHostRuntime/setBalance(_:)``.
-/// The core checks the product's balance access itself, so never prompt for
-/// it here. A runtime without one answers `balanceSubscribe` with
-/// `Unsupported`.
-public protocol BalanceHostBridge: AnyObject, Sendable {
-    /// Follow the user's spendable balance, pushing the current one and each
-    /// change with ``TrUAPIHostRuntime/notifyBalance(available:)``, and
-    /// return when the stream ends. The core cancels the call once no product
-    /// follows the balance, and calls again when one does.
-    func followBalance() async throws
-}
-
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
 /// `ScannerPlatform`. Closes it when the task is cancelled.
 public protocol ScannerHostBridge: AnyObject, Sendable {
@@ -584,86 +523,6 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     ) async throws -> HostScan {
         try await withHostRejection {
             try await bridge.scanCode(productId: productId, executionKind: executionKind, request: request)
-        }
-    }
-}
-
-/// Adapter that bridges the public `TopUpHostBridge` to the generated UniFFI
-/// `NativeTopUpCallbacks` protocol.
-private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Sendable {
-    private let bridge: TopUpHostBridge
-
-    init(bridge: TopUpHostBridge) {
-        self.bridge = bridge
-    }
-
-    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws {
-        do {
-            try await bridge.topUp(productId: productId, request: request)
-        } catch let error as HostPaymentTopUpError {
-            throw error
-        } catch {
-            throw HostPaymentTopUpError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-
-    func followTopUp(productId: ProductId, id: Bytes32) async throws {
-        do {
-            try await bridge.followTopUp(productId: productId, id: id)
-        } catch let error as HostPaymentTopUpStatusSubscribeError {
-            throw error
-        } catch {
-            throw HostPaymentTopUpStatusSubscribeError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-}
-
-/// Adapter that bridges the public `PaymentHostBridge` to the generated UniFFI
-/// `NativePaymentCallbacks` protocol.
-private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked Sendable {
-    private let bridge: PaymentHostBridge
-
-    init(bridge: PaymentHostBridge) {
-        self.bridge = bridge
-    }
-
-    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws {
-        do {
-            try await bridge.requestPayment(productId: productId, request: request)
-        } catch let error as HostPaymentError {
-            throw error
-        } catch {
-            throw HostPaymentError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-
-    func followPayment(productId: ProductId, id: Bytes32) async throws {
-        do {
-            try await bridge.followPayment(productId: productId, id: id)
-        } catch let error as HostPaymentStatusSubscribeError {
-            throw error
-        } catch {
-            throw HostPaymentStatusSubscribeError.Unknown(reason: hostRejectionReason(error))
-        }
-    }
-}
-
-/// Adapter that bridges the public `BalanceHostBridge` to the generated UniFFI
-/// `NativeBalanceCallbacks` protocol.
-private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked Sendable {
-    private let bridge: BalanceHostBridge
-
-    init(bridge: BalanceHostBridge) {
-        self.bridge = bridge
-    }
-
-    func followBalance() async throws {
-        do {
-            try await bridge.followBalance()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 }
@@ -929,9 +788,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
-    private var topUpRetainer: NativeTopUpCallbacks?
-    private var paymentsRetainer: NativePaymentCallbacks?
-    private var balanceRetainer: NativeBalanceCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
@@ -995,54 +851,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// resolving.
     public func notifyContactsChanged() {
         inner.notifyContactsChanged()
-    }
-
-    /// Install the host's top-up engine. Set-once; answers whether this call
-    /// installed it. Call it before opening any product execution.
-    @discardableResult
-    public func setTopUp(_ topUp: TopUpHostBridge) -> Bool {
-        let adapter = TopUpCallbackAdapter(bridge: topUp)
-        guard inner.setTopUpCallbacks(callbacks: adapter) else { return false }
-        topUpRetainer = adapter
-        return true
-    }
-
-    /// Push a status the engine reported for `productId`'s top-up `id`,
-    /// which the core asked to follow through `followTopUp`.
-    public func notifyTopUpStatus(productId: ProductId, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
-        try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
-    }
-
-    /// Install the host's payment engine. Set-once; answers whether this call
-    /// installed it. Call it before opening any product execution.
-    @discardableResult
-    public func setPayments(_ payments: PaymentHostBridge) -> Bool {
-        let adapter = PaymentCallbackAdapter(bridge: payments)
-        guard inner.setPaymentCallbacks(callbacks: adapter) else { return false }
-        paymentsRetainer = adapter
-        return true
-    }
-
-    /// Push a status the engine reported for `productId`'s payment `id`,
-    /// which the core asked to follow through `followPayment`.
-    public func notifyPaymentStatus(productId: ProductId, id: Data, status: HostPaymentStatusSubscribeItem) throws {
-        try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
-    }
-
-    /// Install the host's balance view. Set-once; answers whether this call
-    /// installed it. Call it before opening any product execution.
-    @discardableResult
-    public func setBalance(_ balance: BalanceHostBridge) -> Bool {
-        let adapter = BalanceCallbackAdapter(bridge: balance)
-        guard inner.setBalanceCallbacks(callbacks: adapter) else { return false }
-        balanceRetainer = adapter
-        return true
-    }
-
-    /// Push the user's spendable balance, a decimal string of CASH units,
-    /// while the core follows it through `followBalance`.
-    public func notifyBalance(available: U128) {
-        inner.notifyBalance(available: available)
     }
 
     /// Open one executable connection with a host-assigned immutable context.

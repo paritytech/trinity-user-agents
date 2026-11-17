@@ -25,7 +25,7 @@ use truapi::{latest, v01};
 use zeroize::Zeroizing;
 
 use crate::{
-	DevicePairingObserver, PairedSsoPeer, Spawner,
+	DevicePairingObserver, PairedSsoPeer,
 	encrypted_storage::EncryptedStorage,
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
@@ -35,11 +35,9 @@ use crate::{
 
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
+		NativeGameCallbacks, NativeScannerCallbacks,
 	},
-	engine_follow::{BalanceFollower, StatusFollower},
 	errors::HostRejection,
 	events::NativeEventBus,
 	funding_feed::{FundingChangeKind, write_resume_marker},
@@ -820,178 +818,5 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 
 	fn funding_providers_changed(&self) {
 		self.funding.funding_changed(None, FundingChangeKind::Providers);
-	}
-}
-
-/// What a product is told when it names a purse: native hosts hold only the
-/// main one.
-const MAIN_PURSE_ONLY: &str = "only the main purse is supported";
-
-/// [`crate::platform::TopUpPlatform`] served by host-provided
-/// [`NativeTopUpCallbacks`], following each top-up through a
-/// [`StatusFollower`] the host pushes to with [`Self::notify_status`].
-pub struct TopUpCallbackPlatform {
-	top_up: Arc<dyn NativeTopUpCallbacks>,
-	statuses: StatusFollower<v01::HostPaymentTopUpStatusSubscribeItem>,
-}
-
-impl TopUpCallbackPlatform {
-	/// Serve top-ups from `top_up`, following them on `spawner`.
-	pub fn new(top_up: Arc<dyn NativeTopUpCallbacks>, spawner: Spawner) -> Self {
-		let host = top_up.clone();
-		let follow = Arc::new(move |product_id, id| {
-			let host = host.clone();
-			async move { host.follow_top_up(product_id, id).await }.boxed()
-		});
-		Self { top_up, statuses: StatusFollower::new(follow, spawner) }
-	}
-
-	/// Take a status the host's engine reported for `product_id`'s top-up
-	/// `id`.
-	pub fn notify_status(
-		&self,
-		product_id: ProductId,
-		id: crate::Bytes32,
-		status: v01::HostPaymentTopUpStatusSubscribeItem,
-	) {
-		self.statuses.notify(product_id, id, status);
-	}
-}
-
-#[async_trait::async_trait]
-impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
-	async fn top_up(
-		&self,
-		product: &ProductContext,
-		request: crate::latest::HostPaymentTopUpRequest,
-	) -> Result<(), crate::latest::HostPaymentTopUpError> {
-		if request.into.is_some() {
-			return Err(crate::latest::HostPaymentTopUpError::Unknown {
-				reason: MAIN_PURSE_ONLY.into(),
-			});
-		}
-		let id = request.id;
-		self.top_up.top_up(product.product_id.clone(), request).await?;
-		self.statuses.follow(product.product_id.clone(), id);
-		Ok(())
-	}
-
-	fn subscribe_top_up_status(
-		&self,
-		product: &ProductContext,
-		id: crate::Bytes32,
-	) -> BoxStream<
-		'static,
-		Result<v01::HostPaymentTopUpStatusSubscribeItem, v01::HostPaymentTopUpStatusSubscribeError>,
-	> {
-		self.statuses.subscribe(product.product_id.clone(), id)
-	}
-}
-
-/// [`crate::platform::PaymentPlatform`] served by host-provided
-/// [`NativePaymentCallbacks`], following each payment through a
-/// [`StatusFollower`] the host pushes to with [`Self::notify_status`].
-pub struct PaymentCallbackPlatform {
-	payments: Arc<dyn NativePaymentCallbacks>,
-	statuses: StatusFollower<v01::HostPaymentStatusSubscribeItem>,
-}
-
-impl PaymentCallbackPlatform {
-	/// Serve payments from `payments`, following them on `spawner`.
-	pub fn new(payments: Arc<dyn NativePaymentCallbacks>, spawner: Spawner) -> Self {
-		let host = payments.clone();
-		let follow = Arc::new(move |product_id, id| {
-			let host = host.clone();
-			async move { host.follow_payment(product_id, id).await }.boxed()
-		});
-		Self { payments, statuses: StatusFollower::new(follow, spawner) }
-	}
-
-	/// Take a status the host's engine reported for `product_id`'s payment
-	/// `id`.
-	pub fn notify_status(
-		&self,
-		product_id: ProductId,
-		id: crate::Bytes32,
-		status: v01::HostPaymentStatusSubscribeItem,
-	) {
-		self.statuses.notify(product_id, id, status);
-	}
-}
-
-#[async_trait::async_trait]
-impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
-	async fn request_payment(
-		&self,
-		product: &ProductContext,
-		request: crate::latest::HostPaymentRequest,
-	) -> Result<(), crate::latest::HostPaymentError> {
-		if request.from.is_some() {
-			return Err(crate::latest::HostPaymentError::Unknown {
-				reason: MAIN_PURSE_ONLY.into(),
-			});
-		}
-		let id = request.id;
-		self.payments.request_payment(product.product_id.clone(), request).await?;
-		self.statuses.follow(product.product_id.clone(), id);
-		Ok(())
-	}
-
-	fn subscribe_payment_status(
-		&self,
-		product: &ProductContext,
-		id: crate::Bytes32,
-	) -> BoxStream<
-		'static,
-		Result<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
-	> {
-		self.statuses.subscribe(product.product_id.clone(), id)
-	}
-}
-
-/// [`crate::platform::BalancePlatform`] served by host-provided
-/// [`NativeBalanceCallbacks`], following the balance through a
-/// [`BalanceFollower`] the host pushes to with [`Self::notify_balance`].
-pub struct BalanceCallbackPlatform {
-	follower: BalanceFollower,
-}
-
-impl BalanceCallbackPlatform {
-	/// Serve balances from `balance`, following it on `spawner`.
-	pub fn new(balance: Arc<dyn NativeBalanceCallbacks>, spawner: Spawner) -> Self {
-		let follow = Arc::new(move || {
-			let balance = balance.clone();
-			async move { balance.follow_balance().await }.boxed()
-		});
-		Self { follower: BalanceFollower::new(follow, spawner) }
-	}
-
-	/// Take the balance the host's engine reported. The core drops it for a
-	/// product whose balance access was revoked.
-	pub fn notify_balance(&self, available: u128) {
-		self.follower.notify(available);
-	}
-}
-
-impl crate::platform::BalancePlatform for BalanceCallbackPlatform {
-	fn subscribe_balance(
-		&self,
-		_product: &ProductContext,
-		purse: Option<u32>,
-	) -> BoxStream<
-		'static,
-		Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
-	> {
-		if purse.is_some() {
-			let error =
-				v01::HostPaymentBalanceSubscribeError::Unknown { reason: MAIN_PURSE_ONLY.into() };
-			return stream::iter([Err(error)]).boxed();
-		}
-		self.follower
-			.subscribe()
-			.map(|balance| {
-				balance.map(|available| v01::HostPaymentBalanceSubscribeItem { available })
-			})
-			.boxed()
 	}
 }

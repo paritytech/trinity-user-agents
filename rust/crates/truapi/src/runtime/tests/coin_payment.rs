@@ -33,6 +33,14 @@ impl crate::runtime::ProductFunding for NoProductAccounts {
 	}
 }
 
+/// Installs `engine` as the core does once the coinage layers start.
+fn install_engine(services: &RuntimeServices, engine: crate::runtime::CoinageEngine) {
+	let engine = Arc::new(engine);
+	assert!(services.install_top_up_engine(engine.clone()));
+	assert!(services.install_payment_engine(engine.clone()));
+	assert!(services.install_balance_view(engine));
+}
+
 /// A product host over a running coinage layer, with the wallet behind it.
 async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntimeHost<RemoteAccountHolder>) {
 	let (wallet, host, _) = coinage_host_with_layer(platform).await;
@@ -54,7 +62,7 @@ async fn coinage_host_with_layer(
 		funding: Arc::new(NoProductAccounts),
 	};
 	assert!(services.install_coinage_payments(payments));
-	assert!(services.install_coinage_engine(Arc::new(engine)));
+	install_engine(&services, engine);
 	let (started, start) = futures::channel::oneshot::channel();
 	assert!(services.install_coinage_start(futures::FutureExt::shared(start)));
 	started.send(Ok(layer.clone())).ok();
@@ -208,7 +216,7 @@ async fn an_rfc6_call_made_while_the_layers_start_is_served_by_them() {
 			funding: Arc::new(NoProductAccounts),
 		};
 		assert!(services.install_coinage_payments(payments));
-		assert!(services.install_coinage_engine(Arc::new(engine)));
+		install_engine(&services, engine);
 		started.send(Ok(layer)).ok();
 	};
 	let (too_small, ()) = futures::join!(too_small, start_layers);

@@ -455,17 +455,16 @@ export interface TestHost {
 /**
  * Why the payment controls cannot be served.
  *
- * The core serves payments through `TopUpPlatform`, `PaymentPlatform` and
- * `BalancePlatform`, which only a native or Rust host can install: the browser
- * host-callback bridge cannot carry them yet. This host therefore answers
- * every payment call `Unsupported`, and has no payment engine to record or
- * drive.
+ * The core serves payments from its coinage layers, which run only where the
+ * runtime holds the seed and the host turned coinage on. This host does
+ * neither, so it answers every payment call `Unsupported`, and has no payment
+ * engine to record or drive.
  */
 const NO_PAYMENT_SEAM =
-  "is not available in the TrUAPI test host: payments are served only by " +
-  "native and Rust hosts, since the browser host-callback bridge cannot carry " +
-  "the payment platforms yet, so this host answers every payment call " +
-  "Unsupported. See the payment platforms in rust/crates/truapi/RUNTIME.md.";
+  "is not available in the TrUAPI test host: the core serves payments from " +
+  "its coinage layers, which run only where the runtime holds the seed, so " +
+  "this host answers every payment call Unsupported. See Payments in " +
+  "rust/crates/truapi/RUNTIME.md.";
 
 /** Why a product account cannot be pinned to a chosen key. */
 const NO_PINNED_PRODUCT_ACCOUNT =

@@ -1477,9 +1477,9 @@ impl FundingRegistry {
 		for (intent, provider, settlement) in due {
 			let engine = match settlement {
 				Settlement::TopUps(_) | Settlement::Refund(_) => {
-					services.top_up_platform().is_some()
+					services.top_up_engine().is_some()
 				},
-				Settlement::Payment(_) => services.payment_platform().is_some(),
+				Settlement::Payment(_) => services.payment_engine().is_some(),
 			};
 			if engine &&
 				let Some(following) =
@@ -1510,8 +1510,8 @@ impl FundingRegistry {
 		let starting = self.lock_starting();
 		for (intent, provider, funds) in pending {
 			let engine = match funds.direction {
-				FundingDirection::In => services.top_up_platform().is_some(),
-				FundingDirection::Out => services.payment_platform().is_some(),
+				FundingDirection::In => services.top_up_engine().is_some(),
+				FundingDirection::Out => services.payment_engine().is_some(),
 			};
 			if !engine ||
 				starting.contains(&funds.host_id) ||
@@ -2075,7 +2075,7 @@ pub(crate) async fn engine_holds(
 ) -> Result<bool, String> {
 	match direction {
 		FundingDirection::In => {
-			let platform = services.top_up_platform().ok_or("no top-up engine")?;
+			let platform = services.top_up_engine().ok_or("no top-up engine")?;
 			let mut statuses = platform.subscribe_top_up_status(provider, host_id);
 			match within(ENGINE_READ_TIMEOUT, statuses.next()).await {
 				None => Err("the top-up engine did not answer".to_string()),
@@ -2089,7 +2089,7 @@ pub(crate) async fn engine_holds(
 			}
 		},
 		FundingDirection::Out => {
-			let platform = services.payment_platform().ok_or("no payment engine")?;
+			let platform = services.payment_engine().ok_or("no payment engine")?;
 			let mut statuses = platform.subscribe_payment_status(provider, host_id);
 			match within(ENGINE_READ_TIMEOUT, statuses.next()).await {
 				None => Err("the payment engine did not answer".to_string()),
@@ -2466,7 +2466,7 @@ impl RuntimeServices {
 		loop {
 			let read = match direction {
 				FundingDirection::In => {
-					let Some(platform) = self.top_up_platform() else {
+					let Some(platform) = self.top_up_engine() else {
 						tracing::warn!("no top-up platform to follow a funding session's claims");
 						return None;
 					};
@@ -2474,7 +2474,7 @@ impl RuntimeServices {
 					top_up_moved(statuses, funds, current_unix_millis()).await
 				},
 				FundingDirection::Out => {
-					let Some(platform) = self.payment_platform() else {
+					let Some(platform) = self.payment_engine() else {
 						tracing::warn!("no payment platform to follow a funding session's payment");
 						return None;
 					};

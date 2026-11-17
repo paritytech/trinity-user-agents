@@ -19,10 +19,9 @@ use std::{
 };
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
-	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost, FundingPlatform, GamePlatform,
+	PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	PermissionStatusHost, Platform, PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig,
 };
 use futures::{
 	StreamExt,
@@ -336,29 +335,6 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
 	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
 		self.services.install_game_platform(platform)
-	}
-
-	/// Install the host's [`TopUpPlatform`], which claims funds into the
-	/// balance. Set-once. Returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
-	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.services.install_top_up_platform(platform)
-	}
-
-	/// Install the host's [`PaymentPlatform`], which pays from the user's
-	/// balance once the user approves. Set-once; returns whether this call
-	/// installed it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_payment_platform"))]
-	pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.services.install_payment_platform(platform)
-	}
-
-	/// Install the host's [`BalancePlatform`], which shares the user's
-	/// balance with products. Set-once; returns whether this call installed
-	/// it.
-	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_balance_platform"))]
-	pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
-		self.services.install_balance_platform(platform)
 	}
 
 	/// Install the host's [`ScannerPlatform`] before serving any product
@@ -1054,29 +1030,6 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
 	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
 		self.services.install_game_platform(platform)
-	}
-
-	/// Install the host's [`TopUpPlatform`], which claims funds into the
-	/// balance. Set-once. Returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
-	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.services.install_top_up_platform(platform)
-	}
-
-	/// Install the host's [`PaymentPlatform`], which pays from the user's
-	/// balance once the user approves. Set-once; returns whether this call
-	/// installed it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_payment_platform"))]
-	pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.services.install_payment_platform(platform)
-	}
-
-	/// Install the host's [`BalancePlatform`], which shares the user's
-	/// balance with products. Set-once; returns whether this call installed
-	/// it.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_balance_platform"))]
-	pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
-		self.services.install_balance_platform(platform)
 	}
 
 	/// Install the host's [`ScannerPlatform`] before serving any product
@@ -1818,7 +1771,10 @@ fn start_coinage(
 				let engine = crate::runtime::CoinageEngine { payments: payments.clone(), platform, funding };
 				if let Some(services) = weak.upgrade() {
 					services.install_coinage_payments(payments.clone());
-					services.install_coinage_engine(Arc::new(engine));
+					let engine = Arc::new(engine);
+					services.install_top_up_engine(engine.clone());
+					services.install_payment_engine(engine.clone());
+					services.install_balance_view(engine);
 				}
 				report_coinage_start(started, Ok(started_layer));
 				follow_people_heads(&weak, &payments, heads.as_ref(), people_genesis).await;

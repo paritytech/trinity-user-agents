@@ -174,7 +174,7 @@ impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostPaymentBalanceSubscribeRequest { purse }| async move {
 				self.after_coinage_start().await;
-				let Some(platform) = self.connection.services.balance_platform() else {
+				let Some(platform) = self.connection.services.balance_view() else {
 					return Subscription::interrupted(CallError::Unsupported);
 				};
 				if let Err(error) = self.require_session() {
@@ -217,7 +217,7 @@ impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostPaymentStatusSubscribeRequest { id }| async move {
 				self.after_coinage_start().await;
-				let Some(platform) = self.connection.services.payment_platform() else {
+				let Some(platform) = self.connection.services.payment_engine() else {
 					return Subscription::interrupted(CallError::Unsupported);
 				};
 				if let Err(error) = self.require_session() {
@@ -256,7 +256,7 @@ impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostPaymentTopUpStatusSubscribeRequest { id }| async move {
 				self.after_coinage_start().await;
-				let Some(platform) = self.connection.services.top_up_platform() else {
+				let Some(platform) = self.connection.services.top_up_engine() else {
 					return Subscription::interrupted(CallError::Unsupported);
 				};
 				if let Err(error) = self.require_session() {
@@ -356,7 +356,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		mut request: latest::HostPaymentRequest,
 	) -> Result<(), CallError<latest::HostPaymentError>> {
 		self.after_coinage_start().await;
-		let platform = self.connection.services.payment_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.payment_engine().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
@@ -417,7 +417,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		mut request: latest::HostPaymentTopUpRequest,
 	) -> Result<(), CallError<latest::HostPaymentTopUpError>> {
 		self.after_coinage_start().await;
-		let platform = self.connection.services.top_up_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.top_up_engine().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidAmount));

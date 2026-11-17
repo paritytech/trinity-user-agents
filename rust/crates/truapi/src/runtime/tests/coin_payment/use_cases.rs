@@ -26,8 +26,8 @@ use crate::{
 	},
 	durable::DurableTxId,
 	installation::InstallationId,
-	platform::{PaymentPlatform, ProductContext, ProductId, TopUpPlatform},
-	runtime::{CoinageEngine, ProductFunding},
+	platform::{ProductContext, ProductId},
+	runtime::{CoinageEngine, PaymentEngine, ProductFunding, TopUpEngine},
 };
 
 fn spend_reviews(platform: &StubPlatform) -> Vec<crate::platform::CoinPaymentSpendReview> {
@@ -111,18 +111,18 @@ fn coins_top_up(coins: &[u32], amount: u128, id: u8) -> HostPaymentTopUpRequest 
 
 impl Engine {
 	async fn top_up(&self, request: HostPaymentTopUpRequest) -> Result<(), HostPaymentTopUpError> {
-		TopUpPlatform::top_up(&self.engine, &self.product, request).await
+		TopUpEngine::top_up(&self.engine, &self.product, request).await
 	}
 
 	async fn pay(&self, request: HostPaymentRequest) -> Result<(), HostPaymentError> {
-		PaymentPlatform::request_payment(&self.engine, &self.product, request).await
+		PaymentEngine::request_payment(&self.engine, &self.product, request).await
 	}
 
 	fn payment_status(
 		&self,
 		id: u8,
 	) -> futures::stream::BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>> {
-		PaymentPlatform::subscribe_payment_status(&self.engine, &self.product, [id; 32])
+		PaymentEngine::subscribe_payment_status(&self.engine, &self.product, [id; 32])
 	}
 
 	/// Whether each spend review the user saw took held-back value.
@@ -140,7 +140,7 @@ impl Engine {
 		id: u8,
 	) -> futures::stream::BoxStream<'static, Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>>
 	{
-		TopUpPlatform::subscribe_top_up_status(&self.engine, &self.product, [id; 32])
+		TopUpEngine::subscribe_top_up_status(&self.engine, &self.product, [id; 32])
 	}
 
 	/// The records of the operation the product's `id` names.
@@ -375,7 +375,7 @@ async fn the_same_account_index_of_another_product_is_another_source() {
 	let engine = engine(StubPlatform::default(), Arc::new(ProductAccounts)).await;
 	assert_eq!(engine.top_up(account_top_up(0, 1)).await, Ok(()));
 	let other = ProductContext::new(ProductId::for_test("game.dot"));
-	assert_eq!(TopUpPlatform::top_up(&engine.engine, &other, account_top_up(0, 1)).await, Ok(()));
+	assert_eq!(TopUpEngine::top_up(&engine.engine, &other, account_top_up(0, 1)).await, Ok(()));
 }
 
 #[tokio::test]
