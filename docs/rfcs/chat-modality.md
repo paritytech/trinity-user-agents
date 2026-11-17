@@ -324,6 +324,9 @@ enum RoomEvent {
     AvatarChanged,
     DescriptionChanged,
     SettingsChanged,
+    // Each Product writes it when it sees the change. A user may hide it
+    // on a device.
+    SecurityKeyChanged,
 }
 
 struct ChatMedia {
@@ -809,6 +812,8 @@ struct ChatParticipant {
     // A name color and a profile color that every member sees.
     colors: Option<ParticipantColors>,
     presence: Option<Presence>,
+    // A short code of the security key, which two users can compare.
+    security_code: Option<String>,
 }
 
 enum Role {
