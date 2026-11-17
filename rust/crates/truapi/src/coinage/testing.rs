@@ -4,23 +4,23 @@ use core::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use futures::executor::block_on;
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, Encode};
 use subxt::{Metadata, utils::H256};
 
 use super::{
-	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
+	Asset, ChainConfig, ChainParams, CoinSecret, Exponent, PrivacyPolicy, PurseId, Snapshot,
 	chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace, RingPosition},
-	plugins::{PersonhoodSource, Seed},
+	plugins::{PersonhoodSource, RegistryWriter, Seed},
 	ledger::{
-		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
+		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
 		snapshot,
 	},
-	operation::OpKey,
+	operation::{self, OpKey, OpKind},
 	params::{InstanceRecord, validate},
 	registration::{Admission, RegisterError, Rows, coinage_domain, register, registry_domain},
 };
 use crate::{
-	chain::{HashAndNumber, Heads, StorageWatchError},
+	chain::{HashAndNumber, Heads, MortalExtrinsic, StorageWatchError},
 	chain_runtime::RuntimeFailure,
 	runtime::statement_allowance::{PersonhoodSigner, ring::RingParams},
 	durable::{
@@ -269,8 +269,17 @@ pub struct TestWallet {
 }
 
 impl TestWallet {
-	/// A wallet with the given policy.
+	/// A wallet with the given policy, whose installation's registration
+	/// has landed, so the layer builds its transactions (G3 invariant 4).
 	pub fn new(policy: PrivacyPolicy) -> Self {
+		let wallet = Self::unregistered(policy);
+		wallet.register_installation();
+		wallet
+	}
+
+	/// A wallet with the given policy, whose installation is not
+	/// registered yet.
+	pub fn unregistered(policy: PrivacyPolicy) -> Self {
 		let db = crate::store::open_memory_core_db();
 		block_on(db.write(move |tx| {
 			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.expect("a fresh store");
@@ -278,6 +287,20 @@ impl TestWallet {
 		}))
 		.expect("the installation is minted");
 		Self { db }
+	}
+
+	/// Records the installation's registration as finalized, as G3's start
+	/// leaves it once the append has landed.
+	pub fn register_installation(&self) {
+		let key = OpKey::own(block_on(self.db.write(ledger::next_operation_id)).expect("an operation id"));
+		let begun = key.clone();
+		let arguments = InstallationId([9; 32]).encode();
+		block_on(self.db.write(move |tx| operation::begin(tx, &begun, OpKind::RegisterInstallation, &arguments)))
+			.expect("the store is writable")
+			.expect("a fresh key");
+		let engine = unbuilt_engine(self.db.clone());
+		let records = register_rows(&engine, &key, Admission::Ordinary, vec![Rows::default()]).expect("registered");
+		set_status(&self.db, records[0], "FINALIZED_SUCCESS", None);
 	}
 
 	/// An asset allocated in `purse`, observed as `read` a little before
@@ -350,4 +373,15 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 		Ok(())
 	}))
 	.expect("the status is written");
+}
+
+/// A registry writer that cannot build an append yet, as before the
+/// `//datastore` account can pay for one.
+pub struct NoRegistryWriter;
+
+#[async_trait::async_trait]
+impl RegistryWriter for NoRegistryWriter {
+	async fn append(&self, _: &CoinSecret, _: &[u8]) -> Result<MortalExtrinsic, String> {
+		Err("this test builds no registry append".into())
+	}
 }
