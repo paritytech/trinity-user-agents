@@ -23,7 +23,7 @@ extension ProductMessageSource {
                 $0.body = body
                 $0.editedAt = now()
             }
-            return await ask(action) { [weak self] in
+            return await ask(action, after: messageId) { [weak self] in
                 await self?.put(original)
             }
         case let .reactionPlaced(messageId, emoji),
@@ -42,7 +42,7 @@ extension ProductMessageSource {
                 }
                 message.adjustReaction(emoji, by: productUserParticipantId, placed: placed)
             }
-            return await ask(action) { [weak self] in
+            return await ask(action, after: messageId) { [weak self] in
                 await self?.put(original)
             }
         case let .deleteMessage(messageId):
@@ -64,35 +64,6 @@ extension ProductMessageSource {
         }
     }
 
-    /// Sends a text of the user under an id that the host chose. The window shows the message that the product
-    /// made with it.
-    func send(text: String, replyTo: String?) async -> ChatSourceActionOutcome {
-        if !isAtNewestEnd {
-            await reload()
-        }
-
-        let action = ChatUserAction.newMessage(
-            body: .text(text: text),
-            replyTo: replyTo,
-            messageId: UUID().uuidString,
-            timestamp: now()
-        )
-
-        do {
-            let answer = try await querying.userAction(ProductChatUserActionRequest(roomId: roomId, action: action))
-            if case let .messageCreated(created) = answer {
-                insertLive(created)
-                emit()
-            }
-            return .done
-        } catch {
-            logger.warning("Message of room \(roomId) failed: \(error)")
-            noteUnavailable(after: error)
-            emit()
-            return .refused(reason: Self.reason(of: error))
-        }
-    }
-
     /// The body of an edit: a text keeps its kind, and a caption keeps the media of its message.
     func editedBody(of messageId: String, text: String) -> ChatMessageBody {
         guard case let .richText(_, media)? = messages[messageId]?.body, !media.isEmpty else {
@@ -108,6 +79,24 @@ extension ProductMessageSource {
         }
 
         messages[message.messageId] = message
+    }
+
+    /// Sends an action on a message whose change the window shows already. An action on a message of the user that
+    /// the outbox still holds goes once the product has the message.
+    func ask(
+        _ action: ChatUserAction,
+        after messageId: String,
+        revert: @escaping () async -> Void
+    ) async -> ChatSourceActionOutcome {
+        emit()
+
+        guard await waitUntilDelivered(messageId) else {
+            await revert()
+            emit()
+            return .refused(reason: nil)
+        }
+
+        return await ask(action, revert: revert)
     }
 
     /// Sends an action whose change the window shows already. `revert` undoes the change when the product
@@ -167,7 +156,7 @@ extension ProductMessageSource {
     func markSeen(_ messageIds: Set<Chat.MessageId>) {
         let ids = orderedIds
         guard
-            let newestIndex = ids.lastIndex(where: { messageIds.contains($0) }),
+            let newestIndex = ids.lastIndex(where: { messageIds.contains($0) && !pending.contains($0) }),
             let newest = messages[ids[newestIndex]]
         else {
             return
