@@ -2,6 +2,8 @@
 //!
 //! Wallet replacement and retained grants use the same lifecycle guard.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod data_store;
 mod local_activation;
 pub mod ring_vrf;
 mod wallet_account_holder;
@@ -282,6 +284,20 @@ impl crate::gap_scan::HardKeyDerivation for SigningHost {
 		indices: core::ops::Range<u32>,
 	) -> Result<Vec<[u8; 32]>, AuthorityError> {
 		self.wallet.hard_public_keys_under(prefix, indices)
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::installation_registry::DataStoreKeys for SigningHost {
+	fn data_store_owner(&self) -> Result<[u8; 20], AuthorityError> {
+		self.wallet.data_store_owner()
+	}
+
+	fn open_installation_records(
+		&self,
+		records: &[Vec<u8>],
+	) -> Result<Vec<crate::installation::InstallationId>, AuthorityError> {
+		self.wallet.open_installation_records(records)
 	}
 }
 

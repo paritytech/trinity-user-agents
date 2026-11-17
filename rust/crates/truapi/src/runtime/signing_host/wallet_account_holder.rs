@@ -336,6 +336,26 @@ impl WalletAccountHolder {
 		})
 	}
 
+	/// The H160 the `AccountDataStore` contract keeps this seed's
+	/// installation records under.
+	pub fn data_store_owner(&self) -> Result<[u8; 20], AuthorityError> {
+		self.with_installed_keys(|keys| {
+			super::data_store::data_store_owner(&keys.entropy).map_err(AuthorityError::from)
+		})
+	}
+
+	/// The distinct installations in `records` that were sealed under this
+	/// seed, skipping every other record.
+	pub fn open_installation_records(
+		&self,
+		records: &[Vec<u8>],
+	) -> Result<Vec<crate::installation::InstallationId>, AuthorityError> {
+		self.with_installed_keys(|keys| {
+			let key = super::data_store::installation_record_key(&keys.entropy)?;
+			Ok(super::data_store::open_installation_records(&key, records))
+		})
+	}
+
 	/// The identity chat key.
 	pub fn identity_chat_private_key(&self) -> Result<[u8; 32], AuthorityError> {
 		self.with_installed_keys(|keys| Ok(derive_identity_chat_private_key(&keys.entropy)))
