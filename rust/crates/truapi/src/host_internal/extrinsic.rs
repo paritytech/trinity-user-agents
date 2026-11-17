@@ -34,12 +34,12 @@ use subxt::{
 	utils::{AccountId32, H256, MultiAddress, MultiSignature},
 };
 use tracing::warn;
-use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
+use truapi::latest::TxPayloadExtension;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
 use crate::{
-	chain_runtime::{ChainRuntime, encode_hex},
+	chain_runtime::{ChainRuntime, CurrentBlockError, encode_hex},
 	host_logic::product_account::SR25519_SIGNING_CONTEXT,
 };
 
@@ -84,7 +84,7 @@ pub fn sr25519_secret_from_bytes(secret: &[u8; 64]) -> Result<SecretKey, String>
 pub struct Sr25519Signer {
 	#[debug("\"<redacted>\"")]
 	secret: SecretKey,
-	#[debug("{}", hex::encode(public.to_bytes()))]
+	#[debug("{}", crate::logging::Account::new(&public.to_bytes()))]
 	public: PublicKey,
 }
 
@@ -150,7 +150,7 @@ fn v4_signer_payload(call_data: &[u8], extensions: &[TxPayloadExtension]) -> Vec
 /// signed payload. The chain binding (genesis, spec/tx version, mortality
 /// anchor, nonce, tip) lives inside the caller's extension bytes, so nothing
 /// here is metadata-driven.
-pub fn build_signed_extrinsic_v4(
+fn build_signed_extrinsic_v4(
 	signer: &Sr25519Signer,
 	call_data: &[u8],
 	extensions: &[TxPayloadExtension],
@@ -309,7 +309,12 @@ pub enum LocalTransactionError {
 		/// Versions the runtime metadata declares.
 		declared: Vec<u8>,
 	},
-	/// The runtime metadata needed to choose and encode the format is unavailable.
+	/// The host could not connect to the chain, for instance because it serves
+	/// no such chain.
+	#[display("{_0}")]
+	NoChainConnection(String),
+	/// The node could not be asked for the current block or its runtime, such
+	/// as during a halt, or did not answer in time. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// The caller's extension list does not fit the runtime's pipeline.
@@ -320,27 +325,23 @@ pub enum LocalTransactionError {
 	Other(String),
 }
 
-/// Assemble a local transaction using the client's runtime metadata.
-pub async fn build_local_transaction(
+/// Runtime metadata for locally constructing a transaction.
+pub async fn local_transaction_metadata(
 	chain: &ChainRuntime,
-	keypair: &schnorrkel::Keypair,
 	genesis_hash: [u8; 32],
-	call_data: &[u8],
-	extensions: &[TxPayloadExtension],
-	tx_ext_version: u8,
-) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
+) -> Result<ArcMetadata, LocalTransactionError> {
 	let started = Instant::now();
-	let at_block = async {
-		let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-			LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-		})?;
-		client.at_current_block().await.map_err(|error| {
-			LocalTransactionError::ChainUnavailable(format!(
-				"cannot select a metadata block: {error}"
-			))
-		})
-	}
-	.await;
+	let at_block = chain.current_block(&genesis_hash).await.map_err(|error| match error {
+		CurrentBlockError::NoChainConnection(failure) => LocalTransactionError::NoChainConnection(
+			format!("cannot load chain metadata: {failure}"),
+		),
+		CurrentBlockError::ChainUnavailable(reason) => LocalTransactionError::ChainUnavailable(
+			format!("cannot select a metadata block: {reason}"),
+		),
+		CurrentBlockError::Other(reason) => {
+			LocalTransactionError::Other(format!("cannot select a metadata block: {reason}"))
+		},
+	});
 	let waited = started.elapsed();
 	if waited > SLOW_CURRENT_BLOCK || at_block.is_err() {
 		let genesis = encode_hex(&genesis_hash);
@@ -353,16 +354,7 @@ pub async fn build_local_transaction(
 			},
 		}
 	}
-	let at_block = at_block?;
-	let transaction = build_signed_transaction(
-		&Sr25519Signer::from_keypair(keypair),
-		genesis_hash,
-		call_data,
-		extensions,
-		tx_ext_version,
-		at_block.metadata(),
-	)?;
-	Ok(HostCreateTransactionResponse { transaction })
+	Ok(at_block?.metadata())
 }
 
 /// Choose the extrinsic format for `tx_ext_version`, then assemble it.
@@ -463,7 +455,7 @@ fn traverse_exactly<R: TypeResolver>(
 /// caller that supplies it owns its bytes and gets no host signature, whether
 /// they say `Disabled` (authorizing with a proof in a later extension) or carry
 /// a signature the caller made itself.
-pub fn build_signed_extrinsic_v5(
+fn build_signed_extrinsic_v5(
 	signer: &Sr25519Signer,
 	genesis_hash: [u8; 32],
 	call_data: &[u8],
@@ -1543,12 +1535,15 @@ pub mod tests {
 				implicit: extension.additional_signed,
 			})
 			.collect();
-		let every_extension = (0..transaction_extensions.len() as u32).map(Compact).collect();
+		let every_extension = (0..u32::try_from(transaction_extensions.len())
+			.expect("extension count fits in u32"))
+			.map(Compact)
+			.collect();
 		let encoding_version_extensions = transaction_extensions
 			.iter()
 			.enumerate()
 			.filter(|(_, extension)| !omitted.contains(&extension.identifier.as_str()))
-			.map(|(index, _)| Compact(index as u32))
+			.map(|(index, _)| Compact(u32::try_from(index).expect("extension index fits in u32")))
 			.collect();
 
 		let pallets = v14

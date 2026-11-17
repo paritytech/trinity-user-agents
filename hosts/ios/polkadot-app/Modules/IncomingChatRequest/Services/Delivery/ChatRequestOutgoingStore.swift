@@ -43,7 +43,8 @@ extension ChatRequestOutgoingStore: OutgoingStatementStoring {
 
     func markPublished(_ input: OutgoingChatRequestInput, period: UInt32) async throws -> StatementPublication {
         try await databaseService.performWrite { context in
-            guard let request = try Self.fetchRequest(input.statementId, in: context) else {
+            // A publish that lands after a Cancel must not recreate the publication row the Cancel deleted.
+            guard let request = try Self.fetchRequest(input.statementId, in: context), Self.isPending(request) else {
                 return StatementPublication(period: period, isFirst: false)
             }
 
@@ -93,13 +94,34 @@ extension ChatRequestOutgoingStore: OutgoingStatementStoring {
     }
 }
 
+extension ChatRequestOutgoingStore: PendingOutgoingChatRequestLoading {
+    func pendingRequest(requestId: String) async throws -> OutgoingChatRequestInput? {
+        try await databaseService.performRead { context throws -> OutgoingChatRequestInput? in
+            guard
+                let request = try Self.fetchRequest(requestId, in: context),
+                Self.isPending(request),
+                let contact = request.contact
+            else {
+                return nil
+            }
+
+            let periods = try context.outgoingStatementPeriods(for: [requestId])
+            let mappedContact = try ChatContactMapper().transform(entity: contact)
+
+            guard let candidate = Self.candidate(from: mappedContact, periods: periods) else { return nil }
+
+            return candidate.input
+        }
+    }
+}
+
 enum ChatRequestOutgoingStoreError: Error {
     case abandoned
 }
 
 private extension ChatRequestOutgoingStore {
     static func isPending(_ request: CDChatRequest) -> Bool {
-        request.status == Chat.RequestStatus.outgoing.rawValue && request.contact?.chatRequest == request
+        request.status == Chat.RequestStatus.outgoing(.pending).rawValue && request.contact?.chatRequest == request
     }
 
     static func renewablePredicate() -> NSPredicate {
@@ -111,7 +133,7 @@ private extension ChatRequestOutgoingStore {
         return NSPredicate(
             format: "%K == %d AND %K IN %@",
             #keyPath(CDChatContact.chatRequest.status),
-            Chat.RequestStatus.outgoing.rawValue,
+            Chat.RequestStatus.outgoing(.pending).rawValue,
             #keyPath(CDChatContact.chatRequest.message.status),
             sentStatuses
         )

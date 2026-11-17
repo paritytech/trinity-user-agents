@@ -3,6 +3,7 @@ pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
 use truapi::{
+	ProductId,
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
@@ -23,13 +24,11 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			[0xa2; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new("dotli.dot".parse().expect("valid product id")),
+		ProductContext::new(ProductId::for_test("dotli.dot")),
 	)
 }
 
@@ -37,7 +36,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 /// wire-shape tests that only inspect emitted frames.
 pub struct WireShapePlatform;
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for WireShapePlatform {
 	async fn read(&self, _key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		Err(v01::HostLocalStorageReadError::Full)
@@ -60,7 +59,7 @@ impl ProductStorage for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for WireShapePlatform {
 	async fn begin_operation(
 		&self,
@@ -78,14 +77,14 @@ impl ProductOperations for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Navigation for WireShapePlatform {
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Notifications for WireShapePlatform {
 	async fn push_notification(
 		&self,
@@ -99,7 +98,7 @@ impl Notifications for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Permissions for WireShapePlatform {
 	async fn device_permission(
 		&self,
@@ -119,23 +118,13 @@ impl Permissions for WireShapePlatform {
 
 impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Features for WireShapePlatform {
 	async fn feature_supported(
 		&self,
 		_request: v01::HostFeatureSupportedRequest,
 	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
 		Ok(v01::HostFeatureSupportedResponse { supported: true })
-	}
-
-	async fn supported_chains(&self) -> Result<truapi::platform::HostChainSet, v01::GenericError> {
-		Ok(truapi::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![truapi::platform::HostChainEntry {
-				identifier: v01::ChainIdentifier::AssetHub,
-				genesis_hash: [0xaa; 32],
-			}],
-		})
 	}
 }
 
@@ -149,7 +138,7 @@ impl JsonRpcConnection for DeadConnection {
 	fn close(&self) {}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for WireShapePlatform {
 	async fn connect(
 		&self,
@@ -161,7 +150,7 @@ impl ChainProvider for WireShapePlatform {
 
 impl AuthPresenter for WireShapePlatform {}
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for WireShapePlatform {
 	async fn read_core_storage(
 		&self,
@@ -181,7 +170,7 @@ impl CoreStorage for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for WireShapePlatform {
 	async fn confirm_user_action(
 		&self,

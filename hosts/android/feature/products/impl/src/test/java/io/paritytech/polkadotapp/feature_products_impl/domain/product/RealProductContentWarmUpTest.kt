@@ -3,8 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.product
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
 import io.paritytech.polkadotapp.test_shared.thenThrowUnsafe
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -16,6 +14,8 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 
 class RealProductContentWarmUpTest {
     private val dotNsResolver: DotNsResolver = mock()
@@ -30,7 +30,7 @@ class RealProductContentWarmUpTest {
     }
     private val warmUp = RealProductContentWarmUp(dotNsResolver, servingHostResolver, runtimeSettings)
 
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
     private val archive: Uri = mock()
 
     // The archive is keyed by the host that serves the card, which for a manifest product is its
@@ -38,7 +38,7 @@ class RealProductContentWarmUpTest {
     // paying for the download after all.
     @Test
     fun `warms the archive of the host that actually serves the product`() = runBlocking {
-        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn("widget.game.dot")
+        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn(Result.success("widget.game.dot"))
         whenever(dotNsResolver.resolveToLocalUri("widget.game.dot")).thenReturn(Result.success(archive))
 
         val result = warmUp.warmUp(productId)
@@ -52,7 +52,7 @@ class RealProductContentWarmUpTest {
     @Test
     fun `on the native runtime it warms the app archive the card loads`() = runBlocking {
         truapiRuntime = false
-        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.APP)).thenReturn("app.game.dot")
+        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.APP)).thenReturn(Result.success("app.game.dot"))
         whenever(dotNsResolver.resolveToLocalUri("app.game.dot")).thenReturn(Result.success(archive))
 
         val result = warmUp.warmUp(productId)
@@ -66,7 +66,7 @@ class RealProductContentWarmUpTest {
     @Test
     fun `an archive that cannot be fetched is reported rather than thrown`() = runBlocking {
         val failure = IllegalStateException("chain unreachable")
-        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn("widget.game.dot")
+        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.WIDGET)).thenReturn(Result.success("widget.game.dot"))
         whenever(dotNsResolver.resolveToLocalUri("widget.game.dot")).thenReturn(Result.failure(failure))
 
         val result = warmUp.warmUp(productId)

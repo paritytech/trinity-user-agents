@@ -1,9 +1,14 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.toRect
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
@@ -19,6 +24,27 @@ class DockletCardShape(private val pillShare: () -> Float) : Shape {
 }
 
 internal fun dockPath(size: Size, density: Float): Path {
+    val shelfHeight = DockletGeometry.shelfHeightPx(size.height, density)
+    return if (shelfHeight > 0f) shelfDockPath(size, density, rowTop = shelfHeight) else restingDockPath(size, density)
+}
+
+// The whole cutout circle, not only its open top: the shelf above the row would otherwise paint over the Pill's ring.
+private fun shelfDockPath(size: Size, density: Float, rowTop: Float): Path {
+    val outline = Path().apply {
+        addRoundRect(RoundRect(size.toRect(), CornerRadius(DockletGeometry.DockHeight.value * density / 2)))
+    }
+    val cutout = Path().apply {
+        addOval(
+            Rect(
+                center = Offset(size.width / 2, rowTop + DockletGeometry.CutoutCenterY.value * density),
+                radius = DockletGeometry.CutoutRadius.value * density,
+            ),
+        )
+    }
+    return Path().apply { op(outline, cutout, PathOperation.Difference) }
+}
+
+private fun restingDockPath(size: Size, density: Float): Path {
     val width = size.width
     val height = size.height
     val radius = height / 2

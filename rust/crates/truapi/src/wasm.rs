@@ -24,11 +24,13 @@ use std::{
 
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
+#[cfg(feature = "test-host")]
+use crate::platform::StackChains;
 use crate::platform::{
-	ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-	PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-	ProductExecutionKind, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
-	ScannerPlatform,
+	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
+	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
+	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
+	ScannerPlatform, Stack,
 };
 use futures::{
 	channel::mpsc,
@@ -48,8 +50,8 @@ use wasm_bindgen::{JsCast, prelude::*};
 use crate::SigningHostRuntime;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime,
-	host_logic::worker::WorkerTransition, subscription::Spawner,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
+	host_logic::worker::WorkerTransition,
 };
 
 mod generated_bridge;
@@ -131,7 +133,7 @@ impl WasmPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for WasmPlatform {
 	async fn connect(
 		&self,
@@ -141,6 +143,7 @@ impl ChainProvider for WasmPlatform {
 		let chain_connect = SendWrapper::new(chain_connect);
 		SendWrapper::new(async move {
 			let (response_tx, response_rx) = mpsc::unbounded::<String>();
+			let responses_close = response_tx.clone();
 			let on_response = Closure::wrap(Box::new(move |json: JsValue| {
 				// The host must hand back JSON-RPC frames as strings. Drop (and
 				// log) non-string values rather than forwarding an empty frame
@@ -177,6 +180,7 @@ impl ChainProvider for WasmPlatform {
 				close_fn: SendWrapper::new(close_fn),
 				closed: AtomicBool::new(false),
 				_on_response: SendWrapper::new(on_response),
+				responses_close,
 				response_rx: std::sync::Mutex::new(Some(response_rx)),
 			}) as Box<dyn JsonRpcConnection>)
 		})
@@ -274,6 +278,9 @@ struct JsCallbackJsonRpcConnection {
 	/// Closure must outlive the connection so JS keeps a live ref to the
 	/// response sink. Dropped together with the rest of the struct.
 	_on_response: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+	/// Sender half of the responses channel, kept to end the stream when a
+	/// send fails.
+	responses_close: mpsc::UnboundedSender<String>,
 	response_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<String>>>,
 }
 
@@ -282,6 +289,10 @@ impl JsonRpcConnection for JsCallbackJsonRpcConnection {
 		let arg = JsValue::from_str(&request);
 		if let Err(err) = self.send_fn.call1(&JsValue::NULL, &arg) {
 			web_sys::console::error_1(&err);
+			// The request is lost, so end the response stream and let the
+			// client fail what it is still waiting on.
+			self.responses_close.close_channel();
+			self.close();
 		}
 	}
 
@@ -494,9 +505,6 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
 
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
-	let people = get_required_object(value, "people", "runtimeConfig.people")?;
-	let bulletin = get_required_object(value, "bulletin", "runtimeConfig.bulletin")?;
-	let asset_hub = get_required_object(value, "assetHub", "runtimeConfig.assetHub")?;
 	let pairing = get_required_object(value, "pairing", "runtimeConfig.pairing")?;
 
 	PairingHostConfig::new(
@@ -522,9 +530,7 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
-		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
+		stack_from_js(value)?,
 		get_required_string_at(&pairing, "deeplinkScheme", "runtimeConfig.pairing.deeplinkScheme")?,
 	)
 	.map_err(runtime_config_validation_to_js)
@@ -555,12 +561,6 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
-	let people = get_required_object(value, "people", "runtimeConfig.people")?;
-	let bulletin = get_required_object(value, "bulletin", "runtimeConfig.bulletin")?;
-	let asset_hub = get_required_object(value, "assetHub", "runtimeConfig.assetHub")?;
-	let network_suffix =
-		get_required_string_at(value, "networkSuffix", "runtimeConfig.networkSuffix")?;
-
 	SigningHostConfig::new(
 		HostInfo {
 			name: get_required_string_at(&host, "name", "runtimeConfig.host.name")?,
@@ -584,33 +584,92 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
-		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
-		network_suffix,
+		stack_from_js(value)?,
 	)
 	.map_err(runtime_config_validation_to_js)
+}
+
+/// The stack `runtimeConfig` names: `stack`, the pointer and descriptor copy a
+/// host build bundles, or, in a test-host build only, `testStack`, built from
+/// its parts because a test host has no descriptor to bundle.
+fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
+	#[cfg(feature = "test-host")]
+	if let Some(test_stack) = get_optional_object(value, "testStack", "runtimeConfig.testStack")? {
+		return test_stack_from_js(&test_stack);
+	}
+	let stack = get_required_object(value, "stack", "runtimeConfig.stack")?;
+	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
+	let descriptor = Reflect::get(&stack, &JsValue::from_str("descriptor"))?
+		.dyn_into::<Uint8Array>()
+		.map_err(|_| JsValue::from_str("runtimeConfig.stack.descriptor must be a Uint8Array"))?
+		.to_vec();
+	let allows_reserved_values = get_optional_bool_at(
+		&stack,
+		"allowsReservedValues",
+		"runtimeConfig.stack.allowsReservedValues",
+	)?
+	.unwrap_or(false);
+	Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
+}
+
+/// `runtimeConfig.testStack`: `network`, `tld`, `assetHub`, `people`,
+/// `bulletin` and the optional `relay`, each `{ genesisHash }`, and
+/// `allowsReservedValues`, which defaults to false.
+#[cfg(feature = "test-host")]
+fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
+	let genesis = |role: &str| {
+		let path = format!("runtimeConfig.testStack.{role}");
+		get_optional_object(stack, role, &path)?
+			.map(|chain| {
+				get_required_bytes32_at(&chain, "genesisHash", &format!("{path}.genesisHash"))
+			})
+			.transpose()
+	};
+	let required = |role: &str| {
+		genesis(role)?.ok_or_else(|| {
+			JsValue::from_str(&format!("runtimeConfig.testStack.{role} is required"))
+		})
+	};
+	let chains = StackChains {
+		relay: genesis("relay")?,
+		asset_hub: required("assetHub")?,
+		people: required("people")?,
+		bulletin: required("bulletin")?,
+	};
+	Stack::new(
+		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
+		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
+		chains,
+		get_optional_bool_at(
+			stack,
+			"allowsReservedValues",
+			"runtimeConfig.testStack.allowsReservedValues",
+		)?
+		.unwrap_or(false),
+	)
+	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
 }
 
 fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 	if value.is_null() || value.is_undefined() {
 		return Err(JsValue::from_str("product is required"));
 	}
-	let product_id = get_required_string_at(value, "productId", "runtimeConfig.productId")?;
+	let raw_product_id = get_required_string_at(value, "productId", "runtimeConfig.productId")?;
 	let execution_kind =
 		match get_optional_string_at(value, "executionKind", "runtimeConfig.executionKind")?
 			.as_deref()
 		{
-			None | Some("App") => ProductExecutionKind::App,
-			Some("Widget") => ProductExecutionKind::Widget,
-			Some("Worker") => ProductExecutionKind::Worker,
+			None | Some("App") => ExecutableKind::App,
+			Some("Widget") => ExecutableKind::Widget,
+			Some("Worker") => ExecutableKind::Worker,
 			Some(other) => {
 				return Err(JsValue::from_str(&format!(
 					"runtimeConfig.executionKind must be App, Widget or Worker, got {other:?}"
 				)));
 			},
 		};
-	let product_id = product_id
+	let product_id = raw_product_id
 		.parse::<ProductId>()
 		.map_err(|error| runtime_config_validation_to_js(error.into()))?;
 	Ok(ProductContext::new_with_execution(product_id, execution_kind))
@@ -620,10 +679,6 @@ fn runtime_config_field_to_js(field: &str) -> &str {
 	match field {
 		"host_info.name" => "host.name",
 		"pairing_deeplink_scheme" => "pairing.deeplinkScheme",
-		"people_chain_genesis_hash" => "people.genesisHash",
-		"bulletin_chain_genesis_hash" => "bulletin.genesisHash",
-		"asset_hub_chain_genesis_hash" => "assetHub.genesisHash",
-		"network_suffix" => "networkSuffix",
 		other => other,
 	}
 }
@@ -646,9 +701,9 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Empty) => {
 			JsValue::from_str("runtimeConfig.productId must not be empty")
 		},
-		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { product_id }) => {
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { input }) => {
 			JsValue::from_str(&format!(
-				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
+				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {input:?}"
 			))
 		},
 		// By length, never by value: an id that trips this is unbounded in
@@ -659,11 +714,6 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		}) => JsValue::from_str(&format!(
 			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
 		)),
-		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
-			JsValue::from_str(&format!(
-				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
-			))
-		},
 	}
 }
 
@@ -708,11 +758,23 @@ fn get_optional_string_at(
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
 }
 
+fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Option<bool>, JsValue> {
+	let property = Reflect::get(value, &JsValue::from_str(name))?;
+	if property.is_null() || property.is_undefined() {
+		return Ok(None);
+	}
+	property
+		.as_bool()
+		.map(Some)
+		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+}
+
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
 	get_optional_string_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn get_optional_bytes32_at(
 	value: &JsValue,
 	name: &str,
@@ -736,11 +798,13 @@ fn get_optional_bytes32_at(
 	})
 }
 
+#[cfg(feature = "test-host")]
 fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u8; 32], JsValue> {
 	get_optional_bytes32_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {
@@ -808,6 +872,12 @@ fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
 		.map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
+/// Validate and normalize an identifier before the host stores it.
+#[wasm_bindgen(js_name = parseProductId)]
+pub fn parse_product_id_for_wasm(value: &str) -> Result<String, JsValue> {
+	product_id_from_js(value).map(Into::into)
+}
+
 struct WasmCoreInner {
 	core: ProductRuntime,
 	dispose_fn: SendWrapper<Function>,
@@ -852,9 +922,11 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
 }
 
 /// Forwards every worker transition request to the host's
-/// `requestWorkerTransition(productId, transition)` callback.
+/// `requestWorkerTransition(productId, transition)` callback, and a worker
+/// that keeps crashing to its optional `workerCrashing(productId, crashes)`.
 struct WasmWorkerController {
 	request: SendWrapper<Function>,
+	crashing: Option<SendWrapper<Function>>,
 }
 
 impl crate::host_logic::worker::WorkerController for WasmWorkerController {
@@ -869,6 +941,16 @@ impl crate::host_logic::worker::WorkerController for WasmWorkerController {
 			&JsValue::from_str(name),
 		);
 	}
+
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		if let Some(crashing) = &self.crashing {
+			let _ = crashing.call2(
+				&JsValue::NULL,
+				&JsValue::from_str(product_id.as_str()),
+				&JsValue::from(crashes),
+			);
+		}
+	}
 }
 
 /// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
@@ -878,9 +960,11 @@ fn install_worker_controller(
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
 	let request = get_function(callbacks, "requestWorkerTransition")?;
+	let crashing = get_optional_function(callbacks, "workerCrashing")?;
 	assert!(
 		ledger.install_worker_controller(Arc::new(WasmWorkerController {
 			request: SendWrapper::new(request),
+			crashing: crashing.map(SendWrapper::new),
 		})),
 		"a freshly built runtime installs its worker controller once"
 	);
@@ -927,9 +1011,7 @@ impl WasmPairingHostRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let host_config = pairing_host_config_from_js(&host_config)?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
@@ -1015,12 +1097,12 @@ impl WasmPairingHostRuntime {
 	#[wasm_bindgen(js_name = productSubtreePublicKey)]
 	pub async fn product_subtree_public_key(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		Ok(self
 			.runtime
-			.product_subtree_public_key(&product_id_from_js(&product_id)?, timeout_ms)
+			.product_subtree_public_key(&product_id_from_js(&raw_product_id)?, timeout_ms)
 			.await?
 			.map(|key| key.to_vec()))
 	}
@@ -1061,13 +1143,13 @@ impl WasmPairingHostRuntime {
 	#[wasm_bindgen(js_name = permissionAuthorizationStatus)]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
+			.permission_authorization_status(&product_id_from_js(&raw_product_id)?, request)
 			.await?;
 		Ok(permission_authorization_status_to_js(status))
 	}
@@ -1080,13 +1162,13 @@ impl WasmPairingHostRuntime {
 	#[wasm_bindgen(js_name = permissionAuthorizationStatuses)]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		payloads: Array,
 	) -> Result<Array, JsValue> {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
+			.permission_authorization_statuses(&product_id_from_js(&raw_product_id)?, requests)
 			.await?;
 		let values = Array::new();
 		for status in statuses {
@@ -1099,22 +1181,26 @@ impl WasmPairingHostRuntime {
 	#[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		payload: Vec<u8>,
 		status: String,
 	) -> Result<(), JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
+			.set_permission_authorization_status(
+				&product_id_from_js(&raw_product_id)?,
+				request,
+				status,
+			)
 			.await?;
 		Ok(())
 	}
 
 	/// Clear one product's durable and in-memory capability state.
 	#[wasm_bindgen(js_name = clearProductState)]
-	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id_from_js(&product_id)?).await?;
+	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
+		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await?;
 		Ok(())
 	}
 
@@ -1129,8 +1215,8 @@ impl WasmPairingHostRuntime {
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
-	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
+	pub fn acquire_worker(&self, raw_product_id: String) {
+		match raw_product_id.parse::<ProductId>() {
 			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
@@ -1138,12 +1224,24 @@ impl WasmPairingHostRuntime {
 		}
 	}
 
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+		}
+	}
+
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op, and so
 	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
-	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
+	pub fn release_worker(&self, raw_product_id: String) {
+		match raw_product_id.parse::<ProductId>() {
 			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
@@ -1162,8 +1260,8 @@ impl WasmPairingHostRuntime {
 /// Normalizes before matching, and answers `false` for an id that does not
 /// normalize, so an unknown spelling is never read as trusted.
 #[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
-pub fn has_trusted_remote_permissions_for_wasm(product_id: String) -> bool {
-	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
+pub fn has_trusted_remote_permissions_for_wasm(raw_product_id: String) -> bool {
+	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&raw_product_id)
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1173,8 +1271,14 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 		.map_err(|error| JsValue::from_str(&error.to_string()))?;
 	let value = js_sys::Object::new();
 	Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(description.kind))?;
-	if let Some(product_id) = description.product_id {
-		Reflect::set(&value, &JsValue::from_str("productId"), &JsValue::from_str(&product_id))?;
+	if let Some(owner) = description.owner {
+		let (name, owner) = match owner {
+			crate::platform::CoreStorageKeyOwner::Product(product_id) => {
+				("productId", product_id.to_string())
+			},
+			crate::platform::CoreStorageKeyOwner::ProductLabel(label) => ("productLabel", label),
+		};
+		Reflect::set(&value, &JsValue::from_str(name), &JsValue::from_str(&owner))?;
 	}
 	Ok(value.into())
 }
@@ -1214,10 +1318,10 @@ impl WasmSigningHostRuntime {
 	#[wasm_bindgen(js_name = productSubtreePublicKey)]
 	pub fn product_subtree_public_key(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		self.runtime
-			.product_subtree_public_key(&product_id_from_js(&product_id)?)
+			.product_subtree_public_key(&product_id_from_js(&raw_product_id)?)
 			.map(|key| key.map(|key| key.to_vec()))
 			.map_err(Into::into)
 	}
@@ -1265,9 +1369,7 @@ impl WasmSigningHostRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let host_config = signing_host_config_from_js(&host_config)?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
@@ -1339,8 +1441,8 @@ impl WasmSigningHostRuntime {
 
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
-	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id_from_js(&product_id)?).await;
+	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
+		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await;
 		Ok(())
 	}
 
@@ -1352,13 +1454,13 @@ impl WasmSigningHostRuntime {
 	#[wasm_bindgen(js_name = permissionAuthorizationStatus)]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
+			.permission_authorization_status(&product_id_from_js(&raw_product_id)?, request)
 			.await?;
 		Ok(permission_authorization_status_to_js(status))
 	}
@@ -1371,13 +1473,13 @@ impl WasmSigningHostRuntime {
 	#[wasm_bindgen(js_name = permissionAuthorizationStatuses)]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		payloads: Array,
 	) -> Result<Array, JsValue> {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
+			.permission_authorization_statuses(&product_id_from_js(&raw_product_id)?, requests)
 			.await?;
 		let values = Array::new();
 		for status in statuses {
@@ -1390,14 +1492,18 @@ impl WasmSigningHostRuntime {
 	#[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: String,
+		raw_product_id: String,
 		payload: Vec<u8>,
 		status: String,
 	) -> Result<(), JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
+			.set_permission_authorization_status(
+				&product_id_from_js(&raw_product_id)?,
+				request,
+				status,
+			)
 			.await
 			.map_err(Into::into)
 	}
@@ -1407,8 +1513,8 @@ impl WasmSigningHostRuntime {
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
-	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
+	pub fn acquire_worker(&self, raw_product_id: String) {
+		match raw_product_id.parse::<ProductId>() {
 			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
@@ -1416,12 +1522,24 @@ impl WasmSigningHostRuntime {
 		}
 	}
 
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+		}
+	}
+
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op, and so
 	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
-	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
+	pub fn release_worker(&self, raw_product_id: String) {
+		match raw_product_id.parse::<ProductId>() {
 			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
@@ -1438,11 +1556,11 @@ impl WasmSigningHostRuntime {
 #[wasm_bindgen(js_name = deriveProductSubtreePublicKey)]
 pub fn derive_product_subtree_public_key(
 	root_entropy: Vec<u8>,
-	product_id: String,
+	raw_product_id: String,
 ) -> Result<Vec<u8>, JsValue> {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	let product_id = product_id
+	let product_id = raw_product_id
 		.parse::<crate::platform::ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
@@ -1480,6 +1598,18 @@ pub fn product_account_address(public_key: Vec<u8>) -> Result<String, JsValue> {
 	let public_key = <[u8; 32]>::try_from(public_key.as_slice())
 		.map_err(|_| JsValue::from_str("product account public key must be 32 bytes"))?;
 	Ok(crate::host_logic::product_account::product_public_key_to_address(public_key))
+}
+
+/// The key the host stores `product_id`'s storage entry `key` under.
+///
+/// Pure, so a test host can seed an entry where the core will read it without
+/// rebuilding the core's namespacing or its product id normalization.
+#[wasm_bindgen(js_name = productStorageKey)]
+pub fn product_storage_key(product_id: String, key: String) -> Result<String, JsValue> {
+	let product_id = product_id
+		.parse::<ProductId>()
+		.map_err(|err| JsValue::from_str(&err.to_string()))?;
+	Ok(crate::platform::ProductStorageKey::new(product_id, key).encode())
 }
 
 /// The ring-VRF member for `entropy`, derived through the module this core
@@ -1552,9 +1682,7 @@ impl WasmProductRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let (host_config, product) = runtime_config_from_js(&runtime_config)?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.
@@ -1695,7 +1823,7 @@ impl WasmProductRuntime {
 		on_complete: Function,
 		on_error: Function,
 	) -> Result<WasmRendererSubscription, JsValue> {
-		let request = v01::ProductRendererRenderRequest::decode(&mut request.as_slice())
+		let request = truapi::latest::ProductRendererRenderRequest::decode(&mut request.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("render request did not decode: {err}")))?;
 		let mut stream = self
 			.inner
@@ -1751,7 +1879,7 @@ impl WasmProductRuntime {
 	/// `HostRendererActionSubscribeItem`.
 	#[wasm_bindgen(js_name = publishRendererAction)]
 	pub fn publish_renderer_action(&self, item: Vec<u8>) -> Result<(), JsValue> {
-		let item = v01::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
+		let item = truapi::latest::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("renderer action did not decode: {err}")))?;
 		self.inner
 			.core

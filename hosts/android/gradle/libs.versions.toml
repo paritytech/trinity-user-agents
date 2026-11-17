@@ -55,7 +55,6 @@ intercom = "17.2.0"
 firebaseBom = "34.4.0"
 integrity = "1.5.0"
 biometrics = "1.4.0-alpha02"
-firebase-crashlytics = "3.0.6"
 google-services = "4.4.4"
 sentry-android-gradle = "6.7.1"
 # Matches the SDK auto-installed by sentry-android-gradle 6.7.1 (8.41.0).
@@ -141,8 +140,6 @@ google-inapp-review-ktx = { group = "com.google.android.play", name = "review-kt
 google-integrity = { group = "com.google.android.play", name = "integrity", version.ref = "integrity" }
 
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
-firebase-crashlytics = { group = "com.google.firebase", name = "firebase-crashlytics-ndk" }
-firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics" }
 firebase-remote-config = { group = "com.google.firebase", name = "firebase-config" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
@@ -223,7 +220,6 @@ kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "ko
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 androidx-room = { id = "androidx.room", version.ref = "room" }
 dagger-hilt = { id = "com.google.dagger.hilt.android", version.ref = "dagger-hilt" }
-firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebase-crashlytics" }
 google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }
 sentry-android-gradle = { id = "io.sentry.android.gradle", version.ref = "sentry-android-gradle" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }

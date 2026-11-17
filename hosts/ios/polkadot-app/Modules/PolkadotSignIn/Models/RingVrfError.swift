@@ -8,6 +8,9 @@ import SubstrateSdk
 enum RingVrfError: Error, Hashable {
     case ringNotFound
     case notMember
+    case keyNotRegistered
+    case keyNotInRing
+    case notAllowlisted
     case rejected
     case unknown(String)
 }
@@ -37,6 +40,9 @@ private extension RingVrfError {
         switch createProofError {
         case .ringNotFound: .ringNotFound
         case .notMember: .notMember
+        case .keyNotRegistered: .keyNotRegistered
+        case .keyNotInRing: .keyNotInRing
+        case .notAllowlisted: .notAllowlisted
         case .rejected: .rejected
         case let .unknown(reason): .unknown(reason)
         }
@@ -46,6 +52,8 @@ private extension RingVrfError {
         switch getAliasError {
         case .ringNotFound: .ringNotFound
         case .notMember: .notMember
+        case .keyNotRegistered: .keyNotRegistered
+        case .keyNotInRing: .keyNotInRing
         case .rejected: .rejected
         case let .unknown(reason): .unknown(reason)
         }
@@ -59,8 +67,11 @@ extension RingVrfError: ScaleCodable {
         switch index {
         case 0: self = .ringNotFound
         case 1: self = .notMember
-        case 2: self = .rejected
-        case 3: self = try .unknown(String(scaleDecoder: scaleDecoder))
+        case 2: self = .keyNotRegistered
+        case 3: self = .keyNotInRing
+        case 4: self = .notAllowlisted
+        case 5: self = .rejected
+        case 6: self = try .unknown(String(scaleDecoder: scaleDecoder))
         default: throw ScaleCodingError.unexpectedDecodedValue
         }
     }
@@ -71,10 +82,16 @@ extension RingVrfError: ScaleCodable {
             try UInt8(0).encode(scaleEncoder: scaleEncoder)
         case .notMember:
             try UInt8(1).encode(scaleEncoder: scaleEncoder)
-        case .rejected:
+        case .keyNotRegistered:
             try UInt8(2).encode(scaleEncoder: scaleEncoder)
-        case let .unknown(reason):
+        case .keyNotInRing:
             try UInt8(3).encode(scaleEncoder: scaleEncoder)
+        case .notAllowlisted:
+            try UInt8(4).encode(scaleEncoder: scaleEncoder)
+        case .rejected:
+            try UInt8(5).encode(scaleEncoder: scaleEncoder)
+        case let .unknown(reason):
+            try UInt8(6).encode(scaleEncoder: scaleEncoder)
             try reason.encode(scaleEncoder: scaleEncoder)
         }
     }

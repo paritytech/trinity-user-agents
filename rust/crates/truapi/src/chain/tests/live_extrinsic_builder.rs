@@ -14,6 +14,7 @@ use subxt::{tx::ValidationResult, utils::H256};
 use truapi_provider::{ChainSource, EmbeddedChainProvider};
 
 use crate::{
+	Spawner,
 	chain::{EncodedExtrinsic, ExtrinsicService, FixedExtensionVersions, TxValidator},
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_internal::{bulletin::build_signed_store_transaction, extrinsic::Sr25519Signer},
@@ -26,7 +27,6 @@ use crate::{
 		extrinsic::{ClaimPgasCallArgs, SetStatementStoreAccountCallArgs},
 		ring::RingParams,
 	},
-	subscription::Spawner,
 };
 
 /// A paseo-next-v2 chain: its node and the genesis the host configures.
@@ -60,10 +60,7 @@ impl LiveChain {
 	fn chain_runtime(&self) -> ChainRuntime {
 		let source = ChainSource::rpc_node(self.ws.parse().expect("a WebSocket URL"));
 		let provider = EmbeddedChainProvider::builder().chain(self.genesis().0, source).build();
-		let handle = tokio::runtime::Handle::current();
-		let spawner: Spawner = Arc::new(move |task| {
-			handle.spawn(task);
-		});
+		let spawner = Spawner::new(tokio::runtime::Handle::current());
 		ChainRuntime::new(Arc::new(HostChainProvider::new(Arc::new(provider))), spawner)
 	}
 }

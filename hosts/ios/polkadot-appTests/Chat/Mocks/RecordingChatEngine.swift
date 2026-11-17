@@ -48,6 +48,11 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     func unblockUser() async throws {}
     func acceptChatRequest() async throws {}
     func declineChatRequest() async throws {}
+    func cancelChatRequest() async throws {}
+
+    func removalReason() async -> ChatRemovalReason {
+        .other
+    }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
         let updates = metadataUpdates

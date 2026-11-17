@@ -11,6 +11,7 @@ use futures::executor::block_on;
 
 use super::*;
 use crate::{
+	Spawner,
 	durable::{
 		model::{
 			DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyId, PolicyParams,
@@ -25,8 +26,7 @@ use crate::{
 		},
 	},
 	store::Db,
-	subscription::Spawner,
-	test_support::{test_spawner, wait_until},
+	test_support::wait_until,
 };
 
 /// The rows of the test domain waiting for the test policy, read straight
@@ -84,10 +84,10 @@ fn starting_the_executor_twice_runs_one_collector() {
 	let chain = FakeChain::new(130, 140);
 	let spawned = Arc::new(AtomicUsize::new(0));
 	let counter = spawned.clone();
-	let inner = test_spawner();
-	let spawner: Spawner = Arc::new(move |task| {
+	let inner = Spawner::for_test();
+	let spawner = Spawner::with_test_scheduler(move |task| {
 		counter.fetch_add(1, Ordering::SeqCst);
-		inner(task)
+		inner.spawn(task)
 	});
 	let registry =
 		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS)));

@@ -7,7 +7,7 @@ use truapi::{
 };
 
 /// Host login, connection state and identity presentation.
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 pub trait HostSession: Send + Sync {
 	/// Canonical state shared by connection-status consumers.
 	fn session_state(&self) -> Arc<SessionState>;

@@ -1,15 +1,16 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 
 struct SPATab: Equatable {
     let id: UUID
-    let dotDomain: String
+    let dotDomain: ProductId
     var page: String?
     let createdAt: Date
 }
 
 extension SPATab {
-    init(dotDomain: String, page: String? = nil, now: Date = Date()) {
+    init(dotDomain: ProductId, page: String? = nil, now: Date = Date()) {
         self.init(
             id: UUID(),
             dotDomain: dotDomain,
@@ -19,7 +20,7 @@ extension SPATab {
     }
 
     func makeProductPage(hostProvider: ProductHostProviding) -> ProductPage? {
-        guard let host = hostProvider.host(rawString: dotDomain) else { return nil }
+        guard let host = hostProvider.host(rawString: dotDomain.rawValue) else { return nil }
         return ProductPage(host: host, page: page)
     }
 }

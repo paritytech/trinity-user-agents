@@ -35,15 +35,27 @@ extension ChatRoomPolicy {
 
     /// The policy of a room from what its product declared. A nil value of a declaration uses the default.
     init(footer: Chat.RoomFooter?, declarations: Chat.RoomDeclarations?) {
-        let defaults = Self.defaults
         let config = declarations?.effectiveConfig ?? .hostDefault
 
         self.init(
             messageStore: config.productSource ? .product : .host,
             reportsSeen: config.reportSeen,
-            footer: footer == .empty ? .empty : defaults.footer,
+            footer: Self.footer(of: footer),
             configGeneration: declarations?.configGeneration ?? 0
         )
+    }
+}
+
+private extension ChatRoomPolicy {
+    /// The host input shows only for the text-input footer, which is also the footer of a room
+    /// that set none. A docked card takes the place of the input, as an empty footer does.
+    static func footer(of footer: Chat.RoomFooter?) -> Footer {
+        switch footer {
+        case nil, .textInput:
+            defaults.footer
+        case .empty, .card:
+            .empty
+        }
     }
 }
 

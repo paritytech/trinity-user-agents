@@ -2,6 +2,7 @@ import Foundation
 import PolkadotUI
 import Products
 import Testing
+import TrUAPIHost
 @testable import polkadot_app
 
 /// The host defaults for a product room that declares nothing.
@@ -40,9 +41,9 @@ struct ChatRoomPolicyTests {
 private extension ChatRoomPolicyTests {
     func makeBot() -> ProductBot {
         ProductBot(
-            product: Product(id: "dim2.paseo", name: "Jollity"),
+            product: Product(id: try! ProductId("dim2.paseo"), name: "Jollity"),
             description: nil,
-            runtime: TrUAPIChatHandler(productId: "dim2.paseo", workers: StubWorkerManager()),
+            runtime: TrUAPIChatHandler(productId: try! ProductId("dim2.paseo"), workers: StubWorkerManager()),
             resolveImage: WidgetImageResolver { _ in nil }
         )
     }
@@ -80,6 +81,9 @@ struct ChatRoomPolicyDeclarationsTests {
     @Test func theFooterOfTheRoomSetsTheFooter() {
         #expect(ChatRoomPolicy(footer: .textInput, declarations: declarations()).footer == .input)
         #expect(ChatRoomPolicy(footer: .empty, declarations: declarations()).footer == .empty)
+        // A docked card takes the place of the input.
+        let card = Chat.RoomFooter.card(messageType: "game", payload: Data([1]))
+        #expect(ChatRoomPolicy(footer: card, declarations: declarations()).footer == .empty)
     }
 
     @Test func theGenerationComesFromTheStore() {

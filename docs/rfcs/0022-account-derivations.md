@@ -281,7 +281,7 @@ the network the host runs against: `uid.dot` and `peopl.dot` on Polkadot,
 runtime scopes its product contexts with (`product/peopl.<tld>/…`), so accounts,
 contexts and keys agree on which network a person belongs to, and one seed is one
 person per network. A host learns the suffix from the network it is configured
-for (`SigningHostConfig::network_suffix` in the Rust core) and never assumes it.
+for (the `tld` of its stack descriptor, `Stack::tld` in the Rust core) and never assumes it.
 ### Well-known alias accounts
 
 The runtime defines well-known Account Contexts (`resources`, `score`,

@@ -9,7 +9,11 @@ final class TabBarChromeSurfaceView: UIView {
     private var barBottomConstraint: Constraint?
     private var barHostHeight = DSTabBarStyle.height
 
-    /// The chrome translates this view, so the gap reads the untransformed host's inset.
+    /// The chrome transforms this view, so its insets read the untransformed host's.
+    private var topSafeAreaInset: CGFloat {
+        superview?.safeAreaInsets.top ?? safeAreaInsets.top
+    }
+
     private var bottomSafeAreaInset: CGFloat {
         superview?.safeAreaInsets.bottom ?? safeAreaInsets.bottom
     }
@@ -24,7 +28,7 @@ final class TabBarChromeSurfaceView: UIView {
     /// lift, which the chrome subtracts itself.
     var restingPanelHeight: CGFloat {
         let restingHeight = DSTabBarStyle.restingHeight(bottomSafeAreaInset: bottomSafeAreaInset)
-        return max(0, bounds.height - safeAreaInsets.top - restingHeight)
+        return max(0, bounds.height - topSafeAreaInset - restingHeight)
     }
 
     override init(frame: CGRect) {

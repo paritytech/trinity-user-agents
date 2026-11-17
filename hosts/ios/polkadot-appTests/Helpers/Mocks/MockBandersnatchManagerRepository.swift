@@ -24,10 +24,10 @@ final class MockBandersnatchManagerRepository: BandersnatchManagerRepositoryProt
     }
 
     func fullPerson() throws -> BandersnatchKeyManager {
-        BandersnatchKeyManager.fullPerson(for: tld, entropyManager: entropyManager)
+        try BandersnatchKeyManager.fullPerson(for: tld, entropyManager: entropyManager)
     }
 
     func litePerson() throws -> BandersnatchKeyManager {
-        BandersnatchKeyManager.litePerson(for: tld, entropyManager: entropyManager)
+        try BandersnatchKeyManager.litePerson(for: tld, entropyManager: entropyManager)
     }
 }

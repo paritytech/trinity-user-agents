@@ -16,7 +16,9 @@ protocol ChatEngineProtocol {
     func unblockUser() async throws
     func acceptChatRequest() async throws
     func declineChatRequest() async throws
+    func cancelChatRequest() async throws
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?>
+    func removalReason() async -> ChatRemovalReason
     func footerStream() async throws -> AnyAsyncSequence<(any HashableContentConfiguration)?>?
     func processAction(_ action: Chat.Action) async
     /// Asks for the page before the window.
@@ -33,6 +35,11 @@ enum ChatEngineError: Error {
     case missingChat
 }
 
+enum ChatRemovalReason {
+    case requestCancelled
+    case other
+}
+
 final class ChatEngine {
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let sourceContext: ChatRoomSourceContext
@@ -44,6 +51,7 @@ final class ChatEngine {
     let chatRequestContext: ChatRequestEngineContext
     let leaveChatService: LeaveChatServicing
     let blockUserService: BlockUserServicing
+    let seenReceiptService: SeenReceiptSending
     let logger: LoggerProtocol
 
     init(
@@ -56,6 +64,7 @@ final class ChatEngine {
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         leaveChatService: LeaveChatServicing,
         blockUserService: BlockUserServicing,
+        seenReceiptService: SeenReceiptSending,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -64,6 +73,7 @@ final class ChatEngine {
         self.settings = settings
         self.leaveChatService = leaveChatService
         self.blockUserService = blockUserService
+        self.seenReceiptService = seenReceiptService
         self.chatProvider = chatProvider
         self.logger = logger
 
@@ -124,7 +134,9 @@ final class ChatEngine {
 
 extension ChatEngine: ChatEngineProtocol {
     func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {
-        try await sourceContext.source().snapshots()
+        seenReceiptService.scheduleSeenReceipt(for: chatId)
+
+        return try await sourceContext.source().snapshots()
     }
 
     func loadOlder() async -> ChatPageOutcome {
@@ -152,7 +164,13 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
+        guard !messageIds.isEmpty else {
+            return
+        }
+
         _ = try await sourceContext.source().perform(.markSeen(messageIds))
+
+        seenReceiptService.scheduleSeenReceipt(for: chatId)
     }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
@@ -161,6 +179,7 @@ extension ChatEngine: ChatEngineProtocol {
             .map { [weak self, chatExtensionRegistry] optChat in
                 if let chat = optChat {
                     await self?.chatRequestContext.resetPendingOutgoingRequest()
+                    await self?.chatRequestContext.rememberIncomingRequest(of: chat)
 
                     return chat.chatMetadata(using: chatExtensionRegistry)
                 } else {
@@ -169,6 +188,10 @@ extension ChatEngine: ChatEngineProtocol {
             }
             .removeDuplicates()
             .eraseToAnyAsyncSequence()
+    }
+
+    func removalReason() async -> ChatRemovalReason {
+        await chatRequestContext.removalReason()
     }
 
     func footerStream() async throws -> AnyAsyncSequence<(any HashableContentConfiguration)?>? {
@@ -218,6 +241,10 @@ extension ChatEngine: ChatEngineProtocol {
 
     func declineChatRequest() async throws {
         try await chatRequestContext.declineIncomingRequest(for: chatId)
+    }
+
+    func cancelChatRequest() async throws {
+        try await chatRequestContext.cancelOutgoingRequest(for: chatId)
     }
 
     func processAction(_ action: Chat.Action) async {

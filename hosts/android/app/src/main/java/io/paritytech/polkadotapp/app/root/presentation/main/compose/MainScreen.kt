@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.app.root.presentation.main.MainViewModel
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.TabStatusBarTitle
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitle
 import io.paritytech.polkadotapp.common.presentation.tabbar.ForceShowTabBar
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -24,10 +26,11 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 fun MainScreen(viewModel: MainViewModel) {
-    // On Main the bar is always available and can never be hidden.
     ForceShowTabBar()
 
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+
+    StatusBarTitle { TabStatusBarTitle(currentTab) }
 
     MainScreenInternal(currentTab = currentTab)
 }

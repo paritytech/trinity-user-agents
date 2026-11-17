@@ -3,8 +3,11 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,8 +27,11 @@ import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarHiddenFraction
+import io.paritytech.polkadotapp.common.presentation.tabbar.ShowTabBarTucked
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
+import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -58,6 +64,8 @@ private val ACTION_MENU_BLUR_RADIUS = 25.dp
 
 @Composable
 fun ChatFeedScreen(contract: ChatFeedContract) {
+    ShowTabBarTucked()
+
     val config by contract.config.collectAsStateWithLifecycle()
     val chatInputState by contract.chatInputUiState.collectAsStateWithLifecycle()
     val chatMessagesState by contract.chatMessagesState.collectAsStateWithLifecycle()
@@ -205,6 +213,10 @@ private fun ChatFeedScreenInternal(
     )
 
     var footerHeight by remember { mutableStateOf(0.dp) }
+    val barHiddenFraction = LocalTabBarHiddenFraction.current.collectAsStateWithLifecycle()
+    val barInsets = LocalAppNavigationBarInsets.current
+    val navigationBars = WindowInsets.navigationBars
+    val ime = WindowInsets.ime
 
     // Messages can be replied to only when we have a regular send message input
     val canReplyToMessages = chatInputUiState is ChatInputUiState.SendMessage && !chatInputUiState.isChatRequest
@@ -233,6 +245,7 @@ private fun ChatFeedScreenInternal(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }
             ) {
                 chatMessagesLoadingState.onLoaded {
                     CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {

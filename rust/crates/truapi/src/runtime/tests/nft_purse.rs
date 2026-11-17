@@ -28,7 +28,7 @@ const TICKETS: u32 = 0;
 fn nft_host(
 	platform: Arc<StubPlatform>,
 	with_session: bool,
-) -> (tempfile::TempDir, ProductRuntimeHost) {
+) -> (tempfile::TempDir, ProductRuntimeHost<RemoteAccountHolder>) {
 	let encrypted = Arc::new(MemoryEncryptedStorage::default());
 	nft_host_with_storage(platform, with_session, encrypted)
 }
@@ -39,10 +39,10 @@ pub fn nft_host_with_storage(
 	platform: Arc<StubPlatform>,
 	with_session: bool,
 	encrypted: Arc<dyn EncryptedStorage>,
-) -> (tempfile::TempDir, ProductRuntimeHost) {
+) -> (tempfile::TempDir, ProductRuntimeHost<RemoteAccountHolder>) {
 	let services = payment_services_over(platform);
 	let (dir, db) = open_temporary_core_db();
-	assert!(services.install_core_db(db.clone()));
+	assert!(services.install_core_db(db.clone()).is_some());
 	assert!(services.install_nft_ledger(test_ledger(db)));
 	assert!(services.install_encrypted_storage(encrypted));
 	assert!(services.install_static_receive_secret(test_static_secret()));
@@ -55,7 +55,7 @@ fn test_static_secret() -> Arc<FixedStaticSecret> {
 }
 
 fn create(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	name: &str,
 ) -> Result<HostNftPurseCreatePurseResponse, CallError<HostNftPurseCreatePurseError>> {
 	let request = v01::HostNftPurseCreatePurseRequest { name: name.to_owned() };
@@ -65,7 +65,7 @@ fn create(
 }
 
 fn list(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	owner: v01::NftPurseOwner,
 ) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
 	let request = v01::HostNftPurseListPursesRequest { owner };
@@ -75,7 +75,7 @@ fn list(
 }
 
 fn create_items(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	purse: u32,
 	count: u32,
 ) -> Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>> {
@@ -97,7 +97,7 @@ fn create_items_refusal(
 }
 
 fn query(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	purse: u32,
 	page_size: u32,
 ) -> Result<HostNftPurseQueryPurseResponse, CallError<HostNftPurseQueryPurseError>> {
@@ -140,7 +140,7 @@ fn a_product_lists_the_purse_it_created_without_a_prompt() {
 	let (_dir, host) = nft_host(platform.clone(), true);
 
 	let created = create(&host, "Tickets");
-	let own = list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned()));
+	let own = list(&host, v01::NftPurseOwner::Product(ProductId::for_test(PRODUCT)));
 
 	let response = v01::HostNftPurseCreatePurseResponse { purse: v01::NftPurseId(0) };
 	assert_eq!(created, Ok(HostNftPurseCreatePurseResponse::V1(response)));
@@ -182,7 +182,7 @@ fn another_product_without_purses_lists_none() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(
-		list(&host, v01::NftPurseOwner::Product("other.dot".to_owned())),
+		list(&host, v01::NftPurseOwner::Product(ProductId::for_test("other.dot"))),
 		Ok(listed(vec![]))
 	);
 }
@@ -209,26 +209,17 @@ fn purses_need_a_paired_session() {
 
 	assert_eq!(create(&host, "Tickets"), Err(CallError::Denied));
 	assert_eq!(
-		list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned())),
+		list(&host, v01::NftPurseOwner::Product(ProductId::for_test(PRODUCT))),
 		Err(CallError::Denied)
 	);
 	assert_eq!(create_items(&host, PurseId::MAIN.0, 1), Err(CallError::Denied));
 	assert_eq!(query(&host, PurseId::MAIN.0, 1), Err(CallError::Denied));
 }
 
-// The empty product id shares Root's empty tag, so naming it must fail before
-// any prompt rather than show Root's purses under a blank owner. Like any
-// product id a product sends that does not parse, it is a malformed request.
 #[test]
-fn an_empty_product_owner_is_refused_without_a_prompt() {
-	let platform = Arc::new(StubPlatform::default());
-	let (_dir, host) = nft_host(platform.clone(), true);
-
-	let refused = list(&host, v01::NftPurseOwner::Product(String::new()));
-
-	let reason = "product_id must not be empty".to_owned();
-	assert_eq!(refused, Err(CallError::MalformedFrame { reason }));
-	assert_eq!(requested_permissions(&platform), vec![]);
+fn an_empty_product_owner_cannot_decode_as_a_purse_request() {
+	let frame = (0u8, 0u8, "").encode();
+	assert!(HostNftPurseListPursesRequest::decode(&mut frame.as_slice()).is_err());
 }
 
 // A host that configured no core database has nowhere to keep purses.
@@ -404,7 +395,7 @@ mod operations {
 		_dir: tempfile::TempDir,
 		pub services: Arc<RuntimeServices>,
 		pub ledger: NftLedger,
-		pub host: ProductRuntimeHost,
+		pub host: ProductRuntimeHost<RemoteAccountHolder>,
 	}
 
 	/// [`Purses`] over in-memory encrypted storage.
@@ -420,7 +411,7 @@ mod operations {
 		let services = payment_services_over(platform);
 		let (dir, db) = open_temporary_core_db();
 		let ledger = test_ledger(db.clone());
-		assert!(services.install_core_db(db));
+		assert!(services.install_core_db(db).is_some());
 		assert!(services.install_nft_ledger(ledger.clone()));
 		assert!(services.install_encrypted_storage(encrypted));
 		assert!(services.install_static_receive_secret(test_static_secret()));
@@ -447,13 +438,13 @@ mod operations {
 		}
 
 		/// A host for [`OTHER_PRODUCT`] over the same services.
-		pub fn other_product(&self) -> ProductRuntimeHost {
+		pub fn other_product(&self) -> ProductRuntimeHost<RemoteAccountHolder> {
 			payment_host(&self.services, OTHER_PRODUCT, true)
 		}
 	}
 
 	fn rebalance(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<RemoteAccountHolder>,
 		from: u32,
 		to: u32,
 		keys: Vec<v01::NftPurseItemKey>,
@@ -472,7 +463,7 @@ mod operations {
 	}
 
 	fn transfer(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<RemoteAccountHolder>,
 		item: v01::NftPurseItemKey,
 	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
 		let destination = v01::NftPurseItemKey([0xee; 32]);
@@ -483,7 +474,7 @@ mod operations {
 	}
 
 	fn first_status(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<RemoteAccountHolder>,
 	) -> Result<
 		HostNftPurseObserveOperationStatusItem,
 		CallError<HostNftPurseObserveOperationStatusError>,
