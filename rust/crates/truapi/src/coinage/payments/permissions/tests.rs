@@ -13,9 +13,24 @@ fn every_call_needs_the_coin_payment_permission_except_rfc6_on_the_main_purse() 
 	assert_eq!(requirements(SHOP, PURSE, Some(SHOP), Action::Query, Surface::Rfc17), vec![COIN_PAYMENT]);
 	assert_eq!(requirements(SHOP, PurseId::MAIN, None, Action::TopUp, Surface::Rfc6), vec![]);
 	assert_eq!(
-		requirements(SHOP, PurseId::MAIN, None, Action::Query, Surface::Rfc6),
-		vec![purse_permission(PurseId::MAIN, CoinPaymentPurseAction::Query)],
+		requirements(SHOP, PurseId::MAIN, None, Action::Spend, Surface::Rfc6),
+		vec![purse_permission(PurseId::MAIN, CoinPaymentPurseAction::Spend), Requirement::ConfirmSpend],
 		"RFC-6 still needs access to the main purse"
+	);
+}
+
+/// RFC-6 asks for its balance access before it reads the main purse, so a
+/// second permission for the same fact would ask the user twice.
+#[test]
+fn reading_the_main_purse_through_rfc6_needs_only_its_balance_access() {
+	assert_eq!(
+		requirements(SHOP, PurseId::MAIN, None, Action::Query, Surface::Rfc6),
+		vec![Requirement::Permission(RemotePermission::BalanceAccess)]
+	);
+	assert_eq!(
+		requirements(SHOP, PurseId::MAIN, None, Action::Query, Surface::Rfc17),
+		vec![COIN_PAYMENT, purse_permission(PurseId::MAIN, CoinPaymentPurseAction::Query)],
+		"RFC-17 reads the main purse with its own permissions"
 	);
 }
 
