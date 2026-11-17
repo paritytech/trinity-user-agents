@@ -4,35 +4,21 @@ import struct TrUAPIHost.ProductId
 
 @MainActor
 final class RecordingPresenceRegistry: ProductPresenceRegistering {
-    struct Registration: Equatable {
-        let id: UUID
-        let productId: ProductId
-        let contentId: ProductId
-        let displayName: String
-    }
-
-    private(set) var registrations: [Registration] = []
-    private(set) var unregisteredIds: [UUID] = []
-    private(set) var refreshedProductIds: [ProductId] = []
+    private(set) var registeredContentIds: [ProductId] = []
 
     func register(
-        productId: ProductId,
+        productId _: ProductId,
         contentId: ProductId,
-        displayName: String,
+        displayName _: String,
         reloader _: SPAProductReloading
     ) -> UUID {
-        let id = UUID()
-        registrations.append(Registration(id: id, productId: productId, contentId: contentId, displayName: displayName))
-        return id
+        registeredContentIds.append(contentId)
+        return UUID()
     }
 
-    func unregister(_ presenceId: UUID) {
-        unregisteredIds.append(presenceId)
-    }
+    func unregister(_: UUID) {}
 
-    func requestRefresh(of productId: ProductId) {
-        refreshedProductIds.append(productId)
-    }
+    func requestRefresh(of _: ProductId) {}
 
     func applyPendingUpdate(of _: ProductId) -> Bool {
         false

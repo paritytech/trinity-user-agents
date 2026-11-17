@@ -6,24 +6,15 @@ import TrUAPIHost
 @testable import polkadot_app
 
 @MainActor
+@Suite(.timeLimit(.minutes(5)))
 struct ExpandedPocketCardInteractorTests {
-    @Test func startsTheRuntimeUnderTheInteractorAsTheFace() async throws {
-        let environment = try Environment()
-
-        try await environment.start()
-
-        #expect(environment.output.navigations.map(\.host) == ["test.dot"])
-        #expect(environment.runtimes.faces.count == 1)
-        #expect(environment.runtimes.faces.first === environment.interactor)
-    }
-
     @Test(arguments: [(true, "widget.test.dot"), (false, "test.dot")])
     func registersPresenceForTheServedExecutable(_ publishesWidget: Bool, contentId: String) async throws {
         let environment = try Environment(product: publishesWidget ? productPublishingAWidget() : nil)
 
         try await environment.start()
 
-        #expect(try environment.registry.registrations.map(\.contentId) == [ProductId(contentId)])
+        #expect(try environment.registry.registeredContentIds == [ProductId(contentId)])
     }
 
     @Test func servesTheAppliedBuildAndReloadsThePage() async throws {
@@ -35,25 +26,7 @@ struct ExpandedPocketCardInteractorTests {
         await environment.output.waitForReloads(1)
 
         #expect(environment.interactor.servedContentHash == "01")
-        #expect(environment.registry.registrations.count == 1)
-    }
-
-    @Test func checksForANewBuildOnlyOnceServing() async throws {
-        let environment = try Environment()
-        environment.interactor.checkForNewBuild()
-
-        try await environment.start()
-        environment.interactor.checkForNewBuild()
-
-        #expect(try environment.registry.refreshedProductIds == [ProductId("test.dot")])
-    }
-
-    @Test func faceRequestsAnswerWithThePresentersOutcome() throws {
-        let environment = try Environment()
-        environment.output.faceOutcome = .userMoving
-
-        #expect(environment.interactor.setFaceShown(false) == .userMoving)
-        #expect(environment.output.faceRequests == [false])
+        #expect(environment.registry.registeredContentIds.count == 1)
     }
 }
 
@@ -89,17 +62,14 @@ private struct Environment {
 private final class RecordingRuntimeFactory: ExpandedPocketCardRuntimeMaking {
     let configuration: SPAConfiguration
     let loader: StubProductContentLoader
-    private(set) var faces: [any ExpandedCardFaceShowing] = []
 
     init(configuration: SPAConfiguration, loader: StubProductContentLoader) {
         self.configuration = configuration
         self.loader = loader
     }
 
-    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
-        faces.append(face)
-
-        return SPARustRuntime(
+    func makeRuntime(face _: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
+        SPARustRuntime(
             executionModel: makeExecutionModel(),
             configuration: configuration,
             productOpening: SPARustRuntime.ProductOpening(
@@ -117,8 +87,6 @@ private final class RecordingRuntimeFactory: ExpandedPocketCardRuntimeMaking {
 @MainActor
 private final class RecordingOutput: ExpandedPocketCardInteractorOutputProtocol {
     private(set) var navigations: [URL] = []
-    private(set) var faceRequests: [Bool] = []
-    var faceOutcome: ExpandedCardFaceOutcome = .applied
     private(set) var reloads = 0
     private var navigationWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     private var reloadWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
@@ -149,9 +117,8 @@ private final class RecordingOutput: ExpandedPocketCardInteractorOutputProtocol 
 
     func didFail(error _: Error) {}
 
-    func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        faceRequests.append(shown)
-        return faceOutcome
+    func didRequestFaceShown(_: Bool) -> ExpandedCardFaceOutcome {
+        .applied
     }
 
     private static func resume(

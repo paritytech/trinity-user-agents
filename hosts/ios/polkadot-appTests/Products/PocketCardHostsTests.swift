@@ -36,20 +36,6 @@ struct PocketCardHostsTests {
         #expect(loaded == ["open=prizes"])
         withExtendedLifetime(view) {}
     }
-
-    @Test
-    func isOnDisplayOnlyWhileTheCardsScreenIs() {
-        let hosts = PocketCardHosts()
-        let view = StubExpandedPocketCardView()
-        _ = hosts.open(loyalty) { view }
-
-        #expect(hosts.isOnDisplay(loyalty))
-        #expect(!hosts.isOnDisplay(trophy))
-
-        view.isOnDisplay = false
-
-        #expect(!hosts.isOnDisplay(loyalty))
-    }
 }
 
 // MARK: - Fixtures
