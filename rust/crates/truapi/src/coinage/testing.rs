@@ -4,25 +4,27 @@ use core::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use futures::executor::block_on;
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, Encode};
 use subxt::{Metadata, utils::H256};
 
 use super::{
-	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
+	Asset, ChainConfig, ChainParams, CoinSecret, Exponent, PrivacyPolicy, PurseId, Snapshot,
 	chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace, RingPosition},
 	layer::{Interfaces, Layer, Randomness, RuntimeFacts, RuntimeSource, start},
-	plugins::{PersonhoodSource, Running, Seed},
-	reconstruction::{InstallationRegistry, ScanConfig},
+	plugins::{PersonhoodSource, RegistryWriter, Running, Seed},
+	reconstruction::ScanConfig,
+	registry::NoRegistry,
 	ledger::{
+		self,
 		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
 		snapshot,
 	},
-	operation::OpKey,
+	operation::{self, OpKey, OpKind},
 	params::{InstanceRecord, validate},
 	registration::{Admission, RegisterError, Rows, coinage_domain, register, registry_domain},
 };
 use crate::{
-	chain::{HashAndNumber, Heads, StorageWatchError},
+	chain::{HashAndNumber, Heads, MortalExtrinsic, StorageWatchError},
 	chain_runtime::RuntimeFailure,
 	runtime::statement_allowance::{PersonhoodSigner, ring::RingParams},
 	durable::{
@@ -163,6 +165,9 @@ pub struct FakeChain {
 	pub unplaced: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPosition)>>,
 	/// The state of each alias that has one.
 	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
+	/// The unloaded count of each ring, by exponent and ring; a ring with
+	/// none listed reads as a runtime that keeps no count.
+	pub unloaded: parking_lot::Mutex<HashMap<(i8, u32), u32>>,
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
 	/// What each account holds of the external asset; none for the rest.
@@ -231,6 +236,11 @@ impl CoinageChain for FakeChain {
 		Ok(Vec::new())
 	}
 
+	async fn unloaded_at(&self, _: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		self.check()?;
+		Ok(self.unloaded.lock().get(&(exponent, ring)).copied())
+	}
+
 	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
 		Ok(vec![false; tokens.len()])
 	}
@@ -263,8 +273,17 @@ pub struct TestWallet {
 }
 
 impl TestWallet {
-	/// A wallet with the given policy.
+	/// A wallet with the given policy, whose installation's registration
+	/// has landed, so the layer builds its transactions (G3 invariant 4).
 	pub fn new(policy: PrivacyPolicy) -> Self {
+		let wallet = Self::unregistered(policy);
+		wallet.register_installation();
+		wallet
+	}
+
+	/// A wallet with the given policy, whose installation is not
+	/// registered yet.
+	pub fn unregistered(policy: PrivacyPolicy) -> Self {
 		let db = crate::store::open_memory_core_db();
 		block_on(db.write(move |tx| {
 			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.expect("a fresh store");
@@ -272,6 +291,20 @@ impl TestWallet {
 		}))
 		.expect("the installation is minted");
 		Self { db }
+	}
+
+	/// Records the installation's registration as finalized, as G3's start
+	/// leaves it once the append has landed.
+	pub fn register_installation(&self) {
+		let key = OpKey::own(block_on(self.db.write(ledger::next_operation_id)).expect("an operation id"));
+		let begun = key.clone();
+		let arguments = InstallationId([9; 32]).encode();
+		block_on(self.db.write(move |tx| operation::begin(tx, &begun, OpKind::RegisterInstallation, &arguments)))
+			.expect("the store is writable")
+			.expect("a fresh key");
+		let engine = unbuilt_engine(self.db.clone());
+		let records = register_rows(&engine, &key, Admission::Ordinary, vec![Rows::default()]).expect("registered");
+		set_status(&self.db, records[0], "FINALIZED_SUCCESS", None);
 	}
 
 	/// An asset allocated in `purse`, observed as `read` a little before
@@ -320,6 +353,7 @@ pub fn entry_read(ring: u32) -> Read {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 
@@ -378,13 +412,14 @@ impl Randomness for TestDraws {
 	}
 }
 
-/// A registry whose read always fails.
-pub struct NoRegistry;
+/// A registry writer that cannot build an append yet, as before the
+/// `//datastore` account can pay for one.
+pub struct NoRegistryWriter;
 
 #[async_trait::async_trait]
-impl InstallationRegistry for NoRegistry {
-	async fn records(&self) -> Option<Vec<Vec<u8>>> {
-		None
+impl RegistryWriter for NoRegistryWriter {
+	async fn append(&self, _: &CoinSecret, _: &[u8]) -> Result<MortalExtrinsic, String> {
+		Err("this test builds no registry append".into())
 	}
 }
 
@@ -408,6 +443,7 @@ pub fn layer_interfaces(store: Db, runtime: Arc<TestRuntime>) -> Interfaces {
 		registry: Arc::new(NoRegistry),
 		spawner: crate::Spawner::new(tokio::runtime::Handle::current()),
 		policy: PrivacyPolicy::fastest(),
+		hand_over: None,
 	}
 }
 

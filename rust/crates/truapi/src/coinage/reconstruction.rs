@@ -19,6 +19,7 @@ use super::{
 	Asset, ChainParams, CoinSecret, Exponent, PurseId,
 	assembly::UNLOADING_RECYCLER_CONTEXT,
 	chain::{AliasState, CoinageChain, RingPosition},
+	handover::{self, Handover},
 	ledger::{self, AssetRecord, ScanProgress},
 	namespace::{coin_key, entry_seed},
 	plugins::Seed,
@@ -208,9 +209,10 @@ async fn run(
 		let learned: Vec<InstallationId> = records.iter().filter_map(|record| key.open(record)).collect();
 		deps.store.write(move |tx| ledger::add_installations(tx, &learned)).await?;
 	}
-	let view = deps.store.read(ledger::snapshot).await?;
+	let (view, hand_over) = deps.store.read(|conn| Ok((ledger::snapshot(conn)?, handover::read(conn)?))).await?;
 	let at = deps.chain.heads().await.map_err(|_| ReconstructError::Unavailable)?.finalized.hash;
-	let context = ScanContext { entropy: &entropy, at, gap: if deep { config.deep_gap } else { config.gap }, batch: config.batch, params };
+	let gap = if deep { config.deep_gap } else { config.gap };
+	let context = ScanContext { entropy: &entropy, at, gap, batch: config.batch, params, hand_over: hand_over.as_ref() };
 	let mut adopted = 0;
 	for (installation, progress) in view.installations().to_vec() {
 		if installations == Installations::Unscanned && progress.first_scan_done {
@@ -256,6 +258,7 @@ struct ScanContext<'a> {
 	gap: u32,
 	batch: u32,
 	params: &'a ChainParams,
+	hand_over: Option<&'a Handover>,
 }
 
 /// One namespace, with whether its installation's first scan has completed,
@@ -277,8 +280,9 @@ async fn scan(
 	namespace: Namespace,
 	resume: Option<Position>,
 ) -> Result<usize, ReconstructError> {
-	let ScanContext { entropy, at, gap, batch, params } = *context;
+	let ScanContext { entropy, at, gap, batch, params, hand_over } = *context;
 	let Namespace { purse, installation, first_scan_done } = namespace;
+	let marks = hand_over.filter(|_| purse == PurseId::MAIN).and_then(|hand_over| hand_over.marks(installation));
 	let vrf = load_vrf().await.map_err(|_| ReconstructError::Unavailable)?;
 	let instance = params.config().instance;
 	let mut adopted = 0;
@@ -288,21 +292,28 @@ async fn scan(
 		}
 		let mut empty = 0;
 		let mut start = resume.filter(|position| position.space == space).map_or(0, |position| position.next);
-		while empty < gap {
+		let mark = marks.map_or(0, |(coins, entries)| if space == Space::Coins { coins } else { entries });
+		while empty < gap || start < mark {
 			let indices: Vec<u32> = (start..start.saturating_add(batch)).collect();
+			let mut disclosed = Vec::new();
 			let found: Vec<AssetRecord> = if space == Space::Coins {
-				let accounts: Vec<[u8; 32]> = indices
+				let accounts = indices
 					.iter()
-					.filter_map(|index| coin_key(entropy, purse, installation, *index).ok().map(|(_, account)| account))
-					.collect();
+					.map(|index| coin_key(entropy, purse, installation, *index).map(|(_, account)| account))
+					.collect::<Result<Vec<_>, _>>()
+					.map_err(|_| ReconstructError::Unavailable)?;
 				let read = deps.chain.coins_at(at, &accounts).await.map_err(|_| ReconstructError::Unavailable)?;
 				indices
 					.iter()
+					.zip(accounts)
 					.zip(read)
-					.filter_map(|(index, coin)| {
+					.filter_map(|((index, account), coin)| {
 						let coin = coin.filter(|coin| coin.instance == instance)?;
 						let exponent = Exponent::from_chain(coin.value, params)?;
 						let asset = Asset::Coin { purse, installation, index: *index };
+						if let Some(payment) = hand_over.and_then(|hand_over| hand_over.payment_of(&account)) {
+							disclosed.push((payment, asset, exponent));
+						}
 						Some(AssetRecord { asset, exponent })
 					})
 					.collect()
@@ -331,6 +342,9 @@ async fn scan(
 			deps.store
 				.write(move |tx| {
 					ledger::adopt(tx, &found)?;
+					for (payment, coin, exponent) in disclosed {
+						handover::adopt_disclosed(tx, payment, coin, exponent)?;
+					}
 					ledger::record_scan(tx, installation, &progress)
 				})
 				.await?;
