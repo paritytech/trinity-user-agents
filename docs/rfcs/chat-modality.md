@@ -802,6 +802,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 |---|---|
 | One reaction (`Emoji`) | 64 bytes |
 | Distinct reactions on one message | 64 |
+| The text of a message | 16 KiB |
 
 ## Drawbacks
 
@@ -822,6 +823,8 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows content edits.
 
 2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
+
+3. **Text size**: Long pastes, code blocks and Markdown can be over 16 KiB. Should the limit be 64 KiB, or should a longer text go as a text file?
 
 ## Related Discussions
 
