@@ -13,8 +13,11 @@
 
 mod streams;
 
-use core::time::Duration;
-use std::sync::Arc;
+use core::{
+	sync::atomic::{AtomicBool, Ordering},
+	time::Duration,
+};
+use std::{collections::BTreeSet, sync::Arc};
 
 use parity_scale_codec::Encode;
 use parking_lot::Mutex;
@@ -288,6 +291,11 @@ struct Inner {
 	running: Running,
 	failed_check: Mutex<Option<String>>,
 	streams: streams::Wakes,
+	/// The reconstructions whose scan runs in this process.
+	reconstructing: Mutex<BTreeSet<OpKey>>,
+	/// A reconstruction, which asks the registry first, completed since the
+	/// layer started.
+	registry_read: AtomicBool,
 }
 
 /// Starts the layer (G3): validates the runtime, opens the store, releases
@@ -341,6 +349,8 @@ pub async fn start(
 		running,
 		failed_check: Mutex::new(None),
 		streams: streams::Wakes::default(),
+		reconstructing: Mutex::new(BTreeSet::new()),
+		registry_read: AtomicBool::new(false),
 	}));
 	layer.register_installation().await?;
 	Ok(layer)
@@ -635,16 +645,18 @@ impl Layer {
 
 	// ---- Maintenance and recovery ----
 
-	/// Runs whatever maintenance is due at `now` (F2), advances every open
-	/// deletion, and ends every cancelled offload that has nothing in flight.
+	/// Runs whatever maintenance is due at `now` (F2), starts or resumes
+	/// reconstructions (F2 step 4), advances every open deletion, and ends
+	/// every cancelled offload that has nothing in flight.
 	pub async fn run_due(&self, now: u64) -> Result<Due, Error> {
 		let Some(state) = self.0.running.state().filter(|state| !state.check_failed) else {
 			return Ok(Due { cannot_tell: Vec::new(), started: Vec::new(), call_again_within: Some(Duration::ZERO) });
 		};
 		let entropy = self.entropy()?;
 		let launcher = self.launcher(&state.params, &entropy);
-		let due = maintenance::run_due(&launcher, &self.0.store, now).await?;
+		let mut due = maintenance::run_due(&launcher, &self.0.store, now).await?;
 		let view = self.view().await?;
+		self.run_reconstructions(&view, &mut due, &state.params, now).await?;
 		for deletion in view.operations().filter(|operation| operation.kind == OpKind::Delete) {
 			let Some(DeleteArguments { purse, drain_into }) = deletion.arguments_as() else { continue };
 			if matches!(view.purse(purse).map(|record| record.state), Some(PurseState::Deleting { .. })) {
@@ -666,22 +678,77 @@ impl Layer {
 		if let Some(started) = self.begin_own_step(&op, OpKind::Reconstruct, (purses.clone(), deep).encode()).await? {
 			return Ok(started);
 		}
+		self.spawn_reconstruction(op.key, purses, deep, state.params);
+		Ok(Started::New)
+	}
+
+	/// Resumes every open reconstruction whose scan does not run in this
+	/// process, as a restart or a failed scan leaves it, and otherwise starts
+	/// the default reconstruction once it is due (F4 invariant 5), under the
+	/// layer's own scope.
+	async fn run_reconstructions(&self, view: &Snapshot, due: &mut Due, params: &ChainParams, now: u64) -> Result<(), Error> {
+		let open: Vec<&OperationRecord> = view
+			.operations()
+			.filter(|operation| operation.kind == OpKind::Reconstruct && operation.end.is_none())
+			.collect();
+		for operation in &open {
+			if let Some((purses, deep)) = operation.arguments_as::<(Purses, bool)>() {
+				self.spawn_reconstruction(operation.key.clone(), purses, deep, params.clone());
+			}
+		}
+		if !open.is_empty() {
+			return Ok(());
+		}
+		let Some(due_at) = maintenance::default_reconstruction_at(view, params, self.0.registry_read.load(Ordering::SeqCst))
+		else {
+			return Ok(());
+		};
+		if due_at > now {
+			let until = Duration::from_secs(due_at - now);
+			due.call_again_within = Some(due.call_again_within.map_or(until, |within| within.min(until)));
+			return Ok(());
+		}
+		let key = OpKey::own(self.0.store.write(ledger::next_operation_id).await?);
+		let (begun_key, arguments) = (key.clone(), (Purses::MainOnly, false).encode());
+		let begun = self.0.store.write(move |tx| operation::begin(tx, &begun_key, OpKind::Reconstruct, &arguments)).await?;
+		if begun.is_ok() {
+			self.spawn_reconstruction(key.clone(), Purses::MainOnly, false, params.clone());
+			due.started.push(key);
+		}
+		Ok(())
+	}
+
+	/// Runs the scan of the reconstruction `key` names in the background,
+	/// unless it already runs in this process: the default reconstruction
+	/// for a key of the layer's own scope, `purses` and `deep` otherwise. The
+	/// operation ends `Done` once its scan completes; a scan that fails
+	/// leaves it open for the next `run_due` to resume.
+	fn spawn_reconstruction(&self, key: OpKey, purses: Purses, deep: bool, params: ChainParams) {
+		if !self.0.reconstructing.lock().insert(key.clone()) {
+			return;
+		}
 		let deps = ReconstructionDeps {
 			store: self.0.store.clone(),
 			seed: self.0.seed.clone(),
 			chain: self.0.chain.clone(),
 			registry: self.0.registry.clone(),
 		};
-		let (scan, layer, key) = (self.0.scan, self.clone(), op.key);
+		let (scan, layer) = (self.0.scan, self.clone());
 		self.0.spawner.spawn(async move {
-			if reconstruction::reconstruct(&deps, purses, deep, &scan, &state.params).await.is_ok() {
-				let ended = layer.0.store.write(move |tx| operation::record_end(tx, &key, OperationEnd::Done)).await;
-				if ended.is_ok() {
+			let scanned = if key.is_own() {
+				reconstruction::reconstruct_default(&deps, &scan, &params).await
+			} else {
+				reconstruction::reconstruct(&deps, purses, deep, &scan, &params).await
+			};
+			if scanned.is_ok() {
+				layer.0.registry_read.store(true, Ordering::SeqCst);
+				let ended = key.clone();
+				if layer.0.store.write(move |tx| operation::record_end(tx, &ended, OperationEnd::Done)).await.is_ok() {
 					layer.changed();
 				}
 			}
+			layer.0.reconstructing.lock().remove(&key);
 		});
-		Ok(Started::New)
 	}
 
 	// ---- Policy, backup, parameters ----
