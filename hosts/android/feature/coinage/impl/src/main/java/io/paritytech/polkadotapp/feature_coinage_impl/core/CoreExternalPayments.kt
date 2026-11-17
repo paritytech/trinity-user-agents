@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
-import uniffi.truapi.Exception.UnknownOperation
+import uniffi.truapi.CoinageException.UnknownOperation
 import uniffi.truapi.NativeStatusObserver
 import uniffi.truapi.Retry
 import uniffi.truapi.Started
