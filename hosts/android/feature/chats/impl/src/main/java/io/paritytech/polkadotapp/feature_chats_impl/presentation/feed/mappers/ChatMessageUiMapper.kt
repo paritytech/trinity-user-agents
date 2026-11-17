@@ -525,7 +525,7 @@ private fun constructEmojiReactionGroup(
                     authorName = originDisplay.name,
                     timestamp = reaction.timestamp,
                     isUser = reaction.origin.isUser(),
-                    avatarModel = originDisplay.avatar.toUi()
+                    avatarModel = originDisplay.avatar.toUi(forceFresh = false)
                 )
             }
             .toImmutableList()
