@@ -263,7 +263,6 @@ internal interface ProductsModule {
     fun bindBulletinImageLoaderRegistrar(impl: BulletinImageLoaderRegistrar): ImageLoaderComponentRegistrar
 
     @Binds
-    @Singleton
     fun bindPublicProfileAvatarSource(impl: CorePublicProfileAvatarSource): PublicProfileAvatarSource
 
     @Binds
