@@ -401,3 +401,35 @@ fn maturity_makes_an_entry_spendable_without_confirmation_under_both_presets() {
 		assert_eq!(verdicts, [Selectability::HeldBack(HeldBack::Dwell), Selectability::Now], "{policy:?}");
 	}
 }
+
+/// A reconstruction adopts what an earlier installation minted without any
+/// of its records, and the coin must still be spendable.
+#[test]
+fn a_coin_of_an_earlier_installation_with_no_record_counts_as_minted() {
+	let wallet = Wallet::new(PrivacyPolicy::fastest());
+	let recovered = Asset::Coin { purse: PurseId::MAIN, installation: InstallationId([4; 32]), index: 7 };
+	let found = crate::coinage::ledger::AssetRecord { asset: recovered, exponent: Exponent::new(2).unwrap() };
+	block_on(wallet.db.write(move |tx| crate::coinage::ledger::adopt(tx, &[found]))).unwrap();
+	wallet.observe(recovered, present(2, 0, None), NOW);
+	let state = wallet.state(&recovered);
+	assert_eq!((state.class, state.selectability), (Class::Coin(CoinClass::Available), Selectability::Now));
+}
+
+#[test]
+fn only_a_coin_present_right_now_is_selectable() {
+	let wallet = Wallet::new(PrivacyPolicy::fastest());
+	let coin = wallet.coin(2, 0);
+	wallet.observe(coin, Read::Coin { now: None, emptied_by: None }, NOW);
+	assert_ne!(wallet.state(&coin).selectability, Selectability::Now, "an empty account is not spendable");
+	wallet.observe(coin, present(2, 0, None), NOW);
+	assert_eq!(wallet.state(&coin).selectability, Selectability::Now);
+}
+
+#[test]
+fn the_live_consumer_after_a_failed_one_is_the_one_that_counts() {
+	let mut wallet = Wallet::new(PrivacyPolicy::fastest());
+	let coin = wallet.coin(2, 0);
+	wallet.register(spend(coin), "FAILURE", Some("REJECTED"));
+	wallet.register(spend(coin), "PENDING", None);
+	assert_eq!(wallet.state(&coin).class, Class::Coin(CoinClass::InUse(OpKey { scope: b"p".to_vec(), id: [2; 32] })));
+}

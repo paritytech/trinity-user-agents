@@ -167,6 +167,46 @@ fn a_committed_mark_is_never_released() {
 }
 
 #[test]
+fn a_mark_is_kept_per_asset() {
+	let db = ledger();
+	let coins = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0), exponent(1)]))).unwrap();
+	let marked = coins[0];
+	block_on(db.write(move |tx| mark_disclosed(tx, &[marked]))).unwrap().unwrap();
+	let snapshot = view(&db);
+	assert_eq!((snapshot.mark(&coins[0]), snapshot.mark(&coins[1])), (Some(Mark::Uncommitted), None));
+}
+
+#[test]
+fn an_asset_the_ledger_never_held_has_no_record() {
+	let db = ledger();
+	let unknown = Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index: 99 };
+	assert_eq!(view(&db).asset(&unknown), None);
+}
+
+/// Adoption records what an earlier instance allocated; the current
+/// installation's counter starts from its own allocations alone.
+#[test]
+fn allocation_counts_per_installation_and_adoption_never_advances_it() {
+	let db = ledger();
+	let earlier = InstallationId([1; 32]);
+	let found = AssetRecord { asset: Asset::Coin { purse: PurseId::MAIN, installation: earlier, index: 40 }, exponent: exponent(0) };
+	block_on(db.write(move |tx| adopt(tx, &[found]))).unwrap();
+	let allocated = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0)]))).unwrap();
+	assert_eq!(allocated, [Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index: 0 }]);
+}
+
+#[test]
+fn an_allocation_never_overwrites_an_asset_already_held() {
+	let db = ledger();
+	let held = Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index: 0 };
+	let found = AssetRecord { asset: held, exponent: exponent(5) };
+	block_on(db.write(move |tx| adopt(tx, &[found]))).unwrap();
+	let refused = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0)])));
+	assert!(refused.is_err(), "index 0 is taken");
+	assert_eq!(view(&db).asset(&held), Some(&found));
+}
+
+#[test]
 fn earlier_installations_count_toward_the_main_purse() {
 	let db = ledger();
 	let earlier = InstallationId([1; 32]);

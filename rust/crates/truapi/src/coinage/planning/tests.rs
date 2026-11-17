@@ -83,6 +83,32 @@ fn each_unload_group_presents_its_own_token_and_conserves_value() {
 }
 
 #[test]
+fn an_offboard_reloads_its_surplus_as_entries_of_the_source_purse() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let eight = wallet.entry(3, 0);
+	wallet.entry(1, 1);
+	let input = spend_of(&wallet, 6, Destination::External([7; 32]), Forms::EntriesOnly);
+	let plan = plan(&input, &[TokenId { period: 1, slot: 0 }], &wallet.view(), &chain_params());
+	let change = Output { kind: AssetKind::Entry, purse: PurseId::MAIN, exponent: Exponent::new(1).unwrap(), delivered: false };
+	assert_eq!(plan.transactions.len(), 1);
+	assert_eq!((plan.transactions[0].inputs.clone(), plan.transactions[0].outputs.clone()), (vec![eight], vec![change]));
+}
+
+#[test]
+fn an_offboard_with_no_surplus_mints_nothing() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(3, 0);
+	wallet.entry(3, 0);
+	wallet.entry(2, 1);
+	let input = spend_of(&wallet, 20, Destination::External([7; 32]), Forms::EntriesOnly);
+	let tokens = [TokenId { period: 1, slot: 0 }, TokenId { period: 1, slot: 1 }];
+	let plan = plan(&input, &tokens, &wallet.view(), &chain_params());
+	let inputs_per_ring: Vec<usize> = plan.transactions.iter().map(|planned| planned.inputs.len()).collect();
+	assert_eq!(inputs_per_ring, [1, 2], "one transaction per ring, each with its ring's entries");
+	assert!(plan.transactions.iter().all(|planned| planned.outputs.is_empty()));
+}
+
+#[test]
 fn a_load_is_cut_at_the_per_load_cap() {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
 	let input = PlanInput::Load { from: [3; 32], amount: (1 << 12) - 1, into: PurseId::MAIN };

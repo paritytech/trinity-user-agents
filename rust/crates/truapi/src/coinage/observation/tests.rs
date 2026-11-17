@@ -51,6 +51,27 @@ fn a_coin_of_another_instance_reads_as_an_empty_account() {
 	assert_eq!(observation.value, Some(Read::Coin { now: None, emptied_by: None }));
 }
 
+/// An empty account alone cannot tell a payee's claim from a coin not yet
+/// landed (invariant 1), so the facts of an exported coin whose account is
+/// empty name the transaction that emptied it, and the export is seen as
+/// claimed.
+#[test]
+fn an_exported_coin_whose_account_was_emptied_is_seen_claimed() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let coin = wallet.coin(3);
+	block_on(wallet.db.write(move |tx| {
+		crate::coinage::ledger::mark_disclosed(tx, &[coin])?.expect("an unheld coin");
+		crate::coinage::ledger::commit_disclosed(tx, &[coin])
+	}))
+	.unwrap();
+	block_on(on_block(&deps(&wallet, Arc::new(FakeChain::default())), block(20), NOW, &chain_params())).unwrap();
+	let view = wallet.view();
+	let observation = view.observation(&Subject::Asset(coin)).cloned().unwrap();
+	assert!(matches!(observation.value, Some(Read::Coin { now: None, emptied_by: Some(_) })), "{observation:?}");
+	let export = crate::coinage::classification::classify(&coin, &view, NOW, &chain_params()).export;
+	assert!(matches!(export, Some(crate::coinage::classification::ExportStatus::Claimed { .. })), "{export:?}");
+}
+
 #[test]
 fn a_failed_read_never_reaches_the_ledger_as_absent() {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());

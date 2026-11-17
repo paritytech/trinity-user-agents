@@ -136,3 +136,45 @@ fn the_snapshot_indexes_consumers_creators_presenters_and_dependencies() {
 	assert_eq!(presenters, next);
 	assert_eq!(registrations.of_operation(&op(1)).count(), 1);
 }
+
+/// A peer's coin is only ever an input: claiming it must never make it one
+/// of the wallet's own assets.
+#[test]
+fn a_peer_coin_input_never_enters_the_wallets_assets() {
+	let db = ledger();
+	let engine = unbuilt_engine(db.clone());
+	let peer = Asset::PeerCoin([5; 32]);
+	let output = coins(&db, 1)[0];
+	let claim = register_rows(&engine, &op(1), Admission::Import, vec![spend(&[peer], &[output])]).unwrap();
+	let view = block_on(db.read(snapshot)).unwrap();
+	let consumers: Vec<_> = view.registrations().consumers(&peer).map(|facts| facts.record).collect();
+	assert_eq!(consumers, claim);
+	assert!(view.asset(&peer).is_none());
+	assert!(view.all_assets().all(|record| record.asset != peer));
+}
+
+#[test]
+fn the_same_index_under_two_installations_is_two_assets() {
+	let db = ledger();
+	let engine = unbuilt_engine(db.clone());
+	let current = coins(&db, 1)[0];
+	let Asset::Coin { purse, index, .. } = current else { unreachable!("allocated as a coin") };
+	let earlier = Asset::Coin { purse, installation: InstallationId([4; 32]), index };
+	let found = crate::coinage::ledger::AssetRecord { asset: earlier, exponent: Exponent::new(0).unwrap() };
+	block_on(db.write(move |tx| crate::coinage::ledger::adopt(tx, &[found]))).unwrap();
+	register_rows(&engine, &op(1), Admission::Ordinary, vec![spend(&[current], &[])]).unwrap();
+	assert!(register_rows(&engine, &op(2), Admission::Ordinary, vec![spend(&[earlier], &[])]).is_ok(), "holding one leaves the other free");
+}
+
+#[test]
+fn an_operations_records_are_its_own_in_registration_order_with_what_each_mints() {
+	let db = ledger();
+	let engine = unbuilt_engine(db.clone());
+	let assets = coins(&db, 6);
+	let first = register_rows(&engine, &op(1), Admission::Ordinary, vec![spend(&assets[..1], &assets[1..2])]).unwrap();
+	register_rows(&engine, &op(2), Admission::Ordinary, vec![spend(&assets[2..3], &[])]).unwrap();
+	let third = register_rows(&engine, &op(1), Admission::Ordinary, vec![spend(&assets[3..4], &assets[4..6])]).unwrap();
+	let view = block_on(db.read(snapshot)).unwrap();
+	let own: Vec<_> = view.registrations().of_operation(&op(1)).map(|facts| (facts.record, facts.rows.outputs.clone())).collect();
+	assert_eq!(own, [(first[0], assets[1..2].to_vec()), (third[0], assets[4..6].to_vec())]);
+}
