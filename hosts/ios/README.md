@@ -126,6 +126,8 @@ the product container starts. It contains the WebView's `hostSessionId` plus the
 platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
 A page opened from a Pocket card tap or a Pocket link also gets `openedAtEpochMs` (the tap's wall-clock milliseconds) and
 `openSource` (`pocket_card` or `deeplink`); `host.webview.created` carries the session as its `host.session_id` attribute.
+A retry loads the page again under the same session, so `host.webview.created` and `host.page.visible` also carry
+`load.attempt`, counted from 1; only the first attempt is timed from the tap.
 Host events (`host.process.started`, `host.pocket.opened`, `host.webview.created`, `host.page.visible`) go to Sentry
 Logs as info-level structured logs with `tag` `host.telemetry`, not as error events, so they don't open issues. Their
 tags, extras and counters share one set of attributes: a tag keeps its key, an extra under a tag's key arrives as

@@ -29,6 +29,7 @@ actor SPARustRuntime {
     private let logger: LoggerProtocol
     private let hostEventRecorder: HostEventRecording
     private let openTap: HostOpenTap?
+    private let loadAttempt: Int
     private let hostSessionId: UUID
 
     private var engine: JSEngineProtocol?
@@ -47,6 +48,7 @@ actor SPARustRuntime {
         logger: LoggerProtocol,
         hostEventRecorder: HostEventRecording,
         hostSessionID: UUID,
+        loadAttempt: Int = 1,
         openTap: HostOpenTap? = nil
     ) {
         self.executionModel = executionModel
@@ -56,6 +58,7 @@ actor SPARustRuntime {
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
         self.openTap = openTap
+        self.loadAttempt = loadAttempt
         // The view's id, the tap's when a tap opened it, so the tap, a retry and the page share one.
         hostSessionId = hostSessionID
     }
@@ -122,6 +125,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
             monotonicMilliseconds: createdAtMilliseconds,
+            loadAttempt: loadAttempt,
             openTap: openTap
         ))
 
@@ -197,6 +201,7 @@ extension SPARustRuntime {
             truapiHostVersion: truapiHostVersion(),
             monotonicMilliseconds: monotonicMilliseconds,
             webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
+            loadAttempt: loadAttempt,
             openTap: openTap
         ))
     }

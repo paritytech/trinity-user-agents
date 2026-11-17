@@ -90,18 +90,22 @@ public struct HostEvent: Sendable, Equatable {
     /// The event for a product WebView; `hostSessionID` is the id its page reads from `__trinityHostTelemetry`.
     /// When a tap opened the page, `tap_ms` is the host's share of the open: the tap to this WebView, on the
     /// monotonic clock `monotonicMilliseconds` is read from.
+    ///
+    /// `loadAttempt` counts the session's loads from 1. A retry reports under the session's id, so the attempt
+    /// is what tells its events from the first load's.
     public static func webViewCreated(
         hostSessionID: UUID,
         origin: HostEventOrigin,
         truapiHostVersion: String,
         monotonicMilliseconds: Int,
+        loadAttempt: Int,
         openTap: HostOpenTap? = nil
     ) -> HostEvent {
         var tags = [
             "truapi.host_version": truapiHostVersion,
             "host.session_id": hostSessionID.uuidString.lowercased()
         ]
-        var extras: [String: HostEventValue] = [:]
+        var extras: [String: HostEventValue] = ["load.attempt": .integer(loadAttempt)]
 
         if let openTap {
             tags["open.source"] = openTap.source.rawValue
@@ -143,20 +147,24 @@ public struct HostEvent: Sendable, Equatable {
     /// The event for the first visible commit of a session's main page. `webview_ms` is the WebView's creation to
     /// that commit; `tap_ms` is the tap to it, and only a session a tap opened has one. Both are read on the
     /// monotonic clock `monotonicMilliseconds` is read from, so neither is clamped: a negative span is a bug to
-    /// see, not a zero.
+    /// see, not a zero. `loadAttempt` is the load's attempt, as on `webViewCreated`.
     public static func pageVisible(
         hostSessionID: UUID,
         origin: HostEventOrigin,
         truapiHostVersion: String,
         monotonicMilliseconds: Int,
         webViewMilliseconds: Int,
+        loadAttempt: Int,
         openTap: HostOpenTap? = nil
     ) -> HostEvent {
         var tags = [
             "truapi.host_version": truapiHostVersion,
             "host.session_id": hostSessionID.uuidString.lowercased()
         ]
-        var extras: [String: HostEventValue] = ["webview_ms": .integer(webViewMilliseconds)]
+        var extras: [String: HostEventValue] = [
+            "webview_ms": .integer(webViewMilliseconds),
+            "load.attempt": .integer(loadAttempt)
+        ]
 
         if let openTap {
             tags["open.source"] = openTap.source.rawValue

@@ -42,7 +42,8 @@ struct HostEventTests {
             hostSessionID: hostSessionID,
             origin: origin,
             truapiHostVersion: "0.9.0",
-            monotonicMilliseconds: 84
+            monotonicMilliseconds: 84,
+            loadAttempt: 1
         )
 
         #expect(event.name == "host.webview.created")
@@ -69,6 +70,7 @@ struct HostEventTests {
             origin: origin,
             truapiHostVersion: "0.9.0",
             monotonicMilliseconds: 2_500,
+            loadAttempt: 1,
             openTap: tap
         )
 
@@ -145,6 +147,7 @@ struct HostEventTests {
             truapiHostVersion: "0.9.0",
             monotonicMilliseconds: 1_600,
             webViewMilliseconds: 400,
+            loadAttempt: 1,
             openTap: tap
         )
 
@@ -161,7 +164,8 @@ struct HostEventTests {
             origin: testOrigin,
             truapiHostVersion: "0.9.0",
             monotonicMilliseconds: 900,
-            webViewMilliseconds: 400
+            webViewMilliseconds: 400,
+            loadAttempt: 1
         )
 
         #expect(event.tags["open.source"] == nil)
@@ -184,6 +188,7 @@ struct HostEventTests {
             truapiHostVersion: "0.9.0",
             monotonicMilliseconds: 1_600,
             webViewMilliseconds: 400,
+            loadAttempt: 1,
             openTap: tap
         )
 
@@ -201,6 +206,7 @@ struct HostEventTests {
             truapiHostVersion: "0.9.0",
             monotonicMilliseconds: 1_600,
             webViewMilliseconds: -50,
+            loadAttempt: 1,
             openTap: tap
         )
 

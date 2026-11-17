@@ -117,6 +117,9 @@ private final class ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeM
             face: face
         )
 
+        // Taken once the execution opened, so a runtime that never got one is not an attempt.
+        let attempt = hostSession.nextAttempt()
+
         return SPARustRuntime(
             executionModel: executionModel,
             configuration: configuration,
@@ -129,7 +132,8 @@ private final class ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeM
             logger: rust.logger,
             hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder(),
             hostSessionID: hostSession.id,
-            openTap: hostSession.takeTap()
+            loadAttempt: attempt.number,
+            openTap: attempt.openTap
         )
     }
 }
