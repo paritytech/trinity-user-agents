@@ -51,6 +51,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.GroupDateSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.NewMessagesSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
@@ -80,6 +81,9 @@ internal fun ChatFeed(
     slideInNewMessages: Boolean = false,
     showNewMessagesSeparator: Boolean = true,
     dateSeparatorStyle: ChatDateSeparatorStyle? = null,
+    onLoadOlderMessages: () -> Unit = {},
+    onLoadNewerMessages: () -> Unit = {},
+    onShowNewestMessages: () -> Unit = {},
 ) {
     val footerHeight = LocalChatFooterHeight.current
     var initialMessageIds by remember { mutableStateOf<Set<ChatMessageId>?>(null) }
@@ -91,12 +95,25 @@ internal fun ChatFeed(
     // TODO: This is a quick workaround to account for items other than message items when calculating sticky offset.
     //  When you will add a new item type - please consider more generic approach, that will generically isolate message indices
     //  without a need to rely on assumptions about items relative positioning (e.g. that footer always goes before all the messages)
+    val newerPage = chatMessagesState.newerPage
     val itemIndexOffset = if (footerRenderer != null) 1 else 0
 
     val lazyListState = createLazyListStateForMessagesState(chatMessagesState, itemIndexOffset)
 
     val currentHighlightId = rememberHighlightedMessageId(highlightEvents, lazyListState)
-    ScrollDownUponNewMessageHandler(chatMessagesState.messages, lazyListState)
+    // Newer pages that arrive while the window is away from the newest messages do not pull the list down.
+    ScrollDownUponNewMessageHandler(
+        messages = chatMessagesState.messages,
+        lazyListState = lazyListState,
+        followsNewest = newerPage == ChatPageEdgeUiState.END,
+    )
+    ChatPagingTriggers(
+        lazyListState = lazyListState,
+        olderPage = chatMessagesState.olderPage,
+        newerPage = newerPage,
+        onLoadOlder = onLoadOlderMessages,
+        onLoadNewer = onLoadNewerMessages,
+    )
 
     scrollToPosition.collectAsEffect { _, position ->
         lazyListState.animateScrollToItem(position)
@@ -313,6 +330,7 @@ internal fun ChatFeed(
                 .padding(bottom = footerHeight),
             lazyListState = lazyListState,
             unreadCounter = chatMessagesState.unreadCounter,
+            onShowNewest = onShowNewestMessages.takeIf { newerPage != ChatPageEdgeUiState.END },
             containerColor = dateSeparatorStyle?.backgroundColor,
             iconTint = dateSeparatorStyle?.textColor,
         )

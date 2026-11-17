@@ -3,7 +3,8 @@ import Operation_iOS
 import Testing
 @testable import polkadot_app
 
-/// The room screen reads the window of messages and its paging state from the message source.
+/// The room screen reads its window from the message source, asks for pages only when the end of the window has
+/// more, and jumps to quoted messages.
 @MainActor
 struct ChatInteractorPagingTests {
     private let chatId = Chat.Id.chatExtension("product.dot", roomId: "room")
@@ -20,6 +21,41 @@ struct ChatInteractorPagingTests {
         let model = try #require(output.listModel)
         #expect(model.paging == ChatPagingState(older: .loading, newer: .end))
         #expect(model.readiness == .loading)
+    }
+
+    @Test func anEndWithMoreMessagesAsksForAPage() async {
+        engine.snapshotUpdates = [snapshot(older: .more, newer: .failed)]
+        let interactor = makeInteractor()
+        interactor.setup()
+        await waitForListModel()
+
+        interactor.loadOlderMessages()
+        #expect(await nextCall() == .loadOlder)
+
+        interactor.loadNewerMessages()
+        #expect(await nextCall() == .loadNewer)
+    }
+
+    @Test func anEndWithoutMoreMessagesAsksNothing() async {
+        engine.snapshotUpdates = [snapshot(older: .end, newer: .loading)]
+        let interactor = makeInteractor()
+        interactor.setup()
+        await waitForListModel()
+
+        interactor.loadOlderMessages()
+        interactor.loadNewerMessages()
+        interactor.jump(to: "m1")
+
+        #expect(await nextCall() == .jump("m1"))
+    }
+
+    @Test func aJumpTellsThePresenterWhetherTheMessageExists() async {
+        engine.jumpFindsMessage = false
+        let interactor = makeInteractor()
+
+        interactor.jump(to: "gone")
+
+        #expect(await nextEvent { if case .jumped = $0 { true } else { false } } == .jumped("gone", found: false))
     }
 
     /// The "New messages" marker waits for the first page of a room that pages.
@@ -96,6 +132,13 @@ private extension ChatInteractorPagingTests {
     ) async -> RecordingChatInteractorOutput.Event? {
         for await event in output.events where matches(event) {
             return event
+        }
+        return nil
+    }
+
+    func nextCall() async -> RecordingChatEngine.Call? {
+        for await call in engine.calls {
+            return call
         }
         return nil
     }
