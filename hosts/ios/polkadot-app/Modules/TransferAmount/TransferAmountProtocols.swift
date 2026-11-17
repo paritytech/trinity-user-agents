@@ -28,10 +28,6 @@ protocol TransferAmountViewProtocol: ControllerBackedProtocol, ValidationResultP
 
     func didReceive(transferState: OutgoingTransferState)
     func didUnlockNavigation()
-
-    #if TESTNET_FEATURE
-        func didReceive(strategyDebugInfo: TransferStrategyDebugInfo?)
-    #endif
 }
 
 // MARK: - Presenter
@@ -57,20 +53,12 @@ protocol TransferAmountInteractorInputProtocol: AnyObject {
     func previewTransfer(for amount: Decimal) async throws -> TransferPreviewValidation
     func confirmTransfer(validation: TransferPreviewValidation) async throws
     func saveRecentContact()
-
-    #if TESTNET_FEATURE
-        func previewStrategy(for amount: Decimal)
-    #endif
 }
 
 @MainActor
 protocol TransferAmountInteractorOutputProtocol: AnyObject {
     func didReceive(error: TransferAmountInteractorError)
     func didReceive(spendableBreakdown: TransferSpendableBreakdown)
-
-    #if TESTNET_FEATURE
-        func didReceive(strategyDebugInfo: TransferStrategyDebugInfo?)
-    #endif
 }
 
 @MainActor

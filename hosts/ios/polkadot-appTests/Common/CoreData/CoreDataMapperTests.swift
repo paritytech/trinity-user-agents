@@ -1,5 +1,4 @@
 import BigInt
-import Coinage
 import Foundation
 import Operation_iOS
 import Testing

@@ -25,7 +25,7 @@ final class AssetDetailsPresenter {
     /// Ready and Clearing for the real holdings, totalled by the balance service.
     private var coinageAmounts: CoinageAmounts?
     /// What each denomination is worth, which a tapped coin states in full.
-    private var denominations: DenominationBreakdownContext?
+    private var units: CoinageUnits?
     /// Loaded from chain state; the balance is shown against it.
     private var price: PriceData?
     let logger: LoggerProtocol
@@ -135,11 +135,11 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
     func didReceive(
         coinageAmounts: CoinageAmounts,
         holdings: CoinageHoldings,
-        denominations: DenominationBreakdownContext
+        units: CoinageUnits
     ) {
         self.coinageAmounts = coinageAmounts
         self.holdings = holdings
-        self.denominations = denominations
+        self.units = units
         provideAssetBalance()
         provideCoinageBreakdown()
     }
@@ -199,7 +199,7 @@ private extension AssetDetailsPresenter {
         let figureInfo = chainAsset.asset.digitalDollarFigureDisplayInfo
         let strip = CoinageBreakdownFactory.stripCoins(CoinageBreakdownFactory.rows(from: holdings))
         let traces = CoinageBreakdownFactory.traces(from: holdings) { exponent in
-            formatted(from: denominations?.amount(forExponent: exponent) ?? 0, as: figureInfo)
+            formatted(from: units?.amount(forExponent: exponent) ?? 0, as: figureInfo)
         }
 
         let breakdown = CoinageBalanceBreakdownViewModel(

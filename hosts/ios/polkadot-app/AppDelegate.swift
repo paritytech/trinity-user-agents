@@ -71,7 +71,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(
         _: UIApplication,
-        didFailToRegisterForRemoteNotificationsWithError error: any Error
+        didFailToRegisterForRemoteNotificationsWithError error: any Swift.Error
     ) {
         logger.error("DidFailToRegisterForRemoteNotificationsWithError \(error)")
     }

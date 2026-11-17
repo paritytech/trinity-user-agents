@@ -225,12 +225,18 @@ extension ServiceCoordinator {
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
+        let coinageRegistry = AccountDataStoreConfigProvider()
         let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            coinageConfig: CoinageRuntimeConfigFactory(
+                storageFacade: UserDataStorageFacade.shared,
+                registry: coinageRegistry,
+                logger: logger
+            ),
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
@@ -281,7 +287,8 @@ extension ServiceCoordinator {
             ),
             let chatCoordinator = createChatCoordinator(factory: chatCoordinatorFactory, logger: logger),
             let coinageServices = createCoinageServices(
-                allowanceManager: allowanceManagerFacade.smartContractManager
+                runtimeProvider: truapiRuntimeProvider,
+                registry: coinageRegistry
             ),
             let depositService = createDepositService(
                 walletToFund: depositWallet,
@@ -322,7 +329,6 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
-        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)

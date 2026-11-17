@@ -8,7 +8,7 @@ extension CoreDataBenchmarks {
     struct Subscriptions {
         let scale = BenchmarkScale.default
 
-        /// Twenty live snapshot subscriptions, then single-row inserts: how long a save takes with
+        /// Fourteen live snapshot subscriptions, then single-row inserts: how long a save takes with
         /// every subscriber re-mapping behind it, and how long until the snapshot reaches a consumer.
         @Test("B3 subscription fan-out", .timeLimit(.minutes(5)), arguments: StackVariant.supported)
         func subscriptionFanOut(variant: StackVariant) async throws {
@@ -17,8 +17,6 @@ extension CoreDataBenchmarks {
 
             let chats = max(6, scale.subscriptionRows / scale.messagesPerChat)
             let chatIds = try await seeder.seedChats(count: chats, messagesPerChat: scale.messagesPerChat)
-            _ = try await seeder.seedCoins(count: 50)
-            try await seeder.seedVouchers(count: 50, startIndex: 10_000)
             let seededMessages = chats * scale.messagesPerChat
 
             let subscriptions = ProductionFloorSubscriptions(facade: facade, chatIds: chatIds)

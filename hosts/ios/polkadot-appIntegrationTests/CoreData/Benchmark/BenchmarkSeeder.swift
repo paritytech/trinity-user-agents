@@ -1,4 +1,3 @@
-import Coinage
 import Foundation
 import Operation_iOS
 import StructuredConcurrency
@@ -21,14 +20,6 @@ struct BenchmarkSeeder {
 
     var messageRepository: AnyDataProviderRepository<Chat.LocalMessage> {
         facade.makeRepo(mapper: ChatMessageEntityMapper())
-    }
-
-    var coinRepository: AnyDataProviderRepository<Coin> {
-        facade.makeRepo(mapper: CoinMapper())
-    }
-
-    var voucherRepository: AnyDataProviderRepository<Voucher> {
-        facade.makeRepo(mapper: VoucherMapper())
     }
 
     /// Contacts, then chats, then messages: the message mapper requires its chat row and the chat
@@ -54,17 +45,6 @@ struct BenchmarkSeeder {
         return chatIds
     }
 
-    func seedCoins(count: Int) async throws -> [Coin] {
-        let coins = (0 ..< count).map { BenchmarkFixtures.coin(index: $0) }
-        try await saveInBatches(coins, using: coinRepository)
-        return coins
-    }
-
-    func seedVouchers(count: Int, startIndex: Int) async throws {
-        let vouchers = (startIndex ..< startIndex + count).map { BenchmarkFixtures.voucher(index: $0) }
-        try await saveInBatches(vouchers, using: voucherRepository)
-    }
-
     func insertMessage(index: Int, chatId: Chat.Id) async throws {
         let message = BenchmarkFixtures.message(
             id: "insert-\(index)",
@@ -73,10 +53,6 @@ struct BenchmarkSeeder {
             text: "inserted \(index)"
         )
         try await messageRepository.saveOperation({ [message] }, { [] }).asyncExecute()
-    }
-
-    func saveVoucher(index: Int) async throws {
-        try await voucherRepository.saveOperation({ [BenchmarkFixtures.voucher(index: index)] }, { [] }).asyncExecute()
     }
 
     /// Each batch overwrites the first `rowsPerBatch` seeded ids of a rotating chat, so the per-row

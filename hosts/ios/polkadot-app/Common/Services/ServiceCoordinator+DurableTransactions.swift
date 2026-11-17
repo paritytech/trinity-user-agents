@@ -19,10 +19,7 @@ extension ServiceCoordinator {
         )
 
         return DurableTxService.make(
-            store: DurableTxCoreDataRepository(
-                storageFacade: UserDataStorageFacade.shared,
-                rowObservers: [CoinageTxRowObserver()]
-            ),
+            store: DurableTxCoreDataRepository(storageFacade: UserDataStorageFacade.shared),
             chainViewFactory: chainViewFactory,
             chainTools: DurableChainToolsProvider(
                 chainRegistry: chainRegistry,

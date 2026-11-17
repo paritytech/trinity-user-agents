@@ -146,7 +146,7 @@ private func makeHandlers(
 final class StubPublishedCards: PublishedPocketCardsResolving, @unchecked Sendable {
     /// Errors thrown by successive lookups, consumed in order; once empty the
     /// lookup succeeds.
-    var failures: [any Error] = []
+    var failures: [any Swift.Error] = []
     private(set) var lookups = 0
 
     func find(productId: ProductId, cardId: PocketCardId) async throws -> PublishedPocketCard {

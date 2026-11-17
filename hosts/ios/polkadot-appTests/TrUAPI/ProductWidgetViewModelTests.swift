@@ -8,8 +8,8 @@ import UIKitExt
 
 /// What one render stream does before it ends.
 private enum ServedStream {
-    case fail(Error)
-    case drawThenFail(Error)
+    case fail(Swift.Error)
+    case drawThenFail(Swift.Error)
     case draw
 }
 
@@ -30,7 +30,7 @@ private final class ScriptedRenderRuntime: ChatRuntimeProtocol, @unchecked Senda
         messageId _: String,
         messageType _: String,
         messageData _: Data
-    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Swift.Error> {
         let attempt = state.withLock { count -> Int in
             count += 1
             return count

@@ -60,4 +60,4 @@ struct TrUAPIWorkerBuilderTests {
     }
 }
 
-private struct NoEnvironment: Error {}
+private struct NoEnvironment: Swift.Error {}

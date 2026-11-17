@@ -255,7 +255,7 @@ private extension ProductPocketService {
     }
 }
 
-enum PocketServiceError: Error {
+enum PocketServiceError: Swift.Error {
     case gone
 }
 

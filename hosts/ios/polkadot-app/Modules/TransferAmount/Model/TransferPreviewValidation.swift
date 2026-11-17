@@ -3,7 +3,7 @@ import Coinage
 
 enum TransferPreviewValidation {
     case coinage(TransferPreview)
-    /// External payments carry the amount (the preview holds only what is spent) and whether the
+    /// External payments carry the amount and whether the
     /// plan gives up privacy the user must confirm first.
     case externalPayment(ExternalPaymentPreview, amount: BigUInt, requiresPrivacyConfirmation: Bool)
 
@@ -17,7 +17,7 @@ enum TransferPreviewValidation {
     /// Whether the plan spends gaining-privacy funds, so the user must confirm before it is submitted.
     var requiresPrivacyConfirmation: Bool {
         switch self {
-        case let .coinage(preview): preview.scope == .withConfirmation
+        case let .coinage(preview): preview.spendsGainingPrivacy
         case let .externalPayment(_, _, requiresPrivacyConfirmation): requiresPrivacyConfirmation
         }
     }

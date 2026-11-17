@@ -147,7 +147,7 @@ extension SSOTruAPICoordinator {
 
     func handleDidPostMessages(
         _ messages: [OpaqueSSORawHostMessage],
-        withError error: Error?
+        withError error: Swift.Error?
     ) async {
         await rawSender.handleDidPostMessages(messages.map(\.message), withError: error)
     }

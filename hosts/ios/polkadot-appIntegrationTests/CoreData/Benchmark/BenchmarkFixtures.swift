@@ -1,5 +1,3 @@
-import Coinage
-import DurableTransactions
 import Foundation
 
 @testable import polkadot_app
@@ -12,7 +10,7 @@ enum BenchmarkFixtures {
         return bytes
     }
 
-    static func key(_ index: Int) -> PublicKey {
+    static func key(_ index: Int) -> Data {
         var bytes = Data(repeating: 0xCD, count: 32)
         withUnsafeBytes(of: UInt32(index).bigEndian) { bytes.replaceSubrange(28 ..< 32, with: $0) }
         return bytes
@@ -70,42 +68,6 @@ enum BenchmarkFixtures {
             reactions: [],
             compactionId: nil,
             relatedMessages: []
-        )
-    }
-
-    static func coin(index: Int) -> Coin {
-        Coin(
-            exponent: 0,
-            derivationIndex: CoinageKeyIndex(installation: .test, item: UInt64(index)),
-            age: nil,
-            publicKey: key(index)
-        )
-    }
-
-    static func voucher(index: Int) -> Voucher {
-        let now = Date()
-        return Voucher(
-            exponent: 0,
-            derivationIndex: CoinageKeyIndex(installation: .test, item: UInt64(index)),
-            allocatedAt: now,
-            readyAt: now,
-            publicKey: key(index)
-        )
-    }
-
-    /// Received-input form: no local coin row is required, so the benchmark measures the ledger write
-    /// path without coupling to the own-asset mapper.
-    static func registration(index: Int, groupId: CoinageTxGroupId) -> CoinageTxRegistration {
-        var hash = Data(repeating: 0x5E, count: 32)
-        withUnsafeBytes(of: UInt32(index).bigEndian) { hash.replaceSubrange(0 ..< 4, with: $0) }
-
-        return CoinageTxRegistration(
-            txHash: hash,
-            checkpoint: BlockRef(number: 100, hash: Data([100])),
-            mortalityBlocks: 64,
-            groupId: groupId,
-            inputs: [.coin(.received(hash))],
-            outputs: []
         )
     }
 }

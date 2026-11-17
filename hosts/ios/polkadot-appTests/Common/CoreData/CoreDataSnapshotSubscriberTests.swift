@@ -205,7 +205,7 @@ final class CoreDataSnapshotSubscriberTests {
         #expect(await sizes.next() == [7])
     }
 
-    /// The pattern `CoinageTxRowObserver` relies on: a row is touched (will/didChangeValue) without any value
+    /// The pattern a touched parent relies on: a row is touched (will/didChangeValue) without any value
     /// change, so derived-state subscribers refresh exactly that row.
     @Test(.timeLimit(.minutes(1)))
     func touchedParentRowIsRemappedAlone() async throws {

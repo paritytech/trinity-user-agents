@@ -85,7 +85,7 @@ private actor RawMessageSender: PolkadotHostMessageSending {
         postedMessages.append(message)
     }
 
-    func handleDidPostMessages(_: [SSORawHostMessage], withError _: Error?) async {}
+    func handleDidPostMessages(_: [SSORawHostMessage], withError _: Swift.Error?) async {}
 
     func cancelPendingMessages(excluding _: Set<String>) async {}
 }

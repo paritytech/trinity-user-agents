@@ -13,20 +13,20 @@ struct PocketCardScreeningTests {
         let coffee = "\u{2615}\u{fe0f} Coffee"
 
         #expect(try PocketCardScreening.core.title(coffee) == coffee)
-        #expect(throws: (any Error).self) { try PocketCardScreening.core.id(coffee) }
+        #expect(throws: (any Swift.Error).self) { try PocketCardScreening.core.id(coffee) }
     }
 
     /// Both sides NFC-normalize, so a card added under one spelling is found
     /// again under the other.
     @Test func screeningNormalizesAndTrims() throws {
         #expect(try PocketCardScreening.core.id("  cafe\u{301}  ").value == "caf\u{e9}")
-        #expect(throws: (any Error).self) { try PocketCardScreening.core.id("   ") }
+        #expect(throws: (any Swift.Error).self) { try PocketCardScreening.core.id("   ") }
     }
 
     /// A title long enough to crowd out the product's name is the view's
     /// problem, but the core still bounds what it will carry.
     @Test func screeningBoundsATitleTheCoreWillNotCarry() throws {
-        #expect(throws: (any Error).self) {
+        #expect(throws: (any Swift.Error).self) {
             try PocketCardScreening.core.title(String(repeating: "a", count: 257))
         }
     }

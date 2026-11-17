@@ -50,6 +50,13 @@ extension W3sPaymentRecord: Operation_iOS.Identifiable {
     var identifier: String { paymentId }
 }
 
+extension W3sPaymentRecord {
+    /// The wallet's export the payment `paymentId` sent its coins under.
+    static func exportId(paymentId: String) throws -> CoinageOperationId {
+        try .of("w3s:\(paymentId)")
+    }
+}
+
 extension W3sPaymentRecord.Status {
     /// The W3S payment lifecycle is monotonic once coins are confirmed on-chain.
     /// Guards against concurrent writers (statement submitter vs tracking service)

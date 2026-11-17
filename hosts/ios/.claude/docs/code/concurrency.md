@@ -110,8 +110,7 @@ func setup(with ctx: Context) {
 
 Reach for this when there are **several** interrelated mutable pieces with their own lifecycle. For a
 single coalesced in-flight task use `CoalescingTask`; for one typed guarded value
-`OSAllocatedUnfairLock<State>` is enough. (Real example: `IncomingPaymentService` +
-`IncomingPaymentContext` in `Packages/Coinage`.)
+`OSAllocatedUnfairLock<State>` is enough.
 
 ## Injecting Time
 

@@ -124,24 +124,23 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         balanceSubscriptionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let balanceService = try await coinageService.coinageBalanceService()
-                let context = balanceService.denominationContext
-                for try await summary in balanceService.summaryStream {
+                let units = try await coinageService.units()
+                for try await summary in coinageService.summaryStream() {
                     try Task.checkCancellation()
                     let balance = summary.balance
-                    await presenter?.didReceive(balance: context.decimal(fromPlanks: balance.total))
+                    await presenter?.didReceive(balance: units.decimal(fromPlanks: balance.total))
 
                     // Ready and Clearing come from the one place that collapses the domain's
                     // three buckets into the two the user is shown, so the figures, the bar and
                     // the coins cannot disagree, and the two add up to the total above them.
                     await presenter?.didReceive(
                         coinageAmounts: CoinageAmounts(
-                            total: context.decimal(fromPlanks: balance.total),
-                            availableNow: context.decimal(fromPlanks: balance.ready),
-                            gainingPrivacy: context.decimal(fromPlanks: balance.clearing)
+                            total: units.decimal(fromPlanks: balance.total),
+                            availableNow: units.decimal(fromPlanks: balance.ready),
+                            gainingPrivacy: units.decimal(fromPlanks: balance.clearing)
                         ),
                         holdings: summary.holdings,
-                        denominations: context
+                        units: units
                     )
                 }
             } catch {

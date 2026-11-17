@@ -40,8 +40,8 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
 - **ExtrinsicServiceExt** — Pluggable extrinsic submission on top of the `ExtrinsicService` package adds pre-submission validation + general fork protection
 - **MessageExchangeKit** — Encrypted messaging protocol
 - **HandoffService** — Handoff/continuity
-- **Coinage** — Private Payment System implementation: coin models, denominations, transfer planning, and lifecycle
-- **DurableTransactions** — Domain-neutral crash-durable transaction engine (ledger, submission watch, recovery pass, completion ladder, pinned chain view). Domains plug in through `TxCompletionOracle`; Coinage is the first. Ships `DurableTransactionsTestSupport` fakes
+- **Coinage** — the wallet over the Rust core's coinage layer: `CoinageServicing`, the core handle, and the models the screens use
+- **DurableTransactions** — Domain-neutral crash-durable transaction engine (ledger, submission watch, recovery pass, completion ladder, pinned chain view). Domains plug in through `TxCompletionOracle`. Ships `DurableTransactionsTestSupport` fakes
 - **Individuality** — People, LitePeople, Members, Allowance, Pgas, Resources, the identity pallet and the origin restriction pallet
 - **BulletinChain** — Bulletin/news chain integration
 - **AssetExchange** — Asset exchange protocols

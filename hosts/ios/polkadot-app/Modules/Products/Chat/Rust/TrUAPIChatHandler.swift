@@ -21,7 +21,7 @@ import UIKitExt
 /// `dispose` flips `disposed` before its first await and `start` re-checks it
 /// after every await, releasing anything it took in the gap.
 actor TrUAPIChatHandler: ChatRuntimeProtocol {
-    enum ChatSeamError: Error, Equatable {
+    enum ChatSeamError: Swift.Error, Equatable {
         case notStarted
         /// The core normalizes room ids on the way back and rejects an empty one, so a
         /// chat with no room would reach the product as a message it cannot answer.
@@ -101,7 +101,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         messageId: String,
         messageType: String,
         messageData: Data
-    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Swift.Error> {
         guard let roomId else {
             return AsyncThrowingStream { $0.finish(throwing: ChatSeamError.roomlessChat) }
         }
@@ -116,7 +116,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         roomId: String,
         messageType: String,
         payload: Data
-    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Swift.Error> {
         await render(.chatRoomFooter(roomId: roomId, messageType: messageType), payload: payload)
     }
 
@@ -248,7 +248,7 @@ private extension TrUAPIChatHandler {
     func render(
         _ context: RenderContext,
         payload: Data
-    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Swift.Error> {
         do {
             let nodes = try await renderNodesWhenConnected(
                 deadline: ContinuousClock.now + renderStartupWindow,
@@ -277,7 +277,7 @@ private extension TrUAPIChatHandler {
     func renderNodesWhenConnected(
         deadline: ContinuousClock.Instant,
         request: ProductRendererRenderRequest
-    ) async throws -> AsyncThrowingStream<RendererNode, Error> {
+    ) async throws -> AsyncThrowingStream<RendererNode, Swift.Error> {
         while true {
             try checkNotDisposed()
             do {

@@ -46,7 +46,7 @@
         }
 
         /// The core's reason, worded for the developer who typed the address.
-        static func message(for error: Error) -> String {
+        static func message(for error: Swift.Error) -> String {
             switch error as? DevServerError {
             case let .NotADevServer(message),
                  let .InvalidProductId(message):

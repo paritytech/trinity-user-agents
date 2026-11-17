@@ -29,7 +29,6 @@ private func makeHostBridge(
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
-        backedUpInstallation: TrUAPIBackedUpInstallation(),
         encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
         logger: Logger.shared
     )

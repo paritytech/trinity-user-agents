@@ -56,7 +56,7 @@ struct ChatCardImagesTests {
     }
 }
 
-private struct Unavailable: Error {}
+private struct Unavailable: Swift.Error {}
 
 private final class NoRuntime: TrUAPIHostRuntimeProviding {
     func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }

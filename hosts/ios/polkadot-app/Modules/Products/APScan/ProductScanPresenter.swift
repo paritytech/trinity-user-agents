@@ -65,7 +65,7 @@ final class ProductScanPresenter: QRScannerPresenter {
         }
     }
 
-    override func handleQRService(error: Error) {
+    override func handleQRService(error: Swift.Error) {
         switch error as? QRCaptureServiceError {
         case .deviceAccessDeniedPreviously:
             wireframe.askOpenSettings(from: view) { [weak self] _ in

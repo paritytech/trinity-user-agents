@@ -132,7 +132,7 @@ enum DebugPocketFacePreviewImages {
 
 /// The one refusal this screen owns. Everything else it shows comes from
 /// the core reading the face.
-enum DebugPocketFacePreviewError: Error, CustomStringConvertible {
+enum DebugPocketFacePreviewError: Swift.Error, CustomStringConvertible {
     case notUtf8
 
     var description: String { "the file is not UTF-8" }

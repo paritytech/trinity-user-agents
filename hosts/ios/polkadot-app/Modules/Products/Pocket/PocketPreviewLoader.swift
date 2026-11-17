@@ -11,7 +11,7 @@ protocol PocketArchiveReading {
     func file(contentId: ProductId, path: String, maxBytes: Int) async throws -> Data
 }
 
-enum PocketPreviewError: Error, CustomStringConvertible {
+enum PocketPreviewError: Swift.Error, CustomStringConvertible {
     case notReachable(String)
     case tooLarge(bytes: Int)
     case notReadable

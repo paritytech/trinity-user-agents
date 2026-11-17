@@ -2,20 +2,13 @@ import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import Operation_iOS
-import ExtrinsicService
 import SubstrateSdk
 import SDKLogger
-import OperationExt
 import Coinage
 import KeyDerivation
 import StructuredConcurrency
 import BigInt
 import ChainRegistry
-import SubstrateSdkExt
-
-#if TESTNET_FEATURE
-    import Keystore_iOS
-#endif
 
 struct TransferAmountDependency {
     let wallet: () -> WalletManaging
@@ -101,12 +94,8 @@ extension TransferAmountInteractor: TransferAmountInteractorInputProtocol {
             return .coinage(preview)
         case .externalPayment:
             let preview = try await coinageService.previewExternalPayment(for: planks)
-            // Same rule as product payments: warn unless private vouchers pay or the preset is minPrivacy.
-            var requiresPrivacyConfirmation = false
-            if recyclingStrategy.strategy != .minPrivacy {
-                requiresPrivacyConfirmation = try await !coinageService
-                    .canExecuteExternalPaymentPrivately(amount: planks)
-            }
+            // Same rule as product payments: warn unless private value pays or the preset is minPrivacy.
+            let requiresPrivacyConfirmation = recyclingStrategy.strategy != .minPrivacy && preview != .privately
             return .externalPayment(preview, amount: planks, requiresPrivacyConfirmation: requiresPrivacyConfirmation)
         }
     }
@@ -120,8 +109,8 @@ extension TransferAmountInteractor: TransferAmountInteractorInputProtocol {
                 switch validation {
                 case let .coinage(preview):
                     try await confirmCoinageTransfer(preview: preview)
-                case let .externalPayment(_, amount, _):
-                    try await confirmExternalPayment(amount: amount)
+                case let .externalPayment(preview, amount, _):
+                    try await confirmExternalPayment(amount: amount, confirmed: preview != .privately)
                 }
             } catch {
                 logger?.error("Did fail transfer: \(error)")
@@ -161,29 +150,31 @@ extension TransferAmountInteractor: TransferAmountInteractorInputProtocol {
 
 private extension TransferAmountInteractor {
     func confirmCoinageTransfer(preview: TransferPreview) async throws {
-        let result = preview.selectionResult
-        // One id shared by the coinage transactions (their groupId) and the chat message that
-        // carries the memo, so the transfer's on-chain work and its message correlate.
+        // One id for the chat message that carries the memo, from which the export's id is derived, so
+        // the payment's export and its message correlate.
         let messageId: Chat.MessageId = UUID().uuidString
-        // Mints and reserves only: nothing is built and nothing is on the wire yet, so the slow part
-        // of a payment no longer stands between the user and the memo leaving.
-        let prepared = try await coinageService.executeTransfer(result: result, groupId: messageId)
+        let retryUntil = Date().addingTimeInterval(CoinageConstants.chatPaymentRetryWindow)
+        let prepared = try await coinageService.prepareTransfer(
+            preview,
+            exportId: transferSubmitter.exportId(messageId: messageId),
+            retryUntil: retryUntil
+        )
         do {
-            // The hook runs inside the transaction that persists the memo, so the handoff becomes
-            // final and the payment's transactions are registered exactly when the keys are durable.
             try await transferSubmitter.sendTransfer(
                 prepared.memo,
                 to: recipient.accountId,
                 messageId: messageId
-            ) { scope in
-                try prepared.commit(in: scope)
+            ) {
+                try await prepared.commit()
             }
         } catch {
-            // Every transport runs the hook inside a transaction, and only once whatever carries the
-            // keys is durable — so a throw from here means nothing was committed and nothing scheduled.
-            // Drop the reservation now rather than waiting for a relaunch, and never report a transfer
-            // the recipient has no way to claim.
-            try? await prepared.abandon()
+            // The memo may not have left: take the coins back, which loses nothing, since whoever moves
+            // a coin first owns it.
+            do {
+                try await prepared.abandon(reclaimId: .chatReclaim(messageId: messageId), retryUntil: retryUntil)
+            } catch {
+                logger?.error("Failed to take back an unsent payment: \(error)")
+            }
 
             throw error
         }
@@ -195,15 +186,18 @@ private extension TransferAmountInteractor {
 
 private extension TransferAmountInteractor {
     /// Reaches here only after the presenter's privacy confirmation when the plan requires one.
-    func confirmExternalPayment(amount: BigUInt) async throws {
+    func confirmExternalPayment(amount: BigUInt, confirmed: Bool) async throws {
         let productId: ProductId? = nil
         let paymentId = try Data.randomOrError(of: 32).toHex(includePrefix: true)
 
         try await coinageService.initiateExternalPayment(
-            productId: productId,
-            paymentId: paymentId,
-            amountInPlanks: amount,
-            destination: recipient.accountId
+            ExternalPaymentRequest(
+                productId: productId,
+                paymentId: paymentId,
+                amountInPlanks: amount,
+                destination: recipient.accountId,
+                confirmed: confirmed
+            )
         )
 
         // Completion and failure are observed by the presenter through the
@@ -222,8 +216,7 @@ private extension TransferAmountInteractor {
         let service = coinageService
         coinageBalanceTask = Task { [weak self] in
             do {
-                let balanceService = try await service.coinageBalanceService()
-                for try await balance in balanceService.balanceStream {
+                for try await balance in service.balanceStream() {
                     // `availablePrivate` is spendable at no privacy cost; `gainingPrivacy` is the
                     // funds this strategy would still release behind a confirmation (none under max
                     // privacy). Together they form the reachable amount.
@@ -241,46 +234,6 @@ private extension TransferAmountInteractor {
             }
         }
     }
-}
-
-// MARK: - DEBUG
-
-extension TransferAmountInteractor {
-    #if TESTNET_FEATURE
-        func previewStrategy(for amount: Decimal) {
-            // No need to properly inject settings here as this is a debug view
-            guard SettingsManager.shared.bool(for: SettingsKey.showTransferStrategyDebug.rawValue) ?? true else {
-                Task { @MainActor [weak self] in
-                    self?.presenter?.didReceive(strategyDebugInfo: nil)
-                }
-                return
-            }
-
-            let service = coinageService
-            let method = transferMethod
-            Task { [weak self, chainAsset] in
-                do {
-                    guard let plank = chainAsset.asset.planks(from: amount) else {
-                        throw TransferAmountInteractorError.internalError
-                    }
-
-                    let fetcher: TransferDebugInfoFetching =
-                        switch method {
-                        case .coinage:
-                            CoinageDebugInfoFetcher(coinageService: service)
-                        case .externalPayment:
-                            ExternalPaymentDebugInfoFetcher(coinageService: service)
-                        }
-
-                    let debugInfo = try await fetcher.fetchDebugInfo(for: plank)
-                    await self?.presenter?.didReceive(strategyDebugInfo: debugInfo)
-                } catch {
-                    self?.logger?.error("Strategy preview failed: \(error)")
-                    await self?.presenter?.didReceive(strategyDebugInfo: nil)
-                }
-            }
-        }
-    #endif
 }
 
 private extension AssetModel {

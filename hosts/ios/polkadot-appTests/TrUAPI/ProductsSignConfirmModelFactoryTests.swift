@@ -134,7 +134,7 @@ struct ProductsSignConfirmModelFactoryTests {
             )
         )
 
-        await #expect(throws: (any Error).self) {
+        await #expect(throws: (any Swift.Error).self) {
             _ = try await makeFactory().makeModel(from: input, requester: requester)
         }
     }

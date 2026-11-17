@@ -35,7 +35,7 @@ private final class FakeChatWorker: ProductChatWorking, @unchecked Sendable {
         messageId _: String,
         messageType _: String,
         messageData _: Data
-    ) async -> AsyncThrowingStream<String, Error> {
+    ) async -> AsyncThrowingStream<String, Swift.Error> {
         AsyncThrowingStream { $0.finish() }
     }
 

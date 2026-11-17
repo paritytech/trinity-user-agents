@@ -26,58 +26,51 @@ struct TransferStateMappingTests {
     }
 
     @Test("no coin states yet means sending")
-    func emptyIsSending() throws {
-        let world = try CoinStateWorld()
-        #expect([:].outgoingState(context: world.context) == OutgoingTransferState(status: .sending))
+    func emptyIsSending() {
+        #expect([CoinagePaymentState]().outgoingState == OutgoingTransferState(status: .sending))
     }
 
     @Test("coins still being detected with nothing awaiting or claimed means sending")
-    func onlyDetectingIsSending() throws {
-        let world = try CoinStateWorld()
-        let states = try world.states([.detecting, .detecting])
-        #expect(states.outgoingState(context: world.context) == OutgoingTransferState(status: .sending))
+    func onlyDetectingIsSending() {
+        let states = CoinStateWorld.states([.detecting, .detecting])
+        #expect(states.outgoingState == OutgoingTransferState(status: .sending))
     }
 
     @Test("a coin on chain waiting for the peer means sent")
-    func awaitingIsSent() throws {
-        let world = try CoinStateWorld()
-        let states = try world.states([.awaitingClaim, .detecting])
-        #expect(states.outgoingState(context: world.context) == OutgoingTransferState(status: .sent))
+    func awaitingIsSent() {
+        let states = CoinStateWorld.states([.awaitingClaim, .detecting])
+        #expect(states.outgoingState == OutgoingTransferState(status: .sent))
     }
 
     @Test("a claimed coin next to one still outstanding keeps the message at sent")
-    func claimedWithOutstandingIsSent() throws {
-        let world = try CoinStateWorld()
-        let states = try world.states([.claimed(finalized: true), .awaitingClaim])
-        #expect(states.outgoingState(context: world.context) == OutgoingTransferState(status: .sent))
+    func claimedWithOutstandingIsSent() {
+        let states = CoinStateWorld.states([.claimed(finalized: true), .awaitingClaim])
+        #expect(states.outgoingState == OutgoingTransferState(status: .sent))
     }
 
     @Test("nothing outstanding and nothing claimed means failed")
-    func allFailedIsFailed() throws {
-        let world = try CoinStateWorld()
-        let states = try world.states([.failed, .failed])
-        #expect(states.outgoingState(context: world.context) == OutgoingTransferState(status: .failed))
+    func allFailedIsFailed() {
+        let states = CoinStateWorld.states([.failed, .failed])
+        #expect(states.outgoingState == OutgoingTransferState(status: .failed))
     }
 
     @Test("nothing outstanding sums the claimed coins into the actual value")
-    func claimedSumsValue() throws {
-        let world = try CoinStateWorld()
-        let states = try world.states([.claimed(finalized: true), .failed, .claimed(finalized: false)])
+    func claimedSumsValue() {
+        let states = CoinStateWorld.states([.claimed(finalized: true), .failed, .claimed(finalized: false)])
 
-        let expectedValue = world.context.valueInPlanks(for: 0) + world.context.valueInPlanks(for: 2)
+        let expectedValue = CoinStateWorld.value(ofExponent: 0) + CoinStateWorld.value(ofExponent: 2)
         #expect(
-            states.outgoingState(context: world.context)
+            states.outgoingState
                 == OutgoingTransferState(status: .claimed, actualValue: expectedValue)
         )
     }
 
     @Test("settled only when every coin is terminal")
-    func settledNeedsEveryCoinTerminal() throws {
-        let world = try CoinStateWorld()
-        #expect(try world.states([.claimed(finalized: true), .failed]).isSettled)
-        #expect(try !world.states([.claimed(finalized: false)]).isSettled)
-        #expect(try !world.states([.claimed(finalized: true), .awaitingClaim]).isSettled)
-        #expect(![:].isSettled)
+    func settledNeedsEveryCoinTerminal() {
+        #expect(CoinStateWorld.states([.claimed(finalized: true), .failed]).isSettled)
+        #expect(!CoinStateWorld.states([.claimed(finalized: false)]).isSettled)
+        #expect(!CoinStateWorld.states([.claimed(finalized: true), .awaitingClaim]).isSettled)
+        #expect(![CoinagePaymentState]().isSettled)
     }
 
     @Test("claimed and failed are the terminal statuses on both sides")
@@ -93,27 +86,19 @@ struct TransferStateMappingTests {
     }
 }
 
-/// Coins with exponents 0, 1, 2… in the order given, each with its own public key.
-private struct CoinStateWorld {
-    let context = DenominationBreakdownContext(unit: 1_000, precision: 3, maxExponent: 10, minExponent: 0)
-    private let installation: CoinageInstallationId
-
-    init() throws {
-        installation = try CoinageInstallationId(value: Data(repeating: 0x01, count: 32))
+/// Coins with exponents 0, 1, 2… in the order given, each with its own account.
+private enum CoinStateWorld {
+    static func value(ofExponent exponent: Int) -> BigUInt {
+        BigUInt(1_000) << exponent
     }
 
-    func states(_ statuses: [CoinageTransferStatus]) throws -> [PublicKey: CoinageTransferState] {
-        var result: [PublicKey: CoinageTransferState] = [:]
-        for (offset, status) in statuses.enumerated() {
-            let publicKey = Data(repeating: UInt8(offset + 1), count: 32)
-            let coin = Coin(
-                exponent: Int16(offset),
-                derivationIndex: CoinageKeyIndex(installation: installation, item: DerivationIndex(offset)),
-                age: 0,
-                publicKey: publicKey
+    static func states(_ statuses: [CoinageTransferStatus]) -> [CoinagePaymentState] {
+        statuses.enumerated().map { offset, status in
+            CoinagePaymentState(
+                account: Data(repeating: UInt8(offset + 1), count: 32),
+                value: value(ofExponent: offset),
+                status: status
             )
-            result[publicKey] = CoinageTransferState(coin: coin, status: status)
         }
-        return result
     }
 }

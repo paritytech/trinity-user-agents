@@ -2,7 +2,7 @@ import Foundation
 @preconcurrency import Products
 import TrUAPIHost
 
-enum TrUAPIWorkerError: Error, CustomStringConvertible {
+enum TrUAPIWorkerError: Swift.Error, CustomStringConvertible {
     case noWorker(ProductId)
 
     var description: String {

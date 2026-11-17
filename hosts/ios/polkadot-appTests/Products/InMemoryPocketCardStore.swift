@@ -10,7 +10,7 @@ import TrUAPIHost
 /// core's card stream behaves, so a test can assert that a surface followed a
 /// write nobody announced.
 actor InMemoryPocketCardStore: PocketCardStore {
-    struct Unavailable: Error {}
+    struct Unavailable: Swift.Error {}
 
     private var stored: [PocketCardEntry]
     private var faces: [PocketCardKey: RendererNode] = [:]

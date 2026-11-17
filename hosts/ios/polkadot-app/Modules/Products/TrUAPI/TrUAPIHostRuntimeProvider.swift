@@ -30,17 +30,26 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
+extension TrUAPIHostRuntimeProviding {
+    /// The shared runtime's coinage layer, once its start has returned.
+    func coinage() async throws -> NativeCoinage {
+        try await sharedRuntime().coinage()
+    }
+}
+
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
-/// build bundles + the local session secret, activates the local session once,
-/// and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once a session secret exists.
+/// build bundles + the local session secret + the coinage config, activates the
+/// local session once, and caches it. Lazy so startup is not blocked and the
+/// runtime is only assembled once a session secret exists. The coinage config
+/// carries the wallet the app's own engine kept, which the core takes over the
+/// first time it starts, so whichever caller builds the runtime builds it with it.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
-    private let backedUpInstallation = TrUAPIBackedUpInstallation()
+    private let coinageConfig: CoinageRuntimeConfigProviding
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
@@ -52,16 +61,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// first use, which is long after, so the manager is in place by then.
     private var workerManager: (any TrUAPIWorkerManaging)?
 
-    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
-    /// it is built, or right away if it already is.
-    private var paymentsBridge: RustPaymentsBridge?
-
     init(
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
+        coinageConfig: CoinageRuntimeConfigProviding,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
     ) {
@@ -70,6 +76,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
+        self.coinageConfig = coinageConfig
         self.tldProvider = tldProvider
         self.logger = logger
     }
@@ -91,34 +98,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.workerManager = workerManager
     }
 
-    /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
-    /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
-        backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
-        let productsRouter = confirmationRouterFacade.productsRouter
-        let bridge = RustPaymentsBridge(
-            payments: ProductPayments(
-                support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
-                privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
-                recyclingStrategy: CoinageRecyclingStrategyStore.shared
-            ),
-            logger: logger
-        )
-
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard paymentsBridge == nil else { return }
-        paymentsBridge = bridge
-        if let cachedRuntime {
-            bridge.install(on: cachedRuntime)
-        }
-    }
-
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -133,7 +112,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            databaseDirectory: Self.coreDatabaseDirectory(),
+            coinage: coinageConfig.coinageConfig()
         )
 
         let chainConnections = TrUAPIV2SpecConnectionPool(
@@ -149,7 +129,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
-            backedUpInstallation: backedUpInstallation,
             encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
@@ -168,7 +147,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade,
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
-        paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -195,7 +173,8 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
-        databaseDirectory: String
+        databaseDirectory: String,
+        coinage: CoinageConfig? = nil
     ) throws -> HostRuntimeConfig {
         let bundle = Bundle.main
         let version = bundle.appVersion.map { version in
@@ -211,7 +190,8 @@ extension TrUAPIHostRuntimeProvider {
             databaseDirectory: databaseDirectory,
             pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            localSessionLiteUsername: liteUsername,
+            coinage: coinage
         )
     }
 

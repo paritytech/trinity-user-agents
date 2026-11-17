@@ -8,33 +8,25 @@ import Testing
 /// Picking a coin out: what it says about itself, where it goes, and how a tap finds it.
 @Suite("Coin trace")
 struct CoinageTraceTests {
-    private static let installation = try! CoinageInstallationId(value: Data(repeating: 3, count: 32))
+    private static let installation = Data(repeating: 3, count: 32)
 
-    private func keyIndex(_ item: Int) -> CoinageKeyIndex {
-        CoinageKeyIndex(installation: Self.installation, item: DerivationIndex(item))
-    }
-
-    private func coin(_ item: Int, exponent: Int16 = 4, fungibility: UInt8?, hops: [Hop]) -> Coin {
-        Coin(
+    private func holding(
+        _ kind: CoinageHolding.Kind,
+        _ index: UInt32,
+        exponent: Int16,
+        fungibility: UInt8?,
+        hops: Int = 0,
+        availability: CoinageAvailability
+    ) -> CoinageHolding {
+        CoinageHolding(
+            kind: kind,
+            installation: Self.installation,
+            index: index,
             exponent: exponent,
-            derivationIndex: keyIndex(item),
-            age: 0,
-            recyclerFungibility: fungibility,
+            availability: availability,
             hops: hops,
-            publicKey: Data(repeating: UInt8(item), count: 32)
-        )
-    }
-
-    private func voucher(_ item: Int, fungibility: UInt8) -> Voucher {
-        Voucher(
-            exponent: 6,
-            derivationIndex: keyIndex(item),
-            allocatedAt: .distantPast,
-            readyAt: .distantPast,
-            remoteState: .inRecycler(.init(index: 0, membersCount: 10)),
-            recyclerFungibility: fungibility,
-            maxRecyclerFungibility: 100,
-            publicKey: Data(repeating: 9, count: 32)
+            isBatchUnloaded: false,
+            fungibility: fungibility
         )
     }
 
@@ -44,15 +36,10 @@ struct CoinageTraceTests {
 
     @Test("A coin that cleared here is told its hops and the grade its clearing earned")
     func clearedCoinIsGraded() throws {
-        let holdings = CoinageHoldings(
-            coins: [.init(
-                coin: coin(1, fungibility: 100, hops: [.split(fanout: 4), .transfer(bundleSize: 3)]),
-                availability: .availableNow
-            )],
-            vouchers: []
-        )
+        let cleared = holding(.coin, 1, exponent: 4, fungibility: 100, hops: 2, availability: .availableNow)
+        let holdings = CoinageHoldings(rows: [cleared])
 
-        let trace = try #require(traces(holdings)["coin-\(keyIndex(1))"])
+        let trace = try #require(traces(holdings)[cleared.id])
 
         #expect(trace.value == "2^4")
         #expect(trace.partition == .ready)
@@ -62,15 +49,10 @@ struct CoinageTraceTests {
 
     @Test("A coin received from someone else has no clearing to grade")
     func receivedCoinIsUnknown() throws {
-        let holdings = CoinageHoldings(
-            coins: [.init(
-                coin: coin(2, fungibility: nil, hops: [.transfer(bundleSize: 1), .transfer(bundleSize: 2)]),
-                availability: .gainingPrivacy
-            )],
-            vouchers: []
-        )
+        let received = holding(.coin, 2, exponent: 4, fungibility: nil, hops: 2, availability: .notReady)
+        let holdings = CoinageHoldings(rows: [received])
 
-        let trace = try #require(traces(holdings)["coin-\(keyIndex(2))"])
+        let trace = try #require(traces(holdings)[received.id])
 
         #expect(trace.partition == .clearing)
         #expect(trace.hops == 2)
@@ -79,12 +61,10 @@ struct CoinageTraceTests {
 
     @Test("A holding still clearing has made no hops and is graded as it stands")
     func clearingHoldingHasNoHops() throws {
-        let holdings = CoinageHoldings(
-            coins: [],
-            vouchers: [.init(voucher: voucher(3, fungibility: 0), availability: .pending)]
-        )
+        let clearing = holding(.voucher, 3, exponent: 6, fungibility: 0, availability: .notReady)
+        let holdings = CoinageHoldings(rows: [clearing])
 
-        let trace = try #require(traces(holdings)["voucher-\(keyIndex(3))"])
+        let trace = try #require(traces(holdings)[clearing.id])
 
         #expect(trace.value == "2^6")
         #expect(trace.hops == 0)
@@ -113,10 +93,10 @@ struct CoinageTraceTests {
 
     @Test("The traces are keyed the way the coins are, so a tap finds its own")
     func tracesMatchTheCoins() {
-        let holdings = CoinageHoldings(
-            coins: [.init(coin: coin(4, fungibility: 80, hops: []), availability: .availableNow)],
-            vouchers: [.init(voucher: voucher(5, fungibility: 20), availability: .pending)]
-        )
+        let holdings = CoinageHoldings(rows: [
+            holding(.coin, 4, exponent: 4, fungibility: 80, availability: .availableNow),
+            holding(.voucher, 5, exponent: 6, fungibility: 20, availability: .notReady)
+        ])
 
         let ids = Set(CoinageBreakdownFactory.stripCoins(CoinageBreakdownFactory.rows(from: holdings)).map(\.id))
 

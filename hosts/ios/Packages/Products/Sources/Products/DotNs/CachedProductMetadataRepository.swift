@@ -1,7 +1,7 @@
 import Foundation
 import TrUAPIHost
 
-public enum ProductManifestCacheError: Error, Equatable {
+public enum ProductManifestCacheError: Swift.Error, Equatable {
     case recordNotCached(name: String, key: String)
 }
 

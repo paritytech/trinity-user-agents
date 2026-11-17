@@ -83,6 +83,7 @@ extension ServiceCoordinator {
     func stopAll() {
         stopInteractive()
         durableTransactionEngine.txService.stop()
+        coinageService.stop()
 
         // The workers and the product behind an opened card belong to this
         // session's runtime provider, so they go with the coordinator. Here
@@ -95,25 +96,7 @@ extension ServiceCoordinator {
 
 private extension ServiceCoordinator {
     func runDurabilityStart() async -> Bool {
-        let chainRegistry = ChainRegistryFacade.sharedRegistry
-        let mainAssetId = AppConfig.Assets.mainAsset
-
-        guard
-            let chain = chainRegistry.getChain(for: mainAssetId.chainId),
-            let asset = chain.asset(for: mainAssetId.assetId)
-        else {
-            assertionFailure()
-            return false
-        }
-
-        do {
-            try await coinageService.setup(with: asset)
-        } catch {
-            logger.error("Coinage service setup failed: \(error)")
-            return false
-        }
-
-        // After coinage setup, which releases uncommitted handoffs the first pass must not see.
+        coinageService.start()
         durableTransactionEngine.txService.start()
         return true
     }

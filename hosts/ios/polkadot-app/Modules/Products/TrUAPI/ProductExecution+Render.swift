@@ -13,7 +13,7 @@ extension TrUAPIProductExecutionProtocol {
         _ request: ProductRendererRenderRequest,
         until deadline: ContinuousClock.Instant,
         retryEvery interval: Duration
-    ) async throws -> AsyncThrowingStream<RendererNode, Error> {
+    ) async throws -> AsyncThrowingStream<RendererNode, Swift.Error> {
         while true {
             do {
                 return try render(request)

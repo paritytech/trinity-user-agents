@@ -61,7 +61,7 @@ private extension RendererNode {
 private struct StubFaceStreams: PocketFaceStreaming {
     let faces: [RendererNode]
 
-    func renderFaces(for _: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
+    func renderFaces(for _: PocketCardKey) -> AsyncThrowingStream<RendererNode, Swift.Error> {
         AsyncThrowingStream { continuation in
             faces.forEach { continuation.yield($0) }
             continuation.finish()

@@ -35,28 +35,28 @@ struct CoinageBreakdownOrderTests {
 
     @Test("A single unload is scored on its recycler alone")
     func singleUnloadHasNoPenalty() {
-        let coin = coin(age: 0, fungibility: 12)
+        let coin = coin(index: 0, fungibility: 12)
 
         #expect(CoinageBreakdownFactory.bucket(for: coin) == 4)
     }
 
     @Test("A batch unload is pushed down the ladder")
     func batchUnloadIsPenalised() {
-        let coin = coin(age: 1, fungibility: 12)
+        let coin = coin(index: 0, fungibility: 12, isBatchUnloaded: true)
 
         #expect(CoinageBreakdownFactory.bucket(for: coin) == 4 + CoinageStatusMetrics.batchUnloadPenalty)
     }
 
     @Test("The penalty cannot push a coin past the end of the ladder")
     func penaltyClamps() {
-        let coin = coin(age: 1, fungibility: 0)
+        let coin = coin(index: 0, fungibility: 0, isBatchUnloaded: true)
 
         #expect(CoinageBreakdownFactory.bucket(for: coin) == CoinageStatusMetrics.maximumBucket)
     }
 
     @Test("A coin with no recycler record has no bucket")
     func unknownHistoryHasNoBucket() {
-        let coin = coin(age: 3, fungibility: nil, hops: [.transfer(bundleSize: 4)])
+        let coin = coin(index: 0, fungibility: nil, hops: 1)
 
         #expect(CoinageBreakdownFactory.bucket(for: coin) == nil)
     }
@@ -65,15 +65,13 @@ struct CoinageBreakdownOrderTests {
 
     @Test("Within one denomination: unknown histories lead, then known levels least fungible first")
     func orderWithinADenomination() {
-        let holdings = CoinageHoldings(
-            coins: [
-                holding(coin(age: 2, fungibility: nil, hops: hops(2))),
-                holding(coin(age: 5, fungibility: nil, hops: hops(5))),
-                holding(coin(age: 0, fungibility: 100)),
-                holding(coin(age: 0, fungibility: 20))
-            ],
-            vouchers: [holding(voucher(fungibility: 50))]
-        )
+        let holdings = CoinageHoldings(rows: [
+            coin(index: 0, fungibility: nil, hops: 2),
+            coin(index: 1, fungibility: nil, hops: 5),
+            coin(index: 2, fungibility: 100),
+            coin(index: 3, fungibility: 20),
+            voucher(index: 4, fungibility: 50)
+        ])
 
         let expected: [Placement] = [
             .unknownHistory(5),
@@ -88,27 +86,21 @@ struct CoinageBreakdownOrderTests {
 
     @Test("Denomination leads, largest first")
     func denominationLeads() {
-        let holdings = CoinageHoldings(
-            coins: [
-                holding(coin(exponent: 3, age: 0, fungibility: 20)),
-                holding(coin(exponent: 9, age: 0, fungibility: 20)),
-                holding(coin(exponent: 6, age: 0, fungibility: 20))
-            ],
-            vouchers: []
-        )
+        let holdings = CoinageHoldings(rows: [
+            coin(index: 0, exponent: 3, fungibility: 20),
+            coin(index: 1, exponent: 9, fungibility: 20),
+            coin(index: 2, exponent: 6, fungibility: 20)
+        ])
 
         #expect(CoinageBreakdownFactory.rows(from: holdings).map(\.exponent) == [9, 6, 3])
     }
 
     @Test("Denomination outranks fungibility, which only separates coins worth the same")
     func denominationOutranksFungibility() {
-        let holdings = CoinageHoldings(
-            coins: [
-                holding(coin(exponent: 2, age: 4, fungibility: nil, hops: hops(4))),
-                holding(coin(exponent: 9, age: 0, fungibility: 100))
-            ],
-            vouchers: []
-        )
+        let holdings = CoinageHoldings(rows: [
+            coin(index: 0, exponent: 2, fungibility: nil, hops: 4),
+            coin(index: 1, exponent: 9, fungibility: 100)
+        ])
 
         // The small coin nobody can trace used to lead on being the least fungible thing in the
         // list. It is still the least fungible; it is no longer what the eye meets first.
@@ -219,7 +211,7 @@ private extension CoinageBreakdownOrderTests {
     }
 
     /// One installation for the whole suite: ordering only ever compares items within it.
-    static let installation = try! CoinageInstallationId(value: Data(repeating: 7, count: 32))
+    static let installation = Data(repeating: 7, count: 32)
 
     /// Twenty states of one denomination, generated most fungible first: the order a list is
     /// built in has nothing to do with the order it should be drawn in.
@@ -266,48 +258,35 @@ private extension CoinageBreakdownOrderTests {
         )
     }
 
-    func keyIndex(_ item: DerivationIndex) -> CoinageKeyIndex {
-        CoinageKeyIndex(installation: Self.installation, item: item)
-    }
-
-    func hops(_ count: Int) -> [Hop] {
-        Array(repeating: .transfer(bundleSize: 1), count: count)
-    }
-
     func coin(
+        index: UInt32,
         exponent: Int16 = 5,
-        age: Int16,
         fungibility: UInt8?,
-        hops: [Hop] = []
-    ) -> Coin {
-        Coin(
+        hops: Int = 0,
+        isBatchUnloaded: Bool = false
+    ) -> CoinageHolding {
+        CoinageHolding(
+            kind: .coin,
+            installation: Self.installation,
+            index: index,
             exponent: exponent,
-            derivationIndex: keyIndex(DerivationIndex(abs(Int(age)) + Int(exponent) * 100)),
-            age: age,
-            recyclerFungibility: fungibility,
+            availability: .availableNow,
             hops: hops,
-            publicKey: Data(repeating: UInt8(truncatingIfNeeded: Int(exponent)), count: 32)
+            isBatchUnloaded: isBatchUnloaded,
+            fungibility: fungibility
         )
     }
 
-    func voucher(exponent: Int16 = 5, fungibility: UInt8) -> Voucher {
-        Voucher(
+    func voucher(index: UInt32, exponent: Int16 = 5, fungibility: UInt8) -> CoinageHolding {
+        CoinageHolding(
+            kind: .voucher,
+            installation: Self.installation,
+            index: index,
             exponent: exponent,
-            derivationIndex: keyIndex(900),
-            allocatedAt: .distantPast,
-            readyAt: .distantPast,
-            remoteState: .inRecycler(.init(index: 0, membersCount: 10)),
-            recyclerFungibility: fungibility,
-            maxRecyclerFungibility: 100,
-            publicKey: Data(repeating: 9, count: 32)
+            availability: .availableNow,
+            hops: 0,
+            isBatchUnloaded: false,
+            fungibility: fungibility
         )
-    }
-
-    func holding(_ coin: Coin) -> CoinageHoldings.CoinHolding {
-        .init(coin: coin, availability: .availableNow)
-    }
-
-    func holding(_ voucher: Voucher) -> CoinageHoldings.VoucherHolding {
-        .init(voucher: voucher, availability: .availableNow)
     }
 }
