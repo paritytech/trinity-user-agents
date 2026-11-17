@@ -9,7 +9,7 @@ use subxt::{Metadata, utils::H256};
 
 use super::{
 	Asset, ChainConfig, ChainParams, CoinSecret, Exponent, PrivacyPolicy, PurseId, Snapshot,
-	chain::{AliasState, ChainCoin, CoinageChain, RingPlace, RingPosition},
+	chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace, RingPosition},
 	plugins::{PersonhoodSource, RegistryWriter, Seed},
 	ledger::{
 		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
@@ -161,10 +161,17 @@ pub struct FakeChain {
 	pub unplaced: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPosition)>>,
 	/// The state of each alias that has one.
 	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
+	/// The unloaded count of each ring, by exponent and ring; a ring with
+	/// none listed reads as a runtime that keeps no count.
+	pub unloaded: parking_lot::Mutex<HashMap<(i8, u32), u32>>,
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
 	/// What each account holds of the external asset; none for the rest.
 	pub funds: parking_lot::Mutex<HashMap<[u8; 32], u128>>,
+	/// The transaction that emptied each account, and the block it is in.
+	pub emptied: parking_lot::Mutex<HashMap<[u8; 32], Emptying>>,
+	/// The finalized height, when a test moves it from block 10.
+	pub finalized: parking_lot::Mutex<Option<u64>>,
 }
 
 impl FakeChain {
@@ -180,7 +187,8 @@ impl FakeChain {
 #[async_trait::async_trait]
 impl CoinageChain for FakeChain {
 	async fn heads(&self) -> Result<Heads, StorageWatchError> {
-		let block = HashAndNumber { hash: H256([1; 32]), number: 10 };
+		let number = self.finalized.lock().unwrap_or(10);
+		let block = HashAndNumber { hash: H256([1; 32]), number };
 		Ok(Heads { finalized: block, best: block })
 	}
 
@@ -224,6 +232,11 @@ impl CoinageChain for FakeChain {
 		Ok(Vec::new())
 	}
 
+	async fn unloaded_at(&self, _: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		self.check()?;
+		Ok(self.unloaded.lock().get(&(exponent, ring)).copied())
+	}
+
 	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
 		Ok(vec![false; tokens.len()])
 	}
@@ -235,6 +248,17 @@ impl CoinageChain for FakeChain {
 	async fn funds_at(&self, _: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
 		self.check()?;
 		Ok(self.funds.lock().get(&account).copied().unwrap_or(0))
+	}
+
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError> {
+		self.check()?;
+		let emptied = self.emptied.lock().get(&account).copied();
+		Ok(emptied.filter(|emptying| since < emptying.block && emptying.block <= at.number))
 	}
 }
 
