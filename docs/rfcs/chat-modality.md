@@ -280,6 +280,21 @@ enum MessageContent {
     // A line about the room that the Host draws with its own strings. The
     // origin is the participant who acted: "Ana added Ben".
     RoomEvent(RoomEvent),
+
+    // A call. The origin is the caller and the time is the time of the
+    // offer. Only the `CallSignal`s of its participants change it.
+    Call(Call),
+}
+
+struct Call {
+    video: bool,
+    // Only admins send media; the others listen.
+    broadcast: bool,
+    // Who is in the call now.
+    participants: Vec<ChatParticipantId>,
+    answered_at: Option<Timestamp>,
+    ended_at: Option<Timestamp>,
+    ended_by: Option<ChatParticipantId>,
 }
 
 enum RoomEvent {
@@ -496,6 +511,22 @@ enum UserChatAction {
     EditRoom(RoomMetadata),
     // The user started (true) or stopped (false) typing.
     Typing(bool),
+
+    // A step of the call of a `Call` message. `payload` is for the call
+    // transport, and the Host does not read it.
+    CallSignal {
+        message_id: MessageId,
+        signal: CallSignalKind,
+        payload: Vec<u8>,
+    },
+}
+
+enum CallSignalKind {
+    Answer,
+    Join,
+    Leave,
+    // Also a decline.
+    End,
 }
 
 // Return type varies by action:
@@ -909,6 +940,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 20. **Records between Products**: One record for the Products of a room, with ids bound to their origin and a rule for what a reader does not know.
 21. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
 22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
+23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
 
 #### Non-Functional Requirements
 
@@ -962,7 +994,9 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 1. **Payment messages**: The payment button in chat input is in scope, but the full payment message type and rendering is a separate RFC. The `MessageContent` enum may need a `Payment` variant in the future.
 
-2. **Custom message rendering**: `Custom(CustomMessageType, CustomMessagePayload)` messages use the existing `SerializedCustomChatMessage` rendering system. The details of that system are outside the scope of this RFC.
+2. **Call transport**: A call needs a signalling and a media path in the Host. This RFC defines only the call row and its signals.
+
+3. **Custom message rendering**: `Custom(CustomMessageType, CustomMessagePayload)` messages use the existing `SerializedCustomChatMessage` rendering system. The details of that system are outside the scope of this RFC.
 
 ## References
 
