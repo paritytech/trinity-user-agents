@@ -358,6 +358,8 @@ enum UserChatAction {
     MessageDeleted {
         message_id: MessageId
     }
+    // The user started (true) or stopped (false) typing.
+    Typing(bool),
 }
 
 // Return type varies by action:
@@ -583,7 +585,50 @@ Products can customize the participant list. The default is two participants: th
 ```rust
 PersonId = u32
 
-enum ChatParticipant {
+struct ChatParticipant {
+    id: ChatParticipantId,
+    kind: ChatParticipantKind,
+    // Shown over what the Host infers from `kind`.
+    name: Option<String>,
+    avatar: Option<ResourceUri>,
+    about: Option<String>,
+    birthday: Option<Date>,
+    links: Vec<String>,
+    // A name color and a profile color that every member sees.
+    colors: Option<ParticipantColors>,
+    presence: Option<Presence>,
+}
+
+struct Presence {
+    status: PresenceStatus,
+    // When the status last changed: the "last seen" time of `Offline`.
+    since: Timestamp,
+}
+
+enum PresenceStatus {
+    Online,
+    Offline,
+}
+
+struct ParticipantColors {
+    name: u32,     // RGB
+    profile: u32,  // RGB
+}
+
+struct Date {
+    year: Option<u16>,
+    month: u8,
+    day: u8,
+}
+
+// Who may see a field of a participant.
+enum Audience {
+    Everyone,
+    Contacts,
+    Nobody,
+}
+
+enum ChatParticipantKind {
     // Verified person with a numeric ID from the People Registry.
     // Has access to Ring VRF proofs.
     Person(PersonId),
@@ -599,13 +644,12 @@ enum ChatParticipant {
     // Another Product acting as a participant.
     Product(ProductId),
 
-    // Arbitrary participant with explicit appearance.
-    Custom {
-        nickname: String,
-        avatar: ResourceUri,
-    },
+    // Arbitrary participant. `name` and `avatar` give its appearance.
+    Custom,
 }
 ```
+
+A participant sets an `Audience` for its `avatar`, `about`, `birthday`, `links` and `presence`. Its Product sends each field only to that audience, so a reader that ignores the audience does not get the field.
 
 #### 8.2 Methods
 
@@ -622,6 +666,9 @@ fn handle_chat_participants(
         ids: Vec<ChatParticipantId>
     ) -> Vec<ChatParticipant>,
 );
+
+// The participants who type in the room now. An empty list ends the line.
+fn on_chat_typing(room_id: RoomId, participants: Vec<ChatParticipantId>);
 ```
 
 ### 9. Participant Actions
@@ -703,7 +750,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 10. **Emoji reactions**: Place and remove emoji reactions on messages. Aggregated counts displayed inline; detailed reaction lists available on demand.
 11. **Unread counter**: Track and display unread message count per room — either Host-derived or Product-controlled.
 12. **Message status**: Track message lifecycle (preparing, delivered, read).
-13. **Typing indicator**: Preview text with `ongoing` flag for "User is typing..." style animations.
+13. **Typing indicator**: Preview text with `ongoing` flag for "User is typing..." style animations, and the participants who type in a room.
 14. **Participants**: List, paginate, and resolve participants. Support multiple identity types (Person, LitePerson, Contact, Product, Custom).
 15. **Per-message actions**: Configurable long-press menu — built-in actions (copy, reply, edit, react) extensible with Product-defined actions.
 16. **Toolbar actions**: Product-defined action buttons in the chat screen header.
