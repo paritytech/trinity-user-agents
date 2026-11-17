@@ -180,6 +180,13 @@ struct RoomMetadata {
     parent: Option<RoomId>,
     position: u32,
     settings: RoomSettings,
+    pinned: Vec<PinnedMessage>,
+}
+
+struct PinnedMessage {
+    message_id: MessageId,
+    by: ChatParticipantId,
+    until: Option<Timestamp>,
 }
 
 enum RoomKind {
@@ -414,6 +421,7 @@ enum RoomEvent {
     AvatarChanged,
     DescriptionChanged,
     SettingsChanged,
+    MessagePinned(MessageId),
     // Each Product writes it when it sees the change. A user may hide it
     // on a device.
     SecurityKeyChanged,
@@ -668,6 +676,9 @@ enum UserChatAction {
     },
     // The user opened the view-once media of a message.
     Opened { message_id: MessageId },
+    // A pin that every member sees, until a time or the unpin.
+    PinMessage { message_id: MessageId, until: Option<Timestamp> },
+    UnpinMessage { message_id: MessageId },
     // The user changed the metadata or the settings of the room.
     EditRoom(RoomMetadata),
     // The user started (true) or stopped (false) typing.
@@ -1236,6 +1247,8 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 3. **Text size**: Long pastes, code blocks and Markdown can be over 16 KiB. Should the limit be 64 KiB, or should a longer text go as a text file?
 
 4. **Visible decline**: This RFC hides a decline from the requester. Should every Product show it instead?
+
+5. **Pinned messages**: How many pinned messages may one room hold? Chat apps range from three to no limit.
 
 ## Related Discussions
 
