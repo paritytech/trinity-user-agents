@@ -139,6 +139,30 @@ enum ChatRoomRegistrationErr {
 }
 ```
 
+#### 2.4 Links and Invites
+
+A chat link is a `Deeplink` that the Host opens in the Product that owns the room.
+
+```rust
+enum ChatLink {
+    Room(RoomId),
+    Message(RoomId, MessageId),
+    Call(RoomId, MessageId),
+    Invite(Invite),
+}
+
+struct Invite {
+    room_id: RoomId,
+    // Proves the invite to the members that manage the room.
+    token: Vec<u8>,
+    expires_at: Option<Timestamp>,
+    max_uses: Option<u32>,
+}
+```
+
+- A user who opens an invite sends `JoinRequest`. When the room approves joins, a member that manages it answers with `AnswerJoin`. A request waits until such a member is online.
+- A user sets an `Audience` (8.1) for who may add it to a room. An add by anyone else is a request (`RoomRequest::Incoming`) that the user answers.
+
 ### 3. Room Metadata & Preview
 
 Products control how rooms appear in the chat list and inside the chat screen.
@@ -185,6 +209,8 @@ struct RoomSettings {
     slow_mode: u32,
     // A text that a member can read after the join.
     welcome: Option<String>,
+    // A join by invite waits for `AnswerJoin`.
+    approve_joins: bool,
     // A sender sets `expires_at` this many milliseconds after the send.
     message_timer: Option<u64>,
     // A reader drops a message from a participant who is not an admin.
@@ -352,6 +378,7 @@ enum RoomEvent {
     Created,
     MemberAdded(ChatParticipantId),
     MemberRemoved(ChatParticipantId),
+    MemberJoined,
     MemberLeft,
     RequestAccepted,
     Renamed(String),
@@ -633,6 +660,12 @@ enum UserChatAction {
         signal: CallSignalKind,
         payload: Vec<u8>,
     },
+
+    // Links and invites (2.4). A reset is a revoke, then a create.
+    CreateInvite { expires_at: Option<Timestamp>, max_uses: Option<u32> },
+    RevokeInvite { token: Vec<u8> },
+    JoinRequest(Invite),
+    AnswerJoin { participant_id: ChatParticipantId, accept: bool },
 }
 
 enum CallSignalKind {
@@ -648,6 +681,7 @@ enum CallSignalKind {
 // - EditMessage, ReactionPlaced, ReactionRemoved → void
 enum UserChatActionResult {
     MessageCreated(Message),
+    InviteCreated(Invite),
     Acknowledged,
 }
 
@@ -1096,9 +1130,10 @@ This RFC follows the same transport and serialization rules as the Host API prot
 22. **Room actions**: Pin, archive, mute, mark unread, clear and leave a room, and answer or block a request, with the same state on all the user's devices.
 23. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 24. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
-25. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
-26. **Stories**: Posts that expire, for an audience, with views and replies.
-27. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
+25. **Links and invites**: Links to a room, a message, a call or an invite, join requests, and consent before an add.
+26. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+27. **Stories**: Posts that expire, for an audience, with views and replies.
+28. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
