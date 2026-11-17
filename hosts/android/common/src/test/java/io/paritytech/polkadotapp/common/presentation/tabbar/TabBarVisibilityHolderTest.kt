@@ -1,5 +1,10 @@
 package io.paritytech.polkadotapp.common.presentation.tabbar
 
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -97,6 +102,40 @@ class TabBarVisibilityHolderTest {
         holder.release(Chat)
 
         assertEquals(TabBarMode.Main, holder.mode.value)
+    }
+
+    @Test
+    fun `a screen that pins while the last one is leaving keeps the bar through the swap`() = runTest {
+        val settled = settledModes()
+        holder.pin(Main, TabBarPin.Main)
+        runCurrent()
+
+        holder.release(Main)
+        advanceTimeBy(100)
+        holder.pin(Chat, TabBarPin.Tucked)
+        advanceTimeBy(1_000)
+
+        assertEquals(listOf(TabBarMode.Main, TabBarMode.TuckedOverScreen(Chat)), settled)
+    }
+
+    @Test
+    fun `the bar leaves once no screen has pinned it for a while`() = runTest {
+        val settled = settledModes()
+        holder.pin(Main, TabBarPin.Main)
+        runCurrent()
+
+        holder.release(Main)
+        advanceTimeBy(299)
+        assertEquals(TabBarMode.Main, settled.last())
+
+        advanceTimeBy(2)
+        assertEquals(TabBarMode.Absent, settled.last())
+    }
+
+    private fun TestScope.settledModes(): List<TabBarMode> {
+        val settled = mutableListOf<TabBarMode>()
+        backgroundScope.launch { holder.settledMode.collect { settled += it } }
+        return settled
     }
 
     private companion object {

@@ -46,7 +46,8 @@ class RootNavBarViewModel @Inject constructor(
     scanPanelRequests: ScanPanelRequests,
 ) : BaseViewModel() {
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
-    val barMode: StateFlow<TabBarMode> = tabBarVisibilityHolder.mode
+    val barMode: StateFlow<TabBarMode> = tabBarVisibilityHolder.settledMode
+        .stateInBackground(started = SharingStarted.Eagerly, initialValue = tabBarVisibilityHolder.mode.value)
     val openApps: StateFlow<ImmutableList<TabInfo>> = productSessionController.openTabs
         .map { it.toImmutableList() }
         .stateInBackground(started = SharingStarted.Eagerly, initialValue = persistentListOf())

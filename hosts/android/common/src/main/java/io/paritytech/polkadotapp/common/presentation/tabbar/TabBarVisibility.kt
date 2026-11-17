@@ -8,10 +8,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.withResumed
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.transformLatest
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Which [TabBarMode] the bar is in. It exists only on screens that pin it via [ForceShowTabBar] (Main) or
@@ -24,6 +28,12 @@ class TabBarVisibilityHolder @Inject constructor() {
 
     val mode: StateFlow<TabBarMode>
         field = MutableStateFlow<TabBarMode>(TabBarMode.Absent)
+
+    // The next screen pins only once it resumes, after the one it replaces has already let go.
+    val settledMode: Flow<TabBarMode> = mode.transformLatest {
+        if (it == TabBarMode.Absent) delay(ScreenSwapGrace)
+        emit(it)
+    }
 
     @Synchronized
     fun pin(key: Any, pin: TabBarPin) {
@@ -49,6 +59,10 @@ class TabBarVisibilityHolder @Inject constructor() {
     }
 
     private fun Map<Any, TabBarPin>.lastKeyPinning(pin: TabBarPin): Any? = entries.lastOrNull { it.value == pin }?.key
+
+    private companion object {
+        val ScreenSwapGrace = 300.milliseconds
+    }
 }
 
 enum class TabBarPin { Main, Tucked, Hidden }
