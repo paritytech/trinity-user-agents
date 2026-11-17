@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "902ebc97af296f8b";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4ca6e8043e12e53d";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -312,6 +312,24 @@ pub const COIN_PAYMENT_REFUND: MethodIds = MethodIds {
 pub const COIN_PAYMENT_LISTEN_FOR_PAYMENT: MethodIds = MethodIds {
     trait_id: 5,
     method_id: 8,
+};
+
+/// Wire discriminants for `coin_payment_cheque_status`.
+pub const COIN_PAYMENT_CHEQUE_STATUS: MethodIds = MethodIds {
+    trait_id: 5,
+    method_id: 9,
+};
+
+/// Wire discriminants for `coin_payment_cancel_cheque`.
+pub const COIN_PAYMENT_CANCEL_CHEQUE: MethodIds = MethodIds {
+    trait_id: 5,
+    method_id: 10,
+};
+
+/// Wire discriminants for `coin_payment_list_purses`.
+pub const COIN_PAYMENT_LIST_PURSES: MethodIds = MethodIds {
+    trait_id: 5,
+    method_id: 11,
 };
 
 /// Wire discriminants for `entropy_derive`.
@@ -917,6 +935,18 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "coin_payment_listen_for_payment",
         kind: WireKind::Subscription(COIN_PAYMENT_LISTEN_FOR_PAYMENT),
+    },
+    WireEntry {
+        method: "coin_payment_cheque_status",
+        kind: WireKind::Subscription(COIN_PAYMENT_CHEQUE_STATUS),
+    },
+    WireEntry {
+        method: "coin_payment_cancel_cheque",
+        kind: WireKind::Subscription(COIN_PAYMENT_CANCEL_CHEQUE),
+    },
+    WireEntry {
+        method: "coin_payment_list_purses",
+        kind: WireKind::Request(COIN_PAYMENT_LIST_PURSES),
     },
     WireEntry {
         method: "entropy_derive",
