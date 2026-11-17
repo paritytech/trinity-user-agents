@@ -1,12 +1,5 @@
 ---
-"@parity/truapi": major
+"@parity/truapi": minor
 ---
 
-The core reports funding facts for telemetry as `truapi.funding.*` events from a registry of allowed names and tags, and funding's warnings leave as registered `truapi.funding.*` markers without the session's intent.
-
-Breaking for native hosts:
-
-- `NativeFundingCallbacks` gains `funding_event(event)`. A `FundingEvent` carries its name, a level, a random
-  `session_ref`, closed-value tags and numeric measures: amounts and fees as buckets, a country as its region, never an
-  intent, id, address, exact amount or URL. Forward it only from builds that are not released.
-- `FundingPlatform` gains `funding_event(event)`, which does nothing by default.
+Funding sessions log telemetry facts as exported `truapi.funding.*` markers: the overlay opening and closing, quotes settling, the provider chosen and taking the session, milestones, warning states, the ending, cancels and provider screens. Each detail reads `funding.ref=<ref> key=value ...`, with a random per-session reference and only the keys the core's registry lists for the marker, every value from a closed set: amounts and fees as buckets, a country as its region, never an intent, id, address, exact amount, provider text or URL. An ending that is a fault logs as `truapi.funding.ended_unexpectedly` at error. Funding's warnings and errors log as registered `truapi.funding.*` markers too, none naming the session.

@@ -525,9 +525,4 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// says what, `intent` which session, `None` for `Providers`. The core has updated what the
 	/// runtime answers before it calls.
 	fn funding_changed(&self, intent: Option<String>, kind: super::funding_feed::FundingChangeKind);
-
-	/// A funding fact for telemetry, from the registry in
-	/// `truapi::funding_events`. Send it on only from builds that are not
-	/// released, and add nothing that names the session.
-	fn funding_event(&self, event: crate::platform::FundingEvent);
 }

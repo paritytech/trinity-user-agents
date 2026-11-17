@@ -803,10 +803,6 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 	) {
 		self.funding.funding_changed(Some(intent), FundingChangeKind::Quotes);
 	}
-
-	fn funding_event(&self, event: crate::platform::FundingEvent) {
-		self.funding.funding_event(event);
-	}
 }
 
 impl crate::runtime::FundingFeed for FundingCallbackPlatform {

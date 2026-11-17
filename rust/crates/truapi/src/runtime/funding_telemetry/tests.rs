@@ -1,5 +1,8 @@
 use super::*;
-use crate::{host_logic::funding::test_choice, platform::FundingQuoteRow};
+use crate::{
+	host_logic::funding::{FundingChoice, test_choice},
+	platform::FundingQuoteRow,
+};
 
 const NOW: u64 = 10_000_000;
 
@@ -7,7 +10,15 @@ fn session(direction: FundingDirection, amount: Option<u128>) -> FundingSession 
 	FundingSession::new("fs_secret".to_string(), None, direction, amount, NOW - 5_000)
 }
 
-/// One fact of each kind, so every kind is checked against the registry.
+/// A top-up that delivered.
+fn delivered() -> FundingSession {
+	let mut delivered = session(FundingDirection::In, Some(1));
+	delivered.stage = FundingStage::Delivered { credited: 1, settled_at_ms: NOW };
+	delivered
+}
+
+/// One fact of each kind, and an ending of each level, so every marker is
+/// checked against the registry.
 fn every_fact() -> Vec<FundingFact> {
 	vec![
 		FundingFact::OverlayOpened { amount_preset: true },
@@ -38,6 +49,7 @@ fn every_fact() -> Vec<FundingFact> {
 			since_prev_ms: 1,
 		},
 		FundingFact::StatusFlag { flag: Flag::TakingLonger, since_start_ms: 1 },
+		FundingFact::Ended(Ending::of(&delivered(), Region::Eu, NOW)),
 		FundingFact::Ended(Ending::of(&session(FundingDirection::In, Some(1)), Region::Eu, NOW)),
 		FundingFact::CancelRequested {
 			result: CancelOutcome::TooLate,
@@ -72,28 +84,71 @@ fn every_fact_is_registered_and_carries_nothing_identifying() {
 	let events: Vec<FundingEvent> =
 		every_fact().iter().map(|fact| fact.event(&common, "ref")).collect();
 	for event in &events {
-		assert_eq!(funding_events::check(event), Ok(()), "{} is refused", event.name);
-	}
-	let serialized = serde_json::to_string(&events).expect("events serialize");
-	for secret in ["fs_secret", "123456789", "someones-shop", "ramp.dot", "q-test"] {
-		assert!(!serialized.contains(secret), "an event carries {secret}");
+		assert_eq!(funding_events::check(event), Ok(()), "{:?} is refused", event.marker);
+		let line = format!("{}: {}", event.marker.target, event.detail());
+		for secret in ["fs_secret", "123456789", "someones-shop", "ramp.dot", "q-test"] {
+			assert!(!line.contains(secret), "a line carries {secret}: {line}");
+		}
 	}
 	assert_eq!(
 		(
-			event_tag(&events[0], "funding.product"),
-			event_tag(&events[0], "funding.provider"),
-			event_tag(&events[0], "funding.amount_bucket"),
+			events[0].tag("product"),
+			events[0].tag("provider"),
+			events[0].tag("amount_bucket"),
+			events[0].detail(),
 		),
-		(Some("third_party"), Some("other"), Some("100-250"))
+		(
+			Some("third_party"),
+			Some("other"),
+			Some("100-250"),
+			"funding.ref=ref direction=in opener=product product=third_party rail=crypto \
+			 provider=other asset=usdt network=polkadot amount_bucket=100-250 \
+			 amount_preset=true age_ms=5000"
+				.to_string(),
+		)
 	);
-	let names: Vec<&str> = events.iter().map(|event| event.name.as_str()).collect();
+	let markers: Vec<&str> = events.iter().map(|event| event.marker.target).collect();
 	let registered: Vec<&str> =
-		funding_events::FUNDING_EVENTS.iter().map(|spec| spec.name).collect();
-	assert_eq!(names, registered, "a registered event has no fact");
+		funding_events::FUNDING_EVENTS.iter().map(|spec| spec.marker.target).collect();
+	assert_eq!(markers, registered, "a registered event has no fact");
 }
 
-fn event_tag<'a>(event: &'a FundingEvent, key: &str) -> Option<&'a str> {
-	event.tags.iter().find(|tag| tag.key == key).map(|tag| tag.value.as_str())
+// Every fact's line fits what a host keeps of a marker's detail, with the
+// longest values its keys take.
+#[test]
+fn every_line_fits_a_host_detail_at_its_longest() {
+	let mut held = session(FundingDirection::Out, Some(u128::MAX));
+	held.owner_product_id = Some(ProductId::for_test("someones-shop.dot"));
+	held.provider_id = Some(ProductId::for_test(&format!("{}.dot", "p".repeat(36))));
+	held.choice = Some(FundingChoice {
+		asset: "a".repeat(PLAIN_ID_MAX_CHARS),
+		network: Some("n".repeat(PLAIN_ID_MAX_CHARS)),
+		..test_choice()
+	});
+	let common = Common::of(Some(&held), None, |_| true, NOW);
+	let long_ms = 9_999_999_999;
+	let busiest = FundingFact::QuotesSettled {
+		counts: QuoteCounts {
+			asked: 999,
+			quoted: 999,
+			refused_country: 999,
+			refused_min: 999,
+			refused_max: 999,
+			refused_unavailable: 999,
+			refused_other: 999,
+			timed_out: 999,
+			pending: 999,
+		},
+		region: Region::Unset,
+		issue: Some(FundingAmountIssue::NotEnoughBalance),
+		superseded: false,
+		first_quote_ms: Some(long_ms),
+		settle_ms: long_ms,
+	};
+	for fact in every_fact().into_iter().chain([busiest]) {
+		let event = fact.event(&common, &"r".repeat(16));
+		assert_eq!(funding_events::check(&event), Ok(()), "{}", event.detail());
+	}
 }
 
 #[test]

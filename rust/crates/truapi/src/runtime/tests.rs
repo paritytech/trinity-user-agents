@@ -2811,8 +2811,6 @@ struct RecordingFundingPlatform {
 	in_progress: Mutex<Vec<bool>>,
 	quote_lists: Mutex<Vec<(String, crate::platform::FundingQuoteList)>>,
 	withdrawn: Mutex<Vec<String>>,
-	/// The funding events the core reported, in order.
-	events: Mutex<Vec<crate::platform::FundingEvent>>,
 }
 
 impl RecordingFundingPlatform {
@@ -2829,13 +2827,7 @@ impl RecordingFundingPlatform {
 			in_progress: Mutex::new(Vec::new()),
 			quote_lists: Mutex::new(Vec::new()),
 			withdrawn: Mutex::new(Vec::new()),
-			events: Mutex::new(Vec::new()),
 		})
-	}
-
-	/// The funding events reported so far.
-	fn events(&self) -> Vec<crate::platform::FundingEvent> {
-		self.events.lock().expect("events mutex poisoned").clone()
 	}
 
 	/// The quote lists session `intent`'s host was shown, in order.
@@ -2923,10 +2915,6 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 				.push((intent, quotes)),
 			None => self.withdrawn.lock().expect("withdrawn mutex poisoned").push(intent),
 		}
-	}
-
-	fn funding_event(&self, event: crate::platform::FundingEvent) {
-		self.events.lock().expect("events mutex poisoned").push(event);
 	}
 }
 
@@ -12761,36 +12749,31 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 	"q-test".to_string()
 }
 
+type LoggedFact = crate::funding_events::FundingEvent;
+
 /// The value of tag `key` on `event`.
-fn event_tag<'a>(event: &'a crate::platform::FundingEvent, key: &str) -> Option<&'a str> {
-	event.tags.iter().find(|tag| tag.key == key).map(|tag| tag.value.as_str())
+fn event_tag<'a>(event: &'a LoggedFact, key: &str) -> Option<&'a str> {
+	event.tag(key)
 }
 
 /// The value of measure `key` on `event`.
-fn event_measure(event: &crate::platform::FundingEvent, key: &str) -> Option<u64> {
-	event
-		.measures
-		.iter()
-		.find(|measure| measure.key == key)
-		.map(|measure| measure.value)
+fn event_measure(event: &LoggedFact, key: &str) -> Option<u64> {
+	event.measure(key)
 }
 
-/// The events named `name`.
-fn events_named<'a>(
-	events: &'a [crate::platform::FundingEvent],
-	name: &str,
-) -> Vec<&'a crate::platform::FundingEvent> {
-	events.iter().filter(|event| event.name == name).collect()
+/// The events logged under `marker`.
+fn events_named<'a>(events: &'a [LoggedFact], marker: &str) -> Vec<&'a LoggedFact> {
+	events.iter().filter(|event| event.marker.target == marker).collect()
 }
 
-/// Assert no event names `secrets`, as it is serialized for a host.
-fn assert_events_carry_none_of(events: &[crate::platform::FundingEvent], secrets: &[&str]) {
-	let serialized = serde_json::to_string(events).expect("events serialize");
-	for secret in secrets {
-		assert!(!serialized.contains(secret), "an event carries {secret}: {serialized}");
-	}
+/// Assert no logged line names `secrets`, and every one is registered.
+fn assert_events_carry_none_of(events: &[LoggedFact], secrets: &[&str]) {
 	for event in events {
-		assert_eq!(crate::funding_events::check(event), Ok(()), "{} is not registered", event.name);
+		assert_eq!(crate::funding_events::check(event), Ok(()), "{:?} is refused", event.marker);
+		let line = format!("{}: {}", event.marker.target, event.detail());
+		for secret in secrets {
+			assert!(!line.contains(secret), "a line carries {secret}: {line}");
+		}
 	}
 }
 
@@ -12811,18 +12794,18 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	))
 	.expect("opened")
 	.intent;
-	let opened = host.events();
+	let opened = services.funding().logged_facts();
 	assert_eq!(
-		opened.iter().map(|event| event.name.as_str()).collect::<Vec<_>>(),
+		opened.iter().map(|event| event.marker.target).collect::<Vec<_>>(),
 		["truapi.funding.overlay_opened", "truapi.funding.overlay_closed"]
 	);
 	assert_eq!(
 		(
-			event_tag(&opened[0], "funding.amount_preset"),
-			event_tag(&opened[0], "funding.amount_bucket"),
-			event_tag(&opened[0], "funding.opener"),
-			event_tag(&opened[1], "funding.outcome"),
-			event_tag(&opened[1], "funding.furthest"),
+			event_tag(&opened[0], "amount_preset"),
+			event_tag(&opened[0], "amount_bucket"),
+			event_tag(&opened[0], "opener"),
+			event_tag(&opened[1], "outcome"),
+			event_tag(&opened[1], "furthest"),
 		),
 		(Some("true"), Some("50-100"), Some("host"), Some("started"), Some("amount"))
 	);
@@ -12871,9 +12854,9 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 		.expect("settled")
 	);
 
-	let events = host.events();
+	let events = services.funding().logged_facts();
 	assert_eq!(
-		events[2..].iter().map(|event| event.name.as_str()).collect::<Vec<_>>(),
+		events[2..].iter().map(|event| event.marker.target).collect::<Vec<_>>(),
 		[
 			"truapi.funding.provider_chosen",
 			"truapi.funding.step_reached",
@@ -12885,23 +12868,23 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	let chosen = events_named(&events, "truapi.funding.provider_chosen")[0];
 	assert_eq!(
 		(
-			event_tag(chosen, "funding.best"),
-			event_tag(chosen, "funding.provider"),
-			event_tag(chosen, "funding.rail"),
-			event_tag(chosen, "funding.asset"),
-			event_measure(chosen, "funding.rank"),
-			event_measure(chosen, "funding.quote_count"),
+			event_tag(chosen, "best"),
+			event_tag(chosen, "provider"),
+			event_tag(chosen, "rail"),
+			event_tag(chosen, "asset"),
+			event_measure(chosen, "rank"),
+			event_measure(chosen, "quote_count"),
 		),
 		(Some("false"), Some("ramp.dot"), Some("card"), Some("eur"), Some(1), Some(1))
 	);
 	let steps: Vec<_> = events_named(&events, "truapi.funding.step_reached")
 		.into_iter()
-		.map(|event| event_tag(event, "funding.step"))
+		.map(|event| event_tag(event, "step"))
 		.collect();
 	assert_eq!(steps, [Some("received"), Some("added")]);
 	let cancel = events_named(&events, "truapi.funding.cancel_requested")[0];
 	assert_eq!(
-		(event_tag(cancel, "funding.money_moved"), event_tag(cancel, "funding.result")),
+		(event_tag(cancel, "money_moved"), event_tag(cancel, "result")),
 		(
 			Some("true"),
 			Some(if cancelled == crate::host_logic::funding::CancelOutcome::Requested {
@@ -12914,19 +12897,13 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	let ended = events_named(&events, "truapi.funding.ended")[0];
 	assert_eq!(
 		(
-			event_tag(ended, "funding.outcome"),
-			event_tag(ended, "funding.reason"),
-			event_tag(ended, "funding.expected"),
-			event_tag(ended, "funding.money_moved"),
-			ended.level,
+			event_tag(ended, "outcome"),
+			event_tag(ended, "reason"),
+			event_tag(ended, "expected"),
+			event_tag(ended, "money_moved"),
+			ended.marker,
 		),
-		(
-			Some("topped_up"),
-			Some("none"),
-			Some("true"),
-			Some("true"),
-			crate::platform::FundingEventLevel::Info
-		)
+		(Some("topped_up"), Some("none"), Some("true"), Some("true"), crate::markers::FUNDING_ENDED)
 	);
 	assert!(events.iter().all(|event| event.session_ref == events[0].session_ref));
 	assert_events_carry_none_of(
@@ -12954,22 +12931,22 @@ fn a_settled_quote_request_reports_its_counts_once() {
 	answer_quotes(&services, "ramp.dot", card_quote("q1"));
 	answered_quotes(&services, &intent, card_ask(Some("DE")), Duration::from_secs(5));
 	wait_until(
-		|| !events_named(&host.events(), "truapi.funding.quotes_settled").is_empty(),
+		|| !events_named(&services.funding().logged_facts(), "truapi.funding.quotes_settled").is_empty(),
 		"quotes settled",
 	);
 
-	let events = host.events();
+	let events = services.funding().logged_facts();
 	let settled = events_named(&events, "truapi.funding.quotes_settled");
 	assert_eq!(settled.len(), 1);
 	assert_eq!(
 		(
-			event_tag(settled[0], "funding.region"),
-			event_tag(settled[0], "funding.superseded"),
-			event_tag(settled[0], "funding.issue"),
-			event_measure(settled[0], "funding.asked"),
-			event_measure(settled[0], "funding.quoted"),
-			event_measure(settled[0], "funding.pending"),
-			event_measure(settled[0], "funding.first_quote_ms").is_some(),
+			event_tag(settled[0], "region"),
+			event_tag(settled[0], "superseded"),
+			event_tag(settled[0], "issue"),
+			event_measure(settled[0], "asked"),
+			event_measure(settled[0], "quoted"),
+			event_measure(settled[0], "pending"),
+			event_measure(settled[0], "first_quote_ms").is_some(),
 		),
 		(Some("eu"), Some("false"), Some("none"), Some(1), Some(1), Some(0), true)
 	);
@@ -12994,24 +12971,18 @@ fn an_expired_session_reports_an_expected_ending() {
 	futures::executor::block_on(services.funding().commit(far_future, |_| ((), Vec::new())))
 		.expect("swept");
 
-	let events = host.events();
+	let events = services.funding().logged_facts();
 	let ended = events_named(&events, "truapi.funding.ended");
 	assert_eq!(ended.len(), 1);
 	assert_eq!(
 		(
-			event_tag(ended[0], "funding.outcome"),
-			event_tag(ended[0], "funding.expected"),
-			event_tag(ended[0], "funding.direction"),
-			event_tag(ended[0], "funding.amount_bucket"),
-			ended[0].level,
+			event_tag(ended[0], "outcome"),
+			event_tag(ended[0], "expected"),
+			event_tag(ended[0], "direction"),
+			event_tag(ended[0], "amount_bucket"),
+			ended[0].marker,
 		),
-		(
-			Some("expired"),
-			Some("true"),
-			Some("out"),
-			Some("unset"),
-			crate::platform::FundingEventLevel::Info
-		)
+		(Some("expired"), Some("true"), Some("out"), Some("unset"), crate::markers::FUNDING_ENDED)
 	);
 	assert_events_carry_none_of(&events, &[&intent]);
 }
@@ -13044,16 +13015,17 @@ fn provider_frames_report_their_lifecycle() {
 	second.closed(FrameClose::Returned);
 	drop(second);
 
-	let frames: Vec<_> = host
-		.events()
+	let frames: Vec<_> = services
+		.funding()
+		.logged_facts()
 		.into_iter()
-		.filter(|event| event.name.starts_with("truapi.funding.frame_"))
+		.filter(|event| event.marker.target.starts_with("truapi.funding.frame_"))
 		.map(|event| {
 			(
-				event.name.clone(),
-				event_tag(&event, "funding.target").map(str::to_string),
-				event_tag(&event, "funding.outcome")
-					.or(event_tag(&event, "funding.replaced"))
+				event.marker.target.to_string(),
+				event_tag(&event, "target").map(str::to_string),
+				event_tag(&event, "outcome")
+					.or(event_tag(&event, "replaced"))
 					.map(str::to_string),
 			)
 		})

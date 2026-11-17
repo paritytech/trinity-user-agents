@@ -436,6 +436,10 @@ pub struct FundingRegistry {
 	/// What funding telemetry keeps across facts. Taken after `held` when
 	/// both are, never before.
 	telemetry: Mutex<Telemetry>,
+	/// Every funding fact this registry logged, so a test reads its own
+	/// rather than the process-wide log.
+	#[cfg(test)]
+	logged: Mutex<Vec<super::funding_telemetry::FundingEvent>>,
 }
 
 /// A session's provider frames, each with its number and the provider
@@ -1946,10 +1950,16 @@ impl FundingRegistry {
 		lock(&self.telemetry)
 	}
 
-	/// Report `facts` about session `intent` to the host, tagged from
+	/// Every funding fact this registry logged, in order.
+	#[cfg(test)]
+	pub(crate) fn logged_facts(&self) -> Vec<super::funding_telemetry::FundingEvent> {
+		lock(&self.logged).clone()
+	}
+
+	/// Log `facts` about session `intent` as their markers, tagged from
 	/// `session`, or from the session the registry holds when `None`, with
 	/// the route `route` asks when given. Called with no lock held, as the
-	/// host may call back in.
+	/// host's log sink may call back in.
 	pub(crate) fn report_facts(
 		&self,
 		intent: &str,
@@ -1960,9 +1970,6 @@ impl FundingRegistry {
 		if facts.is_empty() {
 			return;
 		}
-		let Some(platform) = self.platform() else {
-			return;
-		};
 		let held = match session {
 			Some(_) => None,
 			None => self.get(intent),
@@ -1981,9 +1988,12 @@ impl FundingRegistry {
 		let session_ref = self.telemetry().session_ref(intent);
 		for fact in facts {
 			let event = fact.event(&common, &session_ref);
-			match crate::funding_events::check(&event) {
-				Ok(()) => platform.funding_event(event),
-				Err(refused) => tracing::error!(%refused, "a funding event left unreported"),
+			match crate::funding_events::emit(&event) {
+				Ok(_) => {
+					#[cfg(test)]
+					lock(&self.logged).push(event);
+				},
+				Err(refused) => tracing::error!(%refused, "a funding fact left unlogged"),
 			}
 		}
 	}
@@ -1996,9 +2006,6 @@ impl FundingRegistry {
 		taking_longer: Vec<FundingSession>,
 		now_ms: u64,
 	) {
-		if self.platform.get().is_none() {
-			return;
-		}
 		for session in taking_longer {
 			let fact = self.telemetry().flagged(
 				&session,

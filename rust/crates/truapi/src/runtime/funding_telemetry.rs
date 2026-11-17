@@ -2,7 +2,7 @@
 //!
 //! Each fact is typed, with closed enums or fixed buckets for everything it
 //! tags, and becomes a [`FundingEvent`] the registry in
-//! [`crate::funding_events`] accepts. What the registry calls the session's
+//! [`crate::funding_events`] accepts and logs as its marker. What the registry calls the session's
 //! `session_ref` is drawn here, at random, the first time a session reports
 //! anything, and forgotten once it ended, so nothing joins it to the intent.
 //!
@@ -25,10 +25,11 @@ use crate::{
 		FundingStatus, FundingStep,
 	},
 	platform::{
-		FundingAmountIssue, FundingEvent, FundingEventLevel, FundingEventMeasure, FundingEventTag,
-		FundingQuoteList, FundingQuoteState, FundingQuoteUnavailable, ProductId,
+		FundingAmountIssue, FundingQuoteList, FundingQuoteState, FundingQuoteUnavailable, ProductId,
 	},
 };
+
+pub use crate::funding_events::FundingEvent;
 
 /// Balance units in one CASH.
 const CASH_UNIT: u128 = 1_000_000;
@@ -36,6 +37,9 @@ const CASH_UNIT: u128 = 1_000_000;
 /// for them, so a fact reported just after a session ended still carries its
 /// `session_ref`.
 const RETIRED_KEPT: usize = 16;
+/// Longest provider id tagged as it is, so every detail stays within what a
+/// host keeps.
+const PROVIDER_ID_MAX_CHARS: usize = 40;
 /// Longest asset or network identifier tagged as it is.
 const PLAIN_ID_MAX_CHARS: usize = 16;
 /// ISO 3166-1 alpha-2 codes of the European Union's member states.
@@ -438,6 +442,13 @@ pub enum FundingFact {
 	},
 }
 
+/// How loud a fact is: an ending that is a fault is an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Level {
+	Info,
+	Error,
+}
+
 /// The tags and measure every event of one session carries.
 #[derive(Debug, Clone)]
 pub struct Common {
@@ -472,24 +483,28 @@ impl Common {
 			None => choice.and_then(|choice| choice.network.as_deref()),
 		};
 		let tags = vec![
-			("funding.direction", direction(session.direction).to_string()),
+			("direction", direction(session.direction).to_string()),
 			(
-				"funding.opener",
+				"opener",
 				if session.owner_product_id.is_some() { "product" } else { "host" }.to_string(),
 			),
-			("funding.product", product_tag(session.owner_product_id.as_ref())),
-			("funding.rail", rail.map_or("none", rail_tag).to_string()),
+			("product", product_tag(session.owner_product_id.as_ref())),
+			("rail", rail.map_or("none", rail_tag).to_string()),
 			(
-				"funding.provider",
+				"provider",
 				match &session.provider_id {
 					None => "none".to_string(),
-					Some(provider) if listed(provider) => provider.as_str().to_string(),
+					Some(provider)
+						if listed(provider) && provider.as_str().len() <= PROVIDER_ID_MAX_CHARS =>
+					{
+						provider.as_str().to_string()
+					},
 					Some(_) => "other".to_string(),
 				},
 			),
-			("funding.asset", plain_tag(asset)),
-			("funding.network", plain_tag(network)),
-			("funding.amount_bucket", amount_bucket(session.amount).to_string()),
+			("asset", plain_tag(asset)),
+			("network", plain_tag(network)),
+			("amount_bucket", amount_bucket(session.amount).to_string()),
 		];
 		Self { tags, age_ms: Some(now_ms.saturating_sub(session.opened_at_ms)) }
 	}
@@ -516,28 +531,28 @@ impl FundingFact {
 		}
 	}
 
-	/// The fact as the event a host receives, with `common` and
-	/// `session_ref`.
+	/// The fact as the core logs it, with `common` and `session_ref`. An
+	/// ending that is a fault is logged under its own marker.
 	pub fn event(&self, common: &Common, session_ref: &str) -> FundingEvent {
 		let (level, tags, measures) = self.parts();
-		let common_measure = common.age_ms.map(|age_ms| ("funding.age_ms", Some(age_ms)));
+		let spec = match (self, level) {
+			(Self::Ended(_), Level::Error) => funding_events::ENDED_UNEXPECTEDLY,
+			_ => self.spec(),
+		};
+		let common_measure = common.age_ms.map(|age_ms| ("age_ms", Some(age_ms)));
 		FundingEvent {
-			name: self.spec().name.to_string(),
-			level,
+			marker: spec.marker,
 			session_ref: session_ref.to_string(),
 			tags: common
 				.tags
 				.iter()
 				.map(|(key, value)| (*key, value.clone()))
 				.chain(tags.into_iter().map(|(key, value)| (key, value.to_string())))
-				.map(|(key, value)| FundingEventTag { key: key.to_string(), value })
 				.collect(),
 			measures: common_measure
 				.into_iter()
 				.chain(measures)
-				.filter_map(|(key, value)| {
-					value.map(|value| FundingEventMeasure { key: key.to_string(), value })
-				})
+				.filter_map(|(key, value)| value.map(|value| (key, value)))
 				.collect(),
 		}
 	}
@@ -547,20 +562,20 @@ impl FundingFact {
 	#[allow(clippy::type_complexity)]
 	fn parts(
 		&self,
-	) -> (FundingEventLevel, Vec<(&'static str, &'static str)>, Vec<(&'static str, Option<u64>)>) {
-		use FundingEventLevel::Info;
+	) -> (Level, Vec<(&'static str, &'static str)>, Vec<(&'static str, Option<u64>)>) {
+		use Level::Info;
 		match self {
 			Self::OverlayOpened { amount_preset } => {
-				(Info, vec![("funding.amount_preset", yes(*amount_preset))], vec![])
+				(Info, vec![("amount_preset", yes(*amount_preset))], vec![])
 			},
 			Self::OverlayClosed { outcome, furthest, overlay_ms } => (
 				Info,
 				vec![
-					("funding.outcome", outcome.into()),
-					("funding.furthest", furthest.into()),
-					("funding.overlay_bucket", duration_bucket(*overlay_ms)),
+					("outcome", outcome.into()),
+					("furthest", furthest.into()),
+					("overlay_bucket", duration_bucket(*overlay_ms)),
 				],
-				vec![("funding.overlay_ms", Some(*overlay_ms))],
+				vec![("overlay_ms", Some(*overlay_ms))],
 			),
 			Self::QuotesSettled {
 				counts,
@@ -572,54 +587,54 @@ impl FundingFact {
 			} => (
 				Info,
 				vec![
-					("funding.region", region.into()),
-					("funding.issue", issue_tag(issue.as_ref())),
-					("funding.superseded", yes(*superseded)),
-					("funding.latency_bucket", duration_bucket(*settle_ms)),
+					("region", region.into()),
+					("issue", issue_tag(issue.as_ref())),
+					("superseded", yes(*superseded)),
+					("latency_bucket", duration_bucket(*settle_ms)),
 				],
 				vec![
-					("funding.asked", Some(counts.asked)),
-					("funding.quoted", Some(counts.quoted)),
-					("funding.refused_country", Some(counts.refused_country)),
-					("funding.refused_min", Some(counts.refused_min)),
-					("funding.refused_max", Some(counts.refused_max)),
-					("funding.refused_unavailable", Some(counts.refused_unavailable)),
-					("funding.refused_other", Some(counts.refused_other)),
-					("funding.timed_out", Some(counts.timed_out)),
-					("funding.pending", Some(counts.pending)),
-					("funding.first_quote_ms", *first_quote_ms),
-					("funding.settle_ms", Some(*settle_ms)),
+					("asked", Some(counts.asked)),
+					("quoted", Some(counts.quoted)),
+					("refused_country", Some(counts.refused_country)),
+					("refused_min", Some(counts.refused_min)),
+					("refused_max", Some(counts.refused_max)),
+					("refused_unavailable", Some(counts.refused_unavailable)),
+					("refused_other", Some(counts.refused_other)),
+					("timed_out", Some(counts.timed_out)),
+					("pending", Some(counts.pending)),
+					("first_quote_ms", *first_quote_ms),
+					("settle_ms", Some(*settle_ms)),
 				],
 			),
 			Self::ProviderChosen { best, rank, quote_count, fee_bucket, eta_bucket } => (
 				Info,
 				vec![
-					("funding.best", yes(*best)),
-					("funding.fee_bucket", fee_bucket),
-					("funding.eta_bucket", eta_bucket),
+					("best", yes(*best)),
+					("fee_bucket", fee_bucket),
+					("eta_bucket", eta_bucket),
 				],
-				vec![("funding.rank", Some(*rank)), ("funding.quote_count", Some(*quote_count))],
+				vec![("rank", Some(*rank)), ("quote_count", Some(*quote_count))],
 			),
 			Self::ProviderTook { taken, take_ms } => (
 				Info,
 				vec![
-					("funding.outcome", if *taken { "taken" } else { "not_taken" }),
-					("funding.take_bucket", take_ms.map_or("unknown", duration_bucket)),
+					("outcome", if *taken { "taken" } else { "not_taken" }),
+					("take_bucket", take_ms.map_or("unknown", duration_bucket)),
 				],
-				vec![("funding.take_ms", *take_ms)],
+				vec![("take_ms", *take_ms)],
 			),
 			Self::StepReached { step, since_start_ms, since_prev_ms } => (
 				Info,
-				vec![("funding.step", step_tag(*step))],
+				vec![("step", step_tag(*step))],
 				vec![
-					("funding.since_start_ms", Some(*since_start_ms)),
-					("funding.since_prev_ms", Some(*since_prev_ms)),
+					("since_start_ms", Some(*since_start_ms)),
+					("since_prev_ms", Some(*since_prev_ms)),
 				],
 			),
 			Self::StatusFlag { flag, since_start_ms } => (
 				Info,
-				vec![("funding.flag", flag.into())],
-				vec![("funding.since_start_ms", Some(*since_start_ms))],
+				vec![("flag", flag.into())],
+				vec![("since_start_ms", Some(*since_start_ms))],
 			),
 			Self::Ended(ending) => {
 				let faulty = !ending.expected &&
@@ -628,55 +643,55 @@ impl FundingFact {
 						EndOutcome::Failed | EndOutcome::PayoutFailed | EndOutcome::Expired
 					);
 				(
-					if faulty { FundingEventLevel::Error } else { Info },
+					if faulty { Level::Error } else { Info },
 					vec![
-						("funding.outcome", ending.outcome.into()),
-						("funding.reason", ending.reason),
-						("funding.expected", yes(ending.expected)),
-						("funding.money_moved", yes(ending.money_moved)),
-						("funding.region", ending.region.into()),
-						("funding.duration_bucket", duration_bucket(ending.duration_ms)),
+						("outcome", ending.outcome.into()),
+						("reason", ending.reason),
+						("expected", yes(ending.expected)),
+						("money_moved", yes(ending.money_moved)),
+						("region", ending.region.into()),
+						("duration_bucket", duration_bucket(ending.duration_ms)),
 					],
 					vec![
-						("funding.duration_ms", Some(ending.duration_ms)),
-						("funding.to_received_ms", ending.to_received_ms),
+						("duration_ms", Some(ending.duration_ms)),
+						("to_received_ms", ending.to_received_ms),
 					],
 				)
 			},
 			Self::CancelRequested { result, status_at, money_moved } => (
 				Info,
 				vec![
-					("funding.result", cancel_outcome_tag(*result)),
-					("funding.status_at", status_at),
-					("funding.money_moved", yes(*money_moved)),
+					("result", cancel_outcome_tag(*result)),
+					("status_at", status_at),
+					("money_moved", yes(*money_moved)),
 				],
 				vec![],
 			),
 			Self::CancelAnswered { answer, fee_bucket, answer_ms } => (
 				Info,
-				vec![("funding.answer", answer.into()), ("funding.fee_bucket", fee_bucket)],
-				vec![("funding.answer_ms", *answer_ms)],
+				vec![("answer", answer.into()), ("fee_bucket", fee_bucket)],
+				vec![("answer_ms", *answer_ms)],
 			),
 			Self::CancelConfirmed { result } => {
-				(Info, vec![("funding.result", confirmation_tag(result))], vec![])
+				(Info, vec![("result", confirmation_tag(result))], vec![])
 			},
 			Self::FrameRequested { target, replaced } => (
 				Info,
-				vec![("funding.target", target.into()), ("funding.replaced", yes(*replaced))],
+				vec![("target", target.into()), ("replaced", yes(*replaced))],
 				vec![],
 			),
 			Self::FrameOpened { target, wait_ms } => (
 				Info,
 				vec![
-					("funding.target", target.into()),
-					("funding.wait_bucket", duration_bucket(*wait_ms)),
+					("target", target.into()),
+					("wait_bucket", duration_bucket(*wait_ms)),
 				],
-				vec![("funding.wait_ms", Some(*wait_ms))],
+				vec![("wait_ms", Some(*wait_ms))],
 			),
 			Self::FrameClosed { target, outcome, open_ms } => (
 				Info,
-				vec![("funding.target", target.into()), ("funding.outcome", outcome.into())],
-				vec![("funding.open_ms", *open_ms)],
+				vec![("target", target.into()), ("outcome", outcome.into())],
+				vec![("open_ms", *open_ms)],
 			),
 		}
 	}

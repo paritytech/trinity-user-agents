@@ -365,83 +365,6 @@ export type FundingAmountIssue =
   | { tag: "AboveMaximum"; value: { max: bigint } };
 
 /**
- * One funding fact the core reports for telemetry, named and shaped by the
- * registry in `crate::funding_events`.
- *
- * Nothing in it identifies a session, a person or an amount: tags hold
- * closed values only, amounts and fees arrive as coarse buckets and a
- * country as a coarse region, and `session_ref` is a random id the core
- * draws for telemetry alone. A host maps it onto its own event recorder,
- * and only on builds that are not released: the core emits it whatever the
- * build, and the host decides whether it leaves the device.
- */
-export interface FundingEvent {
-  /**
-   * The registered name, `truapi.funding.<thing>`.
-   */
-  name: string;
-
-  /**
-   * How loud the event is, which picks where the host sends it.
-   */
-  level: FundingEventLevel;
-
-  /**
-   * A random id that joins one session's events. It is drawn per session
-   * and kept in memory only, so it cannot be traced back to the session,
-   * its provider or its payments.
-   */
-  sessionRef: string;
-
-  /**
-   * What the event is queried on, each key registered for its name and
-   * each value from a closed set.
-   */
-  tags: Array<FundingEventTag>;
-
-  /**
-   * Counts and durations in milliseconds, each key registered for its
-   * name.
-   */
-  measures: Array<FundingEventMeasure>;
-}
-
-/**
- * How loud a `FundingEvent` is.
- */
-export type FundingEventLevel = "Info" | "Error";
-
-/**
- * One count or duration of a `FundingEvent`.
- */
-export interface FundingEventMeasure {
-  /**
-   * The key, `funding.<field>`.
-   */
-  key: string;
-
-  /**
-   * The count, or the duration in milliseconds.
-   */
-  value: bigint;
-}
-
-/**
- * One tag of a `FundingEvent`.
- */
-export interface FundingEventTag {
-  /**
-   * The key, `funding.<field>`.
-   */
-  key: string;
-
-  /**
-   * The value, from the closed set the registry documents for the key.
-   */
-  value: string;
-}
-
-/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -1276,51 +1199,6 @@ export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
 );
 
 /**
- * One funding fact the core reports for telemetry, named and shaped by the
- * registry in `crate::funding_events`.
- *
- * Nothing in it identifies a session, a person or an amount: tags hold
- * closed values only, amounts and fees arrive as coarse buckets and a
- * country as a coarse region, and `session_ref` is a random id the core
- * draws for telemetry alone. A host maps it onto its own event recorder,
- * and only on builds that are not released: the core emits it whatever the
- * build, and the host decides whether it leaves the device.
- */
-export const FundingEvent: S.Codec<FundingEvent> = S.lazy(
-  (): S.Codec<FundingEvent> =>
-    S.Struct({
-      name: S.str,
-      level: FundingEventLevel,
-      sessionRef: S.str,
-      tags: S.Vector(FundingEventTag),
-      measures: S.Vector(FundingEventMeasure),
-    }) as S.Codec<FundingEvent>,
-);
-
-/**
- * How loud a `FundingEvent` is.
- */
-export const FundingEventLevel: S.Codec<FundingEventLevel> = S.lazy(
-  (): S.Codec<FundingEventLevel> => S.Status("Info", "Error"),
-);
-
-/**
- * One count or duration of a `FundingEvent`.
- */
-export const FundingEventMeasure: S.Codec<FundingEventMeasure> = S.lazy(
-  (): S.Codec<FundingEventMeasure> =>
-    S.Struct({ key: S.str, value: S.u64 }) as S.Codec<FundingEventMeasure>,
-);
-
-/**
- * One tag of a `FundingEvent`.
- */
-export const FundingEventTag: S.Codec<FundingEventTag> = S.lazy(
-  (): S.Codec<FundingEventTag> =>
-    S.Struct({ key: S.str, value: S.str }) as S.Codec<FundingEventTag>,
-);
-
-/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -2152,13 +2030,6 @@ export interface FundingPlatform {
     intent: string,
     quotes: FundingQuoteList | undefined,
   ): void;
-
-  /**
-   * Observe a funding fact for telemetry. Every build gets these; a host
-   * sends them on only from builds that are not released, and never
-   * adds a session's intent to them.
-   */
-  fundingEvent?(event: FundingEvent): void;
 }
 
 /**
