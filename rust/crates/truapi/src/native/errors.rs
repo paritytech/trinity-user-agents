@@ -21,6 +21,53 @@ pub enum HostRejection {
 	},
 }
 
+/// Why a native host refused a chat feed update.
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
+pub enum NativeChatFeedRejection {
+	/// The update names a message the room does not hold.
+	#[error("the room holds no such message")]
+	UnknownMessage,
+	/// `New` names a message the room holds already.
+	#[error("the room holds this message already")]
+	DuplicateMessage,
+	/// The update edits, replaces or deletes a message that the product did
+	/// not write.
+	#[error("the product did not write this message")]
+	NotOwner,
+	/// Any other refusal. The product receives it as `HostFailure`.
+	#[error("{reason}")]
+	Rejected {
+		/// Human-readable rejection reason.
+		reason: String,
+	},
+}
+
+impl From<NativeChatFeedRejection> for truapi::CallError<truapi::latest::HostChatUpdateFeedError> {
+	fn from(rejection: NativeChatFeedRejection) -> Self {
+		use truapi::latest::HostChatUpdateFeedError;
+		match rejection {
+			NativeChatFeedRejection::UnknownMessage => {
+				Self::Domain(HostChatUpdateFeedError::UnknownMessage)
+			},
+			NativeChatFeedRejection::DuplicateMessage => {
+				Self::Domain(HostChatUpdateFeedError::DuplicateMessage)
+			},
+			NativeChatFeedRejection::NotOwner => Self::Domain(HostChatUpdateFeedError::NotOwner),
+			NativeChatFeedRejection::Rejected { reason } => Self::HostFailure { reason },
+		}
+	}
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for NativeChatFeedRejection {
+	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+		tracing::warn!(
+			reason = %err.reason,
+			"host chat feed callback threw an undeclared error; reporting it as a rejection"
+		);
+		NativeChatFeedRejection::Rejected { reason: err.reason }
+	}
+}
+
 impl From<HostRejection> for v01::GenericError {
 	fn from(err: HostRejection) -> Self {
 		let HostRejection::Rejected { reason } = err;

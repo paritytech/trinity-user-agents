@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
 import uniffi.truapi.NativeMaterialsObserver
@@ -45,8 +46,12 @@ import uniffi.truapi.NativeMaterialsResolution
 import uniffi.truapi.ResolvedMaterials
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
+import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.HostChatActionSubscribeItem
+import uniffi.truapi.NativeChatFeedRejection
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
@@ -498,7 +503,8 @@ interface ChatHostBridge {
 
     /**
      * Set what a product's native Chat room shows below its messages, and keep
-     * it until the product sets another.
+     * it until the product sets another. A room without a footer shows the
+     * text input.
      */
     @Throws(HostRejection::class)
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
@@ -506,7 +512,77 @@ interface ChatHostBridge {
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
+
+    // The members below have defaults for a host that does not serve the Chat
+    // Extension v2 requests yet. The product receives a rejection for each
+    // request, with two exceptions. The host ignores metadata and keeps the
+    // name and icon of `createRoom`. The host accepts a configuration that
+    // keeps the behaviour that it serves.
+
+    /**
+     * Return the configuration the product last declared for a room, or
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] when it declared none. The core reads it
+     * before each feed update, preview and posted message of the room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
+
+    /**
+     * Replace the configuration of a room whole, and keep it across restarts,
+     * when the product declares one with `createRoom`. A room the product
+     * declared none for has [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A change of
+     * `productSource` discards the stored messages or the cached pages of the
+     * room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw unservedChatRequest("setRoomConfig")
+    }
+
+    /**
+     * Replace the name, description, icon and empty-room text of a room. An
+     * icon of `null` keeps the icon, and an empty icon removes it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
+
+    /** Replace how a room shows in the chat list. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): Unit =
+        throw unservedChatRequest("setRoomPreview")
+
+    /**
+     * Delete a room with its messages, cache and declarations, and close its
+     * screen. A room that does not exist is not an error.
+     */
+    @Throws(HostRejection::class)
+    suspend fun deleteRoom(roomId: String): Unit = throw unservedChatRequest("deleteRoom")
+
+    /**
+     * Apply one change to the messages of a room. With [persist] the host
+     * stores the change. Without it the host applies the change only to an
+     * open room screen and to the chat list preview.
+     *
+     * Throw [NativeChatFeedRejection] to refuse the change. The product
+     * receives each case as its own error, and any other exception as
+     * [NativeChatFeedRejection.Rejected].
+     */
+    @Throws(NativeChatFeedRejection::class)
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): Unit =
+        throw NativeChatFeedRejection.Rejected(unservedChatRequestReason("updateFeed"))
 }
+
+/**
+ * The configuration of a room that declares nothing: the host stores the
+ * messages and serves every part of the room itself.
+ */
+val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
+    ChatRoomConfig(productSource = false, reactionDetails = false, reportSeen = false)
+
+private fun unservedChatRequestReason(request: String): String = "this host does not serve chat $request"
+
+private fun unservedChatRequest(request: String): HostRejection =
+    HostRejection.Rejected(unservedChatRequestReason(request))
 
 /**
  * Native game-reminder surface. Implement and pass to
@@ -750,6 +826,38 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
+
+    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
+        withHostRejection { bridge.roomConfig(roomId) }
+
+    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) =
+        withHostRejection { bridge.setRoomConfig(roomId, config) }
+
+    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) =
+        withHostRejection { bridge.setRoomMetadata(roomId, metadata) }
+
+    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) =
+        withHostRejection { bridge.setRoomPreview(roomId, preview) }
+
+    override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
+
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
+        withFeedRejection { bridge.updateFeed(roomId, update, persist) }
+
+    /**
+     * Pass a [NativeChatFeedRejection] to the product as it is, and any other
+     * exception as [NativeChatFeedRejection.Rejected].
+     */
+    private suspend fun withFeedRejection(operation: suspend () -> Unit) =
+        try {
+            operation()
+        } catch (rejection: NativeChatFeedRejection) {
+            throw rejection
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw NativeChatFeedRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
+        }
 }
 
 /**

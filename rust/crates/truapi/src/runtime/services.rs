@@ -160,6 +160,8 @@ pub struct RuntimeServices {
 	stack: Stack,
 	/// Reference counts per product worker.
 	pub worker_ledger: WorkerLedger,
+	/// Call budgets of every product chat room.
+	pub chat_rate_limits: crate::runtime::chat::ChatRateLimits,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
 	pub chain: ChainRuntime,
 	/// Builds the core's own extrinsics over `chain`.
@@ -289,6 +291,7 @@ impl RuntimeServices {
 			durable_work_observer: OnceLock::new(),
 			stack,
 			worker_ledger: WorkerLedger::default(),
+			chat_rate_limits: Default::default(),
 			chain,
 			extrinsics,
 			statement_store,

@@ -28,7 +28,11 @@ import { scale } from "@parity/truapi";
 
 import type {
   ChatMessageContent,
+  ChatFeedUpdate,
   ChatRoom,
+  ChatRoomConfig,
+  ChatRoomMetadata,
+  ChatRoomPreview,
   GenericError,
   HostChatListSubscribeItem,
   HostChatPostMessageResponse,
@@ -361,6 +365,18 @@ export interface ChatMessageRecord {
   payload: ChatMessageContent;
 }
 
+/** What the product declared for one chat room, as the Rust mock keeps it. */
+export interface ChatRoomDeclarations {
+  /** The last configuration, or undefined before the product declared one. */
+  config?: ChatRoomConfig;
+  /** The last metadata from `setChatRoomMetadata`. */
+  metadata?: ChatRoomMetadata;
+  /** The last chat list preview. */
+  preview?: ChatRoomPreview;
+  /** Every feed update, in order, with whether the host had to store it. */
+  feed: [ChatFeedUpdate, boolean][];
+}
+
 /** State of the mock's chain connection, as the host sees it. */
 export type ChainStatus = "Idle" | "Connected" | "Disconnected";
 
@@ -595,6 +611,11 @@ export interface MockHost {
   getChatBots(): HostChatRegisterBotRequest[];
   /** Messages the product posted, with the ids the mock assigned. */
   getChatMessageLog(): ChatMessageRecord[];
+  /**
+   * What the product declared for `roomId`, or undefined for a room it
+   * declared nothing for or deleted.
+   */
+  chatRoomDeclarations(roomId: string): ChatRoomDeclarations | undefined;
   /**
    * Product-scoped storage the core has written, keyed without the internal
    * namespace prefix.
@@ -927,6 +948,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   let nextOperationId = 0;
   const permissionDecisions = new Map<string, boolean>();
   const chatRooms = new Map<string, ChatRoom>();
+  const chatDeclarations = new Map<string, ChatRoomDeclarations>();
+  const declareChatRoom = (
+    roomId: string,
+    change: (room: ChatRoomDeclarations) => void,
+  ): void => {
+    if (faults.chatError) throw new Error(faults.chatError);
+    const room = chatDeclarations.get(roomId) ?? { feed: [] };
+    change(room);
+    chatDeclarations.set(roomId, room);
+  };
   const chatBots = new Map<string, HostChatRegisterBotRequest>();
   const chatMessages: ChatMessageRecord[] = [];
   // Ids start at 1, not 0: the id is what the product cancels by, and a
@@ -1398,6 +1429,46 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async setChatRoomFooter() {
         if (faults.chatError) throw new Error(faults.chatError);
       },
+      async readChatRoomConfig(_product, roomId) {
+        if (faults.chatError) throw new Error(faults.chatError);
+        return (
+          chatDeclarations.get(roomId)?.config ?? {
+            productSource: false,
+            reactionDetails: false,
+            reportSeen: false,
+          }
+        );
+      },
+      async setChatRoomConfig(_product, roomId, config) {
+        declareChatRoom(roomId, (room) => {
+          room.config = config;
+        });
+      },
+      async setChatRoomMetadata(_product, request) {
+        declareChatRoom(request.roomId, (room) => {
+          room.metadata = request.metadata;
+        });
+      },
+      async setChatRoomPreview(_product, request) {
+        declareChatRoom(request.roomId, (room) => {
+          room.preview = request.preview;
+        });
+      },
+      async deleteChatRoom(_product, request) {
+        if (faults.chatError) throw new Error(faults.chatError);
+        chatRooms.delete(request.roomId);
+        chatDeclarations.delete(request.roomId);
+        const kept = chatMessages.filter(
+          (message) => message.roomId !== request.roomId,
+        );
+        chatMessages.splice(0, chatMessages.length, ...kept);
+        publishChatRooms();
+      },
+      async updateChatFeed(_product, request, persist) {
+        declareChatRoom(request.roomId, (room) => {
+          room.feed.push([request.update, persist]);
+        });
+      },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
         // reports it too rather than handing back a stream that looks healthy
@@ -1415,6 +1486,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
             return () => chatRoomSubscribers.delete(push);
           },
         );
+      },
+      async listChatRooms() {
+        if (faults.chatError) throw new Error(faults.chatError);
+        return { rooms: byKey(chatRooms) };
       },
     },
 
@@ -1600,6 +1675,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getChatRooms: () => byKey(chatRooms),
     getChatBots: () => byKey(chatBots),
     getChatMessageLog: () => [...chatMessages],
+    chatRoomDeclarations: (roomId) => chatDeclarations.get(roomId),
     seedPreimage(value) {
       const key = preimageKey(value);
       const id = hex(key);
@@ -1667,6 +1743,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     clearStorage: () => storage.clear(),
     clearChatState: () => {
       chatRooms.clear();
+      chatDeclarations.clear();
       chatBots.clear();
       chatMessages.length = 0;
       // Live subscriptions stay open and see the emptied list, as on Rust.

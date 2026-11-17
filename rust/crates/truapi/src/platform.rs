@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use futures::stream::BoxStream;
+use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
 
@@ -40,22 +40,29 @@ pub use crate::{
 };
 
 use truapi::{
+	CallError,
 	latest::{
-		AllocatableResource, ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoomRegistrationStatus, CodeFormat,
-		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
+		AllocatableResource, ChatAction, ChatActions, ChatCustomBody,
+		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
+		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReaction, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig,
+		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, CodeFormat,
+		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
 		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
 		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
@@ -342,16 +349,22 @@ pub fn validate_chat_message_content(
 pub fn validate_chat_custom_message(
 	custom: ChatCustomMessage,
 ) -> Result<ChatCustomMessage, ChatFieldError> {
-	if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
+	Ok(ChatCustomMessage {
+		message_type: validate_chat_custom_type(&custom.message_type, &custom.payload)?,
+		..custom
+	})
+}
+
+/// Validate the type and payload of a message that the product draws through
+/// `Renderer::render`, and answer the normalized type.
+fn validate_chat_custom_type(message_type: &str, payload: &[u8]) -> Result<String, ChatFieldError> {
+	if payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
 		return Err(ChatFieldError::TooLong {
 			field: "payload",
 			limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
 		});
 	}
-	Ok(ChatCustomMessage {
-		message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
-		payload: custom.payload,
-	})
+	normalize_chat_identifier("messageType", message_type)
 }
 
 /// Validate a product-supplied file name.
@@ -531,6 +544,318 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
 		Some("data") if is_allowed_icon_data_url(trimmed) => Ok(trimmed.to_string()),
 		_ => Err(ChatFieldError::RejectedScheme { field }),
 	}
+}
+
+/// Largest accepted length for a room description, in bytes.
+pub const CHAT_DESCRIPTION_MAX_BYTES: usize = 1024;
+
+/// Largest accepted number of reaction summaries on one message.
+pub const CHAT_REACTIONS_MAX: usize = 64;
+
+/// Largest accepted number of `update_feed` calls for one room in one second.
+pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
+
+/// Largest accepted number of `set_room_preview` calls for one room in one
+/// second.
+pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
+
+/// The largest file a [`ChatResource::Hop`] names: the largest the native chat sends.
+pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
+
+/// The longest node URL of a [`ChatResource::Hop`].
+pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
+
+/// Validate the resource of a media item: a HOP file.
+fn validate_chat_media_resource(
+	field: &'static str,
+	resource: ChatResource,
+) -> Result<ChatResource, ChatFieldError> {
+	let ChatResource::Hop { node, size, .. } = &resource;
+	if !node.starts_with("wss://") {
+		return Err(ChatFieldError::RejectedScheme { field });
+	}
+	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
+	}
+	if *size == 0 {
+		return Err(ChatFieldError::Empty { field });
+	}
+	if *size > CHAT_HOP_FILE_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_FILE_MAX_BYTES as usize });
+	}
+	Ok(resource)
+}
+
+/// Hosts compare a media type with allowlists. Thus the core screens it as a
+/// name and makes it lower case.
+fn validate_chat_mime_type(field: &'static str, mime_type: &str) -> Result<String, ChatFieldError> {
+	let mime_type = validate_chat_name(field, mime_type)?.to_ascii_lowercase();
+	if mime_type.is_empty() {
+		return Err(ChatFieldError::Empty { field });
+	}
+	Ok(mime_type)
+}
+
+/// Bound and screen a description. A description can have more than one line,
+/// so the core keeps its line breaks and does not normalize it.
+fn validate_chat_description(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
+	if value.len() > CHAT_DESCRIPTION_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_DESCRIPTION_MAX_BYTES });
+	}
+	validate_chat_body(field, value)
+}
+
+/// Reject a list longer than `limit`.
+fn check_chat_count<T>(
+	field: &'static str,
+	items: &[T],
+	limit: usize,
+) -> Result<(), ChatFieldError> {
+	if items.len() > limit {
+		return Err(ChatFieldError::TooMany { field, limit });
+	}
+	Ok(())
+}
+
+/// Validate the name, description, icon and empty-room text of a room. The icon
+/// has the rules of the icon of `create_room`.
+pub fn validate_chat_room_metadata(
+	metadata: ChatRoomMetadata,
+) -> Result<ChatRoomMetadata, ChatFieldError> {
+	Ok(ChatRoomMetadata {
+		name: validate_chat_name("name", &metadata.name)?,
+		description: metadata
+			.description
+			.map(|description| validate_chat_description("description", &description))
+			.transpose()?,
+		icon: metadata.icon.map(|icon| validate_chat_icon("icon", &icon)).transpose()?,
+		placeholder: metadata
+			.placeholder
+			.map(|placeholder| validate_chat_description("placeholder", &placeholder))
+			.transpose()?,
+	})
+}
+
+/// Validate how a room shows in the chat list.
+pub fn validate_chat_room_preview(
+	preview: ChatRoomPreview,
+) -> Result<ChatRoomPreview, ChatFieldError> {
+	Ok(ChatRoomPreview {
+		last_message: preview.last_message.map(validate_chat_preview_message).transpose()?,
+		last_reaction: preview
+			.last_reaction
+			.map(|reaction| {
+				Ok::<_, ChatFieldError>(ChatPreviewReaction {
+					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+					by_user: reaction.by_user,
+					message: reaction.message.map(validate_chat_preview_message).transpose()?,
+					removed: reaction.removed,
+				})
+			})
+			.transpose()?,
+		badge: preview.badge.map(validate_chat_room_badge).transpose()?,
+		activity: preview
+			.activity
+			.map(|activity| {
+				let text = validate_chat_name("activity", &activity.text)?;
+				if text.is_empty() {
+					return Err(ChatFieldError::Empty { field: "activity" });
+				}
+				Ok(ChatRoomActivity { text, ..activity })
+			})
+			.transpose()?,
+		..preview
+	})
+}
+
+/// An image badge has the rules of the icon of `create_room`, and it needs an
+/// image.
+fn validate_chat_room_badge(badge: ChatRoomBadge) -> Result<ChatRoomBadge, ChatFieldError> {
+	match badge {
+		ChatRoomBadge::Image { icon } => {
+			let icon = validate_chat_icon("badge", &icon)?;
+			if icon.is_empty() {
+				return Err(ChatFieldError::Empty { field: "badge" });
+			}
+			Ok(ChatRoomBadge::Image { icon })
+		},
+		badge => Ok(badge),
+	}
+}
+
+/// Validate what a message says.
+///
+/// A size rejection names `text`, the field a product shrinks by sending
+/// less.
+pub fn validate_chat_message_body(
+	body: ChatMessageBody,
+) -> Result<ChatMessageBody, ChatFieldError> {
+	Ok(match body {
+		ChatMessageBody::Text { text } => {
+			ChatMessageBody::Text { text: validate_chat_body("text", &text)? }
+		},
+		ChatMessageBody::RichText { text, media } => {
+			check_chat_count("media", &media, CHAT_MEDIA_MAX)?;
+			ChatMessageBody::RichText {
+				text: text.map(|text| validate_chat_body("text", &text)).transpose()?,
+				media: media.into_iter().map(validate_chat_media_item).collect::<Result<_, _>>()?,
+			}
+		},
+		ChatMessageBody::Custom { message, alt } => ChatMessageBody::Custom {
+			message: ChatCustomBody {
+				message_type: validate_chat_custom_type(&message.message_type, &message.payload)?,
+				..message
+			},
+			alt: alt
+				.map(|alt| validate_chat_name("alt", &alt))
+				.transpose()?
+				.filter(|alt| !alt.is_empty()),
+		},
+		body @ (ChatMessageBody::Event(_) |
+		ChatMessageBody::Call(_) |
+		ChatMessageBody::Payment(_)) => body,
+	})
+}
+
+fn validate_chat_media_item(item: ChatMediaItem) -> Result<ChatMediaItem, ChatFieldError> {
+	Ok(match item {
+		ChatMediaItem::Image { resource, meta } => ChatMediaItem::Image {
+			resource: validate_chat_media_resource("media", resource)?,
+			meta: validate_chat_media_meta(meta)?,
+		},
+		ChatMediaItem::Video { resource, meta } => ChatMediaItem::Video {
+			resource: validate_chat_media_resource("media", resource)?,
+			meta: validate_chat_media_meta(meta)?,
+		},
+		ChatMediaItem::File { resource, meta, file_name } => ChatMediaItem::File {
+			resource: validate_chat_media_resource("media", resource)?,
+			meta: validate_chat_media_meta(meta)?,
+			file_name: validate_chat_file_name("fileName", &file_name)?,
+		},
+	})
+}
+
+fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFieldError> {
+	Ok(ChatMediaMeta {
+		mime_type: validate_chat_mime_type("mimeType", &meta.mime_type)?,
+		placeholder: meta
+			.placeholder
+			.map(|placeholder| validate_chat_name("placeholder", &placeholder))
+			.transpose()?,
+		alt: meta.alt.map(|alt| validate_chat_name("alt", &alt)).transpose()?,
+		..meta
+	})
+}
+
+/// Validate one message, as a product writes it into a feed or answers it in
+/// a page.
+pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
+	check_chat_count("reactions", &message.reactions, CHAT_REACTIONS_MAX)?;
+	let mut seen = BTreeSet::new();
+	let reactions = message
+		.reactions
+		.into_iter()
+		.map(|reaction| {
+			let emoji = validate_chat_emoji("emoji", &reaction.emoji)?;
+			if !seen.insert(emoji.clone()) {
+				return Err(ChatFieldError::Duplicate { field: "emoji" });
+			}
+			Ok(ChatReactionSummary { emoji, ..reaction })
+		})
+		.collect::<Result<_, _>>()?;
+	Ok(ChatMessage {
+		message_id: normalize_chat_identifier("messageId", &message.message_id)?,
+		origin: ChatMessageOrigin {
+			participant_id: normalize_chat_identifier(
+				"participantId",
+				&message.origin.participant_id,
+			)?,
+		},
+		timestamp: message.timestamp,
+		body: validate_chat_message_body(message.body)?,
+		status: message.status,
+		reply: message
+			.reply
+			.map(|reply| {
+				let preview = reply
+					.preview
+					.map(|preview| {
+						Ok::<_, ChatFieldError>(ChatReplyPreview {
+							origin: ChatMessageOrigin {
+								participant_id: normalize_chat_identifier(
+									"participantId",
+									&preview.origin.participant_id,
+								)?,
+							},
+							body: validate_chat_message_body(preview.body)?,
+						})
+					})
+					.transpose()?;
+				Ok::<_, ChatFieldError>(ChatReply {
+					message_id: normalize_chat_identifier("reply", &reply.message_id)?,
+					preview,
+				})
+			})
+			.transpose()?,
+		edited_at: message.edited_at,
+		reactions,
+		request: message.request,
+	})
+}
+
+/// Validate a message as the chat list shows it in the preview line of a room.
+fn validate_chat_preview_message(
+	message: ChatPreviewMessage,
+) -> Result<ChatPreviewMessage, ChatFieldError> {
+	Ok(ChatPreviewMessage {
+		message_id: normalize_chat_identifier("messageId", &message.message_id)?,
+		origin: ChatMessageOrigin {
+			participant_id: normalize_chat_identifier(
+				"participantId",
+				&message.origin.participant_id,
+			)?,
+		},
+		body: validate_chat_message_body(message.body)?,
+		reply_to: message.reply_to.map(|id| normalize_chat_identifier("reply", &id)).transpose()?,
+		..message
+	})
+}
+
+/// Validate one change to the messages of a room.
+pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdate, ChatFieldError> {
+	let message_id = |id: &str| normalize_chat_identifier("messageId", id);
+	let participant_id = |id: &str| normalize_chat_identifier("participantId", id);
+	Ok(match update {
+		ChatFeedUpdate::New(message) => ChatFeedUpdate::New(validate_chat_message(message)?),
+		ChatFeedUpdate::Edited { message_id: id, body, edited_at } => ChatFeedUpdate::Edited {
+			message_id: message_id(&id)?,
+			body: validate_chat_message_body(body)?,
+			edited_at,
+		},
+		ChatFeedUpdate::ReactionPlaced { message_id: id, participant_id: by, emoji } => {
+			ChatFeedUpdate::ReactionPlaced {
+				message_id: message_id(&id)?,
+				participant_id: participant_id(&by)?,
+				emoji: validate_chat_emoji("emoji", &emoji)?,
+			}
+		},
+		ChatFeedUpdate::ReactionRemoved { message_id: id, participant_id: by, emoji } => {
+			ChatFeedUpdate::ReactionRemoved {
+				message_id: message_id(&id)?,
+				participant_id: participant_id(&by)?,
+				emoji: validate_chat_emoji("emoji", &emoji)?,
+			}
+		},
+		ChatFeedUpdate::StatusChanged { message_id: id, status } => {
+			ChatFeedUpdate::StatusChanged { message_id: message_id(&id)?, status }
+		},
+		ChatFeedUpdate::Replaced(message) => {
+			ChatFeedUpdate::Replaced(validate_chat_message(message)?)
+		},
+		ChatFeedUpdate::Deleted { message_id: id } => {
+			ChatFeedUpdate::Deleted { message_id: message_id(&id)? }
+		},
+	})
 }
 
 /// Scheme a URL parser would resolve, with the characters parsers ignore
@@ -2037,6 +2362,100 @@ pub trait ChatPlatform: Send + Sync {
 		&self,
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+
+	/// The current product-scoped room list, read one time. The core uses it to
+	/// check that a product hosts a room. A host that cannot read its rooms
+	/// returns an error, not an empty list. If a Rust host does not implement
+	/// this method, the core uses the first item of the room list subscription.
+	async fn list_chat_rooms(
+		&self,
+		product: &ProductContext,
+	) -> Result<HostChatListSubscribeItem, GenericError> {
+		self.subscribe_chat_rooms(product).next().await.unwrap_or_else(|| {
+			Err(GenericError { reason: "the host published no room list".to_string() })
+		})
+	}
+
+	/// The configuration the product last declared for a room, or the default
+	/// configuration when it declared none. The core reads it to decide
+	/// whether a room keeps its messages in the host.
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+	) -> Result<ChatRoomConfig, GenericError> {
+		Ok(ChatRoomConfig::default())
+	}
+
+	/// Replace the configuration of a room whole and keep it across restarts.
+	/// The core calls it after each `create_chat_room`, for a new room and for
+	/// a room that exists. If a Rust host does not implement this method, it
+	/// accepts only the default configuration. That configuration changes
+	/// nothing that the host shows.
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+		config: ChatRoomConfig,
+	) -> Result<(), GenericError> {
+		if config != ChatRoomConfig::default() {
+			return Err(chat_method_not_served("setChatRoomConfig"));
+		}
+		Ok(())
+	}
+
+	/// Replace the name, description, icon and empty-room text of a room. An
+	/// icon of `None` keeps the icon, and an empty icon removes it. If a Rust
+	/// host does not implement this method, it ignores the metadata. The room
+	/// keeps the name and icon of `create_chat_room`.
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomMetadataRequest,
+	) -> Result<(), GenericError> {
+		Ok(())
+	}
+
+	/// Replace how a room shows in the chat list.
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomPreviewRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomPreview"))
+	}
+
+	/// Delete a room with its messages, cache and declarations, and close its
+	/// screen. The core calls it only for a room the product hosts.
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatDeleteRoomRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("deleteChatRoom"))
+	}
+
+	/// Apply one change to the messages of a room. With `persist` the host
+	/// stores the change, because it keeps the messages of the room. Without
+	/// it the host applies the change only to an open room screen and the chat
+	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
+	/// and, for an edit, a replacement or a deletion of a message the product
+	/// did not write, `NotOwner`, and any failure of its own with
+	/// `HostFailure`. A web host can answer only `HostFailure`: the web bridge
+	/// turns each error that a web callback throws into `HostFailure`.
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatUpdateFeedRequest,
+		_persist: bool,
+	) -> Result<(), CallError<HostChatUpdateFeedError>> {
+		Err(CallError::HostFailure { reason: chat_method_not_served("updateChatFeed").reason })
+	}
+}
+
+/// The failure of a chat platform method a host does not serve yet.
+fn chat_method_not_served(method: &str) -> GenericError {
+	GenericError { reason: format!("this host does not serve {method}") }
 }
 
 /// Host-implemented balance view: what a payment request can spend right now,

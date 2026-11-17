@@ -13,6 +13,7 @@ export {
 export type {
   ChainStatus,
   ChatMessageRecord,
+  ChatRoomDeclarations,
   MockFaults,
   MockHost,
   MockHostConfig,

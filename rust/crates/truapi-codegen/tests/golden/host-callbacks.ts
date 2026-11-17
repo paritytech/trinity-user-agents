@@ -31,17 +31,22 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomConfig,
   ChatRoomRegistrationStatus,
   FundingFrameOutcome,
   FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
+  HostChatDeleteRoomRequest,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
   HostChatSetRoomFooterRequest,
+  HostChatSetRoomMetadataRequest,
+  HostChatSetRoomPreviewRequest,
+  HostChatUpdateFeedRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostFundingStatusSubscribeItem,
@@ -1742,6 +1747,81 @@ export interface ChatPlatform {
   subscribeChatRooms(
     product: ProductContext,
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
+
+  /**
+   * The current product-scoped room list, read one time. The core uses it to
+   * check that a product hosts a room. A host that cannot read its rooms
+   * returns an error, not an empty list. If a Rust host does not implement
+   * this method, the core uses the first item of the room list subscription.
+   */
+  listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
+
+  /**
+   * The configuration the product last declared for a room, or the default
+   * configuration when it declared none. The core reads it to decide
+   * whether a room keeps its messages in the host.
+   */
+  readChatRoomConfig?(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<ChatRoomConfig>;
+
+  /**
+   * Replace the configuration of a room whole and keep it across restarts.
+   * The core calls it after each `create_chat_room`, for a new room and for
+   * a room that exists. If a Rust host does not implement this method, it
+   * accepts only the default configuration. That configuration changes
+   * nothing that the host shows.
+   */
+  setChatRoomConfig?(
+    product: ProductContext,
+    roomId: string,
+    config: ChatRoomConfig,
+  ): Promise<void>;
+
+  /**
+   * Replace the name, description, icon and empty-room text of a room. An
+   * icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
+   * host does not implement this method, it ignores the metadata. The room
+   * keeps the name and icon of `create_chat_room`.
+   */
+  setChatRoomMetadata?(
+    product: ProductContext,
+    request: HostChatSetRoomMetadataRequest,
+  ): Promise<void>;
+
+  /**
+   * Replace how a room shows in the chat list.
+   */
+  setChatRoomPreview?(
+    product: ProductContext,
+    request: HostChatSetRoomPreviewRequest,
+  ): Promise<void>;
+
+  /**
+   * Delete a room with its messages, cache and declarations, and close its
+   * screen. The core calls it only for a room the product hosts.
+   */
+  deleteChatRoom?(
+    product: ProductContext,
+    request: HostChatDeleteRoomRequest,
+  ): Promise<void>;
+
+  /**
+   * Apply one change to the messages of a room. With `persist` the host
+   * stores the change, because it keeps the messages of the room. Without
+   * it the host applies the change only to an open room screen and the chat
+   * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
+   * and, for an edit, a replacement or a deletion of a message the product
+   * did not write, `NotOwner`, and any failure of its own with
+   * `HostFailure`. A web host can answer only `HostFailure`: the web bridge
+   * turns each error that a web callback throws into `HostFailure`.
+   */
+  updateChatFeed?(
+    product: ProductContext,
+    request: HostChatUpdateFeedRequest,
+    persist: boolean,
+  ): Promise<void>;
 }
 
 /**

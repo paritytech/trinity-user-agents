@@ -16,8 +16,9 @@ use crate::{
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
-		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+		Account, Chain, Chat, Entropy, ExpandedCard, Game, LocalStorage, Notifications,
+		Permissions, Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
+		Worker,
 	},
 	v02,
 	versioned::{
@@ -35,6 +36,12 @@ use truapi::{
 			RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
 			RemoteChainTransactionBroadcastResponse,
+		},
+		chat::{
+			HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+			HostChatPostMessageError, HostChatPostMessageRequest, HostChatRegisterBotError,
+			HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterError,
+			HostChatSetRoomFooterRequest,
 		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::{

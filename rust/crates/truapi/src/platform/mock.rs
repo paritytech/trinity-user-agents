@@ -43,7 +43,7 @@ use futures::{
 	stream::{self, BoxStream},
 };
 
-use truapi::latest;
+use truapi::{CallError, latest};
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
@@ -175,6 +175,19 @@ pub struct ChatMessageRecord {
 	pub payload: latest::ChatMessageContent,
 	/// The product's one-line description of the message.
 	pub alt: Option<String>,
+}
+
+/// What the product declared for one chat room through the mock.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatRoomDeclarations {
+	/// The last configuration, or `None` before the product declared one.
+	pub config: Option<latest::ChatRoomConfig>,
+	/// The last metadata from `set_chat_room_metadata`.
+	pub metadata: Option<latest::ChatRoomMetadata>,
+	/// The last chat list preview.
+	pub preview: Option<latest::ChatRoomPreview>,
+	/// Every feed update, in order, with whether the host had to store it.
+	pub feed: Vec<(latest::ChatFeedUpdate, bool)>,
 }
 
 /// How the mock's chain connection behaves.
@@ -341,6 +354,7 @@ pub struct MockPlatform {
 	chat_rooms: Arc<Mutex<BTreeMap<String, latest::ChatRoom>>>,
 	chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
 	chat_messages: Arc<Mutex<Vec<ChatMessageRecord>>>,
+	chat_declarations: Arc<Mutex<BTreeMap<String, ChatRoomDeclarations>>>,
 	/// Live `subscribe_chat_rooms` streams, fed a fresh list on every change.
 	chat_room_subscribers:
 		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
@@ -395,6 +409,7 @@ impl MockPlatform {
 			chat_rooms: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_messages: Arc::new(Mutex::new(Vec::new())),
+			chat_declarations: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
 			next_chat_message_id: Arc::new(AtomicU32::new(0)),
 			next_operation_id: Arc::new(AtomicU32::new(0)),
@@ -727,6 +742,31 @@ impl MockPlatform {
 		self.chat_messages.lock().expect("chat messages poisoned").clone()
 	}
 
+	/// What the product declared for `room_id`, or `None` for a room it
+	/// declared nothing for or deleted.
+	pub fn chat_room_declarations(&self, room_id: &str) -> Option<ChatRoomDeclarations> {
+		self.chat_declarations
+			.lock()
+			.expect("chat declarations poisoned")
+			.get(room_id)
+			.cloned()
+	}
+
+	/// Apply `change` to the declarations of `room_id`, or fail with the
+	/// injected chat fault.
+	fn declare_chat_room(
+		&self,
+		room_id: String,
+		change: impl FnOnce(&mut ChatRoomDeclarations),
+	) -> Result<(), latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let mut declarations = self.chat_declarations.lock().expect("chat declarations poisoned");
+		change(declarations.entry(room_id).or_default());
+		Ok(())
+	}
+
 	/// Drop the registered rooms and bots and the posted-message log.
 	///
 	/// Live `subscribe_chat_rooms` streams stay open and see the emptied list,
@@ -735,6 +775,7 @@ impl MockPlatform {
 		self.chat_rooms.lock().expect("chat rooms poisoned").clear();
 		self.chat_bots.lock().expect("chat bots poisoned").clear();
 		self.chat_messages.lock().expect("chat messages poisoned").clear();
+		self.chat_declarations.lock().expect("chat declarations poisoned").clear();
 		self.publish_chat_rooms();
 	}
 
@@ -1394,6 +1435,93 @@ impl ChatPlatform for MockPlatform {
 			.expect("chat subscribers poisoned")
 			.push(sender);
 		Box::pin(receiver.map(Ok))
+	}
+
+	async fn list_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		Ok(latest::HostChatListSubscribeItem { rooms: self.chat_rooms() })
+	}
+
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<latest::ChatRoomConfig, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		Ok(self
+			.chat_room_declarations(&room_id)
+			.and_then(|declarations| declarations.config)
+			.unwrap_or_default())
+	}
+
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+		config: latest::ChatRoomConfig,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(room_id, |room| room.config = Some(config))
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomMetadataRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomPreviewRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatDeleteRoomRequest,
+	) -> Result<(), latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		self.chat_declarations
+			.lock()
+			.expect("chat declarations poisoned")
+			.remove(&request.room_id);
+		self.chat_messages
+			.lock()
+			.expect("chat messages poisoned")
+			.retain(|message| message.room_id != request.room_id);
+		let removed = self
+			.chat_rooms
+			.lock()
+			.expect("chat rooms poisoned")
+			.remove(&request.room_id)
+			.is_some();
+		if removed {
+			self.publish_chat_rooms();
+		}
+		Ok(())
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
+		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))
+			.map_err(|error| CallError::HostFailure { reason: error.reason })
 	}
 }
 

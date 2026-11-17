@@ -918,3 +918,456 @@ fn review_discriminants_do_not_move() {
 
 	assert_eq!(discriminants, [9, 11]);
 }
+
+fn text_message(message_id: &str) -> ChatMessage {
+	ChatMessage {
+		message_id: message_id.to_string(),
+		origin: ChatMessageOrigin { participant_id: "product".to_string() },
+		timestamp: 1,
+		body: ChatMessageBody::Text { text: "hi".to_string() },
+		status: truapi::latest::ChatMessageStatus::Sent,
+		reply: None,
+		edited_at: None,
+		reactions: Vec::new(),
+		request: false,
+	}
+}
+
+fn image_item(resource: ChatResource) -> ChatMediaItem {
+	ChatMediaItem::Image {
+		resource,
+		meta: ChatMediaMeta {
+			mime_type: "image/png".to_string(),
+			size_bytes: None,
+			width: None,
+			height: None,
+			placeholder: None,
+			alt: None,
+			duration_ms: None,
+		},
+	}
+}
+
+fn hop(node: &str, size: u64) -> ChatResource {
+	ChatResource::Hop { identifier: [1; 32], ticket: [2; 32], node: node.to_string(), size }
+}
+
+// A node that is not `wss://` is not one the apps dial.
+#[test]
+fn a_hop_file_is_media_with_a_wss_node() {
+	let file = hop("wss://hop.example", 1_000);
+	assert_eq!(validate_chat_media_resource("media", file.clone()), Ok(file));
+	assert_eq!(
+		validate_chat_media_resource("media", hop("https://hop.example", 1_000)),
+		Err(ChatFieldError::RejectedScheme { field: "media" })
+	);
+	assert_eq!(
+		validate_chat_media_resource(
+			"media",
+			hop("wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
+		),
+		Err(ChatFieldError::TooLong {
+			field: "media",
+			limit: CHAT_HOP_FILE_MAX_BYTES as usize
+		})
+	);
+	// A file with zero bytes is empty, not too long.
+	assert_eq!(
+		validate_chat_media_resource("media", hop("wss://hop.example", 0)),
+		Err(ChatFieldError::Empty { field: "media" })
+	);
+}
+
+// The host shows the length of a video, so the validation must keep it.
+#[test]
+fn a_video_keeps_its_length() {
+	let video = ChatMediaItem::Video {
+		resource: hop("wss://hop.example", 1_000),
+		meta: ChatMediaMeta {
+			mime_type: "video/mp4".to_string(),
+			size_bytes: None,
+			width: None,
+			height: None,
+			placeholder: None,
+			alt: None,
+			duration_ms: Some(12_000),
+		},
+	};
+	assert_eq!(validate_chat_media_item(video.clone()), Ok(video));
+}
+
+#[test]
+fn a_message_carries_at_most_the_media_budget() {
+	let many = |count| ChatMessageBody::RichText {
+		text: None,
+		media: (0..count).map(|_| image_item(hop("wss://hop.example", 1))).collect(),
+	};
+	assert!(validate_chat_message_body(many(CHAT_MEDIA_MAX)).is_ok());
+	assert_eq!(
+		validate_chat_message_body(many(CHAT_MEDIA_MAX + 1)),
+		Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
+	);
+}
+
+// A custom body gets the checks of a custom message that a product posts,
+// and the host shows its `alt` where it shows the `alt` of a post.
+#[test]
+fn a_custom_body_is_screened_like_a_posted_custom_message() {
+	let custom =
+		|message_type: &str, payload: Vec<u8>, alt: Option<&str>| ChatMessageBody::Custom {
+			message: ChatCustomBody { message_type: message_type.to_string(), payload },
+			alt: alt.map(str::to_string),
+		};
+	assert_eq!(
+		validate_chat_message_body(custom(" poll ", vec![1], Some("A poll"))),
+		Ok(custom("poll", vec![1], Some("A poll")))
+	);
+	assert_eq!(
+		validate_chat_message_body(custom("poll", vec![1], Some(""))),
+		Ok(custom("poll", vec![1], None))
+	);
+	assert_eq!(
+		validate_chat_message_body(custom("poll", vec![1], Some("a\u{202e}b"))),
+		Err(ChatFieldError::UnsafeCharacter { field: "alt" })
+	);
+	assert_eq!(
+		validate_chat_message_body(custom("  ", Vec::new(), None)),
+		Err(ChatFieldError::Empty { field: "messageType" })
+	);
+	assert_eq!(
+		validate_chat_message_body(custom(
+			"poll",
+			vec![0; CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1],
+			None
+		)),
+		Err(ChatFieldError::TooLong { field: "payload", limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES })
+	);
+}
+
+// `text` is the field a product shrinks by sending less, so its size
+// rejection keeps that name for `MessageTooLarge`.
+#[test]
+fn a_message_body_is_bounded_in_text() {
+	let text = |len| ChatMessageBody::Text { text: "x".repeat(len) };
+	assert!(validate_chat_message_body(text(CHAT_BODY_MAX_BYTES)).is_ok());
+	assert_eq!(
+		validate_chat_message_body(text(CHAT_BODY_MAX_BYTES + 1)),
+		Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
+	);
+	let caption = ChatMessageBody::RichText {
+		text: Some("x".repeat(CHAT_BODY_MAX_BYTES + 1)),
+		media: Vec::new(),
+	};
+	assert_eq!(
+		validate_chat_message_body(caption),
+		Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
+	);
+}
+
+#[test]
+fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
+	assert_eq!(
+		validate_chat_message(text_message(" m1 ")).map(|message| message.message_id),
+		Ok("m1".to_string())
+	);
+	assert_eq!(
+		validate_chat_message(text_message("m\u{200d}1")),
+		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+	);
+	let reacted = |count: usize| ChatMessage {
+		reactions: (0..count)
+			.map(|index| ChatReactionSummary {
+				emoji: format!("e{index}"),
+				count: 1,
+				reacted_by_user: false,
+				unseen: false,
+			})
+			.collect(),
+		..text_message("m1")
+	};
+	assert!(validate_chat_message(reacted(CHAT_REACTIONS_MAX)).is_ok());
+	assert_eq!(
+		validate_chat_message(reacted(CHAT_REACTIONS_MAX + 1)),
+		Err(ChatFieldError::TooMany { field: "reactions", limit: CHAT_REACTIONS_MAX })
+	);
+	assert_eq!(
+		validate_chat_feed_update(ChatFeedUpdate::ReactionPlaced {
+			message_id: "m1".to_string(),
+			participant_id: "user\u{202e}".to_string(),
+			emoji: "👍".to_string(),
+		}),
+		Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+	);
+}
+
+// A deletion names its message as each other update does.
+#[test]
+fn a_deletion_names_a_screened_message() {
+	let deleted = |id: &str| ChatFeedUpdate::Deleted { message_id: id.to_string() };
+	assert_eq!(validate_chat_feed_update(deleted(" m1 ")), Ok(deleted("m1")));
+	assert_eq!(
+		validate_chat_feed_update(deleted("m\u{202e}1")),
+		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+	);
+}
+
+#[test]
+fn room_declarations_are_bounded_as_the_limits_say() {
+	let metadata = |description: usize| ChatRoomMetadata {
+		name: "Support".to_string(),
+		description: Some("x".repeat(description)),
+		icon: None,
+		placeholder: None,
+	};
+	assert!(validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES)).is_ok());
+	assert_eq!(
+		validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES + 1)),
+		Err(ChatFieldError::TooLong {
+			field: "description",
+			limit: CHAT_DESCRIPTION_MAX_BYTES
+		})
+	);
+	assert_eq!(
+		validate_chat_room_metadata(ChatRoomMetadata {
+			name: "x".repeat(CHAT_FIELD_MAX_BYTES + 1),
+			..metadata(0)
+		}),
+		Err(ChatFieldError::TooLong { field: "name", limit: CHAT_FIELD_MAX_BYTES })
+	);
+	// A new icon has the rules of the icon of `create_room`.
+	let icon = |icon: &str| ChatRoomMetadata { icon: Some(icon.to_string()), ..metadata(0) };
+	assert_eq!(
+		validate_chat_room_metadata(icon(" https://icons.example/room.png ")),
+		Ok(icon("https://icons.example/room.png"))
+	);
+	assert_eq!(validate_chat_room_metadata(icon("")), Ok(icon("")));
+	assert_eq!(
+		validate_chat_room_metadata(icon("javascript:alert(1)")),
+		Err(ChatFieldError::RejectedScheme { field: "icon" })
+	);
+
+	// The core bounds the empty-room text as it bounds a description.
+	let placeholder =
+		|text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
+	assert!(
+		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES)))
+			.is_ok()
+	);
+	assert_eq!(
+		validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES + 1))),
+		Err(ChatFieldError::TooLong {
+			field: "placeholder",
+			limit: CHAT_DESCRIPTION_MAX_BYTES
+		})
+	);
+
+	// An image badge has the rules of an icon and needs an image. An
+	// activity line is display text that says something.
+	let bare = ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message: None,
+		last_reaction: None,
+		unseen_reactions: 0,
+		pinned: true,
+		activity: None,
+	};
+	let badge = |icon: &str| ChatRoomPreview {
+		badge: Some(ChatRoomBadge::Image { icon: icon.to_string() }),
+		..bare.clone()
+	};
+	assert_eq!(
+		validate_chat_room_preview(badge(" https://icons.example/live.png ")),
+		Ok(badge("https://icons.example/live.png"))
+	);
+	assert_eq!(
+		validate_chat_room_preview(badge("")),
+		Err(ChatFieldError::Empty { field: "badge" })
+	);
+	assert_eq!(
+		validate_chat_room_preview(badge("javascript:alert(1)")),
+		Err(ChatFieldError::RejectedScheme { field: "badge" })
+	);
+	let activity = |text: &str| ChatRoomPreview {
+		activity: Some(ChatRoomActivity { text: text.to_string(), ongoing: true }),
+		..bare.clone()
+	};
+	assert_eq!(
+		validate_chat_room_preview(activity("Ben is typing")),
+		Ok(activity("Ben is typing"))
+	);
+	assert_eq!(
+		validate_chat_room_preview(activity(" ")),
+		Err(ChatFieldError::Empty { field: "activity" })
+	);
+	assert_eq!(
+		validate_chat_room_preview(activity("Ben\u{202e} is typing")),
+		Err(ChatFieldError::UnsafeCharacter { field: "activity" })
+	);
+
+	// The preview carries messages, screened as a page message is.
+	let preview_message = |message_id: &str, reply_to: Option<&str>| ChatPreviewMessage {
+		message_id: message_id.to_string(),
+		origin: ChatMessageOrigin { participant_id: "product".to_string() },
+		timestamp: 1,
+		body: ChatMessageBody::Text { text: "hi".to_string() },
+		status: truapi::latest::ChatMessageStatus::Sent,
+		reply_to: reply_to.map(str::to_string),
+		edited_at: None,
+		request: false,
+	};
+	let preview = |message: ChatPreviewMessage| ChatRoomPreview {
+		timestamp: None,
+		badge: None,
+		last_message: None,
+		last_reaction: Some(ChatPreviewReaction {
+			emoji: "👍".to_string(),
+			by_user: false,
+			message: Some(message),
+			removed: false,
+		}),
+		unseen_reactions: 1,
+		pinned: false,
+		activity: None,
+	};
+	assert!(validate_chat_room_preview(preview(preview_message("m1", Some("m0")))).is_ok());
+	assert_eq!(
+		validate_chat_room_preview(preview(preview_message("m\u{202e}1", None))),
+		Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+	);
+	assert_eq!(
+		validate_chat_room_preview(preview(preview_message("m1", Some("m\u{202e}0")))),
+		Err(ChatFieldError::UnsafeCharacter { field: "reply" })
+	);
+}
+
+// The core screens the quote of a reply as it screens the message that it
+// quotes.
+#[test]
+fn the_quote_of_a_reply_is_screened() {
+	let quoting = |participant_id: &str| ChatMessage {
+		reply: Some(ChatReply {
+			message_id: "m0".to_string(),
+			preview: Some(ChatReplyPreview {
+				origin: ChatMessageOrigin { participant_id: participant_id.to_string() },
+				body: ChatMessageBody::Text { text: "earlier".to_string() },
+			}),
+		}),
+		..text_message("m1")
+	};
+
+	assert_eq!(validate_chat_message(quoting(" contact ")), Ok(quoting("contact")));
+	assert_eq!(
+		validate_chat_message(quoting("con\u{202e}tact")),
+		Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+	);
+}
+
+/// A chat host with only the callbacks that have no default.
+struct ChatHostWithoutDeclarations;
+
+#[async_trait::async_trait]
+impl ChatPlatform for ChatHostWithoutDeclarations {
+	async fn create_chat_room(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+		_request: HostChatCreateRoomRequest,
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn register_chat_bot(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatRegisterBotRequest,
+	) -> Result<HostChatRegisterBotResponse, HostChatRegisterBotError> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn post_chat_message(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatPostMessageRequest,
+	) -> Result<HostChatPostMessageResponse, HostChatPostMessageError> {
+		unimplemented!("not used by this test")
+	}
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomFooterRequest,
+	) -> Result<(), GenericError> {
+		unimplemented!("not used by this test")
+	}
+
+	fn subscribe_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>> {
+		unimplemented!("not used by this test")
+	}
+}
+
+// The Rust defaults have the same contract as the Swift and Kotlin bridges.
+// A host without the declaration callbacks accepts the declarations that
+// change nothing, and refuses all other declarations.
+#[test]
+fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
+	let host = ChatHostWithoutDeclarations;
+	let product = ProductContext::new(ProductId::for_test("chat.dot"));
+	let config = |config: ChatRoomConfig| {
+		futures::executor::block_on(host.set_chat_room_config(
+			&product,
+			"support".to_string(),
+			config,
+		))
+	};
+	let refused = |method: &str| Err(chat_method_not_served(method));
+
+	assert_eq!(config(ChatRoomConfig::default()), Ok(()));
+	assert_eq!(
+		config(ChatRoomConfig { product_source: true, ..Default::default() }),
+		refused("setChatRoomConfig")
+	);
+	assert_eq!(
+		futures::executor::block_on(host.set_chat_room_metadata(
+			&product,
+			HostChatSetRoomMetadataRequest {
+				room_id: "support".to_string(),
+				metadata: ChatRoomMetadata {
+					name: "Support".to_string(),
+					description: None,
+					icon: None,
+					placeholder: None,
+				},
+			},
+		)),
+		Ok(())
+	);
+	assert_eq!(
+		futures::executor::block_on(host.set_chat_room_preview(
+			&product,
+			HostChatSetRoomPreviewRequest {
+				room_id: "support".to_string(),
+				preview: ChatRoomPreview {
+					timestamp: None,
+					badge: None,
+					last_message: None,
+					last_reaction: None,
+					unseen_reactions: 0,
+					pinned: false,
+					activity: None,
+				},
+			},
+		)),
+		refused("setChatRoomPreview")
+	);
+	assert_eq!(
+		futures::executor::block_on(host.delete_chat_room(
+			&product,
+			HostChatDeleteRoomRequest { room_id: "support".to_string() },
+		)),
+		refused("deleteChatRoom")
+	);
+}

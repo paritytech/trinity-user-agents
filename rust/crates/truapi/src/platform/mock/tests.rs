@@ -617,16 +617,20 @@ fn mock_product() -> ProductContext {
 	ProductContext::new(ProductId::for_test("mock.dot"))
 }
 
+fn mock_room_request(room_id: &str) -> latest::HostChatCreateRoomRequest {
+	latest::HostChatCreateRoomRequest {
+		room_id_source: room_id.to_string(),
+		name: format!("{room_id} room"),
+		icon: "https://example.invalid/i.png".to_string(),
+		config: Default::default(),
+	}
+}
+
 fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
 	block_on(p.create_chat_room(
 		&mock_product(),
 		room_id.to_string(),
-		latest::HostChatCreateRoomRequest {
-			room_id_source: room_id.to_string(),
-			name: format!("{room_id} room"),
-			icon: "https://example.invalid/i.png".to_string(),
-			config: Default::default(),
-		},
+		mock_room_request(room_id),
 	))
 	.expect("room registration succeeds")
 }
@@ -691,17 +695,9 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 	});
 	let product = mock_product();
 
-	let room = block_on(p.create_chat_room(
-		&product,
-		"lobby".to_string(),
-		latest::HostChatCreateRoomRequest {
-			room_id_source: "lobby".to_string(),
-			name: "lobby room".to_string(),
-			icon: "https://example.invalid/i.png".to_string(),
-			config: Default::default(),
-		},
-	))
-	.expect_err("room creation carries the injected reason");
+	let room =
+		block_on(p.create_chat_room(&product, "lobby".to_string(), mock_room_request("lobby")))
+			.expect_err("room creation carries the injected reason");
 	assert!(
 		matches!(room, latest::HostChatCreateRoomError::Unknown { reason } if reason == "chat down"),
 	);
@@ -963,4 +959,88 @@ fn reset_clears_recordings_and_restores_policy_fallback() {
 	// Enforcement and the explicit denial are both gone, so the allow-all
 	// policy answers again.
 	assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
+}
+
+// The core checks the room of each call that changes a room. A check
+// through a subscription keeps one sender for each call, so the mock
+// answers the check with one read, as the TS mock does.
+#[test]
+fn a_room_check_reads_the_room_list_once() {
+	let p = MockPlatform::new();
+	let product = mock_product();
+	create_room(&p, "lobby");
+
+	let listed = block_on(p.list_chat_rooms(&product)).expect("the mock lists its rooms");
+
+	assert_eq!(listed.rooms, p.chat_rooms());
+	assert!(p.chat_room_subscribers.lock().expect("chat subscribers poisoned").is_empty());
+}
+
+// Every declaration that a product makes through the core lands where a
+// test reads it back. When the product deletes the room, the mock removes
+// all of it.
+#[test]
+fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
+	let p = MockPlatform::new();
+	let product = mock_product();
+	let room = || "lobby".to_string();
+	let config = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
+	block_on(p.create_chat_room(&product, "lobby".to_string(), mock_room_request("lobby")))
+		.expect("room registration succeeds");
+	block_on(p.set_chat_room_config(&product, room(), config.clone()))
+		.expect("the configuration is recorded");
+	let metadata = latest::ChatRoomMetadata {
+		name: "Lobby".to_string(),
+		description: Some("Say hello".to_string()),
+		icon: Some("https://icons.example/lobby.png".to_string()),
+		placeholder: None,
+	};
+	let preview = latest::ChatRoomPreview {
+		timestamp: Some(7),
+		badge: Some(latest::ChatRoomBadge::UnreadCount { count: 2 }),
+		last_message: None,
+		last_reaction: None,
+		unseen_reactions: 0,
+		pinned: false,
+		activity: None,
+	};
+	let update = latest::ChatFeedUpdate::StatusChanged {
+		message_id: "m1".to_string(),
+		status: latest::ChatMessageStatus::Read,
+	};
+
+	block_on(p.set_chat_room_metadata(
+		&product,
+		latest::HostChatSetRoomMetadataRequest { room_id: room(), metadata: metadata.clone() },
+	))
+	.unwrap();
+	block_on(p.set_chat_room_preview(
+		&product,
+		latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: preview.clone() },
+	))
+	.unwrap();
+	block_on(p.update_chat_feed(
+		&product,
+		latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
+		true,
+	))
+	.unwrap();
+
+	assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));
+	assert_eq!(
+		p.chat_room_declarations("lobby"),
+		Some(ChatRoomDeclarations {
+			config: Some(config),
+			metadata: Some(metadata),
+			preview: Some(preview),
+			feed: vec![(update, true)],
+		})
+	);
+
+	block_on(
+		p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }),
+	)
+	.unwrap();
+	assert_eq!(p.chat_room_declarations("lobby"), None);
+	assert!(p.chat_rooms().is_empty());
 }
