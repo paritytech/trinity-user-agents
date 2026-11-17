@@ -270,6 +270,10 @@ enum MessageContent {
         preview_text: Option<String>,
     },
 
+    // A deleted message that keeps its place, so that replies still point
+    // at it. The Host draws "Message deleted".
+    Deleted,
+
     // A line about the room that the Host draws with its own strings. The
     // origin is the participant who acted: "Ana added Ben".
     RoomEvent(RoomEvent),
@@ -374,6 +378,8 @@ enum MessageFeedUpdate {
     MessageEdit(MessageId, MessageContent, Timestamp),
     ReactionPlaced(MessageId, MessageReaction),
     ReactionRemoved(MessageId, MessageReaction),
+    // Removes the row. To keep a "Message deleted" row, the Product sends
+    // `MessageEdit` with `MessageContent::Deleted`.
     MessageDeleted(MessageId),
 }
 
