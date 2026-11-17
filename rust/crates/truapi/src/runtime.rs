@@ -19,7 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
-pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
+pub use dotns_lookup::DotnsLookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
@@ -415,7 +415,7 @@ pub struct ProductConnection {
 	renderer_failures: Arc<ActionChannel<HostRendererFailureSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
 	open_operations: Mutex<HashSet<u32>>,
 }

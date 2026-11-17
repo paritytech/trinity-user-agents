@@ -132,7 +132,7 @@ struct OutboxTextConfigurationBuilder: TextMessageConfigurationBuilding {
         let statusConfig = ChatMessageStatusViewConfiguration.outbox(
             date: context.deliveryDate,
             formatter: timeFormatter,
-            status: outgoingStatus.configurationStatus(),
+            status: outgoingStatus.configurationStatus(isSeenByPeer: context.isSeenByPeer),
             isEdited: context.isEdited,
             background: context.isAttachmentsOnly ? .mediaOverlay : nil
         )
@@ -162,7 +162,7 @@ struct OutboxSingleEmojiConfigurationBuilder: TextMessageConfigurationBuilding {
         let statusConfig = ChatMessageStatusViewConfiguration.outbox(
             date: context.deliveryDate,
             formatter: timeFormatter,
-            status: outgoingStatus.configurationStatus(),
+            status: outgoingStatus.configurationStatus(isSeenByPeer: context.isSeenByPeer),
             isEdited: context.isEdited,
             background: .mediaOverlay
         )

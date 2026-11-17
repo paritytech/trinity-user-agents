@@ -1282,29 +1282,28 @@ impl SigningHostRuntime {
 
 	/// Keeps `text` on the device as a material and returns its ID, for
 	/// resolutions started afterwards to draw without Bulletin. Keep before
-	/// anything resolves the material: a fetch already under way for it is not
-	/// answered. Refused with its reason when the core cannot read it, and as
-	/// unsupported when the host draws no materials or before the core services
-	/// start over a core database.
+	/// anything resolves the material: a resolution that is already waiting on
+	/// Bulletin for it keeps waiting, and does not get the kept text. Refused
+	/// with its reason when the core cannot read it, and as unsupported when the
+	/// host draws no materials or before the core services start over a core
+	/// database.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub async fn keep_material(
-		&self,
-		text: Vec<u8>,
-	) -> Result<[u8; 32], truapi::latest::MaterialFailure> {
+	pub async fn keep_material(&self, text: Vec<u8>) -> Result<[u8; 32], crate::KeepMaterialError> {
+		use crate::KeepMaterialError::Refused;
 		let materials = self
 			.services
 			.materials()
 			.filter(|_| self.services.materials_enabled())
-			.ok_or(truapi::latest::MaterialFailure::Unsupported)?;
+			.ok_or(Refused(truapi::latest::MaterialFailure::Unsupported))?;
 		let id = crate::host_internal::bulletin::preimage_key(&text);
-		materials.keep(id, text).await?;
+		materials.keep(id, text).await.map_err(Refused)??;
 		Ok(id)
 	}
 
-	/// The resolved materials of `tree` in `context`, its shaders in
-	/// `language`, filtering 32-bit float images themselves unless
-	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the core
-	/// services start over a core database, every node draws plain.
+	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn resolve_materials(
 		&self,
@@ -1839,7 +1838,7 @@ pub struct ConnectionAdapters {
 		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 

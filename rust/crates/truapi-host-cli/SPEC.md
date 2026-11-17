@@ -609,7 +609,7 @@ answer within 30 seconds draws plain as `NotFound`.
 
 | Option | Behavior |
 | --- | --- |
-| `--materials <dir>` | Keeps each file in `<dir>` first, as a fetch from Bulletin would, printing `kept <file> 0x<id>` or `refused <file>: <reason>`. A face naming only kept materials resolves without Bulletin. |
+| `--materials <dir>` | Keeps each file in `<dir>` first, as a fetch from Bulletin would, printing `kept <file> 0x<id>` or `refused <file>: <reason>`. A file the database cannot save stops the command with an error. A face naming only kept materials resolves without Bulletin. |
 | `--metal` | Builds Metal shaders, as iOS draws, instead of GLSL ES 3.00, as Android does. |
 | `--out <dir>` | Writes each ready layer's shaders as `node<n>-layer<k>.vert` and `.frag` (or `.vertex.metal` and `.fragment.metal`), and what feeds them (uniform blocks, uniforms, textures) as `node<n>-layer<k>.txt`. |
 

@@ -473,13 +473,13 @@ pub mod latest {
 	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
 	/// Pocket card removal failure.
 	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
-	/// Request to show or hide the face above the calling Widget.
+	/// Request to cover or uncover the face under the calling Widget.
 	pub type HostExpandedCardSetFaceShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
-	/// Face visibility change failure.
+	/// Face cover change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
-	/// Request to turn the card above the calling Widget to one side.
+	/// Request to turn the card under the calling Widget to one side.
 	pub type HostExpandedCardSetBackShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
 	/// Card turn failure.
@@ -936,9 +936,9 @@ cfg_select! {
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use materials::{
-			MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
-			ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
-			UniformRole,
+			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
+			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform,
+			UniformKind, UniformRole,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{

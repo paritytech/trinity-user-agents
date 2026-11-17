@@ -7,6 +7,10 @@ enum ChatRequestStatementBuilderError: Error {
     case invalidPaginationDay
 }
 
+protocol ChatRequestStatementBuilding: OutgoingStatementBuilding where Input == OutgoingChatRequestInput {
+    func makeUnsignedStatement(for input: OutgoingChatRequestInput, expiry: UInt64) throws -> UnsignedStatement
+}
+
 /// The request statement: discovery topics, the peer channel and the encrypted request with its inner proof.
 struct ChatRequestStatementBuilder: @unchecked Sendable {
     private static let topicCount = 3
@@ -16,8 +20,12 @@ struct ChatRequestStatementBuilder: @unchecked Sendable {
     let priorityFactory: StatementPriorityMaking
 }
 
-extension ChatRequestStatementBuilder: OutgoingStatementBuilding {
+extension ChatRequestStatementBuilder: ChatRequestStatementBuilding {
     func makeUnsignedStatement(for input: OutgoingChatRequestInput) throws -> UnsignedStatement {
+        try makeUnsignedStatement(for: input, expiry: priorityFactory.makeTimestampPriority())
+    }
+
+    func makeUnsignedStatement(for input: OutgoingChatRequestInput, expiry: UInt64) throws -> UnsignedStatement {
         guard let pagination = ChatRequest.paginationDay(from: Date()) else {
             throw ChatRequestStatementBuilderError.invalidPaginationDay
         }
@@ -30,7 +38,7 @@ extension ChatRequestStatementBuilder: OutgoingStatementBuilding {
             .addTopic2(ChatRequest.paginationTopic(from: peer.accountId, day: pagination.day))
             .addTopic3(channel) // the channel doubles as a topic for discovery
             .addChannel(channel)
-            .addExpiry(priorityFactory.makeTimestampPriority())
+            .addExpiry(expiry)
             .addScaleEncodedPayload(makePayload(for: input))
     }
 
