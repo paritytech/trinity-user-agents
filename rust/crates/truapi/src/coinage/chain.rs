@@ -94,6 +94,7 @@ const MEMBERS: &str = "Members";
 
 /// The pallet's storage of each alias's lock or unload.
 const ALIAS_STATES: &str = "RecyclerAliasStates";
+const UNLOADED_COUNTS: &str = "RecyclersUnloadedCount";
 
 /// The identifier of the recycler ring collection for `exponent` of
 /// `instance`: `coinage/recycler`, the instance little-endian, the exponent
@@ -192,6 +193,9 @@ pub trait CoinageChain: Send + Sync {
 	/// The members of ring `ring` of `exponent`, in ring order, up to its
 	/// included count.
 	async fn ring_members_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Vec<[u8; 32]>, StorageWatchError>;
+	/// How many aliases an unload has marked in ring `ring` of `exponent`;
+	/// none when the runtime keeps no such count.
+	async fn unloaded_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError>;
 	/// Whether each free token identity, a period and the person's alias in
 	/// it, is recorded as consumed.
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError>;
@@ -372,6 +376,17 @@ impl CoinageChain for CoinageStorage {
 				}),
 			})
 			.collect()
+	}
+
+	async fn unloaded_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		match self.values(at, PALLET, UNLOADED_COUNTS, &[((self.instance, exponent, ring),)]).await {
+			Ok(counts) => {
+				let count = counts.into_iter().flatten().next().and_then(|count| count.as_u128()).unwrap_or(0);
+				Ok(Some(u32::try_from(count).unwrap_or(u32::MAX)))
+			},
+			Err(StorageWatchError::Incompatible { .. }) => Ok(None),
+			Err(error) => Err(error),
+		}
 	}
 
 	async fn ring_members_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {

@@ -109,6 +109,7 @@ pub async fn on_block(deps: &ObserverDeps, block: HashAndNumber, now: u64, param
 					Err(_) => Read::Failed,
 					Ok(states) => {
 						let lifetime = params.config().ring_lifetime.as_secs();
+						let unloaded = deps.chain.unloaded_at(at, exponent, place.ring).await.ok().flatten();
 						Read::Entry(Some(EntryOnChain {
 							ring: place.ring,
 							revision: place.revision,
@@ -122,6 +123,7 @@ pub async fn on_block(deps: &ObserverDeps, block: HashAndNumber, now: u64, param
 								Some(Some(AliasState::Locked(until))) => Some(*until),
 								_ => None,
 							},
+							unloaded,
 						}))
 					},
 				},

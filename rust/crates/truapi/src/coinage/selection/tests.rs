@@ -52,6 +52,7 @@ fn entry(db: &Db, exponent: u8, ring: u32) -> Asset {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	}));
 	hold(db, AssetKind::Entry, exponent, read)
 }

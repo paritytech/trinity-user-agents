@@ -161,6 +161,9 @@ pub struct FakeChain {
 	pub unplaced: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPosition)>>,
 	/// The state of each alias that has one.
 	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
+	/// The unloaded count of each ring, by exponent and ring; a ring with
+	/// none listed reads as a runtime that keeps no count.
+	pub unloaded: parking_lot::Mutex<HashMap<(i8, u32), u32>>,
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
 	/// What each account holds of the external asset; none for the rest.
@@ -227,6 +230,11 @@ impl CoinageChain for FakeChain {
 
 	async fn ring_members_at(&self, _: H256, _: i8, _: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {
 		Ok(Vec::new())
+	}
+
+	async fn unloaded_at(&self, _: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		self.check()?;
+		Ok(self.unloaded.lock().get(&(exponent, ring)).copied())
 	}
 
 	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
@@ -318,6 +326,7 @@ pub fn entry_read(ring: u32) -> Read {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 
