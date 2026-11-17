@@ -255,7 +255,12 @@ export type CoreStorageKey =
    * A product's App executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "AppManifest"; value: { productLabel: string } };
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The Asset Hub account a withdrawal through the core's native funding
+   * route pays out to.
+   */
+  | { tag: "NativeFundingDestination"; value: { intent: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1102,6 +1107,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       AppManifest: [
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      NativeFundingDestination: [
+        17,
+        S.Struct({ intent: S.str }) as S.Codec<{ intent: string }>,
       ] as const,
     }),
 );
