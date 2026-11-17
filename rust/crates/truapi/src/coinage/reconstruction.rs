@@ -7,7 +7,7 @@
 //! (invariant 3). The registry is the only thing that
 //! survives a wipe (invariant 4).
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use chacha20poly1305::{
 	ChaCha20Poly1305, Nonce,
@@ -17,12 +17,17 @@ use parity_scale_codec::{Decode, Encode};
 
 use super::{
 	Asset, ChainParams, CoinSecret, Exponent, PurseId,
-	chain::CoinageChain,
+	assembly::UNLOADING_RECYCLER_CONTEXT,
+	chain::{AliasState, CoinageChain, RingPosition},
 	ledger::{self, AssetRecord, ScanProgress},
 	namespace::{coin_key, entry_seed},
 	plugins::Seed,
 };
-use crate::{installation::InstallationId, runtime::load_vrf, store::Db};
+use crate::{
+	installation::InstallationId,
+	runtime::{Vrf, load_vrf},
+	store::Db,
+};
 
 /// How far a scan reads (part of the layer's configuration).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -307,16 +312,17 @@ async fn scan(
 					.filter_map(|index| vrf.member(&entry_seed(entropy, purse, installation, *index).0).ok())
 					.collect();
 				let read = deps.chain.members_at(at, &members).await.map_err(|_| ReconstructError::Unavailable)?;
-				indices
+				let loaded: Vec<(u32, i8, AssetRecord)> = indices
 					.iter()
 					.zip(read)
 					.filter_map(|(index, loaded)| {
 						let (_, value) = loaded.filter(|(loaded_instance, _)| *loaded_instance == instance)?;
 						let exponent = Exponent::from_chain(value, params)?;
 						let asset = Asset::Entry { purse, installation, index: *index };
-						Some(AssetRecord { asset, exponent })
+						Some((*index, value, AssetRecord { asset, exponent }))
 					})
-					.collect()
+					.collect();
+				not_unloaded(deps, &vrf, entropy, at, (purse, installation), loaded).await?
 			};
 			empty = if found.is_empty() { empty + 1 } else { 0 };
 			adopted += found.len();
@@ -331,6 +337,49 @@ async fn scan(
 		}
 	}
 	Ok(adopted)
+}
+
+/// The entries of `loaded`, each given with its index and the exponent the
+/// chain shows, whose alias in their ring is not unloaded.
+///
+/// An unload names only the entry's alias, so an unloaded entry's member key
+/// stays in its ring until the ring is cleaned up. An entry that is
+/// onboarding was never in a ring, and one that holds no ring index has no
+/// alias to read, so both are kept.
+async fn not_unloaded(
+	deps: &ReconstructionDeps,
+	vrf: &Vrf,
+	entropy: &[u8],
+	at: subxt::utils::H256,
+	(purse, installation): (PurseId, InstallationId),
+	loaded: Vec<(u32, i8, AssetRecord)>,
+) -> Result<Vec<AssetRecord>, ReconstructError> {
+	let mut by_exponent: BTreeMap<i8, Vec<([u8; 32], AssetRecord)>> = BTreeMap::new();
+	for (index, exponent, record) in loaded {
+		by_exponent.entry(exponent).or_default().push((entry_seed(entropy, purse, installation, index).0, record));
+	}
+	let mut kept = Vec::new();
+	for (exponent, group) in by_exponent {
+		let members =
+			group.iter().map(|(seed, _)| vrf.member(seed)).collect::<Result<Vec<_>, _>>().map_err(|_| ReconstructError::Unavailable)?;
+		let places = deps.chain.places_at(at, exponent, &members).await.map_err(|_| ReconstructError::Unavailable)?;
+		let mut in_rings: BTreeMap<u32, Vec<([u8; 32], AssetRecord)>> = BTreeMap::new();
+		for ((seed, record), place) in group.into_iter().zip(places) {
+			let Some(RingPosition::Included(place)) = place else {
+				kept.push(record);
+				continue;
+			};
+			let alias = vrf.alias(&seed, &UNLOADING_RECYCLER_CONTEXT).map_err(|_| ReconstructError::Unavailable)?;
+			in_rings.entry(place.ring).or_default().push((alias, record));
+		}
+		for (ring, group) in in_rings {
+			let aliases: Vec<[u8; 32]> = group.iter().map(|(alias, _)| *alias).collect();
+			let states = deps.chain.aliases_at(at, exponent, ring, &aliases).await.map_err(|_| ReconstructError::Unavailable)?;
+			let unloaded = |state: &Option<AliasState>| *state == Some(AliasState::Unloaded);
+			kept.extend(group.into_iter().zip(states).filter(|(_, state)| !unloaded(state)).map(|((_, record), _)| record));
+		}
+	}
+	Ok(kept)
 }
 
 #[cfg(test)]
