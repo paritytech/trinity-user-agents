@@ -65,6 +65,7 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         setupFace()
         setupPage()
         pullDown.install()
+        setContentScrollView(widgetView.webView.scrollView, for: .top)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
