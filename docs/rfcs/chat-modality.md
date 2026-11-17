@@ -256,6 +256,8 @@ enum MessageContent {
     RichText {
         text: Option<String>,  // Markdown-enabled
         media: Vec<ChatMedia>,
+        // The text goes above the media.
+        text_above: bool,
         // Made by the sender. A Host does not fetch a link of a room that a
         // Product serves: the site would learn who reads the message.
         link_preview: Option<LinkPreview>,
@@ -291,6 +293,8 @@ enum RoomEvent {
 }
 
 struct ChatMedia {
+    // The Host draws the kind that the sender chose: a `File` with an image
+    // type stays a file.
     kind: ChatMediaKind,
     // The same bytes from one or more sources, in the order to try.
     sources: Vec<ResourceUri>,
@@ -303,12 +307,22 @@ struct ChatMedia {
     // A BlurHash of the image or of the first video frame.
     placeholder: Option<String>,
     duration_ms: Option<u64>,
+    // Audio: the peaks that the Host draws.
+    waveform: Option<Vec<u8>>,
+    caption: Option<String>,
 }
 
 enum ChatMediaKind {
     Image,
     Video,
     File,
+    // Drawn with no bubble.
+    Sticker,
+    Audio,
+    // A recorded voice note.
+    Voice,
+    // A recorded video note, drawn round.
+    RoundVideo,
 }
 
 struct LinkPreview {
