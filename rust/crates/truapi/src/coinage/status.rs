@@ -241,9 +241,18 @@ fn in_flight_status(view: &Snapshot, records: &[&RecordFacts]) -> Status {
 	}
 	let usable = records.iter().any(|facts| {
 		facts.state.status == DurableTxStatus::PendingSubmission &&
+			!waits_for_funds(facts) &&
 			facts.depends_on.iter().all(|record| view.registrations().record(*record).is_some_and(final_success))
 	});
 	if usable { Status::Preparing } else { Status::Waiting }
+}
+
+/// Whether a record is a load, whose input is its funding account's funds:
+/// nothing here reads them, and C2 builds the load as soon as they cover it,
+/// so a load waiting to be built is waiting for its funds.
+fn waits_for_funds(facts: &RecordFacts) -> bool {
+	let params = facts.state.plan.as_ref().and_then(|plan| RecordParams::from_params(&plan.params));
+	params.is_some_and(|params| matches!(params.call, Call::Load(_)))
 }
 
 /// Why records that all failed failed: a cancellation, a record given up,
