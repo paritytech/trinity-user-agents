@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 import com.google.gson.Gson
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
@@ -44,6 +45,7 @@ fun productSources(products: BundledProducts, devServersEnabled: Boolean = true)
     products,
     mockk<DevServers> { every { enabled } returns devServersEnabled },
     mockk { every { currentTldOrNull() } returns null },
+    mockk(),
 )
 
 private fun workerManifestJson(includes: String) =
@@ -93,9 +95,25 @@ class BundledProductsTest {
     }
 
     @Test
-    fun `a Worker manifest the parser rejects fails as a published one does`() {
+    fun `a Worker manifest the parser rejects drops the Worker as a published one does`() {
         // provider.dot's manifest has no appVersion.
-        assertTrue(products.resolved(entry("provider.dot")!!).isFailure)
+        val provider = products.resolved(entry("provider.dot")!!).getOrNull()
+
+        assertEquals("Provider", provider?.product?.name)
+        assertNull(provider?.executables?.worker)
+    }
+
+    @Test
+    fun `a root manifest the parser rejects is a malformed manifest`() {
+        val broken = bundledProducts(
+            mapOf(
+                "bundled-products/broken.dot/manifest.json" to "not json",
+                "bundled-products/broken.dot/app/index.html" to "<html></html>",
+            ),
+        )
+        val entry = broken.entry(ProductId.parse("broken.dot").getOrThrow())!!
+
+        assertEquals(ProductResolutionError.MalformedManifest, broken.resolved(entry).exceptionOrNull())
     }
 
     @Test

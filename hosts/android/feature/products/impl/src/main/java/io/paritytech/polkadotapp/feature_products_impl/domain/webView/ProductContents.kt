@@ -1,8 +1,6 @@
-package io.paritytech.polkadotapp.feature_products_impl.data.bundled
+package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSource
 import javax.inject.Inject
 
@@ -13,7 +11,6 @@ import javax.inject.Inject
  */
 class ProductContents @Inject constructor(
     private val bundledProducts: BundledProducts,
-    private val productSources: ProductSources,
 ) {
     /** The pages a product opened from [source] is served from. */
     fun app(source: ProductSource?, mainDocumentResponseHeaders: Map<String, String>): BundledProductContent? =
@@ -21,9 +18,9 @@ class ProductContents @Inject constructor(
             BundledProductContent.app(it.entry, bundledProducts.files, mainDocumentResponseHeaders)
         }
 
-    /** The worker module of [productId] is served from, decided as its pages are. */
-    fun worker(productId: ProductId): BundledProductContent? =
-        (productSources.of(productId.value) as? ProductSource.Bundled)?.let {
+    /** The worker module a product run from [source] is served from. */
+    fun worker(source: ProductSource?): BundledProductContent? =
+        (source as? ProductSource.Bundled)?.let {
             BundledProductContent.worker(it.entry, bundledProducts.files)
         }
 }
