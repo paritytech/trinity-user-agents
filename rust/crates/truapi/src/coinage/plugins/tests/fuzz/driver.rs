@@ -17,9 +17,9 @@ use crate::{
 	coinage::{
 		Asset,
 		chain::RingPosition,
-		operation::Retry,
+		operation::{OpKind, Retry},
 		planning::Call,
-		registration::{Admission, Rows},
+		registration::{Admission, RecordFacts, Rows},
 		start::RecordParams,
 		testing::world::{Finality, World},
 	},
@@ -336,10 +336,12 @@ impl Driver {
 		entry
 	}
 
-	/// Every record with an attempt, with its attempt.
+	/// Every record of the walk with an attempt, with its attempt; the
+	/// installation's registration, which the wallet starts with, has none.
 	fn attempts(&self) -> Vec<DurableTxEntry> {
 		let view = self.world.view();
-		view.registrations().records().filter_map(|facts| self.world.try_attempt(facts.record)).collect()
+		let walked = |facts: &&RecordFacts| view.operation(&facts.operation).is_some_and(|operation| operation.kind != OpKind::RegisterInstallation);
+		view.registrations().records().filter(walked).filter_map(|facts| self.world.try_attempt(facts.record)).collect()
 	}
 
 	/// The first canonical inclusion of every attempt, up to the best head.

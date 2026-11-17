@@ -141,7 +141,7 @@ fn an_import_whose_coins_never_arrived_before_its_window_closed_moved_nothing() 
 	set_status(&wallet.db, claims[0], "FAILURE", Some("ABANDONED"));
 	assert_eq!(item(&wallet, &key(1)).status, Status::Failed(Failure::NothingMoved));
 	let completion = completion(&wallet.view(), &key(1), NOW, &chain_params(), &ENTROPY).unwrap();
-	assert_eq!(completion.coins, vec![([1; 32], CoinResult::Absent)]);
+	assert_eq!(completion.coins, vec![CoinOutcome { account: [1; 32], result: CoinResult::Absent }]);
 }
 
 /// A load's input is its account's funds, which no status reads, so a

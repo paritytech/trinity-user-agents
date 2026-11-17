@@ -118,7 +118,7 @@ fn a_failed_split_is_rebuilt_with_the_same_outputs() {
 	world.pass_rebuild_cooldown();
 	world.wait_for_submissions(2);
 	assert_eq!(
-		(world.standing(id), world.asked(), world.rows(id), world.view().registrations().records().count()),
+		(world.standing(id), world.asked(), world.rows(id), world.view().registrations().records().filter(|facts| facts.rows.outputs.contains(&b)).count()),
 		(Standing::Pending, vec![vec![id]], rows, 1)
 	);
 	assert_eq!([world.minter(b), world.minter(c)], [Some(Standing::Pending); 2]);

@@ -92,6 +92,10 @@ impl CoinageChain for RecordingChain {
 		self.chain.ring_members_at(at, exponent, ring).await
 	}
 
+	async fn unloaded_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		self.chain.unloaded_at(at, exponent, ring).await
+	}
+
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
 		self.chain.tokens_consumed_at(at, tokens).await
 	}

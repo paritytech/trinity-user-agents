@@ -55,6 +55,7 @@ pub fn in_ring(ring: u32, members: u32) -> Read {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 

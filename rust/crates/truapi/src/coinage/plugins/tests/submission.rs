@@ -19,7 +19,7 @@ use crate::{
 		plugins::{CoinageDeps, CoinagePolicy, Running, RunningState, buildable, retries, transaction},
 		registration::{Admission, Rows, coinage_domain},
 		start::RecordParams,
-		testing::{FixedSeed, NOW, NoPerson, PEOPLE_METADATA_BYTES, TestWallet, chain_params, register_rows, unbuilt_engine, world::WorldChain},
+		testing::{FixedSeed, NOW, NoPerson, NoRegistryWriter, PEOPLE_METADATA_BYTES, TestWallet, chain_params, register_rows, unbuilt_engine, world::WorldChain},
 	},
 	durable::{
 		DeferredDurableTx, DurableTxEntry, DurableTxId, DurableTxStatus, PolicyParams, Preparation, SubmissionPlan,
@@ -72,6 +72,7 @@ impl Bench {
 			extrinsics: Arc::new(extrinsic_service_serving(PEOPLE_METADATA_BYTES, 0)),
 			personhood: Arc::new(NoPerson),
 			running,
+			registry: Some(Arc::new(NoRegistryWriter)),
 		};
 		let engine = unbuilt_engine(wallet.db.clone());
 		Self { wallet, chain, clock, policy: CoinagePolicy(Arc::new(deps)), engine, operations: 0, blocks: 1 }
@@ -168,8 +169,7 @@ fn in_ring(included: u32, locked_until: Option<u64>) -> Read {
 		included,
 		closed: false,
 		expires_at: None,
-		locked_until,
-	}))
+		locked_until, unloaded: None }))
 }
 
 fn exponent(raw: u8) -> Exponent {

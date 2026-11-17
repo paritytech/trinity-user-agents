@@ -396,6 +396,15 @@ impl CoinageChain for WorldChain {
 		Ok(members.into_iter().map(|(_, member)| member).collect())
 	}
 
+	async fn unloaded_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		let tree = self.0.lock();
+		let state = tree.state_at(at)?;
+		let unloaded = state.aliases.iter().filter(|((loaded, in_ring, _), alias_state)| {
+			*loaded == exponent && *in_ring == ring && **alias_state == AliasState::Unloaded
+		});
+		Ok(Some(u32::try_from(unloaded.count()).unwrap_or(u32::MAX)))
+	}
+
 	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
 		Ok(vec![false; tokens.len()])
 	}

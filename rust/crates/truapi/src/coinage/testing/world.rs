@@ -25,7 +25,7 @@ use parking_lot::Mutex;
 use subxt::utils::H256;
 
 use super::{
-	ENTROPY, FixedSeed, NOW, NoPerson, NoRegistry, PEOPLE_METADATA_BYTES, SCAN, TestDraws, TestRuntime, TestWallet,
+	ENTROPY, FixedSeed, NOW, NoPerson, NoRegistry, NoRegistryWriter, PEOPLE_METADATA_BYTES, SCAN, TestDraws, TestRuntime, TestWallet,
 	chain_config, chain_params,
 };
 use crate::{
@@ -692,6 +692,7 @@ impl World {
 			registry: Arc::new(NoRegistry),
 			spawner: Spawner::for_test(),
 			policy: PrivacyPolicy::fastest(),
+			hand_over: None,
 		};
 		block_on(start(interfaces, chain_config(), SCAN, None, self.running.clone())).expect("the layer starts");
 	}
@@ -846,6 +847,7 @@ fn registry(
 		extrinsics: Arc::new(extrinsic_service_serving(PEOPLE_METADATA_BYTES, 0)),
 		personhood: Arc::new(NoPerson),
 		running: running.clone(),
+		registry: Some(Arc::new(NoRegistryWriter)),
 	};
 	let real = with_coinage(DurableRegistry::new(), deps);
 	let served = |domain| {
