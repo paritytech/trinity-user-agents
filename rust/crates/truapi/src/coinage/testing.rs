@@ -9,7 +9,7 @@ use subxt::{Metadata, utils::H256};
 
 use super::{
 	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
-	chain::{AliasState, ChainCoin, CoinageChain, RingPlace},
+	chain::{AliasState, ChainCoin, CoinageChain, RingPlace, RingPosition},
 	plugins::{PersonhoodSource, Seed},
 	ledger::{
 		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
@@ -154,8 +154,11 @@ impl PersonhoodSource for NoPerson {
 pub struct FakeChain {
 	/// The coin at each account.
 	pub coins: parking_lot::Mutex<HashMap<[u8; 32], ChainCoin>>,
-	/// The exponent and ring place of each member key.
+	/// The exponent and ring place of each member key in a ring.
 	pub places: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPlace)>>,
+	/// The exponent and position of each member key in no ring: onboarding
+	/// or suspended.
+	pub unplaced: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPosition)>>,
 	/// The state of each alias that has one.
 	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
 	/// Every read fails.
@@ -189,14 +192,26 @@ impl CoinageChain for FakeChain {
 
 	async fn members_at(&self, _: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError> {
 		self.check()?;
-		let places = self.places.lock();
-		Ok(members.iter().map(|member| places.get(member).map(|(exponent, _)| (0, *exponent))).collect())
+		let (places, unplaced) = (self.places.lock(), self.unplaced.lock());
+		Ok(members
+			.iter()
+			.map(|member| {
+				let exponent = places.get(member).map(|(exponent, _)| *exponent);
+				exponent.or_else(|| unplaced.get(member).map(|(exponent, _)| *exponent)).map(|exponent| (0, exponent))
+			})
+			.collect())
 	}
 
-	async fn places_at(&self, _: H256, _: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+	async fn places_at(&self, _: H256, _: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
 		self.check()?;
-		let places = self.places.lock();
-		Ok(members.iter().map(|member| places.get(member).map(|(_, place)| *place)).collect())
+		let (places, unplaced) = (self.places.lock(), self.unplaced.lock());
+		Ok(members
+			.iter()
+			.map(|member| {
+				let included = places.get(member).map(|(_, place)| RingPosition::Included(*place));
+				included.or_else(|| unplaced.get(member).map(|(_, position)| *position))
+			})
+			.collect())
 	}
 
 	async fn aliases_at(&self, _: H256, _: i8, _: u32, aliases: &[[u8; 32]]) -> Result<Vec<Option<AliasState>>, StorageWatchError> {
