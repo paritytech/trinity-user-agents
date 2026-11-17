@@ -336,6 +336,11 @@ enum MessageContent {
     // Each participant answers with `Answer`.
     Poll(Poll),
 
+    Location(Location),
+
+    // A person that the receiver can open a chat with.
+    ContactCard { participant_id: ChatParticipantId, name: String },
+
     // A long post. Its Markdown also has headings and tables.
     Article { title: String, blocks: Vec<ArticleBlock> },
 
@@ -364,6 +369,15 @@ enum PaymentReference {
 enum ArticleBlock {
     Text(String),
     Media(ChatMedia),
+}
+
+struct Location {
+    // Degrees times 10^7.
+    latitude: i32,
+    longitude: i32,
+    title: Option<String>,
+    // A live location, which its origin moves with edits until this time.
+    live_until: Option<Timestamp>,
 }
 
 struct Poll {
@@ -630,8 +644,9 @@ enum UserChatAction {
         expires_at: Option<Timestamp>,
         forward: Option<ForwardSource>,
     },
-    // Changes only the text of `Text` or `RichText`, and keeps the media.
-    // A reader drops any other edit, and an edit by another origin.
+    // Changes only the text of `Text` or `RichText` (and keeps the media),
+    // or the point of a live `Location`. A reader drops any other edit,
+    // and an edit by another origin.
     EditMessage {
         message_id: MessageId,
         new_content: MessageContent,
