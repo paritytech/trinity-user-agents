@@ -12,7 +12,7 @@ final class StubCardFace: ExpandedCardFaceShowing {
         return .userMoving
     }
 
-    func setBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+    func setBackShown(_ shown: Bool) -> ExpandedCardTurnOutcome {
         backRequests.append(shown)
         return .noBack
     }

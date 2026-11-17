@@ -340,7 +340,7 @@ private extension ImageProps {
         case let .bulletin(cid): nodeSource = .bulletin(cid: cid)
         case let .archive(path): nodeSource = .archive(path: path)
         case let .inline(bytes):
-            guard inlineImageAllowed(bytes: bytes) else { return nil }
+            guard !bytes.isEmpty else { return nil }
             nodeSource = .inline(bytes)
         }
         // Unwrapped first on purpose: in a switch over an optional fit, `.none`

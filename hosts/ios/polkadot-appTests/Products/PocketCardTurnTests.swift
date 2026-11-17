@@ -1,6 +1,7 @@
 import CoreGraphics
 import Testing
 import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardTurnOutcome
 import enum TrUAPIHost.PocketCardSide
 @testable import polkadot_app
 
@@ -209,7 +210,7 @@ struct PocketCardTurnTests {
 /// wait for the finger only to retry into `NoBack`.
 struct ExpandedCardPageRequestTests {
     @Test(arguments: [
-        (ExpandedCardPageRequest.back(shown: true), false, true, false, ExpandedCardFaceOutcome.noBack),
+        (ExpandedCardPageRequest.back(shown: true), false, true, false, ExpandedCardTurnOutcome.noBack),
         (.back(shown: true), true, true, true, .userMoving),
         (.face(shown: false), true, true, true, .userMoving),
         (.back(shown: false), true, false, false, .notPresented),
@@ -223,9 +224,17 @@ struct ExpandedCardPageRequestTests {
         hasBack: Bool,
         isUserMoving: Bool,
         isPresented: Bool,
-        outcome: ExpandedCardFaceOutcome
+        outcome: ExpandedCardTurnOutcome
     ) {
         #expect(request.outcome(hasBack: hasBack, isUserMoving: isUserMoving, isPresented: isPresented) == outcome)
+    }
+
+    // The face call has no `NoBack` to give, so each of its answers keeps its meaning.
+    @Test
+    func theFaceCallKeepsEveryAnswerItCanBeGiven() {
+        let answers: [ExpandedCardTurnOutcome] = [.applied, .userMoving, .notPresented, .unsupported]
+
+        #expect(answers.map(ExpandedCardFaceOutcome.init) == [.applied, .userMoving, .notPresented, .unsupported])
     }
 }
 

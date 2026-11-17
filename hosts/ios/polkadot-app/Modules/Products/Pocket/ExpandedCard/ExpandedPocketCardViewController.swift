@@ -2,6 +2,7 @@ import FoundationExt
 import Products
 import SwiftUI
 import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardTurnOutcome
 import struct TrUAPIHost.ProductId
 import UIKit
 import UIKitExt
@@ -160,10 +161,10 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
     }
 
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        answer(.face(shown: shown))
+        ExpandedCardFaceOutcome(answer(.face(shown: shown)))
     }
 
-    func setBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+    func setBackShown(_ shown: Bool) -> ExpandedCardTurnOutcome {
         answer(.back(shown: shown))
     }
 
@@ -250,7 +251,7 @@ private extension ExpandedPocketCardViewController {
     }
 
     /// Answers the page as the change starts, without waiting for it to finish.
-    func answer(_ request: ExpandedCardPageRequest) -> ExpandedCardFaceOutcome {
+    func answer(_ request: ExpandedCardPageRequest) -> ExpandedCardTurnOutcome {
         let outcome = request.outcome(
             hasBack: turn.hasBack,
             isUserMoving: pullDown.isPulling || turn.isUserMoving,

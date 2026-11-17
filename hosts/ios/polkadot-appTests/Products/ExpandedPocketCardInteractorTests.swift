@@ -121,7 +121,7 @@ private final class RecordingOutput: ExpandedPocketCardInteractorOutputProtocol 
         .applied
     }
 
-    func didRequestBackShown(_: Bool) -> ExpandedCardFaceOutcome {
+    func didRequestBackShown(_: Bool) -> ExpandedCardTurnOutcome {
         .applied
     }
 

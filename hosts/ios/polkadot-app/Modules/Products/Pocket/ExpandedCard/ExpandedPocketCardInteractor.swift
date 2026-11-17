@@ -1,6 +1,7 @@
 import Foundation
 import Products
 import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardTurnOutcome
 
 @MainActor
 final class ExpandedPocketCardInteractor {
@@ -58,7 +59,7 @@ extension ExpandedPocketCardInteractor: ExpandedCardFaceShowing {
         presenter?.didRequestFaceShown(shown) ?? .notPresented
     }
 
-    func setBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+    func setBackShown(_ shown: Bool) -> ExpandedCardTurnOutcome {
         presenter?.didRequestBackShown(shown) ?? .notPresented
     }
 }

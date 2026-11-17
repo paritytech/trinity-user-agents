@@ -294,15 +294,15 @@ struct RendererNodeMappingTests {
         #expect(widget.modifiers.height == 80)
     }
 
-    /// Every host refuses the same inline bytes, so the core decides once, in
-    /// the mapping. Bytes it allows are drawn as they are, with no resolver;
-    /// refused ones keep the space their modifiers give, so the face around
-    /// them does not move.
-    @Test func anInlineImageDrawsOnlyBytesTheCoreAllows() throws {
+    /// The core empties the bytes of an image it refuses, so every host
+    /// refuses the same ones. Bytes it left are drawn as they are, with no
+    /// resolver; emptied ones keep the space their modifiers give, so the face
+    /// around them does not move.
+    @Test func anInlineImageDrawsOnlyBytesTheCoreLeft() throws {
         let png = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).pngData { context in
             context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
         }
-        let cases = [png, Data("<svg/>".utf8), png + Data(count: 64 * 1_024)]
+        let cases = [png, Data()]
 
         let drawn = try cases.map { bytes in
             let node = RendererNode.image(
@@ -315,7 +315,7 @@ struct RendererNodeMappingTests {
             return props.source == .inline(bytes)
         }
 
-        #expect(drawn == [true, false, false])
+        #expect(drawn == [true, false])
     }
 
     /// A picture the host holds in an archive is named by path rather than by
