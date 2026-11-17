@@ -64,6 +64,8 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --workspace --lib --all-features --no-deps
 
+      - uses: ./.github/actions/wasm-c-toolchain
+
       - name: cargo check wasm32
         run: cargo check --target wasm32-unknown-unknown -p truapi
 
@@ -822,10 +824,21 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
 
+      - uses: ./.github/actions/wasm-c-toolchain
+
       - name: Download codegen output
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
+
+      # The runner has to match the wasm-bindgen the crate links.
+      - name: Install wasm-bindgen-test-runner
+        run: |
+          version="$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')"
+          cargo install wasm-bindgen-cli --version "$version" --locked
+
+      - name: Test the core store on wasm32
+        run: make wasm-store-test
 
       - name: Install
         run: npm ci --ignore-scripts
@@ -960,6 +973,8 @@ jobs:
       # wasm-pack also picks the wasm-opt that shapes their size.
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - uses: ./.github/actions/wasm-c-toolchain
 
       - name: Download codegen output
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

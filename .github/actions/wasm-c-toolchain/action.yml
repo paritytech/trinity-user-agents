@@ -1,0 +1,11 @@
+name: C toolchain for wasm32
+description: >-
+  Installs clang and llvm-ar. Building the truapi crate for wasm32 compiles the
+  SQLite it links there from C source.
+
+runs:
+  using: composite
+  steps:
+    - name: Install clang and llvm-ar
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install --no-install-recommends -y clang llvm
