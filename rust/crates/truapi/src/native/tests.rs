@@ -121,6 +121,7 @@ pub struct EventCallbacks {
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 	pub chain_connects: Mutex<Vec<Vec<u8>>>,
 	pub chain_sends: Mutex<Vec<(u32, String)>>,
+	pub chain_send_rejection: Mutex<Option<String>>,
 	pub chain_closes: Mutex<Vec<u32>>,
 	/// Worker demand transitions, in arrival order.
 	pub worker_demand: Mutex<Vec<(ProductId, WorkerTransition)>>,
@@ -175,6 +176,7 @@ impl EventCallbacks {
 			on_chain_connect: Mutex::new(None),
 			chain_connects: Mutex::new(Vec::new()),
 			chain_sends: Mutex::new(Vec::new()),
+			chain_send_rejection: Mutex::new(None),
 			chain_closes: Mutex::new(Vec::new()),
 			worker_demand: Mutex::new(Vec::new()),
 			paired_devices: Mutex::new(Vec::new()),
@@ -312,6 +314,9 @@ impl HostCallbacks for EventCallbacks {
 		Ok(*self.chain_id.lock().expect("chain id mutex poisoned"))
 	}
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection> {
+		if let Some(reason) = self.chain_send_rejection.lock().unwrap().clone() {
+			return Err(HostRejection::Rejected { reason });
+		}
 		self.chain_sends
 			.lock()
 			.expect("chain sends mutex poisoned")
@@ -1793,6 +1798,22 @@ fn native_chain_provider_forwards_send_response_and_close() {
 		callbacks.chain_closes.lock().expect("chain closes mutex poisoned").as_slice(),
 		&[42]
 	);
+}
+
+/// A request the host refuses to send is never answered, so the connection
+/// ends its response stream and the client fails what it waits on.
+#[test]
+fn native_chain_provider_closes_when_the_host_refuses_a_send() {
+	let (callbacks, _events, platform) = event_platform();
+	*callbacks.chain_id.lock().unwrap() = Some(42);
+	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let mut responses = connection.responses();
+	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
+
+	connection.send(r#"{"jsonrpc":"2.0","id":1}"#.to_string());
+
+	assert_eq!(futures::FutureExt::now_or_never(responses.next()), Some(None));
+	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
 }
 
 #[test]
@@ -3539,8 +3560,7 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
-			.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect());
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));

@@ -33,6 +33,7 @@ default = ["runtime", "wasm-signing-host"]
 # Without it the crate is the protocol definitions alone, which is what
 # codegen reads and builds against.
 runtime = [
+    "dep:async-lock",
     "dep:truapi-provider",
     "dep:trinity-stack",
     "dep:futures-timer",
@@ -94,6 +95,7 @@ mock = ["runtime"]
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true }
+async-lock = { workspace = true, optional = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }

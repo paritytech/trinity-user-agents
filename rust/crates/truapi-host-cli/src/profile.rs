@@ -7,19 +7,27 @@ use std::{fs, io::Cursor, path::Path};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
+use futures::TryStreamExt;
 use image::ImageReader;
 use truapi::{
-	ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile, SigningHostRuntime, check_image,
-	preimage_key,
+	ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile, PublicProfileResolutionOptions,
+	SigningHostRuntime, check_image, preimage_key,
 };
 
 use crate::network::Stack;
 
 /// Reads understood profile metadata from dotNS without provisioning an identity.
 ///
-/// Skips the record cache and reports invalid usernames and lookup failures.
+/// Forces a dotNS lookup and reports invalid usernames and lookup failures.
 pub async fn read(runtime: &SigningHostRuntime, username: &str) -> Result<String> {
-	let profile = runtime.resolve_public_profile(username, true).await?;
+	let profile = runtime
+		.observe_public_profile(
+			username,
+			PublicProfileResolutionOptions { force_fresh: true, skip_stale: false },
+		)
+		.try_fold(None, |_, profile| async { Ok(Some(profile)) })
+		.await?
+		.context("profile resolution completed without a profile")?;
 	Ok(format_profile(username, &profile))
 }
 

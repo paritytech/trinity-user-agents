@@ -81,8 +81,7 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 				app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 			})
 			.collect(),
-	)
-	.expect("offered");
+	);
 	providers
 }
 
@@ -132,8 +131,7 @@ fn a_bundled_provider_keeps_the_hosts_manifest() {
 			root_manifest: None,
 			origin: FundingProviderOrigin::Bundled,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("offered"),
+		}]),
 	);
 	providers.answered(&ProductId::for_test("listed.dot"), None);
 	providers.answered(&ProductId::for_test("bundled.dot"), None);
@@ -144,23 +142,29 @@ fn a_bundled_provider_keeps_the_hosts_manifest() {
 	);
 }
 
-// A snapshot the core cannot read is the host's mistake, so it is refused
-// when offered rather than leaving the provider silently missing.
+// A snapshot the core cannot read, or a bundled provider shipped without
+// one, is the host's mistake for that provider alone: it is left out, and
+// the providers listed with it are still offered.
 #[test]
-fn an_unreadable_snapshot_is_refused_when_offered() {
-	let offered = |worker_manifest: &str| {
-		offered_providers(vec![FundingProviderEntry {
-			product_id: ProductId::for_test("card.dot"),
-			worker_manifest: Some(worker_manifest.to_string()),
-			root_manifest: None,
-			origin: FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.map(|offered| offered.len())
-		.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
+fn an_unreadable_snapshot_leaves_out_only_its_provider() {
+	let entry = |product_id: &str, worker_manifest: Option<String>, origin| FundingProviderEntry {
+		product_id: ProductId::for_test(product_id),
+		worker_manifest,
+		root_manifest: None,
+		origin,
+		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 
-	assert_eq!((offered(&manifest(CARD_IN)), offered("{")), (Ok(1), Err(true)));
+	let offered = offered_providers(vec![
+		entry("broken.dot", Some("{".to_string()), FundingProviderOrigin::Published),
+		entry("card.dot", Some(manifest(CARD_IN)), FundingProviderOrigin::Published),
+		entry("empty.dot", None, FundingProviderOrigin::Bundled),
+	]);
+
+	assert_eq!(
+		offered.iter().map(|provider| provider.product_id.clone()).collect::<Vec<_>>(),
+		vec![ProductId::for_test("card.dot")]
+	);
 }
 
 // A stale snapshot is corrected by what the provider publishes now,
@@ -204,7 +208,6 @@ fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
 				})
 				.collect(),
 		)
-		.expect("offered")
 	};
 	let providers = FundingProviders::default();
 	providers.offer(listed(&["kept.dot", "dropped.dot"]));
@@ -299,8 +302,7 @@ fn a_candidate_carries_its_providers_brand() {
 			root_manifest: Some(root("Shipped")),
 			origin: FundingProviderOrigin::Bundled,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("offered"),
+		}]),
 	);
 	let branded = providers.branded(
 		&ProductId::for_test("bundled.dot"),
