@@ -440,19 +440,16 @@ builds a `ProductId`, so holding one means the id is normalized. Code that reads
 an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
 and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-Parsing checks syntax only: a TLD is any DNS label, because a wire frame or a
-stored record is decoded with no stack in hand. The stack decides which names
-are products: a localhost id, and a name under the reserved `dot` TLD or the
-stack's own TLD (`Stack::serves`). The core checks this where a product id
-enters the runtime: the product a host asks it to run
-(`ProductContext::served_by`), a call naming another product (answered
-`MalformedFrame`), a paired host's request to the signing wallet, every key
-derivation in that wallet (a stored renewal target reaches it without a
-request), the manifest readers and the host's worker references.
-`runtime::served` describes how a checked value is carried to the account calls.
-Native hosts open the bundled stack as a `Stack` object and judge navigation,
-share links and trusted products through its methods, so they never supply a TLD
-of their own.
+Parsing checks syntax only, so any DNS label is a TLD: a wire frame or a stored
+record is decoded without a stack. The stack decides which ids it serves:
+localhost ids, and names under `dot` or under its own TLD (`Stack::serves`).
+
+The core checks this wherever a product id enters the runtime: the product a
+host asks it to run (`ProductContext::served_by`), a call that names another
+product (answered `MalformedFrame`), every key derivation in the signing
+wallet, the manifest readers and worker references. `runtime::served` describes
+how a checked value reaches the account calls. Native hosts run the same checks
+through a `Stack` they open from the bundled copy.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
 counts only under a TLD the stack serves. These products bypass recorded permissions and
