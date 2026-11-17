@@ -44,7 +44,7 @@ use super::{
 	policy::{PolicyError, check},
 	reconstruction::{self, InstallationRegistry, Purses, ReconstructionDeps, ScanConfig},
 	registration::RegisterError,
-	selection::{Forms, SelectRequest, Want, select},
+	selection::{Forms, SelectError, SelectRequest, Want, select},
 	start::{
 		Begin, ExportedCoin, Launched, Launcher, Request, StartError as LaunchError, begin_and_start, exported_coins,
 		needs_confirmation,
@@ -533,8 +533,14 @@ impl Layer {
 			return Err(Error::EmptyRequest);
 		}
 		let offload = Offload { from, amount, to, initiator, confirmed };
-		if view.operation(&op.key).is_none() && offload::needs_confirmation(&view, &offload, self.now(), &state.params) {
-			return Err(Error::NeedsConfirmation);
+		if view.operation(&op.key).is_none() {
+			let everything = SelectRequest { purse: from, want: Want::Amount(amount), forms: Forms::Any, entries_first: true, held_back: true };
+			if let Err(SelectError::InsufficientFunds { available }) = select(&view, everything, self.now(), &state.params) {
+				return Err(Error::InsufficientFunds { available });
+			}
+			if offload::needs_confirmation(&view, &offload, self.now(), &state.params) {
+				return Err(Error::NeedsConfirmation);
+			}
 		}
 		if let Some(started) = self.begin_own_step(&op, OpKind::Offload, (offload, op.retry).encode()).await? {
 			return Ok(started);
