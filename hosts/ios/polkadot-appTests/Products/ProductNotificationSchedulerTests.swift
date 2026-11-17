@@ -114,6 +114,7 @@ struct ProductNotificationSchedulerTests {
 
         try await scheduler.cancelAll(forProductId: productId)
 
+        #expect(await center.pendingNotificationRequests().isEmpty)
         #expect(Array(recorder.events.prefix(2)) == [scheduled(first), scheduled(second)])
         #expect(
             sortedByBookingId(recorder.events.dropFirst(2)) == sortedByBookingId([cancelled(first), cancelled(second)])

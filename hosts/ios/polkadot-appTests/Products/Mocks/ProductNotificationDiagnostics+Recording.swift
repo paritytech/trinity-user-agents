@@ -27,7 +27,7 @@ func expectedProductNotificationHostEvent(
     level: HostLogLevel = .info,
     tags: [String: String] = [:]
 ) -> HostEvent {
-    var expectedTags = [
+    let expectedTags = [
         "host.app_variant": "test",
         "host.platform": "ios",
         "host.native_app_version": "1.2.3",

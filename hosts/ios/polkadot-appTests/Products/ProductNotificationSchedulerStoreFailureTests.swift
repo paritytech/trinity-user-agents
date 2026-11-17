@@ -134,6 +134,7 @@ struct ProductNotificationSchedulerStoreFailureTests {
             try await scheduler.cancelAll(forProductId: productId)
         }
 
+        #expect(await pendingIdentifiers() == [])
         #expect(recorder.events == [event("scheduled", id)])
     }
 }

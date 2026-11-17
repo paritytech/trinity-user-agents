@@ -618,8 +618,10 @@ delivery or cleanup.
 
 iOS hosts with Sentry enabled report each product notification through
 `host.product_notification.*` events, tagged with
-`product_notification.product_id`. Each event carries the booking id as the
-extra `product_notification.id`.
+`product_notification.product_id`. An event of a booking that has an id
+carries it as the extra `product_notification.id`. A booking that fails on
+the store or the system also reports a `CriticalIssue` under flow
+`product-notification`. One refused at the slot limit does not.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
