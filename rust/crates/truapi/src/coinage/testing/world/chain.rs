@@ -65,6 +65,8 @@ pub struct Faults {
 	pub heights: HashSet<u64>,
 	/// No canonical hash can be read.
 	pub every_height: bool,
+	/// No block's number can be read from its hash.
+	pub numbers: bool,
 	/// Transactions whose dispatch outcome cannot be read.
 	pub outcomes: HashSet<H256>,
 	/// The heads cannot be read, so a pass reads nothing.
@@ -256,7 +258,11 @@ impl BlockBackend for WorldChain {
 	}
 
 	async fn block_number(&self, _: H256, hash: H256) -> Result<Option<u64>, RuntimeFailure> {
-		Ok(self.0.lock().block(hash).map(|block| block.at.number))
+		let tree = self.0.lock();
+		if tree.faults.numbers {
+			return Err(failure("block_number"));
+		}
+		Ok(tree.block(hash).map(|block| block.at.number))
 	}
 
 	async fn extrinsic_hashes(&self, _: H256, at: H256) -> Result<Option<Vec<H256>>, RuntimeFailure> {

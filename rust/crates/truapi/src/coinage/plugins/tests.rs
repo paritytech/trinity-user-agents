@@ -1,7 +1,10 @@
+mod assets;
 mod evidence;
+mod reorgs;
 mod rules;
 mod system;
 mod vouchers;
+mod watches;
 
 use std::collections::HashMap;
 
