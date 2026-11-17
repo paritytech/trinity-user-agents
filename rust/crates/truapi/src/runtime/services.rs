@@ -608,9 +608,12 @@ impl RuntimeServices {
 		outcome.await.unwrap_or_else(|_| Err(CoinageUnavailable::NotStarted { reason: "the start was dropped".into() }))
 	}
 
-	/// Coinage payments, once the layer's start sequence has run.
+	/// Coinage payments, once the layer's start sequence has run; none when
+	/// coinage is off or its start failed. Waits for a start still running,
+	/// so a call made while the layer starts is served, not refused.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn coinage_payments(&self) -> Option<Payments> {
+	pub async fn coinage_payments(&self) -> Option<Payments> {
+		self.coinage_layer().await.ok()?;
 		self.coinage_payments.get().cloned()
 	}
 
