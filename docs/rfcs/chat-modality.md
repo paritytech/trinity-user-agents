@@ -368,6 +368,7 @@ struct LinkPreview {
     title: Option<String>,
     description: Option<String>,
     site: Option<String>,
+    // An `Inline` picture with its size and BlurHash.
     image: Option<ChatMedia>,
 }
 
@@ -1013,6 +1014,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 | Distinct reactions on one message | 64 |
 | The text of a message | 16 KiB |
 | The text of an `Article` | 64 KiB |
+| The image of a `LinkPreview` | 64 KiB |
 | A post of a `Stories` room, from the send to `expires_at` | 24 hours |
 
 ## Drawbacks
