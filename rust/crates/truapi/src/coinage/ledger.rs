@@ -780,7 +780,7 @@ pub fn mint_installation(
 }
 
 /// Stores the record of a wallet handed over from a shipped app, encoded by
-/// its owner (native interface, section 5).
+/// its owner (B2 `record_hand_over`).
 pub fn write_hand_over(tx: &Transaction<'_>, record: &[u8]) -> Result<(), DbError> {
 	write_setting(tx, HAND_OVER, record)
 }
