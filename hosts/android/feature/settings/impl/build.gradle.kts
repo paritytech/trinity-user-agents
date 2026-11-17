@@ -33,4 +33,5 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
 }

@@ -104,6 +104,18 @@ class DockletAutoHideTest {
     }
 
     @Test
+    fun `blocking cancels a pending outside hide`() = runTest {
+        val autoHide = autoHide()
+        autoHide.onTouch(DockletTouch.Outside)
+
+        autoHide.blocked = true
+        advanceTimeBy(10_000L)
+        runCurrent()
+
+        assertEquals(0, hides)
+    }
+
+    @Test
     fun `a blocker going away starts a fresh idle timer`() = runTest {
         val autoHide = autoHide()
         autoHide.blocked = true

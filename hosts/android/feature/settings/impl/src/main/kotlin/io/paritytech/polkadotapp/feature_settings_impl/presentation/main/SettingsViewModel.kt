@@ -4,12 +4,14 @@ import android.os.Build
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.combineToPair
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.design.theme.AppThemeSelector
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
+import io.paritytech.polkadotapp.feature_settings_api.domain.docklet.DockletAutoHideSettings
 import io.paritytech.polkadotapp.feature_settings_impl.SettingsRouter
 import io.paritytech.polkadotapp.feature_settings_impl.domain.settings.SettingsInteractor
 import kotlinx.coroutines.flow.SharingStarted
@@ -31,14 +33,15 @@ class SettingsViewModel @Inject constructor(
         interactor.subscribeHasBlockedContacts(),
         interactor.observePrivacyMode(),
         interactor.observePaymentsBackupStatus(),
-        appThemeSelector.selectedTheme
-    ) { backupExists, hasBlockedUsers, privacyMode, paymentsBackupStatus, selectedTheme ->
+        combineToPair(appThemeSelector.selectedTheme, interactor.observeDockletAutoHide())
+    ) { backupExists, hasBlockedUsers, privacyMode, paymentsBackupStatus, (selectedTheme, dockletAutoHide) ->
         SettingsUiState(
             debugMenuEnabled = FeatureOption.DEBUG_MENU.isEnabled,
             linkedDevicesEnabled = FeatureOption.LINKED_DEVICES.isEnabled,
             productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
             isLanguageSettingsAvailable = isLanguageSettingsAvailable,
             selectedTheme = selectedTheme,
+            dockletAutoHide = dockletAutoHide,
             privacyMode = privacyMode,
             paymentsBackupStatus = paymentsBackupStatus,
             isBackupMissing = !backupExists,
@@ -54,6 +57,7 @@ class SettingsViewModel @Inject constructor(
                 productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
                 isLanguageSettingsAvailable = isLanguageSettingsAvailable,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
+                dockletAutoHide = DockletAutoHideSettings.DEFAULT_ENABLED,
                 privacyMode = null,
                 paymentsBackupStatus = null,
                 isBackupMissing = false,
@@ -64,6 +68,10 @@ class SettingsViewModel @Inject constructor(
     fun onPrivacyModeSelected(mode: RecyclingStrategyType) = launchUnit {
         interactor.setPrivacyMode(mode)
             .logFailure("Failed to change payment privacy mode")
+    }
+
+    fun onDockletAutoHideChange(enabled: Boolean) {
+        interactor.setDockletAutoHide(enabled)
     }
 
     fun onBackupClick() {

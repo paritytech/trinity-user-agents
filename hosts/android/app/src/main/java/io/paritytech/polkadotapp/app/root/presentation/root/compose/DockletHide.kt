@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
@@ -38,6 +39,7 @@ import io.paritytech.polkadotapp.design.components.docklet.dockletTouch
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.design.utils.rememberTouchExplorationEnabled
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.drop
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -46,6 +48,7 @@ private val TipAnchorWidth = 1.dp
 @Composable
 fun DockletAutoHideEffect(
     hideState: DockletHideState,
+    enabled: Boolean,
     searchOpen: Boolean,
     tipShown: Boolean,
     panelExpanded: Boolean,
@@ -64,6 +67,7 @@ fun DockletAutoHideEffect(
     val currentAreas by rememberUpdatedState(dockletAreas)
 
     val blockers = DockletAutoHideBlockers(
+        enabled = enabled,
         shownAtRest = shownAtRest,
         searchOpen = searchOpen,
         keyboardUp = imeUp,
@@ -73,6 +77,12 @@ fun DockletAutoHideEffect(
         resumed = resumed,
     )
     SideEffect { autoHide.blocked = blockers.blocked }
+
+    // The tap that turns auto-hide off is itself an outside touch, which has already started tucking the Docklet.
+    val currentEnabled by rememberUpdatedState(enabled)
+    LaunchedEffect(hideState) {
+        snapshotFlow { currentEnabled }.drop(1).collect { if (!it) hideState.restore() }
+    }
 
     inputs.collectAsEffect { _, input ->
         when (input) {

@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.app.root.domain.ObserveTabWarningsUseCase
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
+import io.paritytech.polkadotapp.feature_settings_api.domain.docklet.DockletAutoHideSettings
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 
@@ -18,7 +19,8 @@ class MainInteractor @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val messageSender: ChatMessageSender,
     private val observeTabWarningsUseCase: ObserveTabWarningsUseCase,
-    private val tooltipStorage: TooltipStorage
+    private val tooltipStorage: TooltipStorage,
+    private val dockletAutoHideSettings: DockletAutoHideSettings,
 ) {
     context(scope: ComputationalScope)
     fun initialize() {
@@ -32,6 +34,8 @@ class MainInteractor @Inject constructor(
     }
 
     fun observeTabWarnings(): Flow<Map<BottomTab, Boolean>> = observeTabWarningsUseCase()
+
+    fun observeDockletAutoHide(): Flow<Boolean> = dockletAutoHideSettings.enabledFlow()
 
     fun shouldShowScannerTooltip(): Boolean = !tooltipStorage.wasShown(OneShotTooltip.Scanner)
 

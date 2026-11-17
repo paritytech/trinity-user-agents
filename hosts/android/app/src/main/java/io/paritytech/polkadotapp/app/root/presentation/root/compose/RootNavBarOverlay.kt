@@ -112,6 +112,7 @@ fun RootNavBarOverlay(
     scannerTooltipVisible: Boolean,
     openScanPanelRequests: Flow<Unit>,
     dockletTip: DockletTip?,
+    dockletAutoHideEnabled: Boolean,
     dockletInputs: Flow<DockletInput>,
     backdropSource: View?,
     onTabSelected: (BottomTab) -> Unit,
@@ -331,6 +332,7 @@ fun RootNavBarOverlay(
             if (barShown) {
                 DockletAutoHideEffect(
                     hideState = hideState,
+                    enabled = dockletAutoHideEnabled,
                     searchOpen = pull.scanExpanded,
                     tipShown = (hideState.countsAsHidden && dockletTip != null) || tooltipVisible,
                     panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,

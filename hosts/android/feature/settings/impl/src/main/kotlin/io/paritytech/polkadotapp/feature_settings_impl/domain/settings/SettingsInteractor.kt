@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccount
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
+import io.paritytech.polkadotapp.feature_settings_api.domain.docklet.DockletAutoHideSettings
 import io.paritytech.polkadotapp.tools_backup_api.data.BackupExistsStorage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.onStart
@@ -15,6 +16,7 @@ class SettingsInteractor @Inject constructor(
     private val blockedContactsRepository: BlockedContactsRepository,
     private val recyclingStrategySettings: CoinageRecyclingStrategySettings,
     private val coinageAccountBackupObserver: CoinageAccountBackupObserver,
+    private val dockletAutoHideSettings: DockletAutoHideSettings,
 ) {
     fun observeBackupExists(): Flow<Boolean> {
         return backupExistsStorage.observeBackupExists()
@@ -25,6 +27,12 @@ class SettingsInteractor @Inject constructor(
     fun observePrivacyMode(): Flow<RecyclingStrategyType> = recyclingStrategySettings.strategyFlow()
 
     fun observePaymentsBackupStatus(): Flow<CoinageAccountBackupStatus?> = coinageAccountBackupObserver.subscribeStatus().onStart<CoinageAccountBackupStatus?> { emit(null) }
+
+    fun observeDockletAutoHide(): Flow<Boolean> = dockletAutoHideSettings.enabledFlow()
+
+    fun setDockletAutoHide(enabled: Boolean) {
+        dockletAutoHideSettings.setEnabled(enabled)
+    }
 
     suspend fun setPrivacyMode(mode: RecyclingStrategyType): Result<Unit> =
         recyclingStrategySettings.setStrategy(mode)

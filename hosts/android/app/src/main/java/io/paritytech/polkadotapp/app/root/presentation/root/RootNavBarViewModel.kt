@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabSelection
 import io.paritytech.polkadotapp.common.utils.stateInBackground
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
+import io.paritytech.polkadotapp.feature_settings_api.domain.docklet.DockletAutoHideSettings
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
@@ -57,6 +58,9 @@ class RootNavBarViewModel @Inject constructor(
 
     val isScannerTooltipVisible: StateFlow<Boolean>
         field = MutableStateFlow(interactor.shouldShowScannerTooltip())
+
+    val dockletAutoHideEnabled: StateFlow<Boolean> = interactor.observeDockletAutoHide()
+        .stateInBackground(started = SharingStarted.Eagerly, initialValue = DockletAutoHideSettings.DEFAULT_ENABLED)
 
     val scanPanelOpenRequests: SharedFlow<Unit> = scanPanelRequests.openRequests
 
