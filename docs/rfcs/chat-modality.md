@@ -655,6 +655,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 - All `on_*` functions follow the request pattern: `_request`, `_response`.
 - `chat_room_create`, `chat_room_delete` follow the request pattern.
 - `chat_room_list_subscribe` follows the subscription pattern.
+- Products store and forward these types, so their bytes stay stable. An enum gains variants only after its last one, and never reorders or removes one. A struct change is a new version of the type in a versioned envelope. Each content type (`MessageContent`, `UserChatAction`, `ChatMedia`, `ResourceUri`, `RoomMetadata`) has golden vectors, and each change has a changelog line.
 
 ### Requirements
 
