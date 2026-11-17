@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePop
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReactionDetail
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReplyPreview
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toRichText
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatMenuActionsProvider
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.InputMessageRelation
@@ -218,6 +219,19 @@ class ChatMessageUiMapper @Inject constructor(
                 direction = direction,
                 status = status,
                 origin = origin,
+            )
+
+            is ChatMessage.Content.ProductBody -> mapRichText(
+                message = this,
+                content = latestContent.toRichText(),
+                direction = direction,
+                status = status,
+                messagesById = messagesById,
+                revisions = revisions,
+                originDisplayResolver = originDisplayResolver,
+                mappingHelper = helper,
+                messageReactions = messageReactions,
+                isEdited = isEdited
             )
 
             is ChatMessage.Content.ChatRequest -> mapChatRequest(
@@ -562,6 +576,7 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.Text -> ReplyPreview.Content.Text(text)
     is ChatMessage.Content.ChatRequest -> welcome?.text?.let { ReplyPreview.Content.Text(it) }
     is ChatMessage.Content.RichText -> toReplyPreviewContent()
+    is ChatMessage.Content.ProductBody -> toRichText().toReplyPreviewContent()
     is ChatMessage.Content.CoinagePayment -> ReplyPreview.Content.Payment(mappingHelper.extractTokenAmount(this), direction.toUi())
 
     is ChatMessage.Content.ChatAccepted,

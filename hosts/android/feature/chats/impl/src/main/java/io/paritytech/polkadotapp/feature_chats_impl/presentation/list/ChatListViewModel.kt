@@ -39,6 +39,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatListI
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraft
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummaryBadge
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toRichText
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.CallResolutionContext
@@ -303,6 +304,9 @@ class ChatListViewModel @Inject constructor(
                     isIncoming = isIncoming
                 )
             }
+
+            // A message of a product room, as the product gives it.
+            is ChatMessage.Content.ProductBody -> copy(content = content.toRichText()).toUi(customRenderers, callContext)
 
             is ChatMessage.Content.DataChannelAnswer,
             is ChatMessage.Content.DataChannelIceCandidate,

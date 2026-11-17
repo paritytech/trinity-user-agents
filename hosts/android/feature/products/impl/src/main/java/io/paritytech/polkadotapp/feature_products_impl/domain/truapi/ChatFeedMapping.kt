@@ -2,12 +2,15 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReplyPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPreviewMessage
@@ -16,12 +19,15 @@ import uniffi.truapi.ProductId
 
 // Maps the messages that cross the wire to the chat models of the app, and back.
 
-// The host does not draw the media of a body yet, so a rich text keeps its text. The events, the calls and the
-// payments belong to the Chat Extension v2 additions, which this host does not serve. The renderer of the product
-// draws a custom body, as it draws a custom message that the product posts.
+// The events, the calls and the payments belong to the Chat Extension v2 additions, which this host does not serve.
+// The renderer of the product draws a custom body, as it draws a custom message that the product posts.
 fun ChatMessageBody.toContent(productId: ProductId): ChatMessage.Content = when (this) {
     is ChatMessageBody.Text -> ChatMessage.Content.Text(text)
-    is ChatMessageBody.RichText -> ChatMessage.Content.Text(text.orEmpty())
+    is ChatMessageBody.RichText -> if (media.isEmpty()) {
+        ChatMessage.Content.Text(text.orEmpty())
+    } else {
+        ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text, media.map { it.toModel() }))
+    }
     is ChatMessageBody.Event,
     is ChatMessageBody.Call,
     is ChatMessageBody.Payment,
@@ -67,6 +73,16 @@ fun ChatPreviewMessage.toModel(productId: ProductId) = ProductRoomMessage(
     reactions = emptyList(),
     request = request,
 )
+
+fun ChatFeedUpdate.toModel(productId: ProductId): ProductFeedUpdateModel = when (this) {
+    is ChatFeedUpdate.New -> ProductFeedUpdateModel.New(v1.toModel(productId))
+    is ChatFeedUpdate.Edited -> ProductFeedUpdateModel.Edited(messageId, body.toContent(productId), editedAt.toLong())
+    is ChatFeedUpdate.ReactionPlaced -> ProductFeedUpdateModel.ReactionPlaced(messageId, participantId, emoji)
+    is ChatFeedUpdate.ReactionRemoved -> ProductFeedUpdateModel.ReactionRemoved(messageId, participantId, emoji)
+    is ChatFeedUpdate.StatusChanged -> ProductFeedUpdateModel.StatusChanged(messageId, status.toModel())
+    is ChatFeedUpdate.Replaced -> ProductFeedUpdateModel.Replaced(v1.toModel(productId))
+    is ChatFeedUpdate.Deleted -> ProductFeedUpdateModel.Deleted(messageId)
+}
 
 fun ChatMessageStatus.toModel(): ProductMessageStatusModel = when (this) {
     ChatMessageStatus.PREPARING -> ProductMessageStatusModel.PREPARING

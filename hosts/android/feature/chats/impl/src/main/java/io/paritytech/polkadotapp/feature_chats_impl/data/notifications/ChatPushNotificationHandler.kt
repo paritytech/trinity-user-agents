@@ -287,7 +287,8 @@ internal class ChatPushNotificationHandler @Inject constructor(
             is ChatMessage.Content.DeviceAdded,
             is ChatMessage.Content.DeviceRemoved,
             is ChatMessage.Content.CompactionCommit,
-            is ChatMessage.Content.CompactionUnavailable -> null
+            is ChatMessage.Content.CompactionUnavailable,
+            is ChatMessage.Content.ProductBody -> null
 
             is ChatMessage.Content.ChatAccepted,
             is ChatMessage.Content.DeviceChatAccepted -> {
@@ -332,5 +333,6 @@ internal fun ChatMessage.Content.isDisplayableAsPush(): Boolean = when (this) {
     is ChatMessage.Content.DeviceAdded,
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
-    is ChatMessage.Content.CompactionUnavailable -> false
+    is ChatMessage.Content.CompactionUnavailable,
+    is ChatMessage.Content.ProductBody -> false
 }

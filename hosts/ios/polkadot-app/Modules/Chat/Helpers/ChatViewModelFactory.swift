@@ -169,7 +169,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
             }
 
             let decodingContext = ChatMessageDecodingContext(
-                messageId: message.messageId,
+                messageId: Chat.ProductMessageId.product(message.messageId, in: message.chatId),
                 roomId: message.chatId.roomId,
                 identifier: content.identifier,
                 processAction: { _ in }
@@ -347,8 +347,9 @@ private extension ChatViewModelFactory {
             ]
 
         case let .customRendered(content):
+            // The product renders a message that it pushed under its own id, not under the id of the store.
             let decodingContext = ChatMessageDecodingContext(
-                messageId: message.messageId,
+                messageId: Chat.ProductMessageId.product(message.messageId, in: message.chatId),
                 roomId: message.chatId.roomId,
                 identifier: content.identifier,
                 processAction: actions.processAction

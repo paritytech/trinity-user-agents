@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
@@ -21,6 +22,7 @@ class ProductBotFactory @Inject constructor(
     private val imageResolver: ProductImageResolver,
     private val resolveProduct: ResolveProductUseCase,
     private val roomFooterStorage: ProductRoomFooterStorage,
+    private val feedListeners: ProductFeedListeners,
 ) {
     fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
@@ -30,6 +32,7 @@ class ProductBotFactory @Inject constructor(
             imageResolver = imageResolver,
             resolveProduct = resolveProduct,
             roomFooterStorage = roomFooterStorage,
+            feedListeners = feedListeners,
             origin = origin,
         )
     }

@@ -173,6 +173,10 @@ enum RoomKind {
     Voice,
     // The replies to one message of the parent room.
     Thread { root: MessageId },
+    // The stories of one user: posts that expire. Its members are the
+    // audience, and only the author lists who read a post. A reply goes to
+    // the direct room with the author, with a `forward` that names the post.
+    Stories,
 }
 
 // Settings that every member sees. A change shows as `SettingsChanged`.
@@ -181,8 +185,14 @@ struct RoomSettings {
     slow_mode: u32,
     // A text that a member can read after the join.
     welcome: Option<String>,
+    // A sender sets `expires_at` this many milliseconds after the send.
+    message_timer: Option<u64>,
     // A reader drops a message from a participant who is not an admin.
     only_admins_post: bool,
+    // Asks every Host to hide save and forward. A reader holds the
+    // content, so no Product shows this as a guarantee. Same for
+    // `ChatMedia.view_once`.
+    protected: bool,
 }
 
 enum ChatRoomPreviewOrder {
@@ -256,6 +266,12 @@ enum MessageContent {
     RichText {
         text: Option<String>,  // Markdown-enabled
         media: Vec<ChatMedia>,
+        // The text goes above the media.
+        text_above: bool,
+        entities: Vec<TextEntity>,
+        // Made by the sender. A Host does not fetch a link of a room that a
+        // Product serves: the site would learn who reads the message.
+        link_preview: Option<LinkPreview>,
     },
 
     // preview_text: Human-readable summary for chat list preview
@@ -267,9 +283,57 @@ enum MessageContent {
         preview_text: Option<String>,
     },
 
+    // A deleted message that keeps its place, so that replies still point
+    // at it. The Host draws "Message deleted".
+    Deleted,
+
     // A line about the room that the Host draws with its own strings. The
     // origin is the participant who acted: "Ana added Ben".
     RoomEvent(RoomEvent),
+
+    // A call. The origin is the caller and the time is the time of the
+    // offer. Only the `CallSignal`s of its participants change it.
+    Call(Call),
+
+    // A long post. Its Markdown also has headings and tables.
+    Article { title: String, blocks: Vec<ArticleBlock> },
+
+    // A payment that the Host made. The origin is the payer. The Host of a
+    // reader checks `reference` and draws the state that it reads
+    // (pending, sent, claimed, failed), not one that the sender wrote.
+    Payment(Payment),
+}
+
+struct Payment {
+    asset: PaymentAsset,
+    amount: u128,
+    reference: PaymentReference,
+}
+
+enum PaymentAsset {
+    Id(u32),
+    Token { symbol: String, decimals: u8 },
+}
+
+enum PaymentReference {
+    CoinCheque(Vec<u8>),
+    Transfer { chain: String, block_hash: [u8; 32], extrinsic_hash: [u8; 32] },
+}
+
+enum ArticleBlock {
+    Text(String),
+    Media(ChatMedia),
+}
+
+struct Call {
+    video: bool,
+    // Only admins send media; the others listen.
+    broadcast: bool,
+    // Who is in the call now.
+    participants: Vec<ChatParticipantId>,
+    answered_at: Option<Timestamp>,
+    ended_at: Option<Timestamp>,
+    ended_by: Option<ChatParticipantId>,
 }
 
 enum RoomEvent {
@@ -281,13 +345,19 @@ enum RoomEvent {
     AvatarChanged,
     DescriptionChanged,
     SettingsChanged,
+    // Each Product writes it when it sees the change. A user may hide it
+    // on a device.
+    SecurityKeyChanged,
 }
 
 struct ChatMedia {
+    // The Host draws the kind that the sender chose: a `File` with an image
+    // type stays a file.
     kind: ChatMediaKind,
     // The same bytes from one or more sources, in the order to try.
     sources: Vec<ResourceUri>,
     // What the Host draws before the bytes arrive:
+    file_name: Option<String>,
     mime_type: String,
     size: Option<u64>,
     // The size as shown, after any rotation.
@@ -296,16 +366,68 @@ struct ChatMedia {
     // A BlurHash of the image or of the first video frame.
     placeholder: Option<String>,
     duration_ms: Option<u64>,
+    // Audio: the peaks that the Host draws.
+    waveform: Option<Vec<u8>>,
+    caption: Option<String>,
+    // Hidden until the user taps it.
+    spoiler: bool,
+    // The receiver opens it once, then the Host drops it. See `Opened`.
+    view_once: bool,
 }
 
 enum ChatMediaKind {
     Image,
     Video,
     File,
+    // Drawn with no bubble.
+    Sticker,
+    Audio,
+    // A recorded voice note.
+    Voice,
+    // A recorded video note, drawn round.
+    RoundVideo,
 }
 
-// One extended grapheme cluster.
-Emoji = String
+struct LinkPreview {
+    url: String,
+    title: Option<String>,
+    description: Option<String>,
+    site: Option<String>,
+    // An `Inline` picture with its size and BlurHash.
+    image: Option<ChatMedia>,
+}
+
+enum Emoji {
+    // One extended grapheme cluster.
+    Unicode(String),
+    Custom(CustomEmoji),
+}
+
+struct CustomEmoji {
+    id: String,
+    name: String,
+    image: ResourceUri,
+}
+
+// A range of the text, in UTF-8 bytes, with a meaning that the Host draws.
+struct TextEntity {
+    start: u32,
+    end: u32,
+    kind: TextEntityKind,
+}
+
+enum TextEntityKind {
+    Mention(MentionTarget),
+    CustomEmoji(CustomEmoji),
+    Spoiler,
+}
+
+enum MentionTarget {
+    Participant(ChatParticipantId),
+    Role(Role),
+    Everyone,
+    Room(RoomId),
+}
 
 struct MessageReaction {
     origin: MessageOrigin,
@@ -337,6 +459,9 @@ struct Message {
     content: MessageContent,
     status: MessageStatus,
     reply_to: Option<MessageId>,
+    silent: bool,
+    expires_at: Option<Timestamp>,
+    forward: Option<ForwardSource>,
     last_edited: Option<Timestamp>,
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
@@ -347,11 +472,26 @@ struct Message {
     views: Option<u32>,
 }
 
+// A forward keeps the resources of the media, so a receiver fetches the
+// same bytes. A Host marks a message that came through many forwards.
+struct ForwardSource {
+    // None: the forwarder hides the author.
+    origin: Option<ChatParticipantId>,
+    room_id: Option<RoomId>,
+    room_name: Option<String>,
+    message_id: Option<MessageId>,
+    timestamp: Timestamp,
+    // The forwards that brought the message here, this one included.
+    count: u32,
+}
+
 struct ThreadSummary {
     room_id: RoomId,
     replies: u32,
 }
 ```
+
+The text of `Text` and `RichText` is Markdown that every Host draws in the same way: CommonMark with the GFM strikethrough, limited to emphasis, strong text (`**x**` and `__x__`), strikethrough, inline code, links (`http`, `https` and `mailto`), fenced code blocks, quote blocks (`> `) and lists of two levels. Every line break is a line break. Any other construct, raw HTML and images show as typed. There is no underline. Mentions, custom emoji and spoilers are `entities`, not marks.
 
 #### 4.2 Message Feed Updates
 
@@ -363,6 +503,8 @@ enum MessageFeedUpdate {
     MessageEdit(MessageId, MessageContent, Timestamp),
     ReactionPlaced(MessageId, MessageReaction),
     ReactionRemoved(MessageId, MessageReaction),
+    // Removes the row. To keep a "Message deleted" row, the Product sends
+    // `MessageEdit` with `MessageContent::Deleted`.
     MessageDeleted(MessageId),
 }
 
@@ -407,6 +549,12 @@ enum UserChatAction {
     NewMessage {
         content: MessageContent,
         reply_to: Option<MessageId>,
+        // Notify the author of `reply_to`.
+        reply_ping: bool,
+        // No notification for the receivers.
+        silent: bool,
+        expires_at: Option<Timestamp>,
+        forward: Option<ForwardSource>,
     },
     EditMessage {
         message_id: MessageId,
@@ -425,10 +573,28 @@ enum UserChatAction {
     MessageDeleted {
         message_id: MessageId
     },
+    // The user opened the view-once media of a message.
+    Opened { message_id: MessageId },
     // The user changed the metadata or the settings of the room.
     EditRoom(RoomMetadata),
     // The user started (true) or stopped (false) typing.
     Typing(bool),
+
+    // A step of the call of a `Call` message. `payload` is for the call
+    // transport, and the Host does not read it.
+    CallSignal {
+        message_id: MessageId,
+        signal: CallSignalKind,
+        payload: Vec<u8>,
+    },
+}
+
+enum CallSignalKind {
+    Answer,
+    Join,
+    Leave,
+    // Also a decline.
+    End,
 }
 
 // Return type varies by action:
@@ -464,6 +630,7 @@ fn handle_chat_messages_source(
 );
 ```
 
+- Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
 #### 4.4 Reaction Details
 
 When a user taps on a reaction to see who reacted, the Host requests the full list from the Product. This is **not paginated** — for large chats where tracking individual reactors is impractical, the Product returns `NotAvailable`.
@@ -524,6 +691,14 @@ struct Extension {
 
 - A reader drops a record whose `id` starts with the participant id of another origin.
 - A reader that cannot decode `action` shows a row "This message needs a newer version of {product}" when `control` is false, and ignores the record when it is true. It ignores an extension it does not know, and shows a `Custom` message of a type it does not know as its `preview_text`.
+
+#### 4.7 Well-known Custom Types
+
+Every Host draws the `Custom` types of this list. A Product may propose a type for it.
+
+| `message_type` | Payload | Host behavior |
+|---|---|---|
+| `attention` | None | A "nudge" line, with a sound or an effect. At most one for each sender and room every 15 seconds. No sound when the room is muted or the user is `Busy`. |
 
 ### 5. Message Actions
 
@@ -624,6 +799,8 @@ struct DefaultChatMessageInputConfig {
 
 enum ChatInputPayment {
     Disabled,
+    // The Host makes the payment that the user approves, then sends the
+    // Product a `NewMessage` with its `Payment`.
     Enabled {
         // The account that receives the payment.
         destination: AccountId,
@@ -667,6 +844,8 @@ struct ChatParticipant {
     // A name color and a profile color that every member sees.
     colors: Option<ParticipantColors>,
     presence: Option<Presence>,
+    // A short code of the security key, which two users can compare.
+    security_code: Option<String>,
 }
 
 enum Role {
@@ -842,6 +1021,10 @@ This RFC follows the same transport and serialization rules as the Host API prot
 20. **Records between Products**: One record for the Products of a room, with ids bound to their origin and a rule for what a reader does not know.
 21. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
 22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
+23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
+24. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+25. **Stories**: Posts that expire, for an audience, with views and replies.
+26. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
@@ -865,9 +1048,12 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 | Item | Limit |
 |---|---|
-| One reaction (`Emoji`) | 64 bytes |
+| One `Emoji::Unicode` | 64 bytes |
 | Distinct reactions on one message | 64 |
 | The text of a message | 16 KiB |
+| The text of an `Article` | 64 KiB |
+| The image of a `LinkPreview` | 64 KiB |
+| A post of a `Stories` room, from the send to `expires_at` | 24 hours |
 
 ## Drawbacks
 
@@ -893,9 +1079,11 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 ## Related Discussions
 
-1. **Payment messages**: The payment button in chat input is in scope, but the full payment message type and rendering is a separate RFC. The `MessageContent` enum may need a `Payment` variant in the future.
+1. **Payment messages**: The payment button in chat input and `MessageContent::Payment` are in scope. Making a payment and checking a reference belong to the Payment Host API ([RFC 0006](0006-payments.md)).
 
-2. **Custom message rendering**: `Custom(CustomMessageType, CustomMessagePayload)` messages use the existing `SerializedCustomChatMessage` rendering system. The details of that system are outside the scope of this RFC.
+2. **Call transport**: A call needs a signalling and a media path in the Host. This RFC defines only the call row and its signals.
+
+3. **Custom message rendering**: `Custom(CustomMessageType, CustomMessagePayload)` messages use the existing `SerializedCustomChatMessage` rendering system. The details of that system are outside the scope of this RFC.
 
 ## References
 

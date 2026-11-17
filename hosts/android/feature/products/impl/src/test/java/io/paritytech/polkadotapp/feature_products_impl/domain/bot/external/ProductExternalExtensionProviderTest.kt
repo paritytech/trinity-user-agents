@@ -32,7 +32,14 @@ class ProductExternalExtensionProviderTest {
     private val hostPlacedProducts: HostPlacedProducts = mockk()
     private val provider = ProductExternalExtensionProvider(
         integrationRepository,
-        ProductBotFactory(mockk<Context>(relaxed = true), mockk(), mockk(), mockk(), mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() }),
+        ProductBotFactory(
+            mockk<Context>(relaxed = true),
+            mockk(),
+            mockk(),
+            mockk(),
+            mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() },
+            mockk(),
+        ),
         hostPlacedProducts,
     )
 
@@ -58,7 +65,14 @@ class ProductExternalExtensionProviderTest {
         }
         val provider = ProductExternalExtensionProvider(
             integrationRepository,
-            ProductBotFactory(context, mockk(), mockk(), mockk(), mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() }),
+            ProductBotFactory(
+                context,
+                mockk(),
+                mockk(),
+                mockk(),
+                mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() },
+                mockk(),
+            ),
             HostPlacedProducts(context, tldProvider),
         )
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))
