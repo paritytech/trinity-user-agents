@@ -37,7 +37,8 @@ declared executable that fails to download is an error, not a fallback.
   Otherwise fetches the manifest and stages the served kind's archive under `policy`, then adopts
   the manifest and applies the release. The returned content's `kind` is the served kind. SPAs
   pass `.fixed(.app)` and `.untilCancelled`; the prewarmer passes `.fixed(.app)` and
-  `.attempts(3)`.
+  `.attempts(3)`. An expanded Pocket card's runtime opens `.withAppFallback(.widget)`, and the
+  Pocket prewarmer warms the same.
 - **`openWorker(_:policy:)`**, for chat bots and workers: with a cached manifest, returns it and
   schedules a refresh. Otherwise fetches the manifest under `policy`. Either way it stages a missing
   worker archive under `policy`, best effort: a failed download is logged, and the worker resolves
