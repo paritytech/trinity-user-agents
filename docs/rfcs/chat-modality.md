@@ -329,8 +329,9 @@ enum MessageContent {
     },
 
     // A deleted message that keeps its place, so that replies still point
-    // at it. The Host draws "Message deleted".
-    Deleted,
+    // at it. The Host draws "Message deleted", and names an admin who
+    // deleted it.
+    Deleted { by: ChatParticipantId },
 
     // A line about the room that the Host draws with its own strings. The
     // origin is the participant who acted: "Ana added Ben".
@@ -435,6 +436,7 @@ enum RoomEvent {
     DescriptionChanged,
     SettingsChanged,
     MessagePinned(MessageId),
+    RoleChanged { participant_id: ChatParticipantId, role: Role },
     // Each Product writes it when it sees the change. A user may hide it
     // on a device.
     SecurityKeyChanged,
@@ -730,6 +732,9 @@ enum UserChatAction {
     RevokeInvite { token: Vec<u8> },
     JoinRequest(Invite),
     AnswerJoin { participant_id: ChatParticipantId, accept: bool },
+
+    // Only an admin (8.1).
+    SetRole { participant_id: ChatParticipantId, role: Role },
 
     // The indexes of the chosen options. It replaces an earlier answer of
     // the same participant.
@@ -1116,7 +1121,7 @@ enum ChatParticipantKind {
 }
 ```
 
-The role of a participant in a Space applies in each room of the Space.
+Only an `Admin` or the `Owner` adds and removes members, answers joins, deletes the messages of others, posts when `only_admins_post` is set, changes the room metadata and settings, manages the rooms of a Space, mentions everyone, and sets the role of another participant (not of the Owner). A reader drops such an action from a `Member`. The role of a participant in a Space applies in each room of the Space.
 
 A participant sets an `Audience` for its `avatar`, `about`, `birthday`, `links` and `presence`. Its Product sends each field only to that audience, so a reader that ignores the audience does not get the field.
 
@@ -1295,6 +1300,8 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 5. **Pinned messages**: How many pinned messages may one room hold? Chat apps range from three to no limit.
 
 6. **Event guests**: When a `CalendarEvent` allows guests, is the number of guests part of the answer?
+
+7. **Admins**: How many admins may one room have?
 
 ## Related Discussions
 
