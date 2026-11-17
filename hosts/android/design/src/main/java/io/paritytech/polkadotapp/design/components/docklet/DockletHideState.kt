@@ -192,6 +192,10 @@ class DockletHideState internal constructor(
         settle(from = start, to = 0f, velocity = 0f, spec = DockletSpring.Move)
     }
 
+    fun undoQuietHide() {
+        if (quiet) restore()
+    }
+
     fun peek() {
         peekJob?.cancel()
         peekJob = scope.launch {

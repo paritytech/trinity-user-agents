@@ -41,7 +41,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccountBackupStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
-import io.paritytech.polkadotapp.feature_settings_api.domain.docklet.DockletAutoHideSettings
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.BackupSettingsMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.PaymentsBackupSettingsMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.SettingsMenuItem
@@ -217,7 +216,7 @@ private fun SettingsScreenPreview() = CompositionLocalProvider(
                 linkedDevicesEnabled = true,
                 productSettingsEnabled = true,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
-                dockletAutoHide = DockletAutoHideSettings.DEFAULT_ENABLED,
+                dockletAutoHide = true,
                 privacyMode = RecyclingStrategyType.BALANCED,
                 paymentsBackupStatus = CoinageAccountBackupStatus.Delayed,
                 isLanguageSettingsAvailable = true,

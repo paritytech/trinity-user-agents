@@ -81,7 +81,7 @@ fun DockletAutoHideEffect(
     // The tap that turns auto-hide off is itself an outside touch, which has already started tucking the Docklet.
     val currentEnabled by rememberUpdatedState(enabled)
     LaunchedEffect(hideState) {
-        snapshotFlow { currentEnabled }.drop(1).collect { if (!it) hideState.restore() }
+        snapshotFlow { currentEnabled }.drop(1).collect { if (!it) hideState.undoQuietHide() }
     }
 
     inputs.collectAsEffect { _, input ->

@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.design.theme.AppThemeSelector
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
-import io.paritytech.polkadotapp.feature_settings_api.domain.docklet.DockletAutoHideSettings
 import io.paritytech.polkadotapp.feature_settings_impl.SettingsRouter
 import io.paritytech.polkadotapp.feature_settings_impl.domain.settings.SettingsInteractor
 import kotlinx.coroutines.flow.SharingStarted
@@ -57,7 +56,7 @@ class SettingsViewModel @Inject constructor(
                 productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
                 isLanguageSettingsAvailable = isLanguageSettingsAvailable,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
-                dockletAutoHide = DockletAutoHideSettings.DEFAULT_ENABLED,
+                dockletAutoHide = interactor.isDockletAutoHideEnabled(),
                 privacyMode = null,
                 paymentsBackupStatus = null,
                 isBackupMissing = false,

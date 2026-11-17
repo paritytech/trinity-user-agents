@@ -152,17 +152,31 @@ class DockletHideStateTest {
     }
 
     @Test
-    fun `a restore during the quiet hide brings the dock back without an auto-hide landing`() = runTest {
+    fun `undoing the quiet hide mid-way brings the dock back without an auto-hide landing`() = runTest {
         val state = hideState()
         state.quietHide()
         advanceTimeBy(FrameMillis * 12)
         runCurrent()
 
-        state.restore()
+        state.undoQuietHide()
         advanceUntilIdle()
 
         assertTrue(state.isShownAtRest)
         assertEquals(listOf(DockletLanding.Shown), landings)
+    }
+
+    @Test
+    fun `undoing the quiet hide leaves a dock the user swiped away hidden`() = runTest {
+        val state = hideState()
+        swipe(state, fromX = 50f, toX = 250f)
+        state.releaseHide()
+        advanceUntilIdle()
+
+        state.undoQuietHide()
+        advanceUntilIdle()
+
+        assertTrue(state.countsAsHidden)
+        assertEquals(listOf(DockletLanding.HiddenBySwipe), landings)
     }
 
     @Test
