@@ -56,3 +56,5 @@ fn an_offloaded_amount_is_done() {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
 	assert_eq!(phase_of(&wallet, 0), Phase::Done);
 }
+
+mod use_cases;

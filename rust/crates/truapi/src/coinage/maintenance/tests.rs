@@ -73,3 +73,5 @@ fn the_host_may_wait_until_the_next_ring_reaches_its_rescue_margin() {
 	assert!(due.started.is_empty());
 	assert_eq!(due.call_again_within, Some(Duration::from_secs(23 * DAY)));
 }
+
+mod use_cases;

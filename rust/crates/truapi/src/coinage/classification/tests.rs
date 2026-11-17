@@ -235,3 +235,5 @@ fn an_entry_in_use_or_consumed_is_never_selectable() {
 	set_status(&wallet.db, record, "FINALIZED_SUCCESS", None);
 	assert!(matches!(wallet.state(&entry).class, Class::Entry { local: EntryLocal::Consumed, .. }));
 }
+
+mod use_cases;

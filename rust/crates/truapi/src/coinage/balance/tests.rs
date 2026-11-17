@@ -96,3 +96,5 @@ fn the_main_purse_takes_tokens_before_product_purses() {
 	assert_eq!(balance(&view, PurseId::MAIN, NOW, &params).spendable, 2);
 	assert_eq!(balance(&view, product, NOW, &params), Balance { spendable: 0, held_back: 0, arriving: 64 });
 }
+
+mod use_cases;
