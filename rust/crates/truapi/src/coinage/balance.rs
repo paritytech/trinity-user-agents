@@ -77,8 +77,7 @@ fn purse_balance(view: &Snapshot, purse: PurseId, now: u64, params: &ChainParams
 }
 
 /// A purse's balance and the rows behind it, from one snapshot, so a screen
-/// that shows both never shows them disagreeing (native interface,
-/// section 6).
+/// that shows both never shows them disagreeing (B2 `holdings`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[derive(uniffi::Record)]
 pub struct Holdings {

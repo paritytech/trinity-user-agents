@@ -91,7 +91,7 @@ use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 #[cfg(not(target_arch = "wasm32"))]
-pub use services::CoinageOptions;
+pub use services::{CoinageOptions, CoinageUnavailable};
 #[cfg(not(target_arch = "wasm32"))]
 pub use coinage_engine::{CoinageEngine, ProductFunding};
 #[cfg(not(target_arch = "wasm32"))]

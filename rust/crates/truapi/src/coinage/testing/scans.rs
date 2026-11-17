@@ -12,8 +12,8 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	coinage::{
 		chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPosition},
-		namespace::datastore_key,
-		reconstruction::{InstallationRegistry, RegistryKey},
+		namespace::{RegistryKey, datastore_key},
+		reconstruction::InstallationRegistry,
 	},
 	installation::InstallationId,
 };
