@@ -75,37 +75,44 @@ pub mod latest {
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
-		FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
-		FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit,
-		FundingDetail, FundingDirection, FundingFact, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingPayout,
-		FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail,
-		FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource, MaterialFailure,
-		MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque,
-		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem,
-		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
-		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
-		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RendererNode, ResourceAllocationError, RingLocation,
-		RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-		ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StatementTopic,
-		StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
-		ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature, X25519PublicKey,
+		CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment,
+		ContextualAlias, DerivationIndex, Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES,
+		FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
+		FundingCancelDecision, FundingDeposit, FundingDetail, FundingDirection, FundingFact,
+		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
+		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps, ImageRef,
+		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
+		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
+		OperationStartedResult, Parameter, PaymentTopUpSource, PocketCard, ProductAccount,
+		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
+		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
+		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RendererNode,
+		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
-	pub use crate::v02::{ChatRoomFooter, RenderContext};
+	pub use crate::v02::{
+		ChatCallClose, ChatCallRecord, ChatContactEvent, ChatCustomBody, ChatFeedUpdate,
+		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
+		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
+		RenderContext,
+	};
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -203,6 +210,45 @@ pub mod latest {
 	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
 	/// Failure to set what a native chat room shows below its messages.
 	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
+	/// Failure of a chat query the host sends to a product.
+	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
+	/// Request to replace the name and description of a native chat room.
+	pub type HostChatSetRoomMetadataRequest =
+		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
+	/// Failure to replace the name and description of a native chat room.
+	pub type HostChatSetRoomMetadataError = LatestOf<versioned::chat::HostChatSetRoomMetadataError>;
+	/// Request to replace how a native chat room shows in the chat list.
+	pub type HostChatSetRoomPreviewRequest =
+		LatestOf<versioned::chat::HostChatSetRoomPreviewRequest>;
+	/// Failure to replace how a native chat room shows in the chat list.
+	pub type HostChatSetRoomPreviewError = LatestOf<versioned::chat::HostChatSetRoomPreviewError>;
+	/// Request to delete a native chat room.
+	pub type HostChatDeleteRoomRequest = LatestOf<versioned::chat::HostChatDeleteRoomRequest>;
+	/// Failure to delete a native chat room.
+	pub type HostChatDeleteRoomError = LatestOf<versioned::chat::HostChatDeleteRoomError>;
+	/// Request to push one change to the messages of a native chat room.
+	pub type HostChatUpdateFeedRequest = LatestOf<versioned::chat::HostChatUpdateFeedRequest>;
+	/// Failure to push a change to the messages of a native chat room.
+	pub type HostChatUpdateFeedError = LatestOf<versioned::chat::HostChatUpdateFeedError>;
+	/// Host-to-product question for one page of chat messages.
+	pub type ProductChatMessagesQueryRequest =
+		LatestOf<versioned::chat::ProductChatMessagesQueryRequest>;
+	/// Product-to-host page of chat messages.
+	pub type ProductChatMessagesQueryResponse =
+		LatestOf<versioned::chat::ProductChatMessagesQueryResponse>;
+	/// Host-to-product report of what the user did in a chat room.
+	pub type ProductChatUserActionRequest = LatestOf<versioned::chat::ProductChatUserActionRequest>;
+	/// Product-to-host answer to a chat user action.
+	pub type ProductChatUserActionResponse =
+		LatestOf<versioned::chat::ProductChatUserActionResponse>;
+	/// Failure to apply a chat user action.
+	pub type ProductChatUserActionError = LatestOf<versioned::chat::ProductChatUserActionError>;
+	/// Host-to-product question about who reacted to a chat message.
+	pub type ProductChatReactionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatReactionsQueryRequest>;
+	/// Product-to-host list of who reacted to a chat message.
+	pub type ProductChatReactionsQueryResponse =
+		LatestOf<versioned::chat::ProductChatReactionsQueryResponse>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.

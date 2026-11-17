@@ -67,8 +67,10 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Each declaration becomes a SCALE enum with positional codec indices and an
-/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. When the newest
+/// Each declaration becomes a SCALE enum and an `impl Versioned` exposing
+/// `Latest`, `LATEST`, and `version()`. Variant `Vn` has codec index `n - 1`.
+/// The versions are contiguous. A method that a later protocol version adds
+/// starts at that version, so `{ V2 => v02::HostFooRequest }` is valid. When the newest
 /// variant carries a payload, `From<payload>` wraps it in that variant, so callers
 /// write `latest.into()` instead of naming a version. Single-version
 /// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version

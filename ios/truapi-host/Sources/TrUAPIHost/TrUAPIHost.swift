@@ -249,9 +249,11 @@ public protocol HostBridge: AnyObject, Sendable {
 /// decline a call. A plain `Error` reaches the product as its type name alone,
 /// because a value's stored properties would otherwise cross to it.
 public protocol ChatHostBridge: AnyObject, Sendable {
-    /// Create or resolve a native product Chat room. The core has bounded and
-    /// normalized these arguments and screened the icon scheme; escaping them
-    /// for the surface that renders them is still the host's job.
+    /// Create or resolve a native product Chat room. `roomId` is the id that
+    /// the core derived for the room, and every later call names the room with
+    /// it. The core has bounded and normalized these arguments and screened the
+    /// icon scheme; escaping them for the surface that renders them is still the
+    /// host's job.
     func createRoom(roomId: String, name: String, icon: String) async throws
         -> ChatRoomRegistrationStatus
 

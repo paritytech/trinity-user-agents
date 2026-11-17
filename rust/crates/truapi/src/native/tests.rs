@@ -102,7 +102,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
 	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
@@ -155,7 +155,7 @@ impl EventCallbacks {
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+			chat_room_status: Mutex::new(truapi::latest::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
 			chat_registered_bots: Mutex::new(Vec::new()),
@@ -416,7 +416,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection> {
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
@@ -1624,10 +1624,11 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	};
 	let product =
 		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
-	let request = v01::HostChatCreateRoomRequest {
-		room_id: "support".to_string(),
+	let request = truapi::latest::HostChatCreateRoomRequest {
+		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -1635,14 +1636,18 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
+		"support".to_string(),
 		request.clone(),
 	))
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
-		&platform, &product, request,
+		&platform,
+		&product,
+		"support".to_string(),
+		request,
 	))
 	.unwrap();
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1656,10 +1661,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	))
 	.unwrap();
 
-	assert_eq!(created.status, v01::ChatRoomRegistrationStatus::New);
+	assert_eq!(created, truapi::latest::ChatRoomRegistrationStatus::New);
 	assert_eq!(updated_rooms.rooms.len(), 1);
 	assert_eq!(updated_rooms.rooms[0].room_id, "support");
-	assert_eq!(existing.status, v01::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(existing, truapi::latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(posted.message_id, "message-1");
 	assert_eq!(
 		callbacks
@@ -3426,6 +3431,19 @@ fn a_chat_icon_is_screened_as_create_room_screens_it() {
 	);
 	assert!(screen_chat_icon("data:image/svg+xml,<svg onload=alert(1)>".to_string()).is_err());
 	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
+}
+
+/// A host that shows a room before its product runs must name the room that
+/// the product's own `create_room` resolves, for each spelling of the source.
+#[test]
+fn a_host_derives_the_room_id_that_create_room_answers() {
+	let product = ProductId::for_test("dim2.paseo");
+
+	assert_eq!(
+		chat_room_id(product.clone(), " cafe\u{301} ".to_string()).unwrap(),
+		product.chat_room_id("caf\u{e9}")
+	);
+	assert!(chat_room_id(product, "room\u{202e}".to_string()).is_err());
 }
 
 /// Both sides NFC-normalize, so a host that compares raw bytes against what

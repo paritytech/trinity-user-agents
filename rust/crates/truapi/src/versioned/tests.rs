@@ -34,6 +34,23 @@ fn multi_version_codec_indices_are_positional() {
 	assert_eq!(MultiVersionProbe::LATEST, 2);
 }
 
+truapi_macros::versioned_type! {
+	enum LaterMethodProbe { V2 => ProbeV2 }
+}
+
+// A method that v0.2 adds starts at `V2`. Its envelope keeps codec index
+// `n - 1`, so a v0.1 frame does not decode as the v0.2 payload.
+#[test]
+fn an_envelope_that_starts_at_v2_keeps_the_codec_index_of_v2() {
+	use super::Versioned;
+
+	let v2 = LaterMethodProbe::V2(ProbeV2 { b: b"hello".to_vec() });
+	assert_eq!(v2.encode()[0], 1, "V2 encodes codec index 1");
+	assert_eq!(v2.version(), 2);
+	assert_eq!(LaterMethodProbe::LATEST, 2);
+	assert!(LaterMethodProbe::decode(&mut [0u8, 0].as_slice()).is_err());
+}
+
 #[test]
 fn v1_discriminant_is_zero() {
 	let v1 = super::permissions::HostDevicePermissionRequest::V1(

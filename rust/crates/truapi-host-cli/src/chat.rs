@@ -24,10 +24,10 @@ use parity_scale_codec::Encode;
 use truapi::{
 	latest::{
 		ChatBotRegistrationStatus, ChatRoomRegistrationStatus, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest,
 	},
 	platform::{ChatPlatform, ProductContext},
 	v01::{ChatRoom, ChatRoomParticipation},
@@ -128,19 +128,20 @@ impl ChatPlatform for CliChatHost {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
 		let mut state = self.lock();
-		let status = if state.rooms.contains_key(&request.room_id) {
+		let status = if state.rooms.contains_key(&room_id) {
 			ChatRoomRegistrationStatus::Exists
 		} else {
-			state.rooms.insert(request.room_id.clone(), ChatRoomParticipation::RoomHost);
+			state.rooms.insert(room_id.clone(), ChatRoomParticipation::RoomHost);
 			Self::republish(&mut state);
 			ChatRoomRegistrationStatus::New
 		};
 		drop(state);
-		self.record_registration("room", &request.room_id, &request.name, &request.icon);
-		Ok(HostChatCreateRoomResponse { status })
+		self.record_registration("room", &room_id, &request.name, &request.icon);
+		Ok(status)
 	}
 
 	async fn register_chat_bot(
