@@ -179,6 +179,9 @@ pub trait CoinageChain: Send + Sync {
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError>;
 	/// An account's next nonce.
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError>;
+	/// What an account holds of the instance's external asset, in the
+	/// asset's units; zero for an account that holds none.
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError>;
 }
 
 /// [`CoinageChain`] over the storage and heads of the People chain.
@@ -339,6 +342,13 @@ impl CoinageChain for CoinageStorage {
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError> {
 		let info = self.values(at, "System", "Account", &[(AccountId32(account),)]).await?;
 		Ok(info.into_iter().flatten().next().as_ref().and_then(|info| number(info, "nonce")).unwrap_or(0) as u32)
+	}
+
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		let instance = self.values(at, PALLET, "Instances", &[(self.instance,)]).await?.into_iter().flatten().next();
+		let Some(asset) = instance.as_ref().and_then(|record| record.at("asset_id")).cloned() else { return Ok(0) };
+		let held = self.values(at, "Assets", "Account", &[(asset, AccountId32(account))]).await?;
+		Ok(held.into_iter().flatten().next().as_ref().and_then(|held| number(held, "balance")).unwrap_or(0))
 	}
 }
 
