@@ -143,7 +143,11 @@ fn an_import_is_judged_per_coin_and_its_completion_names_coin_accounts_only() {
 	assert_eq!(completion.status, Status::PartiallyDone);
 	assert_eq!(
 		completion.coins,
-		vec![(claimed, CoinResult::Moved), (sniped, CoinResult::TakenByOther), (absent, CoinResult::Absent)]
+		vec![
+			CoinOutcome { account: claimed, result: CoinResult::Moved },
+			CoinOutcome { account: sniped, result: CoinResult::TakenByOther },
+			CoinOutcome { account: absent, result: CoinResult::Absent },
+		]
 	);
 	let Asset::Coin { purse, installation, index } = output else { unreachable!("held as a coin") };
 	let (_, output_account) = coin_key(&ENTROPY, purse, installation, index).unwrap();

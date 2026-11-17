@@ -21,6 +21,7 @@ use crate::durable::{DurableTxFailureKind, DurableTxStatus};
 
 /// Where an operation stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum Status {
 	/// A transaction waits to be built, and the inputs of one are usable.
 	Preparing,
@@ -47,6 +48,7 @@ impl Status {
 
 /// Why a started operation ended `Failed`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum Failure {
 	/// Its cancellation was requested (invariant 1).
 	Cancelled,
@@ -65,6 +67,7 @@ pub enum Failure {
 
 /// An operation's value progress, in cents.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct Progress {
 	/// Settled on a stable verdict.
 	pub settled: u64,
@@ -77,6 +80,7 @@ pub struct Progress {
 
 /// One item of an operation's status stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct StatusItem {
 	/// Where it stands.
 	pub status: Status,
@@ -86,6 +90,7 @@ pub struct StatusItem {
 
 /// One transaction that succeeded finally.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct Settled {
 	/// The hash of its successful attempt.
 	pub hash: [u8; 32],
@@ -99,6 +104,7 @@ pub struct Settled {
 
 /// What became of one coin of an import or a reclaim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum CoinResult {
 	/// Claimed by the import, or taken back (or never minted) for a reclaim.
 	Moved,
@@ -112,6 +118,7 @@ pub enum CoinResult {
 
 /// An ended operation's outcome, readable for as long as the store exists.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct Completion {
 	/// The operation.
 	pub key: OpKey,
@@ -123,7 +130,17 @@ pub struct Completion {
 	/// offboarding ones.
 	pub transactions: Vec<Settled>,
 	/// For an import or a reclaim, each coin's result.
-	pub coins: Vec<([u8; 32], CoinResult)>,
+	pub coins: Vec<CoinOutcome>,
+}
+
+/// What became of one coin of an import or a reclaim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
+pub struct CoinOutcome {
+	/// The coin's account.
+	pub account: [u8; 32],
+	/// What became of it.
+	pub result: CoinResult,
 }
 
 /// The operation's current status and progress; none for an unknown key.
@@ -189,7 +206,10 @@ pub fn completion(view: &Snapshot, key: &OpKey, now: u64, params: &ChainParams, 
 		OpKind::Reclaim => reclaim_results(view, key, &records, now, params),
 		_ => Vec::new(),
 	};
-	let coins = results.into_iter().filter_map(|(coin, result)| Some((coin_account(&coin, entropy)?, result?))).collect();
+	let coins = results
+		.into_iter()
+		.filter_map(|(coin, result)| Some(CoinOutcome { account: coin_account(&coin, entropy)?, result: result? }))
+		.collect();
 	Some(Completion { key: key.clone(), status: item.status, progress: item.progress, transactions, coins })
 }
 

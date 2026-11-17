@@ -12,9 +12,11 @@ use super::{
 	chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace, RingPosition},
 	layer::{Interfaces, Layer, Randomness, RuntimeFacts, RuntimeSource, start},
 	plugins::{PersonhoodSource, RegistryWriter, Running, Seed},
-	reconstruction::{InstallationRegistry, ScanConfig},
+	reconstruction::ScanConfig,
+	registry::NoRegistry,
 	ledger::{
-		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
+		self,
+		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
 		snapshot,
 	},
 	operation::{self, OpKey, OpKind},
@@ -403,13 +405,14 @@ impl Randomness for TestDraws {
 	}
 }
 
-/// A registry whose read always fails.
-pub struct NoRegistry;
+/// A registry writer that cannot build an append yet, as before the
+/// `//datastore` account can pay for one.
+pub struct NoRegistryWriter;
 
 #[async_trait::async_trait]
-impl InstallationRegistry for NoRegistry {
-	async fn records(&self) -> Option<Vec<Vec<u8>>> {
-		None
+impl RegistryWriter for NoRegistryWriter {
+	async fn append(&self, _: &CoinSecret, _: &[u8]) -> Result<MortalExtrinsic, String> {
+		Err("this test builds no registry append".into())
 	}
 }
 
@@ -433,6 +436,7 @@ pub fn layer_interfaces(store: Db, runtime: Arc<TestRuntime>) -> Interfaces {
 		registry: Arc::new(NoRegistry),
 		spawner: crate::Spawner::new(tokio::runtime::Handle::current()),
 		policy: PrivacyPolicy::fastest(),
+		hand_over: None,
 	}
 }
 
@@ -444,15 +448,4 @@ pub async fn started_layer(store: Db) -> (Layer, Running, Arc<TestRuntime>) {
 		.await
 		.expect("the layer starts");
 	(layer, running, runtime)
-}
-
-/// A registry writer that cannot build an append yet, as before the
-/// `//datastore` account can pay for one.
-pub struct NoRegistryWriter;
-
-#[async_trait::async_trait]
-impl RegistryWriter for NoRegistryWriter {
-	async fn append(&self, _: &CoinSecret, _: &[u8]) -> Result<MortalExtrinsic, String> {
-		Err("this test builds no registry append".into())
-	}
 }
