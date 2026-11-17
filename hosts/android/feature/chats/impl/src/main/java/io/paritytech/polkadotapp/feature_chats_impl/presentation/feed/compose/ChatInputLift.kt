@@ -3,10 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
-import kotlin.math.roundToInt
-
-internal fun chatInputLiftPx(barInsetBottom: Int, systemBottom: Int, hiddenFraction: Float): Int =
-    ((barInsetBottom - systemBottom).coerceAtLeast(0) * (1f - hiddenFraction)).roundToInt()
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.visibleDockletBandPx
 
 internal fun Modifier.shrinkAboveDocklet(
     barInsets: WindowInsets,
@@ -15,7 +12,7 @@ internal fun Modifier.shrinkAboveDocklet(
     hiddenFraction: () -> Float,
 ): Modifier = layout { measurable, constraints ->
     val systemBottom = maxOf(navigationBars.getBottom(this), ime.getBottom(this))
-    val lift = chatInputLiftPx(barInsets.getBottom(this), systemBottom, hiddenFraction())
+    val lift = visibleDockletBandPx(barInsets.getBottom(this), systemBottom, hiddenFraction())
     val placeable = measurable.measure(
         constraints.copy(minHeight = 0, maxHeight = (constraints.maxHeight - lift).coerceAtLeast(0))
     )
