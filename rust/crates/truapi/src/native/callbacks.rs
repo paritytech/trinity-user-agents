@@ -117,6 +117,7 @@ pub trait HostCallbacks: Send + Sync {
 	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
 
 	/// Send one JSON-RPC request over a previously opened chain connection.
+	/// A rejection loses the request, so the core closes the connection.
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection>;
 
 	/// Close a previously opened chain connection.
