@@ -430,3 +430,10 @@ async fn a_followed_top_up_is_reported_until_it_is_final_and_no_further() {
 	assert_eq!(items.next().await, None);
 }
 
+/// The engine always names the shortfall; the core masks it for a product
+/// without balance access.
+#[tokio::test]
+async fn a_payment_the_balance_cannot_cover_is_reported_as_insufficient() {
+	let engine = engine(deciding(&[true]), Arc::new(NoProductAccounts)).await;
+	assert_eq!(engine.pay(payment(8 * UNIT, 1)).await, Err(HostPaymentError::InsufficientBalance));
+}
