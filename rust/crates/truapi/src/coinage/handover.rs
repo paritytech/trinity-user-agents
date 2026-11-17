@@ -1,5 +1,5 @@
 //! The hand-over of a wallet from the coinage engine a shipped app ran
-//! (native interface, section 5): what the app knows and the chain does not,
+//! (B2): what the app knows and the chain does not,
 //! recorded once, in the store transaction that mints the installation.
 //!
 //! [`record`] writes it. A reconstruction scans each handed-over
