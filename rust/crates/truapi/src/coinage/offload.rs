@@ -11,7 +11,7 @@ use parity_scale_codec::Decode;
 
 use super::{
 	Asset, ChainParams, HeldBackSpend, Initiator, PrivacyPolicy, PurseId, Snapshot,
-	classification::{Arriving, HeldBack, Selectability, classify},
+	classification::{Arriving, Class, EntryLocal, HeldBack, Selectability, classify},
 	ledger::{self, Read, Subject},
 	operation::{self, OperationEnd, OpKey, Retry},
 	planning::{Call, Destination, PlanInput},
@@ -20,7 +20,7 @@ use super::{
 	start::{Launcher, Request, StartError, start},
 };
 use crate::{
-	durable::DurableTxStatus,
+	durable::{DurableTxFailureKind, DurableTxStatus},
 	store::{Db, DbError},
 };
 
@@ -52,7 +52,8 @@ pub enum Phase {
 	Wait(Option<u64>),
 	/// The amount is offboarded.
 	Done,
-	/// Nothing in the purse covers the rest.
+	/// Nothing in the purse covers the rest, or a phase's transaction failed
+	/// after reaching the chain (invariant 4).
 	Failed,
 }
 
@@ -83,6 +84,9 @@ pub fn plan(view: &Snapshot, key: &OpKey, offload: &Offload, now: u64, params: &
 	if remaining == 0 {
 		return Phase::Done;
 	}
+	if failed_on_chain(view, key) {
+		return Phase::Failed;
+	}
 	let policy = effective(view.policy(), params);
 	let held_back = match policy.held_back_for(offload.initiator) {
 		HeldBackSpend::Always => true,
@@ -96,8 +100,13 @@ pub fn plan(view: &Snapshot, key: &OpKey, offload: &Offload, now: u64, params: &
 	let mut usable_coins = Vec::new();
 	for record in view.assets(offload.from) {
 		let value = record.exponent.value();
-		let selectability = classify(&record.asset, view, now, params).selectability;
-		match (record.asset, selectability) {
+		let state = classify(&record.asset, view, now, params);
+		if matches!(&state.class, Class::Entry { local: EntryLocal::InUse(holder), .. } if holder != key) {
+			later += value;
+			arriving = true;
+			continue;
+		}
+		match (record.asset, state.selectability) {
 			(Asset::Entry { .. }, Selectability::Now) => usable += value,
 			(Asset::Entry { .. }, Selectability::HeldBack(_)) if held_back => usable += value,
 			(Asset::Entry { .. }, Selectability::HeldBack(HeldBack::Dwell)) => {
@@ -151,6 +160,38 @@ pub fn plan(view: &Snapshot, key: &OpKey, offload: &Offload, now: u64, params: &
 		}
 	}
 	Phase::Failed
+}
+
+/// Whether a transaction of the offload failed after reaching the chain, so
+/// a failure that repeats does not cost one token per Plan (invariant 4).
+fn failed_on_chain(view: &Snapshot, key: &OpKey) -> bool {
+	view.registrations()
+		.of_operation(key)
+		.any(|facts| matches!(facts.state.status, DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed)))
+}
+
+/// Whether the offload needs the user's confirmation before it begins: its
+/// initiator's setting is `AfterConfirmation`, it is not confirmed, and the
+/// entries of its purse that are selectable now, with this period's free
+/// tokens, do not cover its amount. Coins never spare the confirmation,
+/// because an offload offboards only entries, and coins reach it through a
+/// recycle phase whose entries are then held back.
+pub fn needs_confirmation(view: &Snapshot, offload: &Offload, now: u64, params: &ChainParams) -> bool {
+	let setting = effective(view.policy(), params).held_back_for(offload.initiator);
+	if offload.confirmed || setting != HeldBackSpend::AfterConfirmation {
+		return false;
+	}
+	let request = SelectRequest {
+		purse: offload.from,
+		want: Want::Amount(offload.amount),
+		forms: Forms::EntriesOnly,
+		entries_first: true,
+		held_back: false,
+	};
+	let covered_now = select(view, request, now, params).is_ok_and(|selection| {
+		selection.inputs.iter().all(|entry| classify(entry, view, now, params).selectability == Selectability::Now)
+	});
+	!covered_now
 }
 
 /// When a ripening entry becomes ready: the end of the shortest dwell among

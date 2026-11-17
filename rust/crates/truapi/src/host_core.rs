@@ -1701,7 +1701,7 @@ fn with_coinage_domains(
 		store: db,
 		seed: wallet.seed.clone(),
 		clock: Arc::new(crate::unix_time::current_unix_secs),
-		people: Arc::new(CoinageStorage::new(chain.clone(), chain, people_genesis, coinage.instance)),
+		people: Arc::new(CoinageStorage::new(chain.clone(), chain.clone(), chain, people_genesis, coinage.instance)),
 		people_genesis,
 		asset_hub_genesis: services.asset_hub_chain_genesis_hash().into(),
 		extrinsics: services.extrinsics.clone(),
@@ -1749,7 +1749,7 @@ fn start_coinage(
 	let interfaces = Interfaces {
 		store: db,
 		engine,
-		chain: Arc::new(CoinageStorage::new(chain.clone(), chain.clone(), people_genesis, coinage.instance)),
+		chain: Arc::new(CoinageStorage::new(chain.clone(), chain.clone(), chain.clone(), people_genesis, coinage.instance)),
 		runtime: Arc::new(PeopleRuntime::new(chain.clone(), chain, people_genesis, coinage.instance)),
 		seed: wallet.seed,
 		clock: Arc::new(crate::unix_time::current_unix_secs),
