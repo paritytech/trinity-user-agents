@@ -1,5 +1,6 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, UserConfirmationReview,
+	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
+	StackFetchResponse, StackStatus, UserConfirmationReview,
 };
 use truapi::latest;
 
@@ -72,12 +73,11 @@ pub trait HostCallbacks: Send + Sync {
 		request: latest::HostDevicePermissionRequest,
 	) -> Result<DevicePermissionStatus, HostRejection>;
 
-	/// Show (`true`) or hide (`false`) the face above this execution's
-	/// expanded card.
+	/// Uncover (`true`) or cover (`false`) the face under this execution's
+	/// page.
 	///
 	/// Answer `NotPresented` when the execution is not under its card and
-	/// `UserMoving` while the user drags it. Return without waiting for the
-	/// animation to finish.
+	/// `UserMoving` while the user moves the card.
 	async fn set_expanded_card_face_shown(
 		&self,
 		shown: bool,
@@ -469,6 +469,29 @@ pub trait NativeScannerCallbacks: Send + Sync {
 		execution_kind: crate::platform::ExecutableKind,
 		request: latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
+}
+
+/// Native side of the stack's descriptor refresh. A host passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_stack_callbacks`]; without
+/// one the core stays on the copy it started from.
+///
+/// [`NativeTrUApiHostRuntime::set_stack_callbacks`]: super::NativeTrUApiHostRuntime::set_stack_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeStackCallbacks: Send + Sync {
+	/// Fetch the stack's descriptor over HTTP, as `request` describes, with
+	/// the host's HTTP client. Fail when the server gave no usable answer:
+	/// the status reports the failure's reason. The core awaits this on a
+	/// background thread, and counts a fetch that takes too long as failed.
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection>;
+
+	/// The stack's status, once when the callbacks are installed and again
+	/// whenever it changes. Arrives on a core thread: hand it off rather than
+	/// blocking.
+	fn stack_changed(&self, status: StackStatus);
 }
 
 /// Native funding overlay. A host with a funding modality passes an
