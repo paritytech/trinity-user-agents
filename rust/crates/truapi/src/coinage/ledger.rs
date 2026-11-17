@@ -160,7 +160,7 @@ pub enum Read {
 		/// The coin in the account; none when the account is empty.
 		now: Option<CoinOnChain>,
 		/// For an exported coin, the transaction that emptied its account.
-		emptied_by: Option<[u8; 32]>,
+		emptied_by: Option<Emptied>,
 	},
 	/// An entry's ring membership; none when its key is in no ring.
 	Entry(Option<EntryOnChain>),
@@ -169,6 +169,15 @@ pub enum Read {
 		/// It does.
 		consumed: bool,
 	},
+}
+
+/// The transaction that emptied an exported coin's account, as F1 found it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct Emptied {
+	/// Its hash.
+	pub by: [u8; 32],
+	/// Whether the block that included it was finalized at the read.
+	pub stable: bool,
 }
 
 /// A coin as the chain shows it.
