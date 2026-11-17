@@ -20,6 +20,7 @@ struct RustRuntimeEnvironment {
     let ipfsFetcher: IpfsFetching
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
+    let issueDiagnostics: ProductRuntimeIssueDiagnostics
     let logger: LoggerProtocol
 
     /// The rust pieces a runtime needs: the opened execution and its chain
@@ -98,7 +99,7 @@ private extension RustRuntimeEnvironment {
             chainRegistry: chainRegistry,
             applicationHandler: ApplicationHandler(),
             dateProvider: NowDateProvider(),
-            issueDiagnostic: HostLoadIssueDiagnostics.rpcConnection,
+            issueDiagnostic: issueDiagnostics.rpcConnection,
             logger: logger
         )
 
