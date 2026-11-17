@@ -170,6 +170,30 @@ fn failed_on_chain(view: &Snapshot, key: &OpKey) -> bool {
 		.any(|facts| matches!(facts.state.status, DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed)))
 }
 
+/// Whether the offload needs the user's confirmation before it begins: its
+/// initiator's setting is `AfterConfirmation`, it is not confirmed, and the
+/// entries of its purse that are selectable now, with this period's free
+/// tokens, do not cover its amount. Coins never spare the confirmation,
+/// because an offload offboards only entries, and coins reach it through a
+/// recycle phase whose entries are then held back.
+pub fn needs_confirmation(view: &Snapshot, offload: &Offload, now: u64, params: &ChainParams) -> bool {
+	let setting = effective(view.policy(), params).held_back_for(offload.initiator);
+	if offload.confirmed || setting != HeldBackSpend::AfterConfirmation {
+		return false;
+	}
+	let request = SelectRequest {
+		purse: offload.from,
+		want: Want::Amount(offload.amount),
+		forms: Forms::EntriesOnly,
+		entries_first: true,
+		held_back: false,
+	};
+	let covered_now = select(view, request, now, params).is_ok_and(|selection| {
+		selection.inputs.iter().all(|entry| classify(entry, view, now, params).selectability == Selectability::Now)
+	});
+	!covered_now
+}
+
 /// When a ripening entry becomes ready: the end of the shortest dwell among
 /// the readiness rules whose member count its ring reaches, counted from its
 /// key's inclusion.
