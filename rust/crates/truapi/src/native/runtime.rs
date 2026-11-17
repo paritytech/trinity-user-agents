@@ -11,8 +11,9 @@ use crate::{
 	markers,
 	platform::{
 		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		ProductContext, ProductId,
+		ProductContext, ProductId, SigningHostConfig, StackRefresh, StackStatus,
 	},
+	time::{RealTimer, SystemClock},
 };
 use futures::StreamExt;
 use parity_scale_codec::Encode;
@@ -45,10 +46,10 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
-		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
+		BundledStack, HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
 		ProductExecutionConfig,
 	},
 	errors::{HostRejection, NativeCoreDatabaseError},
@@ -57,7 +58,7 @@ use super::{
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -81,6 +82,8 @@ pub struct NativeTrUApiHostRuntime {
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 	/// The Pocket collection, shared with every product execution.
 	pocket: PocketCards,
+	/// The stack the runtime runs and the refresh of its descriptor.
+	stack_refresh: StackRefresh,
 	/// The core database directory, which holds the funding resume marker.
 	database_directory: std::path::PathBuf,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
@@ -136,6 +139,20 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
+		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let stack_refresh = futures::executor::block_on(StackRefresh::load(
+			pointer,
+			descriptor,
+			*allows_reserved_values,
+			Box::new(core_db.clone()),
+			Arc::new(RealTimer),
+			Box::new(SystemClock),
+		))?;
+		let signing = SigningHostConfig {
+			host: runtime_config.host,
+			stack: stack_refresh.stack(),
+			materials_enabled: runtime_config.materials_enabled,
+		};
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -143,11 +160,7 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(
-			platform.clone(),
-			runtime_config.signing,
-			spawner.clone(),
-		));
+		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -194,6 +207,7 @@ impl NativeTrUApiHostRuntime {
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
 			pocket,
+			stack_refresh,
 			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
 		}))
@@ -623,6 +637,37 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
 		self.runtime
 			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
+	}
+
+	/// Install the host's HTTP client for the stack's descriptor and its
+	/// stack status observer, and start refreshing the descriptor in the
+	/// background. Reports the current status to `callbacks` first.
+	///
+	/// Set-once: answers whether this call installed them. A runtime without
+	/// them stays on the copy it started from.
+	///
+	/// The refresh holds `callbacks` until this runtime drops. Hold the
+	/// runtime weakly from them: a strong reference keeps it, and its
+	/// refresh, running after the host builds a new one.
+	pub fn set_stack_callbacks(&self, callbacks: Arc<dyn NativeStackCallbacks>) -> bool {
+		self.stack_refresh
+			.start(Box::new(StackCallbackHost { stack: callbacks }), &self.spawner)
+	}
+
+	/// The stack the runtime runs: its verified descriptor, whether it is
+	/// stale or has shut down, and whether a newer copy waits for the next
+	/// start.
+	pub fn stack_status(&self) -> StackStatus {
+		self.stack_refresh.status()
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old, as when the app returns to the foreground or a chain answers with
+	/// another genesis hash. Returns at once; the result arrives through
+	/// [`NativeStackCallbacks::stack_changed`]. Nothing is fetched until
+	/// [`Self::set_stack_callbacks`] installed the callbacks.
+	pub fn refresh_stack(&self) {
+		self.stack_refresh.refresh_now();
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact

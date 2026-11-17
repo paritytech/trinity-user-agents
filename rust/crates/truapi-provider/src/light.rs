@@ -273,7 +273,7 @@ impl LightState {
 		&self,
 		genesis_hash: [u8; 32],
 		source: &ChainSource,
-		relay: Option<([u8; 32], ChainSource)>,
+		relay: Option<&([u8; 32], ChainSource)>,
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		let (specification, database_content, statement_protocol) = match source {
 			ChainSource::LightClient { specification, database_content, statement_protocol } => {
@@ -300,9 +300,8 @@ impl LightState {
 			return Err(ProviderError::TooManyConnections { limit: MAX_CONNECTIONS });
 		}
 
-		let relay_genesis = relay.as_ref().map(|(genesis, _)| *genesis);
+		let relay_genesis = relay.map(|(genesis, _)| *genesis);
 		let relay_id = relay
-			.as_ref()
 			.map(|(genesis, relay_source)| add_relay(&mut guard, *genesis, relay_source))
 			.transpose()?;
 
@@ -313,7 +312,7 @@ impl LightState {
 				&specification,
 				database_content.as_deref(),
 				*statement_protocol,
-				relay.as_ref(),
+				relay,
 			)
 		} else {
 			Ok(())

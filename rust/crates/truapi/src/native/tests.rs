@@ -1,14 +1,15 @@
 use super::*;
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, atomic::Ordering},
+	sync::{Arc, Mutex, atomic::Ordering, mpsc},
 };
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
+	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -1799,28 +1800,157 @@ fn runtime_config_reports_the_platform_the_library_was_built_for() {
 	let resolved = NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config())
 		.expect("config is valid");
 
-	assert_eq!(resolved.signing.host.host_info.platform, native_host_platform());
+	assert_eq!(resolved.host.host_info.platform, native_host_platform());
 }
 
+/// A host HTTP client that serves one published descriptor, and passes on
+/// each status the core reports.
+struct PublishedStack {
+	document: Vec<u8>,
+	statuses: mpsc::Sender<StackStatus>,
+}
+
+#[async_trait::async_trait]
+impl NativeStackCallbacks for PublishedStack {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection> {
+		Ok(StackFetchResponse::Document { bytes: self.document.clone(), etag: None })
+	}
+
+	fn stack_changed(&self, status: StackStatus) {
+		let _ = self.statuses.send(status);
+	}
+}
+
+/// A wiped stack has to reach an installed app without a release: the
+/// running core fetches the new descriptor and keeps it in its database, and
+/// the next runtime the host builds starts from it instead of the bundle.
 #[test]
-fn each_descriptor_chain_reaches_its_own_role() {
-	let resolved = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
-		)),
+fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
+	let config = HostRuntimeConfig {
+		local_session_secret: None,
+		local_session_lite_username: None,
 		..native_host_runtime_config()
+	};
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let sequence = |status: &StackStatus| {
+		serde_json::from_str::<serde_json::Value>(&status.descriptor)
+			.expect("the status carries descriptor JSON")["sequence"]
+			.clone()
+	};
+
+	let first = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config.clone(),
+	)
+	.expect("host runtime config should be valid");
+	assert!(
+		first.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let at_start = next_status();
+	let after_fetch = next_status();
+	drop(first);
+	let rebuilt =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+
+	let rebuilt_status = rebuilt.stack_status();
+	assert_eq!(
+		(
+			sequence(&at_start),
+			sequence(&after_fetch),
+			after_fetch.restart_required,
+			sequence(&rebuilt_status),
+			rebuilt_status.generation.as_str(),
+		),
+		(1.into(), 1.into(), true, 2.into(), "second")
+	);
+}
+
+/// A record the database refuses must not send the host into a restart: the
+/// next runtime would read the old copy and be told to restart again. The
+/// status says why the copy waits instead.
+#[test]
+fn a_record_the_database_refuses_asks_for_no_restart() {
+	let config = native_host_runtime_config();
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let runtime = build_runtime(config.clone()).expect("host runtime config should be valid");
+	rusqlite::Connection::open(
+		std::path::Path::new(&config.database_directory).join(crate::store::CORE_DB_FILE),
+	)
+	.and_then(|db| {
+		db.execute_batch(
+			"CREATE TRIGGER disk_full BEFORE INSERT ON stack_record
+			 BEGIN SELECT RAISE(FAIL, 'disk full'); END;",
+		)
 	})
-	.expect("config is valid");
+	.expect("the test can make the database refuse a record");
+
+	assert!(
+		runtime.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let _at_start = next_status();
+	let after_fetch = next_status();
 
 	assert_eq!(
-		resolved.signing.stack.chains(),
-		&crate::platform::StackChains {
-			relay: Some([0x01; 32]),
-			asset_hub: [0xc3; 32],
-			people: [0xa1; 32],
-			bulletin: [0xb2; 32],
-		},
+		(
+			after_fetch.restart_required,
+			matches!(
+				&after_fetch.last_refresh,
+				Some(StackRefreshOutcome::NotStored { reason }) if reason.contains("disk full")
+			),
+		),
+		(false, true),
+		"{:?}",
+		after_fetch.last_refresh
 	);
+}
+
+/// A runtime the app builds from `config`, or why it was refused. No local
+/// session, so building it touches only the stack and the database.
+fn build_runtime(
+	config: HostRuntimeConfig,
+) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
+	NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		HostRuntimeConfig {
+			local_session_secret: None,
+			local_session_lite_username: None,
+			..config
+		},
+	)
 }
 
 #[test]
@@ -1829,17 +1959,13 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 	// only a signed stack may start.
 	let mut stack = native_host_runtime_config().stack;
 	stack.pointer = crate::test_support::test_stack_link(None);
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack,
-		..native_host_runtime_config()
-	})
-	.unwrap_err();
+	let err = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() }).err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: crate::platform::StackError::Unsigned.to_string()
-		}
+		})
 	);
 }
 
@@ -1849,24 +1975,24 @@ fn runtime_config_passes_the_reserved_values_flag_through() {
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
-	let refused = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack: stack.clone(),
-		..native_host_runtime_config()
-	});
+	let refused =
+		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
 	stack.allows_reserved_values = true;
-	let allowed = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack,
-		..native_host_runtime_config()
-	});
+	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
+	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
+		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
+			.expect("the status carries descriptor JSON")["tld"]
+			.clone()
+	};
 
 	assert_eq!(
-		(refused.err(), allowed.map(|resolved| resolved.signing.stack.tld().to_owned()).ok()),
+		(refused.err(), allowed.map(tld).ok()),
 		(
 			Some(NativeRuntimeConfigError::Invalid {
 				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
 					.to_string(),
 			}),
-			Some("dot".to_string()),
+			Some("dot".into()),
 		),
 	);
 }
@@ -1891,14 +2017,14 @@ fn runtime_config_rejects_relative_host_icon() {
 		host_icon: Some("/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: "host_info.icon must be an absolute HTTPS URL: relative URL without a base"
 				.to_string(),
-		}
+		})
 	);
 }
 
@@ -1908,13 +2034,13 @@ fn runtime_config_rejects_non_https_host_icon() {
 		host_icon: Some("http://localhost:3000/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: r#"host_info.icon must use https scheme, got "http""#.to_string(),
-		}
+		})
 	);
 }
 
