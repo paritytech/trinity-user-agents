@@ -24,8 +24,9 @@ use crate::{
 	chain::HashAndNumber,
 	coinage::{
 		Exponent, PurseId, Snapshot,
-		balance::{Balance, balance},
+		balance::{Balance, Holdings, balance, holdings},
 		classification::{ExportStatus, classify},
+		handover::HandOverProgress,
 		ledger::{BlockRef, PurseState},
 		namespace::coin_key,
 		operation::{OpKey, OpKind},
@@ -36,6 +37,7 @@ use crate::{
 
 /// A committed change, as the event stream reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum Event {
 	/// The first item of every event stream (invariant 5).
 	Resynced,
@@ -57,6 +59,7 @@ pub enum Event {
 
 /// One exported coin, as the export status stream reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct ExportedCoinStatus {
 	/// The coin's account.
 	pub account: [u8; 32],
@@ -133,6 +136,26 @@ impl Layer {
 			Some(open(view).then(|| balance(view, purse, layer.now(), &layer.params())))
 		});
 		Ok(distinct(balances.take_while(|balance| ready(balance.is_some())).filter_map(ready)))
+	}
+
+	/// The purse's holdings: the current value at once, then each new value,
+	/// under the balance stream's rules, closing when the purse closes.
+	pub async fn holdings(&self, purse: PurseId) -> Result<BoxStream<'static, Holdings>, Error> {
+		let view = self.view().await?;
+		let open = move |view: &Snapshot| view.purse(purse).is_some_and(|record| !matches!(record.state, PurseState::Closed { .. }));
+		if !open(&view) {
+			return Err(Error::PurseNotFound(purse));
+		}
+		let all = self.reads(move |layer, view| {
+			Some(open(view).then(|| holdings(view, purse, layer.now(), &layer.params())))
+		});
+		Ok(distinct(all.take_while(|holdings| ready(holdings.is_some())).filter_map(ready)))
+	}
+
+	/// How far the scan of a handed-over wallet has come: at once, then each
+	/// change (native interface, section 5).
+	pub fn hand_over(&self) -> BoxStream<'static, HandOverProgress> {
+		distinct(self.reads(|_, view| Some(view.hand_over_progress())))
 	}
 
 	/// Every coin of an export with its export status: at once, then each
@@ -249,7 +272,7 @@ impl EventState {
 				.collect(),
 			None => BTreeMap::new(),
 		};
-		Self { purses, statuses, exports, recoverability: recoverability(view, now, &params) }
+		Self { purses, statuses, exports, recoverability: recoverability(view, now) }
 	}
 
 	/// The events that take `self` to `next`.

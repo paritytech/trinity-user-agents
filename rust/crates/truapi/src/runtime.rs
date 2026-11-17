@@ -89,6 +89,8 @@ use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 #[cfg(not(target_arch = "wasm32"))]
+pub use services::CoinageOptions;
+#[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::CoinageChannel;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
 pub use sso_account_holder_service::SsoAccountHolderService;

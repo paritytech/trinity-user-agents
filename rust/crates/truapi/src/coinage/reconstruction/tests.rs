@@ -4,8 +4,9 @@ use super::*;
 use crate::coinage::{
 	PrivacyPolicy,
 	chain::{ChainCoin, RingPlace},
+	classification::{Selectability, classify},
 	namespace::datastore_key,
-	testing::{ENTROPY, FakeChain, FixedSeed, TestWallet, chain_params},
+	testing::{ENTROPY, FakeChain, FixedSeed, NOW, TestWallet, chain_params},
 };
 
 const EARLIER: InstallationId = InstallationId([4; 32]);
@@ -141,4 +142,78 @@ fn a_reconstruction_skips_entries_whose_alias_is_unloaded() {
 	adopted.sort();
 	let entry = |index| Asset::Entry { purse: PurseId::MAIN, installation: EARLIER, index };
 	assert_eq!(adopted, vec![entry(1), entry(2)]);
+}
+
+/// The installation a shipped app allocated under, handed over.
+const APP: InstallationId = InstallationId([5; 32]);
+
+fn app_coin(index: u32) -> [u8; 32] {
+	coin_key(&ENTROPY, PurseId::MAIN, APP, index).unwrap().1
+}
+
+/// A wallet that recorded a hand-over of `APP` up to `next_coin`, listing
+/// `outstanding`, over a chain holding a coin at each of `indices` of `APP`.
+fn handed_over(
+	next_coin: u32,
+	outstanding: Vec<handover::OutstandingPayment>,
+	indices: &[u32],
+) -> (TestWallet, ReconstructionDeps) {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let handed = handover::Handover {
+		installations: vec![handover::AppInstallation { id: APP, next_coin, next_entry: 0 }],
+		outstanding,
+		incoming: Vec::new(),
+	};
+	block_on(wallet.db.write(move |tx| handover::record(tx, &handed))).unwrap();
+	let chain = Arc::new(FakeChain::default());
+	for index in indices {
+		chain.coins.lock().insert(app_coin(*index), ChainCoin { instance: 0, value: 5, age: 1, locked_until: None });
+	}
+	let deps = ReconstructionDeps {
+		store: wallet.db.clone(),
+		seed: Arc::new(FixedSeed),
+		chain,
+		registry: Arc::new(Registry(None)),
+	};
+	(wallet, deps)
+}
+
+fn app_coins_held(wallet: &TestWallet) -> Vec<u32> {
+	let mut held: Vec<u32> = wallet
+		.view()
+		.assets(PurseId::MAIN)
+		.filter_map(|record| match record.asset {
+			Asset::Coin { installation: APP, index, .. } => Some(index),
+			_ => None,
+		})
+		.collect();
+	held.sort();
+	held
+}
+
+/// The app knows how far it allocated, so the scan reads that far whatever
+/// lies spent below, and applies the gap rule only past the mark.
+#[test]
+fn a_scan_reads_a_handed_over_installation_up_to_its_high_water_mark() {
+	let short = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+	let (wallet, deps) = handed_over(40, Vec::new(), &[30, 50]);
+	block_on(reconstruct(&deps, Purses::MainOnly, false, &short, &chain_params())).unwrap();
+	assert_eq!(app_coins_held(&wallet), vec![30]);
+}
+
+/// The payee holds the secrets of a sent payment's coins, so the wallet must
+/// never spend them, and the user can still take them back.
+#[test]
+fn a_coin_of_a_sent_payment_is_adopted_as_handed_out() {
+	let short = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+	let payment = handover::OutstandingPayment { id: [8; 32], accounts: vec![app_coin(3)] };
+	let (wallet, deps) = handed_over(8, vec![payment], &[2, 3]);
+	block_on(reconstruct(&deps, Purses::MainOnly, false, &short, &chain_params())).unwrap();
+	let view = wallet.view();
+	let coin = |index| Asset::Coin { purse: PurseId::MAIN, installation: APP, index };
+	assert_eq!(
+		(app_coins_held(&wallet), view.mark(&coin(3)), view.mark(&coin(2))),
+		(vec![2, 3], Some(ledger::Mark::Committed), None)
+	);
+	assert_eq!(classify(&coin(3), &view, NOW, &chain_params()).selectability, Selectability::Never);
 }
