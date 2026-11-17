@@ -256,7 +256,7 @@ impl Stack {
 		self.served_tlds().any(|served| served == tld)
 	}
 
-	/// Whether this stack runs `product_id`: a localhost development id, or a
+	/// Whether this stack serves `product_id`: a localhost development id, or a
 	/// name under one of [`Self::served_tlds`].
 	pub fn serves(&self, product_id: &ProductId) -> bool {
 		product_id.network_suffix().is_none_or(|tld| self.serves_tld(tld))

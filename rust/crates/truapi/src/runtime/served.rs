@@ -1,9 +1,9 @@
-//! Proof that the stack runs every product a value names.
+//! Proof that the stack serves every product a value names.
 //!
 //! [`serve`] checks a value against the stack and wraps it in [`Served`]. A
 //! handler serves a request that names another product before it acts, and
 //! `HostAccounts` and the signing requests the core builds take their products
-//! as `Served`, so no key is resolved for a product the stack does not run.
+//! as `Served`, so no key is resolved for a product the stack does not serve.
 
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
@@ -17,7 +17,7 @@ use crate::{
 	stack::{Stack, UnservedProduct},
 };
 
-/// A value that names only products the stack runs.
+/// A value that names only products the stack serves.
 ///
 /// Only [`serve`] creates one, so a function that takes `Served` cannot be
 /// called without the check. It derefs to the value. It does not record
@@ -49,15 +49,15 @@ impl Served<ProductAccountTxPayload> {
 	}
 }
 
-/// A value that names products. The core acts on it only if the stack runs
+/// A value that names products. The core acts on it only if the stack serves
 /// all of them.
 pub trait NamesProducts {
 	/// Every product the value names.
 	fn products(&self) -> Vec<&ProductId>;
 }
 
-/// `value` as [`Served`] once `stack` runs every product it names. Fails with
-/// the first one it does not.
+/// `value` as [`Served`] once `stack` serves every product it names. Fails
+/// with the first one it does not.
 pub fn serve<T: NamesProducts>(stack: &Stack, value: T) -> Result<Served<T>, UnservedProduct> {
 	for product_id in value.products() {
 		stack.require_served(product_id)?;

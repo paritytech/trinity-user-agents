@@ -129,9 +129,10 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 pub const ENTROPY: [u8; 16] = [0xAB; 16];
 
 /// Wraps `value` in `Served` for the account calls. Every product these tests
-/// name is under `dot`, which every stack runs.
+/// name is under `dot`, which every stack serves.
 pub fn served<T: NamesProducts>(value: T) -> Served<T> {
-	serve(&crate::test_support::paseo_test_stack(), value).expect("every stack runs a .dot product")
+	serve(&crate::test_support::paseo_test_stack(), value)
+		.expect("every stack serves a .dot product")
 }
 
 /// A locked signing host on `.dot`. With no dotNS Asset Hub, activation looks
