@@ -24,10 +24,38 @@ async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntim
 	let (layer, ..) = started_layer(wallet.db.clone()).await;
 	let services = payment_services_over(platform);
 	let clock = Arc::new(AtomicU64::new(NOW * 1000));
-	let payments = payments(layer, wallet.db.clone(), Arc::new(Board::default()), clock);
+	let payments = payments(layer.clone(), wallet.db.clone(), Arc::new(Board::default()), clock);
 	assert!(services.install_coinage_payments(payments));
+	let (started, start) = futures::channel::oneshot::channel();
+	assert!(services.install_coinage_start(futures::FutureExt::shared(start)));
+	started.send(Ok(layer)).ok();
 	let host = payment_host(&services, PRODUCT, true);
 	(wallet, host)
+}
+
+/// A call made while the coinage layer starts waits for the start instead of
+/// being refused, so a product loaded right after the app starts is served.
+#[tokio::test]
+async fn a_call_made_while_the_layer_starts_is_served_once_it_has_started() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let (layer, ..) = started_layer(wallet.db.clone()).await;
+	let services = payment_services_over(Arc::new(StubPlatform::default()));
+	let (started, start) = futures::channel::oneshot::channel();
+	assert!(services.install_coinage_start(futures::FutureExt::shared(start)));
+	let host = payment_host(&services, PRODUCT, true);
+	let request = v01::HostCoinPaymentCreatePurseRequest { name: "savings".to_owned() };
+	let context = CallContext::default();
+	let created = host.create_purse(&context, HostCoinPaymentCreatePurseRequest::V1(request));
+
+	let clock = Arc::new(AtomicU64::new(NOW * 1000));
+	let start_layer = async {
+		tokio::task::yield_now().await;
+		let payments = payments(layer.clone(), wallet.db.clone(), Arc::new(Board::default()), clock);
+		assert!(services.install_coinage_payments(payments));
+		started.send(Ok(layer)).ok();
+	};
+	let (created, ()) = futures::join!(created, start_layer);
+	assert!(created.is_ok(), "{created:?}");
 }
 
 async fn create(host: &ProductRuntimeHost<RemoteAccountHolder>, name: &str) -> u32 {
