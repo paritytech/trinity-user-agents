@@ -25,6 +25,18 @@ final class BrowseViewController: UIViewController, ViewHolder {
 
         presenter.setup()
     }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        presenter.didAppear()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+
+        presenter.didDisappear()
+    }
 }
 
 // MARK: - BrowseViewProtocol
@@ -37,4 +49,10 @@ extension BrowseViewController: BrowseViewProtocol {
     func hideLoading() {
         rootView.activityIndicatorView.stopAnimating()
     }
+}
+
+// MARK: - NavigationBarHiding
+
+extension BrowseViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool { true }
 }

@@ -261,7 +261,7 @@ impl<'a> SsoPairingFlow<'a> {
 		let resolve_session = resolve_session_identity_with_chain(
 			&self.host.dotns_reads,
 			&self.host.chain,
-			self.host.host_config.asset_hub_chain_genesis_hash,
+			self.host.host_config.stack.chains().asset_hub,
 			session,
 		)
 		.fuse();

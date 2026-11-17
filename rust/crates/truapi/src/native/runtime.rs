@@ -11,21 +11,24 @@ use crate::{
 	markers,
 	platform::{
 		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		ProductContext, ProductId,
+		ProductContext, ProductId, SigningHostConfig, StackRefresh, StackStatus,
 	},
+	time::{RealTimer, SystemClock},
 };
+use futures::StreamExt;
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
+use truapi::{Bytes32, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
 	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
-	ResponderExit, SigningHostRuntime, Spawner,
+	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -42,10 +45,10 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
-		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
+		BundledStack, HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
 		ProductExecutionConfig,
 	},
 	errors::{HostRejection, NativeCoreDatabaseError},
@@ -54,7 +57,7 @@ use super::{
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -78,6 +81,8 @@ pub struct NativeTrUApiHostRuntime {
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 	/// The Pocket collection, shared with every product execution.
 	pocket: PocketCards,
+	/// The stack the runtime runs and the refresh of its descriptor.
+	stack_refresh: StackRefresh,
 	/// The core database directory, which holds the funding resume marker.
 	database_directory: std::path::PathBuf,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
@@ -133,6 +138,16 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
+		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let stack_refresh = futures::executor::block_on(StackRefresh::load(
+			pointer,
+			descriptor,
+			*allows_reserved_values,
+			Box::new(core_db.clone()),
+			Arc::new(RealTimer),
+			Box::new(SystemClock),
+		))?;
+		let signing = SigningHostConfig { host: runtime_config.host, stack: stack_refresh.stack() };
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -140,11 +155,7 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(
-			platform.clone(),
-			runtime_config.signing,
-			spawner.clone(),
-		));
+		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -191,6 +202,7 @@ impl NativeTrUApiHostRuntime {
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
 			pocket,
+			stack_refresh,
 			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
 		}))
@@ -381,6 +393,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_amount_issue(&intent, amount, spendable)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for, after
+	/// `provider_frame_requested`. Answers whether one was waiting.
+	pub fn open_provider_frame(&self, intent: String) -> bool {
+		self.runtime.open_provider_frame(&intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened, so the host can show the notice again after redrawing.
+	pub fn funding_frame_waiting(&self, intent: String) -> bool {
+		self.runtime.funding_frame_waiting(&intent)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)
@@ -392,14 +416,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_entries()
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
+	/// Offer the funding providers the remote configuration names; see
+	/// [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.runtime.set_funding_provider_config(published_names)?)
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
@@ -608,6 +631,37 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
 		self.runtime
 			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
+	}
+
+	/// Install the host's HTTP client for the stack's descriptor and its
+	/// stack status observer, and start refreshing the descriptor in the
+	/// background. Reports the current status to `callbacks` first.
+	///
+	/// Set-once: answers whether this call installed them. A runtime without
+	/// them stays on the copy it started from.
+	///
+	/// The refresh holds `callbacks` until this runtime drops. Hold the
+	/// runtime weakly from them: a strong reference keeps it, and its
+	/// refresh, running after the host builds a new one.
+	pub fn set_stack_callbacks(&self, callbacks: Arc<dyn NativeStackCallbacks>) -> bool {
+		self.stack_refresh
+			.start(Box::new(StackCallbackHost { stack: callbacks }), &self.spawner)
+	}
+
+	/// The stack the runtime runs: its verified descriptor, whether it is
+	/// stale or has shut down, and whether a newer copy waits for the next
+	/// start.
+	pub fn stack_status(&self) -> StackStatus {
+		self.stack_refresh.status()
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old, as when the app returns to the foreground or a chain answers with
+	/// another genesis hash. Returns at once; the result arrives through
+	/// [`NativeStackCallbacks::stack_changed`]. Nothing is fetched until
+	/// [`Self::set_stack_callbacks`] installed the callbacks.
+	pub fn refresh_stack(&self) {
+		self.stack_refresh.refresh_now();
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact
@@ -897,6 +951,28 @@ impl NativeTrUApiHostRuntime {
 		force: bool,
 	) -> Result<PublicProfile, PublicProfileError> {
 		self.runtime.resolve_public_profile(&username, force).await
+	}
+
+	/// Observes public profile metadata until resolution completes or fails.
+	///
+	/// Options control forced lookups and stale stored values. Failures follow any
+	/// emitted value. Cancelling the subscription aborts resolution.
+	pub fn observe_public_profile(
+		&self,
+		username: String,
+		options: PublicProfileResolutionOptions,
+		observer: Arc<dyn NativePublicProfileObserver>,
+	) -> Arc<NativeSubscription> {
+		let mut stream = self.runtime.observe_public_profile(&username, options);
+		self.spawner.spawn_observation(async move {
+			while let Some(item) = stream.next().await {
+				match item {
+					Ok(profile) => observer.on_profile(profile),
+					Err(error) => return observer.on_error(error),
+				}
+			}
+			observer.on_complete();
+		})
 	}
 
 	/// The image `reference` names, read from Bulletin over the core's own connection and
@@ -1242,7 +1318,7 @@ impl NativeProductExecution {
 	/// card's newest face is also kept, so the card has it offline.
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
@@ -1274,7 +1350,7 @@ impl NativeProductExecution {
 	/// it until the product connection subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		self.renderer_connection.publish(item.into())

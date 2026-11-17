@@ -9,8 +9,8 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
-  ChainIdentifier,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -328,17 +328,6 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ExecutableKind = "App" | "Widget" | "Worker";
-
-/**
  * What the host did with a request to cover or uncover the expanded card face.
  */
 export type ExpandedCardFaceOutcome =
@@ -500,37 +489,6 @@ export type FundingQuoteUnavailable =
    * The provider did not answer in time.
    */
   | { tag: "Timeout"; value?: undefined };
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export interface HostChainEntry {
-  /**
-   * Protocol role this entry answers for.
-   */
-  identifier: ChainIdentifier;
-
-  /**
-   * Genesis hash identifying the chain in all chain-scoped calls.
-   */
-  genesisHash: Bytes32;
-}
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export interface HostChainSet {
-  /**
-   * Ecosystem the host is configured for, e.g. "polkadot", "paseo".
-   */
-  network: string;
-
-  /**
-   * Chains this host serves, keyed by protocol role.
-   */
-  chains: Array<HostChainEntry>;
-}
 
 /**
  * Contact handles the core needs turned back into accounts, and the key they
@@ -1210,19 +1168,6 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
-);
-
-/**
  * What the host did with a request to cover or uncover the expanded card face.
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
@@ -1327,29 +1272,6 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
       }>,
       Timeout: S._void,
     }),
-);
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export const HostChainEntry: S.Codec<HostChainEntry> = S.lazy(
-  (): S.Codec<HostChainEntry> =>
-    S.Struct({
-      identifier: ChainIdentifier,
-      genesisHash: Bytes32,
-    }) as S.Codec<HostChainEntry>,
-);
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
-  (): S.Codec<HostChainSet> =>
-    S.Struct({
-      network: S.str,
-      chains: S.Vector(HostChainEntry),
-    }) as S.Codec<HostChainSet>,
 );
 
 /**
@@ -2032,12 +1954,6 @@ export interface Features {
   featureSupported(
     request: HostFeatureSupportedRequest,
   ): Promise<HostFeatureSupportedResponse>;
-
-  /**
-   * Enumerate the chains this host serves (RFC 0026). The core resolves
-   * `get_chain_info` requests against the returned set.
-   */
-  supportedChains(): Promise<HostChainSet>;
 }
 
 /**
@@ -2056,12 +1972,22 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
+   * `provider` asked to show a screen for session `intent`. The core
+   * holds it until the host calls `open_provider_frame(intent)`, which
+   * the host does at once while the user looks at the session, or once
+   * the user taps a notice that the provider wants to show something.
+   * A worker never puts a screen in front of the user on its own.
+   */
+  providerFrameRequested(provider: ProductContext, intent: string): void;
+
+  /**
    * Show `target` for `provider`'s session `intent` in a frame the host
-   * owns, and answer once it closes. A page is an https URL the core has
-   * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL. The core closes the
-   * frame itself, through
-   * `Self::close_provider_frame`, once the session's payment moved.
+   * owns, and answer once it closes. Called only once the host opened the
+   * request `Self::provider_frame_requested` announced. A page is an
+   * https URL the core has checked: the host shows its origin, and closes
+   * the frame with `Returned` when the page reaches its return URL. The
+   * core closes the frame itself, through `Self::close_provider_frame`,
+   * once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,

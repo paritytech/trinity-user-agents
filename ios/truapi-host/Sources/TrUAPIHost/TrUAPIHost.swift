@@ -149,10 +149,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// return promptly.
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool
 
-    /// Enumerate the chains this host serves: its environment plus one entry
-    /// per chain role. Invoked on the dispatcher thread; must return promptly.
-    func supportedChains() throws -> HostChainSet
-
     /// The chains this host builds as V5 general transactions, each with its
     /// transaction extension pipeline; every other chain is built as V4. The
     /// core builds its own extrinsics the same way. Defaults to none.
@@ -432,7 +428,6 @@ public extension HostBridge {
             languageTag: Locale.current.language.languageCode?.identifier ?? "en"
         )
     }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
@@ -857,12 +852,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func supportedChains() throws -> HostChainSet {
-        try withHostRejection {
-            try bridge.supportedChains()
-        }
-    }
-
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         try await withHostRejection {
             try await bridge.transactionExtensionVersions()
@@ -1177,9 +1166,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
-    /// Profile metadata without image bytes. `force` bypasses the core's one-hour cache.
-    public func resolvePublicProfile(username: String, force: Bool) async throws -> PublicProfile {
-        try await inner.resolvePublicProfile(username: username, force: force)
+    /// Profile metadata according to the requested freshness and stale-value policy.
+    /// At most two values are emitted. Cancellation stops the core observation.
+    public func resolvePublicProfile(
+        username: String,
+        options: PublicProfileResolutionOptions
+    ) -> AsyncThrowingStream<PublicProfile, Error> {
+        observedStream(PublicProfileStreamObserver.init(continuation:)) { observer in
+            inner.observePublicProfile(username: username, options: options, observer: observer)
+        }
     }
 
     /// The image `reference` names, read from Bulletin by the core and checked against its
@@ -1527,6 +1522,26 @@ private func observedStream<Element, Observer>(
         subscription.cancel()
     }
     return stream
+}
+
+private final class PublicProfileStreamObserver: NativePublicProfileObserver {
+    private let continuation: AsyncThrowingStream<PublicProfile, Error>.Continuation
+
+    init(continuation: AsyncThrowingStream<PublicProfile, Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onProfile(profile: PublicProfile) {
+        continuation.yield(profile)
+    }
+
+    func onComplete() {
+        continuation.finish()
+    }
+
+    func onError(error: PublicProfileError) {
+        continuation.finish(throwing: error)
+    }
 }
 
 private final class RendererStreamObserver: NativeRendererObserver, @unchecked Sendable {

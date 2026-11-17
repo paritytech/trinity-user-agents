@@ -8,7 +8,7 @@ set -euo pipefail
 
 id="${1:?usage: write-refresh-changeset.sh <id>}"
 cd "$(dirname "$0")/.."
-stacks="$(git diff --name-only -- 'rust/crates/truapi-host-cli/stacks/*.json')"
+stacks="$(git diff --name-only -- 'stacks/*.json')"
 specs_changed=false
 git diff --quiet -- rust/crates/truapi-provider/networks || specs_changed=true
 

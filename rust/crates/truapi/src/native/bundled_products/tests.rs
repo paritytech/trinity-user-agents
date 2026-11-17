@@ -33,40 +33,23 @@ impl BundleReader for Bundle {
 	}
 }
 
-const FUNDING: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{}}}"#;
-const CHAT: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#;
+const WORKER: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#;
 
 fn bundle() -> Bundle {
 	Bundle::new(&[
-		("root/ramp.dot/worker-manifest.json", FUNDING),
+		("root/ramp.dot/worker-manifest.json", WORKER),
 		("root/ramp.dot/worker/index.js", ""),
 		("root/ramp.dot/app/index.html", ""),
-		("root/bank.dot/worker-manifest.json", FUNDING),
+		("root/bank.dot/worker-manifest.json", WORKER),
 		("root/bank.dot/worker/index.js", ""),
-		("root/chat.dot/worker-manifest.json", CHAT),
+		("root/chat.dot/worker-manifest.json", WORKER),
 		("root/chat.dot/worker/index.js", ""),
 		("root/broken.dot/worker-manifest.json", "{"),
 		("root/broken.dot/worker/index.js", ""),
-		("root/noworker.dot/worker-manifest.json", FUNDING),
-		("root/.hidden.dot/worker-manifest.json", FUNDING),
+		("root/noworker.dot/worker-manifest.json", WORKER),
+		("root/.hidden.dot/worker-manifest.json", WORKER),
 		("root/Not A Product/x", ""),
 	])
-}
-
-#[test]
-fn bundled_funding_providers_ship_a_funding_worker() {
-	let providers = bundled_funding_providers("root".to_string(), Box::new(bundle()));
-	assert_eq!(
-		providers
-			.iter()
-			.map(|entry| (entry.product_id.as_str().to_string(), entry.origin, entry.app))
-			.collect::<Vec<_>>(),
-		vec![
-			("bank.dot".to_string(), FundingProviderOrigin::Bundled, FundingProviderApp::Absent),
-			("ramp.dot".to_string(), FundingProviderOrigin::Bundled, FundingProviderApp::Shipped),
-		]
-	);
-	assert_eq!(providers[0].worker_manifest.as_deref(), Some(FUNDING));
 }
 
 const ROOT_MANIFEST_JSON: &str = r#"{"$v":1,"displayName":"Ramp","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"},"trustedProducts":{}}"#;

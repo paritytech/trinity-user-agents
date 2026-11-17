@@ -10,8 +10,8 @@ use crate::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		ProductOperations, ProductStorage, ProviderError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -37,7 +37,7 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	engine_follow::{BalanceFollower, StatusFollower},
 	errors::HostRejection,
@@ -92,6 +92,27 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`StackHost`] served by host-provided
+/// [`NativeStackCallbacks`].
+pub struct StackCallbackHost {
+	/// Host HTTP client and stack status observer.
+	pub stack: Arc<dyn NativeStackCallbacks>,
+}
+
+#[async_trait::async_trait]
+impl StackHost for StackCallbackHost {
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, v01::GenericError> {
+		Ok(self.stack.fetch_stack_descriptor(request).await?)
+	}
+
+	fn stack_changed(&self, status: StackStatus) {
+		self.stack.stack_changed(status);
 	}
 }
 
@@ -272,13 +293,6 @@ impl Features for CallbackPlatform {
 
 		let supported = self.callbacks.feature_supported(request).await?;
 		Ok(v01::HostFeatureSupportedResponse { supported })
-	}
-
-	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-		self.callbacks
-			.on_core_log(markers::NATIVE_SUPPORTED_CHAINS.target.to_string(), String::new());
-
-		self.callbacks.supported_chains().map_err(v01::GenericError::from)
 	}
 }
 
@@ -702,7 +716,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn set_chat_room_footer(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatSetRoomFooterRequest,
+		request: truapi::latest::HostChatSetRoomFooterRequest,
 	) -> Result<(), v01::GenericError> {
 		self.chat
 			.set_room_footer(request.room_id, request.footer)
@@ -793,6 +807,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
 		self.funding.close_provider_frame(provider.product_id.clone(), intent);
+	}
+
+	fn provider_frame_requested(&self, provider: &ProductContext, intent: String) {
+		self.funding.provider_frame_requested(provider.product_id.clone(), intent);
 	}
 
 	async fn detected_country(&self) -> Option<String> {

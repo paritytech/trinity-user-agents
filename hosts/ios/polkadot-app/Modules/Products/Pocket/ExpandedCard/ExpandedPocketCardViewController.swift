@@ -171,8 +171,6 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
 
 extension ExpandedPocketCardViewController: ProductPageShowing {}
 
-extension ExpandedPocketCardViewController: TabBarRootStandIn {}
-
 extension ExpandedPocketCardViewController: PocketFlightScreen {
     var pocketItem: PocketItem {
         .card(card.key)

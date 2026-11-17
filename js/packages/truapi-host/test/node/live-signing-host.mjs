@@ -19,6 +19,7 @@ import {
   createNodePairingHostRuntime,
   createHeadlessHostCallbacks,
 } from "@parity/truapi-host/node";
+import { bundledStack } from "./support/stack.mjs";
 
 const { TRUAPI_HOST_CLI, TRUAPI_HOST_BASE, TRUAPI_HOST_SESSION } = process.env;
 
@@ -170,20 +171,12 @@ test(
             return "AllowOnce";
           },
         },
-        supportedChains: {
-          network: "paseo",
-          chains: Object.entries(CHAINS).map(([identifier, [genesisHash]]) => ({
-            identifier,
-            genesisHash,
-          })),
-        },
+        servedChains: Object.values(CHAINS).map(([genesisHash]) => genesisHash),
       }),
       {
         hostConfig: {
           host: { name: "truapi-host node live test", platform: "Cli" },
-          people: { genesisHash: CHAINS.People[0] },
-          bulletin: { genesisHash: CHAINS.Bulletin[0] },
-          assetHub: { genesisHash: CHAINS.AssetHub[0] },
+          stack: bundledStack("paseo-next-v2"),
           pairing: { deeplinkScheme: "polkadotapp" },
         },
       },
