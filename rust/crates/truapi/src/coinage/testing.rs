@@ -9,7 +9,7 @@ use subxt::{Metadata, utils::H256};
 
 use super::{
 	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
-	chain::{AliasState, ChainCoin, CoinageChain, RingPlace},
+	chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace, RingPosition},
 	plugins::{PersonhoodSource, Seed},
 	ledger::{
 		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
@@ -154,12 +154,21 @@ impl PersonhoodSource for NoPerson {
 pub struct FakeChain {
 	/// The coin at each account.
 	pub coins: parking_lot::Mutex<HashMap<[u8; 32], ChainCoin>>,
-	/// The exponent and ring place of each member key.
+	/// The exponent and ring place of each member key in a ring.
 	pub places: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPlace)>>,
+	/// The exponent and position of each member key in no ring: onboarding
+	/// or suspended.
+	pub unplaced: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPosition)>>,
 	/// The state of each alias that has one.
 	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
+	/// What each account holds of the external asset; none for the rest.
+	pub funds: parking_lot::Mutex<HashMap<[u8; 32], u128>>,
+	/// The transaction that emptied each account, and the block it is in.
+	pub emptied: parking_lot::Mutex<HashMap<[u8; 32], Emptying>>,
+	/// The finalized height, when a test moves it from block 10.
+	pub finalized: parking_lot::Mutex<Option<u64>>,
 }
 
 impl FakeChain {
@@ -175,7 +184,8 @@ impl FakeChain {
 #[async_trait::async_trait]
 impl CoinageChain for FakeChain {
 	async fn heads(&self) -> Result<Heads, StorageWatchError> {
-		let block = HashAndNumber { hash: H256([1; 32]), number: 10 };
+		let number = self.finalized.lock().unwrap_or(10);
+		let block = HashAndNumber { hash: H256([1; 32]), number };
 		Ok(Heads { finalized: block, best: block })
 	}
 
@@ -187,14 +197,26 @@ impl CoinageChain for FakeChain {
 
 	async fn members_at(&self, _: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError> {
 		self.check()?;
-		let places = self.places.lock();
-		Ok(members.iter().map(|member| places.get(member).map(|(exponent, _)| (0, *exponent))).collect())
+		let (places, unplaced) = (self.places.lock(), self.unplaced.lock());
+		Ok(members
+			.iter()
+			.map(|member| {
+				let exponent = places.get(member).map(|(exponent, _)| *exponent);
+				exponent.or_else(|| unplaced.get(member).map(|(exponent, _)| *exponent)).map(|exponent| (0, exponent))
+			})
+			.collect())
 	}
 
-	async fn places_at(&self, _: H256, _: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+	async fn places_at(&self, _: H256, _: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
 		self.check()?;
-		let places = self.places.lock();
-		Ok(members.iter().map(|member| places.get(member).map(|(_, place)| *place)).collect())
+		let (places, unplaced) = (self.places.lock(), self.unplaced.lock());
+		Ok(members
+			.iter()
+			.map(|member| {
+				let included = places.get(member).map(|(_, place)| RingPosition::Included(*place));
+				included.or_else(|| unplaced.get(member).map(|(_, position)| *position))
+			})
+			.collect())
 	}
 
 	async fn aliases_at(&self, _: H256, _: i8, _: u32, aliases: &[[u8; 32]]) -> Result<Vec<Option<AliasState>>, StorageWatchError> {
@@ -213,6 +235,22 @@ impl CoinageChain for FakeChain {
 
 	async fn nonce_at(&self, _: H256, _: [u8; 32]) -> Result<u32, StorageWatchError> {
 		Ok(0)
+	}
+
+	async fn funds_at(&self, _: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		self.check()?;
+		Ok(self.funds.lock().get(&account).copied().unwrap_or(0))
+	}
+
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError> {
+		self.check()?;
+		let emptied = self.emptied.lock().get(&account).copied();
+		Ok(emptied.filter(|emptying| since < emptying.block && emptying.block <= at.number))
 	}
 }
 

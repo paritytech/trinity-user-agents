@@ -81,6 +81,23 @@ pub async fn run_due(launcher: &Launcher<'_>, store: &Db, now: u64) -> Result<Du
 	Ok(due)
 }
 
+/// When the default reconstruction becomes due (F4 invariant 5), in Unix
+/// seconds; none when it is not needed. It is needed while the registry has
+/// not been read since the layer started (`registry_read`), since only a
+/// read tells whether it lists an installation not yet scanned, and while a
+/// known installation's first scan has not completed. It is due one longest
+/// validity window after the current installation was minted, so that every
+/// transaction from before a wipe has landed or died first.
+pub fn default_reconstruction_at(view: &Snapshot, params: &super::ChainParams, registry_read: bool) -> Option<u64> {
+	let unscanned = view.installations().iter().any(|(_, progress)| !progress.first_scan_done);
+	if registry_read && !unscanned {
+		return None;
+	}
+	let config = params.config();
+	let window = config.block_time.as_secs() * u64::from(config.longest_window);
+	Some(view.minted_at().unwrap_or(0) + window)
+}
+
 /// Starts one of the layer's own operations; none when its start was refused,
 /// for want of tokens or because its inputs were taken first.
 async fn own_operation(
