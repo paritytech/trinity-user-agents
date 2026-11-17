@@ -39,6 +39,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 
 class HostApiProductsScriptExecutor @AssistedInject constructor(
     private val serializer: JsWidgetSerializer,
@@ -66,16 +67,21 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
         this.scope = scope
 
         return scriptResolver.resolveWorker(productId).mapCatching { worker ->
-            initializeWith(WorkerScript.of(worker.scriptUrl), botApi, scope)
+            initializeWith(WorkerScript.of(worker.executable.scriptUrl), worker.source, botApi, scope)
         }
     }
 
-    private suspend fun initializeWith(workerScript: WorkerScript, botApi: ProductsBotApi, scope: CoroutineScope) {
+    private suspend fun initializeWith(
+        workerScript: WorkerScript,
+        source: ProductSource?,
+        botApi: ProductsBotApi,
+        scope: CoroutineScope,
+    ) {
         mutex.withLock {
             if (initialized.value) return@withLock
 
             val webViewProvider = chatWebViewProviderFactory.create(
-                config = ChatWebViewConfig(productId = productId, workerScript = workerScript),
+                config = ChatWebViewConfig(productId = productId, workerScript = workerScript, source = source),
                 scope = scope,
             )
             val webViewRuntime = WebViewRuntime(webViewProvider)

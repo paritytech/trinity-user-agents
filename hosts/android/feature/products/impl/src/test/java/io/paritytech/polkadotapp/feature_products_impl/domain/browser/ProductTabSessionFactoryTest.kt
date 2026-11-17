@@ -28,7 +28,11 @@ class ProductTabSessionFactoryTest {
     private val native = mockk<NativeProductTabSessionFactory> {
         every { create(any(), any(), any()) } returns provider
     }
-    private val runtimeSettings = mockk<ProductRuntimeSettings> { every { isTrUAPIRuntimeEnabled() } returns false }
+    private val runtimeSettings = object : ProductRuntimeSettings {
+        override fun isTrUAPIRuntimeEnabled() = false
+
+        override fun setTrUAPIRuntimeEnabled(enabled: Boolean) = Unit
+    }
     private val scope = TestScope()
     private val bundledProducts = bundledProducts(
         mapOf(

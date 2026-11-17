@@ -1,11 +1,10 @@
-package io.paritytech.polkadotapp.feature_products_impl.data.bundled
+package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
-import uniffi.truapi.ProductId
 
 class ProductContentsTest {
     private val bundled = bundledProducts(
@@ -17,12 +16,12 @@ class ProductContentsTest {
         ),
     )
     private val sources = productSources(bundled)
-    private val contents = ProductContents(bundled, sources)
+    private val contents = ProductContents(bundled)
 
     // The WebView of a worker the app ships serves its script from the bundle, under the worker's own origin.
     @Test
     fun `a bundled worker is served from the bundle`() {
-        assertEquals("worker.worker.paseo", contents.worker(ProductId.parse("worker.paseo").getOrThrow())?.host)
+        assertEquals("worker.worker.paseo", contents.worker(sources.of("worker.paseo"))?.host)
     }
 
     @Test
@@ -33,9 +32,8 @@ class ProductContentsTest {
     // Anything else is the dotNS or network clients' to load.
     @Test
     fun `a published product is served by nothing here`() {
-        val published = ProductId.parse("other.paseo").getOrThrow()
-
-        assertNull(contents.worker(published))
+        assertNull(contents.worker(sources.of("other.paseo")))
+        assertNull(contents.worker(null))
         assertNull(contents.app(sources.of("other.paseo"), emptyMap()))
         assertNull(contents.app(null, emptyMap()))
     }
