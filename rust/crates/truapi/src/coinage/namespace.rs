@@ -24,6 +24,11 @@ use crate::{host_internal::sso_messages::RingVrfError, installation::Installatio
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub struct PurseId(pub u32);
 
+uniffi::custom_type!(PurseId, u32, {
+	lower: |purse| purse.0,
+	try_lift: |id| Ok(PurseId(id)),
+});
+
 impl PurseId {
 	/// The main purse, which every wallet has.
 	pub const MAIN: Self = Self(u32::MAX);
@@ -35,6 +40,11 @@ impl PurseId {
 /// Its `Debug` output never shows the secret.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub struct CoinSecret(pub [u8; 64]);
+
+uniffi::custom_type!(CoinSecret, Vec<u8>, {
+	lower: |secret| secret.0.to_vec(),
+	try_lift: |bytes| Ok(CoinSecret(bytes.as_slice().try_into()?)),
+});
 
 impl core::fmt::Debug for CoinSecret {
 	fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
