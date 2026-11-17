@@ -102,9 +102,9 @@ pub async fn scan_until_gap<Keys, Lookup>(
 	limit: GapLimit,
 ) -> Result<FoundKeys<Keys, Lookup>, ScanError<Keys, Lookup>>
 where
-	Keys: KeyRange,
+	Keys: KeyRange + ?Sized,
 	Keys::Key: Sync,
-	Lookup: HoldingLookup<Keys::Key>,
+	Lookup: HoldingLookup<Keys::Key> + ?Sized,
 {
 	let mut found = Vec::new();
 	let mut position = ScanPosition { next_index: 0, empty_run: 0 };
@@ -153,9 +153,9 @@ async fn read_batch<Keys, Lookup>(
 	indices: Range<u32>,
 ) -> Result<FoundKeys<Keys, Lookup>, ScanError<Keys, Lookup>>
 where
-	Keys: KeyRange,
+	Keys: KeyRange + ?Sized,
 	Keys::Key: Sync,
-	Lookup: HoldingLookup<Keys::Key>,
+	Lookup: HoldingLookup<Keys::Key> + ?Sized,
 {
 	let derived = keys.derive_range(indices.clone()).map_err(GapScanError::Derive)?;
 	let holdings = lookup.read_holdings(&derived).await.map_err(GapScanError::Lookup)?;

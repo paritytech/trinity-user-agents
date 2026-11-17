@@ -16,7 +16,9 @@ mod ledger;
 mod live;
 mod operation;
 mod purse;
+mod purse_id_gate;
 mod reclaim;
+mod recovery;
 mod returns;
 mod scarcity;
 mod standing;
@@ -38,6 +40,8 @@ pub use operation::{
 	TransferType,
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
+pub use purse_id_gate::PurseIdGate;
+pub use recovery::{AssetHubRecoveryChain, NftRecovery, NftRecoveryDeps};
 pub use reclaim::ReclaimRequest;
 pub use returns::ReturnRequest;
 pub use scarcity::{

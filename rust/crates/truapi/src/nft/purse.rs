@@ -20,6 +20,12 @@ impl PurseId {
 	pub const MAIN: Self = Self(u32::MAX);
 }
 
+impl From<u32> for PurseId {
+	fn from(id: u32) -> Self {
+		Self(id)
+	}
+}
+
 /// Bytes the caller attaches to a purse when it creates it, written in the
 /// same transaction. A tag lets the layer above group purses and attach its
 /// own metadata to them; ownership is one such use, with the owner in the

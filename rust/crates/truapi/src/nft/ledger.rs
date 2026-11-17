@@ -21,6 +21,7 @@ use super::{
 		validate_can_start,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
+	purse_id_gate::PurseIdGate,
 	reclaim::{ReclaimRequest, plan_reclaims, record_reclaim_inputs},
 	returns::{
 		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
@@ -49,6 +50,9 @@ pub struct NftLedgerDeps {
 	pub secrets: Arc<dyn ItemSecrets>,
 	/// Keeps the secrets of imported keys.
 	pub imported: ImportedSecretStore,
+	/// Holds back new purse ids while backup recovery may recreate earlier
+	/// purses.
+	pub purse_ids: PurseIdGate,
 }
 
 /// Layer 1's store of purses and their items.
@@ -60,22 +64,25 @@ pub struct NftLedger {
 	durable: Arc<DurableTxEngine>,
 	secrets: Arc<dyn ItemSecrets>,
 	imported: ImportedSecretStore,
+	purse_ids: PurseIdGate,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys, durable, secrets, imported } = deps;
-		Self { db, installation, keys, durable, secrets, imported }
+		let NftLedgerDeps { db, installation, keys, durable, secrets, imported, purse_ids } = deps;
+		Self { db, installation, keys, durable, secrets, imported, purse_ids }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
-	/// [`PurseId::MAIN`], in one write.
+	/// [`PurseId::MAIN`], in one write. Waits first until backup recovery can
+	/// no longer recreate a purse at that id.
 	pub async fn create_purse(
 		&self,
 		name: String,
 		tag: PurseTag,
 	) -> Result<PurseId, CreatePurseError> {
+		self.purse_ids.wait_until_open().await;
 		let created = self.db.write(move |tx| dao::insert_purse(tx, &name, &tag)).await?;
 		created.ok_or(CreatePurseError::IdsExhausted)
 	}
