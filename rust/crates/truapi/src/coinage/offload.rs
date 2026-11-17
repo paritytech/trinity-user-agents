@@ -11,7 +11,7 @@ use parity_scale_codec::Decode;
 
 use super::{
 	Asset, ChainParams, HeldBackSpend, Initiator, PrivacyPolicy, PurseId, Snapshot,
-	classification::{Arriving, HeldBack, Selectability, classify},
+	classification::{Arriving, Class, EntryLocal, HeldBack, Selectability, classify},
 	ledger::{self, Read, Subject},
 	operation::{self, OperationEnd, OpKey, Retry},
 	planning::{Call, Destination, PlanInput},
@@ -100,8 +100,13 @@ pub fn plan(view: &Snapshot, key: &OpKey, offload: &Offload, now: u64, params: &
 	let mut usable_coins = Vec::new();
 	for record in view.assets(offload.from) {
 		let value = record.exponent.value();
-		let selectability = classify(&record.asset, view, now, params).selectability;
-		match (record.asset, selectability) {
+		let state = classify(&record.asset, view, now, params);
+		if matches!(&state.class, Class::Entry { local: EntryLocal::InUse(holder), .. } if holder != key) {
+			later += value;
+			arriving = true;
+			continue;
+		}
+		match (record.asset, state.selectability) {
 			(Asset::Entry { .. }, Selectability::Now) => usable += value,
 			(Asset::Entry { .. }, Selectability::HeldBack(_)) if held_back => usable += value,
 			(Asset::Entry { .. }, Selectability::HeldBack(HeldBack::Dwell)) => {
