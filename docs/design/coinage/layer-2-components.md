@@ -26,7 +26,7 @@ In this document, **layer 1** means the coinage layer, and **layer 2** means the
 
 Layer 2 runs where layer 1 runs, on the device that holds the seed (layer 1, section 6). A host paired with that device answers every RFC-6 and RFC-17 call as unsupported.
 
-The chat does not use layer 2. It has its own transport and its own encryption, it needs no receivable and no product permission, and it calls layer 1 directly, through the core's native interface, as the app's other wallet screens do (layer 1, section 6).
+The chat does not use layer 2. It has its own transport and its own encryption, it needs no receivable and no product permission, and it calls layer 1 directly, through the core's native interface ([`native-interface.md`](native-interface.md)), as the app's other wallet screens do.
 
 Three rules apply to every component:
 
@@ -213,7 +213,7 @@ fn verify(root: [u8; 32], leaf: Leaf, proof: InclusionProof) -> bool;
 
 **Owns** nothing. **Band:** pure.
 
-Translates layer 1's statuses, failures and per-coin results into RFC-17's and RFC-6's vocabularies. The RFC types are used as RFC-17 and RFC-6 define them: RFC-17's `CoinPaymentStatus`, `CoinPaymentError` and `CoinPaymentChequeProgress` (RFC deviations, entry 3), and RFC-6's payment status, top-up status and payment error. Amounts in the RFC-6 results are converted from cents to the asset's units by N2 (N2 invariant 5).
+Translates layer 1's statuses, failures and per-coin results into RFC-17's and RFC-6's vocabularies. The RFC types are used as RFC-17 and RFC-6 define them: RFC-17's `CoinPaymentStatus`, `CoinPaymentError` and `CoinPaymentChequeProgress` (RFC deviations, entry 3), and RFC-6's payment status, top-up status and payment error. RFC-6's amounts are in the asset's units (N2 invariant 5): `payment_status` and `top_up_status` take the amount the product asked for in those units, and `unit`, the asset's amount in one cent (layer 1, G1 `asset_unit`), by which they convert layer 1's cents, saturating.
 
 ```rust
 fn deposit_status(item: StatusItem, coins: Vec<(AccountId, CoinResult)>, expected: Amount,
@@ -224,8 +224,8 @@ fn refund_status(cheques: Vec<CoinPaymentChequeProgress>, missing_return_path: b
                  reference: ClearingReference) -> CoinPaymentStatus;
 fn cancellation_status(cheque: CoinPaymentChequeProgress) -> CoinPaymentStatus;
 fn coin_payment_error(refusal: Refusal) -> CoinPaymentError;
-fn payment_status(item: StatusItem, amount: Amount) -> PaymentStatus;     // RFC-6 `status_subscribe`
-fn top_up_status(item: StatusItem, amount: Amount) -> TopUpStatus;        // RFC-6 `top_up_status_subscribe`
+fn payment_status(item: StatusItem, amount: u128, unit: u128) -> PaymentStatus;   // RFC-6 `status_subscribe`
+fn top_up_status(item: StatusItem, amount: u128, unit: u128) -> TopUpStatus;      // RFC-6 `top_up_status_subscribe`
 fn payment_error(refusal: Refusal, balance_access: bool) -> PaymentError; // RFC-6 `request`
 
 enum Refusal { Layer1(Error), ConsentRefused }
@@ -245,7 +245,9 @@ enum Refusal { Layer1(Error), ConsentRefused }
 | Coin result `TakenByOther` | `SnipedCoins` | — |
 | `InsufficientFunds` | `BalanceLow` | `InsufficientBalance` to a caller with balance access, otherwise `Rejected` (RFC-6) |
 | `NeedsConfirmation` | Not returned: N1 asks the user, and a refusal is `Denied` | Not returned: N2 asks the user, and a refusal is `Rejected` |
-| `NoUnloadToken` | `Internal` | `Failed` |
+| `NoUnloadToken` | `Internal` | `Unknown { reason }` |
+| `UnsupportedRuntime`, `Unavailable` | `UserAgentCapabilityUnavailable` | `Unknown { reason }` |
+| `InvalidSecret` | `BadCoins` | `InvalidSource` (N2 invariant 4) |
 | A refund for a deposit with no return path (K3 invariant 3) | `Failed { error: Internal }`, until RFC-17 has a variant for it (RFC deviations, gap 5) | — |
 | Consent refused | `Denied` | `Rejected` |
 
@@ -357,7 +359,7 @@ struct Rfc6Record {
     product: ProductId,
     id: [u8; 32],
     kind: Rfc6Kind,                     // Payment or TopUp
-    amount: Amount,                     // the amount asked for, in cents
+    amount: u128,                       // the amount asked for, in the payment asset's units (N2 invariant 5)
     source: Option<AccountId>,          // a top-up's paying account; a private key itself is never stored
     funding: Option<String>,            // the funding session it serves, when a funding provider's worker started it (N2 invariant 6)
     operation: OperationRecord,
@@ -385,7 +387,7 @@ fn refundable(deposit: ChequeHash) -> Amount;         // invariant 1
 ```
 
 - The **writes** add records or set a flag. None of them changes or removes an earlier record (invariant 3). `record_rfc6` refuses a `(product, id)` that is already recorded.
-- **`unposted`** is what section 1's `run_due` posts again: refund cheques that were recorded but not yet posted, until their claim deadlines.
+- **`unposted`** is what section 1's `run_due` posts again: the cheques layer 2 posts itself (`post`), which are refund cheques, recorded but not yet posted, until their claim deadlines.
 - **`ended`** counts, among the given operation records, those that layer 1 refused and those whose layer-1 operation has a completion (layer 1, G1 `completion`). K3 keys a new refund, and K4 and K5 key a new reclaim, by this count over the deposit's refunds or the cheque's reclaims (K3 invariant 2, K4 invariant 3).
 - **`refundable`** computes invariant 1 from the deposit's records and layer 1's results: the import's settled value from its completion, and each refund's claimed value from its cheque's export status (layer 1, B1).
 
@@ -609,7 +611,7 @@ N1's operations are RFC-17's calls, with the changes `rfc-deviations.md` records
 
 **Owns** nothing. **Band:** thin surface.
 
-N2's operations are RFC-6's calls, served as the table says after J1's authorization. N2 is the only implementation of RFC-6: the core serves it from layer 1, and the host supplies no payment engine of its own. N2 calls layer 1 `offload` with `Initiator::Product`. When it fails with `NeedsConfirmation`, N2 asks the user through the consent interface whether to spend value that is still gaining privacy, and calls it again under the same key with `confirmed` if the user agrees; otherwise it returns `Rejected`. An id that the calling product has not used is answered as unknown: `PaymentNotFound` for `status_subscribe`, `TopUpNotFound` for `top_up_status_subscribe`. This holds for another product's id too, since that id names nothing in the caller's scope (invariant 3).
+N2's operations are RFC-6's calls, served as the table says after J1's authorization. N2 is the only implementation of RFC-6: the core serves it from layer 1, and the host supplies no payment engine of its own. N2 calls layer 1 `offload` with `Initiator::Product`. When it fails with `NeedsConfirmation`, N2 asks the user through the consent interface whether to spend value that is still gaining privacy, and calls it again under the same key with `confirmed` if the user agrees; otherwise it returns `Rejected`. An id that the calling product has not used is answered as unknown: `PaymentNotFound` for `status_subscribe`, `TopUpNotFound` for `top_up_status_subscribe`. This holds for another product's id too, since that id names nothing in the caller's scope (invariant 3). A status subscription reports each mapped status once, and a status layer 1 cannot read ends it with `Unknown`, never with an outcome (layer 1, P11).
 
 | RFC-6 call | Served by | J1 action |
 |---|---|---|
@@ -622,8 +624,8 @@ N2's operations are RFC-6's calls, served as the table says after J1's authoriza
 **Invariants**
 1. A call that names no purse acts on the main purse.
 2. An RFC-6 call is authorized exactly as an RFC-17 call on the same purse, except for the `CoinPayment` permission of J1 invariant 5 (RFC-17, behavioural requirement 17).
-3. **The id the product chose is the key of the operation.** The key of a payment or top-up is that id hashed together with the product, as the core runtime passes the product on. The key lives in the product's own layer-1 scope and is recorded before the operation starts (section 1). A call whose id already names an operation is refused (`AlreadyExists`). So a product that lost the response can retry safely: the retry is refused, and the product follows the first operation through its status. Another product cannot name the operation at all.
-4. A top-up from coins (RFC-0021) is an import: the product hands coin secrets in and never receives any. A top-up from a product account or a private key does not fail while the source lacks the funds. It waits for them (`Detecting`) until the top-up window passes (section 1). Only one top-up per source runs at a time; another one is refused (`SourceBusy`). This matches layer 1, which builds one transaction per signing account at a time (layer 1, C2 invariant 5). A private key must be a 64-byte sr25519 secret in the canonical layout, read the same way layer 1 reads a coin secret (layer 1, G1 invariant 5). A key in any other layout is refused (`InvalidSource`), and so is a coin secret that layer 1's `import` refuses as not canonical (layer 1, G1 `InvalidSecret`).
+3. **The id the product chose is the key of the operation.** The key of a payment or top-up is that id hashed together with the product, as the core runtime passes the product on. The key lives in the product's own layer-1 scope and is recorded before the operation starts (section 1). A call whose id already names an operation is refused (`AlreadyExists`), before the user is asked to confirm anything, because the refused call could spend nothing. So a product that lost the response can retry safely: the retry is refused without a second prompt, and the product follows the first operation through its status. The record written before the operation starts still refuses an id that two calls race for. Another product cannot name the operation at all.
+4. A top-up from coins (RFC-0021) is an import: the product hands coin secrets in and never receives any. A top-up from a product account or a private key does not fail while the source lacks the funds. It waits for them (`Detecting`) until the top-up window passes (section 1). Only one top-up per source runs at a time; another one is refused (`SourceBusy`). For coins, the source is busy while a claim without a stable verdict holds one of them (layer 1 `importing`), so a top-up that shares even one coin with a running import is refused before anything is recorded. This matches layer 1, which builds one transaction per signing account at a time (layer 1, C2 invariant 5). A private key must be a 64-byte sr25519 secret in the canonical layout, read the same way layer 1 reads a coin secret (layer 1, G1 invariant 5). A key in any other layout is refused (`InvalidSource`), and so is a coin secret that layer 1's `import` refuses as not canonical (layer 1, G1 `InvalidSecret`).
 5. **Amounts are in the payment asset's own units** (RFC-6). Coinage counts whole cents, so the balance is converted from cents into the asset's units with the instance's `asset_unit` (layer 1, A3). A top-up or a payment moves its amount rounded down to a whole cent. If it moves less than was requested, it ends `ClaimedPartially`. A zero amount is refused (`InvalidAmount`).
 6. **A funding session's top-ups and payments are N2's own.** A funding provider's worker may start a top-up or a payment for a funding session it serves (RFC-6 version 2's `funding` field). N2 records the session with the operation (J2 `Rfc6Record.funding`) in the store transaction that records the operation, and the core's funding registry, which tracks what each session moved, asks N2 whether it holds an operation under an id, and what became of it, instead of a host engine. An id that names an operation of another session, or one without a session, is `AlreadyExists`, as for any reused id.
 
@@ -696,7 +698,7 @@ Layer 1's own properties are assumed here; layer 1's composition section argues 
 | The payee claims while the payer cancels | K4 invariant 2: the chain moves each coin once, and whoever moves it first has it |
 | The payee claims just before the deadline while the payer reclaims | K5: the reclaim waits until one validity window and the clock tolerance have passed after the deadline. By then, any claim submitted before the deadline has either been included or can no longer be included (K2 invariant 3). Both clocks keep network time |
 | Payer and payee compute different deadlines, because their claim timeouts differ | H3 invariant 6: the cheque carries one deadline, which both use |
-| A cheque for an invoice is never posted, because the channel is unreachable or the user agent crashed before posting | K1 `run_due` posts it again from the sealed cheque J2 keeps (J2 `unposted`), until its claim deadline; after that, K5 reclaims it |
+| A refund cheque is never posted, because the channel is unreachable or the user agent crashed before posting | K3 `run_due` posts it again from the sealed cheque J2 keeps (J2 `unposted`), until its claim deadline; after that, K5 reclaims it |
 | A reclaim ends with a coin left in place, for example because a lock held it | K5 `run_due` starts the next reclaim, under a new key (K4 invariant 3), until every coin of the cheque is stably `Claimed`, `Reclaimed` or `NeverMinted` (layer 1, B1) |
 | A reclaim lands in a purse that has been deleted since | K4, K5: it lands in the purse the deleted purse resolves to, which is always open (layer 1, B2 `resolve_purse`, B2 invariant 7) |
 | A refund arrives after the payer stopped collecting refunds | K5: the payee's K5 reclaims the refund cheque at its deadline, and the payee can refund its value again (J2 invariant 1) |
