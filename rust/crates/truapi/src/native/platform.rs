@@ -226,9 +226,9 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 	async fn set_expanded_card_back_shown(
 		&self,
 		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.set_expanded_card_back_shown".to_string(),
+			markers::NATIVE_SET_EXPANDED_CARD_BACK_SHOWN.target.to_string(),
 			format!("{shown}"),
 		);
 

@@ -92,7 +92,7 @@ pub trait HostCallbacks: Send + Sync {
 	async fn set_expanded_card_back_shown(
 		&self,
 		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection>;
 
 	/// Prompt the user for a remote permission `product` requested.
 	async fn remote_permission(

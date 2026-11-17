@@ -16,7 +16,7 @@ use truapi::{
 };
 
 use crate::{
-	platform::{ExecutableKind, ExpandedCardFaceOutcome},
+	platform::{ExecutableKind, ExpandedCardFaceOutcome, ExpandedCardTurnOutcome},
 	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
 
@@ -44,11 +44,6 @@ impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
 						Err(CallError::Domain(FaceShownError::UserMoving))
 					},
 					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
-					Ok(ExpandedCardFaceOutcome::NoBack) => {
-						Err(CallError::Domain(FaceShownError::Unknown {
-							reason: "the host answered a face request with NoBack".into(),
-						}))
-					},
 					Err(error) => {
 						Err(CallError::Domain(FaceShownError::Unknown { reason: error.reason }))
 					},
@@ -71,17 +66,17 @@ impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
 					return Err(CallError::Unsupported);
 				};
 				match card.set_expanded_card_back_shown(request.shown).await {
-					Ok(ExpandedCardFaceOutcome::Applied) => Ok(()),
-					Ok(ExpandedCardFaceOutcome::NotPresented) => {
+					Ok(ExpandedCardTurnOutcome::Applied) => Ok(()),
+					Ok(ExpandedCardTurnOutcome::NotPresented) => {
 						Err(CallError::Domain(BackShownError::NotPresented))
 					},
-					Ok(ExpandedCardFaceOutcome::UserMoving) => {
+					Ok(ExpandedCardTurnOutcome::UserMoving) => {
 						Err(CallError::Domain(BackShownError::UserMoving))
 					},
-					Ok(ExpandedCardFaceOutcome::NoBack) => {
+					Ok(ExpandedCardTurnOutcome::NoBack) => {
 						Err(CallError::Domain(BackShownError::NoBack))
 					},
-					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
+					Ok(ExpandedCardTurnOutcome::Unsupported) => Err(CallError::Unsupported),
 					Err(error) => {
 						Err(CallError::Domain(BackShownError::Unknown { reason: error.reason }))
 					},

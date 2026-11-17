@@ -419,7 +419,9 @@ pub struct ProductConnection {
 	/// Cards whose back this connection has drawn. A press on a back reaches
 	/// the product only for these: a product whose SDK predates
 	/// `PocketCardBack` cannot decode one and would lose its whole action
-	/// stream, and one that drew a back has shown it can.
+	/// stream, and one that drew a back has shown it can. A press on a cached
+	/// back before this connection's back render yields its first tree is
+	/// dropped too, as the Pocket RFC lets presses on a cached back go nowhere.
 	drawn_backs: Mutex<HashSet<String>>,
 }
 

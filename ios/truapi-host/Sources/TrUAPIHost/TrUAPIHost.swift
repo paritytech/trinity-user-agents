@@ -78,7 +78,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// and the face call's outcomes otherwise, without waiting for the
     /// animation. Defaults to `.unsupported`, so an app that cannot turn cards
     /// says so.
-    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
@@ -462,7 +462,7 @@ public extension HostBridge {
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
         .unsupported
     }
-    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
         .unsupported
     }
     /// Defaults opt out of worker keep-alive; override to run background work
@@ -776,7 +776,7 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
         try await withHostRejection {
             try await bridge.setExpandedCardBackShown(shown: shown)
         }

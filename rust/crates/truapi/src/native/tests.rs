@@ -284,9 +284,9 @@ impl HostCallbacks for EventCallbacks {
 	async fn set_expanded_card_back_shown(
 		&self,
 		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
 		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
 		&self,
@@ -2013,8 +2013,8 @@ fn start_ws_bridge_twice_returns_already_running() {
 		async fn set_expanded_card_back_shown(
 			&self,
 			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -2210,8 +2210,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		async fn set_expanded_card_back_shown(
 			&self,
 			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -3124,11 +3124,11 @@ fn reads_an_inline_image_from_hex() {
 	};
 
 	assert_eq!(
-		parse_renderer_node_json(image("0x89504e47")).expect("hex reads"),
+		parse_renderer_node_json(image("0x89504e470d0a1a0a")).expect("hex reads"),
 		latest::RendererNode::Image {
 			modifiers: Vec::new(),
 			props: latest::ImageProps {
-				source: latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]),
+				source: latest::ImageSource::Inline(b"\x89PNG\r\n\x1a\n".to_vec()),
 				fit: None,
 			},
 		}
@@ -3137,30 +3137,43 @@ fn reads_an_inline_image_from_hex() {
 	assert!(parse_renderer_node_json(image("89504e47")).is_err());
 }
 
-/// Every host refuses the same inline images, so a face draws alike
-/// everywhere: raster formats recognised by their first bytes, nothing over
-/// 64 KiB, and never SVG, which can load outside addresses.
+/// A face file reaches every host through this reader, so a refused inline
+/// image is emptied here once, and still takes its place as empty space.
 #[test]
-fn inline_images_are_allowed_by_format_and_size() {
-	let png = b"\x89PNG\r\n\x1a\n".to_vec();
-	let padded = |mut bytes: Vec<u8>, len: usize| {
-		bytes.resize(len, 0);
-		bytes
-	};
-	let cases = [
-		(png.clone(), true),
-		(vec![0xff, 0xd8, 0xff, 0xe0], true),
-		(b"RIFF\0\0\0\0WEBPVP8 ".to_vec(), true),
-		(padded(png.clone(), 64 * 1024), true),
-		(padded(png, 64 * 1024 + 1), false),
-		(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(), false),
-		(b"not an image".to_vec(), false),
-		(Vec::new(), false),
-	];
+fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
+	let svg = "0x3c7376672f3e";
+	let json = format!(
+		r#"{{"tag":"Image","value":{{"modifiers":[],"props":{{"source":{{"tag":"Inline","value":"{svg}"}}}}}}}}"#
+	);
 
-	let answers: Vec<bool> =
-		cases.iter().map(|(bytes, _)| inline_image_allowed(bytes.clone())).collect();
-	assert_eq!(answers, cases.iter().map(|(_, allowed)| *allowed).collect::<Vec<_>>());
+	assert_eq!(
+		parse_renderer_node_json(json).expect("the face reads"),
+		latest::RendererNode::Image {
+			modifiers: Vec::new(),
+			props: latest::ImageProps { source: latest::ImageSource::Inline(Vec::new()), fit: None },
+		}
+	);
+}
+
+/// The bridge drops a log whose target is not in the marker table, so an
+/// expanded card call logged under any other name is never seen.
+#[test]
+fn expanded_card_calls_log_registered_markers() {
+	let (callbacks, _events, platform) = event_platform();
+
+	futures::executor::block_on(async {
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
+		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
+	});
+
+	let classes: Vec<_> = callbacks
+		.logs
+		.lock()
+		.expect("logs mutex poisoned")
+		.iter()
+		.map(|(target, _)| crate::markers::class_of(target))
+		.collect();
+	assert_eq!(classes, vec![Some(crate::markers::MarkerClass::Local); 2]);
 }
 
 /// `depth` boxes around an empty node, three brackets per box.

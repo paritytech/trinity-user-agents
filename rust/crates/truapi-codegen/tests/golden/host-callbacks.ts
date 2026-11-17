@@ -334,6 +334,15 @@ export type ExpandedCardFaceOutcome =
   | "Applied"
   | "NotPresented"
   | "UserMoving"
+  | "Unsupported";
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export type ExpandedCardTurnOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
   | "Unsupported"
   | "NoBack";
 
@@ -1173,6 +1182,14 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export const ExpandedCardTurnOutcome: S.Codec<ExpandedCardTurnOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardTurnOutcome> =>
     S.Status("Applied", "NotPresented", "UserMoving", "Unsupported", "NoBack"),
 );
 
@@ -1935,7 +1952,7 @@ export interface ExpandedCardHost {
    * Turn the card above the calling Widget so its back (`true`) or its
    * front (`false`) is up.
    */
-  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardTurnOutcome>;
 }
 
 /**

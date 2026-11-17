@@ -1172,6 +1172,31 @@ fn a_back_press_reaches_only_a_connection_that_drew_that_back() {
 	assert!(actions.poll_next_unpin(&mut cx).is_pending(), "a back never drawn takes no press");
 }
 
+/// Every host draws the trees the core hands it, so the core refuses an
+/// inline image once for all of them.
+#[test]
+fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
+	let (runtime, sink) = render_runtime();
+	let mut render = start_render(&runtime, "loyalty");
+	let image = |bytes: Vec<u8>| v01::RendererNode::Image {
+		modifiers: Vec::new(),
+		props: v01::ImageProps { source: v01::ImageSource::Inline(bytes), fit: None },
+	};
+
+	let item = truapi::versioned::renderer::ProductRendererRenderItem::V1(image(b"<svg/>".to_vec()));
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_RECEIVE,
+		item.encode(),
+	);
+
+	assert!(matches!(
+		poll_render(&mut render),
+		core::task::Poll::Ready(Some(Ok(node))) if node == image(Vec::new())
+	));
+}
+
 #[test]
 fn a_render_the_product_ends_releases_its_worker_reference() {
 	let (runtime, sink) = render_runtime();

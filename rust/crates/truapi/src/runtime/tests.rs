@@ -2331,16 +2331,30 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
 /// Records the face visibility and card sides the host is asked for and
 /// answers both with a configured result.
 struct RecordingExpandedCardHost {
-	answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	requested: Mutex<Vec<bool>>,
 	turned: Mutex<Vec<bool>>,
 }
 
 impl RecordingExpandedCardHost {
 	fn answering(
-		answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	) -> Arc<Self> {
-		Arc::new(Self { answer, requested: Mutex::new(Vec::new()), turned: Mutex::new(Vec::new()) })
+		Arc::new(Self {
+			face_answer,
+			turn_answer,
+			requested: Mutex::new(Vec::new()),
+			turned: Mutex::new(Vec::new()),
+		})
+	}
+
+	fn applying() -> Arc<Self> {
+		Self::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		)
 	}
 
 	fn requested(&self) -> Vec<bool> {
@@ -2359,15 +2373,15 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
 		self.requested.lock().expect("requested mutex poisoned").push(shown);
-		self.answer.clone()
+		self.face_answer.clone()
 	}
 
 	async fn set_expanded_card_back_shown(
 		&self,
 		shown: bool,
-	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError> {
 		self.turned.lock().expect("turned mutex poisoned").push(shown);
-		self.answer.clone()
+		self.turn_answer.clone()
 	}
 }
 
@@ -2411,8 +2425,7 @@ fn set_back_shown(
 /// state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let card = RecordingExpandedCardHost::applying();
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
 
 	for shown in [false, true, false] {
@@ -2438,9 +2451,7 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
-		let card = RecordingExpandedCardHost::answering(Ok(
-			crate::platform::ExpandedCardFaceOutcome::Applied,
-		));
+		let card = RecordingExpandedCardHost::applying();
 		let host = expanded_card_host(kind, Some(card.clone()));
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
@@ -2468,7 +2479,10 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 	use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
 
 	let answer = |outcome| {
-		let card = RecordingExpandedCardHost::answering(outcome);
+		let card = RecordingExpandedCardHost::answering(
+			outcome,
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
 		set_face_shown(&host, false)
 	};
@@ -2485,12 +2499,6 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 		answer(Ok(ExpandedCardFaceOutcome::UserMoving)),
 		Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::UserMoving)))
 	));
-	assert!(matches!(
-		answer(Ok(ExpandedCardFaceOutcome::NoBack)),
-		Err(CallError::Domain(WireError::V1(
-			v01::HostExpandedCardSetFaceShownError::Unknown { .. }
-		)))
-	));
 	let Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::Unknown {
 		reason,
 	}))) = answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() }))
@@ -2504,11 +2512,14 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 /// back from one the user is holding, and retry only the latter.
 #[test]
 fn expanded_card_back_outcomes_map_to_wire_answers() {
-	use crate::platform::ExpandedCardFaceOutcome;
+	use crate::platform::ExpandedCardTurnOutcome;
 	use v01::HostExpandedCardSetBackShownError as Answer;
 
 	let answer = |outcome| {
-		let card = RecordingExpandedCardHost::answering(outcome);
+		let card = RecordingExpandedCardHost::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			outcome,
+		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
 		set_back_shown(&host, true)
 	};
@@ -2519,14 +2530,14 @@ fn expanded_card_back_outcomes_map_to_wire_answers() {
 
 	assert_eq!(
 		[
-			domain(ExpandedCardFaceOutcome::NotPresented),
-			domain(ExpandedCardFaceOutcome::UserMoving),
-			domain(ExpandedCardFaceOutcome::NoBack),
+			domain(ExpandedCardTurnOutcome::NotPresented),
+			domain(ExpandedCardTurnOutcome::UserMoving),
+			domain(ExpandedCardTurnOutcome::NoBack),
 		],
 		[Some(Answer::NotPresented), Some(Answer::UserMoving), Some(Answer::NoBack)]
 	);
 	assert!(matches!(
-		answer(Ok(ExpandedCardFaceOutcome::Unsupported)),
+		answer(Ok(ExpandedCardTurnOutcome::Unsupported)),
 		Err(CallError::Unsupported)
 	));
 	assert!(matches!(

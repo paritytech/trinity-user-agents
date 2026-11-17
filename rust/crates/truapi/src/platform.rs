@@ -2372,7 +2372,21 @@ pub enum ExpandedCardFaceOutcome {
 	UserMoving,
 	/// The host cannot move the face at all.
 	Unsupported,
-	/// The card has no back to show right now. Only a turn answers it.
+}
+
+/// What the host did with a request to turn the expanded card.
+#[derive(Debug, Clone, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardTurnOutcome {
+	/// The requested side is now up, including when it already was.
+	Applied,
+	/// The Widget is not shown under its card right now.
+	NotPresented,
+	/// The user is moving the face or turning the card, so the request had no effect.
+	UserMoving,
+	/// The host cannot turn cards at all.
+	Unsupported,
+	/// The card has no back to show right now.
 	NoBack,
 }
 
@@ -2394,7 +2408,7 @@ pub trait ExpandedCardHost: Send + Sync {
 	async fn set_expanded_card_back_shown(
 		&self,
 		shown: bool,
-	) -> Result<ExpandedCardFaceOutcome, GenericError>;
+	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
 /// Host store for a product's pending operations, which the host uses to keep

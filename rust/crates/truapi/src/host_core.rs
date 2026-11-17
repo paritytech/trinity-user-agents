@@ -2060,9 +2060,10 @@ impl ProductRuntimeControl {
 			|(mut stream, reference, mut back)| async move {
 				match stream.next().await? {
 					Ok(
-						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
-						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(mut node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(mut node),
 					) => {
+						node.clear_refused_inline_images();
 						if let Some((connection, card_id)) = back.take() {
 							connection.mark_back_drawn(card_id);
 						}

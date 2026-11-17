@@ -77,6 +77,7 @@ import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
@@ -243,15 +244,15 @@ interface HostBridge {
 
     /**
      * Turn this execution's expanded card so its back (`true`) or its front
-     * (`false`) is up. Answers [ExpandedCardFaceOutcome.NO_BACK] when the card
+     * (`false`) is up. Answers [ExpandedCardTurnOutcome.NO_BACK] when the card
      * has no back to show, and the face call's outcomes otherwise. Returns
      * without waiting for the animation.
      *
-     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app that cannot
+     * Defaults to [ExpandedCardTurnOutcome.UNSUPPORTED], so an app that cannot
      * turn cards says so.
      */
-    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
-        ExpandedCardFaceOutcome.UNSUPPORTED
+    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+        ExpandedCardTurnOutcome.UNSUPPORTED
 
     /**
      * Prompt for a remote permission bundle [product] requested on the main
@@ -606,7 +607,7 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         withHostRejection { bridge.setExpandedCardFaceShown(shown) }
 
-    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
+    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
         withHostRejection { bridge.setExpandedCardBackShown(shown) }
 
     override suspend fun remotePermission(
