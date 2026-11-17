@@ -7,13 +7,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import kotlin.time.Duration.Companion.seconds
 
 /** What the product under an expanded card asks of that card. */
 interface ExpandedCardFace {
     suspend fun setFaceShown(shown: Boolean): ExpandedCardFaceOutcome
 
-    suspend fun setBackShown(shown: Boolean): ExpandedCardFaceOutcome
+    suspend fun setBackShown(shown: Boolean): ExpandedCardTurnOutcome
 }
 
 /**
@@ -25,12 +26,21 @@ internal class CardFaceRequests : ExpandedCardFace {
 
     val requests: Flow<FaceShownRequest> get() = outgoing
 
-    override suspend fun setFaceShown(shown: Boolean) = send(shown, back = false)
+    override suspend fun setFaceShown(shown: Boolean) = when (send(shown, back = false)) {
+        FaceShownAnswer.APPLIED -> ExpandedCardFaceOutcome.APPLIED
+        FaceShownAnswer.USER_MOVING -> ExpandedCardFaceOutcome.USER_MOVING
+        FaceShownAnswer.NOT_PRESENTED, FaceShownAnswer.NO_BACK -> ExpandedCardFaceOutcome.NOT_PRESENTED
+    }
 
-    override suspend fun setBackShown(shown: Boolean) = send(shown, back = true)
+    override suspend fun setBackShown(shown: Boolean) = when (send(shown, back = true)) {
+        FaceShownAnswer.APPLIED -> ExpandedCardTurnOutcome.APPLIED
+        FaceShownAnswer.USER_MOVING -> ExpandedCardTurnOutcome.USER_MOVING
+        FaceShownAnswer.NO_BACK -> ExpandedCardTurnOutcome.NO_BACK
+        FaceShownAnswer.NOT_PRESENTED -> ExpandedCardTurnOutcome.NOT_PRESENTED
+    }
 
-    private suspend fun send(shown: Boolean, back: Boolean): ExpandedCardFaceOutcome {
-        if (outgoing.subscriptionCount.value == 0) return ExpandedCardFaceOutcome.NOT_PRESENTED
+    private suspend fun send(shown: Boolean, back: Boolean): FaceShownAnswer {
+        if (outgoing.subscriptionCount.value == 0) return FaceShownAnswer.NOT_PRESENTED
         val reply = CompletableDeferred<FaceShownAnswer>()
         val answer = try {
             withTimeoutOrNull(REPLY_TIMEOUT) {
@@ -40,12 +50,7 @@ internal class CardFaceRequests : ExpandedCardFace {
         } finally {
             reply.cancel()
         }
-        return when (answer) {
-            FaceShownAnswer.APPLIED -> ExpandedCardFaceOutcome.APPLIED
-            FaceShownAnswer.USER_MOVING -> ExpandedCardFaceOutcome.USER_MOVING
-            FaceShownAnswer.NO_BACK -> ExpandedCardFaceOutcome.NO_BACK
-            FaceShownAnswer.NOT_PRESENTED, null -> ExpandedCardFaceOutcome.NOT_PRESENTED
-        }
+        return answer ?: FaceShownAnswer.NOT_PRESENTED
     }
 
     private companion object {

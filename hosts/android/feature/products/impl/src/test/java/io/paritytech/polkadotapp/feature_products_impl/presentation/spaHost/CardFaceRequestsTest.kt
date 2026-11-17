@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CardFaceRequestsTest {
@@ -22,7 +23,7 @@ class CardFaceRequestsTest {
     @Test
     fun `a request nobody is watching for is not presented`() = runTest {
         assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, requests.setFaceShown(true))
-        assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, requests.setBackShown(true))
+        assertEquals(ExpandedCardTurnOutcome.NOT_PRESENTED, requests.setBackShown(true))
     }
 
     // Only the screen knows whether the card it draws has a back right now.
@@ -39,7 +40,7 @@ class CardFaceRequestsTest {
         val outcome = requests.setBackShown(true)
 
         assertEquals(listOf(true to true), received.map { it.back to it.shown })
-        assertEquals(ExpandedCardFaceOutcome.NO_BACK, outcome)
+        assertEquals(ExpandedCardTurnOutcome.NO_BACK, outcome)
     }
 
     // Only the fold knows whether the user is dragging, so the product must get the screen's answer.

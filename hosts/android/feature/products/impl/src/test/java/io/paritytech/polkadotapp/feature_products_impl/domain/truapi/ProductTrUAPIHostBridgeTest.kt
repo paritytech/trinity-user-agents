@@ -29,6 +29,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
@@ -124,20 +125,20 @@ class ProductTrUAPIHostBridgeTest {
         val hostBridge = attachCapturingBridge(card = null)
 
         assertEquals(ExpandedCardFaceOutcome.UNSUPPORTED, hostBridge.setExpandedCardFaceShown(true))
-        assertEquals(ExpandedCardFaceOutcome.UNSUPPORTED, hostBridge.setExpandedCardBackShown(true))
+        assertEquals(ExpandedCardTurnOutcome.UNSUPPORTED, hostBridge.setExpandedCardBackShown(true))
     }
 
     @Test
     fun `a product under a card asks that card and gets its answer`() = runTest {
         val card = mockk<ExpandedCardFace> {
             coEvery { setFaceShown(false) } returns ExpandedCardFaceOutcome.USER_MOVING
-            coEvery { setBackShown(true) } returns ExpandedCardFaceOutcome.NO_BACK
+            coEvery { setBackShown(true) } returns ExpandedCardTurnOutcome.NO_BACK
         }
         val hostBridge = attachCapturingBridge(card)
 
-        val outcomes = listOf(hostBridge.setExpandedCardFaceShown(false), hostBridge.setExpandedCardBackShown(true))
+        val outcomes = hostBridge.setExpandedCardFaceShown(false) to hostBridge.setExpandedCardBackShown(true)
 
-        assertEquals(listOf(ExpandedCardFaceOutcome.USER_MOVING, ExpandedCardFaceOutcome.NO_BACK), outcomes)
+        assertEquals(ExpandedCardFaceOutcome.USER_MOVING to ExpandedCardTurnOutcome.NO_BACK, outcomes)
     }
 
     @Test
