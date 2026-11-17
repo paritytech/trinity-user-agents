@@ -12,12 +12,12 @@ npm run build        # dist/: worker.js, widget.js, index.html, faces/
 
 The published `@parity/truapi` (0.16.0) predates the Pocket API, so `client.pocket` is undefined
 there and `npm run typecheck` fails against it. Until a release ships Pocket, build the client from
-the core checkout that `truapi_ref` pins and install it over the published one:
+the enclosing `trinity-user-agents` tree and install it over the published one:
 
 ```sh
-( cd "$TRUAPI_DIR" && ./scripts/codegen.sh )
-( cd "$TRUAPI_DIR/js/packages/truapi" && npm install && npm run build )
-npm install --no-save "$TRUAPI_DIR/js/packages/truapi"
+( cd ../../../../../.. && ./scripts/codegen.sh )
+( cd ../../../../../../js/packages/truapi && npm install && npm run build )
+npm install --no-save ../../../../../../js/packages/truapi
 ```
 
 ## Publish

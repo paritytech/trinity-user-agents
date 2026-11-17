@@ -1,7 +1,10 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
 @testable import polkadot_app
+
+private let workerContentId = try! ProductId("worker.game.paseo")
 
 struct ProductWorkerArchiveTests {
     @Test
@@ -10,7 +13,7 @@ struct ProductWorkerArchiveTests {
         let archive = ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil })
 
         let data = try await archive.file(
-            contentId: "worker.game.paseo",
+            contentId: workerContentId,
             path: "faces/loyalty.json",
             maxBytes: PocketPreviewLoader.maxBytes
         )
@@ -32,7 +35,7 @@ struct ProductWorkerArchiveTests {
         )
 
         let data = try await archive.file(
-            contentId: "worker.game.paseo",
+            contentId: workerContentId,
             path: "faces/loyalty.json",
             maxBytes: PocketPreviewLoader.maxBytes
         )
@@ -53,7 +56,7 @@ struct ProductWorkerArchiveTests {
         )
 
         let data = try await archive.file(
-            contentId: "worker.game.paseo",
+            contentId: workerContentId,
             path: "faces/loyalty.json",
             maxBytes: PocketPreviewLoader.maxBytes
         )
@@ -70,7 +73,7 @@ struct ProductWorkerArchiveTests {
         let archive = ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil })
 
         await #expect(throws: (any Error).self) {
-            try await archive.file(contentId: "worker.game.paseo", path: "../outside.json", maxBytes: 1_024)
+            try await archive.file(contentId: workerContentId, path: "../outside.json", maxBytes: 1_024)
         }
     }
 
@@ -93,7 +96,7 @@ struct ProductWorkerArchiveTests {
 
         await #expect(throws: (any Error).self) {
             try await archive.file(
-                contentId: "worker.game.paseo",
+                contentId: workerContentId,
                 path: "nextdoor/secret.json",
                 maxBytes: 1_024
             )
@@ -114,7 +117,7 @@ struct ProductWorkerArchiveTests {
         let archive = ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil })
 
         await #expect(throws: (any Error).self) {
-            try await archive.file(contentId: "worker.game.paseo", path: "faces/escape.json", maxBytes: 1_024)
+            try await archive.file(contentId: workerContentId, path: "faces/escape.json", maxBytes: 1_024)
         }
     }
 
@@ -127,7 +130,7 @@ struct ProductWorkerArchiveTests {
         let archive = ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil })
 
         let refusal = await #expect(throws: PocketPreviewError.self) {
-            try await archive.file(contentId: "worker.game.paseo", path: "faces/big.json", maxBytes: 1_024)
+            try await archive.file(contentId: workerContentId, path: "faces/big.json", maxBytes: 1_024)
         }
 
         guard case let .tooLarge(bytes) = refusal else {

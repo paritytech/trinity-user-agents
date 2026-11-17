@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import SubstrateSdk
@@ -19,7 +20,7 @@ public protocol ExternalPaymentServicing {
     /// Registers a payment with stage `.plan`. Throws ``ExternalPaymentError/alreadyExists`` for a
     /// known `(productId, paymentId)` and ``ExternalPaymentError/invalidPaymentId`` for an empty id.
     func initiatePayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -28,7 +29,7 @@ public protocol ExternalPaymentServicing {
     /// Ends after the first terminal status. Throws ``ExternalPaymentError/notFound`` when nothing is
     /// registered under `(productId, paymentId)`.
     func subscribePaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus>
 

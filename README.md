@@ -17,6 +17,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
+- [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -36,7 +37,7 @@ The interactive playground lets you browse every method, edit request payloads, 
 curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
-Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. A workflow installs the same binaries with [`install-truapi-host`](rust/crates/truapi-host-cli/README.md#in-github-actions), pinned to a CLI release. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
 
 `truapi-host signing-host --session <name>` opens an interactive session and
 restores or creates its signer. `/session <name>` switches to the saved account
@@ -75,6 +76,7 @@ npm install @parity/truapi
 
 ```ts
 import {
+  asProductId,
   createClient,
   createMessagePortProvider,
   createTransport,
@@ -84,9 +86,35 @@ const transport = createTransport(createMessagePortProvider(port));
 const truapi = createClient(transport);
 
 const result = await truapi.accountManagement.accountGet({
-  productAccountId: { dotNsIdentifier: "my-product.dot", derivationIndex: { tag: "Index", value: 0 } },
+  productAccountId: { dotNsIdentifier: asProductId("my-product.dot"), derivationIndex: { tag: "Index", value: 0 } },
 });
 ```
+
+Product identifiers use `ProductId` throughout the protocol and host APIs.
+Rust exposes this version-independent type as `truapi::ProductId`.
+The client receives typed IDs from the host; `asProductId` brands an explicit
+string without parsing or loading WASM. Rust validates IDs at the host boundary.
+Swift's `try ProductId("my-product.dot")` and Kotlin's
+`ProductId.parse("my-product.dot")` call Rust once. Kotlin also provides
+`ProductId.fromName("my-product", "dot")`; both return `Result<ProductId>`
+so callers explicitly handle invalid input. Kotlin's `executable(kind)` and
+`owner()` methods expose their failures the same way. Both platforms
+own the resulting immutable values. Browser hosts can use their existing worker
+runtime's `parseProductId` method for the same validation and normalization.
+Native callers use Rust for product names, executable ownership, and share-link parsing and formatting.
+Both native hosts use Rust's `ExecutableKind` for executable selection and
+its label mapping for manifest discriminators.
+Product ID methods and their rule tests live in [product_id.rs](rust/crates/truapi/src/product_id.rs).
+Product links require an explicitly supplied network suffix; both direct names
+and `.li` links must match it. Share-host recognition and enumeration use one
+Rust suffix policy. Rust defines the `polkadotapp` deeplink and
+`polkadot` content schemes shared by both native hosts. Both native hosts stop
+content loading on resolution errors or missing executables. Products without
+a manifest explicitly serve their app from the base name.
+Rust's reserved identity constructors return `ProductId` directly from the
+validated network suffix.
+The Android app's fixed reserved identities also return `ProductId` directly;
+an unsupported configured network is a bug and fails the internal unwrap.
 
 The transport retries iframe bootstrap until the host channel arrives and rejects unanswered
 requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` to override it.
@@ -119,7 +147,8 @@ js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
                           (shared host types), `/web` (iframe + Web Worker),
-                          `/worker-runtime`, and the test host: `/testing`
+                          `/node` (worker thread), `/worker-runtime`, and the
+                          test host: `/testing`
                           (createMockHost), `/testing/playwright`,
                           `/testing/server`, `/testing/client`,
                           `/testing/dev-accounts`, `/testing/host-page`
@@ -138,16 +167,20 @@ ios/truapi-host/           Swift host adapter package over the truapi UniFFI cor
 ios/truapi-provider/       TrUAPIProvider Swift package: chain transport over UniFFI
 playground/                Interactive Next.js playground (truapi-playground dotNS label)
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
+                           scripts/update-stacks.sh refreshes each descriptor from its link
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
                            Refresh a vendored host tree from its source repository
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           Run the CLI on both chain backends and compare what each serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
                            ci.yml change gates
@@ -193,15 +226,14 @@ native-only adapter types are limited to lifecycle and callback behavior.
 The core requests product worker transitions through `requestWorkerTransition`
 (`request_worker_transition` in Rust). `Start` requires the worker to run;
 `Stop` permits it to stop when no references remain.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+
+`HostAccounts` serves every product account operation on both host roles: it checks access, confirms signing and allocation requests with the user, keeps the grants it was issued in its `HostGrantStore`, and signs with delegated keys. Wallet work sits behind an `AccountHolder`: `WalletAccountHolder` on a signing host, or `RemoteAccountHolder` on a paired host, which sends wallet operations to the phone; the phone confirms signing, transaction, VRF and allocation requests again. `RemoteAccountHolder` derives entropy and contact handles from the paired session itself and refuses exact statement proofs, which a paired host signs only with a kept AutoSigning key. One `ProductConsent` per runtime holds account-access decisions and runs their prompts. `PairingHost` and `SigningHost` build these parts for their role. `SigningHost` owns login, logout and the wallet lifecycle; on a paired host `SsoRequestService` owns login and the paired session, and `PairingHost` owns logout; see [runtime ownership and lifecycle](rust/crates/truapi/RUNTIME.md#the-two-roles).
+
+Each product connection is served by a `ProductRuntimeHost`, which combines `HostAccounts`, a `HostSession` (`SigningHost` or `SsoRequestService`) for login, disconnect and identity lookup, and a per-product `ProductConnection` for adapters, permissions and action streams.
+
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
@@ -212,8 +244,12 @@ JS hosts integrate the Rust core through [`@parity/truapi-host`](js/packages/tru
 a single package with tree-shakeable subpath entries:
 
 - `@parity/truapi-host` (the `.` entry) exposes shared host runtime types and generated callback contracts.
+- `@parity/truapi-host/markers` carries `CORE_MARKERS`, the core's table of which log markers may
+  leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
+- `@parity/truapi-host/node` runs the same pairing host in a Node process, with the core in
+  a `node:worker_threads` thread (`createNodePairingHostRuntime`, `createHeadlessHostCallbacks`).
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
 
@@ -232,11 +268,16 @@ embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
-Connections to a remote node, which only the WASM build compiles, are not counted
-against it. A light-client connection holds its requests until the chain first
+The limit covers only light-client connections; connections to a remote node are
+not capped. Only a provider built with `catalog()` resolves a genesis nobody
+registered from the catalog, so one for remote nodes never starts the light client
+for a chain its host did not name. Built with `keep_chains_running()`, a provider keeps each light-client chain
+running after its last connection closes. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
+On native targets every `wss` connection, to a remote node or a light-client bootnode, checks the
+certificate against the webpki roots compiled into the crate, not the operating system's store.
 Every artifact exposes the sync progress of a running chain (phase, peer count,
 stall verdict) as a watch.
 The crate
@@ -278,6 +319,18 @@ allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
 only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
 `AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
 runtime's type by name.
+
+### Contract calls
+
+`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`RuntimeApiCaller` transports support individual and batched reads of ABI data. For writes,
+`dry_run` simulates as the signer and returns a prepared transaction;
+`execute_until_finalized` submits it and waits for successful finalized dispatch.
+
+```rust
+let transaction = contracts.dry_run(&signer, &contract, &input).await?;
+transaction.execute_until_finalized().await?;
+```
 
 ### Durable transactions
 
@@ -379,6 +432,69 @@ backlog in one batch, then each live page.
 A host without a core database, such as the browser core, answers
 `Unsupported` to the served calls.
 
+### Images
+
+Native hosts draw images with `loadImage(reference)`, as described in the
+[image loader RFC](docs/rfcs/image-loader.md).
+A reference is a Bulletin CID, with the format its source declares if it
+declares one. The core reads the blob with `bitswap_v1_get` over its own
+Bulletin connection, the call the CLI host's preimage lookup also makes, and
+returns the bytes only once they hash to the CID. It passes on PNG, JPEG, GIF
+and WebP, read from the file header, up to 2 MiB and 4096 pixels per side, and
+rejects bytes in a format other than the declared one. A load asks again every
+6 seconds while Bulletin does not hold the blob, and a second after a failed
+request, such as a light client's before its first Bitswap peer connects, for
+up to 30 seconds in all. The content key it returns is the CID, for keying a
+host's disk cache. JavaScript bindings are deferred.
+
+`observe_public_profile(username, options)` streams
+[dotNS profile metadata](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
+Native hosts emit cached metadata, then refresh missing or expired records
+(one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
+suppresses expired cached values (false in app callers). Streams emit up to two
+distinct profiles; cancellation or drop stops resolution. Invalid usernames
+return an error subscription. SQLite stores full records and keeps the
+1,000 most recently used. Cache reads use the reader pool; recency updates are
+batched with profile writes or after one second. Avatar CIDs key the image cache;
+only misses call `loadImage`.
+WASM resolves once without caching. A lookup requires the stack's Asset Hub.
+
+The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
+finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
+explicitly supply both resolution options.
+
+Android avatar views collect the profile stream for their composition's lifetime.
+Each distinct avatar becomes a Coil request whose data is the canonical
+`ImageReference.Bulletin`; metadata resolution runs independently of image loading.
+Conversation entry forces freshness, while list and search loads use ordinary freshness. All
+callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
+on disk and decoded variants in memory without an image freshness expiry. The
+displayed image remains visible during replacement, metadata errors or image errors; a profile
+without an avatar restores the letter tile. Changing the username or removing the
+view cancels observation and image loading. The shared Coil loader is installed
+before startup initializers.
+
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+Only avatar changes trigger image requests.
+The public-profile factory returns `AnyImageViewModel`, which shared image views
+use to retain requests while the image identity and processing settings match.
+`ChatIconViewModelFactory` selects product icons or public-profile avatars for chats and contact lists.
+New chat headers explicitly request forced
+freshness; cells and search explicitly use the ordinary policy. All app callers
+explicitly set `skipStale` to false. A cancelled header
+observation retains its forced intent until an observation completes or fails.
+[The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
+uses Kingfisher's cache without a freshness expiry, including on cache hits,
+with a 100 MiB disk budget configured during root setup, before onboarding. It keeps
+the current image while loading; avatar views cancel metadata observation and image work
+when their view is reused or released.
+
+The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
+avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
+avatar as the identity's Humanity product, calling the core's TrUAPI resource
+allocation and preimage methods directly.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
@@ -386,6 +502,9 @@ A stack descriptor describes one deployment of chains and services, as
 [`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
+
+The core takes all of its chain configuration from one stack, and fetches newer copies of its descriptor through the
+host while it runs. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 
@@ -424,6 +543,8 @@ A method returning `Subscription` generates a streaming handler. See the
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
+Rust embedders use `truapi::Spawner::new(handle)` with a Tokio runtime handle on native targets and `truapi::Spawner::default()` on WASM. Shared core code schedules background work with `spawner.spawn(async move { ... })`, which dispatches to the platform executor. The native runtime must remain alive to run its tasks; submissions after shutdown are cancelled.
+
 ## Develop
 
 Common tasks are wrapped in the top-level `Makefile`. Run `make help` for the full list.
@@ -443,7 +564,12 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
-Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Unit tests schedule tasks with the `#[cfg(test)]` helpers in [`spawner.rs`](rust/crates/truapi/src/spawner.rs). Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Contract response fixtures encode the Revive result structs, re-exported only in test builds.
+Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
+their product fixtures use `ProductId::for_test` from that feature.
+Product ID and link parsing rules are tested in Rust. Native ProductId tests
+cover serialization, persistence and host integration.
 
 Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 
@@ -473,13 +599,23 @@ make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
 make e2e-funding-cli                # funding requests and statuses against a scripted funding host
+make e2e-cli-backends               # the phases above and the dev diagnosis on rpc and light-client
 ```
+
+`make e2e-cli-backends` (`scripts/cli-backends-e2e.ts`) runs the signing and
+pairing phases and the `dev` playground diagnosis once per chain backend, then
+checks the CLI's routing rules and the live chain tests. It fails when a Chain,
+Statement Store or Preimage example fails on either backend or the two disagree.
+`SESSION=<name>` creates or selects the signing session; reports land in
+`target/cli-backends/`.
 
 The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from
 `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), which is what makes one
 card removable and one privileged, and records every removal it is asked for in
-the transcript named by `TRUAPI_POCKET_LOG`. The cases read that transcript, so
+the transcript named by `TRUAPI_POCKET_LOG`. As the product connects, the host
+renders each card, resolves the materials of every face, reports each fallback
+to the product and records each result in the same transcript. The cases read that transcript, so
 a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
@@ -612,10 +748,10 @@ pull request means running the command above and deleting the file.
 
 ### Working on the iOS host
 
-`hosts/ios/` is the iOS app, and it resolves the core from this tree rather than
-from a published version. The core's bindings, xcframework and FFI headers are
-gitignored build outputs, so a fresh clone cannot load the app's package graph
-until they exist. Generate them once:
+`hosts/ios/` is the iOS app, and it resolves the core from this tree. The
+core's bindings, xcframework and FFI headers are gitignored build outputs, so a
+fresh clone cannot load the app's package graph until they exist. Generate them
+once:
 
 ```bash
 make ios-bootstrap
@@ -657,9 +793,15 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
-- `test`, the unit test suite
+- `test`, the [unit test suite](hosts/ios/polkadot-appTests/)
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
+
+The `iOS SwiftLint` job, also part of `CI Status`, lints the app tree on ubuntu
+and fails on any SwiftLint error, and on any warning the committed baseline
+does not list. It runs on pull requests whose changes can affect the app and in
+the merge queue, where it catches two pull requests that each pass but break a
+rule together, such as a file's length.
 
 Pull requests that build the app carry a comment linking the build for its head
 commit, updated in place as the branch moves. To run one:
@@ -744,7 +886,9 @@ when `main` has not moved past what their last successful run built. `android-de
 on every push to `main`, and answers what `main` does right now. It builds the
 pushed commit, the one that landed. A push rather than the pull request's merge
 event, because the Firebase identity is bound to `main`, and a pull request
-event's token never matches that binding.
+event's token never matches that binding. A manual run of either with
+`deliver` off builds and checks any branch without sending it to testers or
+publishing it.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that
@@ -806,70 +950,10 @@ Each job removes what it materialised, and the last verdict is carried into the
 pull request summary, so it is visible before someone starts a release rather
 than after. A workflow that has never run reports as never run, not as healthy.
 
-### Building the standalone iOS host app
+### Chat diagnosis on Android
 
-The targets below build `polkadot-app-ios-v2`, a separate checkout set by
-`IOS_HOST`, not `hosts/ios`. To build the playground in Simulator against it:
-
-```bash
-make ios-run
-```
-
-The target regenerates the UniFFI Swift bindings, builds the matching Rust
-simulator library, and builds the sibling `polkadot-app-ios-v2` checkout with the Nightly feature
-flags and release Firebase app used by the Nightly TestFlight build. Native
-Chat and the Paseo chain catalog come from the same Nightly Remote Config as
-TestFlight. The executable keeps the development bundle and app-group identity
-so Simulator can reuse its already registered wallet; keychain data cannot be
-transferred to the production bundle. The simulator also adds the
-`IOS_PASEO_E2E` conveniences needed to start on the real `browse.dot` Browse tab
-and activate the embedded signing host. Embedded product host sessions use the
-same Paseo People and Bulletin chains selected by the Nightly app
-configuration. The launcher starts the playground at `http://localhost:3100`
-when needed and uses that local source only after Browse opens
-`truapi-playground.dot`. It refuses to launch if the local URL belongs to a
-different app. Override the product, URL, or simulator with `IOS_PRODUCT_HOST`,
-`IOS_PRODUCT_URL`, or `TRUAPI_IOS_E2E_DEVICE`. The simulator launch reuses the
-wallet and registered username already stored by the iOS app. Opening a product
-activates the embedded `truapi-host` signing-host session from that wallet; it
-does not provision or pair a signer-bot user.
-
-To exercise the shared-core Chat path with the first-party TrUAPI Playground
-worker, build and serve the local product, install its worker into the
-simulator app's product storage, and open its native Chat application. The
-worker drives all five Chat methods and both Renderer methods, so a host
-without bot registration reports that row red:
-
-```bash
-make ios-chat-run
-```
-
-The launcher verifies the Chat connection and runs a correlated Chat-only
-diagnosis. The worker proves create-room idempotency, observes the new room on
-the live list subscription, posts text and custom messages, receives
-`!diagnose` through `chat_action_subscribe`, and serves live renderer trees.
-The launcher also verifies that a renderer update reaches native code and that
-the final Markdown report reaches CoreData. It writes the host-labelled report
-to `playground/test-results/ios-chat/diagnosis-report.md`. The product builds
-against the workspace-linked `@parity/truapi`. Override the product source,
-identity, SPA URL, room, input, or report path with
-`IOS_CHAT_PRODUCT_DIR`, `IOS_CHAT_PRODUCT_HOST`, `IOS_CHAT_PRODUCT_URL`,
-`TRUAPI_IOS_E2E_CHAT_ROOM_ID_SOURCE`, `TRUAPI_IOS_E2E_CHAT_MESSAGE`, or
-`TRUAPI_IOS_E2E_CHAT_REPORT`.
-
-The same harness can run the legacy Product SDK worker from the sibling
-`host-playground` checkout. This target builds the current TrUAPI client, links
-it over Host Playground's transitive `@parity/truapi`, then builds and runs
-that product:
-
-```bash
-make ios-chat-host-playground-run
-```
-
-Run both integrations with one iOS build using `make ios-chat-all`.
-
-The Android twin of that launcher runs the same TrUAPI Playground worker
-against the shared core inside a headless emulator, and writes its report to
+`make android-chat-playground-run` runs the TrUAPI Playground worker against the
+shared core inside a headless emulator, and writes its report to
 `playground/test-results/android-chat/diagnosis-report.md`:
 
 ```bash
@@ -888,8 +972,7 @@ Prerequisites:
   must pass `TRUAPI_ANDROID_E2E_PACKAGE`
 
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
-(device, APK, product, room, message, username, URL, report path); they
-mirror the iOS `TRUAPI_IOS_E2E_*` ones.
+(device, APK, product, room, message, username, URL, report path).
 
 The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 

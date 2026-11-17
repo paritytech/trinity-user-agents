@@ -41,7 +41,7 @@ pub enum RuntimeType {
 }
 
 /// What a chain-head storage query returns for a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum StorageQueryType {
 	/// Return the value under the key.
 	Value,
@@ -357,8 +357,11 @@ pub struct RemoteChainTransactionBroadcastResponse {
 }
 
 /// Role of a chain within the host's configured environment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+///
+/// Each variant's name is the role a Trinity stack descriptor lists that chain
+/// under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChainIdentifier {
 	/// The relay chain.
 	Relay,

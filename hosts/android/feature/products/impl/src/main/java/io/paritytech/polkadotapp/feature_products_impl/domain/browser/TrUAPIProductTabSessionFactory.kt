@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
@@ -31,7 +30,7 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
     ): BrowserWebViewProvider {
         // A dev server page loads from the address that reaches the developer's machine but runs under
         // the id the core gave it, so neither can be read off the other.
-        val devServerProductId = devServer?.let { ProductId.fromStoredValue(it.productId) }
+        val devServerProductId = devServer?.productId
         val provider = browserWebViewProviderFactory.create(
             url,
             NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),

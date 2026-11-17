@@ -11,10 +11,7 @@ pub use policy::{
 
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
-	sync::{
-		Arc,
-		atomic::{AtomicUsize, Ordering},
-	},
+	sync::Arc,
 };
 
 use futures::{
@@ -89,7 +86,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 		id,
 		domain: DomainId::new("test"),
 		group: None,
-		tx_hash: H256::repeat_byte(id.0 as u8),
+		tx_hash: H256::repeat_byte(u8::try_from(id.0).expect("test id fits in u8")),
 		mortality: Mortality::new(block(birth), period).unwrap(),
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
@@ -159,7 +156,7 @@ impl PinnedView for FakeView {
 
 	async fn search(&self, from: u64, to: u64, _tx_hash: H256) -> SearchResult {
 		self.ranges.lock().push((from, to));
-		self.result
+		self.result.clone()
 	}
 }
 
@@ -344,7 +341,7 @@ impl BlockBackend for FakeChain {
 		if state.unreadable_outcomes.contains(&at.hash) {
 			return Err(unavailable("dispatch_outcome"));
 		}
-		Ok(state.outcomes.get(&(at.hash, extrinsic_hash)).copied())
+		Ok(state.outcomes.get(&(at.hash, extrinsic_hash)).cloned())
 	}
 }
 
@@ -393,14 +390,14 @@ pub fn engine_with(
 	chain: &Arc<FakeChain>,
 	registry: DurableRegistry,
 ) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
-	engine_with_spawner(chain, registry, crate::test_support::test_spawner())
+	engine_with_spawner(chain, registry, crate::Spawner::for_test())
 }
 
 /// [`engine_with`], running its background tasks on `spawner`.
 pub fn engine_with_spawner(
 	chain: &Arc<FakeChain>,
 	registry: DurableRegistry,
-	spawner: crate::subscription::Spawner,
+	spawner: crate::Spawner,
 ) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
 	let (dir, db) = open_db();
 	let timer = Arc::new(ManualTimer::default());
@@ -437,21 +434,6 @@ pub fn insert_with_plan(
 	futures::executor::block_on(write).unwrap()
 }
 
-/// A spawner running each task on its own thread, counting the tasks that
-/// finished.
-pub fn counting_spawner() -> (crate::subscription::Spawner, Arc<AtomicUsize>) {
-	let finished = Arc::new(AtomicUsize::new(0));
-	let counter = finished.clone();
-	let spawner: crate::subscription::Spawner = Arc::new(move |task| {
-		let counter = counter.clone();
-		std::thread::spawn(move || {
-			futures::executor::block_on(task);
-			counter.fetch_add(1, Ordering::SeqCst);
-		});
-	});
-	(spawner, finished)
-}
-
 /// An engine over `db` serving the domains of `registry`, on a chain that
 /// never moves and with time that only the test moves.
 pub fn engine_on(db: Db, registry: DurableRegistry) -> Arc<DurableTxEngine> {
@@ -464,6 +446,6 @@ pub fn engine_on(db: Db, registry: DurableRegistry) -> Arc<DurableTxEngine> {
 		validator: chain.clone(),
 		submitter: chain,
 		timer: Arc::new(ManualTimer::default()),
-		spawner: crate::test_support::test_spawner(),
+		spawner: crate::Spawner::for_test(),
 	})
 }

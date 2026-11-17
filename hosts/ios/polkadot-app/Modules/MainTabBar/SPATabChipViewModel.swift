@@ -5,7 +5,7 @@ import Products
 struct SPATabChipViewModel {
     let id: UUID
     let name: String
-    let icon: ImageViewModelProtocol?
+    let icon: AnyImageViewModel?
 }
 
 @MainActor
@@ -25,11 +25,11 @@ final class SPATabChipViewModelFactory {
 
 private extension SPATabChipViewModelFactory {
     func name(for tab: SPATab) -> String {
-        flowStateProvider.flowState().hostProvider.host(rawString: tab.dotDomain)?.name
+        flowStateProvider.flowState().hostProvider.host(rawString: tab.dotDomain.rawValue)?.name
             ?? String(localized: .Products.productTabsNotAvailable)
     }
 
-    func icon(for tab: SPATab) -> ImageViewModelProtocol? {
-        flowStateProvider.flowState().iconViewModelFactory.createViewModel(for: tab.dotDomain)
+    func icon(for tab: SPATab) -> AnyImageViewModel? {
+        AnyImageViewModel(flowStateProvider.flowState().iconViewModelFactory.createViewModel(for: tab.dotDomain))
     }
 }

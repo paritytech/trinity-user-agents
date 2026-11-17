@@ -75,7 +75,10 @@ extension NSPredicate {
             statusPredicate,
             chatTypePredicate,
             contentTypePredicate,
-            withoutTerminalTransferState(#keyPath(CDChatMessage.incomingTransferState))
+            withoutTerminalTransferState(
+                #keyPath(CDChatMessage.incomingTransferState),
+                terminal: IncomingTransferState.Status.terminalRawValues
+            )
         ])
     }
 
@@ -98,7 +101,10 @@ extension NSPredicate {
             chatTypePredicate,
             contentTypePredicate,
             creationSourcePredicate,
-            withoutTerminalTransferState(#keyPath(CDChatMessage.outgoingTransferState))
+            withoutTerminalTransferState(
+                #keyPath(CDChatMessage.outgoingTransferState),
+                terminal: OutgoingTransferState.Status.terminalRawValues
+            )
         ])
     }
 
@@ -222,13 +228,13 @@ extension NSPredicate {
         )
     }
 
-    /// A claimed or failed transfer never re-enters the monitor.
-    static func withoutTerminalTransferState(_ relationship: String) -> NSPredicate {
+    /// A finalized or failed transfer never re-enters the monitor; a best-head `claimed` still does.
+    static func withoutTerminalTransferState(_ relationship: String, terminal: [Int16]) -> NSPredicate {
         NSPredicate(
-            format: "%K == nil OR %K < %d",
+            format: "%K == nil OR NOT (%K IN %@)",
             relationship,
             "\(relationship).status",
-            TransferStateStatus.firstTerminalRawValue
+            terminal.map { NSNumber(value: $0) }
         )
     }
 
@@ -301,5 +307,31 @@ extension NSPredicate {
             #keyPath(CDChatMessage.compactionId),
             compactionIds
         )
+    }
+
+    static func lastSeenMessageCandidates(in chatId: Chat.Id) -> NSPredicate {
+        let countedContentTypes = Chat.LocalMessage.Content.ContentType.allCases
+            .filter(\.canBeLastSeenMessage)
+            .map { Int16($0.rawValue) }
+
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localMessages(from: chatId),
+            byStatus(Chat.LocalMessage.Status.incoming(.seen)),
+            NSPredicate(format: "%K IN %@", #keyPath(CDChatMessage.contentType), countedContentTypes)
+        ])
+    }
+
+    /// Only posted messages can be seen by the peer; new and failed ones never reached them.
+    static func postedOutgoingMessages(in chatId: Chat.Id, timestampAtOrBefore timestamp: Int64) -> NSPredicate {
+        let outgoingStatuses: [Chat.LocalMessage.Status.OutgoingStatus] = [.sent, .delivered]
+        let statusPredicate = NSCompoundPredicate(
+            orPredicateWithSubpredicates: outgoingStatuses.map { byStatus(.outgoing($0)) }
+        )
+
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localMessages(from: chatId),
+            statusPredicate,
+            NSPredicate(format: "%K <= %lld", #keyPath(CDChatMessage.timestamp), timestamp)
+        ])
     }
 }

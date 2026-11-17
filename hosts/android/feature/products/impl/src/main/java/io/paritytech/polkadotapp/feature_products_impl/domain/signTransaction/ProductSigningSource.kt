@@ -6,7 +6,6 @@ import dagger.assisted.AssistedInject
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.util.sign
 import io.paritytech.polkadotapp.chains.util.signing.MessageSigningContext
-import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.flatMap
@@ -102,23 +101,4 @@ class IdentityAccountSigningSource @Inject constructor(
     override suspend fun signVrf(transcriptLabel: ByteArray, items: List<VrfTranscriptItem>): Result<VrfSignature> {
         return Result.failure(SignVrfError.Unknown("VRF signing is not supported for the identity account"))
     }
-}
-
-/**
- * Names an account the app holds no key for. Every signing method fails: only
- * the TrUAPI core produces these requests and it signs them itself, so this
- * source exists so the confirmation sheet can render the signer.
- */
-class LegacyAccountSigningSource(private val accountId: AccountId) : ProductSigningSource {
-    override fun resolveAccount(): SigningAccount = SigningAccount.Legacy(accountId)
-
-    override suspend fun createTransactionOrigin(): Result<TransactionOrigin> = Result.failure(cannotSign())
-
-    override suspend fun signRaw(message: ByteArray, context: MessageSigningContext): Result<DataByteArray> =
-        Result.failure(cannotSign())
-
-    override suspend fun signVrf(transcriptLabel: ByteArray, items: List<VrfTranscriptItem>): Result<VrfSignature> =
-        Result.failure(cannotSign())
-
-    private fun cannotSign() = IllegalStateException("the host holds no key for $accountId")
 }

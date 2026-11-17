@@ -87,6 +87,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             switch footer {
             case .textInput: .textInput
             case .empty: .empty
+            case let .card(card): .card(messageType: card.messageType, payload: card.payload)
             }
         try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }
@@ -150,7 +151,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         }
 
         guard persist else {
-            await pageCache.apply(update, productId: productId, roomId: roomId)
+            await pageCache.apply(update, productId: productId.rawValue, roomId: roomId)
             logger.debug("[truapi:chat-bridge] updateFeed \(roomId): the cached page takes it")
             return
         }

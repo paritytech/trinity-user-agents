@@ -9,7 +9,10 @@ use std::sync::Mutex;
 
 use crate::platform::{ChainProvider, JsonRpcConnection};
 
-use crate::{config::ChainSource, error::ProviderError};
+use crate::{
+	config::{ChainSource, ResolvedChain},
+	error::ProviderError,
+};
 
 /// Lock a mutex, recovering the guard if a previous holder panicked.
 #[cfg(feature = "smoldot")]
@@ -35,6 +38,12 @@ pub struct EmbeddedChainProviderBuilder {
 	/// The peer connections the browser light client opens.
 	#[cfg(feature = "smoldot")]
 	connection_types: crate::connection_types::ConnectionTypes,
+	/// Set by [`keep_chains_running`](Self::keep_chains_running).
+	#[cfg(feature = "smoldot")]
+	keep_chains_running: bool,
+	/// Set by [`catalog`](Self::catalog).
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 impl core::fmt::Debug for EmbeddedChainProviderBuilder {
@@ -46,7 +55,10 @@ impl core::fmt::Debug for EmbeddedChainProviderBuilder {
 			.field("relays", &self.relays)
 			.field("seeded_databases", &self.seeded_databases)
 			.field("storage", &self.storage.is_some())
-			.field("connection_types", &self.connection_types);
+			.field("connection_types", &self.connection_types)
+			.field("keep_chains_running", &self.keep_chains_running);
+		#[cfg(feature = "networks")]
+		builder.field("catalog", &self.catalog);
 		builder.finish()
 	}
 }
@@ -111,6 +123,23 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
+	/// Keep each light-client chain running from its first connect until the
+	/// provider is dropped, so it keeps its sync and peers between connections.
+	#[cfg(feature = "smoldot")]
+	pub fn keep_chains_running(mut self) -> Self {
+		self.keep_chains_running = true;
+		self
+	}
+
+	/// Resolve a genesis nobody registered from the bundled catalog. Without it, a
+	/// provider answers only for the chains registered on it, so one for remote
+	/// nodes never starts the light client.
+	#[cfg(feature = "networks")]
+	pub fn catalog(mut self) -> Self {
+		self.catalog = true;
+		self
+	}
+
 	/// Build the provider. Light-client resources start lazily on the first
 	/// light-client connect.
 	pub fn build(self) -> EmbeddedChainProvider {
@@ -125,7 +154,9 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "smoldot")]
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
-			light: crate::light::LightState::new(self.connection_types),
+			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
+			#[cfg(feature = "networks")]
+			catalog: self.catalog,
 		}
 	}
 }
@@ -142,6 +173,9 @@ impl EmbeddedChainProviderBuilder {
 ///
 /// The `responses()` stream of returned connections is take-once: the first
 /// call yields the live stream, later calls yield an ended stream.
+///
+/// A genesis nobody registered is resolved from the bundled catalog only on a
+/// provider built with `catalog()`, which the `networks` feature adds.
 pub struct EmbeddedChainProvider {
 	chains: HashMap<[u8; 32], ChainSource>,
 	/// The relay each explicitly-registered parachain syncs through; catalog
@@ -163,6 +197,8 @@ pub struct EmbeddedChainProvider {
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 impl EmbeddedChainProvider {
@@ -171,46 +207,50 @@ impl EmbeddedChainProvider {
 		EmbeddedChainProviderBuilder::new()
 	}
 
-	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
-	/// the light backend the relay to sync it through.
-	///
-	/// The relay's source is resolved and warm-start-seeded here, so a blob
-	/// registered for a relay applies whether it is connected directly or
-	/// brought up implicitly behind one of its parachains.
-	#[cfg_attr(not(feature = "smoldot"), allow(unused_variables))]
-	async fn connect_source(
-		&self,
-		genesis_hash: [u8; 32],
-		source: &ChainSource,
-		chains: &HashMap<[u8; 32], ChainSource>,
-		relay: Option<[u8; 32]>,
-	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		match source {
-			#[cfg(feature = "ws")]
-			ChainSource::RpcNode { url } => crate::ws::connect(url.clone()).await,
-			#[cfg(feature = "smoldot")]
-			ChainSource::LightClient { .. } => {
-				let relay = match relay {
-					None => None,
-					Some(relay_genesis) => Some(self.resolve_relay(chains, relay_genesis)?),
-				};
-				self.light.connect(genesis_hash, source, relay).await
-			},
-		}
+	/// The chains of the bundled network `genesis_hash` belongs to and the relay
+	/// it syncs through, on a provider built with
+	/// [`catalog`](EmbeddedChainProviderBuilder::catalog).
+	#[cfg(feature = "networks")]
+	fn catalog_network(&self, genesis_hash: [u8; 32]) -> Option<crate::networks::ResolvedNetwork> {
+		self.catalog
+			.then(|| crate::networks::catalog_network_chains(genesis_hash))
+			.flatten()
 	}
 
-	/// Resolve a parachain's relay to the source the light backend should add
-	/// it under, carrying any warm-start blob registered for the relay.
+	/// Whether [`connect`](ChainProvider::connect) can reach `genesis_hash`.
 	#[cfg(feature = "smoldot")]
-	fn resolve_relay(
-		&self,
-		chains: &HashMap<[u8; 32], ChainSource>,
-		relay_genesis: [u8; 32],
-	) -> Result<([u8; 32], ChainSource), ProviderError> {
-		let source = chains
-			.get(&relay_genesis)
-			.ok_or(ProviderError::UnknownRelay { relay: relay_genesis })?;
-		Ok((relay_genesis, self.with_seeded_database(relay_genesis, source.clone())))
+	fn serves(&self, genesis_hash: [u8; 32]) -> bool {
+		#[cfg(feature = "networks")]
+		if self.catalog && crate::networks::catalog_service(genesis_hash).is_some() {
+			return true;
+		}
+		self.chains.contains_key(&genesis_hash)
+	}
+
+	/// What a connect to `genesis_hash` goes through: the chain registered for
+	/// it, then the catalog.
+	fn resolve(&self, genesis_hash: [u8; 32]) -> Result<ResolvedChain, ProviderError> {
+		if let Some(source) = self.chains.get(&genesis_hash) {
+			return Ok(ResolvedChain {
+				source: source.clone(),
+				#[cfg(feature = "smoldot")]
+				relay: relay_source(&self.chains, source, self.relays.get(&genesis_hash).copied())?,
+			});
+		}
+		#[cfg(feature = "networks")]
+		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
+			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
+				tracing::info!(network, service, "connecting via light client");
+			}
+			let source = catalog
+				.get(&genesis_hash)
+				.expect("catalog_network_chains includes the queried genesis");
+			return Ok(ResolvedChain {
+				source: source.clone(),
+				relay: relay_source(&catalog, source, relay)?,
+			});
+		}
+		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
 	}
 
 	/// Apply a seeded warm-start database blob to `source` if one exists for
@@ -222,7 +262,6 @@ impl EmbeddedChainProvider {
 		// make every later connect re-clone a string smoldot then discards.
 		// Irrefutable only in the native-bindings build, where ChainSource
 		// has no ws variant.
-		#[allow(irrefutable_let_patterns)]
 		if let ChainSource::LightClient { database_content, .. } = &mut source &&
 			database_content.is_none() &&
 			let Some(blob) = lock(&self.seeded_databases).remove(&genesis_hash)
@@ -235,6 +274,23 @@ impl EmbeddedChainProvider {
 	#[cfg(not(feature = "smoldot"))]
 	fn with_seeded_database(&self, _genesis_hash: [u8; 32], source: ChainSource) -> ChainSource {
 		source
+	}
+}
+
+/// The relay `source` syncs through, looked up in `chains`. Only a
+/// light-client chain has one.
+#[cfg(feature = "smoldot")]
+fn relay_source(
+	chains: &HashMap<[u8; 32], ChainSource>,
+	source: &ChainSource,
+	relay: Option<[u8; 32]>,
+) -> Result<Option<([u8; 32], ChainSource)>, ProviderError> {
+	match (source, relay) {
+		(ChainSource::LightClient { .. }, Some(relay)) => {
+			let source = chains.get(&relay).ok_or(ProviderError::UnknownRelay { relay })?;
+			Ok(Some((relay, source.clone())))
+		},
+		_ => Ok(None),
 	}
 }
 
@@ -301,7 +357,7 @@ impl EmbeddedChainProvider {
 			return Some(*relay);
 		}
 		#[cfg(feature = "networks")]
-		if let Some((_, relay)) = crate::networks::catalog_network_chains(genesis_hash) {
+		if let Some((_, relay)) = self.catalog_network(genesis_hash) {
 			return relay;
 		}
 		None
@@ -342,9 +398,14 @@ impl EmbeddedChainProvider {
 	/// Fails when a read is needed and the provider was built without storage.
 	/// A chain that silently never resumes is indistinguishable from one that
 	/// has nothing stored yet, so missing configuration is reported rather than
-	/// swallowed. A chain that is already running, or already holds a blob,
-	/// answers without consulting storage at all.
+	/// swallowed. For the same reason a chain this provider cannot connect to
+	/// fails as unknown, as [`connect`](crate::platform::ChainProvider::connect)
+	/// would. A chain that is already running, or already holds a blob, answers
+	/// without consulting storage at all.
 	pub async fn load_database(&self, genesis_hash: [u8; 32]) -> Result<bool, ProviderError> {
+		if !self.serves(genesis_hash) {
+			return Err(ProviderError::UnknownGenesis { genesis: genesis_hash });
+		}
 		// A parachain is only as cold as the relay under it, and the relay is
 		// the one that warp syncs, so it is seeded first.
 		if let Some(relay) = self.relay_of(genesis_hash) &&
@@ -539,407 +600,31 @@ impl ChainProvider for EmbeddedChainProvider {
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		// Explicit registrations win; otherwise the catalog resolves the whole
-		// network from the genesis hash alone.
-		if let Some(source) = self.chains.get(&genesis_hash) {
-			let source = self.with_seeded_database(genesis_hash, source.clone());
+		let resolved = self.resolve(genesis_hash)?;
+		match self.with_seeded_database(genesis_hash, resolved.source) {
+			#[cfg(feature = "ws")]
+			ChainSource::RpcNode { url } => crate::ws::connect(url).await,
 			#[cfg(feature = "smoldot")]
-			let relay = self.relays.get(&genesis_hash).copied();
-			#[cfg(not(feature = "smoldot"))]
-			let relay = None;
-			let connected = self.connect_source(genesis_hash, &source, &self.chains, relay).await;
-			#[cfg(feature = "smoldot")]
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
+			source @ ChainSource::LightClient { .. } => {
+				let relay = resolved
+					.relay
+					.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source)));
+				let connected = self.light.connect(genesis_hash, &source, relay.as_ref()).await;
+				if connected.is_err() {
+					self.return_seed(genesis_hash, source);
+					// A relay that is running took its seed on the add that
+					// started it.
+					if let Some((genesis, source)) = relay &&
+						!self.light.is_added(genesis)
+					{
+						self.return_seed(genesis, source);
+					}
+				}
+				connected
+			},
 		}
-		#[cfg(feature = "networks")]
-		if let Some((catalog, relay)) = crate::networks::catalog_network_chains(genesis_hash) {
-			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
-				tracing::info!(network, service, "connecting via light client");
-			}
-			let source = catalog
-				.get(&genesis_hash)
-				.expect("catalog_network_chains includes the queried genesis")
-				.clone();
-			let source = self.with_seeded_database(genesis_hash, source);
-			let connected = self.connect_source(genesis_hash, &source, &catalog, relay).await;
-			if connected.is_err() {
-				self.return_seed(genesis_hash, source);
-			}
-			return connected;
-		}
-		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
 	}
 }
 
 #[cfg(test)]
-mod tests {
-	use crate::platform::ChainProvider;
-
-	use super::EmbeddedChainProvider;
-	use crate::config::ChainSource;
-
-	#[test]
-	fn unknown_genesis_is_an_error_naming_the_hash() {
-		let provider = EmbeddedChainProvider::builder().build();
-		let error = futures::executor::block_on(provider.connect([0xab; 32]))
-			.err()
-			.expect("connect must fail for an unregistered genesis");
-		assert!(error.to_string().contains(&"ab".repeat(32)));
-	}
-
-	/// A blob registered for a relay reaches it even when the relay is never
-	/// connected directly, only brought up behind one of its parachains.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	// Without the `ws` backend the enum has a single variant, making the
-	// let-else below irrefutable there.
-	#[allow(irrefutable_let_patterns)]
-	fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
-		use std::collections::HashMap;
-
-		const RELAY: [u8; 32] = [1; 32];
-		let mut chains = HashMap::new();
-		chains.insert(RELAY, ChainSource::light_client("{}").build());
-		let provider = EmbeddedChainProvider::builder()
-			.database(RELAY, "relay-blob".to_owned())
-			.build();
-
-		let (genesis, source) =
-			provider.resolve_relay(&chains, RELAY).expect("the relay is registered");
-		assert_eq!(genesis, RELAY);
-		let ChainSource::LightClient { database_content, .. } = source else {
-			panic!("expected a LightClient source");
-		};
-		assert_eq!(database_content.as_deref(), Some("relay-blob"));
-	}
-
-	/// The snapshot round trip resolves against a live light client, and the
-	/// blob it returns is accepted back as a warm-start seed.
-	///
-	/// `chainHead_unstable_finalizedDatabase` first asks the runtime service for
-	/// the finalized runtime's storage merkle values, and that answer waits on
-	/// smoldot's sync-mode decision, which no reachable peer will ever settle
-	/// here. The test platform collapses that deadline; see
-	/// [`crate::light_platform_test`].
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn snapshot_round_trips_into_a_seed() {
-		const GENESIS: [u8; 32] = [1; 32];
-		const SPEC: &str = include_str!("../tests/fixtures/paseo.json");
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client(SPEC).build())
-			.build();
-		let blob = futures::executor::block_on(provider.snapshot(GENESIS))
-			.expect("the light client answers the finalized-database request");
-		assert!(blob.contains("genesisHash"), "unexpected blob: {blob}");
-
-		let seeded = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client(SPEC).build())
-			.database(GENESIS, blob)
-			.build();
-		futures::executor::block_on(seeded.connect(GENESIS))
-			.expect("a chain seeded with its own snapshot connects");
-	}
-
-	/// A store answering from memory, recording what it was asked to keep.
-	#[cfg(feature = "smoldot")]
-	#[derive(Default)]
-	struct MemoryStorageClient {
-		stored: std::sync::Mutex<std::collections::HashMap<[u8; 32], String>>,
-		loads: std::sync::atomic::AtomicUsize,
-	}
-
-	#[cfg(feature = "smoldot")]
-	#[async_trait::async_trait]
-	impl crate::storage::StorageClient for MemoryStorageClient {
-		async fn load(
-			&self,
-			genesis_hash: [u8; 32],
-		) -> Result<Option<String>, crate::storage::StorageClientError> {
-			self.loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-			Ok(self.stored.lock().expect("test store").get(&genesis_hash).cloned())
-		}
-
-		async fn save(
-			&self,
-			genesis_hash: [u8; 32],
-			blob: String,
-		) -> Result<(), crate::storage::StorageClientError> {
-			self.stored.lock().expect("test store").insert(genesis_hash, blob);
-			Ok(())
-		}
-	}
-
-	/// A stored blob reaches the chain source the light backend is handed.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	#[allow(irrefutable_let_patterns)]
-	fn a_stored_blob_seeds_a_chain() {
-		const GENESIS: [u8; 32] = [3; 32];
-		let store = std::sync::Arc::new(MemoryStorageClient::default());
-		store
-			.stored
-			.lock()
-			.expect("test store")
-			.insert(GENESIS, "stored-blob".to_owned());
-
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(store.clone())
-			.build();
-
-		assert!(
-			futures::executor::block_on(provider.load_database(GENESIS))
-				.expect("the store answers"),
-			"a stored blob is reported as in hand"
-		);
-
-		futures::executor::block_on(provider.load_database(GENESIS)).expect("the store answers");
-		assert_eq!(
-			store.loads.load(std::sync::atomic::Ordering::Relaxed),
-			1,
-			"a blob already in hand is not read again"
-		);
-
-		let seeded =
-			provider.with_seeded_database(GENESIS, ChainSource::light_client("{}").build());
-		let ChainSource::LightClient { database_content, .. } = seeded else {
-			panic!("expected a LightClient source");
-		};
-		assert_eq!(database_content.as_deref(), Some("stored-blob"));
-		assert!(
-			!provider.has_database(GENESIS),
-			"the blob is taken by the chain that consumed it rather than retained"
-		);
-	}
-
-	/// An explicitly registered blob is not replaced by the stored one.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn an_explicit_blob_wins_over_the_store() {
-		const GENESIS: [u8; 32] = [4; 32];
-		let store = std::sync::Arc::new(MemoryStorageClient::default());
-		store
-			.stored
-			.lock()
-			.expect("test store")
-			.insert(GENESIS, "stored-blob".to_owned());
-
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.database(GENESIS, "explicit-blob".to_owned())
-			.storage(store.clone())
-			.build();
-
-		assert!(
-			futures::executor::block_on(provider.load_database(GENESIS)).expect("no store read")
-		);
-		assert_eq!(
-			store.loads.load(std::sync::atomic::Ordering::Relaxed),
-			0,
-			"an explicit blob means the store is never consulted"
-		);
-	}
-
-	/// Persisting a chain nobody connected would start one just to snapshot it.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn persist_without_a_connection_stores_nothing() {
-		const GENESIS: [u8; 32] = [7; 32];
-		let store = std::sync::Arc::new(MemoryStorageClient::default());
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(store.clone())
-			.build();
-
-		assert!(
-			!futures::executor::block_on(provider.save_database(GENESIS))
-				.expect("no snapshot attempted"),
-			"a chain that was never connected has nothing to store"
-		);
-		assert!(
-			store.stored.lock().expect("test store").is_empty(),
-			"nothing is written for a chain that was never connected"
-		);
-	}
-
-	/// A client implemented in Rust is driven by both database calls, which is
-	/// the coverage the deleted file store used to give.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	// Without the `ws` backend the enum has a single variant, making the
-	// let-else below irrefutable there.
-	#[allow(irrefutable_let_patterns)]
-	fn a_rust_client_is_driven_by_both_database_calls() {
-		const GENESIS: [u8; 32] = [10; 32];
-		let client = std::sync::Arc::new(MemoryStorageClient::default());
-		client
-			.stored
-			.lock()
-			.expect("test client")
-			.insert(GENESIS, "stored-blob".to_owned());
-
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(client.clone())
-			.build();
-
-		assert!(
-			futures::executor::block_on(provider.load_database(GENESIS))
-				.expect("the client answers")
-		);
-		assert_eq!(client.loads.load(std::sync::atomic::Ordering::Relaxed), 1);
-
-		let seeded =
-			provider.with_seeded_database(GENESIS, ChainSource::light_client("{}").build());
-		let ChainSource::LightClient { database_content, .. } = seeded else {
-			panic!("expected a LightClient source");
-		};
-		assert_eq!(
-			database_content.as_deref(),
-			Some("stored-blob"),
-			"what the client returned is what the chain is seeded with"
-		);
-	}
-
-	/// A snapshot that lost the runtime code must not replace a stored blob
-	/// that still has it. Flipping the guard in `store_blob` makes this fail,
-	/// which the unit test on `is_worth_storing` alone does not catch.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn a_snapshot_without_the_runtime_code_does_not_replace_one_with_it() {
-		const GENESIS: [u8; 32] = [11; 32];
-		const WITH_CODE: &str = r#"{"chain":{"a":1},"runtimeCode":"AAAA"}"#;
-		const WITHOUT_CODE: &str = r#"{"chain":{"a":1}}"#;
-
-		let client = std::sync::Arc::new(MemoryStorageClient::default());
-		client.stored.lock().expect("test client").insert(GENESIS, WITH_CODE.to_owned());
-
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(client.clone())
-			.build();
-
-		assert!(
-			!futures::executor::block_on(provider.store_blob(GENESIS, WITHOUT_CODE.to_owned()))
-				.expect("the client answers"),
-			"a blob that lost the runtime code is not worth storing"
-		);
-		assert_eq!(
-			client.stored.lock().expect("test client").get(&GENESIS),
-			Some(&WITH_CODE.to_owned()),
-			"the better blob is still there"
-		);
-	}
-
-	/// A blob carrying the runtime code always wins, and does so without
-	/// reading the stored one back.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn a_snapshot_with_the_runtime_code_is_stored_without_a_read() {
-		const GENESIS: [u8; 32] = [12; 32];
-		const WITH_CODE: &str = r#"{"chain":{"a":1},"runtimeCode":"AAAA"}"#;
-
-		let client = std::sync::Arc::new(MemoryStorageClient::default());
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(client.clone())
-			.build();
-
-		assert!(
-			futures::executor::block_on(provider.store_blob(GENESIS, WITH_CODE.to_owned()))
-				.expect("the client accepts it")
-		);
-		assert_eq!(
-			client.loads.load(std::sync::atomic::Ordering::Relaxed),
-			0,
-			"a blob with the runtime code needs no comparison"
-		);
-		assert_eq!(
-			client.stored.lock().expect("test client").get(&GENESIS),
-			Some(&WITH_CODE.to_owned())
-		);
-	}
-
-	/// A blob with nothing finalized is never stored, whatever is there.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn a_snapshot_with_no_chain_information_is_never_stored() {
-		const GENESIS: [u8; 32] = [13; 32];
-
-		let client = std::sync::Arc::new(MemoryStorageClient::default());
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(client.clone())
-			.build();
-
-		assert!(
-			!futures::executor::block_on(
-				provider.store_blob(GENESIS, r#"{"genesisHash":"0x01"}"#.to_owned())
-			)
-			.expect("the client answers")
-		);
-		assert!(client.stored.lock().expect("test client").is_empty());
-	}
-
-	/// Once this provider has written, it knows what it left behind and stops
-	/// reading the blob back on every snapshot.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn the_stored_quality_is_remembered_after_the_first_write() {
-		const GENESIS: [u8; 32] = [14; 32];
-		const WITHOUT_CODE: &str = r#"{"chain":{"a":1}}"#;
-
-		let client = std::sync::Arc::new(MemoryStorageClient::default());
-		let provider = EmbeddedChainProvider::builder()
-			.chain(GENESIS, ChainSource::light_client("{}").build())
-			.storage(client.clone())
-			.build();
-
-		for _ in 0..3 {
-			assert!(
-				futures::executor::block_on(provider.store_blob(GENESIS, WITHOUT_CODE.to_owned()))
-					.expect("the client answers")
-			);
-		}
-		assert_eq!(
-			client.loads.load(std::sync::atomic::Ordering::Relaxed),
-			1,
-			"only the first write has to look at what was already there"
-		);
-	}
-
-	/// A provider with nowhere to keep blobs says so, rather than answering the
-	/// same way a working client answers for a chain it has nothing stored for.
-	#[cfg(feature = "smoldot")]
-	#[test]
-	fn load_database_without_storage_is_an_error_naming_what_is_missing() {
-		let provider = EmbeddedChainProvider::builder()
-			.chain([5; 32], ChainSource::light_client("{}").build())
-			.build();
-		let error = futures::executor::block_on(provider.load_database([5; 32]))
-			.expect_err("a provider with no storage cannot load a database");
-		assert!(error.to_string().contains("without storage"), "{error}");
-	}
-
-	#[cfg(feature = "ws")]
-	#[test]
-	// On wasm32 without the smoldot backend the enum has a single variant,
-	// making the let-else irrefutable there.
-	#[allow(irrefutable_let_patterns)]
-	fn later_registration_wins() {
-		let first = url::Url::parse("ws://first.example").expect("static URL parses");
-		let second = url::Url::parse("ws://second.example").expect("static URL parses");
-		let provider = EmbeddedChainProvider::builder()
-			.chain([1; 32], ChainSource::rpc_node(first))
-			.chain([1; 32], ChainSource::rpc_node(second.clone()))
-			.build();
-		let ChainSource::RpcNode { url } = &provider.chains[&[1; 32]] else {
-			panic!("expected an RpcNode source");
-		};
-		assert_eq!(*url, second);
-	}
-}
+mod tests;

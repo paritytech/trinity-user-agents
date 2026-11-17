@@ -29,8 +29,8 @@ final class AppScannerHostBridge: ScannerHostBridge, @unchecked Sendable {
     }
 
     func scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan {
         await awaitDecision(cancelled: .dismissed) { [routerFacade, visibility, makeScanner] pending in

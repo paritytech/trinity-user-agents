@@ -28,7 +28,7 @@ use assembly::assemble;
 pub const DEFAULT_MORTALITY_PERIOD: u64 = 64;
 
 /// The runtime at the block a build is born at.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RuntimeAtBirth {
 	/// The block the extrinsic's era starts at.
 	pub birth: HashAndNumber,

@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * Entropy derivation per TrUAPI RFC-7. Layers, from outermost in:

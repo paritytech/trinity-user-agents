@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMes
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReplyPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import uniffi.truapi.ChatFeedUpdate
@@ -16,6 +15,7 @@ import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPreviewMessage
 import uniffi.truapi.ChatMessage as CoreChatMessage
+import uniffi.truapi.ProductId
 
 // Maps the messages that cross the wire to the chat models of the app, and back.
 
