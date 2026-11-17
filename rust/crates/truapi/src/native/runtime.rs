@@ -29,14 +29,13 @@ use super::{
 use crate::{
 	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
 	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
-	coinage::layer::CoinageUnavailable,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
-	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
+	runtime::{AnnouncedPairing, CoinageUnavailable, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
 
@@ -319,8 +318,7 @@ pub struct NativeAnnouncedPairing {
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
 	/// The coinage layer, once it has started, as the app's wallet screens
-	/// and chat use it; or why it does not run (coinage native interface,
-	/// section 2). A failed start is answered until the runtime is
+	/// and chat use it; or why it does not run (V1). A failed start is answered until the runtime is
 	/// constructed again.
 	pub async fn coinage(&self) -> Result<Arc<NativeCoinage>, CoinageUnavailable> {
 		let layer = self.runtime.coinage_layer().await?;
