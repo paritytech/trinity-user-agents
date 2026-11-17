@@ -163,7 +163,7 @@ pub enum Read {
 		/// The coin in the account; none when the account is empty.
 		now: Option<CoinOnChain>,
 		/// For an exported coin, the transaction that emptied its account.
-		emptied_by: Option<[u8; 32]>,
+		emptied_by: Option<Emptied>,
 	},
 	/// An entry's ring membership; none when its key is in no ring.
 	Entry(Option<EntryOnChain>),
@@ -172,6 +172,15 @@ pub enum Read {
 		/// It does.
 		consumed: bool,
 	},
+}
+
+/// The transaction that emptied an exported coin's account, as F1 found it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct Emptied {
+	/// Its hash.
+	pub by: [u8; 32],
+	/// Whether the block that included it was finalized at the read.
+	pub stable: bool,
 }
 
 /// A coin as the chain shows it.
@@ -206,6 +215,9 @@ pub struct EntryOnChain {
 	pub expires_at: Option<u64>,
 	/// When the entry's alias lock ends, in Unix seconds.
 	pub locked_until: Option<u64>,
+	/// How many aliases an unload has marked in the ring; none when the
+	/// runtime keeps no such count, or the read failed.
+	pub unloaded: Option<u32>,
 }
 
 impl EntryOnChain {
@@ -280,6 +292,7 @@ pub enum LedgerError {
 
 const POLICY: &str = "policy";
 const OWN_OPERATIONS: &str = "own_operations";
+const MINTED_AT: &str = "minted_at";
 const HAND_OVER: &str = "hand_over";
 
 /// One committed state of the ledger, read in one read transaction. Every
@@ -294,6 +307,7 @@ pub struct Snapshot {
 	policy: PrivacyPolicy,
 	installations: Vec<(InstallationId, ScanProgress)>,
 	current_installation: Option<InstallationId>,
+	minted_at: Option<u64>,
 	handed_over: Option<Vec<InstallationId>>,
 	operations: BTreeMap<OpKey, OperationRecord>,
 	registrations: Registrations,
@@ -363,6 +377,11 @@ impl Snapshot {
 	/// The installation the layer allocates into.
 	pub fn current_installation(&self) -> Option<InstallationId> {
 		self.current_installation
+	}
+
+	/// When the current installation was minted, in Unix seconds.
+	pub fn minted_at(&self) -> Option<u64> {
+		self.minted_at
 	}
 
 	/// Whether the current installation's registration has finally
@@ -451,6 +470,14 @@ fn load(read: &Connection) -> Result<Snapshot, DbError> {
 	)?;
 	let current_installation = installations.iter().find(|(_, _, current)| *current).map(|(id, _, _)| *id);
 	let policy = read_policy(read)?;
+	let minted_at: Option<Vec<u8>> = read
+		.query_row(
+			"SELECT value FROM coinage_setting WHERE name = :name",
+			named_params! { ":name": MINTED_AT },
+			|row| row.get(0),
+		)
+		.optional()?;
+	let minted_at = minted_at.map(|bytes| decode_bytes::<u64>(&bytes, 0)).transpose()?;
 	let handed_over = hand_over::<Handover>(read)?
 		.map(|handed| handed.installations.iter().map(|installation| installation.id).collect());
 	let operations = operation::all(read)?.into_iter().map(|record| (record.key.clone(), record)).collect();
@@ -463,6 +490,7 @@ fn load(read: &Connection) -> Result<Snapshot, DbError> {
 		policy,
 		installations: installations.into_iter().map(|(id, progress, _)| (id, progress)).collect(),
 		current_installation,
+		minted_at,
 		handed_over,
 		operations,
 		registrations,
@@ -719,9 +747,9 @@ pub fn current_installation(conn: &Connection) -> Result<Option<InstallationId>,
 	bytes.map(|bytes| decode_bytes(&bytes, 0)).transpose().map_err(DbError::from)
 }
 
-/// Records a fresh installation as current, stores the initial policy,
-/// restores the purse backup if one is given, and records the main purse,
-/// which exists as soon as the seed does (G3 invariants 2 and 3).
+/// Records a fresh installation as current, minted at `now`, stores the
+/// initial policy, restores the purse backup if one is given, and records the
+/// main purse, which exists as soon as the seed does (G3 invariants 2 and 3).
 pub fn mint_installation(
 	tx: &Transaction<'_>,
 	id: InstallationId,
@@ -741,6 +769,7 @@ pub fn mint_installation(
 		named_params! { ":id": id.encode(), ":progress": ScanProgress::default().encode() },
 	)?;
 	set_policy(tx, policy)?;
+	write_setting(tx, MINTED_AT, &now.encode())?;
 	let main = PurseRecord { id: PurseId::MAIN, name: String::new(), created: now, tag: Vec::new(), state: PurseState::Open };
 	for purse in purses.into_iter().chain([main]) {
 		if read_purse(tx, purse.id)?.is_none() {
@@ -946,6 +975,19 @@ fn write_purse(tx: &Transaction<'_>, purse: &PurseRecord) -> Result<(), DbError>
 		"INSERT INTO coinage_purse (id, record) VALUES (:id, :record)
 		 ON CONFLICT (id) DO UPDATE SET record = excluded.record",
 		named_params! { ":id": purse.id.0, ":record": purse.encode() },
+	)?;
+	Ok(())
+}
+
+/// Fixes the denomination of an import's output at the exponent F1 first
+/// observed the claimed coin at (B1): the one asset whose denomination is
+/// not known when it is allocated, and that nothing reads for more than a
+/// provisional value before its claim can be built.
+pub fn fix_import_output(tx: &Transaction<'_>, output: Asset, exponent: Exponent) -> Result<(), DbError> {
+	let record = AssetRecord { asset: output, exponent };
+	tx.execute(
+		"UPDATE coinage_asset SET record = :record WHERE asset = :asset",
+		named_params! { ":asset": record.asset.encode(), ":record": record.encode() },
 	)?;
 	Ok(())
 }
