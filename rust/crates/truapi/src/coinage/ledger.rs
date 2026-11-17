@@ -277,6 +277,7 @@ pub enum LedgerError {
 
 const POLICY: &str = "policy";
 const OWN_OPERATIONS: &str = "own_operations";
+const MINTED_AT: &str = "minted_at";
 
 /// One committed state of the ledger, read in one read transaction. Every
 /// read here comes from that state, so no two reads fall on both sides of a
@@ -290,6 +291,7 @@ pub struct Snapshot {
 	policy: PrivacyPolicy,
 	installations: Vec<(InstallationId, ScanProgress)>,
 	current_installation: Option<InstallationId>,
+	minted_at: Option<u64>,
 	operations: BTreeMap<OpKey, OperationRecord>,
 	registrations: Registrations,
 }
@@ -360,6 +362,11 @@ impl Snapshot {
 		self.current_installation
 	}
 
+	/// When the current installation was minted, in Unix seconds.
+	pub fn minted_at(&self) -> Option<u64> {
+		self.minted_at
+	}
+
 	/// Every installation known, in the order learned, with its scan
 	/// progress.
 	pub fn installations(&self) -> &[(InstallationId, ScanProgress)] {
@@ -422,6 +429,14 @@ fn load(read: &Connection) -> Result<Snapshot, DbError> {
 	)?;
 	let current_installation = installations.iter().find(|(_, _, current)| *current).map(|(id, _, _)| *id);
 	let policy = read_policy(read)?;
+	let minted_at: Option<Vec<u8>> = read
+		.query_row(
+			"SELECT value FROM coinage_setting WHERE name = :name",
+			named_params! { ":name": MINTED_AT },
+			|row| row.get(0),
+		)
+		.optional()?;
+	let minted_at = minted_at.map(|bytes| decode_bytes::<u64>(&bytes, 0)).transpose()?;
 	let operations = operation::all(read)?.into_iter().map(|record| (record.key.clone(), record)).collect();
 	let registrations = registration::load(read)?;
 	Ok(Snapshot {
@@ -432,6 +447,7 @@ fn load(read: &Connection) -> Result<Snapshot, DbError> {
 		policy,
 		installations: installations.into_iter().map(|(id, progress, _)| (id, progress)).collect(),
 		current_installation,
+		minted_at,
 		operations,
 		registrations,
 	})
@@ -687,9 +703,9 @@ pub fn current_installation(conn: &Connection) -> Result<Option<InstallationId>,
 	bytes.map(|bytes| decode_bytes(&bytes, 0)).transpose().map_err(DbError::from)
 }
 
-/// Records a fresh installation as current, stores the initial policy,
-/// restores the purse backup if one is given, and records the main purse,
-/// which exists as soon as the seed does (G3 invariants 2 and 3).
+/// Records a fresh installation as current, minted at `now`, stores the
+/// initial policy, restores the purse backup if one is given, and records the
+/// main purse, which exists as soon as the seed does (G3 invariants 2 and 3).
 pub fn mint_installation(
 	tx: &Transaction<'_>,
 	id: InstallationId,
@@ -709,6 +725,7 @@ pub fn mint_installation(
 		named_params! { ":id": id.encode(), ":progress": ScanProgress::default().encode() },
 	)?;
 	set_policy(tx, policy)?;
+	write_setting(tx, MINTED_AT, &now.encode())?;
 	let main = PurseRecord { id: PurseId::MAIN, name: String::new(), created: now, tag: Vec::new(), state: PurseState::Open };
 	for purse in purses.into_iter().chain([main]) {
 		if read_purse(tx, purse.id)?.is_none() {
