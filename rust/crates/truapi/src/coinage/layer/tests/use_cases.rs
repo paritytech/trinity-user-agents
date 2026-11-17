@@ -179,3 +179,17 @@ async fn a_claim_of_a_coin_not_yet_on_chain_mints_at_the_exponent_first_observed
 	assert_eq!(claimed_exponent(&layer, &op(1).key, &peer_coin(1)).await, 3);
 }
 
+/// A runtime upgrade is checked when F1 first sees the new version, not at
+/// the first refused transaction (G3 invariant 1).
+#[tokio::test]
+async fn a_block_of_a_new_runtime_version_has_the_runtime_checked_again() {
+	let (layer, running, runtime) = started_layer(crate::store::open_memory_core_db()).await;
+	runtime.failing.store(true, core::sync::atomic::Ordering::SeqCst);
+	layer.on_block(BLOCK).await.unwrap();
+	assert!(!running.state().unwrap().check_failed, "the version did not change, so nothing was checked");
+
+	runtime.version.store(2, core::sync::atomic::Ordering::SeqCst);
+	layer.on_block(BLOCK).await.unwrap();
+	assert!(running.state().unwrap().check_failed, "the new version failed its check");
+}
+

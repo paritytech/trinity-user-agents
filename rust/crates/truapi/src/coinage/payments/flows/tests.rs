@@ -162,3 +162,5 @@ async fn the_cheque_status_follows_its_coins() {
 	let mut progress = setup.payments.cheque_status(hash).await.unwrap();
 	assert_eq!(progress.next().await, Some(ChequeProgress { claimable: 8, ..Default::default() }));
 }
+
+mod use_cases;

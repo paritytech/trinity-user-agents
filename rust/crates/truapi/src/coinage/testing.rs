@@ -337,6 +337,8 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 pub struct TestRuntime {
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
+	/// The spec version, which stays readable while the rest fails.
+	pub version: core::sync::atomic::AtomicU32,
 }
 
 #[async_trait::async_trait]
@@ -345,7 +347,12 @@ impl RuntimeSource for TestRuntime {
 		if self.failing.load(core::sync::atomic::Ordering::SeqCst) {
 			return None;
 		}
-		Some(RuntimeFacts { metadata: Arc::new(people_metadata()), instance: Some(instance_record()), maximum_age: Some(16) })
+		let version = self.version.load(core::sync::atomic::Ordering::SeqCst);
+		Some(RuntimeFacts { metadata: Arc::new(people_metadata()), instance: Some(instance_record()), maximum_age: Some(16), version })
+	}
+
+	async fn version(&self, _: HashAndNumber) -> Option<u32> {
+		Some(self.version.load(core::sync::atomic::Ordering::SeqCst))
 	}
 }
 

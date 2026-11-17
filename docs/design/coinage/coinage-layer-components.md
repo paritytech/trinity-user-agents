@@ -1195,7 +1195,7 @@ Both thresholds come from A4. When a coin is old enough to recycle is a privacy 
 2. **Scheduling is a host obligation.** The layer is given the current time (§1), but nothing wakes it up: it can say what is due now, but it cannot arrange to be called. So it provides an entry point that runs whatever is due at a given instant and reports how long the host may wait before calling again. If a host never calls the entry point, the wallet loses value once a ring expires.
 
    Three mechanisms invoke the layer, and each covers a case the others do not:
-   - **While the layer is running and subscribed** (F1 invariant 6), each new block counts as a call: F1 publishes `Event::NewBlock`, and the host's entry point is called on it, so a host in the foreground does not need to poll.
+   - **While the layer is running and subscribed** (F1 invariant 6), each new block counts as a call: the core follows the chain's finalized heads, F1 observes each one and publishes `Event::NewBlock`, and the core calls the entry point (layer 2's `run_due`) on it, so a host in the foreground does not need to poll.
    - **While any transaction is open**, the durability layer keeps running in the background where the platform allows it (§1), so a registered payment or sweep completes even with the application closed.
    - **The host's periodic call** covers the remaining case: an idle wallet with no transaction in flight. That is exactly when a ring can expire without anyone noticing, so neither of the other two mechanisms can replace the periodic call.
 

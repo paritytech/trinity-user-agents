@@ -471,6 +471,10 @@ impl RuntimeSource for PeopleRuntime {
 			.flatten()
 			.next()
 			.and_then(|record| Some(InstanceRecord { asset_unit: number(&record, "asset_unit")? }));
-		Some(RuntimeFacts { metadata, instance, maximum_age: None })
+		Some(RuntimeFacts { metadata, instance, maximum_age: None, version: client.spec_version() })
+	}
+
+	async fn version(&self, at: HashAndNumber) -> Option<u32> {
+		Some(self.storage.client_at(self.genesis, at).await.ok()?.spec_version())
 	}
 }
