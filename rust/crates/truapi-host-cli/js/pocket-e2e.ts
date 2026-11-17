@@ -270,11 +270,10 @@ async function materialsCase(
         item.context.value.cardId === cardId,
       "the fallback report for the card",
     );
+    // The removed card's render stream was opened before its removal, so a
+    // face for it shows whether removing the card closed the stream.
     registration = client.renderer.onRender((request, send) => {
-      if (
-        request.context.tag === "PocketCard" &&
-        request.context.value.cardId === cardId
-      ) {
+      if (request.context.tag === "PocketCard") {
         send(OVER_THE_LAYER_LIMIT);
       }
     });
@@ -287,7 +286,13 @@ async function materialsCase(
         line.nodes?.[0]?.reason === "LimitExceeded",
       "the card's materials",
     );
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const removedCardResolved = transcript(pocketLogPath).some(
+      (line) =>
+        line.kind === "materials" && line.cardId === SEEDED_CARDS.removable,
+    );
     const passed =
+      !removedCardResolved &&
       supported.isOk() &&
       supported.value.supported &&
       reported.node === 0 &&
@@ -297,8 +302,8 @@ async function materialsCase(
       "materials",
       passed ? "pass" : "fail",
       passed
-        ? "the host resolved the card's materials and reported its fallback"
-        : `supported=${JSON.stringify(supported)} reported=${JSON.stringify(reported)} resolved=${JSON.stringify(resolved)}`,
+        ? "the host resolved the card's materials and reported its fallback, and none for the removed card"
+        : `removedCardResolved=${removedCardResolved} supported=${JSON.stringify(supported)} reported=${JSON.stringify(reported)} resolved=${JSON.stringify(resolved)}`,
       startedAt,
     );
   } catch (error) {

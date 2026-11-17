@@ -34,7 +34,7 @@ impl ProductRuntimeFactory for PocketFaces {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
 		let runtime = self.inner.product_runtime(product.clone(), sink);
 		for card_id in self.pocket.cards(&product) {
-			tokio::spawn(follow(runtime.control(), card_id, self.pocket.clone()));
+			tokio::spawn(follow(runtime.control(), product.clone(), card_id, self.pocket.clone()));
 		}
 		runtime
 	}
@@ -44,9 +44,15 @@ impl ProductRuntimeFactory for PocketFaces {
 	}
 }
 
-/// Resolves the materials of each face of `card_id` until its render stream ends. A new face's
-/// resolution starts before the last one is dropped, so the materials they share keep their fetch.
-async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<CliPocketHost>) {
+/// Resolves the materials of each face of `card_id` until its render stream ends or the card
+/// leaves the Pocket. A new face's resolution starts before the last one is dropped, so the
+/// materials they share keep their fetch.
+async fn follow(
+	control: ProductRuntimeControl,
+	product: ProductContext,
+	card_id: String,
+	pocket: Arc<CliPocketHost>,
+) {
 	let context = RenderContext::PocketCard { card_id: card_id.clone() };
 	let request = ProductRendererRenderRequest { context: context.clone(), payload: Vec::new() };
 	let mut faces = match control.render(request) {
@@ -56,12 +62,20 @@ async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<Cli
 			return;
 		},
 	};
+	let removed = pocket.removed(&product, &card_id);
+	tokio::pin!(removed);
 	let mut resolution: Option<MaterialsResolution> = None;
 	loop {
 		tokio::select! {
+			() = &mut removed => return,
 			face = faces.next() => {
-				let Some(Ok(face)) = face else {
-					return;
+				let face = match face {
+					Some(Ok(face)) => face,
+					Some(Err(error)) => {
+						tracing::warn!(?error, card_id, "the card's render stream failed");
+						return;
+					},
+					None => return,
 				};
 				match control.resolve_materials(&face, &context, ShaderLanguage::GlslEs, false) {
 					Ok(resolving) => resolution = Some(resolving),

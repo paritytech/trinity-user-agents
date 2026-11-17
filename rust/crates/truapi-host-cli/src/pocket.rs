@@ -89,6 +89,17 @@ impl CliPocketHost {
 		self.entry(&mut products, product).cards.keys().cloned().collect()
 	}
 
+	/// Completes once `product` no longer holds `card_id`.
+	async fn removed(&self, product: &ProductContext, card_id: &str) {
+		let mut lists = self.subscribe_pocket_cards(product);
+		while let Some(Ok(list)) = lists.next().await {
+			if !list.cards.iter().any(|card| card.card_id == card_id) {
+				return;
+			}
+		}
+		std::future::pending().await
+	}
+
 	/// This product's collection, seeded on first use so every product starts
 	/// from the same spec and diverges from there.
 	fn entry<'a>(
