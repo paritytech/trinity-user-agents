@@ -57,7 +57,6 @@ final class PocketCardScreenViewController: UIViewController {
         super.viewDidLoad()
 
         view.backgroundColor = .bgSurfaceMain
-        title = card.title
 
         setupScrollView()
         setupFace()
@@ -136,6 +135,14 @@ extension PocketCardScreenViewController: TabBarRootStandIn {}
 extension PocketCardScreenViewController: PocketFlightScreen {
     var statusStripTitle: String {
         card.title
+    }
+}
+
+// MARK: - NavigationBarHiding
+
+extension PocketCardScreenViewController: NavigationBarHiding {
+    var hidesNavigationBar: Bool {
+        true
     }
 }
 
