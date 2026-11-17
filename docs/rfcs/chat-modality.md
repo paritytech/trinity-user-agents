@@ -465,6 +465,8 @@ struct ChatMedia {
     spoiler: bool,
     // The receiver opens it once, then the Host drops it. See `Opened`.
     view_once: bool,
+    // The status of this item while it differs from the message.
+    status: Option<MessageStatus>,
 }
 
 enum ChatMediaKind {
@@ -540,8 +542,8 @@ struct AggregatedReaction {
 // mean every recipient. `Message.receipts` gives the counts.
 enum MessageStatus {
     // Message is visible to sender but not yet ready for delivery.
-    // e.g. media is still uploading.
-    Preparing,
+    // e.g. media is still uploading, with its progress in percent.
+    Preparing { progress: Option<u8> },
     ReadyForDelivery,
     Delivered,
     Read,
