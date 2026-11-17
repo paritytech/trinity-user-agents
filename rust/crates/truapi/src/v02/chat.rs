@@ -8,8 +8,8 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Request to create a chat room.
 ///
-/// v0.2 lets the host make the room id. The product names the room with its
-/// own source, and the host derives the id from the product and that source.
+/// The host makes the room id. The product names the room with its own
+/// source, and the host derives the id from the product and that source.
 /// It also declares the parts of the room that the product serves.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatCreateRoomRequest {
@@ -38,7 +38,7 @@ pub enum ChatRoomRegistrationStatus {
 
 /// Result of a room registration.
 ///
-/// v0.2 adds `room_id`. Every later call names the room with this id.
+/// Every later call names the room with `room_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatCreateRoomResponse {
 	/// `New` or `Exists`.
