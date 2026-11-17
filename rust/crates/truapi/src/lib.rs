@@ -50,40 +50,20 @@ pub mod v02;
 pub mod versioned;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
-/// the FFI conversion below applies to `[u8; 32]` fields in every protocol
-/// version.
+/// the FFI conversion in `uniffi_types` applies to `[u8; 32]` fields in every
+/// protocol version.
 pub type Bytes32 = [u8; 32];
 
 #[cfg(not(target_arch = "wasm32"))]
 uniffi::setup_scaffolding!();
 
 #[cfg(not(target_arch = "wasm32"))]
-uniffi::custom_type!(Bytes32, Vec<u8>, {
-	remote,
-	lower: |bytes| bytes.to_vec(),
-	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
-});
+mod uniffi_types;
 
 /// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
 /// FFI surfaces. Named only because `uniffi::custom_type!` takes an ident, not
 /// an array type.
 pub type Bytes64 = [u8; 64];
-
-#[cfg(not(target_arch = "wasm32"))]
-uniffi::custom_type!(Bytes64, Vec<u8>, {
-	remote,
-	lower: |bytes| bytes.to_vec(),
-	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
-});
-
-// Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
-// decimal strings.
-#[cfg(not(target_arch = "wasm32"))]
-uniffi::custom_type!(u128, String, {
-	remote,
-	lower: |amount| amount.to_string(),
-	try_lift: |amount| Ok(amount.parse()?),
-});
 
 /// Latest-version protocol payload types, unwrapped from their versioned
 /// envelopes. Runtime code should use these instead of per-version modules.
@@ -96,32 +76,33 @@ pub mod latest {
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
 		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-		EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
-		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
-		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
-		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
-		FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
-		FundingRail, FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
+		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
+		FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
+		FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit,
+		FundingDetail, FundingDirection, FundingFact, FundingFailure, FundingFrameOutcome,
+		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingPayout,
+		FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail,
+		FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
 		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
 		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
 		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
-		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
-		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
-		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RendererNode,
-		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
-		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
-		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource, MaterialFailure,
+		MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque,
+		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem,
+		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
+		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+		RemoteStatementStoreSubscribeRequest, RendererNode, ResourceAllocationError, RingLocation,
+		RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+		ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StatementTopic,
+		StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
+		ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+		VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{ChatRoomFooter, RenderContext};
@@ -233,6 +214,9 @@ pub mod latest {
 	/// Action triggered inside a product-rendered body, delivered to the worker.
 	pub type HostRendererActionSubscribeItem =
 		LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
+	/// A `Materials` node that fell back, delivered to the worker.
+	pub type HostRendererFailureSubscribeItem =
+		LatestOf<versioned::renderer::HostRendererFailureSubscribeItem>;
 	/// Host-to-product render request for one body.
 	pub type ProductRendererRenderRequest =
 		LatestOf<versioned::renderer::ProductRendererRenderRequest>;
@@ -489,13 +473,13 @@ pub mod latest {
 	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
 	/// Pocket card removal failure.
 	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
-	/// Request to show or hide the face above the calling Widget.
+	/// Request to cover or uncover the face under the calling Widget.
 	pub type HostExpandedCardSetFaceShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
-	/// Face visibility change failure.
+	/// Face cover change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
-	/// Request to turn the card above the calling Widget to one side.
+	/// Request to turn the card under the calling Widget to one side.
 	pub type HostExpandedCardSetBackShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
 	/// Card turn failure.
@@ -919,9 +903,18 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		mod pocket_cards;
 
+		#[cfg(not(target_arch = "wasm32"))]
+		mod bulletin_lookup;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		mod materials;
+
 		pub use spawner::Spawner;
 
 		pub use truapi_core::TrUApiCore;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
 			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
@@ -942,9 +935,15 @@ cfg_select! {
 		pub use host_rpc_client::HostRpcClient;
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
+		pub use materials::{
+			MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
+			ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
+			UniformRole,
+		};
+		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
-			NativePublicProfileObserver, NativeRendererObserver, NativeSubscription,
-			WsBridgeEndpoint, WsBridgeStartError,
+			NativeMaterialsObserver, NativeMaterialsResolution, NativePublicProfileObserver,
+			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native_debug::{DebugSinkError, WsDebugSink};

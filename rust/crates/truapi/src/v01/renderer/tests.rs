@@ -50,8 +50,22 @@ fn renderer_node() -> RendererNode {
 				modifiers: Vec::new(),
 				props: ImageProps { source: ImageSource::Inline(vec![0x89, 0x50]), fit: None },
 			},
-			RendererNode::Effect {
-				props: EffectProps { effect: Effect::Rainbow },
+			RendererNode::Materials {
+				props: MaterialsProps {
+					layers: vec![MaterialInstance {
+						material: [7; 32],
+						args: vec![
+							Parameter::Float(1.5f32.to_bits()),
+							Parameter::Vec2([1, 2]),
+							Parameter::Vec3([1, 2, 3]),
+							Parameter::Vec4([1, 2, 3, 4]),
+							Parameter::SamplerFloat(ImageRef::Noise),
+							Parameter::SamplerVec4(ImageRef::Source(ImageSource::Archive(
+								"mask.png".to_string(),
+							))),
+						],
+					}],
+				},
 				children: vec![RendererNode::Nil],
 			},
 		],
@@ -74,13 +88,19 @@ fn variants_encode_only_the_fields_they_carry() {
 	let spacer = RendererNode::Spacer { modifiers: Vec::new() };
 	assert_eq!(spacer.encode(), vec![5, 0]);
 
-	let effect = RendererNode::Effect {
-		props: EffectProps { effect: Effect::Rainbow },
+	let materials = RendererNode::Materials {
+		props: MaterialsProps { layers: Vec::new() },
 		children: Vec::new(),
 	};
-	assert_eq!(effect.encode(), vec![10, 0, 0]);
+	assert_eq!(materials.encode(), vec![11, 0, 0]);
 
 	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
+}
+
+/// Index 10 stays unused, so an older tree is refused rather than misread.
+#[test]
+fn index_10_is_never_read() {
+	assert!(RendererNode::decode(&mut [10u8, 0, 0].as_slice()).is_err());
 }
 
 #[test]

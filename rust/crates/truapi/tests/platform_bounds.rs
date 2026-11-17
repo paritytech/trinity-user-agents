@@ -95,7 +95,7 @@ fn pairing_config_validation_cases() {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], Some([0xcc; 32])),
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]),
 			case.pairing_deeplink_scheme.to_string(),
 		)
 		.map(|_| ());

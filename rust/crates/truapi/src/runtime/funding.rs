@@ -86,7 +86,7 @@ use crate::{
 		ProductContext, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
-	time::{Backoff, retry},
+	time::{Backoff, retry, within},
 	unix_time::current_unix_millis,
 	wake::WakeSignal,
 };
@@ -1676,7 +1676,7 @@ impl FundingRegistry {
 	/// whether the worker answered within [`CALL_TIMEOUT`] and the answer was
 	/// stored.
 	async fn put(&self, link: &dyn FundingProviderLink, call: ProviderCall) -> bool {
-		let (intent, answered) = match call {
+		let answered = match call {
 			ProviderCall::Assign(session) => {
 				let intent = session.intent.clone();
 				let taken = within(CALL_TIMEOUT, link.assign(*session)).await.unwrap_or(false);
@@ -1693,7 +1693,7 @@ impl FundingRegistry {
 					return false;
 				};
 				let target = intent.clone();
-				let answered = self
+				self
 					.commit(current_unix_millis(), move |draft| {
 						let now_ms = current_unix_millis();
 						let changed = draft
@@ -1702,8 +1702,7 @@ impl FundingRegistry {
 							.is_some_and(|session| session.answer_cancel(answer, now_ms));
 						((), if changed { vec![target] } else { Vec::new() })
 					})
-					.await;
-				(intent, answered)
+					.await
 			},
 			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
 				let heard =
@@ -1715,21 +1714,20 @@ impl FundingRegistry {
 					return false;
 				}
 				let target = intent.clone();
-				let answered = self
+				self
 					.commit(current_unix_millis(), move |draft| {
 						if let Some(session) = draft.sessions.get_mut(&target) {
 							session.cancel_settled(&decision);
 						}
 						((), Vec::new())
 					})
-					.await;
-				(intent, answered)
+					.await
 			},
 		};
 		match answered {
 			Ok(()) => true,
 			Err(error) => {
-				tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
+				tracing::warn!(%error, "storing a provider's cancel answer failed");
 				false
 			},
 		}
@@ -2053,14 +2051,6 @@ async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedRe
 		if !woke {
 			return;
 		}
-	}
-}
-
-/// `future`'s output, or `None` once `limit` passed first.
-pub(crate) async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
-	match futures::future::select(core::pin::pin!(future), futures_timer::Delay::new(limit)).await {
-		Either::Left((output, _)) => Some(output),
-		Either::Right(_) => None,
 	}
 }
 

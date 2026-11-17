@@ -26,7 +26,12 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
-                         from Bulletin by CID and checks them
+                         from Bulletin by CID and checks them; its `materials` module keeps
+                         the materials renderer trees name in the same database, read from
+                         Bulletin by its `bulletin_lookup` module, checked against Shaderlab's
+                         material format and the tree limits, built into the shaders apps
+                         compile (GLSL ES, and Metal through naga), and resolved per tree for
+                         the apps to draw
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
@@ -113,6 +118,9 @@ scripts/refresh-host-import.sh
 scripts/host-papp-fixtures.ts
                            print host-papp's encoding of the SSO messages the core
                            pins, from a triangle-js-sdks checkout
+scripts/shaderlab-shader-fixtures.ts
+                           print the shaders Shaderlab's compile step writes for the
+                           core's material shader tests, from a shaderlab-spa checkout
 scripts/truapi-host-installer.sh
                            one-liner installer for the prebuilt truapi-host CLI
 scripts/build-cli-runner.ts
@@ -328,10 +336,11 @@ Two ways to lose work that involve no pushing at all:
 - Follow the Conventions section of `docs/design/host-telemetry.md` for anything
   that sends telemetry from a host. Read it before adding an event, a log line
   or a metric, and before touching a sender. It covers which Sentry product a
-  signal belongs in, which field a query can select on, why every captured event
-  sets a fingerprint, and what the core's marker table decides. Its `Adding a
-  signal` subsection shows what a host event looks like on each host, how a
-  core log line is registered and raised, and how to check one in Sentry.
+  signal belongs in and how its level decides that, which field a captured
+  event is queried on, why every captured event sets a fingerprint, and what
+  the core's marker table decides. Its `Adding a signal` subsection shows what
+  a host event looks like on each host, how a core log line is registered and
+  raised, and how to check one in Sentry.
 
 ## Scope of a change
 
