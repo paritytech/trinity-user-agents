@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -327,18 +328,7 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ExecutableKind = "App" | "Widget" | "Worker";
-
-/**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export type ExpandedCardFaceOutcome =
   | "Applied"
@@ -1178,20 +1168,7 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
-);
-
-/**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
@@ -1941,7 +1918,7 @@ export interface CoreStorage {
 }
 
 /**
- * Host control of the card face drawn above an opened card's Widget.
+ * Host control of the card face drawn under an opened card's Widget.
  *
  * Carried per connection on `ConnectionAdapters`, because the host owns one
  * drawer per product execution. A connection without one tells products
@@ -1949,7 +1926,7 @@ export interface CoreStorage {
  */
 export interface ExpandedCardHost {
   /**
-   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   * Uncover (`true`) or cover (`false`) the face under the calling Widget.
    */
   setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
 }

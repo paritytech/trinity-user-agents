@@ -136,7 +136,7 @@ private extension AcceptOutgoingRequestDeviceTests {
             let request = CDChatRequest(context: context)
             request.identifier = requestId
             request.contactId = peer.toHex()
-            request.status = Chat.RequestStatus.outgoing.rawValue
+            request.status = Chat.RequestStatus.outgoing(.pending).rawValue
             request.message = message
             request.contact = contact
         }

@@ -4,6 +4,7 @@ import SubstrateSdk
 
 enum IdentityProofFactory {
     private static let context = "mds-chat-request"
+    private static let cancelContext = "mds-chat-request-cancel"
 
     static func makeProof(
         identityAccountId: Data,
@@ -14,12 +15,7 @@ enum IdentityProofFactory {
             identityAccountId: identityAccountId,
             deviceAccountId: deviceAccountId
         )
-        let proof = try payload.blake2b32WithKey(sharedSecret)
-
-        return Chat.IdentityProof(
-            identityAccountId: identityAccountId,
-            proof: proof
-        )
+        return try keyedProof(identityAccountId: identityAccountId, payload: payload, sharedSecret: sharedSecret)
     }
 
     static func verifyProof(
@@ -28,11 +24,25 @@ enum IdentityProofFactory {
         sharedSecret: Data
     ) throws {
         let payload = try encodePayload(identityAccountId: proof.identityAccountId, deviceAccountId: deviceAccountId)
-        let expectedProof = try payload.blake2b32WithKey(sharedSecret)
+        try verifyKeyedProof(proof, payload: payload, sharedSecret: sharedSecret)
+    }
 
-        guard expectedProof == proof.proof else {
-            throw IdentityProofError.invalidProof
-        }
+    static func makeCancelProof(
+        identityAccountId: Data,
+        requestId: String,
+        sharedSecret: Data
+    ) throws -> Chat.IdentityProof {
+        let payload = try encodeCancelPayload(identityAccountId: identityAccountId, requestId: requestId)
+        return try keyedProof(identityAccountId: identityAccountId, payload: payload, sharedSecret: sharedSecret)
+    }
+
+    static func verifyCancelProof(
+        _ proof: Chat.IdentityProof,
+        requestId: String,
+        sharedSecret: Data
+    ) throws {
+        let payload = try encodeCancelPayload(identityAccountId: proof.identityAccountId, requestId: requestId)
+        try verifyKeyedProof(proof, payload: payload, sharedSecret: sharedSecret)
     }
 }
 
@@ -46,6 +56,24 @@ private extension IdentityProofFactory {
         encoder.appendRaw(data: deviceAccountId)
         try context.encode(scaleEncoder: encoder)
         return encoder.encode()
+    }
+
+    static func encodeCancelPayload(identityAccountId: Data, requestId: String) throws -> Data {
+        let encoder = ScaleEncoder()
+        encoder.appendRaw(data: identityAccountId)
+        try requestId.encode(scaleEncoder: encoder)
+        try cancelContext.encode(scaleEncoder: encoder)
+        return encoder.encode()
+    }
+
+    static func keyedProof(identityAccountId: Data, payload: Data, sharedSecret: Data) throws -> Chat.IdentityProof {
+        try Chat.IdentityProof(identityAccountId: identityAccountId, proof: payload.blake2b32WithKey(sharedSecret))
+    }
+
+    static func verifyKeyedProof(_ proof: Chat.IdentityProof, payload: Data, sharedSecret: Data) throws {
+        guard try payload.blake2b32WithKey(sharedSecret) == proof.proof else {
+            throw IdentityProofError.invalidProof
+        }
     }
 }
 
