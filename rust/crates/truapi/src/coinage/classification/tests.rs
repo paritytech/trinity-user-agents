@@ -218,7 +218,8 @@ fn an_exported_coin_reports_what_became_of_it() {
 
 	let claimed = wallet.coin(2, 0);
 	block_on(wallet.db.write(move |tx| mark_disclosed(tx, &[claimed]))).unwrap().unwrap();
-	wallet.observe(claimed, Read::Coin { now: None, emptied_by: Some([7; 32]) }, NOW);
+	let emptied = Some(crate::coinage::ledger::Emptied { by: [7; 32], stable: true });
+	wallet.observe(claimed, Read::Coin { now: None, emptied_by: emptied }, NOW);
 	assert_eq!(wallet.state(&claimed).export, Some(ExportStatus::Claimed { stable: true, by: [7; 32] }));
 }
 
