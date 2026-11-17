@@ -286,6 +286,14 @@ enum MessageContent {
     // A call. The origin is the caller and the time is the time of the
     // offer. Only the `CallSignal`s of its participants change it.
     Call(Call),
+
+    // A long post. Its Markdown also has headings and tables.
+    Article { title: String, blocks: Vec<ArticleBlock> },
+}
+
+enum ArticleBlock {
+    Text(String),
+    Media(ChatMedia),
 }
 
 struct Call {
@@ -964,6 +972,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 21. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
 22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
+24. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
 
 #### Non-Functional Requirements
 
@@ -990,6 +999,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 | One `Emoji::Unicode` | 64 bytes |
 | Distinct reactions on one message | 64 |
 | The text of a message | 16 KiB |
+| The text of an `Article` | 64 KiB |
 
 ## Drawbacks
 
