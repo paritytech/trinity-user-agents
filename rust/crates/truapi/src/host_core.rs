@@ -1121,7 +1121,6 @@ impl SigningHostRuntime {
 	/// Set-once, so durable state cannot move to another file under a running
 	/// consumer. Returns whether this call installed it. Nothing runs over it
 	/// until [`Self::start_core_services`].
-	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
 		self.services.install_core_db(db).is_some()

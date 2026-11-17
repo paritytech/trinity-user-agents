@@ -442,7 +442,6 @@ impl RuntimeServices {
 	///
 	/// Set-once, so durable state cannot move to another file under a running
 	/// consumer. Returns `None` if a database was already installed.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn install_core_db(&self, db: Db) -> Option<()> {
 		self.core_db.set(db.clone()).ok()?;
 		self.public_profiles.install_db(db.clone())?;

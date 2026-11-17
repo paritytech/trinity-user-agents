@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::{CachedRecord, ProfileRecord, PublicProfileError, PublicProfilesService};
-use crate::Spawner;
+use crate::{Spawner, store::Db};
 
 /// Browser cache operations retain no state.
 pub struct Cache;
@@ -21,6 +21,11 @@ impl Cache {
 }
 
 impl PublicProfilesService {
+	/// Browser profile records are not persisted, so the database is unused.
+	pub fn install_db(&self, _db: Db) -> Option<()> {
+		Some(())
+	}
+
 	/// Browser metadata is always resolved through dotNS.
 	pub async fn stored_record(
 		self: &Arc<Self>,
