@@ -1,5 +1,6 @@
 import DesignSystem
 import SwiftUI
+import UIKit
 
 public struct DSChatListBadge: View, Equatable {
     public enum Kind: Hashable {
@@ -61,6 +62,45 @@ public struct DSChatListBadge: View, Equatable {
     }
 }
 
+/// An image that a chat list row shows in place of its unread count. Two images with the same key are equal.
+public struct DSChatListBadgeImage: Hashable {
+    public let key: String
+    public let viewModel: any ImageViewModelProtocol
+
+    public init(key: String, viewModel: any ImageViewModelProtocol) {
+        self.key = key
+        self.viewModel = viewModel
+    }
+
+    public static func == (lhs: DSChatListBadgeImage, rhs: DSChatListBadgeImage) -> Bool {
+        lhs.key == rhs.key
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(key)
+    }
+}
+
+/// A small round image in the badge place of a chat list row.
+public struct DSChatListImageBadge: View, Equatable {
+    private let image: DSChatListBadgeImage
+
+    public init(image: DSChatListBadgeImage) {
+        self.image = image
+    }
+
+    public var body: some View {
+        let side = DSChatListBadgeMetrics.badgeMinSize
+
+        AsyncImageView(
+            viewModel: AnyImageViewModel(KeyedBadgeImageViewModel(identifier: image.key, base: image.viewModel)),
+            settings: ImageViewModelSettings(targetSize: CGSize(width: side, height: side))
+        )
+        .frame(width: side, height: side)
+        .clipShape(Circle())
+    }
+}
+
 private enum DSChatListBadgeMetrics {
     static let badgeMinSize: CGFloat = 20
     static let reactionIconSize: CGFloat = 16
@@ -87,3 +127,24 @@ private enum DSChatListBadgeMetrics {
         .background(Color.bgSurfaceMain)
     }
 #endif
+
+/// Gives a badge image the identity of its key, which is what `AsyncImageView` compares.
+private struct KeyedBadgeImageViewModel: IdentifiableImageViewModelProtocol {
+    let identifier: String
+    let base: any ImageViewModelProtocol
+
+    @MainActor
+    func loadImage(
+        on imageView: UIImageView,
+        settings: ImageViewModelSettings,
+        animated: Bool,
+        completion: ((Bool) -> Void)?
+    ) {
+        base.loadImage(on: imageView, settings: settings, animated: animated, completion: completion)
+    }
+
+    @MainActor
+    func cancel(on imageView: UIImageView) {
+        base.cancel(on: imageView)
+    }
+}

@@ -11,6 +11,10 @@ public struct DSChatListItem<Avatar: View>: View {
         public let isMuted: Bool
         public let hasReaction: Bool
         public let unreadCount: Int
+        /// An image in place of the unread count.
+        public let badgeImage: DSChatListBadgeImage?
+        /// The message line tells of an activity that continues, so the row animates it.
+        public let isMessageOngoing: Bool
 
         public init(
             sender: String,
@@ -20,7 +24,9 @@ public struct DSChatListItem<Avatar: View>: View {
             messageContext: DSChatMessage.Context = .single,
             isMuted: Bool = false,
             hasReaction: Bool = false,
-            unreadCount: Int = 0
+            unreadCount: Int = 0,
+            badgeImage: DSChatListBadgeImage? = nil,
+            isMessageOngoing: Bool = false
         ) {
             self.sender = sender
             self.timestamp = timestamp
@@ -30,6 +36,8 @@ public struct DSChatListItem<Avatar: View>: View {
             self.isMuted = isMuted
             self.hasReaction = hasReaction
             self.unreadCount = unreadCount
+            self.badgeImage = badgeImage
+            self.isMessageOngoing = isMessageOngoing
         }
     }
 
@@ -102,7 +110,8 @@ public struct DSChatListItem<Avatar: View>: View {
             DSChatMessage(
                 text: data.message,
                 kind: data.messageKind,
-                context: data.messageContext
+                context: data.messageContext,
+                isOngoing: data.isMessageOngoing
             )
             .equatable()
             badges
@@ -111,13 +120,16 @@ public struct DSChatListItem<Avatar: View>: View {
 
     @ViewBuilder
     private var badges: some View {
-        if data.hasReaction || data.unreadCount > 0 {
+        if data.hasReaction || data.unreadCount > 0 || data.badgeImage != nil {
             HStack(spacing: DSSpacings.small) {
                 if data.hasReaction {
                     DSChatListBadge(kind: .reaction, isMuted: data.isMuted)
                         .equatable()
                 }
-                if data.unreadCount > 0 {
+                if let badgeImage = data.badgeImage {
+                    DSChatListImageBadge(image: badgeImage)
+                        .equatable()
+                } else if data.unreadCount > 0 {
                     DSChatListBadge(kind: .counter(data.unreadCount), isMuted: data.isMuted)
                         .equatable()
                 }

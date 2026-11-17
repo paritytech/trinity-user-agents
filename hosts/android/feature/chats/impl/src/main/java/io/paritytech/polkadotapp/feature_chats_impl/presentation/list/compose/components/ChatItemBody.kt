@@ -1,5 +1,10 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -7,9 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -24,6 +31,8 @@ import kotlinx.collections.immutable.persistentMapOf
 
 private val PreviewIconSize = 16.dp
 private const val PREVIEW_ICON_ID = "previewIcon"
+private const val PULSE_MIN_ALPHA = 0.4f
+private const val PULSE_DURATION_MS = 800
 
 @Composable
 internal fun ChatItemBody(
@@ -70,8 +79,12 @@ internal fun ChatItemBody(
             persistentMapOf()
         }
 
+        val textAlpha = if (preview.pulses) rememberPulseAlpha() else 1f
+
         NovaText(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .graphicsLayer { alpha = textAlpha },
             text = text,
             inlineContent = inlineContent,
             style = PolkadotTheme.typography.paragraph.medium,
@@ -86,4 +99,15 @@ internal fun ChatItemBody(
             hasReaction = hasReaction,
         )
     }
+}
+
+@Composable
+private fun rememberPulseAlpha(): Float {
+    val alpha by rememberInfiniteTransition(label = "activityPulse").animateFloat(
+        initialValue = 1f,
+        targetValue = PULSE_MIN_ALPHA,
+        animationSpec = infiniteRepeatable(tween(PULSE_DURATION_MS), RepeatMode.Reverse),
+        label = "activityPulseAlpha",
+    )
+    return alpha
 }

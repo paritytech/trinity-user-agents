@@ -17,11 +17,14 @@ public struct DSChatMessage: View, Equatable {
     private let text: String
     private let kind: Kind
     private let context: Context
+    /// The text tells of an activity that continues, for example "Ben is typing", so the row animates it.
+    private let isOngoing: Bool
 
-    public init(text: String, kind: Kind = .default, context: Context = .single) {
+    public init(text: String, kind: Kind = .default, context: Context = .single, isOngoing: Bool = false) {
         self.text = text
         self.kind = kind
         self.context = context
+        self.isOngoing = isOngoing
     }
 
     public var body: some View {
@@ -42,6 +45,10 @@ public struct DSChatMessage: View, Equatable {
 
     private func messageRow(lineLimit: Int) -> some View {
         HStack(alignment: kind.rowAlignment, spacing: DSSpacings.extraSmall) {
+            if isOngoing {
+                DSTypingDots()
+                    .frame(height: DSChatMessageMetrics.iconSize)
+            }
             if let resource = kind.iconResource {
                 kindIcon(resource)
             }
@@ -62,6 +69,29 @@ public struct DSChatMessage: View, Equatable {
 
 private enum DSChatMessageMetrics {
     static let iconSize: CGFloat = 16
+}
+
+/// Three dots that become bright one after the other. They show an activity that continues.
+struct DSTypingDots: View {
+    private static let dotCount = 3
+    private static let step: TimeInterval = 0.4
+    private static let dotSize: CGFloat = 4
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: Self.step)) { timeline in
+            let litDot = Int(timeline.date.timeIntervalSinceReferenceDate / Self.step) % Self.dotCount
+
+            HStack(spacing: Self.dotSize / 2) {
+                ForEach(0 ..< Self.dotCount, id: \.self) { dot in
+                    Circle()
+                        .fill(Color.fgSecondary)
+                        .frame(width: Self.dotSize, height: Self.dotSize)
+                        .opacity(dot == litDot ? 1 : 0.3)
+                }
+            }
+            .animation(.easeInOut(duration: Self.step), value: litDot)
+        }
+    }
 }
 
 private extension DSChatMessage.Kind {
@@ -93,6 +123,7 @@ private extension DSChatMessage.Kind {
             DSChatMessage(text: "Media content with 2 lines of looooooong text wrapping nicely", kind: .media)
             DSChatMessage(text: "Voice call", kind: .voiceCall)
             DSChatMessage(text: "Video call", kind: .videoCall)
+            DSChatMessage(text: "Ben is typing", isOngoing: true)
             Divider().background(Color.strokePrimary)
             DSChatMessage(
                 text: "Hey there! How can I assist you today?",

@@ -36,6 +36,9 @@ interface ChatFeedContract {
     val headerRenderer: StateFlow<CustomChatHeaderRenderer?>
     val menuRenderer: StateFlow<CustomChatMenuRenderer?>
     val customAppearance: StateFlow<CustomChatAppearance?>
+
+    /** The text that the screen shows while the room has no messages. */
+    val emptyRoomText: StateFlow<String?>
     val revealingMessageId: StateFlow<ChatMessageId?>
     val scrollToPosition: SharedFlow<Int>
     val toolbarActions: StateFlow<ImmutableList<ChatToolbarAction>>

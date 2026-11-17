@@ -136,6 +136,7 @@ private fun ChatSummaryBadge.toBadgeUi(): ChatListUiState.Badge {
         is ChatSummaryBadge.None -> ChatListUiState.Badge.None
 
         is ChatSummaryBadge.Unread -> ChatListUiState.Badge.Unread(count)
+        is ChatSummaryBadge.Image -> ChatListUiState.Badge.Image(icon)
     }
 }
 
