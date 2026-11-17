@@ -598,35 +598,22 @@ fn cancel_answered(
 /// `ended`, or `ended_unexpectedly` when the ending is a fault.
 fn ended(session: &FundingSession, region: Region, now_ms: u64) -> FundingFact {
 	let money_moved = session.money_moved();
-	let (outcome, reason) = match session.status(now_ms) {
-		FundingStatus::ToppedUp => (EndOutcome::ToppedUp, "none"),
-		FundingStatus::Sent => (EndOutcome::Sent, "none"),
-		FundingStatus::PaidOutAfterCancel => (EndOutcome::PaidOutAfterCancel, "none"),
-		FundingStatus::Refunded => (EndOutcome::Refunded, "refunded"),
-		FundingStatus::Cancelled { .. } => (EndOutcome::Cancelled, "none"),
-		FundingStatus::PayoutFailed { .. } => (EndOutcome::PayoutFailed, "payout_failed"),
+	let (outcome, reason, expected) = match session.status(now_ms) {
+		FundingStatus::ToppedUp => (EndOutcome::ToppedUp, "none", true),
+		FundingStatus::Sent => (EndOutcome::Sent, "none", true),
+		FundingStatus::PaidOutAfterCancel => (EndOutcome::PaidOutAfterCancel, "none", true),
+		FundingStatus::Refunded => (EndOutcome::Refunded, "refunded", true),
+		FundingStatus::Cancelled { .. } => (EndOutcome::Cancelled, "none", true),
+		FundingStatus::PayoutFailed { .. } => (EndOutcome::PayoutFailed, "payout_failed", false),
 		FundingStatus::Failed { reason } => {
 			let outcome = match reason {
 				FundingFailure::Expired => EndOutcome::Expired,
 				FundingFailure::Cancelled => EndOutcome::Cancelled,
 				_ => EndOutcome::Failed,
 			};
-			(outcome, failure_reason(&reason))
+			(outcome, failure_reason(&reason), failure_expected(&reason, money_moved))
 		},
-		_ => (EndOutcome::Failed, "none"),
-	};
-	let expected = match outcome {
-		EndOutcome::Expired => !money_moved,
-		EndOutcome::PayoutFailed => false,
-		EndOutcome::Failed => matches!(
-			reason,
-			"region_unavailable" |
-				"verification_required" |
-				"verification_refused" |
-				"insufficient_balance" |
-				"declined"
-		),
-		_ => true,
+		_ => (EndOutcome::Failed, "none", false),
 	};
 	let marker =
 		if expected { markers::FUNDING_ENDED } else { markers::FUNDING_ENDED_UNEXPECTEDLY };
@@ -641,6 +628,27 @@ fn ended(session: &FundingSession, region: Region, now_ms: u64) -> FundingFact {
 		.flag("money_moved", money_moved)
 		.tag("region", region)
 		.measure("to_received_ms", received.map(|at| at.saturating_sub(session.opened_at_ms)))
+}
+
+/// Whether a session that failed with `failure` ended the way the user, the
+/// route's rules or the market made it, rather than through a fault. A new
+/// variant has to be placed here.
+fn failure_expected(failure: &FundingFailure, money_moved: bool) -> bool {
+	match failure {
+		FundingFailure::RegionUnavailable |
+		FundingFailure::VerificationRequired |
+		FundingFailure::VerificationRefused |
+		FundingFailure::BelowMinimum |
+		FundingFailure::AboveMaximum |
+		FundingFailure::InsufficientBalance |
+		FundingFailure::WrongAssetOrChain |
+		FundingFailure::Declined |
+		FundingFailure::Cancelled => true,
+		FundingFailure::Expired => !money_moved,
+		FundingFailure::ProviderTimeout |
+		FundingFailure::Refunded |
+		FundingFailure::Other { .. } => false,
+	}
 }
 
 /// A failure's kind; a provider's own code is `provider_other`.

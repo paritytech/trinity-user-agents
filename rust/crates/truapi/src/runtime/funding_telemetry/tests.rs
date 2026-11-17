@@ -132,6 +132,9 @@ fn endings_say_whether_they_were_expected() {
 	assert_eq!(
 		[
 			ended(FundingFailure::Declined),
+			ended(FundingFailure::BelowMinimum),
+			ended(FundingFailure::AboveMaximum),
+			ended(FundingFailure::WrongAssetOrChain),
 			ended(FundingFailure::Expired),
 			ended(FundingFailure::Cancelled),
 			ended(FundingFailure::ProviderTimeout),
@@ -139,6 +142,9 @@ fn endings_say_whether_they_were_expected() {
 		],
 		[
 			(some("failed"), some("declined"), true),
+			(some("failed"), some("below_minimum"), true),
+			(some("failed"), some("above_maximum"), true),
+			(some("failed"), some("wrong_asset_or_chain"), true),
 			(some("expired"), some("expired"), true),
 			(some("cancelled"), some("cancelled"), true),
 			(some("failed"), some("provider_timeout"), false),
