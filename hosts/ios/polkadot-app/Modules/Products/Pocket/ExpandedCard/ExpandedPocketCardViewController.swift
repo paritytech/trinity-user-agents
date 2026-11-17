@@ -98,8 +98,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
 
         guard parent != nil else { return }
 
-        // The screen is kept between opens, so a push starts it afresh.
-        isClosing = false
         origin?.setOpenItem(.card(card.key))
     }
 
