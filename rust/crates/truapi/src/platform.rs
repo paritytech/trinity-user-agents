@@ -33,8 +33,8 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse, StackHost,
-		ReplaceCheck, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+		ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 };
 

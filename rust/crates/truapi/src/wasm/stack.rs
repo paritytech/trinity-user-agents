@@ -121,7 +121,9 @@ struct CoreStorageRecords(Arc<dyn CoreStorage>);
 #[async_trait::async_trait]
 impl StackRecords for CoreStorageRecords {
 	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
-		self.0.read_core_storage(CoreStorageKey::StackRecord { stack_id: stack_id.to_string() }).await
+		self.0
+			.read_core_storage(CoreStorageKey::StackRecord { stack_id: stack_id.to_string() })
+			.await
 	}
 
 	/// Reads the stored record before it writes. The two steps are not one
