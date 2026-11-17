@@ -84,6 +84,8 @@ struct CreateChatRoomRequest {
         avatar: ResourceUri?,
         name: String,
         description: String?,
+        kind: RoomKind,
+        parent: Option<RoomId>,
     },
     // Optional. Initial state for the room preview that will define appearance in the chat list. If not provided - default rendering is used
     initial_preview?: {
@@ -149,6 +151,30 @@ struct RoomMetadata {
     avatar: ResourceUri?,
     name: String,
     description: String?,
+    kind: RoomKind,
+    // The Space, Category or Forum that holds the room, and its place there.
+    parent: Option<RoomId>,
+    position: u32,
+    settings: RoomSettings,
+}
+
+enum RoomKind {
+    Group,
+    Space,
+    Category,
+    // Each child room is a topic.
+    Forum,
+    Voice,
+    // The replies to one message of the parent room.
+    Thread { root: MessageId },
+}
+
+// Settings that every member sees. A change shows as `SettingsChanged`.
+struct RoomSettings {
+    // Seconds between two messages of one member. 0: no wait.
+    slow_mode: u32,
+    // A text that a member can read after the join.
+    welcome: Option<String>,
 }
 
 enum ChatRoomPreviewOrder {
@@ -245,6 +271,7 @@ enum RoomEvent {
     Renamed(String),
     AvatarChanged,
     DescriptionChanged,
+    SettingsChanged,
 }
 
 struct ChatMedia {
@@ -305,6 +332,13 @@ struct Message {
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
     extensions: Vec<Extension>,
+    // The thread whose root is this message.
+    thread: Option<ThreadSummary>,
+}
+
+struct ThreadSummary {
+    room_id: RoomId,
+    replies: u32,
 }
 ```
 
@@ -380,7 +414,7 @@ enum UserChatAction {
     MessageDeleted {
         message_id: MessageId
     },
-    // The user changed the name, the avatar or the description of the room.
+    // The user changed the metadata or the settings of the room.
     EditRoom(RoomMetadata),
     // The user started (true) or stopped (false) typing.
     Typing(bool),
@@ -684,6 +718,8 @@ enum ChatParticipantKind {
 }
 ```
 
+The role of a participant in a Space applies in each room of the Space.
+
 A participant sets an `Audience` for its `avatar`, `about`, `birthday`, `links` and `presence`. Its Product sends each field only to that audience, so a reader that ignores the audience does not get the field.
 
 #### 8.2 Methods
@@ -794,6 +830,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
 20. **Records between Products**: One record for the Products of a room, with ids bound to their origin and a rule for what a reader does not know.
 21. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
+22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 
 #### Non-Functional Requirements
 
