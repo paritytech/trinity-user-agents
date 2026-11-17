@@ -131,8 +131,6 @@ final class PocketCardScreenViewController: UIViewController {
     }
 }
 
-extension PocketCardScreenViewController: TabBarRootStandIn {}
-
 extension PocketCardScreenViewController: PocketFlightScreen {}
 
 // MARK: - NavigationTransitionAnimating
