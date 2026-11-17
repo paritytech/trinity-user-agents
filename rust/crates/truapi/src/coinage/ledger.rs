@@ -910,6 +910,19 @@ fn write_purse(tx: &Transaction<'_>, purse: &PurseRecord) -> Result<(), DbError>
 	Ok(())
 }
 
+/// Fixes the denomination of an import's output at the exponent F1 first
+/// observed the claimed coin at (B1): the one asset whose denomination is
+/// not known when it is allocated, and that nothing reads for more than a
+/// provisional value before its claim can be built.
+pub fn fix_import_output(tx: &Transaction<'_>, output: Asset, exponent: Exponent) -> Result<(), DbError> {
+	let record = AssetRecord { asset: output, exponent };
+	tx.execute(
+		"UPDATE coinage_asset SET record = :record WHERE asset = :asset",
+		named_params! { ":asset": record.asset.encode(), ":record": record.encode() },
+	)?;
+	Ok(())
+}
+
 fn write_asset(tx: &Transaction<'_>, record: &AssetRecord) -> Result<(), DbError> {
 	tx.execute(
 		"INSERT INTO coinage_asset (asset, record) VALUES (:asset, :record)",

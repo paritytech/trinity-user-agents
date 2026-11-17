@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 use super::{
 	Asset, ChainParams, Exponent, Snapshot,
 	assembly::{UNLOADING_RECYCLER_CONTEXT, free_token_context},
-	chain::{AliasState, CoinageChain},
+	chain::{AliasState, ChainCoin, CoinageChain},
 	ledger::{self, BlockRef, CoinOnChain, Emptied, EntryOnChain, Facts, Observed, Read, Subject, TokenId},
 	namespace::{coin_key, entry_seed},
 	plugins::{PersonhoodSource, Seed},
@@ -74,13 +74,7 @@ pub async fn on_block(deps: &ObserverDeps, block: HashAndNumber, now: u64, param
 		Ok(found) => {
 			let finalized = deps.chain.heads().await.ok().map(|heads| heads.finalized.number);
 			for ((asset, account), coin) in coins.iter().zip(found) {
-				let now = coin.filter(|coin| coin.instance == params.config().instance).and_then(|coin| {
-					Some(CoinOnChain {
-						exponent: Exponent::from_chain(coin.value, params)?,
-						age: u32::from(coin.age),
-						locked_until: coin.locked_until,
-					})
-				});
+				let now = coin_on_chain(coin, params);
 				let emptied_by = match now {
 					None => emptied_by(deps, &view, asset, *account, block, finalized).await,
 					Some(_) => None,
@@ -153,11 +147,90 @@ pub async fn on_block(deps: &ObserverDeps, block: HashAndNumber, now: u64, param
 		}
 	}
 
+	store(deps, &view, block, reads, now, params).await
+}
+
+/// Reads the peer coins at `accounts` at the finalized head and stores what
+/// the chain shows, so that an import plans its outputs at its coins'
+/// observed exponents (B1). A failed read stores nothing, and a coin not on
+/// chain yet gets its output's denomination when F1 first sees it.
+pub async fn observe_peer_coins(
+	deps: &ObserverDeps,
+	accounts: &[[u8; 32]],
+	now: u64,
+	params: &ChainParams,
+) -> Result<(), ObserveError> {
+	let view = deps.store.read(ledger::snapshot).await?;
+	let Ok(heads) = deps.chain.heads().await else { return Ok(()) };
+	let block = heads.finalized;
+	let Ok(found) = deps.chain.coins_at(block.hash, accounts).await else { return Ok(()) };
+	let reads = accounts
+		.iter()
+		.zip(found)
+		.map(|(account, coin)| {
+			(Subject::Asset(Asset::PeerCoin(*account)), Read::Coin { now: coin_on_chain(coin, params), emptied_by: None })
+		})
+		.collect();
+	store(deps, &view, block, reads, now, params).await
+}
+
+/// Stores `reads`, made at `block`, in one store transaction, with the
+/// denomination of every import output whose claimed coin they show for
+/// the first time.
+async fn store(
+	deps: &ObserverDeps,
+	view: &Snapshot,
+	block: HashAndNumber,
+	reads: Vec<(Subject, Read)>,
+	now: u64,
+	params: &ChainParams,
+) -> Result<(), ObserveError> {
+	let outputs = unfixed_import_outputs(view, &reads);
 	let number = u32::try_from(block.number).unwrap_or(u32::MAX);
 	let facts = Facts { at: BlockRef { number, hash: block.hash.0 }, reads };
 	let page_size = params.config().ring_page_size;
-	deps.store.write(move |tx| ledger::observe(tx, &facts, now, page_size)).await?;
+	deps.store
+		.write(move |tx| {
+			ledger::observe(tx, &facts, now, page_size)?;
+			for (output, exponent) in &outputs {
+				ledger::fix_import_output(tx, *output, *exponent)?;
+			}
+			Ok(())
+		})
+		.await?;
 	Ok(())
+}
+
+/// The outputs of claims still waiting to be built, of peer coins `reads`
+/// shows present, whose denomination is not yet the coin's: the import
+/// allocated them before anyone had seen the coin (B1).
+fn unfixed_import_outputs(view: &Snapshot, reads: &[(Subject, Read)]) -> Vec<(Asset, Exponent)> {
+	let mut outputs = Vec::new();
+	for (subject, read) in reads {
+		let (Subject::Asset(coin @ Asset::PeerCoin(_)), Read::Coin { now: Some(found), .. }) = (subject, read) else { continue };
+		let waiting = view
+			.registrations()
+			.consumers(coin)
+			.filter(|claim| claim.state.status == DurableTxStatus::PendingSubmission);
+		for output in waiting.flat_map(|claim| claim.rows.outputs.iter()) {
+			let unseen = view.observation(&Subject::Asset(*output)).is_none();
+			if unseen && view.asset(output).is_some_and(|record| record.exponent != found.exponent) {
+				outputs.push((*output, found.exponent));
+			}
+		}
+	}
+	outputs
+}
+
+/// A coin as the layer counts it: one of the configured instance at a legal
+/// exponent; none for an empty account or any other coin.
+fn coin_on_chain(coin: Option<ChainCoin>, params: &ChainParams) -> Option<CoinOnChain> {
+	let coin = coin.filter(|coin| coin.instance == params.config().instance)?;
+	Some(CoinOnChain {
+		exponent: Exponent::from_chain(coin.value, params)?,
+		age: u32::from(coin.age),
+		locked_until: coin.locked_until,
+	})
 }
 
 /// For an exported coin whose account is empty at `block`, the transaction

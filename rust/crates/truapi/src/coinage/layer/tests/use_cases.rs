@@ -137,3 +137,45 @@ async fn the_funding_of_a_top_up_is_kept_until_its_verdict_and_dropped_then() {
 	layer.run_due(NOW).await.unwrap();
 	assert!(!held());
 }
+
+/// A layer over `chain`, whose coins a test sets.
+async fn layer_over(chain: Arc<crate::coinage::testing::FakeChain>) -> Layer {
+	let store = crate::store::open_memory_core_db();
+	let interfaces = Interfaces { chain, ..layer_interfaces(store, Arc::new(TestRuntime::default())) };
+	start(interfaces, chain_config(), SCAN, None, Running::new()).await.expect("the layer starts")
+}
+
+/// The denomination the claim of `coin` mints into.
+async fn claimed_exponent(layer: &Layer, key: &OpKey, coin: &CoinSecret) -> u8 {
+	let claims = records(layer, key).await;
+	let claim = claims.iter().find(|facts| facts.rows.inputs == [Asset::PeerCoin(account(coin))]).expect("a claim of the coin");
+	layer.view().await.unwrap().asset(&claim.rows.outputs[0]).expect("an allocated output").exponent.get()
+}
+
+fn on_chain(value: i8) -> crate::coinage::chain::ChainCoin {
+	crate::coinage::chain::ChainCoin { instance: 0, value, age: 1, locked_until: None }
+}
+
+/// The claim moves the peer's coin into a fresh coin of ours, which counts
+/// at the exponent the chain shows, never at what the sender declared (B1).
+#[tokio::test]
+async fn a_claim_mints_a_coin_of_ours_at_the_exponent_observed_on_chain() {
+	let chain = Arc::new(crate::coinage::testing::FakeChain::default());
+	chain.coins.lock().insert(account(&peer_coin(1)), on_chain(3));
+	let layer = layer_over(chain).await;
+	layer.import(op(1), PurseId::MAIN, vec![peer_coin(1)]).await.unwrap();
+	assert_eq!(claimed_exponent(&layer, &op(1).key, &peer_coin(1)).await, 3);
+}
+
+/// A coin not on chain yet is waited for; its output takes the coin's
+/// exponent when F1 first sees the coin, before the claim can be built.
+#[tokio::test]
+async fn a_claim_of_a_coin_not_yet_on_chain_mints_at_the_exponent_first_observed() {
+	let chain = Arc::new(crate::coinage::testing::FakeChain::default());
+	let layer = layer_over(chain.clone()).await;
+	layer.import(op(1), PurseId::MAIN, vec![peer_coin(1)]).await.unwrap();
+	chain.coins.lock().insert(account(&peer_coin(1)), on_chain(3));
+	layer.on_block(HashAndNumber { hash: subxt::utils::H256([11; 32]), number: 11 }).await.unwrap();
+	assert_eq!(claimed_exponent(&layer, &op(1).key, &peer_coin(1)).await, 3);
+}
+
