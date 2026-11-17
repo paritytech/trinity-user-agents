@@ -201,6 +201,8 @@ This is the core of v2. The Product can either rely on the Host's built-in messa
 ```rust
 // Unique in the room.
 MessageId = String
+// "user" is the user and "product" is the Product. A participant with an
+// account is the hex of its AccountId.
 ChatParticipantId = String
 Timestamp = u64
 
@@ -588,6 +590,7 @@ PersonId = u32
 struct ChatParticipant {
     id: ChatParticipantId,
     kind: ChatParticipantKind,
+    role: Role,
     // Shown over what the Host infers from `kind`.
     name: Option<String>,
     avatar: Option<ResourceUri>,
@@ -597,6 +600,12 @@ struct ChatParticipant {
     // A name color and a profile color that every member sees.
     colors: Option<ParticipantColors>,
     presence: Option<Presence>,
+}
+
+enum Role {
+    Member,
+    Admin,
+    Owner,
 }
 
 struct Presence {
