@@ -8,7 +8,7 @@ use futures::{
 };
 use truapi::{CallError, latest};
 
-use crate::{host_core::ChatQuery, subscription::Spawner};
+use crate::{Spawner, host_core::ChatQuery};
 
 /// The answer a product gave to one chat query, in the kind of the query.
 // A uniffi `Enum` cannot box a variant.
@@ -106,7 +106,7 @@ where
 	Error: Send + 'static,
 {
 	let (abort, registration) = AbortHandle::new_pair();
-	(spawner)(Box::pin(async move {
+	spawner.spawn(async move {
 		let _ = Abortable::new(
 			async move {
 				match query.next().await {
@@ -125,7 +125,7 @@ where
 			registration,
 		)
 		.await;
-	}));
+	});
 	Arc::new(NativeChatQuery { abort: Mutex::new(Some(abort)) })
 }
 

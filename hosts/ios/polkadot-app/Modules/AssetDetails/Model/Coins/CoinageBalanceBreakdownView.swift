@@ -9,6 +9,9 @@ struct CoinageBalanceBreakdownView: View {
     let breakdown: CoinageBalanceBreakdownViewModel
     /// Which coins the denominations are drawn as. Only the debug switch ever changes it.
     var coinSet: CoinageScene.CoinSet = .shipped
+    /// The light and the coins held by the debug dials; nil follows the phone.
+    var fixedLight: CoinageTilt.Turn?
+    var fixedLean: CoinageTilt.Turn?
 
     @State private var showDetails = false
     /// The coin picked out by a tap, if any, drawn large with its trace beside it.
@@ -139,6 +142,8 @@ struct CoinageBalanceBreakdownView: View {
             coins: breakdown.strip,
             isExpanded: showDetails,
             focus: focus,
+            fixedLight: fixedLight,
+            fixedLean: fixedLean,
             coinSet: coinSet,
             metrics: $coinMetrics,
             onTap: { tapped($0, scroll: scroll) },

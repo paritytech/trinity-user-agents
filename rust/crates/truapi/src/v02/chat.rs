@@ -3,7 +3,7 @@
 //! The variant order of each enum here is part of the wire. Add a new variant
 //! after the last one, and never reorder or remove a variant.
 
-use crate::v01::ChatMessageContent;
+use crate::v01::{ChatCustomMessage, ChatMessageContent};
 use parity_scale_codec::{Decode, Encode};
 
 /// Request to create a chat room.
@@ -28,7 +28,7 @@ pub struct HostChatCreateRoomRequest {
 
 /// Whether the room was newly created or already existed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatRoomRegistrationStatus {
 	/// The room was created.
 	New,
@@ -78,7 +78,7 @@ pub struct HostChatPostMessageRequest {
 
 /// Bytes the host shows: a media item of a message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatResource {
 	/// A file in the HOP pool of the person-to-person chat, as its
 	/// `P2PMixnet` attachments name it. Only a holder of the ticket reads the
@@ -98,7 +98,7 @@ pub enum ChatResource {
 
 /// What a timeline needs to draw a media item before its bytes arrive.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatMediaMeta {
 	/// Media type of the item, for example `image/jpeg`.
 	pub mime_type: String,
@@ -118,7 +118,7 @@ pub struct ChatMediaMeta {
 
 /// One media item of a message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatMediaItem {
 	/// A still image.
 	Image {
@@ -147,7 +147,7 @@ pub enum ChatMediaItem {
 
 /// The name, description, icon and empty-room text of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatRoomMetadata {
 	/// Room display name.
 	pub name: String,
@@ -163,7 +163,7 @@ pub struct ChatRoomMetadata {
 
 /// The badge the chat list shows on a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatRoomBadge {
 	/// A number. The value `0` shows no badge.
 	UnreadCount {
@@ -179,7 +179,7 @@ pub enum ChatRoomBadge {
 
 /// The newest event of a room when it is a reaction.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatPreviewReaction {
 	/// The emoji.
 	pub emoji: String,
@@ -195,7 +195,7 @@ pub struct ChatPreviewReaction {
 /// no reactions: the preview shows them through `last_reaction` and
 /// `unseen_reactions`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatPreviewMessage {
 	/// Identifier the product chose, unique in the room.
 	pub message_id: String,
@@ -218,7 +218,7 @@ pub struct ChatPreviewMessage {
 /// How a room shows in the chat list. A field at `None` keeps the host
 /// default.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatRoomPreview {
 	/// Milliseconds since the Unix epoch. The chat list orders the rooms by
 	/// it, newest first. `None` uses the time of the newest message.
@@ -245,7 +245,7 @@ pub struct ChatRoomPreview {
 
 /// A line that the chat list shows for a room in place of its newest message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatRoomActivity {
 	/// The text of the line.
 	pub text: String,
@@ -256,7 +256,7 @@ pub struct ChatRoomActivity {
 /// The parts of a room the product serves itself. A field at its default
 /// value keeps the host behaviour for that part.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatRoomConfig {
 	/// `true`: the product keeps the messages and answers `messages_query` and
 	/// `user_action`, and the host keeps only a page cache.
@@ -327,7 +327,7 @@ pub enum HostChatDeleteRoomError {
 
 /// Who wrote a message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatMessageOrigin {
 	/// A participant id of the room. The id `"user"` is the user of the host,
 	/// the id `"product"` is the product, and the id `"contact"` is the
@@ -337,7 +337,7 @@ pub struct ChatMessageOrigin {
 
 /// Where a message is on its way to the other participants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatMessageStatus {
 	/// Only the sender sees the message, for example while media uploads.
 	Preparing,
@@ -354,7 +354,7 @@ pub enum ChatMessageStatus {
 /// A line about the conversation that the host draws with its own strings.
 /// The origin of the message says whose event it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatContactEvent {
 	/// The participant accepted the chat request.
 	RequestAccepted,
@@ -370,7 +370,7 @@ pub enum ChatContactEvent {
 
 /// How a call ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatCallClose {
 	/// Milliseconds since the Unix epoch.
 	pub at: u64,
@@ -382,7 +382,7 @@ pub struct ChatCallClose {
 /// its origin is the caller. The host draws the call bubble in the state that
 /// these give.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatCallRecord {
 	/// The call has video.
 	pub video: bool,
@@ -396,7 +396,7 @@ pub struct ChatCallRecord {
 /// A payment between the user and the contact. The origin of the message is
 /// the payer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatPaymentRecord {
 	/// The amount, in the smallest unit.
 	pub amount: u128,
@@ -409,7 +409,7 @@ pub struct ChatPaymentRecord {
 /// The host draws it through `Renderer::render`, with a `ChatMessage` context
 /// carrying `message_type` and `payload` as the render payload.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatCustomBody {
 	/// Application-defined type key.
 	pub message_type: String,
@@ -419,7 +419,7 @@ pub struct ChatCustomBody {
 
 /// What a message says. A reaction is not content; see `ChatFeedUpdate`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatMessageBody {
 	/// Plain text. The host detects links but applies no Markdown.
 	Text {
@@ -453,7 +453,7 @@ pub enum ChatMessageBody {
 
 /// How many participants reacted to a message with one emoji.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatReactionSummary {
 	/// The emoji.
 	pub emoji: String,
@@ -469,7 +469,7 @@ pub struct ChatReactionSummary {
 /// The message that a reply quotes. With it, the host draws the quote and does
 /// not load that message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatReplyPreview {
 	/// Who wrote the quoted message.
 	pub origin: ChatMessageOrigin,
@@ -479,7 +479,7 @@ pub struct ChatReplyPreview {
 
 /// The message that a message replies to.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatReply {
 	/// The id of the quoted message.
 	pub message_id: String,
@@ -490,7 +490,7 @@ pub struct ChatReply {
 
 /// One message of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatMessage {
 	/// Identifier the product chose, unique in the room.
 	pub message_id: String,
@@ -514,7 +514,7 @@ pub struct ChatMessage {
 
 /// One change to the messages of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatFeedUpdate {
 	/// A new message.
 	New(ChatMessage),
@@ -595,7 +595,7 @@ pub enum HostChatUpdateFeedError {
 
 /// Where a page of messages starts.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatPageAnchor {
 	/// Messages newer than the cursor. `None` starts at the oldest message.
 	After {
@@ -611,7 +611,7 @@ pub enum ChatPageAnchor {
 
 /// Host question for one page of messages of a room the product keeps.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductChatMessagesQueryRequest {
 	/// The room.
 	pub room_id: String,
@@ -623,7 +623,7 @@ pub struct ProductChatMessagesQueryRequest {
 
 /// One page of messages.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductChatMessagesQueryResponse {
 	/// The messages, oldest first.
 	pub messages: Vec<ChatMessage>,
@@ -634,7 +634,7 @@ pub struct ProductChatMessagesQueryResponse {
 
 /// Failure of a query the host sends to the product.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ProductChatQueryError {
 	/// The product has no room with this id.
 	UnknownRoom,
@@ -644,7 +644,7 @@ pub enum ProductChatQueryError {
 
 /// Something the user did in a room the product keeps.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatUserAction {
 	/// The user sent a message.
 	NewMessage {
@@ -711,7 +711,7 @@ pub enum ChatUserAction {
 
 /// Host request that tells the product what the user did.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductChatUserActionRequest {
 	/// The room.
 	pub room_id: String,
@@ -723,7 +723,7 @@ pub struct ProductChatUserActionRequest {
 // A uniffi `Enum` cannot box a variant.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ProductChatUserActionResponse {
 	/// For `NewMessage`: the message as the product stored it.
 	MessageCreated(ChatMessage),
@@ -733,7 +733,7 @@ pub enum ProductChatUserActionResponse {
 
 /// Failure of a user action.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ProductChatUserActionError {
 	/// The product has no room with this id.
 	UnknownRoom,
@@ -751,7 +751,7 @@ pub enum ProductChatUserActionError {
 
 /// Host question about who reacted to one message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductChatReactionsQueryRequest {
 	/// The room.
 	pub room_id: String,
@@ -761,7 +761,7 @@ pub struct ProductChatReactionsQueryRequest {
 
 /// One reaction of one participant.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ChatReactionDetail {
 	/// The participant.
 	pub participant_id: String,
@@ -773,8 +773,32 @@ pub struct ChatReactionDetail {
 
 /// Who reacted to one message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductChatReactionsQueryResponse {
 	/// One entry for each participant and emoji.
 	pub reactions: Vec<ChatReactionDetail>,
+}
+
+/// What a room shows below its messages.
+///
+/// `Card` pins a product-drawn body under the feed, rendered with
+/// `RenderContext::ChatRoomFooter` and never shown as a message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ChatRoomFooter {
+	/// The text field the user types messages into.
+	TextInput,
+	/// Nothing, for a room the product drives through actions alone.
+	Empty,
+	/// One of the product's own cards, drawn by its renderer.
+	Card(ChatCustomMessage),
+}
+
+/// Request to set what a room shows below its messages.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatSetRoomFooterRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+	/// What the room shows below its messages.
+	pub footer: ChatRoomFooter,
 }

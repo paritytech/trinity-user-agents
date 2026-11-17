@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
-import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
@@ -20,7 +19,6 @@ import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
 import uniffi.truapi.Dimensions
-import uniffi.truapi.Effect
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
 import uniffi.truapi.ImageSource
@@ -78,15 +76,15 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
         enabled = props.enabled ?: true,
         modifiers = modifiers.toJsModifiers(),
     )
-    is RendererNode.Image -> JsWidget.Image(
-        source = props.source.toJs(),
-        fit = props.fit?.toJs() ?: JsImageFit.FILL,
-        modifiers = modifiers.toJsModifiers(),
-    )
-    is RendererNode.Effect -> JsWidget.Effect(
-        effect = props.effect.toJs(),
-        children = children.toJsChildren(),
-    )
+    // An image this host cannot draw keeps the size its modifiers give it.
+    is RendererNode.Image -> props.source.toJs()?.let { source ->
+        JsWidget.Image(
+            source = source,
+            fit = props.fit?.toJs() ?: JsImageFit.FILL,
+            modifiers = modifiers.toJsModifiers(),
+        )
+    } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
+    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
 }
 
 private fun List<RendererNode>.toJsChildren(): List<JsWidget> =
@@ -155,9 +153,10 @@ private fun Shape.toJs(): JsShape = when (this) {
     is Shape.Square -> JsShape.Square
 }
 
-private fun ImageSource.toJs(): JsImageSource = when (this) {
+private fun ImageSource.toJs(): JsImageSource? = when (this) {
     is ImageSource.Bulletin -> JsImageSource.Bulletin(v1)
     is ImageSource.Archive -> JsImageSource.Archive(v1)
+    is ImageSource.Inline -> null
 }
 
 private fun ImageFit.toJs(): JsImageFit = when (this) {
@@ -166,10 +165,6 @@ private fun ImageFit.toJs(): JsImageFit = when (this) {
     ImageFit.COVER -> JsImageFit.COVER
     ImageFit.CONTAIN -> JsImageFit.CONTAIN
     ImageFit.SCALE_DOWN -> JsImageFit.SCALE_DOWN
-}
-
-private fun Effect.toJs(): JsEffect = when (this) {
-    Effect.RAINBOW -> JsEffect.RAINBOW
 }
 
 private fun BlendingMode.toJs(): JsBlendingMode = when (this) {

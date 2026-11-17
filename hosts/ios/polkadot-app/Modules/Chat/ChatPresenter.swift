@@ -218,6 +218,9 @@ private extension ChatPresenter {
             declineChatRequest: { [weak self] in
                 self?.interactor.declineChatRequest()
             },
+            cancelChatRequest: { [weak self] in
+                self?.handleCancelChatRequest()
+            },
             showEditHistory: { [weak self] messageId in
                 self?.handleShowEditHistory(for: messageId)
             },
@@ -428,6 +431,20 @@ private extension ChatPresenter {
         }
     }
 
+    func handleCancelChatRequest() {
+        guard let username = metadata?.peerName else {
+            return
+        }
+
+        MainActor.assumeIsolated {
+            wireframe.showCancelChatRequestConfirmation(
+                from: view,
+                username: username,
+                delegate: self
+            )
+        }
+    }
+
     func handleStartCall(callType: ChatCallType) {
         guard let metadata else { return }
         MainActor.assumeIsolated {
@@ -476,21 +493,5 @@ private extension ChatPresenter {
                 )
             }
         }
-    }
-}
-
-extension ChatPresenter: ChatMoreActionsDelegate {
-    func didConfirmLeaveChat() {
-        interactor.leaveChat()
-    }
-
-    func didConfirmBlockUser() {
-        interactor.blockUser()
-    }
-}
-
-extension ChatPresenter: ChatAttachmentPreviewDelegate {
-    func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
-        interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
     }
 }

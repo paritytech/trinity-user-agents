@@ -5,9 +5,9 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -21,7 +21,7 @@ class RealProductContentWarmUp @Inject constructor(
     private val runtimeSettings: ProductRuntimeSettings,
 ) : ProductContentWarmUp {
     override suspend fun warmUp(productId: ProductId): Result<Unit> =
-        runCancellableCatching { servingHostResolver.servingHostFor(productId.value, cardExecutable()) }
+        runCancellableCatching { servingHostResolver.servingHostFor(productId.value, cardExecutable()).getOrThrow() }
             .flatMap { servingHost -> dotNsResolver.resolveToLocalUri(servingHost) }
             .map {}
 

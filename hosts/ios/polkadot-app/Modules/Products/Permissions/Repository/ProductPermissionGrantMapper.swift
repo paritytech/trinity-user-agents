@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Operation_iOS
 import Products
@@ -35,8 +36,8 @@ extension ProductPermissionGrantMapper: CoreDataMapperProtocol {
             throw ProductPermissionGrantMapperError.unknownPermission(typeName: typeName, key: key)
         }
 
-        return ProductPermissionGrant(
-            productId: productId,
+        return try ProductPermissionGrant(
+            productId: ProductId(productId),
             permission: permission,
             granted: entity.granted,
             grantedAt: entity.grantedAt
@@ -49,7 +50,7 @@ extension ProductPermissionGrantMapper: CoreDataMapperProtocol {
         using _: NSManagedObjectContext
     ) throws {
         entity.identifier = model.identifier
-        entity.productId = model.productId
+        entity.productId = model.productId.rawValue
         entity.permissionType = model.permission.typeName
         entity.permissionKey = model.permission.key
         entity.granted = model.granted

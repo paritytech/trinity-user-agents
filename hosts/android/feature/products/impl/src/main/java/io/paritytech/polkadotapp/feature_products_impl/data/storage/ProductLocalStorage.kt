@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.storage
 
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 private const val PREFS_KEY_PREFIX = "ProductStorage"

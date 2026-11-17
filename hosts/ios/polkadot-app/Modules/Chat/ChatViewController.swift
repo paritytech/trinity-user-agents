@@ -275,7 +275,3 @@ private extension ChatViewController {
         case done
     }
 }
-
-extension ChatViewController: TabBarChromeVisibilityCustomizing {
-    var tabBarChromeIsVisible: Bool { false }
-}

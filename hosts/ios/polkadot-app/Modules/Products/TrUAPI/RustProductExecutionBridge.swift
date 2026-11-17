@@ -40,8 +40,9 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend
 
     private let dependencies: Dependencies
-    private let cardFace: (any ExpandedCardFaceShowing)?
     private weak var execution: TrUAPIProductExecutionProtocol?
+    /// Weak because the face owns the runtime that retains this bridge.
+    private weak var cardFace: (any ExpandedCardFaceShowing)?
     private let cachedTheme = OSAllocatedUnfairLock(
         uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
     )
@@ -142,11 +143,14 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId.rawValue)
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirmPermission(
+            review: review,
+            from: dependencies.productId.rawValue
+        )
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -170,7 +174,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
-        guard let cardFace else { return .unsupported }
+        guard let cardFace else { return .notPresented }
 
         return await cardFace.setFaceShown(shown)
     }
@@ -186,11 +190,9 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return dependencies.chainRegistry.getConnection(for: chain.chainId) != nil
+        case .materials:
+            return false
         }
-    }
-
-    func supportedChains() throws -> HostChainSet {
-        TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
     }
 
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
@@ -304,7 +306,7 @@ extension RemotePermission {
 
 extension NftPurseOwner {
     /// The owning product, or `nil` for purses of the user's own account.
-    var productId: String? {
+    var productId: ProductId? {
         switch self {
         case let .product(productId): productId
         case .root: nil

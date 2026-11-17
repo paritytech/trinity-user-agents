@@ -1,11 +1,15 @@
+@file:UseSerializers(ProductIdSerializer::class)
+
 package io.paritytech.polkadotapp.feature_sso_impl.data.model.scale.session
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.annotations.EnumIndex
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.annotations.FixedLength
 import io.paritytech.polkadotapp.chains.util.Sr25519SecretKey
+import io.paritytech.polkadotapp.feature_products_api.model.ProductIdSerializer
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductDerivationIndexScale
-import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductIdScale
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.UseSerializers
+import uniffi.truapi.ProductId
 
 @Serializable
 sealed class SsoApAllocatableResourceScale {
@@ -75,7 +79,7 @@ enum class SsoOnExistingAllowancePolicyScale {
 
 @Serializable
 class SsoResourceAllocationRequestScale(
-    val callingProductId: ProductIdScale,
+    val callingProductId: ProductId,
     val resources: List<SsoApAllocatableResourceScale>,
     val onExisting: SsoOnExistingAllowancePolicyScale,
 )

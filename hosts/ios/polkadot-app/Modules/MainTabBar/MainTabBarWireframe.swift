@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import PolkadotUI
 import Products
@@ -36,7 +37,7 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         ) else {
             return
         }
-        view?.controller.present(signInView.controller, animated: true)
+        view?.controller.topmostPresented.present(signInView.controller, animated: true)
     }
 
     func showPaymentsSetupNotice(isVisible: Bool) {
@@ -77,6 +78,27 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         presentedSettings = settings
         view?.controller.topmostPresented.present(settings, animated: true)
     }
+
+    func showBackupSettings(from view: MainTabBarViewProtocol?) {
+        guard
+            let presenter = view?.controller.topmostPresented,
+            let backup = BackupViewFactory.createView(serviceCoordinator: serviceCoordinator)
+        else {
+            return
+        }
+
+        if let settings = presentedSettings, settings.presentingViewController != nil {
+            settings.pushViewController(backup.controller, animated: true)
+            return
+        }
+
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
+        }
+        presentedSettings = settings
+        settings.pushViewController(backup.controller, animated: false)
+        presenter.present(settings, animated: true)
+    }
 }
 
 private extension MainTabBarWireframe {
@@ -90,7 +112,7 @@ private extension MainTabBarWireframe {
             showDeviceDetails(device, view: view)
         case let .noFreeSlots(message):
             let controller = NoSlotsAvailableViewFactory.createView(message: message)
-            view?.controller.present(controller, animated: true)
+            view?.controller.topmostPresented.present(controller, animated: true)
         case .failed:
             view?.controller.showToast(
                 message: String(localized: .linkedDevicesSignInError),
