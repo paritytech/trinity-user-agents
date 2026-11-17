@@ -31,6 +31,17 @@ use rusqlite::{OptionalExtension, Transaction};
 use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
 
 use self::format::read_material;
+pub use self::{
+	noise::noise_image,
+	resolve::{
+		FallbackReporter, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
+		ResolveSettings, ResolvedMaterials, check_material_image,
+	},
+	shader::{
+		MaterialShader, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
+		UniformRole,
+	},
+};
 use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::PreimageHost,
@@ -39,6 +50,15 @@ use crate::{
 	store::{Db, DbError},
 	time::Timer,
 };
+
+/// Whether a host with materials `enabled` draws materials of format
+/// `version` requiring `features`: the format version this core reads, and
+/// only features it reads (none, in version 1).
+pub fn draws(enabled: bool, version: u32, features: &[String]) -> bool {
+	enabled &&
+		version == format::FORMAT_VERSION &&
+		features.iter().all(|feature| format::FEATURES.contains(&feature.as_str()))
+}
 
 /// Largest material the format allows.
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
@@ -59,6 +79,7 @@ struct Shared {
 	timer: Arc<dyn Timer>,
 	spawner: Spawner,
 	fetches: Mutex<HashMap<[u8; 32], Fetch>>,
+	shaders: Mutex<resolve::ShaderCache>,
 }
 
 /// One fetch in flight, and the callers it answers.
@@ -77,7 +98,14 @@ impl Materials {
 		timer: Arc<dyn Timer>,
 		spawner: Spawner,
 	) -> Self {
-		Self(Arc::new(Shared { db, lookup, timer, spawner, fetches: Mutex::default() }))
+		Self(Arc::new(Shared {
+			db,
+			lookup,
+			timer,
+			spawner,
+			fetches: Mutex::default(),
+			shaders: Mutex::default(),
+		}))
 	}
 
 	/// The text of material `id` once it is on the device, then the end.
@@ -137,7 +165,7 @@ impl Materials {
 	}
 
 	async fn fetch(self, id: [u8; 32], own: AbortHandle) {
-		let answer = self.resolve(id, &own).await;
+		let answer = self.read_or_fetch(id, &own).await;
 		let mut fetches = self.0.fetches.lock();
 		// Every caller left as the answer came, so the entry may be a newer fetch's.
 		if own.is_aborted() {
@@ -154,7 +182,11 @@ impl Materials {
 		}
 	}
 
-	async fn resolve(&self, id: [u8; 32], own: &AbortHandle) -> Result<Vec<u8>, MaterialFailure> {
+	async fn read_or_fetch(
+		&self,
+		id: [u8; 32],
+		own: &AbortHandle,
+	) -> Result<Vec<u8>, MaterialFailure> {
 		match self.kept(id).await {
 			Ok(Some(text)) => return Ok(text),
 			Ok(None) => {},
@@ -190,7 +222,14 @@ impl Materials {
 	}
 
 	async fn keep(&self, id: [u8; 32], text: Vec<u8>) -> Result<Vec<u8>, MaterialFailure> {
-		read_material(&text)?;
+		if let Err(error) = read_material(&text) {
+			tracing::info!(
+				target: crate::markers::MATERIALS_NODE_PLAIN.target,
+				"material {} refused: {error}",
+				hex::encode(id)
+			);
+			return Err(error.into());
+		}
 		let row = text.clone();
 		let kept = self
 			.0
@@ -337,12 +376,15 @@ const NEWEST_FIRST: &str = "SELECT id, length(text) FROM material ORDER BY rowid
 
 const DELETE: &str = "DELETE FROM material WHERE id = ?1";
 
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod format;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod glsl;
 mod limits;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod metal;
 mod noise;
+mod resolve;
+mod shader;
 
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;
