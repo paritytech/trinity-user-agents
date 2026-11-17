@@ -138,42 +138,6 @@ pub enum StartError {
 	Store(DbError),
 }
 
-/// Why the coinage layer does not serve the host (native interface,
-/// section 2).
-#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, uniffi::Error)]
-pub enum CoinageUnavailable {
-	/// The host did not turn coinage on, the runtime has no local session,
-	/// or the stack runs no coinage.
-	#[display("coinage is off")]
-	Off,
-	/// A3's check failed for the current runtime.
-	#[display("unsupported runtime: {check}")]
-	UnsupportedRuntime {
-		/// The check that failed.
-		check: String,
-	},
-	/// The local store does not decode.
-	#[display("the local store does not decode")]
-	UndecodableStore,
-	/// The layer could not start for another reason, such as an
-	/// unavailable seed or a store failure.
-	#[display("the coinage layer did not start: {reason}")]
-	NotStarted {
-		/// What went wrong.
-		reason: String,
-	},
-}
-
-impl From<StartError> for CoinageUnavailable {
-	fn from(error: StartError) -> Self {
-		match error {
-			StartError::UnsupportedRuntime { check } => Self::UnsupportedRuntime { check },
-			StartError::UndecodableStore => Self::UndecodableStore,
-			other => Self::NotStarted { reason: other.to_string() },
-		}
-	}
-}
-
 /// A failure to start an operation, or a query that cannot be answered.
 ///
 /// It crosses UniFFI as `CoinageError`: a bare `Error` would shadow Swift's
