@@ -297,6 +297,27 @@ enum MessageContent {
 
     // A long post. Its Markdown also has headings and tables.
     Article { title: String, blocks: Vec<ArticleBlock> },
+
+    // A payment that the Host made. The origin is the payer. The Host of a
+    // reader checks `reference` and draws the state that it reads
+    // (pending, sent, claimed, failed), not one that the sender wrote.
+    Payment(Payment),
+}
+
+struct Payment {
+    asset: PaymentAsset,
+    amount: u128,
+    reference: PaymentReference,
+}
+
+enum PaymentAsset {
+    Id(u32),
+    Token { symbol: String, decimals: u8 },
+}
+
+enum PaymentReference {
+    CoinCheque(Vec<u8>),
+    Transfer { chain: String, block_hash: [u8; 32], extrinsic_hash: [u8; 32] },
 }
 
 enum ArticleBlock {
@@ -769,6 +790,8 @@ struct DefaultChatMessageInputConfig {
 
 enum ChatInputPayment {
     Disabled,
+    // The Host makes the payment that the user approves, then sends the
+    // Product a `NewMessage` with its `Payment`.
     Enabled {
         // The account that receives the payment.
         destination: AccountId,
@@ -992,6 +1015,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
 24. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
 25. **Stories**: Posts that expire, for an audience, with views and replies.
+26. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
@@ -1046,7 +1070,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 ## Related Discussions
 
-1. **Payment messages**: The payment button in chat input is in scope, but the full payment message type and rendering is a separate RFC. The `MessageContent` enum may need a `Payment` variant in the future.
+1. **Payment messages**: The payment button in chat input and `MessageContent::Payment` are in scope. Making a payment and checking a reference belong to the Payment Host API ([RFC 0006](0006-payments.md)).
 
 2. **Call transport**: A call needs a signalling and a media path in the Host. This RFC defines only the call row and its signals.
 
