@@ -16,7 +16,7 @@ use subxt::{
 	utils::{AccountId32, H256},
 };
 
-use crate::chain::{ChainHeads, Heads, StorageWatchError, WatchedStorage};
+use crate::chain::{ChainHeads, Heads, StorageEntryName, StorageWatchError, WatchedStorage};
 
 /// The pallet's name in the runtime.
 pub const PALLET: &str = "Coinage";
@@ -88,6 +88,9 @@ pub const COIN_FAILURE_LOCK_PERIOD: &str = "CoinFailureLockPeriod";
 /// The members pallet, which holds the recycler rings.
 const MEMBERS: &str = "Members";
 
+/// The pallet's storage of each alias's lock or unload.
+const ALIAS_STATES: &str = "RecyclerAliasStates";
+
 /// The identifier of the recycler ring collection for `exponent` of
 /// `instance`: `coinage/recycler`, the instance little-endian, the exponent
 /// as a byte, padded with zeros.
@@ -158,7 +161,9 @@ pub trait CoinageChain: Send + Sync {
 		exponent: i8,
 		members: &[[u8; 32]],
 	) -> Result<Vec<Option<RingPlace>>, StorageWatchError>;
-	/// The state of each alias in ring `ring` of `exponent`.
+	/// The state of each alias in ring `ring` of `exponent`, none for an
+	/// alias the pallet holds nothing for. A held value that is not an
+	/// `AliasState` fails the read, so it is never taken for a free alias.
 	async fn aliases_at(
 		&self,
 		at: H256,
@@ -296,8 +301,17 @@ impl CoinageChain for CoinageStorage {
 	) -> Result<Vec<Option<AliasState>>, StorageWatchError> {
 		let keys: Vec<(u32, i8, u32, [u8; 32])> =
 			aliases.iter().map(|alias| (self.instance, exponent, ring, *alias)).collect();
-		let states = self.values(at, PALLET, "RecyclerAliasStates", &keys).await?;
-		Ok(states.iter().map(|state| state.as_ref().and_then(alias_state)).collect())
+		let states = self.values(at, PALLET, ALIAS_STATES, &keys).await?;
+		states
+			.iter()
+			.map(|state| match state {
+				None => Ok(None),
+				Some(value) => alias_state(value).map(Some).ok_or_else(|| StorageWatchError::Incompatible {
+					entry: StorageEntryName { pallet: PALLET.to_owned(), entry: ALIAS_STATES.to_owned() },
+					reason: "a stored value is not an AliasState".to_owned(),
+				}),
+			})
+			.collect()
 	}
 
 	async fn ring_members_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {
@@ -333,12 +347,16 @@ fn number(value: &Value, field: &str) -> Option<u128> {
 	value.at(field).and_then(Value::as_u128)
 }
 
-/// An alias's state, from the pallet's `AliasState`.
+/// An alias's state, from the pallet's `AliasState`; none when the value is
+/// not one, such as a lock without its end.
 fn alias_state(state: &Value) -> Option<AliasState> {
 	let variant = variant_name(state)?;
 	match variant {
 		"Unloaded" => Some(AliasState::Unloaded),
-		"Locked" => Some(AliasState::Locked(state.at(0).and_then(|lock| number(lock, "until")).unwrap_or(0) as u64)),
+		"Locked" => {
+			let until = state.at(0).and_then(|lock| number(lock, "until"))?;
+			Some(AliasState::Locked(u64::try_from(until).ok()?))
+		},
 		_ => None,
 	}
 }
