@@ -7,6 +7,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
+use truapi::latest;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
@@ -24,6 +25,15 @@ pub fn chat_platform_for(
 		return Err(ProductRuntimeError::Denied);
 	}
 	chat.cloned().ok_or(ProductRuntimeError::Unsupported)
+}
+
+/// The declaration of a room that lets the core ask a product a query.
+#[derive(Clone, Copy)]
+pub enum ChatHandler {
+	/// A flag of the room configuration.
+	Config(fn(&latest::ChatRoomConfig) -> bool),
+	/// No declaration. The core does not read the room, which need not exist.
+	Undeclared,
 }
 
 /// Call budgets the core holds each product room to, shared by every

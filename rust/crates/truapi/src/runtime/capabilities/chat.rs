@@ -42,7 +42,10 @@ use crate::{
 		validate_chat_name,
 		validate_chat_room_metadata, validate_chat_room_preview,
 	},
-	runtime::{AccountHolder, ProductRuntimeHost, chat::ChatRateLimiter, versioning::version},
+	runtime::{
+		AccountHolder, ChatHandler, ProductConnection, ProductRuntimeHost, chat::ChatRateLimiter,
+		versioning::version,
+	},
 };
 
 /// The participant id of the host's user, which a product cannot write as.
@@ -502,6 +505,27 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 		},
 		error => latest::HostChatPostMessageError::Unknown { reason: error.to_string() },
 	})
+}
+
+impl ProductConnection {
+	/// Whether the declarations the host keeps for `room_id` declare
+	/// `handler`. The core asks a product a query only when they do.
+	pub async fn chat_handler_declared(
+		&self,
+		room_id: String,
+		handler: ChatHandler,
+	) -> Result<bool, String> {
+		let platform = self.native_chat_platform().map_err(|error| error.to_string())?;
+		let declared = match handler {
+			ChatHandler::Config(declared) => declared,
+			ChatHandler::Undeclared => return Ok(true),
+		};
+		let config = platform
+			.read_chat_room_config(&self.product, room_id.clone())
+			.await
+			.map_err(|error| error.reason)?;
+		Ok(declared(&config))
+	}
 }
 
 impl<H: AccountHolder> ProductRuntimeHost<H> {

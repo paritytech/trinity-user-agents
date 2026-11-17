@@ -70,7 +70,7 @@ use std::{
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
 pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey};
-pub use chat::chat_platform_for;
+pub use chat::{ChatHandler, chat_platform_for};
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
@@ -590,7 +590,7 @@ impl ProductConnection {
 	}
 
 	/// Chat access policy for this connection; see [`chat_platform_for`].
-	fn native_chat_platform(
+	pub fn native_chat_platform(
 		&self,
 	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
 		chat_platform_for(

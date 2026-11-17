@@ -1241,6 +1241,48 @@ fn room_declarations_are_bounded_as_the_limits_say() {
 	);
 }
 
+#[test]
+fn a_query_asks_a_bounded_page() {
+	let messages = |page_size, cursor: usize| ProductChatMessagesQueryRequest {
+		room_id: "room".to_string(),
+		anchor: ChatPageAnchor::Before { cursor: Some("c".repeat(cursor)) },
+		page_size,
+	};
+	assert!(
+		validate_chat_messages_query(messages(CHAT_MESSAGES_PAGE_MAX, CHAT_CURSOR_MAX_BYTES))
+			.is_ok()
+	);
+	for page_size in [0, CHAT_MESSAGES_PAGE_MAX + 1] {
+		assert_eq!(
+			validate_chat_messages_query(messages(page_size, 1)),
+			Err(ChatFieldError::OutOfRange {
+				field: "pageSize",
+				min: 1,
+				max: CHAT_MESSAGES_PAGE_MAX.into()
+			})
+		);
+	}
+	assert_eq!(
+		validate_chat_messages_query(messages(1, CHAT_CURSOR_MAX_BYTES + 1)),
+		Err(ChatFieldError::TooLong { field: "cursor", limit: CHAT_CURSOR_MAX_BYTES })
+	);
+}
+
+// A product answers no more than the host asked for, so a page cannot grow
+// the cache past what the screen requested.
+#[test]
+fn an_answer_holds_no_more_than_the_page_asked() {
+	let page = |count: usize| ProductChatMessagesQueryResponse {
+		messages: (0..count).map(|index| text_message(&format!("m{index}"))).collect(),
+		next: None,
+	};
+	assert!(validate_chat_messages_page(page(3), 3).is_ok());
+	assert_eq!(
+		validate_chat_messages_page(page(4), 3),
+		Err(ChatFieldError::TooMany { field: "messages", limit: 3 })
+	);
+}
+
 // The core screens the quote of a reply as it screens the message that it
 // quotes.
 #[test]
