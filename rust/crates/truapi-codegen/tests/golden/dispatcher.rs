@@ -982,7 +982,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::COIN_PAYMENT_LISTEN_FOR_PAYMENT, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentListenForRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -1002,6 +1002,73 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_CHEQUE_STATUS, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentChequeStatusRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.cheque_status(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::coin_payment::HostCoinPaymentChequeStatusItem, truapi::CallError<versioned::coin_payment::HostCoinPaymentChequeStatusError>>| {
+                        item.map(|item| {
+                            <versioned::coin_payment::HostCoinPaymentChequeStatusItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_CANCEL_CHEQUE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentCancelChequeRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.cancel_cheque(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::coin_payment::HostCoinPaymentCancelChequeItem, truapi::CallError<versioned::coin_payment::HostCoinPaymentCancelChequeError>>| {
+                        item.map(|item| {
+                            <versioned::coin_payment::HostCoinPaymentCancelChequeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::COIN_PAYMENT_LIST_PURSES, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentListPursesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::coin_payment::HostCoinPaymentListPursesResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentListPursesError>> =
+                    match host.list_purses(&cx, request).await {
+                        Ok(response) => Ok(<versioned::coin_payment::HostCoinPaymentListPursesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
