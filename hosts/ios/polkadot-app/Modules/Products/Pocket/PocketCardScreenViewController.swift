@@ -130,8 +130,6 @@ final class PocketCardScreenViewController: UIViewController {
     }
 }
 
-extension PocketCardScreenViewController: TabBarRootStandIn {}
-
 extension PocketCardScreenViewController: PocketFlightScreen {
     var statusStripTitle: String {
         card.title
