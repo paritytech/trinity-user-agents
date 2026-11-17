@@ -62,7 +62,17 @@ ProductId = DotNsIdentifier
 
 enum ResourceUri {
   Inline(Base64String),
-  Preimage(CID)
+  // A file on the Bulletin chain. The ticket opens a sealed file.
+  Preimage {
+    cid: CID,
+    ticket: Option<[u8; 32]>,
+  },
+  // A file that the Product serves over its own transport, for example
+  // a peer-to-peer connection. Only a Product that knows `kind` reads it.
+  Product {
+    kind: String,
+    data: Vec<u8>,
+  },
 }
 
 struct CreateChatRoomRequest {
@@ -74,6 +84,8 @@ struct CreateChatRoomRequest {
         avatar: ResourceUri?,
         name: String,
         description: String?,
+        kind: RoomKind,
+        parent: Option<RoomId>,
     },
     // Optional. Initial state for the room preview that will define appearance in the chat list. If not provided - default rendering is used
     initial_preview?: {
@@ -139,6 +151,38 @@ struct RoomMetadata {
     avatar: ResourceUri?,
     name: String,
     description: String?,
+    kind: RoomKind,
+    // The Space, Category or Forum that holds the room, and its place there.
+    parent: Option<RoomId>,
+    position: u32,
+    settings: RoomSettings,
+}
+
+enum RoomKind {
+    // Its parent can be a Channel: then it is the inbox of one reader to
+    // the admins of the Channel.
+    Direct,
+    Group,
+    // A Group of posts with `only_admins_post`. The comments of a post are
+    // a Thread on it.
+    Channel,
+    Space,
+    Category,
+    // Each child room is a topic.
+    Forum,
+    Voice,
+    // The replies to one message of the parent room.
+    Thread { root: MessageId },
+}
+
+// Settings that every member sees. A change shows as `SettingsChanged`.
+struct RoomSettings {
+    // Seconds between two messages of one member. 0: no wait.
+    slow_mode: u32,
+    // A text that a member can read after the join.
+    welcome: Option<String>,
+    // A reader drops a message from a participant who is not an admin.
+    only_admins_post: bool,
 }
 
 enum ChatRoomPreviewOrder {
@@ -189,7 +233,11 @@ This is the core of v2. The Product can either rely on the Host's built-in messa
 #### 4.1 Types
 
 ```rust
-MessageId = UUID
+// Unique in the room.
+MessageId = String
+// "user" is the user and "product" is the Product. "room" is the room
+// itself, for a post of a Channel with no author. A participant with an
+// account is the hex of its AccountId.
 ChatParticipantId = String
 Timestamp = u64
 
@@ -218,14 +266,45 @@ enum MessageContent {
         payload: CustomMessagePayload,
         preview_text: Option<String>,
     },
+
+    // A line about the room that the Host draws with its own strings. The
+    // origin is the participant who acted: "Ana added Ben".
+    RoomEvent(RoomEvent),
 }
 
-enum ChatMedia {
-    Image(ResourceUri),
-    File(ResourceUri),
-    Video(ResourceUri)
+enum RoomEvent {
+    Created,
+    MemberAdded(ChatParticipantId),
+    MemberRemoved(ChatParticipantId),
+    MemberLeft,
+    Renamed(String),
+    AvatarChanged,
+    DescriptionChanged,
+    SettingsChanged,
 }
 
+struct ChatMedia {
+    kind: ChatMediaKind,
+    // The same bytes from one or more sources, in the order to try.
+    sources: Vec<ResourceUri>,
+    // What the Host draws before the bytes arrive:
+    mime_type: String,
+    size: Option<u64>,
+    // The size as shown, after any rotation.
+    width: Option<u32>,
+    height: Option<u32>,
+    // A BlurHash of the image or of the first video frame.
+    placeholder: Option<String>,
+    duration_ms: Option<u64>,
+}
+
+enum ChatMediaKind {
+    Image,
+    Video,
+    File,
+}
+
+// One extended grapheme cluster.
 Emoji = String
 
 struct MessageReaction {
@@ -236,6 +315,9 @@ struct MessageReaction {
 struct AggregatedReaction {
     count: u32,
     reacted_by_me: bool,
+    // Another participant reacted to the user's message, and the user has
+    // not seen the message since.
+    unseen: bool,
 }
 
 enum MessageStatus {
@@ -257,6 +339,17 @@ struct Message {
     reply_to: Option<MessageId>,
     last_edited: Option<Timestamp>,
     reactions: Map<Emoji, AggregatedReaction>,
+    // The extensions of the record that made the message (4.6).
+    extensions: Vec<Extension>,
+    // The thread whose root is this message.
+    thread: Option<ThreadSummary>,
+    // The readers of a post of a Channel.
+    views: Option<u32>,
+}
+
+struct ThreadSummary {
+    room_id: RoomId,
+    replies: u32,
 }
 ```
 
@@ -319,6 +412,8 @@ enum UserChatAction {
         message_id: MessageId,
         new_content: MessageContent,
     },
+    // Adds one emoji and never replaces another: a participant may place
+    // several. A Host that allows one for each user first removes the old.
     ReactionPlaced {
         message_id: MessageId,
         reaction: MessageReaction,
@@ -329,7 +424,11 @@ enum UserChatAction {
     },
     MessageDeleted {
         message_id: MessageId
-    }
+    },
+    // The user changed the metadata or the settings of the room.
+    EditRoom(RoomMetadata),
+    // The user started (true) or stopped (false) typing.
+    Typing(bool),
 }
 
 // Return type varies by action:
@@ -398,6 +497,33 @@ fn handle_chat_placeholder(
     get_placeholder: fn() -> ChatPlaceholder
 );
 ```
+
+#### 4.6 Records between Products
+
+The Products of one room can exchange messages with no Host between them, for example over a peer-to-peer protocol. They exchange each `UserChatAction` in a `ChatRecord`, so that every Product reads the room in the same way.
+
+```rust
+struct ChatRecord {
+    // `<origin>.<random>`, where origin is the participant id of the sender.
+    // For a `NewMessage` it is the id of the new message.
+    id: MessageId,
+    // false: the record adds a row. true: it changes a message or the room.
+    control: bool,
+    timestamp: Timestamp,
+    // A `UserChatAction`.
+    action: Vec<u8>,
+    // Data that a reader may ignore, for example a Product text style.
+    extensions: Vec<Extension>,
+}
+
+struct Extension {
+    key: String,
+    value: Vec<u8>,
+}
+```
+
+- A reader drops a record whose `id` starts with the participant id of another origin.
+- A reader that cannot decode `action` shows a row "This message needs a newer version of {product}" when `control` is false, and ignores the record when it is true. It ignores an extension it does not know, and shows a `Custom` message of a type it does not know as its `preview_text`.
 
 ### 5. Message Actions
 
@@ -528,7 +654,61 @@ Products can customize the participant list. The default is two participants: th
 ```rust
 PersonId = u32
 
-enum ChatParticipant {
+struct ChatParticipant {
+    id: ChatParticipantId,
+    kind: ChatParticipantKind,
+    role: Role,
+    // Shown over what the Host infers from `kind`.
+    name: Option<String>,
+    avatar: Option<ResourceUri>,
+    about: Option<String>,
+    birthday: Option<Date>,
+    links: Vec<String>,
+    // A name color and a profile color that every member sees.
+    colors: Option<ParticipantColors>,
+    presence: Option<Presence>,
+}
+
+enum Role {
+    Member,
+    Admin,
+    Owner,
+}
+
+struct Presence {
+    status: PresenceStatus,
+    // When the status last changed: the "last seen" time of `Offline`.
+    since: Timestamp,
+    text: Option<String>,
+}
+
+enum PresenceStatus {
+    Online,
+    Busy,
+    Away,
+    // Also a user who appears offline.
+    Offline,
+}
+
+struct ParticipantColors {
+    name: u32,     // RGB
+    profile: u32,  // RGB
+}
+
+struct Date {
+    year: Option<u16>,
+    month: u8,
+    day: u8,
+}
+
+// Who may see a field of a participant.
+enum Audience {
+    Everyone,
+    Contacts,
+    Nobody,
+}
+
+enum ChatParticipantKind {
     // Verified person with a numeric ID from the People Registry.
     // Has access to Ring VRF proofs.
     Person(PersonId),
@@ -544,13 +724,14 @@ enum ChatParticipant {
     // Another Product acting as a participant.
     Product(ProductId),
 
-    // Arbitrary participant with explicit appearance.
-    Custom {
-        nickname: String,
-        avatar: ResourceUri,
-    },
+    // Arbitrary participant. `name` and `avatar` give its appearance.
+    Custom,
 }
 ```
+
+The role of a participant in a Space applies in each room of the Space.
+
+A participant sets an `Audience` for its `avatar`, `about`, `birthday`, `links` and `presence`. Its Product sends each field only to that audience, so a reader that ignores the audience does not get the field.
 
 #### 8.2 Methods
 
@@ -567,6 +748,9 @@ fn handle_chat_participants(
         ids: Vec<ChatParticipantId>
     ) -> Vec<ChatParticipant>,
 );
+
+// The participants who type in the room now. An empty list ends the line.
+fn on_chat_typing(room_id: RoomId, participants: Vec<ChatParticipantId>);
 ```
 
 ### 9. Participant Actions
@@ -630,6 +814,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 - All `on_*` functions follow the request pattern: `_request`, `_response`.
 - `chat_room_create`, `chat_room_delete` follow the request pattern.
 - `chat_room_list_subscribe` follows the subscription pattern.
+- Products store and forward these types, so their bytes stay stable. An enum gains variants only after its last one, and never reorders or removes one. A struct change is a new version of the type in a versioned envelope. Each content type (`MessageContent`, `UserChatAction`, `ChatMedia`, `ResourceUri`, `RoomMetadata`) has golden vectors, and each change has a changelog line.
 
 ### Requirements
 
@@ -647,13 +832,16 @@ This RFC follows the same transport and serialization rules as the Host API prot
 10. **Emoji reactions**: Place and remove emoji reactions on messages. Aggregated counts displayed inline; detailed reaction lists available on demand.
 11. **Unread counter**: Track and display unread message count per room — either Host-derived or Product-controlled.
 12. **Message status**: Track message lifecycle (preparing, delivered, read).
-13. **Typing indicator**: Preview text with `ongoing` flag for "User is typing..." style animations.
+13. **Typing indicator**: Preview text with `ongoing` flag for "User is typing..." style animations, and the participants who type in a room.
 14. **Participants**: List, paginate, and resolve participants. Support multiple identity types (Person, LitePerson, Contact, Product, Custom).
 15. **Per-message actions**: Configurable long-press menu — built-in actions (copy, reply, edit, react) extensible with Product-defined actions.
 16. **Toolbar actions**: Product-defined action buttons in the chat screen header.
 17. **Customizable input**: Configurable chat footer — default input with optional payment/attachment buttons, no input, or fully custom.
 18. **Participant actions**: Configurable actions when tapping on a participant.
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
+20. **Records between Products**: One record for the Products of a room, with ids bound to their origin and a rule for what a reader does not know.
+21. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
+22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 
 #### Non-Functional Requirements
 
@@ -669,7 +857,17 @@ This RFC follows the same transport and serialization rules as the Host API prot
 2. **Transport patterns**: All `handle_*` functions follow the subscription pattern (`_start`, `_stop`, `_interrupt`, `_receive`). All `on_*` functions and `chat_room_create`/`chat_room_delete` follow the request pattern (`_request`, `_response`).
 3. **Product script lifecycle**: Products are JS scripts executed from scratch on each app start. The Host MUST delay rendering until initialization completes.
 4. **Room ID scoping**: Room IDs are computed by the Host via `blake2b("product" ++ productId ++ room_id_source)` to guarantee cross-Product uniqueness.
-5. **Resource URIs**: Binary resources are referenced via inline Base64 or Preimage CID — no direct URL references.
+5. **Resource URIs**: Binary resources are referenced inline, by Preimage CID or by a Product source. No direct URL references.
+
+#### Limits
+
+A Product refuses an action over a limit, and a reader drops a record over it.
+
+| Item | Limit |
+|---|---|
+| One reaction (`Emoji`) | 64 bytes |
+| Distinct reactions on one message | 64 |
+| The text of a message | 16 KiB |
 
 ## Drawbacks
 
@@ -690,6 +888,8 @@ This RFC follows the same transport and serialization rules as the Host API prot
 1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows content edits.
 
 2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
+
+3. **Text size**: Long pastes, code blocks and Markdown can be over 16 KiB. Should the limit be 64 KiB, or should a longer text go as a text file?
 
 ## Related Discussions
 
