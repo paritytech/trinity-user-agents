@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.app.root.presentation.main
+package io.paritytech.polkadotapp.common.presentation.tabbar
 
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
