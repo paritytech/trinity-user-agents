@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use super::{
 	Asset, ChainParams, Exponent, PurseId, Snapshot,
 	classification::{Selectability, classify},
-	ledger::{Read, Subject},
+	ledger::{EntryOnChain, Read, Subject},
 	tokens::supply,
 };
 
@@ -74,6 +74,96 @@ fn purse_balance(view: &Snapshot, purse: PurseId, now: u64, params: &ChainParams
 	balance.spendable += chunks[..used].iter().sum::<u64>();
 	balance.arriving += chunks[used..].iter().sum::<u64>();
 	(balance, used)
+}
+
+/// A purse's balance and the rows behind it, from one snapshot, so a screen
+/// that shows both never shows them disagreeing (B2 `holdings`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
+pub struct Holdings {
+	/// The purse's balance.
+	pub balance: Balance,
+	/// One row per coin or entry the balance counts.
+	pub rows: Vec<Holding>,
+}
+
+/// One coin or entry a balance counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
+pub struct Holding {
+	/// The coin or entry, which identifies the row across changes.
+	pub asset: Asset,
+	/// Its denomination.
+	pub exponent: Exponent,
+	/// Selectable now; otherwise counted as held back or arriving.
+	pub ready: bool,
+	/// A coin's age as the chain last showed it; none for an entry, and for
+	/// a coin not yet seen.
+	pub age: Option<u32>,
+	/// A coin this layer created by an unload that the chain marked as one
+	/// of a batch, with an age of one.
+	pub batch_unloaded: bool,
+	/// How much of a ring's anonymity the row hides in, in percent: for an
+	/// entry, its ring's; for a coin this layer unloaded, the ring it left.
+	/// None when that ring, or its unloaded count, is unknown.
+	pub fungibility: Option<u8>,
+}
+
+/// The holdings of `purse` at `now`.
+pub fn holdings(view: &Snapshot, purse: PurseId, now: u64, params: &ChainParams) -> Holdings {
+	let rows = view
+		.assets(purse)
+		.filter_map(|record| {
+			let selectability = classify(&record.asset, view, now, params).selectability;
+			if selectability == Selectability::Never {
+				return None;
+			}
+			let observed = view.observation(&Subject::Asset(record.asset)).and_then(|observation| observation.value.as_ref());
+			let age = match observed {
+				Some(Read::Coin { now: Some(coin), .. }) => Some(coin.age),
+				_ => None,
+			};
+			let source = unloaded_from(view, &record.asset);
+			let ring = match (record.asset, observed) {
+				(Asset::Entry { .. }, Some(Read::Entry(Some(entry)))) => Some(*entry),
+				(Asset::Coin { .. }, _) => source,
+				_ => None,
+			};
+			Some(Holding {
+				asset: record.asset,
+				exponent: record.exponent,
+				ready: selectability == Selectability::Now,
+				age,
+				batch_unloaded: source.is_some() && age == Some(1),
+				fungibility: ring.and_then(|ring| Some(fungibility(params.ring_size(), ring.included, ring.unloaded?))),
+			})
+		})
+		.collect();
+	Holdings { balance: balance(view, purse, now, params), rows }
+}
+
+/// The ring a coin left, as its unload's first input entry was last
+/// observed in it, when the coin's creator is an unload.
+fn unloaded_from(view: &Snapshot, coin: &Asset) -> Option<EntryOnChain> {
+	let creator = view.registrations().creator(coin)?;
+	let entry = creator.rows.inputs.iter().find(|input| matches!(input, Asset::Entry { .. }))?;
+	match view.observation(&Subject::Asset(*entry))?.value.as_ref()? {
+		Read::Entry(Some(entry)) => Some(*entry),
+		_ => None,
+	}
+}
+
+/// `round(100 · (I² − U²) / (I · L))`, as both shipped wallets compute it,
+/// with `U` clamped to `I`; zero for an empty ring or a ring of no capacity.
+fn fungibility(capacity: u32, included: u32, unloaded: u32) -> u8 {
+	if included == 0 || capacity == 0 {
+		return 0;
+	}
+	let (capacity, included, unloaded) = (u64::from(capacity), u64::from(included), u64::from(unloaded.min(included)));
+	let numerator = 100 * (included * included - unloaded * unloaded);
+	let denominator = included * capacity;
+	let rounded = (2 * numerator + denominator) / (2 * denominator);
+	u8::try_from(rounded.min(100)).unwrap_or(100)
 }
 
 /// The ring and revision an entry was last observed in.
