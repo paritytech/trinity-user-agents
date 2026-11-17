@@ -262,18 +262,6 @@ impl PairingHostRuntime {
 		}
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		self.services.public_profiles.resolve(username, force).await
-	}
-
 	/// The image `reference` names, checked against its CID and the image policy.
 	///
 	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
@@ -927,8 +915,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names)?)
+	) {
+		self.services.set_funding_provider_config(published_names);
 	}
 
 	/// Record that the host told the user how ended session `intent` went.
@@ -960,10 +948,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_providers(
 		&self,
 		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), v01::GenericError> {
-		self.services
-			.set_funding_providers(providers)
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	) {
+		self.services.set_funding_providers(providers);
 	}
 
 	/// Quotes of `amount` for funding session `intent` on the rail, asset,
@@ -1246,18 +1232,6 @@ impl SigningHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, crate::store::DbError> {
 		self.services.core_db()?.status().await
-	}
-
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		self.services.public_profiles.resolve(username, force).await
 	}
 
 	/// Resolves public profile metadata with optional cached-first delivery.
