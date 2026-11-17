@@ -612,10 +612,14 @@ struct Presence {
     status: PresenceStatus,
     // When the status last changed: the "last seen" time of `Offline`.
     since: Timestamp,
+    text: Option<String>,
 }
 
 enum PresenceStatus {
     Online,
+    Busy,
+    Away,
+    // Also a user who appears offline.
     Offline,
 }
 
