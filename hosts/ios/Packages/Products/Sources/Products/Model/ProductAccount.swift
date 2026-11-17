@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import SubstrateSdk
@@ -35,12 +36,12 @@ public struct ProductAccountId: Hashable, Codable {
 
 extension ProductAccountId: ScaleCodable {
     public init(scaleDecoder: any ScaleDecoding) throws {
-        productId = try String(scaleDecoder: scaleDecoder)
+        productId = try ProductId(String(scaleDecoder: scaleDecoder))
         derivationIndex = try ProductAccountSelector(scaleDecoder: scaleDecoder)
     }
 
     public func encode(scaleEncoder: any ScaleEncoding) throws {
-        try productId.encode(scaleEncoder: scaleEncoder)
+        try productId.rawValue.encode(scaleEncoder: scaleEncoder)
         try derivationIndex.encode(scaleEncoder: scaleEncoder)
     }
 }

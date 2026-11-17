@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import PolkadotUI
 import Products
@@ -6,7 +7,7 @@ import UIKitExt
 protocol AppDetailViewProtocol: ControllerBackedProtocol {
     func didReceive(name: String, subtitle: String?)
     func didReceive(avatar: AvatarViewModel)
-    func didReceive(icon: any ImageViewModelProtocol)
+    func didReceive(icon: AnyImageViewModel)
 }
 
 @MainActor

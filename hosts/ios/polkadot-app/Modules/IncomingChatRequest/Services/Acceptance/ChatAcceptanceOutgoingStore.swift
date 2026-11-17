@@ -108,11 +108,12 @@ private extension ChatAcceptanceOutgoingStore {
     static func acknowledgementPredicate(in chat: CDChat, after acceptanceOrder: Int64) -> NSPredicate {
         let incoming = [Chat.LocalMessage.Status.incoming(.new), .incoming(.seen)].map(\.rawValue)
         let delivered = Chat.LocalMessage.Status.outgoing(.delivered).rawValue
-        // Inserted by this device while handling the request, not received from the requester.
+        // Not device-route speech: local request bookkeeping, or the peer's acceptance from the identity route.
         let localContentTypes = [
             Chat.LocalMessage.Content.ContentType.versionedChatRequest,
             .chatRequest,
-            .deviceAdded
+            .deviceAdded,
+            .multiChatAccepted
         ].map(\.rawValue)
 
         return NSCompoundPredicate(andPredicateWithSubpredicates: [

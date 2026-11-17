@@ -20,7 +20,7 @@ use super::StorageWatchError;
 use crate::chain::HashAndNumber;
 
 /// A storage entry by pallet and entry name, shown as `Pallet.Entry`.
-#[derive(Clone, Debug, PartialEq, Eq, Display)]
+#[derive(Clone, Debug, Display)]
 #[display("{pallet}.{entry}")]
 pub struct StorageEntryName {
 	/// Pallet that declares the entry.

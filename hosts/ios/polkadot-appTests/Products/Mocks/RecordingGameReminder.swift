@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 @testable import polkadot_app
@@ -21,6 +22,6 @@ final class RecordingGameReminder: GameStartReminderServicing {
 }
 
 /// The reminder call the center makes for a product's start, which rings at the start itself.
-func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGameReminder.Call {
+func reminderCall(_ startsAt: Date, _ productId: ProductId) -> RecordingGameReminder.Call {
     .init(gameDate: startsAt, productId: productId)
 }

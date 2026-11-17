@@ -2,6 +2,7 @@ import Foundation
 import Keystore_iOS
 import Operation_iOS
 import UIKitExt
+import TrUAPIHost
 @testable import polkadot_app
 
 /// The chat store of one product on an in-memory database, reached the way the rust chat bridge reaches it:
@@ -35,7 +36,7 @@ final class ProductRoomFixture {
         feedListeners: ProductFeedListeners = ProductFeedListeners(),
         pageCache: ProductMessageCaching = ProductMessageCache()
     ) async -> RustChatExecutionBridge {
-        let productId = productId
+        let productId = try! ProductId(productId)
         return await RustChatExecutionBridge(
             dependencies: MainActor.run { makeChatBridgeDependencies(productId: productId) },
             chatMessaging: surface,
@@ -93,7 +94,12 @@ final class ProductRoomBotStub: ChatExtensionBotProtocol {
     let identifier: ChatExtension.Id = "game.dot"
 
     var peerMetadata: Chat.PeerMetadata {
-        Chat.PeerMetadata(name: "Game", icon: .product(domain: identifier), input: .empty, moreActions: [])
+        Chat.PeerMetadata(
+            name: "Game",
+            icon: .product(domain: try! ProductId(identifier)),
+            input: .empty,
+            moreActions: []
+        )
     }
 
     func deliverAutomaticMessages(_: ChatExtensionDiscoverContextProtocol) {}

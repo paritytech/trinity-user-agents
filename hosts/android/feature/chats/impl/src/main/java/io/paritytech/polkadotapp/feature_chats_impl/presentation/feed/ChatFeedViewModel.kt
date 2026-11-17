@@ -182,7 +182,7 @@ class ChatFeedViewModel @Inject constructor(
     private val readiness = feedSnapshot.map { it.readiness }.distinctUntilChanged()
 
     override val chatDisplay = interactor.observeChatDisplay(openChatRequest)
-        .mapResult { it.toUi() }
+        .mapResult { it.toUi(forceFresh = true) }
         .withLoading()
         .stateInBackground(initialValue = LoadingState.Loading)
 
@@ -395,6 +395,7 @@ class ChatFeedViewModel @Inject constructor(
                 ChatUserInputState.UnblockUser,
                 ChatUserInputState.IdentitySigningConsentRequired,
                 ChatUserInputState.Nothing,
+                is ChatUserInputState.ExtensionCard,
                 ChatUserInputState.PeerLeft,
                 ChatUserInputState.UserDeclinedChatRequest,
                 ChatUserInputState.WaitChatRequestApproval -> {
@@ -762,6 +763,7 @@ class ChatFeedViewModel @Inject constructor(
             is ChatUserInputState.PeerLeft -> ChatInputUiState.PeerLeft
             is ChatUserInputState.UnblockUser -> ChatInputUiState.UnblockUser
             is ChatUserInputState.IdentitySigningConsentRequired -> ChatInputUiState.IdentitySigningConsent
+            is ChatUserInputState.ExtensionCard -> ChatInputUiState.ExtensionCard(renderer)
             is ChatUserInputState.WaitChatRequestApproval -> ChatInputUiState.WaitChatRequestApproval
             is ChatUserInputState.SendChatRequest -> {
                 ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)

@@ -1,13 +1,17 @@
 import Foundation
+import FoundationExt
 
 enum DashboardServices {
     static let flowStateProvider: SPAFlowStateProviding = SPAFlowStateProvider()
 
     @MainActor static let manager = DashboardServicesManager<ServiceCoordinator>(
-        bootstrapper: BackgroundTaskBootstrapper.makeDefault(),
+        background: DashboardServicesBackground(
+            bootstrapper: BackgroundTaskBootstrapper.makeDefault(),
+            deadline: .seconds(20)
+        ),
         coordinatorFactory: ServiceCoordinatorFactory(flowStateProvider: flowStateProvider),
         connectionRetention: ChainRegistryConnectionRetention(),
-        headlessBootDeadline: .seconds(20),
+        activity: ApplicationActivity(),
         logger: Logger.shared
     )
 }

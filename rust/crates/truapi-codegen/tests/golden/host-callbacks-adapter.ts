@@ -39,7 +39,6 @@ import {
   CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
-  HostChainSet,
   HostContactLookup,
   HostContactMatches,
   HostContactPick,
@@ -102,7 +101,6 @@ export interface RawCallbacks {
   clearCoreStorage(key: Uint8Array): Promise<void>;
   transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
-  supportedChains(): Promise<Uint8Array>;
   scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
   cancelGameReminder?(product: Uint8Array): Promise<void>;
   subscribeLocale(
@@ -271,8 +269,6 @@ export function createWasmRawCallbacks(
           HostFeatureSupportedRequest.dec(request),
         ),
       ),
-    supportedChains: async () =>
-      HostChainSet.enc(await callbacks.features.supportedChains()),
     ...(game
       ? {
           scheduleGameReminder: async (product, startsAt) =>

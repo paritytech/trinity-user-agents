@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import os
@@ -57,7 +58,7 @@ public extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws {
         do {
             try await acceptQueue.run { [self] in
@@ -74,7 +75,7 @@ public extension IncomingPaymentService {
 
     func subscribeStatus(
         for paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws -> AnyAsyncSequence<IncomingPaymentStatus> {
         let groupId = IncomingPayment.groupId(productId: productId, paymentId: paymentId)
 
@@ -114,7 +115,7 @@ private extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws {
         guard amount > 0 else {
             throw IncomingPaymentError.invalidAmount

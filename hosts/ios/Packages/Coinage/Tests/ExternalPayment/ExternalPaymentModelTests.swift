@@ -1,16 +1,24 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Coinage
 
 struct ExternalPaymentModelTests {
     @Test func identityIsScopedByProduct() {
-        let one = ExternalPaymentTestFactory.payment(productId: "getcash.dot", paymentId: "0xaa")
-        let other = ExternalPaymentTestFactory.payment(productId: "other.dot", paymentId: "0xaa")
+        let one = ExternalPaymentTestFactory.payment(productId: try! ProductId("getcash.dot"), paymentId: "0xaa")
+        let other = ExternalPaymentTestFactory.payment(productId: try! ProductId("other.dot"), paymentId: "0xaa")
 
         #expect(one.identifier == "external-payment:getcash.dot:0xaa")
         #expect(one.identifier != other.identifier)
-        #expect(one.productId == "getcash.dot")
+        #expect(one.productId?.rawValue == "getcash.dot")
         #expect(one.paymentId == "0xaa")
+    }
+
+    @Test func walletPaymentKeepsItsStoredIdentityWithoutAProductOwner() {
+        let payment = ExternalPaymentTestFactory.payment(productId: nil, paymentId: "0xaa")
+
+        #expect(payment.productId == nil)
+        #expect(payment.identifier == "external-payment:native-payment:0xaa")
     }
 
     @Test func terminalStages() {

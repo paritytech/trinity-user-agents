@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import io.paritytech.polkadotapp.database.model.RingVrfKeyRegistrationLocal
+import uniffi.truapi.ProductId
 
 @Dao
 abstract class RingVrfKeyRegistrationDao {
@@ -13,7 +14,7 @@ abstract class RingVrfKeyRegistrationDao {
     abstract suspend fun insert(registration: RingVrfKeyRegistrationLocal)
 
     @Query("SELECT * FROM ring_vrf_key_registrations WHERE ownerProductId = :ownerProductId")
-    abstract suspend fun getByOwner(ownerProductId: String): List<RingVrfKeyRegistrationLocal>
+    abstract suspend fun getByOwner(ownerProductId: ProductId): List<RingVrfKeyRegistrationLocal>
 
     @Query(
         """
@@ -22,7 +23,7 @@ abstract class RingVrfKeyRegistrationDao {
         """
     )
     abstract suspend fun getByHandle(
-        ownerProductId: String,
+        ownerProductId: ProductId,
         derivationIndex: ByteArray
     ): List<RingVrfKeyRegistrationLocal>
 }

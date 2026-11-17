@@ -3,9 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.data.repository
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,17 +38,17 @@ class RealProductRepository @Inject constructor(
     }
 
     override suspend fun getProductById(id: ProductId): Product? {
-        return productDao.getById(id.value)?.toProduct()
+        return productDao.getById(id)?.toProduct()
     }
 
     override suspend fun getUserWorkerUrl(id: ProductId): String? {
-        return productDao.getUserWorkerUrl(id.value)
+        return productDao.getUserWorkerUrl(id)
     }
 
     override suspend fun addProduct(id: ProductId, name: String): ProductId {
         productDao.insert(
             ProductLocal(
-                id = id.value,
+                id = id,
                 name = name,
                 iconCid = null,
                 iconFormat = null,
@@ -61,7 +61,7 @@ class RealProductRepository @Inject constructor(
     override suspend fun upsertManualProduct(id: ProductId, name: String, userWorkerUrl: String) {
         productDao.upsertManual(
             ProductLocal(
-                id = id.value,
+                id = id,
                 name = name,
                 iconCid = null,
                 iconFormat = null,
@@ -75,6 +75,6 @@ class RealProductRepository @Inject constructor(
     }
 
     override suspend fun deleteProduct(id: ProductId) {
-        productDao.deleteById(id.value)
+        productDao.deleteById(id)
     }
 }

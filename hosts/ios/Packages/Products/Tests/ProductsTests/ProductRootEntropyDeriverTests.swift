@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import SubstrateSdk
@@ -27,7 +28,7 @@ struct ProductRootEntropyDeriverTests {
 
     @Test func derivesEntropyMatchingReferenceImplementation() throws {
         let result = try makeDeriver().deriveEntropy(
-            productId: "test.product.dot",
+            productId: try! ProductId("test.product.dot"),
             key: Data("my-key".utf8)
         )
 
@@ -37,7 +38,7 @@ struct ProductRootEntropyDeriverTests {
 
     @Test func differentKeyProducesDifferentEntropy() throws {
         let result = try makeDeriver().deriveEntropy(
-            productId: "test.product.dot",
+            productId: try! ProductId("test.product.dot"),
             key: Data("other-key".utf8)
         )
 
@@ -47,7 +48,7 @@ struct ProductRootEntropyDeriverTests {
 
     @Test func differentProductProducesDifferentEntropy() throws {
         let result = try makeDeriver().deriveEntropy(
-            productId: "other.product.dot",
+            productId: try! ProductId("other.product.dot"),
             key: Data("my-key".utf8)
         )
 
@@ -58,8 +59,8 @@ struct ProductRootEntropyDeriverTests {
     @Test func sameInputsProduceSameOutput() throws {
         let deriver = makeDeriver()
 
-        let result1 = try deriver.deriveEntropy(productId: "test.product.dot", key: Data("my-key".utf8))
-        let result2 = try deriver.deriveEntropy(productId: "test.product.dot", key: Data("my-key".utf8))
+        let result1 = try deriver.deriveEntropy(productId: try! ProductId("test.product.dot"), key: Data("my-key".utf8))
+        let result2 = try deriver.deriveEntropy(productId: try! ProductId("test.product.dot"), key: Data("my-key".utf8))
 
         #expect(result1 == result2)
     }
@@ -68,13 +69,13 @@ struct ProductRootEntropyDeriverTests {
         let key = Data(repeating: 0x01, count: 33)
 
         #expect(throws: ProductRootEntropyDeriverError.keyTooLarge(maxSize: 32, actualSize: 33)) {
-            try makeDeriver().deriveEntropy(productId: "test.product.dot", key: key)
+            try makeDeriver().deriveEntropy(productId: try! ProductId("test.product.dot"), key: key)
         }
     }
 
     @Test func outputIs32Bytes() throws {
         let result = try makeDeriver().deriveEntropy(
-            productId: "test.product.dot",
+            productId: try! ProductId("test.product.dot"),
             key: Data("test".utf8)
         )
 

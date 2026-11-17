@@ -7,9 +7,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotification
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.ExperimentalTime

@@ -28,7 +28,7 @@ enum ProductScanViewFactory {
         )
 
         let view = QRScannerViewController(presenter: presenter)
-        view.title = String(localized: .Products.scanTitle(productId: productId))
+        view.title = String(localized: .Products.scanTitle(productId: productId.rawValue))
         view.messageVisibilityDuration = 2
         // Nothing of the product shows through before the camera starts.
         view.rootView.backgroundColor = .black

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.common.presentation.tabbar
 
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.design.components.docklet.DockletSlotHighlight
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -65,16 +66,43 @@ class DockletSlotTapTest {
     }
 
     @Test
-    fun `highlights Network Status when the chain-health panel is open`() {
+    fun `keeps the pill on the current tab while the chain-health panel is open`() {
         assertEquals(
-            DockletSlotTarget.NetworkStatus,
-            dockletHighlightedSlot(currentTab = BottomTab.CHATS, networkStatusExpanded = true),
+            DockletSlotHighlight.Selected,
+            dockletSlotHighlight(Chats, currentTab = BottomTab.CHATS, networkStatusExpanded = true),
         )
     }
 
     @Test
-    fun `highlights the current tab when the chain-health panel is closed`() {
-        assertEquals(Chats, dockletHighlightedSlot(currentTab = BottomTab.CHATS, networkStatusExpanded = false))
+    fun `selects the current tab when the chain-health panel is closed`() {
+        assertEquals(
+            DockletSlotHighlight.Selected,
+            dockletSlotHighlight(Chats, currentTab = BottomTab.CHATS, networkStatusExpanded = false),
+        )
+    }
+
+    @Test
+    fun `leaves the other tabs unhighlighted while the chain-health panel is open`() {
+        assertEquals(
+            DockletSlotHighlight.None,
+            dockletSlotHighlight(Browse, currentTab = BottomTab.CHATS, networkStatusExpanded = true),
+        )
+    }
+
+    @Test
+    fun `emphasizes Network Status without selecting it while its panel is open`() {
+        assertEquals(
+            DockletSlotHighlight.Emphasized,
+            dockletSlotHighlight(DockletSlotTarget.NetworkStatus, currentTab = BottomTab.CHATS, networkStatusExpanded = true),
+        )
+    }
+
+    @Test
+    fun `emphasizes nothing when the chain-health panel is closed`() {
+        assertEquals(
+            DockletSlotHighlight.None,
+            dockletSlotHighlight(DockletSlotTarget.NetworkStatus, currentTab = BottomTab.CHATS, networkStatusExpanded = false),
+        )
     }
 
     private fun tap(target: DockletSlotTarget, current: BottomTab, onMain: Boolean, cardOpen: Boolean = false) =

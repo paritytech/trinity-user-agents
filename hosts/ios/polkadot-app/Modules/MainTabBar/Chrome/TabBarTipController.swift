@@ -4,18 +4,19 @@ import UIKit
 import UIKitExt
 
 @MainActor
-final class TabBarTipController {
+final class TabBarTipController: NSObject {
     private let centerButtonAnchor: any UIPopoverPresentationControllerSourceItem
     private let statusStripAnchor: () -> (any UIPopoverPresentationControllerSourceItem)?
     private let sequence: any TabBarTipSequenceProtocol
+    private let docklet: DockletHooks
 
     private weak var host: UIViewController?
     private var observation: Task<Void, Never>?
 
-    /// Which tip is currently on screen. A presented `TipUIPopoverViewController` cannot be
+    /// Which step is currently on screen. A presented `TipUIPopoverViewController` cannot be
     /// asked which tip it holds, and "on screen" differs from `sequence.currentStep` ("should
     /// be on screen") during the window before an anchor resolves.
-    private var presentedTip: AnyTip?
+    private var presentedStep: TabBarTipStep?
 
     private var isBarLaidOut = false
 
@@ -23,12 +24,15 @@ final class TabBarTipController {
         host: UIViewController,
         sequence: any TabBarTipSequenceProtocol,
         centerButtonAnchor: any UIPopoverPresentationControllerSourceItem,
-        statusStripAnchor: @escaping () -> (any UIPopoverPresentationControllerSourceItem)?
+        statusStripAnchor: @escaping () -> (any UIPopoverPresentationControllerSourceItem)?,
+        docklet: DockletHooks
     ) {
         self.host = host
         self.sequence = sequence
         self.centerButtonAnchor = centerButtonAnchor
         self.statusStripAnchor = statusStripAnchor
+        self.docklet = docklet
+        super.init()
     }
 
     func start() {
@@ -56,6 +60,18 @@ final class TabBarTipController {
         TabBarTips.isBarShownAtRoot = isShown
     }
 
+    /// A tuck landed, so the matching Docklet tip becomes eligible.
+    func dockletTuckLanded(_ kind: DockletTuckKind) {
+        TabBarTips.isUserTuckLanded = kind == .user
+        TabBarTips.isAutoHideLanded = kind == .autoHide
+    }
+
+    /// The bar left Tucked or a grab began; a Docklet tip on screen goes away, unseen if it never appeared.
+    func dockletTuckEnded() {
+        TabBarTips.isUserTuckLanded = false
+        TabBarTips.isAutoHideLanded = false
+    }
+
     func setBarLaidOut(_ isLaidOut: Bool) {
         guard isBarLaidOut != isLaidOut else {
             return
@@ -66,11 +82,11 @@ final class TabBarTipController {
     }
 
     func retireForUserInteraction() {
-        guard let presentedTip else {
+        guard let presentedStep else {
             return
         }
 
-        presentedTip.invalidate(reason: .actionPerformed)
+        presentedStep.tip.invalidate(reason: .actionPerformed)
     }
 
     func dismissForPanel() {
@@ -78,14 +94,47 @@ final class TabBarTipController {
     }
 }
 
+extension TabBarTipController {
+    /// What the Docklet tips need from the chrome.
+    struct DockletHooks {
+        /// The Edge glow the Docklet tips point at.
+        let edgeGlowAnchor: UIView
+        /// The arrow side the Docklet tips point from, toward the Edge glow.
+        let edgeGlowArrowDirection: UIPopoverArrowDirection
+        /// Reports whether any tip is on screen.
+        let onTipShown: (Bool) -> Void
+    }
+}
+
+extension TabBarTipController: UIPopoverPresentationControllerDelegate {
+    /// A tap outside the popover dismisses it without a tip action, which counts as the user closing the tip.
+    func presentationControllerDidDismiss(_: UIPresentationController) {
+        presentedStep?.tip.invalidate(reason: .tipClosed)
+        clearPresentedStep()
+    }
+
+    /// Keeps every tip a popover on compact width, since the presenter replaces TipKit's popover delegate.
+    func adaptivePresentationStyle(
+        for _: UIPresentationController,
+        traitCollection _: UITraitCollection
+    ) -> UIModalPresentationStyle {
+        .none
+    }
+}
+
 private extension TabBarTipController {
+    func clearPresentedStep() {
+        presentedStep = nil
+        docklet.onTipShown(false)
+    }
+
     func present(_ step: TabBarTipStep) {
         guard let host, host.presentedViewController is TipUIPopoverViewController else {
             show(step)
             return
         }
 
-        presentedTip = nil
+        clearPresentedStep()
         host.dismiss(animated: true) { [weak self] in
             self?.show(step)
         }
@@ -102,12 +151,30 @@ private extension TabBarTipController {
         }
 
         let controller = TipUIPopoverViewController(step.tip, sourceItem: anchor)
-        controller.popoverPresentationController?.permittedArrowDirections = [.up, .down]
-        controller.popoverPresentationController?.backgroundColor = .fgPrimary
-        controller.viewStyle = TabBarTipViewStyle()
+        configure(controller, for: step, in: host)
 
         host.present(controller, animated: true)
-        presentedTip = step.tip
+        presentedStep = step
+        step.onShow?()
+        docklet.onTipShown(true)
+    }
+
+    func configure(_ controller: TipUIPopoverViewController, for step: TabBarTipStep, in host: UIViewController) {
+        controller.backgroundColor = .fgPrimary
+        let popover = controller.popoverPresentationController
+        popover?.backgroundColor = .fgPrimary
+        popover?.delegate = self
+
+        switch step.anchor {
+        case .centerButton,
+             .statusStrip:
+            popover?.permittedArrowDirections = [.up, .down]
+        case .edgeGlow:
+            popover?.permittedArrowDirections = [docklet.edgeGlowArrowDirection]
+            popover?.passthroughViews = [host.view]
+        }
+
+        controller.viewStyle = TabBarTipViewStyle()
     }
 
     func anchorItem(for anchor: TabBarTipAnchor) -> (any UIPopoverPresentationControllerSourceItem)? {
@@ -116,11 +183,13 @@ private extension TabBarTipController {
             centerButtonAnchor
         case .statusStrip:
             statusStripAnchor()
+        case .edgeGlow:
+            docklet.edgeGlowAnchor
         }
     }
 
     func dismiss() {
-        presentedTip = nil
+        clearPresentedStep()
 
         guard let host, host.presentedViewController is TipUIPopoverViewController else {
             return
@@ -137,7 +206,7 @@ private extension TabBarTipController {
             return
         }
 
-        guard presentedTip?.id != step.tip.id else {
+        guard presentedStep?.tip.id != step.tip.id else {
             return
         }
 

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Kingfisher
 @preconcurrency import Products
@@ -13,14 +14,14 @@ enum ProductIconImageDataProviderError: Error {
 final class ProductIconImageDataProvider {
     let cacheKey: String
 
-    private let domain: String
+    private let domain: ProductId
     private let dotNsResolver: DotNsResolverProtocol
     private let iconLoader: ProductIconLoading
     private let htmlParser: ProductLinkHTMLParsing
     private let logger: LoggerProtocol
 
     init(
-        domain: String,
+        domain: ProductId,
         dotNsResolver: DotNsResolverProtocol,
         iconLoader: ProductIconLoading,
         htmlParser: ProductLinkHTMLParsing,
@@ -63,7 +64,7 @@ private extension ProductIconImageDataProvider {
         }
 
         // No manifest icon: legacy products link theirs from the archive's index.html.
-        let contentDirectory = try await dotNsResolver.resolveToLocalURL(dotNsName: domain)
+        let contentDirectory = try await dotNsResolver.resolveToLocalURL(dotNsName: domain.rawValue)
         let html = try String(
             contentsOf: contentDirectory.appendingPathComponent(ProductBundle.indexHTML),
             encoding: .utf8
@@ -79,8 +80,8 @@ private extension ProductIconImageDataProvider {
     @MainActor
     func makeLetterIconData() -> Data? {
         let viewModel = AvatarViewModel.colored(
-            text: String(domain.prefix(1)),
-            colorSeed: domain
+            text: String(domain.rawValue.prefix(1)),
+            colorSeed: domain.rawValue
         )
 
         let renderer = ImageRenderer(content: DSAvatar(viewModel: viewModel, size: .s64))

@@ -2,9 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.data.storage
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import uniffi.truapi.ProductId
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton

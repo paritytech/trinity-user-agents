@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarUiState
 import kotlinx.coroutines.flow.StateFlow
 
 interface SpaBrowserContract {
@@ -9,14 +10,17 @@ interface SpaBrowserContract {
 
     fun onBackPressed()
 
-    fun onMinimizeClick()
-
     fun onRefresh()
+
+    fun onProceedInChatClick()
+
+    fun onShareClick()
+
+    fun onCloseAppClick()
 }
 
 data class SpaBrowserUiState(
-    val title: String? = "",
-    val subtitle: String? = "",
+    val statusBar: ProductStatusBarUiState? = null,
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
     val isDevServer: Boolean = false,

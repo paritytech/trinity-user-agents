@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -13,6 +12,7 @@ import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 
 class UninstallProductUseCaseTest {
     private val productRepository: ProductRepository = mock()
@@ -20,7 +20,7 @@ class UninstallProductUseCaseTest {
     private val productGameReminder: ProductGameReminder = mock()
     private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder)
 
-    private val productId = ProductId.fromStoredValue("acme.dot")
+    private val productId = ProductId.parse("acme.dot").getOrThrow()
 
     @Test
     fun `cancels scheduled notifications before deleting product`() = runBlocking {

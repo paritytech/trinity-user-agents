@@ -16,7 +16,7 @@ use crate::{
 
 /// Statement store methods.
 #[wire_trait(id = 14)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait StatementStore: Send + Sync {
 	/// Subscribe to statements matching a topic filter.
 	///

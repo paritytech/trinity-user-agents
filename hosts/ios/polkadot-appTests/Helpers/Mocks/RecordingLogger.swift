@@ -22,6 +22,14 @@ final class RecordingLogger: SDKLoggerProtocol, @unchecked Sendable {
         static func info(_ message: String) -> Line {
             Line(level: .info, message: message)
         }
+
+        static func warning(_ message: String) -> Line {
+            Line(level: .warning, message: message)
+        }
+
+        static func error(_ message: String) -> Line {
+            Line(level: .error, message: message)
+        }
     }
 
     private let lock = NSLock()

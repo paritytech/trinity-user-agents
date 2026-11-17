@@ -23,11 +23,11 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.list.ProductListViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.list.compose.components.EmptyState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.list.compose.components.ProductItem
 import io.paritytech.polkadotapp.feature_products_impl.presentation.list.models.ProductListItemUiModel
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -93,17 +93,17 @@ private fun ProductListScreenPreview() {
             state = LoadingState.Loaded(
                 listOf(
                     ProductListItemUiModel(
-                        id = ProductId.fromStoredValue("1"),
+                        id = ProductId.parse("1.dot").getOrThrow(),
                         name = "Web3 Summit",
                         iconUrl = null,
                     ),
                     ProductListItemUiModel(
-                        id = ProductId.fromStoredValue("2"),
+                        id = ProductId.parse("2.dot").getOrThrow(),
                         name = "Polkadot Decoded",
                         iconUrl = null,
                     ),
                     ProductListItemUiModel(
-                        id = ProductId.fromStoredValue("3"),
+                        id = ProductId.parse("3.dot").getOrThrow(),
                         name = "Sub0 Conference",
                         iconUrl = null,
                     )
