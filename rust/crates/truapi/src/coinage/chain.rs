@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use parity_scale_codec::Encode;
 use subxt::{
 	dynamic::At,
 	ext::{
@@ -13,10 +14,13 @@ use subxt::{
 		scale_value::{Value, ValueDef},
 	},
 	storage::dynamic,
-	utils::{AccountId32, H256},
+	utils::{AccountId32, H256, MultiAddress},
 };
 
-use crate::chain::{ChainHeads, Heads, StorageEntryName, StorageWatchError, WatchedStorage};
+use crate::{
+	chain::{BlockBackend, ChainHeads, HashAndNumber, Heads, StorageEntryName, StorageWatchError, WatchedStorage},
+	chain_runtime::RuntimeFailure,
+};
 
 /// The pallet's name in the runtime.
 pub const PALLET: &str = "Coinage";
@@ -90,6 +94,7 @@ const MEMBERS: &str = "Members";
 
 /// The pallet's storage of each alias's lock or unload.
 const ALIAS_STATES: &str = "RecyclerAliasStates";
+const UNLOADED_COUNTS: &str = "RecyclersUnloadedCount";
 
 /// The identifier of the recycler ring collection for `exponent` of
 /// `instance`: `coinage/recycler`, the instance little-endian, the exponent
@@ -143,6 +148,19 @@ pub struct RingPlace {
 	pub revision: u32,
 }
 
+/// Where a member key stands in its recycler collection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingPosition {
+	/// Queued to join a ring. It was never in one, so its entry was never
+	/// unloaded.
+	Onboarding,
+	/// In a ring.
+	Included(RingPlace),
+	/// Taken out of its ring, or any other position the layer does not
+	/// read: the pallet holds no ring index to read its alias under.
+	Suspended,
+}
+
 /// The coinage pallet's storage, and the members pallet's recycler rings,
 /// read at one block. Every read is batched over its keys, and a missing
 /// value reads as none.
@@ -154,13 +172,14 @@ pub trait CoinageChain: Send + Sync {
 	async fn coins_at(&self, at: H256, accounts: &[[u8; 32]]) -> Result<Vec<Option<ChainCoin>>, StorageWatchError>;
 	/// The instance and exponent each member key was loaded under.
 	async fn members_at(&self, at: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError>;
-	/// The place of each member key in its recycler ring of `exponent`.
+	/// The position of each member key in the recycler collection of
+	/// `exponent`; none for a key that is not a member.
 	async fn places_at(
 		&self,
 		at: H256,
 		exponent: i8,
 		members: &[[u8; 32]],
-	) -> Result<Vec<Option<RingPlace>>, StorageWatchError>;
+	) -> Result<Vec<Option<RingPosition>>, StorageWatchError>;
 	/// The state of each alias in ring `ring` of `exponent`, none for an
 	/// alias the pallet holds nothing for. A held value that is not an
 	/// `AliasState` fails the read, so it is never taken for a free alias.
@@ -174,25 +193,62 @@ pub trait CoinageChain: Send + Sync {
 	/// The members of ring `ring` of `exponent`, in ring order, up to its
 	/// included count.
 	async fn ring_members_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Vec<[u8; 32]>, StorageWatchError>;
+	/// How many aliases an unload has marked in ring `ring` of `exponent`;
+	/// none when the runtime keeps no such count.
+	async fn unloaded_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError>;
 	/// Whether each free token identity, a period and the person's alias in
 	/// it, is recorded as consumed.
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError>;
 	/// An account's next nonce.
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError>;
+	/// What an account holds of the instance's external asset, in the
+	/// asset's units; zero for an account that holds none.
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError>;
+	/// The hash of the transaction that emptied a coin's account, and the
+	/// number of the block that included it, given the account held the
+	/// coin at block `since` and is empty at `at`; none when no transaction
+	/// that coin signed is found there.
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError>;
 }
 
-/// [`CoinageChain`] over the storage and heads of the People chain.
+/// The transaction that emptied a coin's account.
+#[derive(Clone, Copy)]
+pub struct Emptying {
+	/// Its hash.
+	pub transaction: [u8; 32],
+	/// The number of the block that included it.
+	pub block: u64,
+}
+
+/// [`CoinageChain`] over the storage, heads and blocks of the People chain.
 pub struct CoinageStorage {
 	storage: Arc<dyn WatchedStorage>,
 	heads: Arc<dyn ChainHeads>,
+	blocks: Arc<dyn BlockBackend>,
 	genesis: H256,
 	instance: u32,
 }
 
 impl CoinageStorage {
 	/// Reads of the pallet's `instance` on the chain with `genesis`.
-	pub fn new(storage: Arc<dyn WatchedStorage>, heads: Arc<dyn ChainHeads>, genesis: H256, instance: u32) -> Self {
-		Self { storage, heads, genesis, instance }
+	pub fn new(
+		storage: Arc<dyn WatchedStorage>,
+		heads: Arc<dyn ChainHeads>,
+		blocks: Arc<dyn BlockBackend>,
+		genesis: H256,
+		instance: u32,
+	) -> Self {
+		Self { storage, heads, blocks, genesis, instance }
+	}
+
+	/// The block at `number`, canonical up to the finalized height.
+	async fn block_at(&self, number: u64) -> Result<Option<HashAndNumber>, StorageWatchError> {
+		Ok(self.blocks.block_hash(self.genesis, number).await?.map(|hash| HashAndNumber { hash, number }))
 	}
 
 	/// The values of `pallet::entry` at `at` for each of `keys`, decoded as
@@ -266,20 +322,28 @@ impl CoinageChain for CoinageStorage {
 		at: H256,
 		exponent: i8,
 		members: &[[u8; 32]],
-	) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+	) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
 		let collection = recycler_collection(self.instance, exponent);
 		let keys: Vec<([u8; 32], [u8; 32])> = members.iter().map(|member| (collection, *member)).collect();
 		let positions = self.values(at, MEMBERS, "Members", &keys).await?;
 		let mut places = Vec::with_capacity(positions.len());
 		for position in positions {
-			let Some((ring, page, slot)) = position.as_ref().and_then(included_position) else {
+			let Some(position) = position else {
 				places.push(None);
+				continue;
+			};
+			if variant_name(&position) == Some("Onboarding") {
+				places.push(Some(RingPosition::Onboarding));
+				continue;
+			}
+			let Some((ring, page, slot)) = included_position(&position) else {
+				places.push(Some(RingPosition::Suspended));
 				continue;
 			};
 			let (status, revision) = self.ring_status(at, collection, ring).await?;
 			let field = |name: &str| status.as_ref().and_then(|status| number(status, name));
 			let immutable_since = status.as_ref().and_then(|status| status.at("immutable_since")).and_then(|since| since.at(0));
-			places.push(Some(RingPlace {
+			places.push(Some(RingPosition::Included(RingPlace {
 				ring,
 				page,
 				position: slot,
@@ -287,7 +351,7 @@ impl CoinageChain for CoinageStorage {
 				included: field("included").unwrap_or(0) as u32,
 				immutable_since: immutable_since.and_then(Value::as_u128).map(|since| since as u64),
 				revision,
-			}));
+			})));
 		}
 		Ok(places)
 	}
@@ -312,6 +376,17 @@ impl CoinageChain for CoinageStorage {
 				}),
 			})
 			.collect()
+	}
+
+	async fn unloaded_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		match self.values(at, PALLET, UNLOADED_COUNTS, &[((self.instance, exponent, ring),)]).await {
+			Ok(counts) => {
+				let count = counts.into_iter().flatten().next().and_then(|count| count.as_u128()).unwrap_or(0);
+				Ok(Some(u32::try_from(count).unwrap_or(u32::MAX)))
+			},
+			Err(StorageWatchError::Incompatible { .. }) => Ok(None),
+			Err(error) => Err(error),
+		}
 	}
 
 	async fn ring_members_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {
@@ -339,6 +414,41 @@ impl CoinageChain for CoinageStorage {
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError> {
 		let info = self.values(at, "System", "Account", &[(AccountId32(account),)]).await?;
 		Ok(info.into_iter().flatten().next().as_ref().and_then(|info| number(info, "nonce")).unwrap_or(0) as u32)
+	}
+
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		let instance = self.values(at, PALLET, "Instances", &[(self.instance,)]).await?.into_iter().flatten().next();
+		let Some(asset) = instance.as_ref().and_then(|record| record.at("asset_id")).cloned() else { return Ok(0) };
+		let held = self.values(at, "Assets", "Account", &[(asset, AccountId32(account))]).await?;
+		Ok(held.into_iter().flatten().next().as_ref().and_then(|held| number(held, "balance")).unwrap_or(0))
+	}
+
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError> {
+		let (mut held, mut emptied) = (since, at);
+		while emptied.number > held + 1 {
+			let middle = held + (emptied.number - held) / 2;
+			let Some(block) = self.block_at(middle).await? else { return Ok(None) };
+			match self.coins_at(block.hash, &[account]).await?.first() {
+				Some(Some(_)) => held = middle,
+				_ => emptied = block,
+			}
+		}
+		let failure = |error: subxt::Error| RuntimeFailure::host_failure("coinage_emptied_by", error.to_string());
+		let client = self.storage.client_at(self.genesis, emptied).await?;
+		let extrinsics = client.extrinsics().fetch().await.map_err(|error| failure(error.into()))?;
+		let signer = MultiAddress::<AccountId32, ()>::Id(AccountId32(account)).encode();
+		for extrinsic in extrinsics.iter() {
+			let extrinsic = extrinsic.map_err(|error| failure(error.into()))?;
+			if extrinsic.address_bytes() == Some(signer.as_slice()) {
+				return Ok(Some(Emptying { transaction: extrinsic.hash().0, block: emptied.number }));
+			}
+		}
+		Ok(None)
 	}
 }
 
