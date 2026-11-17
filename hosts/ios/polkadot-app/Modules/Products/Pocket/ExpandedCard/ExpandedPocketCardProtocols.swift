@@ -24,7 +24,6 @@ protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
 protocol ExpandedPocketCardPresenterProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func didBecomeVisible()
-    func didTapRetry()
     func didInterceptNavigation(to url: URL)
     func didRequestDeeplink(_ url: URL)
 }
@@ -32,7 +31,6 @@ protocol ExpandedPocketCardPresenterProtocol: AnyObject {
 @MainActor
 protocol ExpandedPocketCardInteractorInputProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
-    func retry()
     func checkForNewBuild()
 }
 

@@ -14,7 +14,6 @@ final class WidgetView: UIView {
 
     /// The page's scroll offset, which the face follows.
     var onScroll: ((CGFloat) -> Void)?
-    var onRetry: (() -> Void)?
 
     /// Set by the screen, since the safe area the page sees includes the face the indicator runs beside.
     var scrollIndicatorInsets: UIEdgeInsets {
@@ -84,13 +83,9 @@ final class WidgetView: UIView {
         loadIndicator.stop()
         hideFailure()
 
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.text = content.title
-        configuration.secondaryText = content.message
-        configuration.button.title = String(localized: .Common.retry)
-        configuration.buttonProperties.primaryAction = UIAction { [weak self] _ in self?.onRetry?() }
-
-        let failureView = UIContentUnavailableView(configuration: configuration)
+        let failureView = UIContentUnavailableView(
+            configuration: .titleSubtitle(with: content.title, subtitle: content.message)
+        )
         addSubview(failureView)
         failureView.snp.makeConstraints { make in
             make.edges.equalTo(safeAreaLayoutGuide)

@@ -31,11 +31,6 @@ extension ExpandedPocketCardPresenter: ExpandedPocketCardPresenterProtocol {
         interactor.checkForNewBuild()
     }
 
-    func didTapRetry() {
-        view?.showLoading()
-        interactor.retry()
-    }
-
     func didInterceptNavigation(to url: URL) {
         guard let productHost = hostProvider.host(url: url) else { return }
 

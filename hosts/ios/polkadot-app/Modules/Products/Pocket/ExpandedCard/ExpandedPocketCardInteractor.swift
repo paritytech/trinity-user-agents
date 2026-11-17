@@ -11,7 +11,6 @@ final class ExpandedPocketCardInteractor {
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
 
-    private var engine: JSEngineProtocol?
     private var runtime: SPARuntimeProtocol?
     private var servedContent: ProductContent?
     private var presenceId: UUID?
@@ -44,18 +43,6 @@ final class ExpandedPocketCardInteractor {
 
 extension ExpandedPocketCardInteractor: ExpandedPocketCardInteractorInputProtocol {
     func setup(engine: JSEngineProtocol) {
-        self.engine = engine
-        startRuntime(engine: engine)
-    }
-
-    func retry() {
-        guard let engine else { return }
-
-        reloadTask?.cancel()
-        let previousRuntime = runtime
-        runtime = nil
-        Task { await previousRuntime?.dispose() }
-
         startRuntime(engine: engine)
     }
 
@@ -99,9 +86,6 @@ extension ExpandedPocketCardInteractor: SPAProductReloading {
 
 private extension ExpandedPocketCardInteractor {
     func startRuntime(engine: JSEngineProtocol) {
-        setupTask?.cancel()
-        servedContent = nil
-
         do {
             let newRuntime = try runtimeFactory.makeRuntime(face: self)
             runtime = newRuntime
@@ -113,7 +97,7 @@ private extension ExpandedPocketCardInteractor {
                     self?.presenter?.didRequestNavigation(to: start.url)
                     self?.didServe(start.resolution.content)
                 } catch is CancellationError {
-                    // Superseded by a retry or teardown, which reports for itself.
+                    // Torn down with the card, so there is no one to report to.
                 } catch {
                     self?.logger.error("Expanded card: setup failed: \(error)")
                     self?.presenter?.didFail(error: error)

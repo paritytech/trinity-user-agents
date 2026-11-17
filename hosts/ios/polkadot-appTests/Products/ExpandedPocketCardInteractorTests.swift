@@ -26,17 +26,6 @@ struct ExpandedPocketCardInteractorTests {
         #expect(try environment.registry.registrations.map(\.contentId) == [ProductId(contentId)])
     }
 
-    @Test func retryKeepsThePresence() async throws {
-        let environment = try Environment()
-        try await environment.start()
-
-        environment.interactor.retry()
-        await environment.output.waitForNavigations(2)
-
-        #expect(environment.registry.registrations.count == 1)
-        #expect(environment.registry.unregisteredIds.isEmpty)
-    }
-
     @Test func servesTheAppliedBuildAndReloadsThePage() async throws {
         let environment = try Environment()
         try await environment.start()

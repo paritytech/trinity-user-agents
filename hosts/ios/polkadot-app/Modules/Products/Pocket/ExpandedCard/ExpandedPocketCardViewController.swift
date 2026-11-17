@@ -230,7 +230,6 @@ private extension ExpandedPocketCardViewController {
 
     func setupPage() {
         widgetView.onScroll = { [weak self] offset in self?.rootView.followPage(offset: offset) }
-        widgetView.onRetry = { [weak self] in self?.presenter.didTapRetry() }
         engine.onNavigationIntercepted = { [weak self] url in self?.presenter.didInterceptNavigation(to: url) }
         engine.onDeeplinkRequested = { [weak self] url in self?.presenter.didRequestDeeplink(url) }
 

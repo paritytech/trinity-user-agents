@@ -25,15 +25,6 @@ struct ExpandedPocketCardPresenterTests {
         #expect(environment.view.events == [.hideLoading, .navigate(url)])
     }
 
-    @Test func retryShowsLoadingAgain() {
-        let environment = Environment()
-
-        environment.presenter.didTapRetry()
-
-        #expect(environment.view.events == [.showLoading])
-        #expect(environment.interactor.retryCount == 1)
-    }
-
     @Test func unknownFailureShowsTheGenericError() {
         let environment = Environment()
 
@@ -70,9 +61,7 @@ private struct Environment {
 @MainActor
 private final class RecordingInteractor: ExpandedPocketCardInteractorInputProtocol {
     private(set) var setupCount = 0
-    private(set) var retryCount = 0
 
     func setup(engine _: JSEngineProtocol) { setupCount += 1 }
-    func retry() { retryCount += 1 }
     func checkForNewBuild() {}
 }
