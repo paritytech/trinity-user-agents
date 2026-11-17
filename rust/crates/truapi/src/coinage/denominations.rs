@@ -13,6 +13,11 @@ use super::ChainParams;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub struct Exponent(u8);
 
+uniffi::custom_type!(Exponent, u8, {
+	lower: |exponent| exponent.0,
+	try_lift: |raw| Exponent::new(raw).ok_or_else(|| uniffi::deps::anyhow::anyhow!("{raw} is not a legal exponent")),
+});
+
 impl Exponent {
 	/// The exponent `raw`, or none if `2^raw` cents does not fit a `u64`.
 	pub const fn new(raw: u8) -> Option<Self> {

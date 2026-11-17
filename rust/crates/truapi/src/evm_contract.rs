@@ -126,13 +126,13 @@ pub struct PreparedEvmTransaction<'a> {
 /// Reads contracts and prepares writes on one chain.
 pub struct EvmContractCaller {
 	chain: ChainRuntime,
-	extrinsics: ExtrinsicService,
+	extrinsics: Arc<ExtrinsicService>,
 	genesis: H256,
 }
 
 impl EvmContractCaller {
 	/// Uses the configured chain and extrinsic builder for prepared writes.
-	pub fn new(chain: ChainRuntime, extrinsics: ExtrinsicService, genesis: H256) -> Self {
+	pub fn new(chain: ChainRuntime, extrinsics: Arc<ExtrinsicService>, genesis: H256) -> Self {
 		Self { chain, extrinsics, genesis }
 	}
 
@@ -145,7 +145,7 @@ impl EvmContractCaller {
 		genesis: H256,
 	) -> Self {
 		let chain = ChainRuntime::new(Arc::new(HostChainProvider::new(provider)), spawner);
-		let extrinsics = ExtrinsicService::over_chain(chain.clone(), versions);
+		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), versions));
 		Self::new(chain, extrinsics, genesis)
 	}
 
@@ -201,15 +201,23 @@ impl PreparedEvmTransaction<'_> {
 	/// [`EvmContractError::NotFinalized`] or
 	/// [`EvmContractError::OutcomeUnreadable`].
 	pub async fn execute_until_finalized(self) -> Result<(), EvmContractError> {
+		let (chain, genesis) = (&self.caller.chain, self.caller.genesis);
+		let extrinsic = self.sign().await?;
+		submit_until_finalized(chain, genesis, extrinsic).await
+	}
+
+	/// Signs the prepared call with a fresh nonce and mortal era, and
+	/// returns it unsubmitted, for a caller that submits and follows it
+	/// itself.
+	pub async fn sign(self) -> Result<MortalExtrinsic, EvmContractError> {
 		let Self { caller, signer, call } = self;
-		let extrinsic = caller
+		Ok(caller
 			.extrinsics
 			.build_mortal_extrinsic(caller.genesis)
 			.with_call_args(REVIVE_PALLET, "call", call)
 			.with_signer(signer)
 			.build()
-			.await?;
-		submit_until_finalized(&caller.chain, caller.genesis, extrinsic).await
+			.await?)
 	}
 }
 

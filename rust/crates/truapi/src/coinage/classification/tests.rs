@@ -88,6 +88,7 @@ fn in_ring(included: u32, members: u32, closed: bool, expires_at: Option<u64>) -
 		closed,
 		expires_at,
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 

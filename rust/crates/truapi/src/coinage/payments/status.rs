@@ -15,7 +15,7 @@ use super::clearing;
 use crate::coinage::{
 	classification::ExportStatus,
 	layer::{Error, ExportedCoinStatus},
-	status::{CoinResult, Progress, Status, StatusItem},
+	status::{CoinOutcome, CoinResult, Progress, Status, StatusItem},
 };
 
 /// A cheque's value by what became of its coins, in cents (RFC deviations,
@@ -62,7 +62,7 @@ pub fn cheque_progress(coins: &[ExportedCoinStatus]) -> ChequeProgress {
 /// error its coins' results name.
 pub fn deposit_status(
 	item: StatusItem,
-	coins: &[([u8; 32], CoinResult)],
+	coins: &[CoinOutcome],
 	expected: u64,
 	reference: CoinPaymentClearingReference,
 ) -> CoinPaymentStatus {
@@ -70,7 +70,7 @@ pub fn deposit_status(
 	match item.status {
 		Status::Done if item.progress.settled == expected => CoinPaymentStatus::Done { cleared, reference },
 		status if status.is_terminal() => {
-			let error = if coins.iter().any(|(_, result)| *result == CoinResult::TakenByOther) {
+			let error = if coins.iter().any(|coin| coin.result == CoinResult::TakenByOther) {
 				CoinPaymentError::SnipedCoins
 			} else {
 				CoinPaymentError::BadCoins

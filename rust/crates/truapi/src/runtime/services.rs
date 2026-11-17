@@ -11,7 +11,29 @@ use std::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::coinage::{payments::flows::Payments, plugins::Running};
+use crate::coinage::{
+	layer::{CoinageUnavailable, Layer},
+	payments::flows::Payments,
+	plugins::Running,
+};
+
+/// How a host turns the coinage layer on.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, Default)]
+pub struct CoinageOptions {
+	/// The wallet a shipped app hands over, which the layer records on a
+	/// fresh store.
+	pub hand_over: Option<crate::coinage::handover::Handover>,
+	/// The installation registry's contract, which a host reads from its
+	/// own configuration; it overrides the stack's.
+	pub registry: Option<[u8; 20]>,
+}
+
+/// The outcome of the coinage layer's start, which every caller of
+/// [`RuntimeServices::coinage_layer`] waits for.
+#[cfg(not(target_arch = "wasm32"))]
+pub type CoinageStart =
+	futures::future::Shared<futures::channel::oneshot::Receiver<Result<Layer, CoinageUnavailable>>>;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
@@ -153,9 +175,10 @@ pub struct RuntimeServices {
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
-	/// Set once the host turned the coinage layer on. Unset leaves it off.
+	/// Set once the host turned the coinage layer on, with its options.
+	/// Unset leaves it off.
 	#[cfg(not(target_arch = "wasm32"))]
-	coinage_enabled: OnceLock<()>,
+	coinage_enabled: OnceLock<CoinageOptions>,
 	/// The handle the coinage plug-ins and the layer share, closed until the
 	/// layer's start sequence has run.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -166,6 +189,9 @@ pub struct RuntimeServices {
 	/// The coinage layers as the RFC-6 engine, preferred over the host's.
 	#[cfg(not(target_arch = "wasm32"))]
 	coinage_engine: OnceLock<Arc<crate::runtime::CoinageEngine>>,
+	/// The outcome of the coinage layer's start, once it was started.
+	#[cfg(not(target_arch = "wasm32"))]
+	coinage_start: OnceLock<CoinageStart>,
 	/// The stack the host runs, fixed for the life of the runtime.
 	stack: Stack,
 	/// Reference counts per product worker.
@@ -302,6 +328,8 @@ impl RuntimeServices {
 			coinage_payments: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			coinage_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			coinage_start: OnceLock::new(),
 			stack,
 			worker_ledger: WorkerLedger::default(),
 			chain,
@@ -503,11 +531,26 @@ impl RuntimeServices {
 		self.core_db.get().cloned().ok_or(DbError::NotConfigured)
 	}
 
-	/// Turn the coinage layer on. Set-once; returns whether this call turned
-	/// it on.
+	/// Turn the coinage layer on with `options`. Set-once; returns whether
+	/// this call turned it on.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn enable_coinage(&self) -> bool {
-		self.coinage_enabled.set(()).is_ok()
+	pub fn enable_coinage(&self, options: CoinageOptions) -> bool {
+		self.coinage_enabled.set(options).is_ok()
+	}
+
+	/// The wallet a shipped app hands over, which the layer records on a
+	/// fresh store.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn coinage_hand_over(&self) -> Option<crate::coinage::handover::Handover> {
+		self.coinage_enabled.get().and_then(|options| options.hand_over.clone())
+	}
+
+	/// The installation registry's contract: the host's, else the stack's;
+	/// none when neither names one.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn coinage_registry(&self) -> Option<[u8; 20]> {
+		let host = self.coinage_enabled.get().and_then(|options| options.registry);
+		host.or_else(|| self.stack().coinage().and_then(|coinage| coinage.registry))
 	}
 
 	/// Whether the host turned the coinage layer on.
@@ -534,6 +577,22 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_coinage_engine(&self, engine: Arc<crate::runtime::CoinageEngine>) -> bool {
 		self.coinage_engine.set(engine).is_ok()
+	}
+
+	/// Install the outcome of the coinage layer's start, which
+	/// [`Self::coinage_layer`] waits for. Returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_coinage_start(&self, outcome: CoinageStart) -> bool {
+		self.coinage_start.set(outcome).is_ok()
+	}
+
+	/// The running coinage layer, once its start has returned, or why it
+	/// does not run.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn coinage_layer(&self) -> Result<Layer, CoinageUnavailable> {
+		let Some(outcome) = self.coinage_start.get().cloned() else { return Err(CoinageUnavailable::Off) };
+		outcome.await.unwrap_or_else(|_| Err(CoinageUnavailable::NotStarted { reason: "the start was dropped".into() }))
 	}
 
 	/// Coinage payments, once the layer's start sequence has run.

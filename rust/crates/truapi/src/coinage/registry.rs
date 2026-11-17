@@ -11,11 +11,19 @@ use std::sync::Arc;
 use alloy_sol_types::SolCall;
 use subxt::utils::H256;
 
-use super::{ledger, namespace::datastore_key, plugins::Seed, reconstruction::InstallationRegistry};
+use super::{
+	CoinSecret, ledger,
+	namespace::datastore_key,
+	plugins::{PersonhoodSource, RegistryWriter, Seed},
+	reconstruction::InstallationRegistry,
+};
 use crate::{
+	chain::{ExtrinsicService, MortalExtrinsic},
 	chain_runtime::ChainRuntime,
 	evm_contract::EvmContractCaller,
+	host_internal::extrinsic::Sr25519Signer,
 	installation::{InstallationId, InstallationIdProvider},
+	runtime::statement_allowance::{self, ChainClient, pgas, rpc::RpcClient},
 	store::Db,
 };
 use truapi::latest::GenericError;
@@ -75,8 +83,72 @@ impl InstallationRegistry for ContractRegistry {
 	}
 }
 
-/// The registry of a stack that names no `AccountDataStore` contract: its
-/// read always fails, so reconstruction scans only installations it knows.
+/// The appends to the `AccountDataStore` contract on Asset Hub, paid in PGAS
+/// by the `//datastore` account, as the shipped wallets pay them.
+pub struct ContractRegistryWriter {
+	/// The chain connections.
+	pub chain: ChainRuntime,
+	/// Builds extrinsics.
+	pub extrinsics: Arc<ExtrinsicService>,
+	/// Asset Hub's genesis.
+	pub asset_hub_genesis: H256,
+	/// The People chain's genesis, where the person's ring lives.
+	pub people_genesis: H256,
+	/// The contract's address.
+	pub contract: [u8; 20],
+	/// The person whose ring proof claims the PGAS.
+	pub personhood: Arc<dyn PersonhoodSource>,
+}
+
+#[async_trait::async_trait]
+impl RegistryWriter for ContractRegistryWriter {
+	async fn append(&self, datastore: &CoinSecret, record: &[u8]) -> Result<MortalExtrinsic, String> {
+		let signer = Sr25519Signer::from_secret_bytes(&datastore.0).map_err(|error| format!("{error:?}"))?;
+		self.fund(subxt::tx::Signer::account_id(&signer).0).await?;
+		let caller = EvmContractCaller::new(self.chain.clone(), self.extrinsics.clone(), self.asset_hub_genesis);
+		let prepared = caller.dry_run(&signer, &self.contract, &register_call(record)).await.map_err(|error| error.to_string())?;
+		prepared.sign().await.map_err(|error| error.to_string())
+	}
+}
+
+impl ContractRegistryWriter {
+	/// Claims PGAS for `account` unless it holds at least one claim's worth,
+	/// which covers the append's fee and storage deposit.
+	async fn fund(&self, account: [u8; 32]) -> Result<(), String> {
+		let failed = |error: statement_allowance::StatementAllowanceError| error.to_string();
+		let asset_hub = self.client("coinage registry", self.asset_hub_genesis).await?;
+		let asset_hub_metadata = statement_allowance::fetch_metadata(asset_hub.rpc()).await.map_err(failed)?;
+		if pgas::holds_a_full_claim(asset_hub.rpc(), &asset_hub_metadata, &account).await.map_err(failed)? {
+			return Ok(());
+		}
+		let (signer, ring, _) = self.personhood.person().await.ok_or("the person's ring is not available")?;
+		let people = self.client("coinage registry ring", self.people_genesis).await?;
+		let people_metadata = statement_allowance::fetch_metadata(people.rpc()).await.map_err(failed)?;
+		let network_suffix = statement_allowance::slot::read_network_suffix(asset_hub.rpc()).await.map_err(failed)?;
+		pgas::claim_pgas(pgas::PgasClaim {
+			asset_hub_rpc: asset_hub.rpc(),
+			asset_hub_metadata: &asset_hub_metadata,
+			asset_hub_target: asset_hub.extrinsic_target(&self.extrinsics),
+			people_rpc: people.rpc(),
+			people_metadata: &people_metadata,
+			signer: signer.as_ref(),
+			network_suffix: &network_suffix,
+			target: &account,
+			ring: &ring,
+		})
+		.await
+		.map_err(failed)?;
+		Ok(())
+	}
+
+	async fn client(&self, method: &'static str, genesis: H256) -> Result<ChainClient, String> {
+		let rpc = self.chain.rpc_client(method, &genesis.0).await.map_err(|error| error.to_string())?;
+		Ok(ChainClient::new(RpcClient::new(subxt_rpcs::RpcClient::new(rpc)), genesis.0))
+	}
+}
+
+/// The registry of a host that runs none: its read always fails, so a
+/// reconstruction scans only the installations it knows.
 pub struct NoRegistry;
 
 #[async_trait::async_trait]

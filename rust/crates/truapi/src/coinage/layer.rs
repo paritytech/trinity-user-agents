@@ -30,6 +30,7 @@ use super::{
 	balance::{Balance, balance},
 	chain::CoinageChain,
 	classification::{Class, CoinClass, EntryLocal, classify},
+	handover::{self, HandOverProgress, Handover},
 	ledger::{self, LedgerError, Mark, PurseState},
 	maintenance::{self, Due},
 	observation::{self, ObserverDeps},
@@ -112,6 +113,9 @@ pub struct Interfaces {
 	pub spawner: Spawner,
 	/// The initial policy, stored only on a fresh store.
 	pub policy: PrivacyPolicy,
+	/// A wallet a shipped app hands over, recorded only on a fresh store,
+	/// with its installation (native interface, section 5).
+	pub hand_over: Option<Handover>,
 }
 
 /// Why the layer did not start (G3 invariant 1).
@@ -134,8 +138,45 @@ pub enum StartError {
 	Store(DbError),
 }
 
+/// Why the coinage layer does not serve the host (native interface,
+/// section 2).
+#[derive(Clone, Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, uniffi::Error)]
+pub enum CoinageUnavailable {
+	/// The host did not turn coinage on, the runtime has no local session,
+	/// or the stack runs no coinage.
+	#[display("coinage is off")]
+	Off,
+	/// A3's check failed for the current runtime.
+	#[display("unsupported runtime: {check}")]
+	UnsupportedRuntime {
+		/// The check that failed.
+		check: String,
+	},
+	/// The local store does not decode.
+	#[display("the local store does not decode")]
+	UndecodableStore,
+	/// The layer could not start for another reason, such as an
+	/// unavailable seed or a store failure.
+	#[display("the coinage layer did not start: {reason}")]
+	NotStarted {
+		/// What went wrong.
+		reason: String,
+	},
+}
+
+impl From<StartError> for CoinageUnavailable {
+	fn from(error: StartError) -> Self {
+		match error {
+			StartError::UnsupportedRuntime { check } => Self::UnsupportedRuntime { check },
+			StartError::UndecodableStore => Self::UndecodableStore,
+			other => Self::NotStarted { reason: other.to_string() },
+		}
+	}
+}
+
 /// A failure to start an operation, or a query that cannot be answered.
-#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From, uniffi::Error)]
+#[uniffi(flat_error)]
 pub enum Error {
 	/// The purse is unknown, closed, or, as a destination, being deleted.
 	#[display("purse {} not found", _0.0)]
@@ -218,6 +259,7 @@ pub struct Op {
 
 /// What starting a long-running operation returned.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum Started {
 	/// The key was new.
 	New,
@@ -230,6 +272,7 @@ pub enum Started {
 /// What [`Layer::export`] returned: the same coins however often it is
 /// joined.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct Export {
 	/// Whether the export is new.
 	pub started: Started,
@@ -254,6 +297,7 @@ pub struct PurseInfo {
 
 /// Whether the current installation can be found from the seed alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum Recoverability {
 	/// Its registration succeeded.
 	Registered,
@@ -326,16 +370,23 @@ pub async fn start(
 
 	let fresh = interfaces.randomness.installation();
 	let policy = interfaces.policy.clone();
+	let hand_over = interfaces.hand_over.clone();
 	interfaces
 		.store
 		.write_unless_refused(move |tx| {
 			if ledger::current_installation(tx)?.is_some() {
 				return Ok(Ok(()));
 			}
-			Ok(ledger::mint_installation(tx, fresh, &policy, purse_backup.as_deref(), now)?
-				.map_err(|_| StartError::UndecodableStore))
+			if let Err(error) = ledger::mint_installation(tx, fresh, &policy, purse_backup.as_deref(), now)? {
+				return Ok(Err(error));
+			}
+			if let Some(hand_over) = &hand_over {
+				handover::record(tx, hand_over)?;
+			}
+			Ok(Ok(()))
 		})
-		.await??;
+		.await?
+		.map_err(|_| StartError::UndecodableStore)?;
 	interfaces.store.write(release_uncommitted).await.map_err(undecodable)?;
 
 	let Interfaces { store, engine, chain, runtime, seed, clock, personhood, registry, spawner, .. } =
@@ -361,6 +412,7 @@ pub async fn start(
 		registry_read: AtomicBool::new(false),
 	}));
 	layer.register_installation().await?;
+	layer.import_handed_over().await?;
 	Ok(layer)
 }
 
@@ -819,7 +871,7 @@ impl Layer {
 	/// Whether the current installation's registration has succeeded (G3
 	/// invariant 4).
 	pub async fn recoverable(&self) -> Result<Recoverability, Error> {
-		Ok(recoverability(&self.view().await?, self.now(), &self.params()))
+		Ok(recoverability(&self.view().await?, self.now()))
 	}
 
 	// ---- Following an operation ----
@@ -1032,6 +1084,32 @@ impl Layer {
 		}
 	}
 
+	/// After the start sequence: starts or joins the import of each payment
+	/// the hand-over recorded as received, and forgets its secrets once the
+	/// import has started or was refused. A payment whose import cannot be
+	/// started now is tried again at the next start (native interface,
+	/// section 5).
+	async fn import_handed_over(&self) -> Result<(), StartError> {
+		let Some(hand_over) = self.0.store.read(handover::read).await.map_err(undecodable)? else { return Ok(()) };
+		for payment in hand_over.incoming {
+			let op = Op { key: handover::app_key(payment.id), retry: Retry::Until(payment.claim_by) };
+			match self.import(op, PurseId::MAIN, payment.coins).await {
+				Ok(_) => {},
+				Err(Error::Unavailable | Error::Store(_) | Error::UnsupportedRuntime { .. }) => continue,
+				Err(error) => tracing::warn!(%error, "a handed-over payment cannot be claimed"),
+			}
+			let id = payment.id;
+			self.0.store.write(move |tx| handover::forget_incoming(tx, id)).await?;
+		}
+		Ok(())
+	}
+
+	/// How far the scan of a handed-over wallet has come (native interface,
+	/// section 5).
+	pub async fn hand_over_progress(&self) -> Result<HandOverProgress, Error> {
+		Ok(self.view().await?.hand_over_progress())
+	}
+
 	/// Tells the streams that something they read may have changed.
 	fn changed(&self) {
 		self.0.streams.wake();
@@ -1110,14 +1188,8 @@ fn ending_cancelled_offload(view: &Snapshot, operation: &OperationRecord) -> boo
 }
 
 /// Whether the current installation's registration has succeeded.
-fn recoverability(view: &Snapshot, now: u64, params: &ChainParams) -> Recoverability {
-	let Some(installation) = view.current_installation() else { return Recoverability::Pending { since: now } };
-	let registered = view.operations().any(|operation| {
-		operation.kind == OpKind::RegisterInstallation &&
-			operation.arguments == installation.encode() &&
-			status(view, &operation.key, now, params).is_some_and(|item| item.status == Status::Done)
-	});
-	if registered {
+fn recoverability(view: &Snapshot, now: u64) -> Recoverability {
+	if view.installation_registered() {
 		return Recoverability::Registered;
 	}
 	let since = view.purse(PurseId::MAIN).map_or(now, |main| main.created);

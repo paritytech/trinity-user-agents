@@ -1152,11 +1152,21 @@ impl SigningHostRuntime {
 	/// it, when the stack runs coinage, over the installed wallet's seed, and
 	/// NFT purses derive their keys under the installation the layer owns.
 	/// A host whose app still runs a coinage engine of its own leaves it off,
-	/// because two engines on one seed compete for the same coins. Set-once;
-	/// returns whether this call turned it on.
+	/// because two engines on one seed compete for the same coins, and turns
+	/// it on with that engine's wallet in `options`, which the layer records
+	/// on a fresh store. Set-once; returns whether this call turned it on.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn enable_coinage(&self) -> bool {
-		self.services.enable_coinage()
+	pub fn enable_coinage(&self, options: crate::runtime::CoinageOptions) -> bool {
+		self.services.enable_coinage(options)
+	}
+
+	/// The running coinage layer, once its start has returned, or why it
+	/// does not run.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn coinage_layer(
+		&self,
+	) -> Result<crate::coinage::layer::Layer, crate::coinage::layer::CoinageUnavailable> {
+		self.services.coinage_layer().await
 	}
 
 	/// Starts what runs over the core database: the durable transaction
@@ -1692,6 +1702,7 @@ fn with_coinage_domains(
 	use crate::coinage::{
 		chain::CoinageStorage,
 		plugins::{CoinageDeps, with_coinage},
+		registry::ContractRegistryWriter,
 	};
 
 	let Some(coinage) = coinage_of(services) else {
@@ -1709,6 +1720,16 @@ fn with_coinage_domains(
 		extrinsics: services.extrinsics.clone(),
 		personhood: wallet.personhood.clone(),
 		running: services.coinage_running().clone(),
+		registry: services.coinage_registry().map(|contract| {
+			Arc::new(ContractRegistryWriter {
+				chain: services.chain.clone(),
+				extrinsics: services.extrinsics.clone(),
+				asset_hub_genesis: services.asset_hub_chain_genesis_hash().into(),
+				people_genesis,
+				contract,
+				personhood: wallet.personhood.clone(),
+			}) as Arc<dyn crate::coinage::plugins::RegistryWriter>
+		}),
 	};
 	with_coinage(registry, deps)
 }
@@ -1726,25 +1747,35 @@ fn start_coinage(
 	use crate::coinage::{
 		ChainConfig, PrivacyPolicy,
 		chain::{CoinageStorage, PeopleRuntime},
-		layer::{Interfaces, SystemRandomness, start},
+		layer::{CoinageUnavailable, Interfaces, SystemRandomness, start},
 		payments::flows::{PaymentDeps, PaymentParams, Payments, SystemDraws},
 		reconstruction::{InstallationRegistry, ScanConfig},
 		registry::{ContractRegistry, NoRegistry},
 	};
 
+	if !services.coinage_enabled() {
+		return;
+	}
+	let (started, outcome) = futures::channel::oneshot::channel();
+	services.install_coinage_start(futures::FutureExt::shared(outcome));
 	let Some(coinage) = coinage_of(services) else {
+		report_coinage_start(started, Err(CoinageUnavailable::Off));
 		return;
 	};
+
 	let chain = Arc::new(services.chain.clone());
 	let people_genesis = services.stack().chains().people.into();
-	let registry: Arc<dyn InstallationRegistry> = match coinage.registry {
+	let registry: Arc<dyn InstallationRegistry> = match services.coinage_registry() {
 		Some(contract) => Arc::new(ContractRegistry {
 			chain: services.chain.clone(),
 			genesis: services.asset_hub_chain_genesis_hash().into(),
 			contract,
 			seed: wallet.seed.clone(),
 		}),
-		None => Arc::new(NoRegistry),
+		None => {
+			tracing::warn!("no installation registry is configured, so the wallet cannot be recovered from the seed");
+			Arc::new(NoRegistry)
+		},
 	};
 	let store = db.clone();
 	let channel = wallet.channel.clone();
@@ -1762,14 +1793,19 @@ fn start_coinage(
 		registry,
 		spawner: services.spawner.clone(),
 		policy: PrivacyPolicy::fastest(),
+		hand_over: services.coinage_hand_over(),
 	};
 	let running = services.coinage_running().clone();
 	let weak = Arc::downgrade(services);
 	let heads: Arc<dyn crate::chain::ChainHeads> = Arc::new(services.chain.clone());
 	services.spawner.spawn(async move {
+		while interfaces.seed.entropy().is_none() {
+			crate::time::Timer::sleep(&crate::time::RealTimer, SEED_WAIT).await;
+		}
 		let config = ChainConfig::shipped(coinage.instance);
 		match start(interfaces, config, ScanConfig::SHIPPED, None, running).await {
 			Ok(layer) => {
+				let started_layer = layer.clone();
 				let payments = Payments::new(PaymentDeps {
 					layer,
 					store,
@@ -1783,12 +1819,33 @@ fn start_coinage(
 					services.install_coinage_payments(payments.clone());
 					services.install_coinage_engine(Arc::new(engine));
 				}
+				report_coinage_start(started, Ok(started_layer));
 				follow_people_heads(&weak, &payments, heads.as_ref(), people_genesis).await;
 			},
-			Err(error) => tracing::warn!(%error, "the coinage layer did not start"),
+			Err(error) => {
+				tracing::warn!(%error, "the coinage layer did not start");
+				report_coinage_start(started, Err(error.into()));
+			},
 		}
 	});
 }
+
+/// Tells whoever waits for the coinage layer how its start ended.
+#[cfg(not(target_arch = "wasm32"))]
+fn report_coinage_start(
+	started: futures::channel::oneshot::Sender<Result<crate::coinage::layer::Layer, crate::coinage::layer::CoinageUnavailable>>,
+	outcome: Result<crate::coinage::layer::Layer, crate::coinage::layer::CoinageUnavailable>,
+) {
+	if started.send(outcome).is_err() {
+		tracing::debug!("nobody waits for the coinage layer");
+	}
+}
+
+/// How long the coinage layer's start waits before looking again for the
+/// seed, which a native host's local session supplies after the core's
+/// services have started.
+#[cfg(not(target_arch = "wasm32"))]
+const SEED_WAIT: Duration = Duration::from_millis(200);
 
 /// How long the coinage layers wait before following the People chain's
 /// heads again after the node's subscription ended.
