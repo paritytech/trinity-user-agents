@@ -566,12 +566,18 @@ impl World {
 		}
 	}
 
-	/// Ends every open watch and waits until no watch owns `ids`, so a pass
-	/// decides them.
+	/// Ends every open watch, again while one of `ids` is still watched, so a
+	/// watch that starts after the first ending is ended too, and waits until
+	/// no watch owns `ids`, so a pass decides them.
 	pub fn release(&self, ids: &[DurableTxId]) {
-		self.chain.end_watches();
 		for id in ids {
-			wait_until(|| !self.engine.is_watched(*id), "the watch releases the record");
+			wait_until(
+				|| {
+					self.chain.end_watches();
+					!self.engine.is_watched(*id)
+				},
+				"the watch releases the record",
+			);
 		}
 	}
 
