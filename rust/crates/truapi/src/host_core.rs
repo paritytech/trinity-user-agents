@@ -1761,6 +1761,7 @@ fn start_coinage(
 	};
 	let running = services.coinage_running().clone();
 	let weak = Arc::downgrade(services);
+	let heads: Arc<dyn crate::chain::ChainHeads> = Arc::new(services.chain.clone());
 	services.spawner.spawn(async move {
 		let config = ChainConfig::shipped(coinage.instance);
 		match start(interfaces, config, ScanConfig::SHIPPED, None, running).await {
@@ -1774,12 +1775,50 @@ fn start_coinage(
 					params: PaymentParams::SHIPPED,
 				});
 				if let Some(services) = weak.upgrade() {
-					services.install_coinage_payments(payments);
+					services.install_coinage_payments(payments.clone());
 				}
+				follow_people_heads(&weak, &payments, heads.as_ref(), people_genesis).await;
 			},
 			Err(error) => tracing::warn!(%error, "the coinage layer did not start"),
 		}
 	});
+}
+
+/// How long the coinage layers wait before following the People chain's
+/// heads again after the node's subscription ended.
+#[cfg(not(target_arch = "wasm32"))]
+const HEADS_RESUBSCRIBE_DELAY: Duration = Duration::from_secs(6);
+
+/// Drives the coinage layers from the People chain's finalized heads, for
+/// as long as the runtime lives: each new head is observed and counts as a
+/// call of the layers' one entry point (coinage layer 1, F2 invariant 2).
+#[cfg(not(target_arch = "wasm32"))]
+async fn follow_people_heads(
+	services: &std::sync::Weak<RuntimeServices>,
+	payments: &crate::coinage::payments::flows::Payments,
+	heads: &dyn crate::chain::ChainHeads,
+	genesis: subxt::utils::H256,
+) {
+	use crate::{
+		chain::HeadEvent,
+		time::{RealTimer, Timer},
+	};
+
+	while services.strong_count() > 0 {
+		if let Ok(events) = heads.head_events(genesis).await {
+			let alive = services.clone();
+			let finalized = events.take_while(move |_| futures::future::ready(alive.strong_count() > 0)).filter_map(
+				|event| {
+					futures::future::ready(match event {
+						Ok(HeadEvent::Finalized(block)) => Some(block),
+						_ => None,
+					})
+				},
+			);
+			payments.follow(finalized).await;
+		}
+		RealTimer.sleep(HEADS_RESUBSCRIBE_DELAY).await;
+	}
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the

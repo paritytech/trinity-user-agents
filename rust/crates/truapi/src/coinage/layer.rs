@@ -73,6 +73,8 @@ pub struct RuntimeFacts {
 	pub instance: Option<InstanceRecord>,
 	/// The maximum coin age the runtime reports; none when it reports none.
 	pub maximum_age: Option<u16>,
+	/// The runtime's spec version.
+	pub version: u32,
 }
 
 /// Reads [`RuntimeFacts`] from the People chain.
@@ -81,6 +83,9 @@ pub trait RuntimeSource: Send + Sync {
 	/// The facts at block `at`, or at the finalized head when none; none
 	/// when they cannot be read.
 	async fn runtime(&self, at: Option<HashAndNumber>) -> Option<RuntimeFacts>;
+	/// The runtime's spec version at block `at`; none when it cannot be
+	/// read.
+	async fn version(&self, at: HashAndNumber) -> Option<u32>;
 }
 
 /// §1's interfaces, supplied by the host.
@@ -290,6 +295,8 @@ struct Inner {
 	scan: ScanConfig,
 	running: Running,
 	failed_check: Mutex<Option<String>>,
+	/// The runtime version of the latest check.
+	checked_version: Mutex<u32>,
 	streams: streams::Wakes,
 	/// The reconstructions whose scan runs in this process.
 	reconstructing: Mutex<BTreeSet<OpKey>>,
@@ -348,6 +355,7 @@ pub async fn start(
 		scan,
 		running,
 		failed_check: Mutex::new(None),
+		checked_version: Mutex::new(facts.version),
 		streams: streams::Wakes::default(),
 		reconstructing: Mutex::new(BTreeSet::new()),
 		registry_read: AtomicBool::new(false),
@@ -827,8 +835,11 @@ impl Layer {
 	/// in use for reads (G3 invariant 7).
 	pub async fn revalidate(&self, at: HashAndNumber) {
 		let checked = match self.0.runtime.runtime(Some(at)).await {
-			Some(facts) => validate(&facts.metadata, facts.instance.as_ref(), facts.maximum_age, self.0.config.clone())
-				.map_err(|unsupported| unsupported.check),
+			Some(facts) => {
+				*self.0.checked_version.lock() = facts.version;
+				validate(&facts.metadata, facts.instance.as_ref(), facts.maximum_age, self.0.config.clone())
+					.map_err(|unsupported| unsupported.check)
+			},
 			None => Err("the runtime could not be read".to_owned()),
 		};
 		match checked {
@@ -846,10 +857,15 @@ impl Layer {
 		}
 	}
 
-	/// Observes `block` (F1) and tells the streams; the host's entry point
-	/// may run maintenance on it.
+	/// Observes `block` (F1), checks the runtime again when its version at
+	/// `block` is not the version of the latest check (G3 invariant 1), and
+	/// tells the streams; the host's entry point may run maintenance on it.
 	pub async fn on_block(&self, block: HashAndNumber) -> Result<(), Error> {
 		observation::on_block(&self.observer(), block, self.now(), &self.params()).await.map_err(observe_error)?;
+		let version = self.0.runtime.version(block).await;
+		if version.is_some_and(|version| version != *self.0.checked_version.lock()) {
+			self.revalidate(block).await;
+		}
 		self.0.streams.new_block(block);
 		self.changed();
 		Ok(())
