@@ -14,7 +14,6 @@ final class ExpandedPocketCardInteractor {
     private var engine: JSEngineProtocol?
     private var runtime: SPARuntimeProtocol?
     private var servedContent: ProductContent?
-    private var displayName: String?
     private var presenceId: UUID?
 
     private var setupTask: Task<Void, Never>?
@@ -111,7 +110,6 @@ private extension ExpandedPocketCardInteractor {
             setupTask = Task { [weak self] in
                 do {
                     let start = try await newRuntime.start(with: engine, onPhase: onPhase)
-                    self?.displayName = start.resolution.product?.displayName
                     self?.presenter?.didRequestNavigation(to: start.url)
                     self?.didServe(start.resolution.content)
                 } catch is CancellationError {
@@ -136,12 +134,12 @@ private extension ExpandedPocketCardInteractor {
     func didServe(_ content: ProductContent?) {
         servedContent = content
 
-        guard presenceId == nil, let contentId = try? content?.contentId else { return }
+        guard presenceId == nil, let content, let contentId = try? content.contentId else { return }
 
         presenceId = presenceRegistry?.register(
             productId: configuration.productDomain,
             contentId: contentId,
-            displayName: displayName ?? configuration.page.host.name,
+            displayName: content.resolved.displayName,
             reloader: self
         )
     }
