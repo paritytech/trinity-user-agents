@@ -189,6 +189,10 @@ struct RoomSettings {
     message_timer: Option<u64>,
     // A reader drops a message from a participant who is not an admin.
     only_admins_post: bool,
+    // Asks every Host to hide save and forward. A reader holds the
+    // content, so no Product shows this as a guarantee. Same for
+    // `ChatMedia.view_once`.
+    protected: bool,
 }
 
 enum ChatRoomPreviewOrder {
@@ -342,6 +346,8 @@ struct ChatMedia {
     caption: Option<String>,
     // Hidden until the user taps it.
     spoiler: bool,
+    // The receiver opens it once, then the Host drops it. See `Opened`.
+    view_once: bool,
 }
 
 enum ChatMediaKind {
@@ -541,6 +547,8 @@ enum UserChatAction {
     MessageDeleted {
         message_id: MessageId
     },
+    // The user opened the view-once media of a message.
+    Opened { message_id: MessageId },
     // The user changed the metadata or the settings of the room.
     EditRoom(RoomMetadata),
     // The user started (true) or stopped (false) typing.
