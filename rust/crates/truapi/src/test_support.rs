@@ -113,6 +113,9 @@ pub struct StubPlatform {
 	pub nft_purse_drain_confirmed: bool,
 	pub nft_purse_drain_reviews: Arc<Mutex<Vec<NftPurseDrainReview>>>,
 	pub coin_payment_spend_confirmed: bool,
+	/// Answers to successive coinage spend reviews, before
+	/// `coin_payment_spend_confirmed` answers the rest.
+	pub coin_payment_spend_decisions: Mutex<std::collections::VecDeque<bool>>,
 	pub coin_payment_spend_reviews: Arc<Mutex<Vec<crate::platform::CoinPaymentSpendReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
@@ -2153,7 +2156,12 @@ impl UserConfirmation for StubPlatform {
 					.lock()
 					.expect("coinage spend review list mutex poisoned")
 					.push(review);
-				(None, self.coin_payment_spend_confirmed)
+				let decided = self
+					.coin_payment_spend_decisions
+					.lock()
+					.expect("coinage spend decision queue mutex poisoned")
+					.pop_front();
+				(None, decided.unwrap_or(self.coin_payment_spend_confirmed))
 			},
 		};
 		if let Some(reason) = error {
