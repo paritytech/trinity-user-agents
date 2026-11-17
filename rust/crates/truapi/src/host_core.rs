@@ -1287,13 +1287,8 @@ impl SigningHostRuntime {
 		float_filterable: bool,
 		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
 	) -> crate::MaterialsResolution {
-		let Some(materials) = self.services.materials() else {
-			tracing::warn!("no core database, so every material node draws plain");
-			return crate::MaterialsResolution::plain(tree, context, failures);
-		};
-		let enabled = self.services.materials_enabled();
-		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
-		materials.resolve(tree, context, settings, failures)
+		self.services
+			.resolve_materials(tree, context, language, float_filterable, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -2063,6 +2058,30 @@ impl ProductRuntimeControl {
 		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
 		self.connection()?.publish_renderer_action(item.into())
+	}
+
+	/// The resolved materials of `tree`, a body this connection's product
+	/// rendered in `context`, its shaders in `language`, filtering 32-bit float
+	/// images themselves unless `float_filterable`. A node that falls back is
+	/// logged and reported to the product through `Renderer::failure_subscribe`,
+	/// once.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<crate::MaterialsResolution, ProductRuntimeError> {
+		let services = self.connection()?.services();
+		let connection = self.connection.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
+		});
+		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement
