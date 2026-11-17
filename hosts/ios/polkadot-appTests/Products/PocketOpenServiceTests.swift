@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import IssueMonitoring
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -21,7 +22,8 @@ struct PocketOpenServiceTests {
     @Test
     func anOpenLinkIsTimedFromWhenItArrives() async throws {
         let (taps, continuation) = AsyncStream<HostOpenTap>.makeStream()
-        let service = PocketOpenService(present: { _, tap in continuation.yield(tap) })
+        let clock = StoppedClock(now: Date(timeIntervalSince1970: 1_793_900_000.123))
+        let service = PocketOpenService(present: { _, tap in continuation.yield(tap) }, dateProvider: clock)
 
         let before = HostEventClock.monotonicMilliseconds()
         #expect(service.handle(url: URL(string: "polkadotapp://pocket/open?product=game.dot&card=loyalty")!))
@@ -34,6 +36,7 @@ struct PocketOpenServiceTests {
             throw CancellationError()
         }
         #expect(tap.source == .deeplink)
+        #expect(tap.openedAtEpochMilliseconds == 1_793_900_000_123)
         #expect(tap.openedAtMonotonicMilliseconds >= before)
         #expect(tap.openedAtMonotonicMilliseconds <= handled)
     }
@@ -104,6 +107,10 @@ struct PocketOpenServiceTests {
 
         #expect(try await seen.answer() == .refused)
     }
+}
+
+private struct StoppedClock: CurrentDateProviding {
+    let now: Date
 }
 
 private final class Recorder: @unchecked Sendable {

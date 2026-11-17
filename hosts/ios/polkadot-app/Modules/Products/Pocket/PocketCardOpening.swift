@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import IssueMonitoring
 import Products
 import TrUAPIHost
@@ -17,13 +18,18 @@ struct PocketCardOpening {
     let pocket: ProductPocketService
     /// Sends nothing unless the composition point passes `IssueMonitoringFactory.createHostEventRecorder()`.
     var hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
+    /// The tap's wall clock, read synchronously at the tap: an async `DateProviding` read would add a hop.
+    var dateProvider: CurrentDateProviding = NowDateProvider()
 
-    /// `tap` is read where the user acted, so the page measures from the tap, not from this call's hops.
+    /// A card tapped in the Pocket is stamped here, on the tap's own call; a link passes the `tap` read where it
+    /// arrived. Either way the page measures from the user's action, not from this call's hops.
     func open(
         _ card: PocketCardViewModel,
         pageQuery: String = "",
-        tap: HostOpenTap = HostOpenTap(source: .pocketCard)
+        tap: HostOpenTap? = nil
     ) {
+        let tap = tap ?? HostOpenTap(source: .pocketCard, openedAt: dateProvider.now)
+
         guard
             let url = card.key.launchUrl(pageQuery: pageQuery),
             let page = flowState.hostProvider.page(url: url)

@@ -63,7 +63,7 @@ struct HostEventTests {
             appBuild: nil,
             appVariant: "debug"
         )
-        let tap = HostOpenTap(source: .pocketCard, openedAtMonotonicMilliseconds: 1_000)
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(), openedAtMonotonicMilliseconds: 1_000)
 
         let event = try HostEvent.webViewCreated(
             hostSessionID: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
@@ -79,15 +79,15 @@ struct HostEventTests {
     }
 
     @Test func aTapMintsAFreshSessionIDEachTime() {
-        let first = HostOpenTap(source: .pocketCard)
-        let second = HostOpenTap(source: .pocketCard)
+        let first = HostOpenTap(source: .pocketCard, openedAt: Date())
+        let second = HostOpenTap(source: .pocketCard, openedAt: Date())
 
         #expect(first.sessionID != second.sessionID)
     }
 
     @Test func pocketOpenedCarriesTheIDMintedAtTheTap() throws {
         let sessionID = try #require(UUID(uuidString: "D93FE846-8F3C-4CFA-A440-402B6F7B43D3"))
-        let tap = HostOpenTap(source: .deeplink, sessionID: sessionID)
+        let tap = HostOpenTap(source: .deeplink, openedAt: Date(), sessionID: sessionID)
 
         let event = HostEvent.pocketOpened(
             tap: tap,
@@ -107,7 +107,7 @@ struct HostEventTests {
 
     @Test func pocketOpenedOnAReusedPageSaysSo() {
         let event = HostEvent.pocketOpened(
-            tap: HostOpenTap(source: .pocketCard),
+            tap: HostOpenTap(source: .pocketCard, openedAt: Date()),
             reused: true,
             origin: testOrigin,
             truapiHostVersion: "0.9.0",
@@ -139,7 +139,7 @@ struct HostEventTests {
     }
 
     @Test func pageVisibleAfterATapMeasuresTheWebViewAndTheTap() throws {
-        let tap = HostOpenTap(source: .pocketCard, openedAtMonotonicMilliseconds: 100)
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(), openedAtMonotonicMilliseconds: 100)
 
         let event = try HostEvent.pageVisible(
             hostSessionID: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
@@ -198,7 +198,7 @@ struct HostEventTests {
     /// Both spans read the one monotonic clock, so neither is clamped: a negative span is sent as measured
     /// rather than as a zero that reads as the fastest possible load.
     @Test func pageVisibleSendsBothSpansAsMeasured() {
-        let tap = HostOpenTap(source: .pocketCard, openedAtMonotonicMilliseconds: 2_000)
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(), openedAtMonotonicMilliseconds: 2_000)
 
         let event = HostEvent.pageVisible(
             hostSessionID: UUID(),

@@ -16,9 +16,11 @@ public struct HostOpenTap: Sendable, Equatable {
     /// Minted at the tap; the session that takes this tap adopts it as its host session id.
     public let sessionID: UUID
 
+    /// `openedAt` is the caller's to read, from its `CurrentDateProviding` (`NowDateProvider` in the app), at
+    /// the moment the user acted.
     public init(
         source: Source,
-        openedAt: Date = Date(),
+        openedAt: Date,
         openedAtMonotonicMilliseconds: Int = HostEventClock.monotonicMilliseconds(),
         sessionID: UUID = UUID()
     ) {

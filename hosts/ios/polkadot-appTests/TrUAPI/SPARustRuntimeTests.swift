@@ -146,7 +146,7 @@ struct SPARustRuntimeTests {
     /// The tap minted the id, and the session it opens reports under it, so the tap and the page share one.
     @Test func aSessionTakingATapAdoptsTheIdMintedAtTheTap() async throws {
         let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
-        let tap = HostOpenTap(source: .deeplink)
+        let tap = HostOpenTap(source: .deeplink, openedAt: Date())
         let hostEventRecorder = RecordingHostEventRecorder()
         let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
 
@@ -163,7 +163,7 @@ struct SPARustRuntimeTests {
     /// events can be told from the first load's.
     @Test func aRetryKeepsTheTapsSessionAndIsNotTimedFromIt() async throws {
         let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
-        let tap = HostOpenTap(source: .pocketCard)
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date())
         var session = SPARustRuntimeFactory.HostSession(openTap: tap)
         let hostEventRecorder = RecordingHostEventRecorder()
 
@@ -222,7 +222,7 @@ struct SPARustRuntimeTests {
     /// navigation commits again and sends nothing.
     @Test func theFirstMainFrameCommitSendsPageVisibleOnce() async throws {
         let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
-        let tap = HostOpenTap(source: .pocketCard)
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date())
         let hostEventRecorder = RecordingHostEventRecorder()
         let engine = MockJSEngine()
         let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
@@ -250,6 +250,7 @@ struct SPARustRuntimeTests {
         let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
         let tap = HostOpenTap(
             source: .pocketCard,
+            openedAt: Date(),
             openedAtMonotonicMilliseconds: HostEventClock.monotonicMilliseconds() - 1_000
         )
         let hostEventRecorder = RecordingHostEventRecorder()

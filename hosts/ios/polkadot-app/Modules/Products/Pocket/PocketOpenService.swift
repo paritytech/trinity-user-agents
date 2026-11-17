@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import IssueMonitoring
 import Products
 import UIKit
@@ -20,21 +21,25 @@ final class PocketOpenService: URLHandlingServiceProtocol {
     private let present: @MainActor (PocketDeeplink, HostOpenTap) -> Void
     private let openCollection: @MainActor () -> Void
     private let refuse: @MainActor (String) -> Void
+    /// The tap's wall clock, read synchronously as the link arrives: an async `DateProviding` read would add a hop.
+    private let dateProvider: CurrentDateProviding
 
     init(
         present: @escaping @MainActor (PocketDeeplink, HostOpenTap) -> Void,
         openCollection: @escaping @MainActor () -> Void = {},
-        refuse: @escaping @MainActor (String) -> Void = { _ in }
+        refuse: @escaping @MainActor (String) -> Void = { _ in },
+        dateProvider: CurrentDateProviding = NowDateProvider()
     ) {
         self.present = present
         self.openCollection = openCollection
         self.refuse = refuse
+        self.dateProvider = dateProvider
     }
 
     func handle(url: URL) -> Bool {
         switch parser.classify(url) {
         case let .pocket(link):
-            let tap = HostOpenTap(source: .deeplink)
+            let tap = HostOpenTap(source: .deeplink, openedAt: dateProvider.now)
             Task { @MainActor in present(link, tap) }
             return true
         case .collection:
