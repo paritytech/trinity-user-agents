@@ -122,7 +122,6 @@ private fun ImageAvatar(
     }
 }
 
-/** Follows metadata independently of image loading for the lifetime of this avatar. */
 @Composable
 fun PublicProfileAvatar(
     modifier: Modifier,
