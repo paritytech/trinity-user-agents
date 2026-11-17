@@ -190,6 +190,24 @@ struct HostEventTests {
         #expect(event.extras["tap_ms"] == .integer(1_500))
     }
 
+    /// Both spans read the one monotonic clock, so neither is clamped: a negative span is sent as measured
+    /// rather than as a zero that reads as the fastest possible load.
+    @Test func pageVisibleSendsBothSpansAsMeasured() {
+        let tap = HostOpenTap(source: .pocketCard, openedAtMonotonicMilliseconds: 2_000)
+
+        let event = HostEvent.pageVisible(
+            hostSessionID: UUID(),
+            origin: testOrigin,
+            truapiHostVersion: "0.9.0",
+            monotonicMilliseconds: 1_600,
+            webViewMilliseconds: -50,
+            openTap: tap
+        )
+
+        #expect(event.extras["webview_ms"] == .integer(-50))
+        #expect(event.extras["tap_ms"] == .integer(-400))
+    }
+
     @Test func aNoopRecorderNeverBuildsTheEvent() {
         var built = false
 

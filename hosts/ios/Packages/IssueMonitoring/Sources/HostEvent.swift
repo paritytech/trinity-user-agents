@@ -142,7 +142,8 @@ public struct HostEvent: Sendable, Equatable {
 
     /// The event for the first visible commit of a session's main page. `webview_ms` is the WebView's creation to
     /// that commit; `tap_ms` is the tap to it, and only a session a tap opened has one. Both are read on the
-    /// monotonic clock `monotonicMilliseconds` is read from.
+    /// monotonic clock `monotonicMilliseconds` is read from, so neither is clamped: a negative span is a bug to
+    /// see, not a zero.
     public static func pageVisible(
         hostSessionID: UUID,
         origin: HostEventOrigin,
@@ -155,7 +156,7 @@ public struct HostEvent: Sendable, Equatable {
             "truapi.host_version": truapiHostVersion,
             "host.session_id": hostSessionID.uuidString.lowercased()
         ]
-        var extras: [String: HostEventValue] = ["webview_ms": .integer(max(0, webViewMilliseconds))]
+        var extras: [String: HostEventValue] = ["webview_ms": .integer(webViewMilliseconds)]
 
         if let openTap {
             tags["open.source"] = openTap.source.rawValue
