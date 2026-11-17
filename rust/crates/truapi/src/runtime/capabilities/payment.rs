@@ -173,6 +173,7 @@ impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 	{
 		version(request)
 			.exec(|latest::HostPaymentBalanceSubscribeRequest { purse }| async move {
+				self.after_coinage_start().await;
 				let Some(platform) = self.connection.services.balance_platform() else {
 					return Subscription::interrupted(CallError::Unsupported);
 				};
@@ -215,6 +216,7 @@ impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 	) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>> {
 		version(request)
 			.exec(|latest::HostPaymentStatusSubscribeRequest { id }| async move {
+				self.after_coinage_start().await;
 				let Some(platform) = self.connection.services.payment_platform() else {
 					return Subscription::interrupted(CallError::Unsupported);
 				};
@@ -253,6 +255,7 @@ impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
 	> {
 		version(request)
 			.exec(|latest::HostPaymentTopUpStatusSubscribeRequest { id }| async move {
+				self.after_coinage_start().await;
 				let Some(platform) = self.connection.services.top_up_platform() else {
 					return Subscription::interrupted(CallError::Unsupported);
 				};
@@ -325,6 +328,14 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	}
 
 	/// Whether the product already holds balance access, without asking.
+	/// Returns once the coinage layers' start has finished, at once when
+	/// coinage is off, so the engine they install serves a call made while
+	/// they start.
+	async fn after_coinage_start(&self) {
+		#[cfg(not(target_arch = "wasm32"))]
+		let _outcome = self.connection.services.coinage_layer().await;
+	}
+
 	async fn holds_balance_access(&self) -> bool {
 		self.balance_access_check().holds().await
 	}
@@ -344,6 +355,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		&self,
 		mut request: latest::HostPaymentRequest,
 	) -> Result<(), CallError<latest::HostPaymentError>> {
+		self.after_coinage_start().await;
 		let platform = self.connection.services.payment_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
@@ -404,6 +416,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		&self,
 		mut request: latest::HostPaymentTopUpRequest,
 	) -> Result<(), CallError<latest::HostPaymentTopUpError>> {
+		self.after_coinage_start().await;
 		let platform = self.connection.services.top_up_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
