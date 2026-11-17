@@ -24,6 +24,14 @@ fn a_coin_account_matches_the_shipped_wallet() {
 	assert_eq!(hex(&account), "4eced11d18ac64e54559cc45eb79415ca66d9354e74394dc8729b69a0fbd9107");
 }
 
+/// The vector the shipped wallets are to pin as well, so a recovered seed
+/// finds the entries another platform loaded.
+#[test]
+fn an_entry_seed_is_pinned_for_the_shipped_wallets() {
+	let seed = entry_seed(&entropy(), PurseId::MAIN, InstallationId([0x5a; 32]), 7);
+	assert_eq!(hex(&seed.0), "7c9e2011ed19b98e95bd8d2bfcbbfb9cedca4617061d2388b58cf68ff0b96754");
+}
+
 #[test]
 fn chain_codes_follow_the_junction_values() {
 	let mut coinage = vec![0x1c, 0x63, 0x6f, 0x69, 0x6e, 0x61, 0x67, 0x65];
