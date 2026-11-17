@@ -691,6 +691,14 @@ struct Extension {
 - A reader drops a record whose `id` starts with the participant id of another origin.
 - A reader that cannot decode `action` shows a row "This message needs a newer version of {product}" when `control` is false, and ignores the record when it is true. It ignores an extension it does not know, and shows a `Custom` message of a type it does not know as its `preview_text`.
 
+#### 4.7 Well-known Custom Types
+
+Every Host draws the `Custom` types of this list. A Product may propose a type for it.
+
+| `message_type` | Payload | Host behavior |
+|---|---|---|
+| `attention` | None | A "nudge" line, with a sound or an effect. At most one for each sender and room every 15 seconds. No sound when the room is muted or the user is `Busy`. |
+
 ### 5. Message Actions
 
 Products can customize the actions available on each message (long-press menu). By default, the Host provides built-in actions (copy, reply, edit own messages, react).
