@@ -1,9 +1,6 @@
 //! Queries over the NFT tables, one SQL constant and one function each.
 
-use std::{
-	collections::{HashMap, HashSet},
-	rc::Rc,
-};
+use std::{collections::HashMap, rc::Rc};
 
 use futures::stream::BoxStream;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Value};
@@ -73,13 +70,17 @@ pub fn insert_recovered_purse(tx: &Transaction<'_>, id: PurseId) -> Result<(), D
 	Ok(())
 }
 
-const START_RECOVERY: &str =
+const INSERT_PENDING_RECOVERY: &str =
 	"INSERT INTO nft_recovery (installation) VALUES (:installation) ON CONFLICT DO NOTHING";
 
 /// Records that backup recovery has to scan `installation`, unless it is
-/// already recorded.
-pub fn start_recovery(tx: &Transaction<'_>, installation: InstallationId) -> Result<(), DbError> {
-	tx.prepare_cached(START_RECOVERY)?.execute(named_params! { ":installation": installation.0 })?;
+/// already recorded, pending or finished.
+pub fn insert_pending_recovery(
+	tx: &Transaction<'_>,
+	installation: InstallationId,
+) -> Result<(), DbError> {
+	tx.prepare_cached(INSERT_PENDING_RECOVERY)?
+		.execute(named_params! { ":installation": installation.0 })?;
 	Ok(())
 }
 
@@ -97,11 +98,12 @@ pub fn mark_recovery_done(
 	Ok(())
 }
 
-const RECOVERED_INSTALLATIONS: &str = "SELECT installation FROM nft_recovery WHERE done = 1";
+const PENDING_RECOVERIES: &str =
+	"SELECT installation FROM nft_recovery WHERE done = 0 ORDER BY installation";
 
-/// The installations backup recovery has finished.
-pub fn recovered_installations(conn: &Connection) -> Result<HashSet<InstallationId>, DbError> {
-	let mut statement = conn.prepare_cached(RECOVERED_INSTALLATIONS)?;
+/// The installations backup recovery has recorded but not finished.
+pub fn pending_recoveries(conn: &Connection) -> Result<Vec<InstallationId>, DbError> {
+	let mut statement = conn.prepare_cached(PENDING_RECOVERIES)?;
 	let rows = statement.query_map([], |row| Ok(InstallationId(row.get("installation")?)))?;
 	Ok(rows.collect::<Result<_, _>>()?)
 }

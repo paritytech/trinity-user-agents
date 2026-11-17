@@ -3,11 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use futures::{
-	FutureExt,
-	channel::oneshot,
-	future::Shared,
-};
+use futures::{FutureExt, channel::oneshot, future::Shared};
 
 /// Holds back new purse ids until backup recovery can no longer recreate an
 /// earlier purse at the id a new one would take. An item's purse is also the

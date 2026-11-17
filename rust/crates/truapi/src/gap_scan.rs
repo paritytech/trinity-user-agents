@@ -80,8 +80,9 @@ pub enum GapScanError<DeriveError, LookupError> {
 }
 
 /// The keys found in one index space, in index order.
-pub type FoundKeys<Keys, Lookup> =
-	Vec<FoundKey<<Keys as KeyRange>::Key, <Lookup as HoldingLookup<<Keys as KeyRange>::Key>>::Holding>>;
+pub type FoundKeys<Keys, Lookup> = Vec<
+	FoundKey<<Keys as KeyRange>::Key, <Lookup as HoldingLookup<<Keys as KeyRange>::Key>>::Holding>,
+>;
 
 /// The error of [`scan_until_gap`] for these keys and this lookup.
 pub type ScanError<Keys, Lookup> = GapScanError<
@@ -196,7 +197,6 @@ impl<PurseId> PurseScanPass<PurseId> {
 }
 
 /// Whether a scanned purse held anything.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PurseScanOutcome {
 	/// At least one of its keys holds something.
 	Held,

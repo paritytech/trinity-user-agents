@@ -37,3 +37,28 @@ fn only_records_sealed_under_the_seed_open_and_each_installation_comes_back_once
 
 	assert_eq!(open_installation_records(&key, &records), [PINNED_INSTALLATION]);
 }
+
+/// The apps' own vectors, pinned against polkadot-js: the seed's `//datastore`
+/// account and the key its records are sealed under. A drift would make the
+/// core read another account's list, or open nothing, without any error.
+#[test]
+fn the_data_store_account_and_record_key_match_the_apps() {
+	let mnemonic = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
+	let entropy = bip39::Mnemonic::parse(mnemonic).unwrap().to_entropy();
+	let public_key: [u8; 32] =
+		bytes("0x82fde43d07766255566803c486f9427cfb7026328a3d87cddd34b362acbdb54d")
+			.try_into()
+			.unwrap();
+	let app_key = AeadKey::from_bytes(Zeroizing::new(
+		bytes("0xa217d0089ea2bc908772a8df8ab8f4aeb122eb1f41bbd26b6aff9c9386143f2a")
+			.try_into()
+			.unwrap(),
+	));
+	let sealed_by_app = app_key.encrypt_with_nonce(&PINNED_INSTALLATION.0, [9; 12]).unwrap();
+
+	let owner = data_store_owner(&entropy).unwrap();
+	let key = installation_record_key(&entropy).unwrap();
+
+	assert_eq!(owner, account_to_h160(&public_key));
+	assert_eq!(open_installation_records(&key, &[sealed_by_app]), [PINNED_INSTALLATION]);
+}

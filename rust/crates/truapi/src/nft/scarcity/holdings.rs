@@ -18,7 +18,8 @@ pub struct ScarcityHoldings {
 }
 
 impl ScarcityHoldings {
-	/// Reads of the pallet on the chain with `genesis`, at the block `at`.
+	/// Reads the pallet on the chain with `genesis`, every read at the block
+	/// `at`.
 	pub fn new(
 		storage: Arc<dyn WatchedStorage>,
 		heads: Arc<dyn ChainHeads>,
@@ -34,7 +35,10 @@ impl HoldingLookup<ItemKey> for ScarcityHoldings {
 	type Holding = HeldItem;
 	type Error = StorageWatchError;
 
-	async fn read_holdings(&self, keys: &[ItemKey]) -> Result<Vec<Option<HeldItem>>, StorageWatchError> {
+	async fn read_holdings(
+		&self,
+		keys: &[ItemKey],
+	) -> Result<Vec<Option<HeldItem>>, StorageWatchError> {
 		let nfts = self.chain.nfts_at(self.at, keys).await?;
 		Ok(nfts.into_iter().map(|nft| nft.map(HeldItem::from)).collect())
 	}

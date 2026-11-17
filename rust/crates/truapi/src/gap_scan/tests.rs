@@ -151,7 +151,11 @@ impl PurseScanner<u32> for ScriptedPurses {
 		if self.failing == Some(purse) {
 			return Err(format!("purse {purse} could not be read"));
 		}
-		Ok(if self.held.contains(&purse) { PurseScanOutcome::Held } else { PurseScanOutcome::Empty })
+		Ok(if self.held.contains(&purse) {
+			PurseScanOutcome::Held
+		} else {
+			PurseScanOutcome::Empty
+		})
 	}
 }
 
@@ -174,7 +178,9 @@ async fn a_skipped_purse_resets_the_run_of_empty_purses() {
 	let with_a_known_purse = ScriptedPurses::holding([5]);
 	let without = ScriptedPurses::holding([3]);
 
-	scan_purse_passes(&[listed([2]), sequential(3)], &with_a_known_purse).await.unwrap();
+	scan_purse_passes(&[listed([2]), sequential(3)], &with_a_known_purse)
+		.await
+		.unwrap();
 	scan_purse_passes(&[sequential(3)], &without).await.unwrap();
 
 	assert_eq!(with_a_known_purse.scanned(), [2, 0, 1, 3, 4, 5, 6, 7, 8]);

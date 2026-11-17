@@ -2,10 +2,7 @@
 //! held.
 
 use core::num::NonZeroU32;
-use std::sync::{
-	Arc, Weak,
-	atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, Weak};
 
 use super::{ItemHoldings, RecoveryError};
 use crate::{
@@ -18,7 +15,7 @@ use crate::{
 		HeldItem, ItemKey, ItemSlot, PurseId, dao,
 		keys::{ItemIndex, item_key_prefix},
 	},
-	store::Db,
+	store::{Db, DbError},
 };
 
 /// The scan of a purse's keys ends after more than this many empty keys in a
@@ -46,41 +43,58 @@ pub fn recovery_passes() -> [PurseScanPass<PurseId>; 2] {
 	]
 }
 
-/// Scans the purses of one earlier installation and records the keys that
-/// hold an NFT.
+/// Scans each purse under every earlier installation of the seed and records
+/// the keys that hold an NFT.
 pub struct NftPurseScanner {
 	db: Db,
 	keys: Weak<dyn HardKeyDerivation>,
 	holdings: Arc<ItemHoldings>,
-	installation: InstallationId,
-	keys_found: AtomicUsize,
+	installations: Vec<InstallationId>,
 }
 
 impl NftPurseScanner {
-	/// Scans under `installation`, deriving keys with `keys` and reading them
-	/// through `holdings`, and records what it finds in `db`.
+	/// Scans under each of `installations`, deriving keys with `keys` and
+	/// reading them through `holdings`, and records what it finds in `db`.
 	pub fn new(
 		db: Db,
 		keys: Weak<dyn HardKeyDerivation>,
 		holdings: Arc<ItemHoldings>,
-		installation: InstallationId,
+		installations: Vec<InstallationId>,
 	) -> Self {
-		Self { db, keys, holdings, installation, keys_found: AtomicUsize::new(0) }
+		Self { db, keys, holdings, installations }
 	}
 
-	/// The number of keys found so far that hold an NFT.
-	pub fn keys_found(&self) -> usize {
-		self.keys_found.load(Ordering::Relaxed)
-	}
-
-	/// The slot and key of each of `found` in `purse`.
-	fn items_of(
+	/// The keys of `purse` under `installation` that hold an NFT, read from
+	/// index 0 until more than [`MAX_EMPTY_KEYS`] in a row hold nothing.
+	async fn find_held_keys(
 		&self,
 		purse: PurseId,
+		installation: InstallationId,
+	) -> Result<Vec<FoundKey<ItemKey, HeldItem>>, RecoveryError> {
+		let prefix = item_key_prefix(purse, installation).to_vec();
+		let keys = HardPathKeys::<ItemKey>::new(self.keys.clone(), prefix);
+		let limit = GapLimit { max_empty_run: MAX_EMPTY_KEYS, batch_size: KEYS_PER_READ };
+		scan_until_gap(&keys, &*self.holdings, limit)
+			.await
+			.map_err(|error| RecoveryError::Scan { purse: purse.0, reason: error.to_string() })
+	}
+
+	/// Records `purse` and the keys in `found` under `installation` in one
+	/// write, keeping a purse or key already recorded as it is.
+	async fn record_recovered_keys(
+		&self,
+		purse: PurseId,
+		installation: InstallationId,
 		found: &[FoundKey<ItemKey, HeldItem>],
-	) -> Vec<(ItemSlot, ItemKey)> {
-		let slot = |index| ItemSlot { purse, installation: self.installation, index: ItemIndex(index) };
-		found.iter().map(|hit| (slot(hit.index), hit.key)).collect()
+	) -> Result<(), DbError> {
+		log_recovered_items(purse, found);
+		let items = found_item_slots(purse, installation, found);
+		self.db
+			.write(move |tx| {
+				dao::insert_recovered_purse(tx, purse)?;
+				dao::insert_recovered_items(tx, &items)
+			})
+			.await
 	}
 }
 
@@ -88,33 +102,34 @@ impl NftPurseScanner {
 impl PurseScanner<PurseId> for NftPurseScanner {
 	type Error = RecoveryError;
 
-	/// Records the purse and its keys in one write when any key holds an
-	/// NFT, keeping a purse or key already recorded as it is.
 	async fn scan_purse(&self, purse: PurseId) -> Result<PurseScanOutcome, RecoveryError> {
-		let prefix = item_key_prefix(purse, self.installation).to_vec();
-		let keys = HardPathKeys::<ItemKey>::new(self.keys.clone(), prefix);
-		let limit = GapLimit { max_empty_run: MAX_EMPTY_KEYS, batch_size: KEYS_PER_READ };
-		let found = scan_until_gap(&keys, &*self.holdings, limit)
-			.await
-			.map_err(|error| RecoveryError::Scan { purse: purse.0, reason: error.to_string() })?;
-		if found.is_empty() {
-			return Ok(PurseScanOutcome::Empty);
+		let mut outcome = PurseScanOutcome::Empty;
+		for installation in &self.installations {
+			let found = self.find_held_keys(purse, *installation).await?;
+			if found.is_empty() {
+				continue;
+			}
+			self.record_recovered_keys(purse, *installation, &found).await?;
+			outcome = PurseScanOutcome::Held;
 		}
-		log_found(purse, &found);
-		let items = self.items_of(purse, &found);
-		self.keys_found.fetch_add(items.len(), Ordering::Relaxed);
-		self.db
-			.write(move |tx| {
-				dao::insert_recovered_purse(tx, purse)?;
-				dao::insert_recovered_items(tx, &items)
-			})
-			.await?;
-		Ok(PurseScanOutcome::Held)
+		Ok(outcome)
 	}
 }
 
+/// The slot of each key in `found`, a key of `purse` under `installation`.
+fn found_item_slots(
+	purse: PurseId,
+	installation: InstallationId,
+	found: &[FoundKey<ItemKey, HeldItem>],
+) -> Vec<(ItemSlot, ItemKey)> {
+	found
+		.iter()
+		.map(|hit| (ItemSlot { purse, installation, index: ItemIndex(hit.index) }, hit.key))
+		.collect()
+}
+
 /// Logs each NFT found in `purse` on the device.
-fn log_found(purse: PurseId, found: &[FoundKey<ItemKey, HeldItem>]) {
+fn log_recovered_items(purse: PurseId, found: &[FoundKey<ItemKey, HeldItem>]) {
 	for hit in found {
 		tracing::debug!(
 			purse = purse.0,

@@ -41,8 +41,8 @@ pub use operation::{
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use purse_id_gate::PurseIdGate;
-pub use recovery::{AssetHubRecoveryChain, NftRecovery, NftRecoveryDeps};
 pub use reclaim::ReclaimRequest;
+pub use recovery::{AssetHubRecoveryChain, NftRecovery, NftRecoveryDeps};
 pub use returns::ReturnRequest;
 pub use scarcity::{
 	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,

@@ -182,10 +182,7 @@ impl Stack {
 			chains,
 			allows_reserved_values,
 		)?;
-		let account_data_store = descriptor
-			.contract_address(ACCOUNT_DATA_STORE_CONTRACT)
-			.filter(|address| *address != [0; 20]);
-		Ok(Self { account_data_store, ..stack })
+		Ok(Self { account_data_store: account_data_store_in(descriptor), ..stack })
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -270,6 +267,14 @@ impl Stack {
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
 	}
+}
+
+/// The `AccountDataStore` address `descriptor` names, or `None` when it names
+/// none or the all-zero address, which no contract has.
+fn account_data_store_in(descriptor: &Descriptor) -> Option<[u8; 20]> {
+	descriptor
+		.contract_address(ACCOUNT_DATA_STORE_CONTRACT)
+		.filter(|address| *address != [0; 20])
 }
 
 /// The pointer a stack link carries. A host runs only a signed stack, so a

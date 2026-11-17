@@ -3,7 +3,7 @@ use std::{
 	collections::BTreeSet,
 	sync::{
 		Mutex,
-		atomic::{AtomicBool, Ordering},
+		atomic::{AtomicUsize, Ordering},
 	},
 };
 
@@ -36,10 +36,12 @@ fn item_key(purse: u32, installation: InstallationId, index: u32) -> ItemKey {
 }
 
 /// Derives from the test seed, records the installation of each prefix it
-/// derives under, and fails once when `fails_once` is set.
+/// derives under, and fails the derivation numbered `failing_derivation`,
+/// counting from 1.
 #[derive(Default)]
 struct TestSeed {
-	fails_once: AtomicBool,
+	failing_derivation: Option<usize>,
+	derivations: AtomicUsize,
 	installations_scanned: Mutex<BTreeSet<String>>,
 }
 
@@ -49,7 +51,8 @@ impl HardKeyDerivation for TestSeed {
 		prefix: &[String],
 		indices: Range<u32>,
 	) -> Result<Vec<[u8; 32]>, AuthorityError> {
-		if self.fails_once.swap(false, Ordering::Relaxed) {
+		let derivation = self.derivations.fetch_add(1, Ordering::Relaxed) + 1;
+		if self.failing_derivation == Some(derivation) {
 			return Err(AuthorityError::Unavailable { reason: "session locked".to_string() });
 		}
 		self.installations_scanned.lock().unwrap().insert(prefix[2].clone());
@@ -139,7 +142,7 @@ impl Harness {
 	}
 
 	fn recover(&self) -> Result<(), RecoveryError> {
-		block_on(recover(&self.deps))
+		block_on(run_recovery_once(&self.deps))
 	}
 
 	fn purse_of(&self, key: ItemKey) -> Option<PurseId> {
@@ -186,20 +189,42 @@ fn the_purse_walk_stops_after_ten_empty_purses() {
 	assert_eq!(tenth.purse_of(in_purse_10), None);
 }
 
-/// A failed run must lose nothing: the installation stays pending and the
-/// next run finds the same items.
+/// A failed run must lose nothing and must not record anything twice: the
+/// installation stays pending, and the retry records again what the failed
+/// run already recorded.
 #[test]
 fn a_failed_run_leaves_the_installation_pending_and_the_retry_finds_its_items() {
+	let in_main = item_key(PurseId::MAIN.0, EARLIER, 0);
 	let in_purse_0 = item_key(0, EARLIER, 2);
-	let seed = TestSeed { fails_once: AtomicBool::new(true), ..TestSeed::default() };
-	let harness = Harness::with_seed(TestChain::new(&[EARLIER], [in_purse_0]), seed);
+	// The main purse takes three reads of 500 keys, so the fourth derivation
+	// is purse 0's first, after the main purse's key is recorded.
+	let seed = TestSeed { failing_derivation: Some(4), ..TestSeed::default() };
+	let harness = Harness::with_seed(TestChain::new(&[EARLIER], [in_main, in_purse_0]), seed);
 
 	assert!(matches!(harness.recover(), Err(RecoveryError::Scan { .. })));
-	let finished = block_on(harness.deps.db.read(dao::recovered_installations)).unwrap();
+	let pending = block_on(harness.deps.db.read(dao::pending_recoveries)).unwrap();
+	let recorded_before_the_failure = harness.purse_of(in_main);
 	harness.recover().unwrap();
 
-	assert_eq!(finished, HashSet::from([TEST_INSTALLATION]));
+	assert_eq!(pending, [EARLIER]);
+	assert_eq!(recorded_before_the_failure, Some(PurseId::MAIN));
 	assert_eq!(harness.purse_of(in_purse_0), Some(PurseId(0)));
+}
+
+/// Purse ids are shared by every installation, so an installation can hold
+/// a purse only past ids it never used itself, such as a purse created after
+/// an earlier recovery. The walk counts a purse as empty only when it is
+/// empty under every installation.
+#[test]
+fn a_purse_past_another_installations_purses_is_found() {
+	let in_earlier_purses = (0..=10).map(|purse| item_key(purse, EARLIER_STILL, 0));
+	let in_purse_12 = item_key(12, EARLIER, 0);
+	let held = in_earlier_purses.chain([in_purse_12]);
+	let harness = Harness::new(TestChain::new(&[EARLIER_STILL, EARLIER], held));
+
+	harness.recover().unwrap();
+
+	assert_eq!(harness.purse_of(in_purse_12), Some(PurseId(12)));
 }
 
 /// Recovery must not clobber local state: a purse already at a recovered id
@@ -209,10 +234,15 @@ fn a_failed_run_leaves_the_installation_pending_and_the_retry_finds_its_items() 
 fn recovery_keeps_existing_purses_and_never_scans_the_current_installation() {
 	let in_purse_0 = item_key(0, EARLIER, 0);
 	let current = item_key(0, TEST_INSTALLATION, 0);
-	let harness = Harness::new(TestChain::new(&[TEST_INSTALLATION, EARLIER], [in_purse_0, current]));
+	let harness =
+		Harness::new(TestChain::new(&[TEST_INSTALLATION, EARLIER], [in_purse_0, current]));
 	harness.deps.purse_ids.open();
-	block_on(harness.ledger().create_purse("tickets".into(), PurseTag(b"tickets.dot".to_vec())))
-		.unwrap();
+	block_on(
+		harness
+			.ledger()
+			.create_purse("tickets".into(), PurseTag(b"tickets.dot".to_vec())),
+	)
+	.unwrap();
 
 	harness.recover().unwrap();
 

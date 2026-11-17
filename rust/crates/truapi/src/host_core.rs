@@ -1175,19 +1175,15 @@ impl SigningHostRuntime {
 
 	/// Installs the NFT ledger over `db` and `durable`, with the static receive
 	/// secret NFT purses open cheques with, starts tracking its holdings, and
-	/// starts backup recovery when the stack names the installation registry.
-	/// Does nothing without an installation provider or encrypted storage.
+	/// starts backup recovery. Does nothing without an installation provider
+	/// or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
-		let registry = self.services.stack().account_data_store();
-		let purse_ids = match registry {
-			Some(_) => crate::nft::PurseIdGate::closed(),
-			None => crate::nft::PurseIdGate::opened(),
-		};
+		let purse_ids = crate::nft::PurseIdGate::closed();
 		let Some(ledger) = self.nft_ledger(db.clone(), durable, purse_ids.clone()) else {
 			return;
 		};
@@ -1195,23 +1191,19 @@ impl SigningHostRuntime {
 		self.services.install_static_receive_secret(static_secret);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
-		match registry {
-			Some(contract) => self.start_nft_recovery(db, contract, purse_ids),
-			None => tracing::info!("the stack names no AccountDataStore, NFT backup recovery is off"),
-		}
+		self.start_nft_recovery(db, purse_ids);
 	}
 
-	/// Starts NFT backup recovery over `db`, reading the installation
-	/// registry at `contract`. Called once the ledger is installed, so the
-	/// installation provider is set.
+	/// Starts NFT backup recovery over `db` when the stack names the
+	/// installation registry. Otherwise there is nothing to recover, so
+	/// `purse_ids` opens at once.
 	#[cfg(not(target_arch = "wasm32"))]
-	fn start_nft_recovery(
-		&self,
-		db: crate::store::Db,
-		contract: [u8; 20],
-		purse_ids: crate::nft::PurseIdGate,
-	) {
-		let Some(installation) = self.services.installation_provider() else {
+	fn start_nft_recovery(&self, db: crate::store::Db, purse_ids: crate::nft::PurseIdGate) {
+		let registry = self.services.stack().account_data_store();
+		let installation = self.services.installation_provider();
+		let (Some(contract), Some(installation)) = (registry, installation) else {
+			tracing::info!("the stack names no AccountDataStore, NFT backup recovery is off");
+			purse_ids.open();
 			return;
 		};
 		let signing_host = Arc::downgrade(&self.signing_host);

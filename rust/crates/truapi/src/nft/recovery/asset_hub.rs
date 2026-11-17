@@ -21,8 +21,8 @@ pub struct AssetHubRecoveryChain {
 }
 
 impl AssetHubRecoveryChain {
-	/// Reads of the Asset Hub with `genesis` over `chain`, the registry at the
-	/// contract `registry` names.
+	/// Reads the Asset Hub with `genesis` through `chain`, and the seed's
+	/// installations through `registry`.
 	pub fn new(chain: ChainRuntime, genesis: H256, registry: RegisteredInstallations) -> Self {
 		Self { chain, genesis, registry }
 	}

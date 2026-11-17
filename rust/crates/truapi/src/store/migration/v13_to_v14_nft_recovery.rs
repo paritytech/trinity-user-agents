@@ -2,9 +2,10 @@
 
 use rusqlite_migration::M;
 
-/// Creates `nft_recovery`, one row per installation recovery has started
-/// scanning. `done` is set once every purse pass of that installation has
-/// ended, and a done installation is not scanned again.
+/// Creates `nft_recovery`, one row per installation a registry read listed.
+/// `done` is set once recovery has scanned that installation's purses, and
+/// from the start for the installation the app runs as, which is never
+/// scanned. A done installation is not scanned again.
 pub fn create_nft_recovery() -> M<'static> {
 	M::up(
 		"CREATE TABLE nft_recovery (

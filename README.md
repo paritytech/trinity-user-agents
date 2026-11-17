@@ -432,9 +432,10 @@ backlog in one batch, then each live page.
 After a reinstall the core recovers what the purses held. It reads the
 installations the seed registered in the `AccountDataStore` contract, at the
 address the stack names under `contracts.accountDataStore`, and opens each
-record with a key derived from the seed's `//datastore` account. For every
-earlier installation it scans the main purse, then purse ids from 0 until 10
-purses in a row are empty, and in each purse reads item keys from index 0 until
+record with a key derived from the seed's `//datastore` account. It walks the
+purse ids once across every earlier installation, since all of them share one
+sequence of ids: the main purse, then ids from 0 until 10 purses in a row are
+empty under all of them. In each purse it reads item keys from index 0 until
 more than 1000 in a row hold nothing. Keys that hold an NFT go back under their
 purse and installation, and a purse with no record is recreated, owned by Root
 and named `Recovered purse <id>`. Recovery runs while a session is active, all

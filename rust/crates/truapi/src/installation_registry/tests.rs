@@ -63,7 +63,10 @@ fn returned(data: Vec<u8>) -> Vec<u8> {
 	.encode()
 }
 
-fn read(registry: &RegisteredInstallations, answer: Vec<u8>) -> Result<Vec<InstallationId>, RegistryReadError> {
+fn read(
+	registry: &RegisteredInstallations,
+	answer: Vec<u8>,
+) -> Result<Vec<InstallationId>, RegistryReadError> {
 	let mut node = AnsweringNode { answer: Some(Ok(answer)), inputs: Arc::default() };
 	futures::executor::block_on(registry.read_installations(&mut node))
 }
@@ -77,7 +80,8 @@ fn the_registry_asks_for_the_owners_list_and_returns_what_opens() {
 	let records: Vec<Bytes> = vec![vec![0x5a; 32].into(), vec![1, 2].into()];
 	let output = getCoinageInstallationsCall::abi_encode_returns(&records);
 	let inputs = Arc::default();
-	let mut node = AnsweringNode { answer: Some(Ok(returned(output))), inputs: Arc::clone(&inputs) };
+	let mut node =
+		AnsweringNode { answer: Some(Ok(returned(output))), inputs: Arc::clone(&inputs) };
 
 	let installations = futures::executor::block_on(registry.read_installations(&mut node));
 
@@ -105,7 +109,10 @@ fn the_read_fails_once_the_keys_are_dropped() {
 
 	let installations = read(&registry, returned(Vec::new()));
 
-	assert!(matches!(installations, Err(RegistryReadError::Keys(AuthorityError::Unavailable { .. }))));
+	assert!(matches!(
+		installations,
+		Err(RegistryReadError::Keys(AuthorityError::Unavailable { .. }))
+	));
 }
 
 /// The contract the apps register against answers the read and returns a

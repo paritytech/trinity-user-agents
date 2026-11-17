@@ -20,7 +20,8 @@ alloy_sol_types::sol! {
 	function getCoinageInstallations(address owner) external view returns (bytes[] memory);
 }
 
-/// The seed's `//datastore` account, which owns its installation records.
+/// Reads the seed's installation records with keys derived from its
+/// `//datastore` account, without handing out the seed.
 pub trait DataStoreKeys: Send + Sync {
 	/// The H160 the contract keeps the records under. Fails without a
 	/// session.
@@ -44,7 +45,7 @@ pub enum RegistryReadError {
 	#[error("reading the installation registry failed: {0}")]
 	Read(#[from] EvmContractError),
 	/// The contract returned something other than a list of records.
-	#[error("the installation registry returned malformed data: {0}")]
+	#[error("the installation registry returned malformed data, expected an ABI `bytes[]`: {0}")]
 	Malformed(alloy_sol_types::Error),
 }
 

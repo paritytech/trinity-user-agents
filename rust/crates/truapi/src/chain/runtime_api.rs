@@ -91,8 +91,7 @@ async fn state_call_batch(
 	inputs: Vec<Vec<u8>>,
 	at: Option<H256>,
 ) -> Vec<Result<Vec<u8>, subxt::Error>> {
-	futures::future::join_all(inputs.iter().map(|input| state_call(rpc, function, input, at)))
-		.await
+	futures::future::join_all(inputs.iter().map(|input| state_call(rpc, function, input, at))).await
 }
 
 #[cfg(test)]

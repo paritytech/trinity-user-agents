@@ -13,7 +13,6 @@ mod asset_hub;
 mod purse_scanner;
 
 use std::{
-	collections::HashSet,
 	ops::ControlFlow,
 	sync::{Arc, Weak},
 	time::Duration,
@@ -43,8 +42,7 @@ use crate::{
 const RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(30), Duration::from_secs(30 * 60));
 
 /// What item keys hold, as [`RecoveryChain::holdings_at`] reads them.
-pub type ItemHoldings =
-	dyn HoldingLookup<ItemKey, Holding = HeldItem, Error = StorageWatchError>;
+pub type ItemHoldings = dyn HoldingLookup<ItemKey, Holding = HeldItem, Error = StorageWatchError>;
 
 /// The chain reads a recovery run makes, all at one finalized block.
 #[async_trait::async_trait]
@@ -111,26 +109,17 @@ pub struct NftRecovery {
 }
 
 impl NftRecovery {
-	/// Starts following the session on the deps' spawner. Opens the gate at
-	/// once when an earlier run on this install finished every installation
-	/// it found.
+	/// Starts on the deps' spawner: opens the gate at once when an earlier run
+	/// on this install finished every installation it found, then recovers
+	/// during each session.
 	pub fn start(deps: NftRecoveryDeps) -> Self {
 		let spawner = deps.spawner.clone();
-		Self { _following: BackgroundTask::spawn(&spawner, follow_sessions(Arc::new(deps))) }
-	}
-}
-
-/// Opens the gate if recovery already finished, then keeps one run going
-/// while a session is active and drops it when the session ends.
-async fn follow_sessions(deps: Arc<NftRecoveryDeps>) {
-	open_gate_if_finished(&deps).await;
-	let mut changes = deps.session_state.subscribe();
-	let mut run = None;
-	while changes.next().await.is_some() {
-		run = match deps.session_state.current() {
-			Some(_) => run.or_else(|| Some(BackgroundTask::spawn(&deps.spawner, recover_until_done(deps.clone())))),
-			None => None,
+		let deps = Arc::new(deps);
+		let following = async move {
+			open_gate_if_finished(&deps).await;
+			recover_during_sessions(deps).await;
 		};
+		Self { _following: BackgroundTask::spawn(&spawner, following) }
 	}
 }
 
@@ -145,13 +134,33 @@ async fn open_gate_if_finished(deps: &NftRecoveryDeps) {
 	}
 }
 
+/// Starts a fresh run on every session change while a session is active,
+/// and drops the run when the session ends. A run derives keys from the
+/// seed loaded when it reads them, so a run never outlives its session.
+async fn recover_during_sessions(deps: Arc<NftRecoveryDeps>) {
+	let mut changes = deps.session_state.subscribe();
+	let mut run = None;
+	while changes.next().await.is_some() {
+		drop(run.take());
+		run = deps.session_state.current().map(|_| spawn_recovery_run(&deps));
+	}
+}
+
+/// A run that retries until it succeeds.
+fn spawn_recovery_run(deps: &Arc<NftRecoveryDeps>) -> BackgroundTask {
+	BackgroundTask::spawn(&deps.spawner, recover_until_done(deps.clone()))
+}
+
 /// Runs recovery until a run succeeds, pausing longer after each failure.
 async fn recover_until_done(deps: Arc<NftRecoveryDeps>) {
 	let mut pauses = RETRY_PAUSES;
 	retry(
 		|| {
 			let deps = deps.clone();
-			async move { recover(&deps).await.map_or_else(ControlFlow::Continue, ControlFlow::Break) }
+			async move {
+				let outcome = run_recovery_once(&deps).await;
+				outcome.map_or_else(ControlFlow::Continue, ControlFlow::Break)
+			}
 		},
 		|error| {
 			tracing::warn!(%error, "NFT backup recovery failed, retrying");
@@ -162,56 +171,64 @@ async fn recover_until_done(deps: Arc<NftRecoveryDeps>) {
 }
 
 /// One run: reads the registered installations at the finalized block,
-/// scans each one not finished yet, and opens the gate once all are.
-async fn recover(deps: &NftRecoveryDeps) -> Result<(), RecoveryError> {
-	let current =
-		deps.installation.current_installation().await.map_err(RecoveryError::Installation)?;
+/// scans every installation not finished yet, and opens the gate.
+async fn run_recovery_once(deps: &NftRecoveryDeps) -> Result<(), RecoveryError> {
+	let current = deps
+		.installation
+		.current_installation()
+		.await
+		.map_err(RecoveryError::Installation)?;
 	let at = deps.chain.finalized_block().await?;
 	let registered = deps.chain.registered_installations(at).await?;
-	record_registry_read(&deps.db, current, registered.clone()).await?;
-	for installation in unfinished_installations(&deps.db, registered).await? {
-		recover_installation(deps, installation, at).await?;
-	}
+	record_registered_installations(&deps.db, current, registered).await?;
+	let pending = deps.db.read(dao::pending_recoveries).await?;
+	recover_installations(deps, pending, at).await?;
 	deps.purse_ids.open();
 	Ok(())
 }
 
 /// Records `current` as finished, so it is never scanned, and each other
-/// installation in `registered` as to be scanned unless already recorded.
-/// After the first read on this install, recovery is finished exactly when
-/// no recorded installation is pending.
-async fn record_registry_read(
+/// installation in `registered` as pending unless already recorded. After
+/// the first read on this install, recovery is finished exactly when no
+/// recorded installation is pending.
+async fn record_registered_installations(
 	db: &Db,
 	current: InstallationId,
 	registered: Vec<InstallationId>,
 ) -> Result<(), DbError> {
 	db.write(move |tx| {
 		dao::mark_recovery_done(tx, current)?;
-		registered.iter().try_for_each(|installation| dao::start_recovery(tx, *installation))
+		registered
+			.iter()
+			.try_for_each(|installation| dao::insert_pending_recovery(tx, *installation))
 	})
 	.await
 }
 
-/// The installations of `registered` recovery has not finished.
-async fn unfinished_installations(
-	db: &Db,
-	registered: Vec<InstallationId>,
-) -> Result<Vec<InstallationId>, DbError> {
-	let finished: HashSet<InstallationId> = db.read(dao::recovered_installations).await?;
-	Ok(registered.into_iter().filter(|installation| !finished.contains(installation)).collect())
-}
-
-/// Scans every purse of `installation` at `at`, then records it as finished.
-async fn recover_installation(
+/// Walks the purse ids once across all of `installations` at `at`, then
+/// records them all as finished. Every installation shares one sequence of
+/// purse ids, so a purse counts as empty only when it is empty under each.
+async fn recover_installations(
 	deps: &NftRecoveryDeps,
-	installation: InstallationId,
+	installations: Vec<InstallationId>,
 	at: H256,
 ) -> Result<(), RecoveryError> {
-	tracing::info!(installation = %hex::encode(installation.0), "NFT backup recovery scanning an installation");
-	let scanner = NftPurseScanner::new(deps.db.clone(), deps.keys.clone(), deps.chain.holdings_at(at), installation);
+	if installations.is_empty() {
+		return Ok(());
+	}
+	tracing::info!(installations = installations.len(), "NFT backup recovery scanning");
+	let holdings = deps.chain.holdings_at(at);
+	let scanner =
+		NftPurseScanner::new(deps.db.clone(), deps.keys.clone(), holdings, installations.clone());
 	scan_purse_passes(&recovery_passes(), &scanner).await?;
-	deps.db.write(move |tx| dao::mark_recovery_done(tx, installation)).await?;
-	tracing::info!(installation = %hex::encode(installation.0), keys = scanner.keys_found(), "NFT backup recovery finished an installation");
+	deps.db
+		.write(move |tx| {
+			installations
+				.iter()
+				.try_for_each(|installation| dao::mark_recovery_done(tx, *installation))
+		})
+		.await?;
+	tracing::info!("NFT backup recovery finished");
 	Ok(())
 }
 
