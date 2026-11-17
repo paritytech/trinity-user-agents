@@ -21,7 +21,7 @@ class LightClientTest {
         override suspend fun save(genesisHash: ByteArray, blob: String) = Unit
     }
 
-    private fun provider(urls: List<String>) = RpcChainProvider(
+    private fun provider(urls: List<String>) = CoreChainConnections(
         resolver = { urls },
         lightClient = LightClient(storage, setOf(PREVIEWNET_RELAY)),
     ).apply {

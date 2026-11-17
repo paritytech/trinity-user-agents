@@ -12,7 +12,7 @@ import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LightClient
 import io.parity.truapi.LocalhostBridgeBootstrap
-import io.parity.truapi.RpcChainProvider
+import io.parity.truapi.CoreChainConnections
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
@@ -103,7 +103,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     // where a suspending registry lookup is not allowed.
     private val cachedChains = AtomicReference(EMPTY_CHAINS)
 
-    private val chainProvider = RpcChainProvider(
+    private val chainConnections = CoreChainConnections(
         // Pure lookup against the snapshot resolved on attach(). The core calls
         // this inline on its dispatcher thread, where blocking on the registry
         // would stall unrelated TrUAPI traffic.
@@ -241,12 +241,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
+        override fun chainConnect(genesisHash: ByteArray): UInt? = chainConnections.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
-            chainProvider.send(connectionId, request)
+            chainConnections.send(connectionId, request)
 
-        override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+        override fun chainClose(connectionId: UInt) = chainConnections.close(connectionId)
 
         override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
             card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
@@ -296,14 +296,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             execution = opened
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            chainProvider.attach(
+            chainConnections.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
             )
             val endpoint = opened.startWsBridge()
             observeAppTheme()
             observeAppLifecycle()
-            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainConnections)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -317,7 +317,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 // not idle in background and recover on foreground. Teardown
                 // takes the other path: stop() detaches first, so the core is
                 // not notified about an execution that is going away anyway.
-                if (state == AppLifecycleState.BACKGROUND) chainProvider.closeAll()
+                if (state == AppLifecycleState.BACKGROUND) chainConnections.closeAll()
             }
         }
     }
@@ -342,8 +342,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     fun stop() {
         val opened = execution ?: return
         execution = null
-        chainProvider.detach()
-        chainProvider.closeAll()
+        chainConnections.detach()
+        chainConnections.closeAll()
         opened.stopWsBridge()
         // Shuts the connection down and releases the native handle. Without it
         // the execution outlives the product tab even though its bridge and

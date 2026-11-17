@@ -13,7 +13,7 @@ import org.junit.Test
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
-class RpcChainProviderTest {
+class CoreChainConnectionsTest {
     private val server = MockWebServer()
     private val lines = LinkedBlockingQueue<String>()
     private val responses = LinkedBlockingQueue<Pair<UInt, String>>()
@@ -27,7 +27,7 @@ class RpcChainProviderTest {
     private fun provider(
         urls: List<String>,
         cleartextPermitted: (host: String) -> Boolean = { true },
-    ) = RpcChainProvider(
+    ) = CoreChainConnections(
         resolver = { urls },
         cleartextPermitted = cleartextPermitted,
         onLog = { lines.add(it) },

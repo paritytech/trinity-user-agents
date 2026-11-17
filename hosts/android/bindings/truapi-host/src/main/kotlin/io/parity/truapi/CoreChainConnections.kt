@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import uniffi.truapi_provider.ChainConnection as RpcConnection
+import uniffi.truapi_provider.ChainConnection
 
 /**
  * Resolves a 32-byte chain genesis hash to its JSON-RPC WebSocket endpoints, in
@@ -37,7 +37,7 @@ fun interface ChainEndpointResolver {
  * The provider's sockets bypass the app's network security config, so a `ws://`
  * endpoint is dialled only when [cleartextPermitted] allows its host.
  */
-class RpcChainProvider(
+class CoreChainConnections(
     private val resolver: ChainEndpointResolver,
     private val lightClient: LightClient? = null,
     private val cleartextPermitted: (host: String) -> Boolean = ::systemPermitsCleartext,
@@ -149,7 +149,7 @@ class RpcChainProvider(
     ) : ChainMessageListener {
         private val lock = Any()
         private var state = State.CONNECTING
-        private var socket: RpcConnection? = null
+        private var socket: ChainConnection? = null
         private val pending = ArrayList<String>()
 
         @Volatile
@@ -167,7 +167,7 @@ class RpcChainProvider(
             }
         }
 
-        private fun openOnLightClient(light: LightClient): RpcConnection? {
+        private fun openOnLightClient(light: LightClient): ChainConnection? {
             dialledUrl = LIGHT_CLIENT
             onLog("chain connection $id dialling $LIGHT_CLIENT")
             return try {
@@ -178,7 +178,7 @@ class RpcChainProvider(
             }
         }
 
-        private fun openOnFirstNode(): RpcConnection? {
+        private fun openOnFirstNode(): ChainConnection? {
             for (url in urls) {
                 if (synchronized(lock) { state == State.FINISHED }) return null
                 dialledUrl = url
@@ -198,7 +198,7 @@ class RpcChainProvider(
             return null
         }
 
-        private fun adopt(opened: RpcConnection): Boolean = synchronized(lock) {
+        private fun adopt(opened: ChainConnection): Boolean = synchronized(lock) {
             if (state == State.FINISHED) return false
             state = State.OPEN
             socket = opened
@@ -254,7 +254,7 @@ class RpcChainProvider(
         }
     }
 
-    private class Finished(val socket: RpcConnection?)
+    private class Finished(val socket: ChainConnection?)
 
     private enum class State { CONNECTING, OPEN, FINISHED }
 
