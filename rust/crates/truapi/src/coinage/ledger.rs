@@ -13,6 +13,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, named_params, types::
 
 use super::{
 	Exponent, HeldBackSpend, MemberThreshold, PrivacyPolicy, PurseId, ReadyRule, RecycleAge,
+	handover::{HandOverProgress, Handover},
 	operation::{self, OpKey, OperationRecord},
 	registration::{self, Registrations},
 };
@@ -21,6 +22,7 @@ use crate::{installation::InstallationId, store::DbError};
 /// One holding the layer tracks, named by its derivation indices, never by
 /// its account or member key (C1 invariant 6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
+#[derive(uniffi::Enum)]
 pub enum Asset {
 	/// A coin this layer derived.
 	Coin {
@@ -116,6 +118,7 @@ pub struct PurseRecord {
 
 /// A finalized block: its number and hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(uniffi::Record)]
 pub struct BlockRef {
 	/// The block's number.
 	pub number: u32,
@@ -287,6 +290,7 @@ pub enum LedgerError {
 const POLICY: &str = "policy";
 const OWN_OPERATIONS: &str = "own_operations";
 const MINTED_AT: &str = "minted_at";
+const HAND_OVER: &str = "hand_over";
 
 /// One committed state of the ledger, read in one read transaction. Every
 /// read here comes from that state, so no two reads fall on both sides of a
@@ -301,6 +305,7 @@ pub struct Snapshot {
 	installations: Vec<(InstallationId, ScanProgress)>,
 	current_installation: Option<InstallationId>,
 	minted_at: Option<u64>,
+	handed_over: Option<Vec<InstallationId>>,
 	operations: BTreeMap<OpKey, OperationRecord>,
 	registrations: Registrations,
 }
@@ -376,6 +381,30 @@ impl Snapshot {
 		self.minted_at
 	}
 
+	/// Whether the current installation's registration has finally
+	/// succeeded: an operation registering it whose records all reached a
+	/// final success (G3 invariant 4).
+	pub fn installation_registered(&self) -> bool {
+		let Some(installation) = self.current_installation else { return false };
+		let arguments = installation.encode();
+		let registering = |operation: &&OperationRecord| {
+			operation.kind == operation::OpKind::RegisterInstallation && operation.arguments == arguments
+		};
+		self.operations.values().filter(registering).any(|operation| {
+			let mut records = self.registrations.of_operation(&operation.key).peekable();
+			records.peek().is_some() &&
+				records.all(|facts| matches!(facts.state.status, crate::durable::DurableTxStatus::FinalizedSuccess { .. }))
+		})
+	}
+
+	/// How far the scan of a wallet a shipped app handed over has come.
+	pub fn hand_over_progress(&self) -> HandOverProgress {
+		let Some(handed_over) = &self.handed_over else { return HandOverProgress::None };
+		let scanned =
+			|id: &InstallationId| self.installations.iter().any(|(known, progress)| known == id && progress.first_scan_done);
+		if handed_over.iter().all(scanned) { HandOverProgress::Done } else { HandOverProgress::Scanning }
+	}
+
 	/// Every installation known, in the order learned, with its scan
 	/// progress.
 	pub fn installations(&self) -> &[(InstallationId, ScanProgress)] {
@@ -446,6 +475,8 @@ fn load(read: &Connection) -> Result<Snapshot, DbError> {
 		)
 		.optional()?;
 	let minted_at = minted_at.map(|bytes| decode_bytes::<u64>(&bytes, 0)).transpose()?;
+	let handed_over = hand_over::<Handover>(read)?
+		.map(|handed| handed.installations.iter().map(|installation| installation.id).collect());
 	let operations = operation::all(read)?.into_iter().map(|record| (record.key.clone(), record)).collect();
 	let registrations = registration::load(read)?;
 	Ok(Snapshot {
@@ -457,6 +488,7 @@ fn load(read: &Connection) -> Result<Snapshot, DbError> {
 		installations: installations.into_iter().map(|(id, progress, _)| (id, progress)).collect(),
 		current_installation,
 		minted_at,
+		handed_over,
 		operations,
 		registrations,
 	})
@@ -742,6 +774,23 @@ pub fn mint_installation(
 		}
 	}
 	Ok(Ok(()))
+}
+
+/// Stores the record of a wallet handed over from a shipped app, encoded by
+/// its owner (native interface, section 5).
+pub fn write_hand_over(tx: &Transaction<'_>, record: &[u8]) -> Result<(), DbError> {
+	write_setting(tx, HAND_OVER, record)
+}
+
+/// The stored hand-over record, decoded; none when no hand-over was
+/// recorded.
+pub fn hand_over<T: Decode>(conn: &Connection) -> Result<Option<T>, DbError> {
+	let stored: Option<Vec<u8>> = conn
+		.query_row("SELECT value FROM coinage_setting WHERE name = :name", named_params! { ":name": HAND_OVER }, |row| {
+			row.get(0)
+		})
+		.optional()?;
+	Ok(stored.map(|bytes| decode_bytes(&bytes, 0)).transpose()?)
 }
 
 /// Records earlier installations a reconstruction learned. A known
