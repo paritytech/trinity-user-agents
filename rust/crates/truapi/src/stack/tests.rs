@@ -21,6 +21,11 @@ fn bundled(
 	Stack::bundled(&pointer, &bytes, allows_reserved_values)
 }
 
+/// A stack on `tld`, allowed reserved values so that it may be on `dot`.
+fn on(tld: &str) -> Stack {
+	crate::test_support::test_stack(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32])
+}
+
 fn info(
 	stack: &Stack,
 	chain: ChainIdentifier,
@@ -156,7 +161,7 @@ fn a_stack_serves_its_own_tld_and_the_reserved_one() {
 /// stack serves: `peopl.com` parses, and must still prompt.
 #[test]
 fn a_trusted_label_is_trusted_only_under_a_served_tld() {
-	let trusted = |stack_tld, product_id| trusts(stack_tld, &ProductId::for_test(product_id));
+	let trusted = |stack_tld, product_id| on(stack_tld).trusts(&ProductId::for_test(product_id));
 
 	assert_eq!(
 		[
@@ -173,18 +178,8 @@ fn a_trusted_label_is_trusted_only_under_a_served_tld() {
 
 #[test]
 fn the_reserved_tld_is_served_once() {
-	assert_eq!(served_tlds("dot").collect::<Vec<_>>(), ["dot"]);
-	assert_eq!(served_tlds("paseo").collect::<Vec<_>>(), ["dot", "paseo"]);
-}
-
-/// A host can pass any string as the TLD over FFI. One that is not a label
-/// adds no TLD, so an empty string does not produce a bare `.li` share
-/// host.
-#[test]
-fn a_malformed_stack_tld_serves_only_the_reserved_one() {
-	for malformed in ["", "PASEO", "pa.seo", ".paseo"] {
-		assert_eq!(served_tlds(malformed).collect::<Vec<_>>(), ["dot"], "{malformed:?}");
-	}
+	assert_eq!(on("dot").served_tlds().collect::<Vec<_>>(), ["dot"]);
+	assert_eq!(on("paseo").served_tlds().collect::<Vec<_>>(), ["dot", "paseo"]);
 }
 
 /// Polkadot's values, the `dot` TLD or a Polkadot genesis hash under any role,

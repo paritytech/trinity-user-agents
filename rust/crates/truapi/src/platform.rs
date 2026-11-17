@@ -26,15 +26,18 @@ use truapi::Bytes32;
 #[cfg(feature = "mock")]
 pub mod mock;
 
+use crate::runtime::NamesProducts;
 pub use crate::{
 	dotns_name::{MAX_DNS_LABEL_LEN, is_dns_label},
 	product_id::{
 		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
-	stack::{Stack, StackChains, StackError, UnservedProduct},
+	stack::{
+		ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus, UnservedProduct,
+	},
 };
-use crate::runtime::NamesProducts;
 
 use truapi::{
 	latest::{

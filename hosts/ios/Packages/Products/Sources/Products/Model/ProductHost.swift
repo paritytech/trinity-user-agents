@@ -2,11 +2,6 @@ import Foundation
 import TrUAPIHost
 
 public struct ProductHost: Sendable {
-    /// Share domains for `dot` and for the network's TLD, `tld`.
-    public static func shareHosts(tld: String) -> Set<String> {
-        Set(productShareHosts(networkSuffix: tld))
-    }
-
     private let identifier: ProductId
 
     public var name: String {

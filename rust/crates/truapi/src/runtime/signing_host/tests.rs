@@ -1567,12 +1567,13 @@ enum Door {
 
 const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 
-/// Wraps `value` as a `paseo` stack would; that stack serves both `.dot` and
+/// Wraps `value` as a `paseo` stack would; that stack runs both `.dot` and
 /// `.paseo`. The fixtures run on `dot`, which refuses a `.paseo` context before
 /// the context check. On a stack with two TLDs such a request reaches that
 /// check, which must keep the context on its owner's network.
 fn served_on_paseo<T: NamesProducts>(value: T) -> Served<T> {
-	serve("paseo", value).expect("a paseo stack serves .dot and .paseo products")
+	serve(&crate::test_support::paseo_test_stack(), value)
+		.expect("a paseo stack runs .dot and .paseo products")
 }
 
 /// The account holder's answer to `payload` from a paired peer naming itself `caller`.
@@ -1917,9 +1918,12 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 		served(request.clone()),
 	))
 	.expect("first alias succeeds");
-	futures::executor::block_on(
-		authority.accounts().account_alias(&session, &cx, &product, served(request)),
-	)
+	futures::executor::block_on(authority.accounts().account_alias(
+		&session,
+		&cx,
+		&product,
+		served(request),
+	))
 	.expect("second alias succeeds from cached grant");
 
 	assert_eq!(

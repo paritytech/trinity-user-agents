@@ -3,8 +3,13 @@ use super::*;
 /// The stack TLD the cases run on unless they name another.
 const STACK_TLD: &str = "paseo";
 
+/// A stack on `tld`.
+fn stack(tld: &str) -> crate::stack::Stack {
+	crate::test_support::test_stack(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32])
+}
+
 fn navigate(input: &str) -> NavigateDecision {
-	parse_navigate(input, STACK_TLD)
+	parse_navigate(input, &stack(STACK_TLD))
 }
 
 #[test]
@@ -77,9 +82,9 @@ fn product_links_reject_non_product_authorities() {
 
 #[test]
 fn share_hosts_are_the_reserved_tld_and_the_stacks_own() {
-	assert_eq!(product_share_hosts("paseo"), ["dot.li", "paseo.li"]);
-	assert_eq!(product_share_hosts("fork"), ["dot.li", "fork.li"]);
-	assert_eq!(product_share_hosts("dot"), ["dot.li"]);
+	assert_eq!(product_share_hosts(&stack("paseo")), ["dot.li", "paseo.li"]);
+	assert_eq!(product_share_hosts(&stack("fork")), ["dot.li", "fork.li"]);
+	assert_eq!(product_share_hosts(&stack("dot")), ["dot.li"]);
 }
 
 /// A name on a network whose TLD is the share suffix is that network's
@@ -113,7 +118,11 @@ fn a_host_reads_only_its_own_and_the_reserved_tld_as_dotns() {
 		} else {
 			NavigateDecision::External { url: format!("https://{input}/") }
 		};
-		assert_eq!(parse_navigate(input, stack_tld), expected, "{input} on a {stack_tld} stack");
+		assert_eq!(
+			parse_navigate(input, &stack(stack_tld)),
+			expected,
+			"{input} on a {stack_tld} stack"
+		);
 	}
 }
 
@@ -128,7 +137,7 @@ fn a_pocket_deeplink_names_a_product_the_stack_serves() {
 		("game.paseo", "fork", false),
 		("game.testnet", "paseo", false),
 	] {
-		let decision = parse_navigate(&link(product), stack_tld);
+		let decision = parse_navigate(&link(product), &stack(stack_tld));
 		assert_eq!(
 			matches!(decision, NavigateDecision::Pocket { .. }),
 			served,

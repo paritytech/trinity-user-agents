@@ -441,7 +441,7 @@ fn resolve_targets(
 		.iter()
 		.filter(|target| match target {
 			StatementRenewalTarget::ProductStatementAllowance { product_id } => {
-				crate::stack::serves(&keys.network_suffix, product_id)
+				keys.stack.serves(product_id)
 			},
 			StatementRenewalTarget::WalletSso | StatementRenewalTarget::Account { .. } => true,
 		})

@@ -47,7 +47,7 @@ use crate::{
 		},
 		vrf::{self, Vrf},
 	},
-	stack,
+	stack::Stack,
 };
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
@@ -194,7 +194,7 @@ impl WalletAccountHolder {
 	/// For a paired host's request, which does not pass through a product
 	/// connection.
 	pub fn serve<T: NamesProducts>(&self, value: T) -> Result<Served<T>, AuthorityError> {
-		Ok(serve(self.services.stack().tld(), value)?)
+		Ok(serve(self.services.stack(), value)?)
 	}
 
 	fn with_keys<T, E: From<AuthorityError>>(
@@ -235,7 +235,7 @@ impl WalletAccountHolder {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<PreparedWalletActivation, AuthorityError> {
-		let keys = WalletKeys::new(secret, self.services.stack().tld().to_string());
+		let keys = WalletKeys::new(secret, self.services.stack().clone());
 		let public_key = keys.root_public_key()?;
 		let identity_account_id = keys.identity_keypair()?.public.to_bytes();
 		let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);
@@ -335,12 +335,12 @@ impl WalletAccountHolder {
 
 struct WalletKeys {
 	entropy: Zeroizing<Vec<u8>>,
-	network_suffix: String,
+	stack: Stack,
 }
 
 impl WalletKeys {
-	fn new(entropy: Vec<u8>, network_suffix: String) -> Self {
-		Self { entropy: Zeroizing::new(entropy), network_suffix }
+	fn new(entropy: Vec<u8>, stack: Stack) -> Self {
+		Self { entropy: Zeroizing::new(entropy), stack }
 	}
 
 	fn root_public_key(&self) -> Result<[u8; 32], ProductAccountError> {
@@ -348,9 +348,10 @@ impl WalletKeys {
 	}
 
 	/// Refuses a product the stack does not serve. Every derivation keyed by a
-	/// product id calls it first, so a paired host's request is checked as well.
+	/// product id calls it first, so a paired host's request and a stored renewal
+	/// target, which reaches the wallet without a request, are checked as well.
 	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
-		Ok(stack::require_served(&self.network_suffix, product_id)?)
+		Ok(self.stack.require_served(product_id)?)
 	}
 
 	fn product_subtree_keypair(
@@ -379,7 +380,7 @@ impl WalletKeys {
 	}
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
-		Ok(derive_identity_keypair(&self.entropy, &self.network_suffix)?)
+		Ok(derive_identity_keypair(&self.entropy, self.stack.tld())?)
 	}
 
 	fn identity_keypair_for(
@@ -415,10 +416,10 @@ impl WalletKeys {
 	fn personhood_entropy(&self, collection: PersonhoodCollection) -> Zeroizing<[u8; 32]> {
 		Zeroizing::new(match collection {
 			PersonhoodCollection::People => {
-				derive_full_person_ring_vrf_entropy(&self.entropy, &self.network_suffix)
+				derive_full_person_ring_vrf_entropy(&self.entropy, self.stack.tld())
 			},
 			PersonhoodCollection::LitePeople => {
-				derive_lite_person_ring_vrf_entropy(&self.entropy, &self.network_suffix)
+				derive_lite_person_ring_vrf_entropy(&self.entropy, self.stack.tld())
 			},
 		})
 	}
@@ -470,7 +471,7 @@ impl WalletKeys {
 	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO
 	/// encryption key, and the identity chat key.
 	fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
-		let statement = derive_identity_keypair(&self.entropy, &self.network_suffix)?;
+		let statement = derive_identity_keypair(&self.entropy, self.stack.tld())?;
 		let (encryption_secret_key, encryption_public_key) =
 			derive_x25519_keypair_from_entropy(&self.entropy, SSO_ENCRYPTION_DOMAIN);
 		let identity_chat_private_key = derive_identity_chat_private_key(&self.entropy);

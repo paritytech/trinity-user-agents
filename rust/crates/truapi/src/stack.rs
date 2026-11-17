@@ -1,17 +1,26 @@
-//! The Trinity stack a host runs, read from the signed descriptor its build
-//! bundles.
+//! The Trinity stack a host runs, read from a signed descriptor.
 //!
 //! The core takes all of its chain configuration from the stack.
-//! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
-//! chain's genesis hash, and answers `get_chain_info`.
+//! [`StackRefresh::load`] checks the descriptor a host build bundles against
+//! the key in the stack's link, starts from it or from a newer copy the core
+//! stored, and fetches newer copies while the core runs. The [`Stack`] it
+//! resolves holds the network, the dotNS TLD and each chain's genesis hash,
+//! and answers `get_chain_info`.
 
-use trinity_stack::{Chain, Pointer, open};
+mod records;
+mod refresh;
+mod source;
+
+use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
 use crate::{CallError, ProductId, dotns_name::is_dns_label};
+
+pub use records::{ReplaceCheck, StackRecords};
+pub use refresh::{StackHost, StackRefresh};
+pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -47,36 +56,6 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// The dotNS TLDs a stack on `stack_tld` serves: `dot`, then
-/// `stack_tld` if it differs.
-///
-/// This is the core's only list of TLDs. Product ids, dotNS links and
-/// share hosts are all checked against it. A `stack_tld` that is not a
-/// DNS label is left out, because a host can pass any string over FFI.
-pub fn served_tlds(stack_tld: &str) -> impl Iterator<Item = &str> {
-	let own = stack_tld != RESERVED_TLD && is_dns_label(stack_tld);
-	[RESERVED_TLD].into_iter().chain(own.then_some(stack_tld))
-}
-
-/// Whether `tld` is one of the [`served_tlds`] of a stack on `stack_tld`.
-pub fn serves_tld(stack_tld: &str, tld: &str) -> bool {
-	served_tlds(stack_tld).any(|served| served == tld)
-}
-
-/// Whether a stack on `stack_tld` runs `product_id`: a localhost development
-/// id, or a name under one of its [`served_tlds`].
-pub fn serves(stack_tld: &str, product_id: &ProductId) -> bool {
-	product_id.network_suffix().is_none_or(|tld| serves_tld(stack_tld, tld))
-}
-
-/// [`serves`] as a check: fails with the product and the stack's TLD.
-pub fn require_served(stack_tld: &str, product_id: &ProductId) -> Result<(), UnservedProduct> {
-	if serves(stack_tld, product_id) {
-		return Ok(());
-	}
-	Err(UnservedProduct { product_id: product_id.clone(), stack_tld: stack_tld.to_owned() })
-}
-
 /// A product under a TLD the stack does not serve.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 #[display("product {product_id} is not under a TLD the {stack_tld} stack serves")]
@@ -95,15 +74,10 @@ impl<D> From<UnservedProduct> for CallError<D> {
 	}
 }
 
-/// Whether a stack on `stack_tld` gives `product_id` every `RemotePermission`
-/// without a prompt: a trusted label under a TLD the stack serves.
-pub fn trusts(stack_tld: &str, product_id: &ProductId) -> bool {
-	serves(stack_tld, product_id) && product_id.has_trusted_remote_permissions()
-}
-
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// and the genesis hash of each chain role the core uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Object))]
 pub struct Stack {
 	network: String,
 	tld: String,
@@ -137,9 +111,9 @@ pub enum StackError {
 	/// copy it fetches later verifies against the same key as the bundled one.
 	#[display("stack pointer has no key; a host's stack must be signed")]
 	Unsigned,
-	/// The bundled descriptor breaks a rule or does not verify under the
-	/// pointer's key.
-	#[display("bundled stack descriptor refused ({}): {_0}", _0.code())]
+	/// The descriptor breaks a rule or does not verify under the pointer's
+	/// key.
+	#[display("stack descriptor refused ({}): {_0}", _0.code())]
 	Descriptor(#[error(not(source))] trinity_stack::Error),
 	/// The descriptor has no chain with this role.
 	#[display("stack has no {} chain", <&str>::from(*chain))]
@@ -176,24 +150,34 @@ pub enum StackError {
 }
 
 impl Stack {
-	/// The stack a host build bundles: `pointer` is the stack's link
-	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
-	/// build ships, and `allows_reserved_values` whether it may use Polkadot's
-	/// genesis hashes and the `dot` TLD.
+	/// The stack a host build bundles, read from the bundled copy alone:
+	/// `pointer` is the stack's link (`polkadotapp://stack?key=0x…&url=…`) and
+	/// `descriptor` the signed copy the build ships. A host starts through
+	/// [`StackRefresh::load`] instead, which also reads the copy the core
+	/// stored.
 	///
-	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
-	/// and `expiresAt` are not checked, because the bundled copy is the only one
-	/// the host has.
+	/// Fails like [`Self::from_descriptor`], and when the copy does not verify
+	/// under the pointer's key.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
-		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
-		if pointer.key().is_none() {
-			return Err(StackError::Unsigned);
-		}
-		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
+		let pointer = signed_pointer(pointer)?;
+		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
+		Self::from_descriptor(&verified.descriptor, allows_reserved_values)
+	}
+
+	/// The stack a verified descriptor names, when the core can run it.
+	/// `allows_reserved_values` is whether the build lets it use Polkadot's
+	/// genesis hashes and the `dot` TLD.
+	///
+	/// Fails with a [`StackError`] naming the rule the descriptor breaks.
+	/// `validUntil` and `expiresAt` are not checked.
+	pub fn from_descriptor(
+		descriptor: &Descriptor,
+		allows_reserved_values: bool,
+	) -> Result<Self, StackError> {
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		}
@@ -206,14 +190,20 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		Self::new(
+			descriptor.network.clone(),
+			descriptor.tld.clone(),
+			chains,
+			allows_reserved_values,
+		)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's.
 	///
-	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
-	/// refuses an all-zero Relay or Asset Hub genesis hash.
+	/// Applies the same TLD and reserved-value rules as
+	/// [`Self::from_descriptor`], and refuses an all-zero Relay or Asset Hub
+	/// genesis hash.
 	pub fn new(
 		network: String,
 		tld: String,
@@ -251,10 +241,39 @@ impl Stack {
 		&self.tld
 	}
 
-	/// `serves` as a check against this stack's TLD: fails with the product and
-	/// the TLD.
+	/// The dotNS TLDs this stack serves names under: Polkadot's reserved TLD,
+	/// then its own when it is another one.
+	///
+	/// The core has no other list of TLDs. Product ids, dotNS links and share
+	/// hosts are all judged against this one.
+	pub fn served_tlds(&self) -> impl Iterator<Item = &str> {
+		let own = (self.tld != RESERVED_TLD).then_some(self.tld.as_str());
+		[RESERVED_TLD].into_iter().chain(own)
+	}
+
+	/// Whether `tld` is one of [`Self::served_tlds`].
+	pub fn serves_tld(&self, tld: &str) -> bool {
+		self.served_tlds().any(|served| served == tld)
+	}
+
+	/// Whether this stack runs `product_id`: a localhost development id, or a
+	/// name under one of [`Self::served_tlds`].
+	pub fn serves(&self, product_id: &ProductId) -> bool {
+		product_id.network_suffix().is_none_or(|tld| self.serves_tld(tld))
+	}
+
+	/// [`Self::serves`] as a check: fails with the product and the stack's TLD.
 	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
-		require_served(&self.tld, product_id)
+		if self.serves(product_id) {
+			return Ok(());
+		}
+		Err(UnservedProduct { product_id: product_id.clone(), stack_tld: self.tld.clone() })
+	}
+
+	/// Whether this stack gives `product_id` every `RemotePermission` without a
+	/// prompt: a trusted label under a TLD it serves.
+	pub fn trusts(&self, product_id: &ProductId) -> bool {
+		self.serves(product_id) && product_id.has_trusted_remote_permissions()
 	}
 
 	/// The stack's chains.
@@ -288,6 +307,16 @@ impl Stack {
 				genesis_hash,
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
+	}
+}
+
+/// The pointer a stack link carries. A host runs only a signed stack, so a
+/// link without a key is refused.
+fn signed_pointer(link: &str) -> Result<Pointer, StackError> {
+	let pointer = Pointer::from_link(link).map_err(StackError::Pointer)?;
+	match pointer.key() {
+		Some(_) => Ok(pointer),
+		None => Err(StackError::Unsigned),
 	}
 }
 

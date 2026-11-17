@@ -61,6 +61,15 @@ pub struct BundledStack {
 	pub allows_reserved_values: bool,
 }
 
+impl BundledStack {
+	/// The stack this build runs, checked as [`Stack::bundled`] checks it.
+	pub fn open(self) -> Result<Stack, NativeRuntimeConfigError> {
+		let Self { pointer, descriptor, allows_reserved_values } = self;
+		Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })
+	}
+}
+
 /// Trusted identity attached by a native host to one executable connection.
 #[derive(Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
@@ -136,9 +145,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let BundledStack { pointer, descriptor, allows_reserved_values } = config.stack;
-		let stack = Stack::bundled(&pointer, &descriptor, allows_reserved_values)
-			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
+		let stack = config.stack.open()?;
 		let signing = SigningHostConfig::new(
 			HostInfo {
 				name: config.host_name,

@@ -104,3 +104,13 @@ dependencies {
 }
 
 apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))
+
+// The stack assets the app ships, which :bindings:truapi-host syncs from the core checkout.
+val stackAssetsDir = project(":bindings:truapi-host").layout.buildDirectory.dir("truapi-stacks")
+
+tasks.withType<Test>().configureEach {
+    // The deeplink tests read those stacks' share hosts, so a refreshed stack reruns them.
+    dependsOn(":bindings:truapi-host:syncStacks")
+    inputs.dir(stackAssetsDir).withPropertyName("stackAssets").withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("truapi.stackAssets", stackAssetsDir.get().asFile.relativeTo(projectDir).path)
+}

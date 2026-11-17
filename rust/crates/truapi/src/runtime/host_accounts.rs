@@ -693,7 +693,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let grant = self.grants.auto_signing_key(&current, &product.product_id).await?;
 		self.holder.require_current_session(session)?;
 		let product_id = &product.product_id;
-		Ok(grant.map(|grant| KeptSigningKey { accounts: self, session, product_id, grant, account }))
+		Ok(grant.map(|grant| KeptSigningKey {
+			accounts: self,
+			session,
+			product_id,
+			grant,
+			account,
+		}))
 	}
 
 	/// Sign with a kept product key, or confirm with the user and ask the holder.
@@ -754,7 +760,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let product = &connection.product;
 		let account = match &request {
 			SignRawAuthorityRequest::Product(payload) => Some(&payload.account),
-			SignRawAuthorityRequest::LegacyAccount { product_account, .. } => Some(&**product_account),
+			SignRawAuthorityRequest::LegacyAccount { product_account, .. } => {
+				Some(&**product_account)
+			},
 			SignRawAuthorityRequest::IdentityAccount { .. } => None,
 		};
 		// The unwatermarked API is never grant-covered, so a local signature
@@ -911,7 +919,8 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let cx = super::remote_authority_context(cx);
 		super::remote_authority_call(
 			&cx,
-			self.holder.sign_vrf(local_invocation(&cx, session, product), request.into_inner()),
+			self.holder
+				.sign_vrf(local_invocation(&cx, session, product), request.into_inner()),
 		)
 		.await
 	}

@@ -127,8 +127,7 @@ impl<H: AccountHolder> System for ProductRuntimeHost<H> {
 	) -> Result<HostNavigateToResponse, CallError<HostNavigateToError>> {
 		version(request)
 			.exec(|latest::HostNavigateToRequest { url }| async move {
-				let network_suffix = self.connection.services.stack().tld();
-				let resolved = match parse_navigate(&url, network_suffix) {
+				let resolved = match parse_navigate(&url, self.connection.services.stack()) {
 					NavigateDecision::Reject { reason } => {
 						return Err(CallError::Domain(latest::HostNavigateToError::Unknown {
 							reason,

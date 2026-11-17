@@ -1,7 +1,9 @@
-//! Proof that the stack serves every product a value names.
+//! Proof that the stack runs every product a value names.
 //!
-//! [`serve`] checks a value against the stack's TLD and wraps it in [`Served`].
-//! `RUNTIME.md` lists where the core takes a product as `Served`.
+//! [`serve`] checks a value against the stack and wraps it in [`Served`]. A
+//! handler serves a request that names another product before it acts, and
+//! `HostAccounts` and the signing requests the core builds take their products
+//! as `Served`, so no key is resolved for a product the stack does not run.
 
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
@@ -12,10 +14,10 @@ use truapi::latest::{
 
 use crate::{
 	ProductId,
-	stack::{UnservedProduct, require_served},
+	stack::{Stack, UnservedProduct},
 };
 
-/// A value that names only products the stack serves.
+/// A value that names only products the stack runs.
 ///
 /// Only [`serve`] creates one, so a function that takes `Served` cannot be
 /// called without the check. It derefs to the value. It does not record
@@ -47,19 +49,18 @@ impl Served<ProductAccountTxPayload> {
 	}
 }
 
-/// A value that names products. The core acts on it only if the stack serves
+/// A value that names products. The core acts on it only if the stack runs
 /// all of them.
 pub trait NamesProducts {
 	/// Every product the value names.
 	fn products(&self) -> Vec<&ProductId>;
 }
 
-/// Wraps `value` in [`Served`] if a stack on `stack_tld` serves every
-/// product it names. Otherwise fails with the first product it does not
-/// serve.
-pub fn serve<T: NamesProducts>(stack_tld: &str, value: T) -> Result<Served<T>, UnservedProduct> {
+/// `value` as [`Served`] once `stack` runs every product it names. Fails with
+/// the first one it does not.
+pub fn serve<T: NamesProducts>(stack: &Stack, value: T) -> Result<Served<T>, UnservedProduct> {
 	for product_id in value.products() {
-		require_served(stack_tld, product_id)?;
+		stack.require_served(product_id)?;
 	}
 	Ok(Served(value))
 }
