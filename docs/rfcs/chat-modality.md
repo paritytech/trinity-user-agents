@@ -173,6 +173,10 @@ enum RoomKind {
     Voice,
     // The replies to one message of the parent room.
     Thread { root: MessageId },
+    // The stories of one user: posts that expire. Its members are the
+    // audience, and only the author lists who read a post. A reply goes to
+    // the direct room with the author, with a `forward` that names the post.
+    Stories,
 }
 
 // Settings that every member sees. A change shows as `SettingsChanged`.
@@ -973,6 +977,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
 24. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+25. **Stories**: Posts that expire, for an audience, with views and replies.
 
 #### Non-Functional Requirements
 
@@ -1000,6 +1005,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 | Distinct reactions on one message | 64 |
 | The text of a message | 16 KiB |
 | The text of an `Article` | 64 KiB |
+| A post of a `Stories` room, from the send to `expires_at` | 24 hours |
 
 ## Drawbacks
 
