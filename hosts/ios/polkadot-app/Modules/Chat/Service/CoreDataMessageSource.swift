@@ -120,7 +120,8 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
             try await save(content: content)
         case let .markSeen(messageIds):
             try await markAsSeen(messageIds: messageIds)
-        case .toggleReaction:
+        case .toggleReaction,
+             .delete:
             throw ChatMessageSourceError.unsupported
         }
 

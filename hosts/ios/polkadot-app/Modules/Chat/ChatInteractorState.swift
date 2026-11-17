@@ -12,11 +12,22 @@ actor ChatInteractorState {
     private var reactionEventsByMessageId: [Chat.MessageId: Set<Chat.MessageId>] = [:]
     private var editsEventsByMessageId: [Chat.MessageId: Set<Chat.MessageId>] = [:]
     private var pendingReactionTargetMessageId: Chat.MessageId?
+    /// The messages of a product-source room whose new reaction the user saw while the product has not marked
+    /// it seen yet.
+    private var seenReactionTargetMessageIds: Set<Chat.MessageId> = []
     var model: MessageListModel?
 
     /// The model of a window. The paging state, the readiness and the edits of a product-source room come
     /// from the snapshot.
     func onSnapshot(_ snapshot: MessageListSnapshot) -> MessageListModel {
+        // A reaction of the contact that the user has not seen shows the scroll-to-reaction button until the
+        // user sees its message.
+        seenReactionTargetMessageIds.formIntersection(snapshot.unseenReactionTargets)
+        if pendingReactionTargetMessageId == nil,
+           let target = snapshot.unseenReactionTargets.first(where: { !seenReactionTargetMessageIds.contains($0) }) {
+            pendingReactionTargetMessageId = target
+        }
+
         // The "New messages" marker waits for the first page of a room that pages.
         var model = onMessagesUpdate(snapshot.messages, fixesInitialUnread: snapshot.readiness != .loading)
         model.paging = snapshot.paging
@@ -82,6 +93,17 @@ actor ChatInteractorState {
         editsEventsByMessageId = buildEditEventsByMessageId(from: messages)
 
         return model
+    }
+
+    /// The user saw these messages of a product-source room. Seeing the message of a new reaction ends the
+    /// scroll-to-reaction button. True when the user saw a new message.
+    func noteSeen(messageIds: [Chat.MessageId]) -> Bool {
+        if let target = pendingReactionTargetMessageId, messageIds.contains(target) {
+            pendingReactionTargetMessageId = nil
+            seenReactionTargetMessageIds.insert(target)
+        }
+
+        return messageIds.contains { newIncomingMessageIds.contains($0) }
     }
 
     /// Finds all edits and reactions for the provided messages and returns Set of **Chat.MessageId**

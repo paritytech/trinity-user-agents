@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
@@ -58,6 +60,12 @@ class DeferredProductWorker : ProductWorker {
         onSuccess = { it.messagesPage(roomId, anchor, pageSize) },
         onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
     )
+
+    override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> =
+        awaitWorker().fold(
+            onSuccess = { it.userAction(roomId, action) },
+            onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
+        )
 
     override fun renderMessage(
         roomId: ProductChatIdParameter?,

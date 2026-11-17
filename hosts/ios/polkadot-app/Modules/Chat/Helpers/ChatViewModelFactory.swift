@@ -313,7 +313,8 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited
+                        isEdited: isEdited,
+                        isProductSource: metadata.isProductSource
                     ),
                     status: status,
                     isSeenByPeer: isSeenByPeer,
@@ -333,7 +334,8 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited
+                        isEdited: isEdited,
+                        isProductSource: metadata.isProductSource
                     ),
                     status: status,
                     isSeenByPeer: isSeenByPeer,
@@ -427,7 +429,8 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited
+                        isEdited: isEdited,
+                        isProductSource: metadata.isProductSource
                     ),
                     status: status,
                     isSeenByPeer: isSeenByPeer,
@@ -735,6 +738,7 @@ private extension ChatViewModelFactory {
                 case .copy: UIAction.chatCopy { actions.copy(text) }
                 case .reaction: nil
                 case .edited: UIAction.chatEditHistory { actions.showEditHistory(messageId) }
+                case .delete: UIAction.chatDelete { actions.delete(messageId) }
                 }
             }
         }

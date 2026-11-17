@@ -203,6 +203,9 @@ private extension ChatPresenter {
             edit: { [weak self] messageId in
                 self?.handleEditAction(for: messageId)
             },
+            delete: { [weak self] messageId in
+                self?.interactor.deleteMessage(messageId: messageId)
+            },
             toggleReaction: { [weak self] messageId, emoji in
                 self?.interactor.toggleReaction(messageId: messageId, emoji: emoji)
             },
