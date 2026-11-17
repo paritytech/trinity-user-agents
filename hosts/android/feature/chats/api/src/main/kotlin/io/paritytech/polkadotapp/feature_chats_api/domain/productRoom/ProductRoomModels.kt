@@ -38,6 +38,17 @@ data class ProductRoomMessage(
 /** The author and the body of a replied message (`ChatReplyPreview`). */
 data class ProductReplyPreviewModel(val participantId: String, val content: ChatMessage.Content)
 
+/** One page of messages, the oldest first. A null [next] ends the paging in this direction. */
+data class ProductMessagesPage(val messages: List<ProductRoomMessage>, val next: String?)
+
+sealed interface ChatPageAnchorModel {
+    /** Newer messages. A null cursor starts at the oldest. */
+    data class After(val cursor: String?) : ChatPageAnchorModel
+
+    /** Older messages. A null cursor starts at the newest. */
+    data class Before(val cursor: String?) : ChatPageAnchorModel
+}
+
 /** The room does not exist, or another extension owns it. */
 class UnknownChatRoomException : Exception("the chat room does not exist")
 

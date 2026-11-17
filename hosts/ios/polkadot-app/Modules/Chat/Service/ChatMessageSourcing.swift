@@ -3,7 +3,8 @@ import AsyncExtensions
 
 /// Where the room screen reads its messages and where it writes what the user does.
 ///
-/// `CoreDataMessageSource` reads and writes the host database.
+/// `CoreDataMessageSource` reads and writes the host database. `ProductMessageSource` asks the product for
+/// pages.
 protocol ChatMessageSourcing: AnyObject, Sendable {
     /// The window of messages, oldest first. A new value comes each time the window changes.
     func snapshots() async throws -> AnyAsyncSequence<MessageListSnapshot>
@@ -30,15 +31,23 @@ struct MessageListSnapshot: Equatable {
     let messages: [Chat.LocalMessage]
     let paging: ChatPagingState
     let readiness: ChatRoomReadiness
+    /// The edit time of each edited message, in milliseconds since the Unix epoch.
+    let editedAt: [Chat.MessageId: Chat.Timestamp]
+    /// The messages that replies of the window quote and the window does not hold, by their ids.
+    let replyPreviews: [Chat.MessageId: Chat.LocalMessage]
 
     init(
         messages: [Chat.LocalMessage],
         paging: ChatPagingState = .complete,
-        readiness: ChatRoomReadiness = .ready
+        readiness: ChatRoomReadiness = .ready,
+        editedAt: [Chat.MessageId: Chat.Timestamp] = [:],
+        replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:]
     ) {
         self.messages = messages
         self.paging = paging
         self.readiness = readiness
+        self.editedAt = editedAt
+        self.replyPreviews = replyPreviews
     }
 }
 
