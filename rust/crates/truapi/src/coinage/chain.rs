@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use parity_scale_codec::Encode;
 use subxt::{
 	dynamic::At,
 	ext::{
@@ -13,14 +14,17 @@ use subxt::{
 		scale_value::{Value, ValueDef},
 	},
 	storage::dynamic,
-	utils::{AccountId32, H256},
+	utils::{AccountId32, H256, MultiAddress},
 };
 
 use super::{
 	layer::{RuntimeFacts, RuntimeSource},
 	params::InstanceRecord,
 };
-use crate::chain::{ChainHeads, HashAndNumber, Heads, StorageEntryName, StorageWatchError, WatchedStorage};
+use crate::{
+	chain::{BlockBackend, ChainHeads, HashAndNumber, Heads, StorageEntryName, StorageWatchError, WatchedStorage},
+	chain_runtime::RuntimeFailure,
+};
 
 /// The pallet's name in the runtime.
 pub const PALLET: &str = "Coinage";
@@ -183,20 +187,54 @@ pub trait CoinageChain: Send + Sync {
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError>;
 	/// An account's next nonce.
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError>;
+	/// What an account holds of the instance's external asset, in the
+	/// asset's units; zero for an account that holds none.
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError>;
+	/// The hash of the transaction that emptied a coin's account, and the
+	/// number of the block that included it, given the account held the
+	/// coin at block `since` and is empty at `at`; none when no transaction
+	/// that coin signed is found there.
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError>;
 }
 
-/// [`CoinageChain`] over the storage and heads of the People chain.
+/// The transaction that emptied a coin's account.
+#[derive(Clone, Copy)]
+pub struct Emptying {
+	/// Its hash.
+	pub transaction: [u8; 32],
+	/// The number of the block that included it.
+	pub block: u64,
+}
+
+/// [`CoinageChain`] over the storage, heads and blocks of the People chain.
 pub struct CoinageStorage {
 	storage: Arc<dyn WatchedStorage>,
 	heads: Arc<dyn ChainHeads>,
+	blocks: Arc<dyn BlockBackend>,
 	genesis: H256,
 	instance: u32,
 }
 
 impl CoinageStorage {
 	/// Reads of the pallet's `instance` on the chain with `genesis`.
-	pub fn new(storage: Arc<dyn WatchedStorage>, heads: Arc<dyn ChainHeads>, genesis: H256, instance: u32) -> Self {
-		Self { storage, heads, genesis, instance }
+	pub fn new(
+		storage: Arc<dyn WatchedStorage>,
+		heads: Arc<dyn ChainHeads>,
+		blocks: Arc<dyn BlockBackend>,
+		genesis: H256,
+		instance: u32,
+	) -> Self {
+		Self { storage, heads, blocks, genesis, instance }
+	}
+
+	/// The block at `number`, canonical up to the finalized height.
+	async fn block_at(&self, number: u64) -> Result<Option<HashAndNumber>, StorageWatchError> {
+		Ok(self.blocks.block_hash(self.genesis, number).await?.map(|hash| HashAndNumber { hash, number }))
 	}
 
 	/// The values of `pallet::entry` at `at` for each of `keys`, decoded as
@@ -344,6 +382,41 @@ impl CoinageChain for CoinageStorage {
 		let info = self.values(at, "System", "Account", &[(AccountId32(account),)]).await?;
 		Ok(info.into_iter().flatten().next().as_ref().and_then(|info| number(info, "nonce")).unwrap_or(0) as u32)
 	}
+
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		let instance = self.values(at, PALLET, "Instances", &[(self.instance,)]).await?.into_iter().flatten().next();
+		let Some(asset) = instance.as_ref().and_then(|record| record.at("asset_id")).cloned() else { return Ok(0) };
+		let held = self.values(at, "Assets", "Account", &[(asset, AccountId32(account))]).await?;
+		Ok(held.into_iter().flatten().next().as_ref().and_then(|held| number(held, "balance")).unwrap_or(0))
+	}
+
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError> {
+		let (mut held, mut emptied) = (since, at);
+		while emptied.number > held + 1 {
+			let middle = held + (emptied.number - held) / 2;
+			let Some(block) = self.block_at(middle).await? else { return Ok(None) };
+			match self.coins_at(block.hash, &[account]).await?.first() {
+				Some(Some(_)) => held = middle,
+				_ => emptied = block,
+			}
+		}
+		let failure = |error: subxt::Error| RuntimeFailure::host_failure("coinage_emptied_by", error.to_string());
+		let client = self.storage.client_at(self.genesis, emptied).await?;
+		let extrinsics = client.extrinsics().fetch().await.map_err(|error| failure(error.into()))?;
+		let signer = MultiAddress::<AccountId32, ()>::Id(AccountId32(account)).encode();
+		for extrinsic in extrinsics.iter() {
+			let extrinsic = extrinsic.map_err(|error| failure(error.into()))?;
+			if extrinsic.address_bytes() == Some(signer.as_slice()) {
+				return Ok(Some(Emptying { transaction: extrinsic.hash().0, block: emptied.number }));
+			}
+		}
+		Ok(None)
+	}
 }
 
 /// The unsigned number in the named field of a composite value.
@@ -416,7 +489,11 @@ impl RuntimeSource for PeopleRuntime {
 			.flatten()
 			.next()
 			.and_then(|record| Some(InstanceRecord { asset_unit: number(&record, "asset_unit")? }));
-		Some(RuntimeFacts { metadata, instance, maximum_age: None })
+		Some(RuntimeFacts { metadata, instance, maximum_age: None, version: client.spec_version() })
+	}
+
+	async fn version(&self, at: HashAndNumber) -> Option<u32> {
+		Some(self.storage.client_at(self.genesis, at).await.ok()?.spec_version())
 	}
 }
 

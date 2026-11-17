@@ -44,7 +44,7 @@ use super::{
 	policy::{PolicyError, check},
 	reconstruction::{self, InstallationRegistry, Purses, ReconstructionDeps, ScanConfig},
 	registration::RegisterError,
-	selection::{Forms, SelectRequest, Want, select},
+	selection::{Forms, SelectError, SelectRequest, Want, select},
 	start::{
 		Begin, ExportedCoin, Launched, Launcher, Request, StartError as LaunchError, begin_and_start, exported_coins,
 		needs_confirmation,
@@ -73,6 +73,8 @@ pub struct RuntimeFacts {
 	pub instance: Option<InstanceRecord>,
 	/// The maximum coin age the runtime reports; none when it reports none.
 	pub maximum_age: Option<u16>,
+	/// The runtime's spec version.
+	pub version: u32,
 }
 
 /// Reads [`RuntimeFacts`] from the People chain.
@@ -81,6 +83,9 @@ pub trait RuntimeSource: Send + Sync {
 	/// The facts at block `at`, or at the finalized head when none; none
 	/// when they cannot be read.
 	async fn runtime(&self, at: Option<HashAndNumber>) -> Option<RuntimeFacts>;
+	/// The runtime's spec version at block `at`; none when it cannot be
+	/// read.
+	async fn version(&self, at: HashAndNumber) -> Option<u32>;
 }
 
 /// §1's interfaces, supplied by the host.
@@ -290,6 +295,8 @@ struct Inner {
 	scan: ScanConfig,
 	running: Running,
 	failed_check: Mutex<Option<String>>,
+	/// The runtime version of the latest check.
+	checked_version: Mutex<u32>,
 	streams: streams::Wakes,
 	/// The reconstructions whose scan runs in this process.
 	reconstructing: Mutex<BTreeSet<OpKey>>,
@@ -348,6 +355,7 @@ pub async fn start(
 		scan,
 		running,
 		failed_check: Mutex::new(None),
+		checked_version: Mutex::new(facts.version),
 		streams: streams::Wakes::default(),
 		reconstructing: Mutex::new(BTreeSet::new()),
 		registry_read: AtomicBool::new(false),
@@ -533,8 +541,14 @@ impl Layer {
 			return Err(Error::EmptyRequest);
 		}
 		let offload = Offload { from, amount, to, initiator, confirmed };
-		if view.operation(&op.key).is_none() && offload::needs_confirmation(&view, &offload, self.now(), &state.params) {
-			return Err(Error::NeedsConfirmation);
+		if view.operation(&op.key).is_none() {
+			let everything = SelectRequest { purse: from, want: Want::Amount(amount), forms: Forms::Any, entries_first: true, held_back: true };
+			if let Err(SelectError::InsufficientFunds { available }) = select(&view, everything, self.now(), &state.params) {
+				return Err(Error::InsufficientFunds { available });
+			}
+			if offload::needs_confirmation(&view, &offload, self.now(), &state.params) {
+				return Err(Error::NeedsConfirmation);
+			}
 		}
 		if let Some(started) = self.begin_own_step(&op, OpKind::Offload, (offload, op.retry).encode()).await? {
 			return Ok(started);
@@ -638,9 +652,26 @@ impl Layer {
 		if accounts.is_empty() {
 			return Err(Error::EmptyRequest);
 		}
+		observation::observe_peer_coins(&self.observer(), &accounts, self.now(), &self.params())
+			.await
+			.map_err(observe_error)?;
 		let arguments = ImportArguments { into, accounts }.encode();
 		let request = Request::Given(PlanInput::Import { coins, into });
 		Ok(self.launch(&op, OpKind::Import, arguments, request).await?.0)
+	}
+
+	/// Whether a claim that has not reached a stable verdict holds one of
+	/// `coins`, so that another import of it could not start.
+	pub async fn importing(&self, coins: &[CoinSecret]) -> Result<bool, Error> {
+		let view = self.view().await?;
+		Ok(coins.iter().filter_map(account_of).any(|account| {
+			view.registrations().consumers(&Asset::PeerCoin(account)).any(|claim| {
+				!matches!(
+					claim.state.status,
+					crate::durable::DurableTxStatus::FinalizedSuccess { .. } | crate::durable::DurableTxStatus::Failure(_)
+				)
+			})
+		}))
 	}
 
 	// ---- Maintenance and recovery ----
@@ -667,8 +698,19 @@ impl Layer {
 			let key = cancelled.key.clone();
 			self.0.store.write(move |tx| operation::record_end(tx, &key, OperationEnd::Cancelled)).await?;
 		}
+		self.drop_ended_funding(&view);
 		self.changed();
 		Ok(due)
+	}
+
+	/// Drops the funding capability of every top-up that has ended, so that
+	/// a key a product handed over is held no longer than its top-up needs
+	/// it (invariant 6).
+	fn drop_ended_funding(&self, view: &Snapshot) {
+		let (now, params) = (self.now(), self.params());
+		self.0.running.update(|state| {
+			state.funding.retain(|key, _| !status(view, key, now, &params).is_some_and(|item| item.status.is_terminal()));
+		});
 	}
 
 	/// Starts a reconstruction of `purses` (F4); its scan runs in the
@@ -807,8 +849,11 @@ impl Layer {
 	/// in use for reads (G3 invariant 7).
 	pub async fn revalidate(&self, at: HashAndNumber) {
 		let checked = match self.0.runtime.runtime(Some(at)).await {
-			Some(facts) => validate(&facts.metadata, facts.instance.as_ref(), facts.maximum_age, self.0.config.clone())
-				.map_err(|unsupported| unsupported.check),
+			Some(facts) => {
+				*self.0.checked_version.lock() = facts.version;
+				validate(&facts.metadata, facts.instance.as_ref(), facts.maximum_age, self.0.config.clone())
+					.map_err(|unsupported| unsupported.check)
+			},
 			None => Err("the runtime could not be read".to_owned()),
 		};
 		match checked {
@@ -826,25 +871,30 @@ impl Layer {
 		}
 	}
 
-	/// Observes `block` (F1) and tells the streams; the host's entry point
-	/// may run maintenance on it.
+	/// Observes `block` (F1), checks the runtime again when its version at
+	/// `block` is not the version of the latest check (G3 invariant 1), and
+	/// tells the streams; the host's entry point may run maintenance on it.
 	pub async fn on_block(&self, block: HashAndNumber) -> Result<(), Error> {
-		let deps = ObserverDeps {
-			store: self.0.store.clone(),
-			seed: self.0.seed.clone(),
-			chain: self.0.chain.clone(),
-			personhood: self.0.personhood.clone(),
-		};
-		observation::on_block(&deps, block, self.now(), &self.params()).await.map_err(|error| match error {
-			observation::ObserveError::Store(error) => Error::Store(error),
-			_ => Error::Unavailable,
-		})?;
+		observation::on_block(&self.observer(), block, self.now(), &self.params()).await.map_err(observe_error)?;
+		let version = self.0.runtime.version(block).await;
+		if version.is_some_and(|version| version != *self.0.checked_version.lock()) {
+			self.revalidate(block).await;
+		}
 		self.0.streams.new_block(block);
 		self.changed();
 		Ok(())
 	}
 
 	// ---- Internals ----
+
+	fn observer(&self) -> ObserverDeps {
+		ObserverDeps {
+			store: self.0.store.clone(),
+			seed: self.0.seed.clone(),
+			chain: self.0.chain.clone(),
+			personhood: self.0.personhood.clone(),
+		}
+	}
 
 	fn now(&self) -> u64 {
 		(self.0.clock)()
@@ -1072,6 +1122,13 @@ fn recoverability(view: &Snapshot, now: u64, params: &ChainParams) -> Recoverabi
 	}
 	let since = view.purse(PurseId::MAIN).map_or(now, |main| main.created);
 	Recoverability::Pending { since }
+}
+
+fn observe_error(error: observation::ObserveError) -> Error {
+	match error {
+		observation::ObserveError::Store(error) => Error::Store(error),
+		_ => Error::Unavailable,
+	}
 }
 
 fn launch_error(error: LaunchError, key: &OpKey) -> Error {

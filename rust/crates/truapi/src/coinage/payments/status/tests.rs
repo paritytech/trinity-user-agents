@@ -5,7 +5,7 @@ use crate::coinage::{
 };
 
 fn item(status: Status, settled: u64, in_flight: u64) -> StatusItem {
-	StatusItem { status, progress: Progress { settled, in_flight } }
+	StatusItem { status, progress: Progress { settled, in_flight, provisional: 0 } }
 }
 
 fn coin(exponent: u8, status: ExportStatus) -> ExportedCoinStatus {
@@ -93,3 +93,5 @@ fn a_partially_completed_payment_reports_what_reached_the_destination() {
 	let partial = HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 4 * 10_000 };
 	assert_eq!(payment_status(item(Status::PartiallyDone, 4, 0), 8, 10_000), partial);
 }
+
+mod use_cases;

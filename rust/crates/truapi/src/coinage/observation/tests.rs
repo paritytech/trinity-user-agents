@@ -64,7 +64,10 @@ fn an_exported_coin_whose_account_was_emptied_is_seen_claimed() {
 		crate::coinage::ledger::commit_disclosed(tx, &[coin])
 	}))
 	.unwrap();
-	block_on(on_block(&deps(&wallet, Arc::new(FakeChain::default())), block(20), NOW, &chain_params())).unwrap();
+	let chain = Arc::new(FakeChain::default());
+	let claim = crate::coinage::chain::Emptying { transaction: [7; 32], block: 5 };
+	chain.emptied.lock().insert(account(0), claim);
+	block_on(on_block(&deps(&wallet, chain), block(20), NOW, &chain_params())).unwrap();
 	let view = wallet.view();
 	let observation = view.observation(&Subject::Asset(coin)).cloned().unwrap();
 	assert!(matches!(observation.value, Some(Read::Coin { now: None, emptied_by: Some(_) })), "{observation:?}");
@@ -100,3 +103,5 @@ fn an_entry_is_observed_in_its_ring_with_its_expiry() {
 	assert!(on_chain.closed);
 	assert_eq!(on_chain.expires_at, Some(NOW + 90 * 24 * 3600));
 }
+
+mod use_cases;

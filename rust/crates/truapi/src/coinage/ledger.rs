@@ -160,7 +160,7 @@ pub enum Read {
 		/// The coin in the account; none when the account is empty.
 		now: Option<CoinOnChain>,
 		/// For an exported coin, the transaction that emptied its account.
-		emptied_by: Option<[u8; 32]>,
+		emptied_by: Option<Emptied>,
 	},
 	/// An entry's ring membership; none when its key is in no ring.
 	Entry(Option<EntryOnChain>),
@@ -169,6 +169,15 @@ pub enum Read {
 		/// It does.
 		consumed: bool,
 	},
+}
+
+/// The transaction that emptied an exported coin's account, as F1 found it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct Emptied {
+	/// Its hash.
+	pub by: [u8; 32],
+	/// Whether the block that included it was finalized at the read.
+	pub stable: bool,
 }
 
 /// A coin as the chain shows it.
@@ -914,6 +923,19 @@ fn write_purse(tx: &Transaction<'_>, purse: &PurseRecord) -> Result<(), DbError>
 		"INSERT INTO coinage_purse (id, record) VALUES (:id, :record)
 		 ON CONFLICT (id) DO UPDATE SET record = excluded.record",
 		named_params! { ":id": purse.id.0, ":record": purse.encode() },
+	)?;
+	Ok(())
+}
+
+/// Fixes the denomination of an import's output at the exponent F1 first
+/// observed the claimed coin at (B1): the one asset whose denomination is
+/// not known when it is allocated, and that nothing reads for more than a
+/// provisional value before its claim can be built.
+pub fn fix_import_output(tx: &Transaction<'_>, output: Asset, exponent: Exponent) -> Result<(), DbError> {
+	let record = AssetRecord { asset: output, exponent };
+	tx.execute(
+		"UPDATE coinage_asset SET record = :record WHERE asset = :asset",
+		named_params! { ":asset": record.asset.encode(), ":record": record.encode() },
 	)?;
 	Ok(())
 }

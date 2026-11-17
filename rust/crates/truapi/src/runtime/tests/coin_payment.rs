@@ -9,6 +9,8 @@ use truapi::{
 	},
 };
 
+mod use_cases;
+
 use super::*;
 use crate::coinage::{
 	PrivacyPolicy, PurseId,
@@ -33,11 +35,19 @@ impl crate::runtime::ProductFunding for NoProductAccounts {
 
 /// A product host over a running coinage layer, with the wallet behind it.
 async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntimeHost<RemoteAccountHolder>) {
+	let (wallet, host, _) = coinage_host_with_layer(platform).await;
+	(wallet, host)
+}
+
+/// [`coinage_host`], with the layer it serves.
+async fn coinage_host_with_layer(
+	platform: Arc<StubPlatform>,
+) -> (TestWallet, ProductRuntimeHost<RemoteAccountHolder>, crate::coinage::layer::Layer) {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
 	let (layer, ..) = started_layer(wallet.db.clone()).await;
 	let services = payment_services_over(platform);
 	let clock = Arc::new(AtomicU64::new(NOW * 1000));
-	let payments = payments(layer, wallet.db.clone(), Arc::new(Board::default()), clock);
+	let payments = payments(layer.clone(), wallet.db.clone(), Arc::new(Board::default()), clock);
 	let engine = crate::runtime::CoinageEngine {
 		payments: payments.clone(),
 		platform: services.platform.clone(),
@@ -46,7 +56,7 @@ async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntim
 	assert!(services.install_coinage_payments(payments));
 	assert!(services.install_coinage_engine(Arc::new(engine)));
 	let host = payment_host(&services, PRODUCT, true);
-	(wallet, host)
+	(wallet, host, layer)
 }
 
 async fn create(host: &ProductRuntimeHost<RemoteAccountHolder>, name: &str) -> u32 {
@@ -165,10 +175,15 @@ fn payment_status_request(id: u8) -> truapi::versioned::payment::HostPaymentStat
 #[tokio::test]
 async fn an_rfc6_payment_status_ends_with_its_first_terminal_item() {
 	let platform = Arc::new(StubPlatform { coin_payment_spend_confirmed: true, ..Default::default() });
-	let (wallet, host) = coinage_host(platform).await;
-	wallet.hold(PurseId::MAIN, AssetKind::Coin, 1, coin_read(1));
+	let (wallet, host, layer) = coinage_host_with_layer(platform).await;
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, coin_read(3));
 	let started = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(8 * UNIT, 1)).await;
 	assert!(started.is_ok(), "the payment starts: {started:?}");
+	let records: Vec<_> = wallet.view().registrations().records().map(|facts| facts.record).collect();
+	for record in records {
+		crate::coinage::testing::set_status(&wallet.db, record, "FAILURE", Some("DISPATCH_FAILED"));
+	}
+	layer.run_due(NOW).await.unwrap();
 	let statuses = truapi::api::Payment::status_subscribe(&host, &CallContext::default(), payment_status_request(1)).await;
 	let items: Vec<_> = tokio::time::timeout(core::time::Duration::from_secs(5), statuses.collect::<Vec<_>>())
 		.await
@@ -182,7 +197,7 @@ async fn an_rfc6_payment_status_ends_with_its_first_terminal_item() {
 		)
 	};
 	assert_eq!(items.len(), 1, "nothing follows the terminal item: {items:?}");
-	assert!(failed(&items[0]), "a coin of 2 cents cannot pay 8: {items:?}");
+	assert!(failed(&items[0]), "its only phase failed on chain: {items:?}");
 }
 
 #[tokio::test]

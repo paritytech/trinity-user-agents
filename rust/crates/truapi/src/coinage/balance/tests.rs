@@ -180,3 +180,5 @@ fn entries_still_gaining_privacy_are_counted_apart_from_spendable_ones() {
 	wallet.hold(PurseId::MAIN, AssetKind::Entry, 2, in_ring(1, 20));
 	assert_eq!(main_balance(&wallet.db), Balance { spendable: 8, held_back: 4, arriving: 0 });
 }
+
+mod use_cases;

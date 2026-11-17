@@ -11,7 +11,7 @@ use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
 	chain_runtime::RuntimeFailure,
 	coinage::{
-		chain::{AliasState, ChainCoin, CoinageChain, RingPlace},
+		chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace},
 		namespace::datastore_key,
 		reconstruction::{InstallationRegistry, RegistryKey},
 	},
@@ -98,6 +98,19 @@ impl CoinageChain for RecordingChain {
 
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError> {
 		self.chain.nonce_at(at, account).await
+	}
+
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		self.chain.funds_at(at, account).await
+	}
+
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError> {
+		self.chain.emptied_by(account, since, at).await
 	}
 }
 

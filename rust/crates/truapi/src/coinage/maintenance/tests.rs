@@ -100,3 +100,5 @@ fn a_short_token_supply_leaves_only_the_coins_at_the_age_cutoff_to_recycle() {
 	assert_eq!(run(&wallet).started.len(), 1);
 	assert_eq!((in_use(&wallet, &at_cutoff), in_use(&wallet, &policy_due)), (true, false));
 }
+
+mod use_cases;

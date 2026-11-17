@@ -40,7 +40,7 @@ async fn a_fresh_store_gets_an_installation_and_its_registration_is_started_laye
 
 #[tokio::test]
 async fn an_unreadable_runtime_stops_the_layer_from_coming_up() {
-	let runtime = Arc::new(TestRuntime { failing: AtomicBool::new(true) });
+	let runtime = Arc::new(TestRuntime { failing: AtomicBool::new(true), ..Default::default() });
 	let running = Running::new();
 	let store = crate::store::open_memory_core_db();
 	let refused = start(layer_interfaces(store, runtime), chain_config(), SCAN, None, running.clone()).await;
@@ -356,3 +356,5 @@ async fn a_reconstruction_whose_scan_failed_is_resumed_by_the_next_run() {
 	let view = layer.view().await.unwrap();
 	assert!(view.asset(&Asset::Coin { purse: PurseId::MAIN, installation: EARLIER, index: 3 }).is_some());
 }
+
+mod use_cases;

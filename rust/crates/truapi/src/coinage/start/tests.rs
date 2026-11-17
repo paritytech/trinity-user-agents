@@ -162,3 +162,5 @@ fn record_params_carry_their_layout_version() {
 	unknown.0[0] = PARAMS_VERSION + 1;
 	assert_eq!(RecordParams::from_params(&unknown), None);
 }
+
+mod use_cases;

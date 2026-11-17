@@ -191,3 +191,5 @@ fn the_installation_registry_domain_lives_on_asset_hub() {
 		(Some(H256([0xcd; 32])), Some(H256([0xab; 32])))
 	);
 }
+
+mod use_cases;

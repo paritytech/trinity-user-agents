@@ -201,7 +201,7 @@ fn an_offboard_that_finalized_completes_the_offload() {
 	assert_eq!(calls, [Call::UnloadToExternal([7; 32])]);
 	set_status(&wallet.db, records[0].0, "FINALIZED_SUCCESS", None);
 	assert_eq!(resume(&wallet, &engine), [key()], "the next Plan finds the amount offboarded");
-	assert_eq!(offload_status(&wallet), StatusItem { status: Status::Done, progress: Progress { settled: 10, in_flight: 0 } });
+	assert_eq!(offload_status(&wallet), StatusItem { status: Status::Done, progress: Progress { settled: 10, in_flight: 0, provisional: 0 } });
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn an_offboard_that_partly_executed_reports_what_reached_the_destination() {
 	set_status(&wallet.db, records[1].0, "FAILURE", Some("DISPATCH_FAILED"));
 	resume(&wallet, &engine);
 	assert_eq!(records_of(&wallet).len(), 2, "no further token is spent on the rest");
-	let partial = StatusItem { status: Status::PartiallyDone, progress: Progress { settled: 8, in_flight: 0 } };
+	let partial = StatusItem { status: Status::PartiallyDone, progress: Progress { settled: 8, in_flight: 0, provisional: 0 } };
 	assert_eq!(offload_status(&wallet), partial);
 }
 
@@ -265,7 +265,7 @@ fn an_offboard_reports_live_records_as_in_flight_and_no_records_as_waiting() {
 	let records = records_of(&wallet);
 	set_status(&wallet.db, records[0].0, "PENDING_SUCCESS", None);
 	set_status(&wallet.db, records[1].0, "FINALIZED_SUCCESS", None);
-	let settling = StatusItem { status: Status::Settling, progress: Progress { settled: 8, in_flight: 8 } };
+	let settling = StatusItem { status: Status::Settling, progress: Progress { settled: 8, in_flight: 8, provisional: 8 } };
 	assert_eq!(offload_status(&wallet), settling);
 }
 
@@ -303,3 +303,5 @@ fn only_entries_selectable_now_spare_the_confirmation() {
 	always.coin(3);
 	assert!(!needs_confirmation(&always.view(), &unconfirmed(8), NOW, &params), "only AfterConfirmation asks");
 }
+
+mod use_cases;

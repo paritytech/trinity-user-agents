@@ -15,7 +15,7 @@ mod refund;
 use core::time::Duration;
 use std::sync::Arc;
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use parity_scale_codec::Encode;
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::CoinPaymentError;
@@ -37,6 +37,7 @@ use crate::{
 		operation::OpKey,
 		status::Completion,
 	},
+	chain::HashAndNumber,
 	store::{Db, DbError},
 };
 
@@ -142,6 +143,23 @@ impl Payments {
 			due.call_again_within = Some(due.call_again_within.map_or(wait, |layer| layer.min(wait)));
 		}
 		Ok(due)
+	}
+
+	/// Follows `blocks`, the People chain's new finalized heads, while the
+	/// layers run (layer 1, F2 invariant 2): layer 1 observes each block,
+	/// which counts as a call of [`Self::run_due`]. A block either step
+	/// fails for is logged, and the next block tries again.
+	pub async fn follow(&self, blocks: impl Stream<Item = HashAndNumber>) {
+		blocks
+			.for_each(|block| async move {
+				if let Err(error) = self.0.layer.on_block(block).await {
+					tracing::warn!(%error, "a coinage block was not observed");
+				}
+				if let Err(error) = self.run_due(self.now() / 1000).await {
+					tracing::warn!(%error, "coinage maintenance did not run");
+				}
+			})
+			.await
 	}
 
 	fn now(&self) -> u64 {
