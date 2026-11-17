@@ -8509,8 +8509,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("provider offered");
+		}]);
 }
 
 /// A provider's worker connection, signed in.
@@ -9614,8 +9613,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9690,8 +9688,7 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("providers offered");
+		}]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9745,8 +9742,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9865,8 +9861,7 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("providers offered");
+		}]);
 
 	let rows = shown_when(&services, &intent, |rows| {
 		rows.iter()
@@ -9941,8 +9936,7 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10313,8 +10307,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 	services
-		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")])
-		.expect("providers offered");
+		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10386,8 +10379,7 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
-			])
-			.expect("providers offered");
+			]);
 		let intent = futures::executor::block_on(services.open_funding(
 			None,
 			new_intent(),
@@ -12429,8 +12421,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let second = futures::executor::block_on(before.open_funding(
 		None,
 		new_intent(),
@@ -12850,8 +12841,7 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
