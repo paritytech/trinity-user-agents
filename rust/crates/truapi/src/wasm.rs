@@ -143,6 +143,7 @@ impl ChainProvider for WasmPlatform {
 		let chain_connect = SendWrapper::new(chain_connect);
 		SendWrapper::new(async move {
 			let (response_tx, response_rx) = mpsc::unbounded::<String>();
+			let responses_close = response_tx.clone();
 			let on_response = Closure::wrap(Box::new(move |json: JsValue| {
 				// The host must hand back JSON-RPC frames as strings. Drop (and
 				// log) non-string values rather than forwarding an empty frame
@@ -179,6 +180,7 @@ impl ChainProvider for WasmPlatform {
 				close_fn: SendWrapper::new(close_fn),
 				closed: AtomicBool::new(false),
 				_on_response: SendWrapper::new(on_response),
+				responses_close,
 				response_rx: std::sync::Mutex::new(Some(response_rx)),
 			}) as Box<dyn JsonRpcConnection>)
 		})
@@ -276,6 +278,9 @@ struct JsCallbackJsonRpcConnection {
 	/// Closure must outlive the connection so JS keeps a live ref to the
 	/// response sink. Dropped together with the rest of the struct.
 	_on_response: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+	/// Sender half of the responses channel, kept to end the stream when a
+	/// send fails.
+	responses_close: mpsc::UnboundedSender<String>,
 	response_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<String>>>,
 }
 
@@ -284,6 +289,10 @@ impl JsonRpcConnection for JsCallbackJsonRpcConnection {
 		let arg = JsValue::from_str(&request);
 		if let Err(err) = self.send_fn.call1(&JsValue::NULL, &arg) {
 			web_sys::console::error_1(&err);
+			// The request is lost, so end the response stream and let the
+			// client fail what it is still waiting on.
+			self.responses_close.close_channel();
+			self.close();
 		}
 	}
 
