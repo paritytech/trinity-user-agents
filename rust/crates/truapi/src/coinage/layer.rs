@@ -522,11 +522,10 @@ impl Layer {
 		if amount == 0 {
 			return Err(Error::EmptyRequest);
 		}
-		let spend = Request::Select { from, amount, to: Destination::External(to), initiator: Some(initiator), confirmed };
-		if view.operation(&op.key).is_none() && needs_confirmation(&view, &spend, self.now(), &state.params) {
+		let offload = Offload { from, amount, to, initiator, confirmed };
+		if view.operation(&op.key).is_none() && offload::needs_confirmation(&view, &offload, self.now(), &state.params) {
 			return Err(Error::NeedsConfirmation);
 		}
-		let offload = Offload { from, amount, to, initiator, confirmed };
 		if let Some(started) = self.begin_own_step(&op, OpKind::Offload, (offload, op.retry).encode()).await? {
 			return Ok(started);
 		}
