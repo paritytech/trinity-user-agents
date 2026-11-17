@@ -62,7 +62,17 @@ ProductId = DotNsIdentifier
 
 enum ResourceUri {
   Inline(Base64String),
-  Preimage(CID)
+  // A file on the Bulletin chain. The ticket opens a sealed file.
+  Preimage {
+    cid: CID,
+    ticket: Option<[u8; 32]>,
+  },
+  // A file that the Product serves over its own transport, for example
+  // a peer-to-peer connection. Only a Product that knows `kind` reads it.
+  Product {
+    kind: String,
+    data: Vec<u8>,
+  },
 }
 
 struct CreateChatRoomRequest {
@@ -220,10 +230,25 @@ enum MessageContent {
     },
 }
 
-enum ChatMedia {
-    Image(ResourceUri),
-    File(ResourceUri),
-    Video(ResourceUri)
+struct ChatMedia {
+    kind: ChatMediaKind,
+    // The same bytes from one or more sources, in the order to try.
+    sources: Vec<ResourceUri>,
+    // What the Host draws before the bytes arrive:
+    mime_type: String,
+    size: Option<u64>,
+    // The size as shown, after any rotation.
+    width: Option<u32>,
+    height: Option<u32>,
+    // A BlurHash of the image or of the first video frame.
+    placeholder: Option<String>,
+    duration_ms: Option<u64>,
+}
+
+enum ChatMediaKind {
+    Image,
+    Video,
+    File,
 }
 
 Emoji = String
@@ -669,7 +694,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 2. **Transport patterns**: All `handle_*` functions follow the subscription pattern (`_start`, `_stop`, `_interrupt`, `_receive`). All `on_*` functions and `chat_room_create`/`chat_room_delete` follow the request pattern (`_request`, `_response`).
 3. **Product script lifecycle**: Products are JS scripts executed from scratch on each app start. The Host MUST delay rendering until initialization completes.
 4. **Room ID scoping**: Room IDs are computed by the Host via `blake2b("product" ++ productId ++ room_id_source)` to guarantee cross-Product uniqueness.
-5. **Resource URIs**: Binary resources are referenced via inline Base64 or Preimage CID — no direct URL references.
+5. **Resource URIs**: Binary resources are referenced inline, by Preimage CID or by a Product source. No direct URL references.
 
 ## Drawbacks
 
