@@ -638,6 +638,9 @@ impl Layer {
 		if accounts.is_empty() {
 			return Err(Error::EmptyRequest);
 		}
+		observation::observe_peer_coins(&self.observer(), &accounts, self.now(), &self.params())
+			.await
+			.map_err(observe_error)?;
 		let arguments = ImportArguments { into, accounts }.encode();
 		let request = Request::Given(PlanInput::Import { coins, into });
 		Ok(self.launch(&op, OpKind::Import, arguments, request).await?.0)
@@ -840,22 +843,22 @@ impl Layer {
 	/// Observes `block` (F1) and tells the streams; the host's entry point
 	/// may run maintenance on it.
 	pub async fn on_block(&self, block: HashAndNumber) -> Result<(), Error> {
-		let deps = ObserverDeps {
-			store: self.0.store.clone(),
-			seed: self.0.seed.clone(),
-			chain: self.0.chain.clone(),
-			personhood: self.0.personhood.clone(),
-		};
-		observation::on_block(&deps, block, self.now(), &self.params()).await.map_err(|error| match error {
-			observation::ObserveError::Store(error) => Error::Store(error),
-			_ => Error::Unavailable,
-		})?;
+		observation::on_block(&self.observer(), block, self.now(), &self.params()).await.map_err(observe_error)?;
 		self.0.streams.new_block(block);
 		self.changed();
 		Ok(())
 	}
 
 	// ---- Internals ----
+
+	fn observer(&self) -> ObserverDeps {
+		ObserverDeps {
+			store: self.0.store.clone(),
+			seed: self.0.seed.clone(),
+			chain: self.0.chain.clone(),
+			personhood: self.0.personhood.clone(),
+		}
+	}
 
 	fn now(&self) -> u64 {
 		(self.0.clock)()
@@ -1083,6 +1086,13 @@ fn recoverability(view: &Snapshot, now: u64, params: &ChainParams) -> Recoverabi
 	}
 	let since = view.purse(PurseId::MAIN).map_or(now, |main| main.created);
 	Recoverability::Pending { since }
+}
+
+fn observe_error(error: observation::ObserveError) -> Error {
+	match error {
+		observation::ObserveError::Store(error) => Error::Store(error),
+		_ => Error::Unavailable,
+	}
 }
 
 fn launch_error(error: LaunchError, key: &OpKey) -> Error {
