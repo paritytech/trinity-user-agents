@@ -181,6 +181,8 @@ struct RoomSettings {
     slow_mode: u32,
     // A text that a member can read after the join.
     welcome: Option<String>,
+    // A sender sets `expires_at` this many milliseconds after the send.
+    message_timer: Option<u64>,
     // A reader drops a message from a participant who is not an admin.
     only_admins_post: bool,
 }
@@ -413,6 +415,8 @@ struct Message {
     content: MessageContent,
     status: MessageStatus,
     reply_to: Option<MessageId>,
+    silent: bool,
+    expires_at: Option<Timestamp>,
     last_edited: Option<Timestamp>,
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
@@ -489,6 +493,9 @@ enum UserChatAction {
         reply_to: Option<MessageId>,
         // Notify the author of `reply_to`.
         reply_ping: bool,
+        // No notification for the receivers.
+        silent: bool,
+        expires_at: Option<Timestamp>,
     },
     EditMessage {
         message_id: MessageId,
@@ -562,6 +569,7 @@ fn handle_chat_messages_source(
 );
 ```
 
+- Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
 #### 4.4 Reaction Details
 
 When a user taps on a reaction to see who reacted, the Host requests the full list from the Product. This is **not paginated** — for large chats where tracking individual reactors is impractical, the Product returns `NotAvailable`.
