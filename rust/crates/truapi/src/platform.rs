@@ -106,6 +106,8 @@ pub struct SigningHostConfig {
 	/// derives ends in its TLD, which has to equal the People chain's
 	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
 	pub stack: Stack,
+	/// Whether the host draws materials. Off by default: `new` leaves it off.
+	pub materials_enabled: bool,
 }
 
 /// Product identity attached to one product-facing TrUAPI connection.
@@ -201,7 +203,11 @@ impl SigningHostConfig {
 		platform_info: PlatformInfo,
 		stack: Stack,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self { host: HostIdentity::new(host_info, platform_info)?, stack })
+		Ok(Self {
+			host: HostIdentity::new(host_info, platform_info)?,
+			stack,
+			materials_enabled: false,
+		})
 	}
 }
 
