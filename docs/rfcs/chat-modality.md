@@ -333,6 +333,9 @@ enum MessageContent {
     // offer. Only the `CallSignal`s of its participants change it.
     Call(Call),
 
+    // Each participant answers with `Answer`.
+    Poll(Poll),
+
     // A long post. Its Markdown also has headings and tables.
     Article { title: String, blocks: Vec<ArticleBlock> },
 
@@ -361,6 +364,18 @@ enum PaymentReference {
 enum ArticleBlock {
     Text(String),
     Media(ChatMedia),
+}
+
+struct Poll {
+    question: String,
+    options: Vec<String>,
+    multiple: bool,
+    // No Product shows who answered. Between Products the record of an
+    // answer still names its origin.
+    anonymous: bool,
+    // A quiz: the index of the correct option.
+    correct: Option<u32>,
+    closes_at: Option<Timestamp>,
 }
 
 struct Call {
@@ -512,8 +527,15 @@ struct Message {
     receipts: Option<ReceiptSummary>,
     // The thread whose root is this message.
     thread: Option<ThreadSummary>,
+    answers: Option<AnswerSummary>,
     // The readers of a post of a Channel.
     views: Option<u32>,
+}
+
+struct AnswerSummary {
+    // The number of participants for each option.
+    counts: Vec<u32>,
+    mine: Vec<u32>,
 }
 
 // A forward keeps the resources of the media, so a receiver fetches the
@@ -666,6 +688,10 @@ enum UserChatAction {
     RevokeInvite { token: Vec<u8> },
     JoinRequest(Invite),
     AnswerJoin { participant_id: ChatParticipantId, accept: bool },
+
+    // The indexes of the chosen options. It replaces an earlier answer of
+    // the same participant.
+    Answer { message_id: MessageId, choices: Vec<u32> },
 }
 
 enum CallSignalKind {
@@ -716,13 +742,14 @@ fn handle_chat_messages_source(
 
 #### 4.4 Message Details
 
-When a user asks who reacted, who read a message, or how it read before an edit, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
+When a user asks who reacted, who read a message, how it read before an edit, or who answered, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
 
 ```rust
 enum MessageDetailsKind {
     Reactions,
     Receipts,
     Edits,
+    Answers,
 }
 
 enum MessageDetails {
@@ -730,6 +757,12 @@ enum MessageDetails {
     Receipts(Vec<MessageReceipt>),
     // The earlier versions, oldest first.
     Edits(Vec<MessageVersion>),
+    Answers(Vec<ParticipantAnswer>),
+}
+
+struct ParticipantAnswer {
+    participant_id: ChatParticipantId,
+    choices: Vec<u32>,
 }
 
 struct MessageVersion {
@@ -1087,7 +1120,7 @@ When a Product does **not** register a handler, the Host applies these defaults:
 | Chat footer | Default input, payment disabled, default attachments |
 | Participants | Two participants: user and Product |
 | Participant actions | Based on participant type (open contact, open product info) |
-| Message details | Not available: no view of who reacted, who read, or earlier versions |
+| Message details | Not available: no view of who reacted, read or answered, or of earlier versions |
 | Placeholder | None |
 
 ### 11. Transport & Serialization
@@ -1131,9 +1164,10 @@ This RFC follows the same transport and serialization rules as the Host API prot
 23. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 24. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
 25. **Links and invites**: Links to a room, a message, a call or an invite, join requests, and consent before an add.
-26. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
-27. **Stories**: Posts that expire, for an audience, with views and replies.
-28. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
+26. **Polls**: Questions with options, quizzes and anonymous polls, with one tally for every Product.
+27. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+28. **Stories**: Posts that expire, for an audience, with views and replies.
+29. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
