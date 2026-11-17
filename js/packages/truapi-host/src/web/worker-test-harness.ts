@@ -12,8 +12,9 @@
  */
 
 import { expect } from "bun:test";
+import { asProductId } from "@parity/truapi";
 
-import { makeHostCallbacks } from "../test-support.js";
+import { bundledTestStack, makeHostCallbacks } from "../test-support.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
 import { createWebWorkerPairingHostRuntime } from "./index.js";
 import type { CreateWebWorkerPairingHostRuntimeOptions } from "./index.js";
@@ -73,7 +74,7 @@ export function runtimeConfig(
   overrides: Partial<ProductRuntimeConfig> = {},
 ): ProductRuntimeConfig {
   return {
-    productId: "dotli.dot",
+    productId: asProductId("dotli.dot"),
     host: {
       name: "Polkadot Web",
       icon: "https://dot.li/dotli.png",
@@ -83,18 +84,7 @@ export function runtimeConfig(
       type: "node",
       version: process.versions.node,
     },
-    people: {
-      genesisHash:
-        "0xa22a2424d2cbf561eaecf7da8b1b548fa9d1939f60265e942b1049616a012f71",
-    },
-    bulletin: {
-      genesisHash:
-        "0xbbcccc1cbe333151b8ed63b17e9e0dec61ee53b57296f1fbe2d161ae3e6fb4dc",
-    },
-    assetHub: {
-      genesisHash:
-        "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    },
+    stack: bundledTestStack(),
     pairing: {
       deeplinkScheme: "polkadotapp",
     },

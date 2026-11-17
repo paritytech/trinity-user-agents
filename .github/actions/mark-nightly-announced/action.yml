@@ -1,0 +1,34 @@
+name: "Mark a nightly as announced"
+description: >-
+  Marks a nightly prerelease as announced, which makes it the base the next
+  nightly's changelog starts from. A build that was never announced, a
+  dispatched one or a night whose announcement failed, never becomes that
+  base, so nothing merged before it goes unannounced. The marker is an HTML
+  comment, so the rendered notes do not show it.
+inputs:
+  release_tag:
+    description: "The prerelease to mark."
+    required: true
+  github_token:
+    description: "Token with contents write."
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Mark the release as announced
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        GH_REPO: ${{ github.repository }}
+        TAG: ${{ inputs.release_tag }}
+      run: |
+        set -euo pipefail
+        marker='<!-- nightly-announced -->'
+        notes="$RUNNER_TEMP/announced-notes.md"
+        gh release view "$TAG" --json body --jq .body > "$notes"
+        if grep -qF "$marker" "$notes"; then
+          exit 0
+        fi
+        printf '\n\n%s\n' "$marker" >> "$notes"
+        gh release edit "$TAG" --notes-file "$notes" > /dev/null
+        echo "Marked $TAG as announced"

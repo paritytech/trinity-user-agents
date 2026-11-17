@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import IssueMonitoring
 import Products
@@ -9,6 +10,7 @@ final class SPARustRuntimeFactory {
         let rust: RustRuntimeEnvironment
         let configuration: SPAConfiguration
         let contentLoader: ProductContentLoading
+        let productResolver: ProductResolving
         let schemeHandlerProxy: SchemeHandlerProxy
         let routers: ProductRoutersFacadeProtocol
     }
@@ -37,14 +39,17 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
 
         let executionModel = try environment.rust.makeSPAExecution(
             productId: productId,
-            routers: environment.routers,
-            cardFace: environment.configuration.cardFace
+            routers: environment.routers
         )
 
         return SPARustRuntime(
             executionModel: executionModel,
             configuration: environment.configuration,
-            contentLoader: environment.contentLoader,
+            productOpening: SPARustRuntime.ProductOpening(
+                loader: environment.contentLoader,
+                strategy: .fixed(.app),
+                resolver: environment.productResolver
+            ),
             schemeHandlerProxy: environment.schemeHandlerProxy,
             logger: environment.rust.logger,
             hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import FoundationExt
 import Keystore_iOS
@@ -9,7 +10,7 @@ import UIKit
 final class GameReminderCenterFakes: @unchecked Sendable {
     var now: Date
     var applicationState: UIApplication.State = .active
-    var opened: [String] = []
+    var opened: [ProductId] = []
     var openNavigates = true
     let calendar = RecordingCalendar()
     let recorder = RecordingHostEventRecorder()
@@ -28,8 +29,8 @@ final class GameReminderCenterFakes: @unchecked Sendable {
     let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
     private let alarmAlertStream: AsyncStream<Set<UUID>>
     private let alarmAvailable: Bool
-    private var alarms: [String: RecordingGameReminder] = [:]
-    private var notifications: [String: RecordingGameReminder] = [:]
+    private var alarms: [ProductId: RecordingGameReminder] = [:]
+    private var notifications: [ProductId: RecordingGameReminder] = [:]
 
     init(now: Date, alarmAvailable: Bool, isReporting: Bool) {
         self.now = now
@@ -38,17 +39,17 @@ final class GameReminderCenterFakes: @unchecked Sendable {
         (alarmAlertStream, alarmAlerts) = AsyncStream.makeStream()
     }
 
-    func alarm(for productId: String) -> RecordingGameReminder {
+    func alarm(for productId: ProductId) -> RecordingGameReminder {
         reminder(in: &alarms, for: productId)
     }
 
-    func notification(for productId: String) -> RecordingGameReminder {
+    func notification(for productId: ProductId) -> RecordingGameReminder {
         reminder(in: &notifications, for: productId)
     }
 
     private func reminder(
-        in store: inout [String: RecordingGameReminder],
-        for productId: String
+        in store: inout [ProductId: RecordingGameReminder],
+        for productId: ProductId
     ) -> RecordingGameReminder {
         if let reminder = store[productId] {
             return reminder
@@ -61,11 +62,11 @@ final class GameReminderCenterFakes: @unchecked Sendable {
 
 extension GameReminderCenterFakes: ProductGameReminderServicesMaking, ApplicationStateProviding, ProductOpening,
     CurrentDateProviding {
-    func makeAlarm(for productId: String) -> (any GameStartReminderServicing)? {
+    func makeAlarm(for productId: ProductId) -> (any GameStartReminderServicing)? {
         alarmAvailable ? alarm(for: productId) : nil
     }
 
-    func makeNotification(for productId: String) -> any GameStartReminderServicing {
+    func makeNotification(for productId: ProductId) -> any GameStartReminderServicing {
         notification(for: productId)
     }
 
@@ -82,7 +83,7 @@ extension GameReminderCenterFakes: ProductGameReminderServicesMaking, Applicatio
         return currentAlertingAlarms
     }
 
-    func open(productId: String) -> Bool {
+    func open(productId: ProductId) -> Bool {
         opened.append(productId)
         return openNavigates
     }
@@ -114,7 +115,7 @@ extension GameReminderCenterFakes {
 }
 
 extension ProductGameReminderCenter {
-    func schedule(productId: String, startsAt: Date, addCalendarEvent: Bool) async {
+    func schedule(productId: ProductId, startsAt: Date, addCalendarEvent: Bool) async {
         await schedule(productId: productId, startsAt: startsAt, ringAlarm: true, addCalendarEvent: addCalendarEvent)
     }
 }

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import IssueMonitoring
 import Keystore_iOS
@@ -9,8 +10,8 @@ import Testing
 struct GameReminderDeliveryDiagnosticsTests {
     private struct ScheduleFailed: Error {}
 
-    private let productId = "game.dot"
-    private let keys = GameReminderStorageKeys.product("game.dot")
+    private let productId = try! ProductId("game.dot")
+    private var keys: GameReminderStorageKeys { .product(productId) }
 
     /// The reminder is held only weakly while its work is queued, so callers keep it in a `let`.
     @available(iOS 26.1, *)
@@ -83,12 +84,15 @@ struct GameReminderDeliveryDiagnosticsTests {
     @Test func notificationBookedIsReportedAsScheduled() async throws {
         let recorder = RecordingHostEventRecorder()
 
-        makeNotification(MockUserNotificationService(), recorder)
+        let service = MockUserNotificationService()
+        makeNotification(service, recorder)
             .scheduleReminder(gameDate: Date().addingTimeInterval(3_600), productId: productId)
         try await recorder.waitForEvents(count: 1)
 
         #expect(recorder.events.map(\.name) == ["host.reminder.scheduled"])
         #expect(recorder.events.first?.tags["reminder.delivery"] == "notification")
+        #expect(service.scheduledContents.map { $0.userInfo[PushNotificationKeys.deeplink] as? String }
+            == [productId.rawValue])
     }
 
     @Test(

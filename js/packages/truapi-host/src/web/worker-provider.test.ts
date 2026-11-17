@@ -1,3 +1,4 @@
+import { asProductId, type ProductId } from "@parity/truapi";
 import { afterEach, describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
@@ -162,7 +163,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     expect(createCore).toEqual({
       kind: "createCore",
       coreId: 1,
-      product: { productId: "dotli.dot" },
+      product: { productId: asProductId("dotli.dot") },
     });
     worker.emit({ kind: "coreReady", coreId: 1 });
     const provider = await providerPromise;
@@ -258,18 +259,22 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
 
-    const firstPromise = runtime.createProvider({ productId: "first.dot" });
-    const secondPromise = runtime.createProvider({ productId: "second.dot" });
+    const firstPromise = runtime.createProvider({
+      productId: asProductId("first.dot"),
+    });
+    const secondPromise = runtime.createProvider({
+      productId: asProductId("second.dot"),
+    });
 
     expect(worker.messages.at(-2)).toEqual({
       kind: "createCore",
       coreId: 1,
-      product: { productId: "first.dot" },
+      product: { productId: asProductId("first.dot") },
     });
     expect(worker.messages.at(-1)).toEqual({
       kind: "createCore",
       coreId: 2,
-      product: { productId: "second.dot" },
+      product: { productId: asProductId("second.dot") },
     });
 
     worker.emit({ kind: "coreReady", coreId: 1 });
@@ -322,7 +327,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     expect(createCore).toEqual({
       kind: "createCore",
       coreId: 1,
-      product: { productId: "dotli.dot", executionKind: "Worker" },
+      product: { productId: asProductId("dotli.dot"), executionKind: "Worker" },
     });
     worker.emit({ kind: "coreReady", coreId: 1 });
     (await providerPromise).dispose();
@@ -539,7 +544,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const provider = await finishProviderReady(worker, providerPromise);
 
     const keyBytes = new Uint8Array(32).fill(0x31);
-    const pending = provider.getProductSubtreePublicKey("myapp.dot", 5000);
+    const pending = provider.getProductSubtreePublicKey(
+      asProductId("myapp.dot"),
+      5000,
+    );
     const msg = worker.messages.at(-1)!;
     expect(msg.kind).toBe("getProductSubtreePublicKey");
     expect(msg.productId).toBe("myapp.dot");
@@ -556,7 +564,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
     // A wallet that never answers ends at the deadline, and that is an error
     // rather than an absent key, so a host can tell it apart from having no
     // session at all.
-    const late = provider.getProductSubtreePublicKey("slow.dot", 1);
+    const late = provider.getProductSubtreePublicKey(
+      asProductId("slow.dot"),
+      1,
+    );
     worker.emit({
       kind: "productSubtreePublicKeyResponse",
       requestId: worker.messages.at(-1)!.requestId,
@@ -1004,7 +1015,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     const product = ProductContext.enc({
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       executionKind: "Worker",
     });
 
@@ -1040,7 +1051,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     const product = ProductContext.enc({
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       executionKind: "Worker",
     });
     worker.emit({
@@ -1076,7 +1087,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const provider = await finishProviderReady(worker, providerPromise);
 
     const product = ProductContext.enc({
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       executionKind: "Worker",
     });
     const begin = (requestId: number) =>
@@ -1129,10 +1140,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const provider = await finishProviderReady(worker, providerPromise);
 
-    const productFor = (productId: string) =>
+    const productFor = (productId: ProductId) =>
       ProductContext.enc({ productId, executionKind: "Worker" });
-    const first = productFor("first.dot");
-    const second = productFor("second.dot");
+    const first = productFor(asProductId("first.dot"));
+    const second = productFor(asProductId("second.dot"));
 
     worker.emit({
       kind: "callbackRequest",
@@ -1506,7 +1517,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const runtime = await readyRuntime(worker);
     const provider = await finishProviderReady(
       worker,
-      runtime.createProvider({ productId: "dotli.dot" }),
+      runtime.createProvider({ productId: asProductId("dotli.dot") }),
     );
     const seen: WorkerDemandChange[] = [];
     runtime.subscribeWorkerDemand((change) => seen.push(change));
@@ -1518,21 +1529,23 @@ describe("createWebWorkerPairingHostRuntime", () => {
     // The demand the core's own reference caused still reaches the host.
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       wanted: true,
     });
-    expect(seen).toEqual([{ productId: "dotli.dot", wanted: true }]);
+    expect(seen).toEqual([
+      { productId: asProductId("dotli.dot"), wanted: true },
+    ]);
 
     stop();
     expect(indexOfKind(worker, "releaseWorker")).toBe(-1);
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       wanted: false,
     });
     expect(seen).toEqual([
-      { productId: "dotli.dot", wanted: true },
-      { productId: "dotli.dot", wanted: false },
+      { productId: asProductId("dotli.dot"), wanted: true },
+      { productId: asProductId("dotli.dot"), wanted: false },
     ]);
     runtime.dispose();
   });
@@ -1627,14 +1640,14 @@ describe("worker demand", () => {
     const runtime = await readyRuntime(worker);
     const seen: WorkerDemandChange[] = [];
 
-    runtime.acquireWorker("a.dot");
+    runtime.acquireWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
       kind: "acquireWorker",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
     });
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
@@ -1642,35 +1655,35 @@ describe("worker demand", () => {
     const unsubscribe = runtime.subscribeWorkerDemand((change) =>
       seen.push(change),
     );
-    expect(seen).toEqual([{ productId: "a.dot", wanted: true }]);
+    expect(seen).toEqual([{ productId: asProductId("a.dot"), wanted: true }]);
 
-    runtime.acquireWorker("b.dot");
+    runtime.acquireWorker(asProductId("b.dot"));
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "b.dot",
+      productId: asProductId("b.dot"),
       wanted: true,
     });
 
-    runtime.releaseWorker("a.dot");
+    runtime.releaseWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
       kind: "releaseWorker",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
     });
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: false,
     });
     expect(seen).toEqual([
-      { productId: "a.dot", wanted: true },
-      { productId: "b.dot", wanted: true },
-      { productId: "a.dot", wanted: false },
+      { productId: asProductId("a.dot"), wanted: true },
+      { productId: asProductId("b.dot"), wanted: true },
+      { productId: asProductId("a.dot"), wanted: false },
     ]);
 
     unsubscribe();
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "b.dot",
+      productId: asProductId("b.dot"),
       wanted: false,
     });
     expect(seen).toHaveLength(3);
@@ -1684,19 +1697,19 @@ describe("worker demand", () => {
     runtime.subscribeWorkerDemand((change) => seen.push(change));
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
     runtime.dispose();
     expect(seen).toEqual([
-      { productId: "a.dot", wanted: true },
-      { productId: "a.dot", wanted: false },
+      { productId: asProductId("a.dot"), wanted: true },
+      { productId: asProductId("a.dot"), wanted: false },
     ]);
 
     // Nothing is posted to a disposed worker, and a late subscriber sees nothing.
     const before = worker.messages.length;
-    runtime.acquireWorker("a.dot");
+    runtime.acquireWorker(asProductId("a.dot"));
     expect(worker.messages.length).toBe(before);
     const late: WorkerDemandChange[] = [];
     runtime.subscribeWorkerDemand((change) => late.push(change));
@@ -1711,7 +1724,7 @@ describe("worker demand", () => {
     // The worker posted this before it saw the dispose, so it lands afterwards.
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
@@ -1732,13 +1745,13 @@ describe("worker demand", () => {
 
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
     // The replay tells it the product is wanted; the delivery still running
     // must not tell it again.
-    expect(nested).toEqual([{ productId: "a.dot", wanted: true }]);
+    expect(nested).toEqual([{ productId: asProductId("a.dot"), wanted: true }]);
     runtime.dispose();
   });
 
@@ -1747,7 +1760,7 @@ describe("worker demand", () => {
     const runtime = await readyRuntime(worker);
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
@@ -1763,12 +1776,12 @@ describe("worker demand", () => {
     runtime.subscribeWorkerDemand((change) => seen.push(change));
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "b.dot",
+      productId: asProductId("b.dot"),
       wanted: true,
     });
     expect(seen).toEqual([
-      { productId: "a.dot", wanted: true },
-      { productId: "b.dot", wanted: true },
+      { productId: asProductId("a.dot"), wanted: true },
+      { productId: asProductId("b.dot"), wanted: true },
     ]);
 
     unsubscribe();

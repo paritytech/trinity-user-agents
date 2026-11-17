@@ -117,7 +117,7 @@ private fun ChatListSearchResult.Message.toRow(
     )
 }
 
-private fun Chat.avatarModel(): AvatarUiModel = display.avatar.toUi()
+private fun Chat.avatarModel(): AvatarUiModel = display.avatar.toUi(forceFresh = false)
 
 private fun Chat?.toRowStatus(): ChatSearchRowStatus {
     if (this == null) return NoRowStatus

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Grants remote access without prompting to products the host trusts,
@@ -17,11 +18,11 @@ import Foundation
 /// ships. Device capabilities, account access, balance and identity disclosure
 /// keep prompting for a trusted product, matching the core.
 public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesting {
-    private let isTrustedForRemoteAccess: @Sendable (String) -> Bool
+    private let isTrustedForRemoteAccess: @Sendable (ProductId) -> Bool
     private let wrapped: ProductPermissionRequesting
 
     public init(
-        isTrustedForRemoteAccess: @escaping @Sendable (String) -> Bool,
+        isTrustedForRemoteAccess: @escaping @Sendable (ProductId) -> Bool,
         wrapped: ProductPermissionRequesting
     ) {
         self.isTrustedForRemoteAccess = isTrustedForRemoteAccess
@@ -29,7 +30,7 @@ public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesti
     }
 
     public func prompt(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async -> PermissionDecision {
         guard !grantsWithoutPrompting(productId: productId, permissions: [permission]) else {
@@ -40,7 +41,7 @@ public struct TrustedRemoteProductPermissionRequester: ProductPermissionRequesti
     }
 
     public func promptBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async -> PermissionDecision {
         guard !grantsWithoutPrompting(productId: productId, permissions: permissions) else {
@@ -58,7 +59,7 @@ private extension TrustedRemoteProductPermissionRequester {
     /// with a device capability has to reach the user: granting it here would
     /// hand over the camera on the strength of a network grant. An empty batch
     /// asks for nothing and is not something to grant.
-    func grantsWithoutPrompting(productId: String, permissions: [ProductPermission]) -> Bool {
+    func grantsWithoutPrompting(productId: ProductId, permissions: [ProductPermission]) -> Bool {
         guard !permissions.isEmpty, permissions.allSatisfy(\.isRemoteAccess) else { return false }
 
         return isTrustedForRemoteAccess(productId)

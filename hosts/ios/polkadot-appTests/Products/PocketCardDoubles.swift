@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -57,7 +58,7 @@ struct StubCardCatalog: PublishedPocketCardsResolving {
         return PublishedPocketCard(
             productId: productId,
             productName: productName,
-            workerContentId: "worker.\(productId)",
+            workerContentId: try! ProductId("worker.\(productId).dot"),
             definition: definition
         )
     }

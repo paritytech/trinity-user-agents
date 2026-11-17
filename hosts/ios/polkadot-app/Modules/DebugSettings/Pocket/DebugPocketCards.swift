@@ -10,7 +10,7 @@ import TrUAPIHost
 /// published manifest can never name an address the host then fetches, and
 /// this one is typed in by whoever is holding the phone.
 struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
-    let productId: String
+    let productId: ProductId
     let cardId: String
     let title: String
     let faceUrl: String
@@ -101,6 +101,6 @@ struct DebugPocketCards: DebugPocketCardsStoring {
 
 private extension DebugPocketCards {
     func cards(of productId: ProductId) -> [DebugPocketCard] {
-        cards().filter { $0.productId.lowercased() == productId.lowercased() }
+        cards().filter { $0.productId == productId }
     }
 }

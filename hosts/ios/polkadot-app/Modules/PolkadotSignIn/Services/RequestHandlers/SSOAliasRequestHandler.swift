@@ -36,6 +36,7 @@ final class SSOAliasRequestHandler: SSORequestHandling {
         do {
             let handler = handlerFactory.makeAliasHandler(callingProductId: request.callingProductId)
             let alias = try await handler.getContextualAlias(
+                keyHandle: request.keyHandle,
                 context: request.context,
                 ring: request.ring
             )

@@ -25,4 +25,8 @@ class PocketCardOpenRequests @Inject constructor() {
     fun consume(request: PocketCardOpenRequest) {
         requested.compareAndSet(request, null)
     }
+
+    fun clear() {
+        requested.value = null
+    }
 }

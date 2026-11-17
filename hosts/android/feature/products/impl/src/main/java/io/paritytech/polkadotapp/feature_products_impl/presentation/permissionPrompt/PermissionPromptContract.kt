@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface PermissionPromptContract {
     val state: StateFlow<PermissionPromptUiState?>
@@ -19,12 +20,12 @@ interface PermissionPromptContract {
 @Immutable
 sealed interface PermissionPromptUiState {
     data class Single(
-        val productId: String,
+        val productId: ProductId,
         val permission: ProductPermission,
     ) : PermissionPromptUiState
 
     data class Batched(
-        val productId: String,
+        val productId: ProductId,
         val permissions: ImmutableList<RemotePermission>,
     ) : PermissionPromptUiState
 }

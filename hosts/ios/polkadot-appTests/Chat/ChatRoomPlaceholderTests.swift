@@ -23,7 +23,8 @@ private extension ChatRoomPlaceholderTests {
         var chatMetadata = ChatMetadata(
             chatId: .chatExtension("game.dot", roomId: "lobby"),
             peerMetadata: .unknown,
-            state: .created
+            state: .created,
+            peerSeenOrder: 0
         )
         chatMetadata.roomPlaceholder = "No games yet"
         return MessageListMetadata(chatMetadata: chatMetadata, myUsername: "me")

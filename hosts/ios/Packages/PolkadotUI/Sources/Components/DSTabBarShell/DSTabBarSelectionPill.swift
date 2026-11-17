@@ -11,10 +11,7 @@ public extension View {
 
 extension EnvironmentValues {
     /// The selection namespace of the enclosing `DSTabBarContainer`. Nil elsewhere.
-    var dsTabBarSelectionNamespace: Namespace.ID? {
-        get { self[DSTabBarSelectionNamespaceKey.self] }
-        set { self[DSTabBarSelectionNamespaceKey.self] = newValue }
-    }
+    @Entry var dsTabBarSelectionNamespace: Namespace.ID? = nil
 }
 
 /// The selection pill's fill and matched geometry id, shared by the bar slot and the shelf.
@@ -24,10 +21,6 @@ enum DSTabBarSelectionPill {
     static func fill(_ shape: some Shape) -> some View {
         shape.fill(DSTabBarStyle.Palette.selectionFill)
     }
-}
-
-private struct DSTabBarSelectionNamespaceKey: EnvironmentKey {
-    static let defaultValue: Namespace.ID? = nil
 }
 
 private struct DSTabBarSelectionPillModifier: ViewModifier {

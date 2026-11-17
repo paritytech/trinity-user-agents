@@ -7,7 +7,7 @@ import TrUAPIHost
 
 /// The room screen holds the worker of its product while it shows a room, and each query holds it while it runs.
 struct TrUAPIChatHandlerRoomTests {
-    private let product: ProductId = "chat.dot"
+    private let product = try! ProductId("chat.dot")
     private let execution = MockProductExecution()
 
     @Test func anOpenHoldsTheWorker() async throws {

@@ -47,9 +47,33 @@ struct ExecutableManifestDTO: Decodable {
     }
 }
 
-struct IncludesDTO: Decodable {
-    let chat: Bool?
-    let pocket: Bool?
+/// The modalities a worker serves: `chat` and `pocket` when their flag is `true`, `funding` when its
+/// section is there. The core reads the funding routes themselves.
+struct IncludesDTO: OptionSet, Decodable {
+    let rawValue: UInt8
+
+    static let chat = IncludesDTO(rawValue: 1 << 0)
+    static let pocket = IncludesDTO(rawValue: 1 << 1)
+    static let funding = IncludesDTO(rawValue: 1 << 2)
+
+    private enum CodingKeys: String, CodingKey {
+        case chat
+        case pocket
+        case funding
+    }
+
+    init(rawValue: UInt8) {
+        self.rawValue = rawValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        var served: IncludesDTO = []
+        if try container.decodeIfPresent(Bool.self, forKey: .chat) == true { served.insert(.chat) }
+        if try container.decodeIfPresent(Bool.self, forKey: .pocket) == true { served.insert(.pocket) }
+        if container.contains(.funding), try !container.decodeNil(forKey: .funding) { served.insert(.funding) }
+        self = served
+    }
 }
 
 /// The section decodes leniently so a publisher who typed it wrong costs the product its cards and

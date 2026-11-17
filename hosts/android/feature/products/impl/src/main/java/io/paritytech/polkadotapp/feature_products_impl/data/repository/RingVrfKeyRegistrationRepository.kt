@@ -4,10 +4,10 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.database.dao.RingVrfKeyRegistrationDao
 import io.paritytech.polkadotapp.database.model.RingVrfKeyRegistrationLocal
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.mappers.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.data.mappers.toLocal
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.registry.RingVrfKeyRegistration
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 interface RingVrfKeyRegistrationRepository {
@@ -26,7 +26,7 @@ class RealRingVrfKeyRegistrationRepository @Inject constructor(
     }
 
     override suspend fun getByOwner(owner: ProductId): List<RingVrfKeyRegistration> {
-        return dao.getByOwner(owner.value).toDomain()
+        return dao.getByOwner(owner).toDomain()
     }
 
     override suspend fun getByHandle(handle: ProductAccountId): List<RingVrfKeyRegistration> {

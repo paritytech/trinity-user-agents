@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Handles `.networkAccess` permissions: domain allow-listing, subdomain
@@ -20,11 +21,11 @@ public final class NetworkAccessPermissionHandler: Sendable {
         self.requester = requester
     }
 
-    public func isGranted(productId: String, domain: String) async throws -> Bool {
+    public func isGranted(productId: ProductId, domain: String) async throws -> Bool {
         try await getPermissionState(productId: productId, domain: domain).isAllowed
     }
 
-    public func request(productId: String, domain: String) async throws -> Bool {
+    public func request(productId: ProductId, domain: String) async throws -> Bool {
         let permissionState = try await getPermissionState(productId: productId, domain: domain)
 
         switch permissionState {
@@ -40,7 +41,7 @@ public final class NetworkAccessPermissionHandler: Sendable {
 }
 
 private extension NetworkAccessPermissionHandler {
-    func getPermissionState(productId: String, domain: String) async throws -> ProductPermissionState {
+    func getPermissionState(productId: ProductId, domain: String) async throws -> ProductPermissionState {
         let permission = ProductPermission.networkAccess(domain: domain)
 
         let permissionState = try await repository.getPermissionState(
@@ -61,7 +62,7 @@ private extension NetworkAccessPermissionHandler {
         }
     }
 
-    func checkAllowedDomains(productId: String, domain: String) async throws -> Bool {
+    func checkAllowedDomains(productId: ProductId, domain: String) async throws -> Bool {
         if Self.allowedDomains.contains(domain) { return true }
 
         let candidates = Self.generateDomainCandidates(for: domain)
@@ -72,7 +73,7 @@ private extension NetworkAccessPermissionHandler {
         )
     }
 
-    func promptPermission(productId: String, domain: String) async throws -> Bool {
+    func promptPermission(productId: ProductId, domain: String) async throws -> Bool {
         let permission = ProductPermission.networkAccess(domain: domain)
 
         switch await requester.prompt(productId: productId, permission: permission) {

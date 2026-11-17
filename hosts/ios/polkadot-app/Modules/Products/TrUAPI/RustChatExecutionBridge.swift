@@ -90,6 +90,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             switch footer {
             case .textInput: .textInput
             case .empty: .empty
+            case let .card(card): .card(messageType: card.messageType, payload: card.payload)
             }
         try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }
@@ -152,11 +153,11 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
         }
 
-        let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+        let chatId = Chat.Id.chatExtension(productId.rawValue, roomId: roomId)
 
         guard persist else {
             if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
-                await pageCache.apply(update, productId: productId, roomId: roomId)
+                await pageCache.apply(update, productId: productId.rawValue, roomId: roomId)
                 logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room, the cached page takes it")
             }
             return
