@@ -359,6 +359,30 @@ impl CliPlatform {
 		if Self::is_device_scoped(slot) { &self.device_storage } else { &self.core_storage }
 	}
 
+	/// The value held under `slot` alone.
+	///
+	/// Read from the file, not the copy loaded at start: the host on a fork or
+	/// its source may have recorded which of them holds these entries, and the
+	/// one that does may have cleared some since.
+	fn read_unscoped(&self, slot: &CoreStorageKey) -> Result<Option<Vec<u8>>, StorageError> {
+		use parity_scale_codec::Encode;
+		let key = slot.encode();
+		Ok(match self.store_path(slot) {
+			Some(path) => read_storage_file(&path)?.remove(&key),
+			None => {
+				self.store(slot).lock().expect("core storage mutex poisoned").get(&key).cloned()
+			},
+		})
+	}
+
+	/// Whether the core recorded this host's stack as the one that holds the
+	/// entries stored with no stack id.
+	fn holds_unscoped(&self) -> Result<bool, StorageError> {
+		use parity_scale_codec::Encode;
+		let owner = self.read_unscoped(&CoreStorageKey::UnscopedEntriesOwner)?;
+		Ok(owner == Some(self.stack_identity.id.encode()))
+	}
+
 	/// The file that persists the store of `slot`, if any.
 	fn store_path(&self, slot: &CoreStorageKey) -> Option<PathBuf> {
 		if Self::is_device_scoped(slot) {
@@ -411,6 +435,10 @@ impl CliPlatform {
 			Self::core_key(&StackStorageKey { stack: self.stack_identity.id.clone(), slot })
 		});
 		let stack_key_prefix = self.stack_key_prefix();
+		// Entries stored with no stack id come along only when the core gave
+		// them to this stack. A fork and its source share the bootstrap
+		// directory, and the other may be the one that holds them.
+		let holds_unscoped = migrating_bootstrap && self.holds_unscoped()?;
 		let (carried, carried_unscoped, bootstrap_path) = {
 			// Keep the same path -> storage lock order used by persistence so
 			// an auth transition cannot deadlock with a concurrent core write.
@@ -419,13 +447,20 @@ impl CliPlatform {
 			let mut current = self.core_storage.lock().expect("core storage mutex poisoned");
 			if migrating_bootstrap {
 				// Another stack's entries stay where that stack will look.
-				// Entries stored with no stack id come along: they are this
-				// stack's if the core gave them to it.
-				let (own, unscoped) = current
+				let own = current
 					.iter()
-					.filter(|(key, _)| key.starts_with(&stack_key_prefix) || is_unscoped(key))
+					.filter(|(key, _)| key.starts_with(&stack_key_prefix))
 					.map(|(key, value)| (key.clone(), value.clone()))
-					.partition::<Vec<_>, _>(|(key, _)| key.starts_with(&stack_key_prefix));
+					.collect::<Vec<_>>();
+				// Taken from the file, not the copy loaded at start, which can
+				// still hold an entry the core has cleared since.
+				let unscoped = match current_path.as_deref() {
+					Some(path) if holds_unscoped => read_storage_file(path)?
+						.into_iter()
+						.filter(|(key, _)| is_unscoped(key))
+						.collect::<Vec<_>>(),
+					_ => Vec::new(),
+				};
 				(own, unscoped, current_path.clone())
 			} else {
 				let carried = transient_keys
@@ -685,19 +720,7 @@ impl CoreStorage for CliPlatform {
 		&self,
 		slot: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, api::GenericError> {
-		use parity_scale_codec::Encode;
-		// Read from the file, not the copy loaded at start: the host on a fork
-		// or its source may have recorded which of them holds these entries.
-		let key = slot.encode();
-		match self.store_path(&slot) {
-			Some(path) => Ok(read_storage_file(&path)?.remove(&key)),
-			None => Ok(self
-				.store(&slot)
-				.lock()
-				.expect("core storage mutex poisoned")
-				.get(&key)
-				.cloned()),
-		}
+		Ok(self.read_unscoped(&slot)?)
 	}
 
 	async fn write_unscoped_core_storage(

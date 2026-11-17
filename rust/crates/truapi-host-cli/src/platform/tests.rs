@@ -896,15 +896,80 @@ async fn values_stored_with_no_stack_id_move_with_the_first_pairing() {
 		.expect("seed core storage");
 	let network = test_network();
 	let platform = pairing_platform(&network, &network_dir);
+	let stack = core_stack(&network);
+	let restored = stack.storage(platform.as_ref()).read(CoreStorageKey::AuthSession).await;
 
 	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 
+	let session = stack.storage(platform.as_ref()).read(CoreStorageKey::AuthSession).await;
+	let left_behind = load_hex_key_map(&bootstrap_dir.join("core-storage.json"));
+	let stored = Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe]));
+	assert_eq!((restored, session, left_behind), (stored.clone(), stored, HashMap::new()));
+}
+
+/// The copy of the bootstrap file a host loaded at start can still hold a
+/// value stored with no stack id that has been cleared since, as by a sign-out
+/// from another run. The first pairing must not bring that value back.
+#[tokio::test]
+async fn the_first_pairing_moves_only_what_the_bootstrap_file_still_holds() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let bootstrap_dir = network_dir.join("pairing-host");
+	std::fs::create_dir_all(&bootstrap_dir).expect("bootstrap dir");
+	std::fs::write(bootstrap_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed core storage");
+	let network = test_network();
+	let pairing = pairing_platform(&network, &network_dir);
+	let signing_out = pairing_platform(&network, &network_dir);
+	core_stack(&network)
+		.storage(signing_out.as_ref())
+		.clear(CoreStorageKey::AuthSession)
+		.await
+		.expect("sign out");
+
+	pairing.switch_pairing_user_storage("alice.dot").expect("select alice");
+
 	let session = core_stack(&network)
-		.storage(platform.as_ref())
+		.storage(pairing.as_ref())
 		.read(CoreStorageKey::AuthSession)
 		.await;
-	let left_behind = load_hex_key_map(&bootstrap_dir.join("core-storage.json"));
-	assert_eq!((session, left_behind), (Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])), HashMap::new()));
+	assert_eq!(session, Ok(None));
+}
+
+/// A fork and its source share the bootstrap directory. When the fork pairs
+/// first, the values stored with no stack id that the source holds must stay
+/// where the source looks for them.
+#[tokio::test]
+async fn the_first_pairing_leaves_values_another_stack_holds() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let bootstrap_dir = network_dir.join("pairing-host");
+	std::fs::create_dir_all(&bootstrap_dir).expect("bootstrap dir");
+	std::fs::write(bootstrap_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed core storage");
+	let (source, fork) = (test_network(), fork_network());
+	let on_source = pairing_platform(&source, &network_dir);
+	let on_fork = pairing_platform(&fork, &network_dir);
+	let restored = core_stack(&source)
+		.storage(on_source.as_ref())
+		.read(CoreStorageKey::AuthSession)
+		.await;
+
+	on_fork.switch_pairing_user_storage("bob.dot").expect("select bob");
+	on_source.switch_pairing_user_storage("alice.dot").expect("select alice");
+
+	let stored = Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe]));
+	let sessions = (
+		core_stack(&source)
+			.storage(on_source.as_ref())
+			.read(CoreStorageKey::AuthSession)
+			.await,
+		core_stack(&fork)
+			.storage(on_fork.as_ref())
+			.read(CoreStorageKey::AuthSession)
+			.await,
+	);
+	assert_eq!((restored, sessions), (stored.clone(), (stored, Ok(None))));
 }
 
 /// A user's directory written before the update holds that user's own values
@@ -924,13 +989,16 @@ async fn the_first_pairing_keeps_the_users_values_stored_with_no_stack_id() {
 		.expect("seed alice core storage");
 	let network = test_network();
 	let platform = pairing_platform(&network, &network_dir);
+	let stack = core_stack(&network);
+	stack
+		.storage(platform.as_ref())
+		.read(CoreStorageKey::AuthSession)
+		.await
+		.expect("the core claims the values stored with no stack id");
 
 	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 
-	let session = core_stack(&network)
-		.storage(platform.as_ref())
-		.read(CoreStorageKey::AuthSession)
-		.await;
+	let session = stack.storage(platform.as_ref()).read(CoreStorageKey::AuthSession).await;
 	assert_eq!(session, Ok(Some(vec![0x0a, 0x0b])));
 }
 

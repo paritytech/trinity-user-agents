@@ -1551,9 +1551,12 @@ Before the first resolved user, pairing state uses
 For the first bootstrap migration, in-memory bootstrap product values and core
 values move into the resolved user's directory, and the core values leave the
 bootstrap `core-storage.json`. The core values are the stack's own, which
-replace the user's, and those stored with no stack id, which do not replace
-an entry the user's directory already holds. Another stack's stay where it
-looks for them.
+replace the user's, and, when the stack is the recorded
+`UnscopedEntriesOwner`, those stored with no stack id as the bootstrap file
+holds them then, which do not replace an entry the user's directory already
+holds. Another stack's entries, and entries stored with no stack id that
+another stack holds or that no stack has claimed yet, stay in the bootstrap
+directory.
 
 When switching from one resolved user to another, only transient authentication
 keys move:
