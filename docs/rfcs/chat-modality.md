@@ -545,6 +545,8 @@ enum MessageStatus {
     ReadyForDelivery,
     Delivered,
     Read,
+    // The Host offers a retry only when `retryable`.
+    Failed { reason: Option<String>, retryable: bool },
 }
 
 struct Message {
