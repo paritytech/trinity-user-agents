@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeMod
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import uniffi.truapi.ChatMediaItem
 import uniffi.truapi.ChatMediaMeta
 import uniffi.truapi.ChatResource
@@ -18,6 +17,7 @@ import uniffi.truapi.ChatRoomBadge
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
+import uniffi.truapi.ProductId
 
 // Maps the Chat Extension v2 values of the bindings to the chat models of the app, and back. The core
 // has bounded and screened every value before the bridge sees it.

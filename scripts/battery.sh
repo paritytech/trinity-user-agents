@@ -16,8 +16,6 @@
 #   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
 #
 # Environment:
-#   E2E_LIVE_CHAIN=1              widen routing to endpoints the preset carries
-#                                 without serving as a role (none on paseo-next-v2)
 #   HOST_CLI_SIGNER_MNEMONIC      reuse a known signer instead of an auto-managed account
 #   BATTERY_PHASE_TIMEOUT         seconds before a phase is killed (default 900)
 #   BATTERY_PAIRING_TIMEOUT       seconds to wait for the pairing link (default 120)

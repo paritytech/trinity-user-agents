@@ -44,14 +44,15 @@ public struct AssetDetailsBalanceCard: View {
 
                     Spacer()
 
-                    if !isExpanded, let balance = viewModel.balance {
+                    if let balance = viewModel.balance {
                         DSAmount(amount: balance, symbol: viewModel.symbol, typography: .titleLarge)
                             .foregroundStyle(Color.fgStaticWhite)
-                            .transition(.opacity)
+                            .opacity(isExpanded ? 0 : 1)
+                            .animation(.easeInOut, value: isExpanded)
+                            .accessibilityHidden(isExpanded)
                             .accessibilityId(AccessibilityID.Wallet.cashCardBalance)
                     }
                 }
-                .animation(.easeInOut, value: isExpanded)
                 Spacer()
 
                 if isUpdating {

@@ -5,8 +5,8 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.RingVrfDe
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ringVrfPath
+import uniffi.truapi.ProductId
 
 class ReservedRingVrfDerivationProvider(
     private val dotNsTldProvider: DotNsTldProvider,

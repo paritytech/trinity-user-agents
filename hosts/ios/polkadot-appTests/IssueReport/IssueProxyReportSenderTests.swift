@@ -7,7 +7,8 @@ struct IssueProxyReportSenderTests {
     private let report = IssueReport(
         description: "The screen froze 🐛",
         logs: Data([0x50, 0x4B, 0x03, 0x04]),
-        screenshot: Data([0x89, 0x50, 0x4E, 0x47])
+        screenshot: Data([0x89, 0x50, 0x4E, 0x47]),
+        gitHubUsername: GitHubUsername("octocat")
     )
 
     @Test func postsAuthenticatedProxyMultipart() async throws {
@@ -29,6 +30,7 @@ struct IssueProxyReportSenderTests {
 
         - App ID: `\(Bundle.main.bundleIdentifier ?? "Unknown")`
         - App version: `\(Bundle.main.appVersion ?? "Unknown")`
+        - GitHub username: @octocat
         - Build: `\(Bundle.main.appBuild ?? "Unknown")`
         """
         var body = Data((

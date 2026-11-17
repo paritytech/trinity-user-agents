@@ -54,6 +54,7 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func unblockUser()
     func acceptChatRequest()
     func declineChatRequest()
+    func cancelChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
     /// The room screen shows the room: a product room holds its product.
@@ -109,6 +110,12 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
 
     func dismissChat(from view: ControllerBackedProtocol?)
 
+    func showCancelChatRequestConfirmation(
+        from view: ControllerBackedProtocol?,
+        username: String,
+        delegate: ChatMoreActionsDelegate
+    )
+
     func showDocument(at url: URL)
 
     func showImagePicker(
@@ -140,4 +147,5 @@ protocol ChatAttachmentPreviewDelegate: AnyObject {
 protocol ChatMoreActionsDelegate: AnyObject {
     func didConfirmLeaveChat()
     func didConfirmBlockUser()
+    func didConfirmCancelChatRequest()
 }

@@ -9,7 +9,11 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::platform::ProductId;
+use crate::{
+	host_internal::bulletin::BulletinCid,
+	image_loader::{ImageFormat, ImageReference},
+	platform::ProductId,
+};
 
 /// Manifest schema version this core parses.
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -33,16 +37,14 @@ pub enum Granted {
 	Unrecognised,
 }
 
-/// Manifest JSON for tests. Only `$v` and `trustedProducts` are modelled, so a
-/// fixture carrying the display name, description and icon a publisher also
-/// writes would be exercising serde's tolerance rather than this parser.
+/// Manifest JSON for tests, with only `$v` and `trustedProducts`.
 #[cfg(test)]
 pub fn test_manifest_json(trusted: &str) -> String {
 	format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)
 }
 
 /// The product-wide manifest published at a base name's `manifest` text record.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct RootManifest {
 	/// Schema version. A version this core does not know makes the product
 	/// undiscoverable rather than malformed.
@@ -52,6 +54,67 @@ pub struct RootManifest {
 	/// with no TLD suffix.
 	#[serde(default, rename = "trustedProducts")]
 	pub trusted_products: BTreeMap<String, Vec<Granted>>,
+}
+
+/// How a product is shown: the name and icon its root manifest gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ProductBrand {
+	/// The product's name, never blank.
+	pub display_name: String,
+	/// Its icon, for `load_image`. `None` when the manifest's icon has a CID
+	/// that does not parse or a format other than `png` or `jpeg`, which
+	/// costs the product its icon and nothing else.
+	pub icon: Option<ImageReference>,
+}
+
+/// The fields of a root manifest a brand is read from.
+#[derive(Deserialize)]
+struct PublishedBrand {
+	#[serde(rename = "$v")]
+	schema_version: u32,
+	#[serde(rename = "displayName")]
+	display_name: Option<String>,
+	description: Option<String>,
+	icon: Option<PublishedIcon>,
+}
+
+#[derive(Deserialize)]
+struct PublishedIcon {
+	cid: Option<String>,
+	format: Option<String>,
+}
+
+impl ProductBrand {
+	/// The brand of a root manifest, under the RFC's schema: `$v` 1, a
+	/// non-blank `displayName`, a `description` and an `icon` with a `cid` and
+	/// a `format`. A manifest that breaks any of these gives no brand. The
+	/// icon itself is presentational, so one that cannot be loaded leaves
+	/// only the icon out.
+	pub fn parse(json: &str) -> Result<Self, ManifestParseError> {
+		let published: PublishedBrand = serde_json::from_str(json)?;
+		if published.schema_version != SUPPORTED_SCHEMA_VERSION {
+			return Err(ManifestParseError::UnsupportedSchemaVersion(published.schema_version));
+		}
+		let display_name = published
+			.display_name
+			.filter(|name| !name.trim().is_empty())
+			.ok_or(ManifestParseError::Missing("displayName"))?;
+		published.description.ok_or(ManifestParseError::Missing("description"))?;
+		let icon = published.icon.ok_or(ManifestParseError::Missing("icon"))?;
+		let (Some(cid), Some(format)) = (icon.cid, icon.format) else {
+			return Err(ManifestParseError::Missing("icon cid and format"));
+		};
+		let declared_format = match format.to_ascii_lowercase().as_str() {
+			"png" => Some(ImageFormat::Png),
+			"jpeg" => Some(ImageFormat::Jpeg),
+			_ => None,
+		};
+		let icon = declared_format
+			.zip(cid.parse::<BulletinCid>().ok())
+			.map(|(format, cid)| ImageReference::Bulletin { cid, declared_format: Some(format) });
+		Ok(Self { display_name, icon })
+	}
 }
 
 /// A manifest that cannot be decoded or uses an unsupported schema.
@@ -64,6 +127,9 @@ pub enum ManifestParseError {
 	/// The manifest names a schema this core cannot read.
 	#[display("manifest schema version {_0} is not supported")]
 	UnsupportedSchemaVersion(#[error(not(source))] u32),
+	/// The manifest lacks a field its schema requires, or leaves it blank.
+	#[display("manifest has no usable {_0}")]
+	Missing(#[error(not(source))] &'static str),
 }
 
 impl RootManifest {
@@ -98,116 +164,4 @@ impl RootManifest {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	fn manifest(trusted: &str) -> RootManifest {
-		RootManifest::parse(&test_manifest_json(trusted)).expect("fixture parses")
-	}
-
-	#[test]
-	fn a_named_scope_is_granted_only_to_the_product_named() {
-		let root = manifest(r#"{"dim2":["storage"]}"#);
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(!root.grants(&ProductId::for_test("stash.dot"), Granted::Storage));
-	}
-
-	#[test]
-	fn scopes_are_independent() {
-		// `storage` must leave account interactions prompting as usual.
-		let root = manifest(r#"{"dim2":["storage"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
-	}
-
-	#[test]
-	fn all_satisfies_every_narrower_scope() {
-		let root = manifest(r#"{"dim2":["all"]}"#);
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
-	}
-
-	#[test]
-	fn an_unrecognised_grant_is_ignored_and_its_neighbours_still_apply() {
-		// The RFC forbids failing validation over a value defined after this
-		// core was built.
-		let root = manifest(r#"{"dim2":["storage-write","storage"]}"#);
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
-	}
-
-	#[test]
-	fn an_entry_of_only_unrecognised_grants_grants_nothing() {
-		let root = manifest(r#"{"dim2":["storage-write"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
-	}
-
-	#[test]
-	fn an_unrecognised_scope_is_never_granted() {
-		// The runtime asks with a `Granted`, so nothing in the type system stops
-		// it asking for `Unrecognised`. A manifest full of values this core does
-		// not know must still answer no.
-		let root = manifest(r#"{"dim2":["storage-write"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Unrecognised));
-
-		let wildcard = manifest(r#"{"dim2":["all"]}"#);
-		assert!(!wildcard.grants(&ProductId::for_test("dim2.dot"), Granted::Unrecognised));
-	}
-
-	#[test]
-	fn a_grant_of_the_wrong_shape_still_fails_the_document() {
-		// Unrecognised means "a value this core does not know", not "anything at
-		// all". A grant list holding a number is a malformed manifest, and the
-		// publisher is told so rather than silently granted less than they wrote.
-		assert!(
-			RootManifest::parse(
-				r#"{"$v":1,"displayName":"D","description":"d",
-                    "icon":{"cid":"c","format":"png"},"trustedProducts":{"dim2":[17]}}"#
-			)
-			.is_err()
-		);
-	}
-
-	#[test]
-	fn a_key_written_with_a_tld_suffix_is_inert() {
-		// It names `dim2.dot.<tld>`, which does not exist, so the caller `dim2`
-		// matches nothing.
-		let root = manifest(r#"{"dim2.dot":["storage"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-	}
-
-	#[test]
-	fn an_absent_trusted_products_field_grants_nothing() {
-		let root = RootManifest::parse(
-			r#"{"$v":1,"displayName":"D","description":"d","icon":{"cid":"c","format":"png"}}"#,
-		)
-		.expect("manifest without trustedProducts parses");
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-	}
-
-	#[test]
-	fn an_unknown_schema_version_is_refused() {
-		assert!(RootManifest::parse(r#"{"$v":2,"trustedProducts":{}}"#).is_err());
-	}
-
-	#[test]
-	fn malformed_json_is_refused() {
-		assert!(RootManifest::parse("not json").is_err());
-	}
-
-	#[test]
-	fn an_executable_inherits_the_grants_published_for_its_product() {
-		let manifest = RootManifest::parse(r#"{"$v":1,"trustedProducts":{"dim2":["storage"]}}"#)
-			.expect("parses");
-		assert!(manifest.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(manifest.grants(&ProductId::for_test("app.dim2.dot"), Granted::Storage));
-		assert!(manifest.grants(&ProductId::for_test("worker.dim2.dot"), Granted::Storage));
-	}
-
-	#[test]
-	fn a_subname_of_another_domain_collects_nothing_published_for_its_first_segment() {
-		let manifest = RootManifest::parse(r#"{"$v":1,"trustedProducts":{"dim2":["storage"]}}"#)
-			.expect("parses");
-		assert!(!manifest.grants(&ProductId::for_test("dim2.attacker.dot"), Granted::Storage));
-	}
-}
+mod tests;

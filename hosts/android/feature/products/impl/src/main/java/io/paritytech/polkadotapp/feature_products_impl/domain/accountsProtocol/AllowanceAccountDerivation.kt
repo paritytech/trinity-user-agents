@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol
 import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
 import io.paritytech.polkadotapp.feature_account_api.domain.usecase.AccountDerivationUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 enum class AllowanceSystem(val slug: String) {

@@ -4,7 +4,6 @@ plugins {
     id("polkadotapp.android.application")
     id("polkadotapp.android.compose")
     id("polkadotapp.android.hilt")
-    alias(libs.plugins.firebase.crashlytics)
     alias(libs.plugins.google.services)
     alias(libs.plugins.sentry.android.gradle)
 }
@@ -182,10 +181,6 @@ dependencies {
     implementation(project(":tools:media-connection:api"))
     // Endregion tools
 
-    "gpImplementation"(platform(libs.firebase.bom))
-    "gpImplementation"(libs.firebase.crashlytics)
-    "gpImplementation"(libs.firebase.analytics)
-
     "gpImplementation"(libs.google.play.services.mlkit)
     "vanillaImplementation"(libs.google.mlkit.barcode.scanning)
 
@@ -194,6 +189,9 @@ dependencies {
     testImplementation(libs.squareup.okhttp3.mockwebserver)
     testImplementation(libs.squareup.okhttp3.tls)
 
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
@@ -231,3 +229,5 @@ sentry {
 configurations.configureEach {
     exclude(group = "io.sentry", module = "sentry-android-timber")
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

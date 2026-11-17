@@ -15,6 +15,7 @@ codegen_required=(
   "js/packages/truapi/src/playground/codegen/services.ts"
   "js/packages/truapi/src/explorer/codegen/types.ts"
   "js/packages/truapi/src/explorer/versions.ts"
+  "js/packages/truapi-host/src/generated/markers.ts"
   "rust/crates/truapi/src/generated/mod.rs"
   "rust/crates/truapi/src/generated/dispatcher.rs"
   "rust/crates/truapi/src/generated/wire_table.rs"

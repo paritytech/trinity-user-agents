@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Where a product's chat worker is served from: its own subname when a worker manifest declares

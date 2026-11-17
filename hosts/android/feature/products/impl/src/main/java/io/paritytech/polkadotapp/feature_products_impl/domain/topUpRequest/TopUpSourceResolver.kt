@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.ProductAccountDerivationUseCase
 import io.paritytech.polkadotapp.feature_transactions.api.data.origins.SignedOrigins
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -18,7 +18,7 @@ class TopUpSourceResolver @Inject constructor(
 ) {
     suspend fun resolve(productId: ProductId, source: PaymentTopUpSource): Result<TopUpSource> = when (source) {
         is PaymentTopUpSource.ProductAccount -> {
-            val productAccountId = ProductAccountId(productId = productId.value, index = source.index)
+            val productAccountId = ProductAccountId(productId = productId, index = source.index)
 
             productAccountDerivationUseCase.deriveTransactionSignerSource(productAccountId)
                 .map { TopUpSource.Onboard(it) }

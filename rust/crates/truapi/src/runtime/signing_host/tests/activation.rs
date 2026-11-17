@@ -1,5 +1,65 @@
 use super::*;
 
+/// A product reset concerns that product's grants, not the wallet: account
+/// work already under way survives it, while a lock or a wallet change ends it.
+#[test]
+fn pending_account_access_tracks_wallet_activation() {
+	use futures::FutureExt;
+	use truapi::versioned::account::HostAccountGetError;
+
+	for change in ["lock", "reactivate", "reset"] {
+		let (release, gate) = futures::channel::oneshot::channel();
+		let platform = Arc::new(StubPlatform {
+			account_access_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+			permission_confirmation_decisions: std::sync::Mutex::new(
+				[crate::platform::PermissionDecision::AllowOnce].into(),
+			),
+			..StubPlatform::default()
+		});
+		let (services, authority) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let session = authority.accounts().current_session().unwrap();
+		let runtime = product_runtime(services, authority.clone());
+		let cx = CallContext::default();
+		let account = runtime.get_account(
+			&cx,
+			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+				product_account_id: v01::ProductAccountId {
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
+					derivation_index: v01::DerivationIndex::Index(0),
+				},
+			}),
+		);
+		futures::pin_mut!(account);
+		assert!(account.as_mut().now_or_never().is_none());
+		match change {
+			"lock" => futures::executor::block_on(authority.disconnect()),
+			"reactivate" => {
+				futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+					.unwrap();
+			},
+			"reset" => authority.clear_product_state(&ProductId::for_test("myapp.dot")),
+			_ => unreachable!(),
+		}
+		release.send(()).unwrap();
+		let expected = if change == "reset" {
+			Ok(())
+		} else {
+			Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected)))
+		};
+		assert_eq!(
+			(
+				futures::executor::block_on(account).map(|_| ()),
+				authority.accounts().current_session().map(|current| current.validation_id) ==
+					Some(session.validation_id),
+				platform.account_access_reviews.lock().unwrap().len(),
+			),
+			(expected, change == "reset", 1),
+			"{change}",
+		);
+	}
+}
+
 /// Allow once lasts for one unlocked wallet and one installed product: lock,
 /// a wallet switch and a product reset each make the next request ask again.
 #[test]

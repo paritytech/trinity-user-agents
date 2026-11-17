@@ -62,7 +62,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
         ] as const) {
             const request: HostSignPayloadRequest = {
                 account: {
-                    dotNsIdentifier: "myapp.dot",
+                    dotNsIdentifier: T.asProductId("myapp.dot"),
                     derivationIndex: { tag: "Index", value: 7 },
                 },
                 payload: {
@@ -161,7 +161,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
             tag: "V1",
             value: {
                 productAccountId: {
-                    dotNsIdentifier: "foo",
+                    dotNsIdentifier: T.asProductId("foo"),
                     derivationIndex: { tag: "Index", value: 0 },
                 },
             },
@@ -211,6 +211,17 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
         expect(decoded.payload.methodId).toBe(W.LOCAL_STORAGE_READ.method);
         expect(decoded.payload.messageType).toBe(MESSAGE_TYPE_REQUEST);
         expect(toHex(decoded.payload.value)).toBe(toHex(inner));
+    });
+
+    // Rust pins the same bytes in `v01::renderer` tests. Index 10 stays
+    // unused, so neither side may fall back to position.
+    it("encodes a Materials node at the index Rust reads and refuses index 10", () => {
+        const node: T.RendererNode = {
+            tag: "Materials",
+            value: { props: { layers: [] }, children: [] },
+        };
+        expect(toHex(T.RendererNode.enc(node))).toBe("0b0000");
+        expect(() => T.RendererNode.dec(new Uint8Array([10, 0, 0]))).toThrow();
     });
 
     it("rejects an invalid outbound trait discriminant", () => {

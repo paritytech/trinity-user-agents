@@ -18,7 +18,7 @@
     "test:scripts": "node --test scripts/lib/*.test.mjs",
     "lint": "npm run format:check && npm run typecheck",
     "changeset": "changeset",
-    "version-packages": "changeset version && npm run sync-release-versions && npm install --package-lock-only --ignore-scripts",
+    "version-packages": "changeset version && npm run sync-release-versions && npm install --package-lock-only --ignore-scripts && cargo update --workspace",
     "sync-release-versions": "node scripts/sync-release-versions.mjs",
     "check-release-versions": "node scripts/sync-release-versions.mjs --check"
   },

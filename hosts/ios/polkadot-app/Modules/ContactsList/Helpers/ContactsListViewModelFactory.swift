@@ -16,7 +16,7 @@ protocol ContactsListViewModelMaking {
 final class ContactsListViewModelFactory {
     let messageTimestampFormatter: TimestampFormatting
     let chatMessageDecoderFactory: ChatMessageDecoderMaking
-    let productIconViewModelFactory: ProductIconViewModelMaking
+    let iconViewModelFactory: ChatIconViewModelFactory
     let chain: ChainModel
     let tokenFormatter: (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     private var _tokenFormatter: TransferAmountViewModelFactoryProtocol?
@@ -24,13 +24,13 @@ final class ContactsListViewModelFactory {
     init(
         messageTimestampFormatter: TimestampFormatting = ContactTimestampFormatter(),
         chatMessageDecoderFactory: ChatMessageDecoderMaking,
-        productIconViewModelFactory: ProductIconViewModelMaking,
+        iconViewModelFactory: ChatIconViewModelFactory,
         chain: ChainModel,
         tokenFormatter: @escaping (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     ) {
         self.messageTimestampFormatter = messageTimestampFormatter
         self.chatMessageDecoderFactory = chatMessageDecoderFactory
-        self.productIconViewModelFactory = productIconViewModelFactory
+        self.iconViewModelFactory = iconViewModelFactory
         self.chain = chain
         self.tokenFormatter = tokenFormatter
     }
@@ -71,7 +71,7 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             let configuration = DSChatListItemConfiguration(
                 dateFormatter: messageTimestampFormatter,
                 avatarViewModel: avatarViewModel,
-                icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
+                icon: iconViewModelFactory.createViewModel(from: peerMetadata.icon),
                 sender: peerMetadata.name,
                 message: activity?.text ?? lastMessage,
                 messageKind: activity == nil ? messageKind(for: chat.message) : .default,
@@ -346,8 +346,8 @@ private extension ContactsListViewModelFactory {
                 .active
             case let .finished(duration):
                 .finished(duration: formatCallDuration(duration))
-            case let .cancelled(duration):
-                .cancelled(ringDuration: formatCallDuration(duration))
+            case .cancelled:
+                .cancelled
             case .missed:
                 .missed
             }

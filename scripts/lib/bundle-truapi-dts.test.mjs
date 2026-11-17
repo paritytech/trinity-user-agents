@@ -30,7 +30,7 @@ test("playground declarations expose the SDK without container or debugger inter
     "generated/index.d.ts":
       'export * from "./types.js";\nexport * from "./client.js";\n',
     "generated/types.d.ts":
-      'import * as S from "../scale.js";\nexport interface RemotePermissionRequest { domain: string; }\n',
+      'import * as S from "../scale.js";\nexport interface RemotePermissionRequest { domain: string; }\ndeclare const productIdBrand: unique symbol;\nexport type ProductId = string & { readonly [productIdBrand]: true };\n',
     "generated/client.d.ts":
       'import * as T from "./types.js";\nexport declare function requestRemotePermission(request: T.RemotePermissionRequest): void;\n',
     "generated/internal.d.ts":
@@ -59,6 +59,8 @@ test("playground declarations expose the SDK without container or debugger inter
     "export import RemotePermissionRequest = T.RemotePermissionRequest": true,
     "function requestRemotePermission": true,
     "type Codec<T>": true,
+    "const productIdBrand: unique symbol": true,
+    "declare const productIdBrand": false,
     authorizeRemotePermission: false,
     PERMISSIONS_AUTHORIZE_REMOTE_PERMISSION: false,
     WIRE_DECODE_TABLE: false,

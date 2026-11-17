@@ -1,15 +1,19 @@
+@file:UseSerializers(ProductIdSerializer::class)
+
 package io.paritytech.polkadotapp.feature_sso_impl.data.model.scale.session
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.annotations.EnumIndex
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.annotations.WithLength32
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.types.BSResult
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.feature_products_api.model.ProductIdSerializer
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductAccountIdScale
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductDerivationIndexScale
-import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductIdScale
 import io.paritytech.polkadotapp.feature_products_api.model.scale.RingLocationScale
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequestId
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.UseSerializers
+import uniffi.truapi.ProductId
 
 /**
  * Union of SSO message types that can be exchanged between wallet and host.
@@ -34,7 +38,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(3)
     class RingVrfAliasRequest(
-        val callingProductId: ProductIdScale,
+        val callingProductId: ProductId,
         val keyHandle: ProductAccountIdScale,
         val context: ProductProofContextScale,
         val ring: RingLocationScale,
@@ -89,7 +93,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(12)
     class RingVrfProofRequest(
-        val callingProductId: ProductIdScale,
+        val callingProductId: ProductId,
         val keyHandle: ProductAccountIdScale,
         val context: ProductProofContextScale,
         val ring: RingLocationScale,
@@ -106,7 +110,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(14)
     class SignVrfRequest(
-        val callingProductId: ProductIdScale,
+        val callingProductId: ProductId,
         val account: ProductAccountIdScale,
         val transcriptLabel: DataByteArray,
         val items: List<VrfTranscriptItemScale>,
@@ -125,7 +129,7 @@ sealed class SsoMessageContent {
      */
     @Serializable
     @EnumIndex(16)
-    class ProductSubtreeRequest(val productId: ProductIdScale) : SsoMessageContent()
+    class ProductSubtreeRequest(val productId: ProductId) : SsoMessageContent()
 
     @Serializable
     @EnumIndex(17)
@@ -139,7 +143,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(18)
     class RegisterRingVrfKeyRequest(
-        val callingProductId: ProductIdScale,
+        val callingProductId: ProductId,
         val index: ProductDerivationIndexScale,
         val ring: RingLocationScale,
     ) : SsoMessageContent()
@@ -154,8 +158,8 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(20)
     class ListRingVrfKeysRequest(
-        val callingProductId: ProductIdScale,
-        val owner: ProductIdScale,
+        val callingProductId: ProductId,
+        val owner: ProductId,
         val disclosure: RingVrfKeyDisclosureScale,
     ) : SsoMessageContent()
 
@@ -169,7 +173,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(22)
     class RingVrfSignRequest(
-        val callingProductId: ProductIdScale,
+        val callingProductId: ProductId,
         val keyHandle: ProductAccountIdScale,
         val message: DataByteArray,
     ) : SsoMessageContent()

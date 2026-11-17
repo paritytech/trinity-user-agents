@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 @testable import Products
 
@@ -7,8 +8,8 @@ struct ProductWorkerSourceTests {
     @Test func servesAPublishedWorkerThatIncludesTheModality() throws {
         let resolved = product(worker: worker(modalities: [.chat, .pocket([])]))
 
-        #expect(ProductWorkerSource.published(for: resolved, serving: .chat)?.contentId == "worker.game.dot")
-        #expect(ProductWorkerSource.published(for: resolved, serving: .pocket)?.contentId == "worker.game.dot")
+        #expect(ProductWorkerSource.published(for: resolved, serving: .chat)?.contentId.rawValue == "worker.game.dot")
+        #expect(ProductWorkerSource.published(for: resolved, serving: .pocket)?.contentId.rawValue == "worker.game.dot")
     }
 
     /// A worker that does not declare the modality serves none of it. Falling
@@ -28,14 +29,14 @@ struct ProductWorkerSourceTests {
 
         #expect(ProductWorkerSource.published(for: resolved, serving: .pocket) == nil)
         #expect(
-            ProductWorkerSource.installedByHand(for: resolved, entryPath: { _ in "bot.js" })?.contentId == "game.dot"
+            ProductWorkerSource.installedByHand(for: resolved, entryPath: { _ in "bot.js" })?.contentId.rawValue == "game.dot"
         )
         #expect(ProductWorkerSource.installedByHand(for: resolved, entryPath: { _ in nil }) == nil)
     }
 
     private func worker(modalities: [ProductExecutable.Worker.Modality]) -> ProductExecutable.Worker {
         ProductExecutable.Worker(
-            identifier: "worker.game.dot",
+            identifier: try! ProductId("worker.game.dot"),
             appVersion: SemVer(major: 1, minor: 0, patch: 0, build: nil),
             entrypoint: "index.js",
             modalities: modalities
@@ -44,7 +45,7 @@ struct ProductWorkerSourceTests {
 
     private func product(worker: ProductExecutable.Worker?) -> ResolvedProduct {
         ResolvedProduct(
-            id: "game.dot",
+            id: try! ProductId("game.dot"),
             displayName: "Game",
             description: nil,
             icon: nil,

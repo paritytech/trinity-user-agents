@@ -4,6 +4,7 @@ struct IssueReport: Sendable {
     let description: String
     let logs: Data
     let screenshot: Data
+    let gitHubUsername: GitHubUsername?
 }
 
 protocol IssueReportSending: Sendable {
@@ -93,15 +94,13 @@ private extension IssueProxyReportSender {
     }()
 
     func multipart(_ report: IssueReport, boundary: String) -> Data {
-        let description = """
-        \(report.description)
-
-        ## App information
-
-        - App ID: `\(Bundle.main.bundleIdentifier ?? "Unknown")`
-        - App version: `\(Bundle.main.appVersion ?? "Unknown")`
-        - Build: `\(Bundle.main.appBuild ?? "Unknown")`
-        """
+        let appInformation = [
+            "- App ID: `\(Bundle.main.bundleIdentifier ?? "Unknown")`",
+            "- App version: `\(Bundle.main.appVersion ?? "Unknown")`",
+            report.gitHubUsername.map { "- GitHub username: @\($0.value)" },
+            "- Build: `\(Bundle.main.appBuild ?? "Unknown")`"
+        ].compactMap { $0 }.joined(separator: "\n")
+        let description = "\(report.description)\n\n## App information\n\n\(appInformation)"
         var body = Data()
         func append(_ headers: String, data: Data) {
             body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; \(headers)\r\n\r\n".utf8))

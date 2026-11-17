@@ -14,7 +14,7 @@ use crate::{
 /// comes back as text. A product that needs the camera for anything else keeps
 /// using `getUserMedia` under the `Camera` permission.
 #[wire_trait(id = 25)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Scanner: Send + Sync {
 	/// Ask the host to let the user scan one code.
 	///

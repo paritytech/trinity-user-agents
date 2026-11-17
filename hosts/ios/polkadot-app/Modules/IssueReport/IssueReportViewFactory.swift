@@ -1,4 +1,5 @@
 import DesignSystem
+import Keystore_iOS
 import SwiftUI
 import UIKit
 
@@ -10,7 +11,8 @@ enum IssueReportViewFactory {
             makeLogsDraft: { LogsEmailDraftFactory(archiveURL: $0).makeLogsDraft() },
             sender: IssueProxyReportSender(configuration: {
                 try await FirebaseFacade.shared.asyncWaitIssueProxyConfiguration()
-            })
+            }),
+            settingsManager: SettingsManager.shared
         )
         let controller = UIHostingController(rootView: IssueReportViewLayout(
             viewModel: viewModel,

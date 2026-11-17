@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 
@@ -118,7 +119,7 @@ private extension ProductResourceKeyManager {
             Self.domain,
             storeIdProvider.getStoreId(),
             Self.namespace,
-            productId,
+            productId.rawValue,
             kind.rawValue
         ]
         .joined(separator: ":")

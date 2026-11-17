@@ -69,14 +69,6 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         subscribeToRecoveredBalance()
     }
 
-    func triggerSync() {
-        coinageBackupSyncService.triggerRecovery()
-    }
-
-    func cancelBackupNotification() {
-        coinageBackupSyncService.acknowledgeRecovery()
-    }
-
     func openTopUpProduct() {
         topUpProductTask?.cancel()
         topUpProductTask = Task { [weak presenter, fundingDomainProvider] in
@@ -107,7 +99,12 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
                     try await backgroundExecutor.execute {
                         try await markStallActivity("Topup") {
                             try await topupService.topUp(depositWallet, amount: .plank(amount))
-                            try await coinageService.loadVouchers(amount: amount, externalAssetHolder: depositWallet)
+                            _ = try await markStallRegion("Loading vouchers") {
+                                try await coinageService.loadVouchers(
+                                    amount: amount,
+                                    externalAssetHolder: depositWallet
+                                )
+                            }
                         }
                     }
 

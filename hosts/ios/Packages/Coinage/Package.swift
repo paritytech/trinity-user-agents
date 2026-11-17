@@ -14,6 +14,7 @@ let package = Package(
         )
     ],
     dependencies: [
+        .package(name: "trinity-user-agents", path: "../../../.."),
         .package(
             url: "https://github.com/novasamatech/Keystore-iOS",
             from: "1.0.1"
@@ -74,6 +75,7 @@ let package = Package(
         .target(
             name: "Coinage",
             dependencies: [
+                .product(name: "TrUAPIHost", package: "trinity-user-agents"),
                 .product(name: "Keystore-iOS", package: "keystore-ios"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
                 .product(name: "SubstrateStorageSubscription", package: "substrate-sdk-ios"),

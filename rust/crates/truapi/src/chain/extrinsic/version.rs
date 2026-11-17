@@ -62,7 +62,7 @@ fn host_default(
 }
 
 /// Whether pipeline `extension_version` lists `extension`.
-pub fn pipeline_declares(
+fn pipeline_declares(
 	metadata: &Metadata,
 	extension_version: u8,
 	extension: &str,

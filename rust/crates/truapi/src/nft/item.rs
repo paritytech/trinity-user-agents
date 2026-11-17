@@ -41,7 +41,7 @@ pub enum AllocateItemsError {
 
 /// Which page of a purse's items to read. Its size is already checked
 /// against the bounds a call allows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct PageRequest {
 	/// Zero-based page index.
 	pub index: u32,

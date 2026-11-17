@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 import KeyDerivation
@@ -16,8 +17,7 @@ enum DefaultProductWorkerFactoryError: Error {
 /// chat bot used inline before unification, now sourced by product id so SPA,
 /// operations and chat all keep the one shared instance alive.
 final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendable {
-    private let productResolver: ProductResolving
-    private let dotNsResolver: DotNsResolverProtocol
+    private let contentLoader: ProductContentLoading
     private let productFileProvider: ChatProductFileProviding
     private let nativeScriptsFactory: ChatScriptsMaking
     private let chainRegistry: ChainRegistryProtocol
@@ -33,8 +33,7 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
     private let logger: LoggerProtocol
 
     init(
-        productResolver: ProductResolving,
-        dotNsResolver: DotNsResolverProtocol,
+        contentLoader: ProductContentLoading,
         productFileProvider: ChatProductFileProviding,
         chainRegistry: ChainRegistryProtocol,
         usernameStorage: UsernameStoring,
@@ -49,8 +48,7 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
         vrfRepo: BandersnatchManagerRepositoryProtocol = .shared,
         logger: LoggerProtocol = Logger.shared
     ) {
-        self.productResolver = productResolver
-        self.dotNsResolver = dotNsResolver
+        self.contentLoader = contentLoader
         self.productFileProvider = productFileProvider
         self.chainRegistry = chainRegistry
         self.usernameStorage = usernameStorage
@@ -67,13 +65,11 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
     }
 
     func startWorker(productId: ProductId) async throws -> ProductWorkerRunning {
-        let resolved = await resolve(productId)
+        let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
 
         guard let source = workerSource(for: resolved) else {
             throw DefaultProductWorkerFactoryError.noWorker(productId)
         }
-
-        await warmWorkerArchive(of: resolved)
 
         let engineContext = try ChatProductEngineFactory.makeContext(
             source: source,
@@ -144,31 +140,10 @@ private extension DefaultProductWorkerFactory {
         return (concrete, routers)
     }
 
-    /// Mirrors ``ProductBotProvider`` resolution: a malformed manifest yields no
-    /// worker, a name that cannot be read degrades to the legacy shape.
-    func resolve(_ productId: ProductId) async -> ResolvedProduct {
-        do {
-            return try await productResolver.resolve(productId)
-        } catch {
-            logger.error("Worker resolve fell back to legacy for \(productId): \(error)")
-            return .legacy(id: productId)
-        }
-    }
-
     func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
         ProductWorkerSource.published(for: resolved, serving: .chat)
             ?? ProductWorkerSource.installedByHand(for: resolved) {
                 productFileProvider.manualScriptEntryPath(productId: $0)
             }
-    }
-
-    func warmWorkerArchive(of resolved: ResolvedProduct) async {
-        guard let published = ProductWorkerSource.published(for: resolved, serving: .chat) else { return }
-
-        do {
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
-        } catch {
-            logger.error("Failed to warm the worker archive \(published.contentId): \(error)")
-        }
     }
 }

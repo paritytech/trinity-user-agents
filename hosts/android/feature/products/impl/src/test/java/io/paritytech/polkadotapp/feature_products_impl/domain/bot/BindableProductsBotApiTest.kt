@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
@@ -18,9 +17,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 
 class BindableProductsBotApiTest {
-    private val productId = ProductId.fromStoredValue("coinflip.dot")
+    private val productId = ProductId.parse("coinflip.dot").getOrThrow()
     private val hostApiInteractor: HostApiInteractor = mock()
     private val chatIdParam = ProductChatIdParameter("room")
 
