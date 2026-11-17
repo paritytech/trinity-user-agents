@@ -29,6 +29,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import uniffi.truapi.BundledStack
+import uniffi.truapi.CoinageConfig
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.PinnedPocketCard
@@ -42,6 +43,7 @@ class TrUAPIHostRuntimeProviderTest {
     private val runtimeConfig = slot<HostRuntimeConfig>()
     private val paseo = requireNotNull(DotNsTld.parse("paseo"))
     private val pinnedHumanity = listOf(PinnedPocketCard(personhoodProduct, "humanity", "humanity"))
+    private val coinageConfig = mockk<CoinageConfig>()
 
     @Before
     fun captureRuntimeConfig() {
@@ -98,6 +100,20 @@ class TrUAPIHostRuntimeProviderTest {
         )
     }
 
+    // The coinage layer keeps the wallet's coins under the session's keys, so it has nothing to run on without one.
+    @Test
+    fun `turns the core's coinage on only for a wallet with a session`() = runTest {
+        val started = mapOf(
+            "with session" to Result.success(TrUAPILocalSession(secret = byteArrayOf(1), liteUsername = null)),
+            "without session" to Result.failure(IllegalStateException("no wallet")),
+        ).mapValues { (_, session) ->
+            provider(session = session).runtime().getOrThrow()
+            runtimeConfig.captured.coinage
+        }
+
+        assertEquals(mapOf("with session" to coinageConfig, "without session" to null), started)
+    }
+
     private data class StartedStack(val tld: String, val allowsReservedValues: Boolean)
 
     private fun BundledStack.tld(): String {
@@ -111,11 +127,12 @@ class TrUAPIHostRuntimeProviderTest {
         read: Result<DotNsTld> = Result.success(paseo),
         environment: TestnetEnvironment = TestnetEnvironment.NIGHTLY,
         pinnedPocketCards: PinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
+        session: Result<TrUAPILocalSession> = Result.failure(IllegalStateException()),
     ) = TrUAPIHostRuntimeProvider(
         context = context(),
         environment = environment,
         chainDirectory = mockk(relaxed = true),
-        localSessionSource = mockk { coEvery { resolve() } returns Result.failure(IllegalStateException()) },
+        localSessionSource = mockk { coEvery { resolve() } returns session },
         accountRepository = mockk { every { walletAccountFlow() } returns emptyFlow() },
         dotNsTldProvider = mockk {
             every { currentTldOrNull() } returns saved
@@ -127,9 +144,8 @@ class TrUAPIHostRuntimeProviderTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
-        paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
-        installations = mockk(),
+        coinageSetup = mockk { coEvery { config() } returns coinageConfig },
         extensionVersions = mockk(),
         pinnedPocketCards = pinnedPocketCards,
         workerSupervisor = { mockk(relaxed = true) },

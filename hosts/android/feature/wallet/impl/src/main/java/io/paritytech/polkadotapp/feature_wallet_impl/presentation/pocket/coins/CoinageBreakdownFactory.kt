@@ -2,8 +2,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHolding
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHolding
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.holdingKeyOrder
 
 /**

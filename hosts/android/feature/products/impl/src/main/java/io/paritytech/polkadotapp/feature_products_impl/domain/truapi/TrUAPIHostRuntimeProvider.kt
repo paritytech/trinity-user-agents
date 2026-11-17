@@ -16,9 +16,9 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
-import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.CoreCoinageSetup
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
@@ -76,9 +76,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
-    private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
-    private val installations: CurrentInstallationProvider,
+    private val coinageSetup: CoreCoinageSetup,
     private val extensionVersions: TrUAPIExtensionVersions,
     private val pinnedPocketCards: PinnedPocketCards,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
@@ -129,7 +128,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts or answers payments Unsupported.
         runtime.setContacts(contactsBridge)
-        paymentPlatforms.install(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
@@ -163,6 +161,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
+            coinage = localSession?.let { coinageSetup.config() },
         )
     }
 
@@ -236,9 +235,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
 
-        // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
+        // The core's coinage layer owns the installation NFT item keys derive under, so this is never asked.
         override suspend fun currentInstallation(): ByteArray =
-            installations.awaitBackedUp().getOrThrow().value.value
+            error("the core's coinage layer owns the installation")
 
         override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? = encryptedStorage.read(key)
 

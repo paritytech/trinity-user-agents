@@ -21,7 +21,6 @@ import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressParcel
 import io.paritytech.polkadotapp.feature_balances_api.presentation.provider.BalanceFlowAvailableBalanceProvider
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentPlan
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.StrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferPlan
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.amountinput.AmountInput
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.amountinput.AmountInputMixin
@@ -191,8 +190,7 @@ class SendEnterAmountViewModel @Inject constructor(
 
     private fun handleTransactionSuccess(state: SendState.Complete) {
         if (payload.showTransactionResult) {
-            val unfinalizedCoins = state.unfinalizedCoins?.map { it.value }
-            walletRouter.openSuccess(TransactionSuccessPayload(unfinalizedCoins))
+            walletRouter.openSuccess(TransactionSuccessPayload(state.unfinalizedExport?.value?.value))
         } else {
             walletRouter.back()
         }
@@ -250,58 +248,17 @@ private fun SendPlan.toDebugInfo(): SendPlanDebugInfo = when (this) {
     is SendPlan.External -> plan.toDebugInfo()
 }
 
-private fun TransferPlan.toDebugInfo(): SendPlanDebugInfo.Coinage {
-    val strategyName = when (strategyType) {
-        is StrategyType.ExactCoins -> "ExactCoins"
-        is StrategyType.Split -> "Split"
-        is StrategyType.UnloadAndSplit -> "UnloadAndSplit"
-    }
-    val details = buildList {
-        when (val st = strategyType) {
-            is StrategyType.UnloadAndSplit -> {
-                add("Vouchers to unload:")
-                st.vouchersToUnload.forEach { v ->
-                    add("  idx=${v.ringVrfKeyIndex.item}  exp=2^${v.recyclerValue.value}")
-                }
-            }
-
-            is StrategyType.Split -> {
-                add("Coins for split:")
-                add("  idx=${st.splitFrom.derivationIndex.item}  exp=2^${st.splitFrom.valueExponent.value}")
-            }
-
-            is StrategyType.ExactCoins -> Unit
-        }
-    }
-    return SendPlanDebugInfo.Coinage(strategyName = strategyName, details = details)
-}
+private fun TransferPlan.toDebugInfo() = SendPlanDebugInfo.Coinage(
+    strategyName = if (spendsGainingPrivacy) "SpendsGainingPrivacy" else "Private",
+    details = listOf("amount=$amount"),
+)
 
 private fun ExternalPaymentPlan.toDebugInfo(): SendPlanDebugInfo.External = when (this) {
-    is ExternalPaymentPlan.Ready -> SendPlanDebugInfo.External(
-        strategyName = "Ready",
-        details = listOf(
-            "vouchers=${offboarding.vouchers.size}",
-            "surplus=${offboarding.surplus.value}",
-        ),
-    )
+    ExternalPaymentPlan.Private -> SendPlanDebugInfo.External(strategyName = "Private", details = emptyList())
 
-    is ExternalPaymentPlan.LoadCoins -> SendPlanDebugInfo.External(
-        strategyName = "LoadCoins",
-        details = buildList {
-            add("coinsToLoad=${coinsToLoad.size}")
-            coinsToLoad.forEach { c ->
-                add("  idx=${c.derivationIndex.item}  exp=2^${c.valueExponent.value}")
-            }
-            add("exactVouchers=${exactVouchers.size}")
-        },
-    )
+    ExternalPaymentPlan.SpendsGainingPrivacy ->
+        SendPlanDebugInfo.External(strategyName = "SpendsGainingPrivacy", details = emptyList())
 
-    is ExternalPaymentPlan.NotEnoughAmount -> SendPlanDebugInfo.External(
-        strategyName = "NotEnoughAmount",
-        details = listOf(
-            "activeVouchers=${activeVouchers.value}",
-            "activeCoins=${activeCoins.value}",
-            "deficit=${deficitToCoverWithCoins.value}",
-        ),
-    )
+    is ExternalPaymentPlan.NotEnoughAmount ->
+        SendPlanDebugInfo.External(strategyName = "NotEnoughAmount", details = listOf("available=${available.value}"))
 }

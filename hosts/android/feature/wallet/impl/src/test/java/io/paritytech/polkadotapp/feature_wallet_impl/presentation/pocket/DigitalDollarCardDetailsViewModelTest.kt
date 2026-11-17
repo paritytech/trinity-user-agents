@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageTestnetFundUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
@@ -39,8 +38,6 @@ class DigitalDollarCardDetailsViewModelTest {
     private val coinageBackupService: CoinageBackupService = mock(CoinageBackupService::class.java)
     private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mock(ShareCoinageLogsUseCase::class.java)
     private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mock(CoinageHoldingsUseCase::class.java)
-    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase =
-        mock(CoinageBalanceConverterUseCase::class.java)
     private val router: PocketRouter = mock(PocketRouter::class.java)
     private val tokenAmountMapper: TokenAmountMapper = mock(TokenAmountMapper::class.java)
 
@@ -53,8 +50,7 @@ class DigitalDollarCardDetailsViewModelTest {
         coinageBackupService = coinageBackupService,
         shareCoinageLogsUseCase = shareCoinageLogsUseCase,
         fundingDomainProvider = fundingDomainProvider,
-        coinageHoldingsUseCase = coinageHoldingsUseCase,
-        coinageBalanceConverterUseCase = coinageBalanceConverterUseCase
+        coinageHoldingsUseCase = coinageHoldingsUseCase
     )
 
     @Before

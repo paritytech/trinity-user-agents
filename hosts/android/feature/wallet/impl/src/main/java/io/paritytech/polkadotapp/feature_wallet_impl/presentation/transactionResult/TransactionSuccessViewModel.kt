@@ -2,7 +2,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.transactionRe
 
 import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.common.domain.model.intoAccountId
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageExportId
 import io.paritytech.polkadotapp.feature_transactions.api.presentation.outcome.TransactionOutcomeViewModel
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.transactionSuccess.TransactionSuccessInteractor
@@ -24,12 +25,12 @@ class TransactionSuccessViewModel @Inject constructor(
     private val interactor: TransactionSuccessInteractor,
 ) : TransactionOutcomeViewModel(), TransactionSuccessContract {
     private val payload: TransactionSuccessPayload = savedStateHandle.getPayload()
-    private val unfinalizedCoins = payload.unfinalizedCoins?.map { it.intoAccountId() }
+    private val unfinalizedExport = payload.unfinalizedExport?.let { CoinageExportId(it.toDataByteArray()) }
 
-    private val finalityFlow: Flow<Finality?> = if (unfinalizedCoins == null) {
+    private val finalityFlow: Flow<Finality?> = if (unfinalizedExport == null) {
         flowOf(null)
     } else {
-        interactor.subscribeClaimsFinalized(unfinalizedCoins)
+        interactor.subscribeClaimsFinalized(unfinalizedExport)
             .map<Boolean, Finality?> { finalized -> if (finalized) Finality.CONFIRMED else Finality.PENDING }
             .catch { error ->
                 Timber.e(error, "Failed to watch payment finality")
@@ -42,7 +43,7 @@ class TransactionSuccessViewModel @Inject constructor(
         .stateIn(
             scope = this,
             started = SharingStarted.Eagerly,
-            initialValue = TransactionSuccessUiState(finality = unfinalizedCoins?.let { Finality.PENDING })
+            initialValue = TransactionSuccessUiState(finality = unfinalizedExport?.let { Finality.PENDING })
         )
 
     override fun onButtonClick() {

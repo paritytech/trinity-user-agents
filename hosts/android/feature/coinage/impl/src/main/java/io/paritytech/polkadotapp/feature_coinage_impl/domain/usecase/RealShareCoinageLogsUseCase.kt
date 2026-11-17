@@ -5,14 +5,11 @@ import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
 import io.paritytech.polkadotapp.common.utils.ContentSharing
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logging.LoggerConstants
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ageOrNull
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.tokenAmount
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHolding
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
-import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
-import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.VoucherRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -28,8 +25,7 @@ import javax.inject.Inject
 class RealShareCoinageLogsUseCase @Inject constructor(
     private val fileProvider: FileProvider,
     private val sharingManager: SharingManager,
-    private val coinRepository: CoinRepository,
-    private val voucherRepository: VoucherRepository,
+    private val holdingsUseCase: CoinageHoldingsUseCase,
     private val dispatchers: CoroutineDispatchers
 ) : ShareCoinageLogsUseCase {
     private companion object {
@@ -46,10 +42,7 @@ class RealShareCoinageLogsUseCase @Inject constructor(
 
     override suspend operator fun invoke(): Result<Unit> = runCatching {
         val exportFile = withContext(dispatchers.io) {
-            val coins = coinRepository.subscribeAllCoins().first()
-            val vouchers = voucherRepository.subscribeAllVouchers().first()
-
-            writeExport(coins, vouchers)
+            writeExport(holdingsUseCase.subscribeHoldings().first().holdings)
         }
 
         sharingManager.shareContent(
@@ -61,7 +54,7 @@ class RealShareCoinageLogsUseCase @Inject constructor(
         )
     }
 
-    private fun writeExport(coins: List<Coin>, vouchers: List<RecyclerVoucher>): File {
+    private fun writeExport(holdings: List<CoinageHolding>): File {
         val generatedAt = ZonedDateTime.now(ZoneOffset.UTC)
         // A fresh name per export: receiving apps key their preview cache on the shared file name, so a fixed
         // one makes them show the previous export instead of this one.
@@ -82,12 +75,8 @@ class RealShareCoinageLogsUseCase @Inject constructor(
                 appendLine("Log lines: ${logLines.size}")
 
                 appendLine()
-                appendLine("=== COINS (${coins.size}) ===")
-                coins.forEach { appendLine(it.describe()) }
-
-                appendLine()
-                appendLine("=== VOUCHERS (${vouchers.size}) ===")
-                vouchers.forEach { appendLine(it.describe()) }
+                appendLine("=== HOLDINGS (${holdings.size}) ===")
+                holdings.forEach { appendLine(it.describe()) }
 
                 appendLine()
                 appendLine("=== COINAGE TRANSACTION LOGS ===")
@@ -127,23 +116,9 @@ class RealShareCoinageLogsUseCase @Inject constructor(
         }
     }
 
-    private fun Coin.describe(): String {
-        val age = ageOrNull()?.toString() ?: "unknown"
-
-        return "Coin[idx=$derivationIndex, value=${valueExponent.formatValue()}, " +
-            "exp=2^${valueExponent.value}, age=$age, onChain=$isOnChain]"
-    }
-
-    private fun RecyclerVoucher.describe(): String {
-        val location = when (val location = location) {
-            RecyclerVoucher.Location.Unknown -> "unknown"
-            RecyclerVoucher.Location.Onboarding -> "onboarding"
-            is RecyclerVoucher.Location.InRecycler ->
-                "recycler=${location.recyclerIndex}, anonymitySet=${location.recyclerMembers}"
-        }
-
-        return "Voucher[ringIdx=$ringVrfKeyIndex, value=${recyclerValue.formatValue()}, " +
-            "exp=2^${recyclerValue.value}, $location]"
+    private fun CoinageHolding.describe(): String {
+        return "Holding[$id, value=${exponent.formatValue()}, exp=2^${exponent.value}, ready=$isReady, " +
+            "hops=$hops, batchUnloaded=$isBatchUnloaded, fungibility=${recyclerFungibility?.percent ?: "unknown"}]"
     }
 
     // Matches what the Coins and Vouchers debug sheets print, so a tester can line the export up against the

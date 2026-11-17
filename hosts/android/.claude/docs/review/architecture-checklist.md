@@ -42,16 +42,11 @@ Walk this checklist for any file path that touches an architectural seam. Cite t
 
 ## Coinage (`architecture/coinage.md`)
 
-- **blocking** — Submitting a coinage transfer extrinsic without first marking selected coins as `SPENT_LOCALLY` (optimistic-spent pattern).
-- **blocking** — Hand-rolled keypair derivation outside `CoinKeypairDerivation`. Path is `//pps//coin//<n>`.
-- **blocking** — Truncating a voucher batch to stay under a cap when proof count must match exactly.
-- **major** — New coinage origin built outside `CoinageTransactionOriginFactory`. Add a new `AsCoinageInfo` sealed branch instead.
-- **major** — New transfer strategy implemented outside `TransferPlanner`; should be a new `tryGet*Plan()` method.
-- **major** — `ExternalPaymentService` wiring that doesn't route through coinage's transfer planner and submission use case.
-- **major** — Chat-extension watching on-chain coinage events but holding state inside the bot class (use a `*StateHolder`).
-- **blocking** — A coinage retry that mints fresh outputs instead of re-arming the row with its registered ones (claims, in-chat sends).
-- **major** — A transfer strategy that builds or registers extrinsics itself instead of returning transactions to schedule.
-- **major** — A coinage submission policy that reimplements the wait / build / give-up / retry decisions instead of composing `InputGatedSubmissionPolicy` with a `CoinageRebuild`.
+- **blocking** — A payment's keys made durable (message saved, submitter called) before its export is committed.
+- **blocking** — A retryable coinage operation started under a random id instead of one derived from the operation.
+- **blocking** — Building coinage transactions, deriving coin keys or reading coin state outside `NativeCoinage`.
+- **major** — A `NativeCoinage` stream bridged outside `CoinageCore.observe`, or polled.
+- **major** — `confirmed = true` passed for a spend the user did not confirm.
 
 ## Statement-store communication (`architecture/statement-store-communication.md`)
 

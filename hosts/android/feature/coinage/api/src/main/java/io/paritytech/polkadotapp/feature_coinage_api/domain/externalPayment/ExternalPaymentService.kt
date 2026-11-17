@@ -8,13 +8,17 @@ import kotlinx.coroutines.flow.last
 
 interface ExternalPaymentService {
     /**
-     * Registers the payment and hands it to the background worker. Returns once it is registered, not once it
-     * is paid. Fails with [ExternalPaymentError.AlreadyExists] when [key] is already taken.
+     * Registers the payment, which the wallet then makes in the background. Returns once it is registered, not
+     * once it is paid. Fails with [ExternalPaymentError.AlreadyExists] when [key] is already taken.
+     *
+     * [confirmed] when the user accepted spending value still gaining privacy; without it, a payment that needs
+     * such value fails.
      */
     suspend fun initiatePayment(
         key: ExternalPaymentKey,
         amount: Balance,
         destination: AccountId,
+        confirmed: Boolean,
     ): Result<Unit>
 
     suspend fun exists(key: ExternalPaymentKey): Result<Boolean>

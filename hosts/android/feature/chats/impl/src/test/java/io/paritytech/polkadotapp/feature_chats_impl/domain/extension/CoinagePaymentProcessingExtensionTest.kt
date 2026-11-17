@@ -4,31 +4,18 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
-import io.mockk.unmockkStatic
-import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
-import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
-import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageExportId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.deriveKeypair
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatusUseCase
@@ -40,7 +27,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
-import org.junit.Before
 import org.junit.Test
 import java.math.BigInteger
 import kotlin.time.Duration.Companion.days
@@ -59,26 +45,11 @@ import kotlin.time.Instant
 class CoinagePaymentProcessingExtensionTest {
     private val paymentStatusUseCase: CoinagePaymentStatusUseCase = mockk()
     private val claimReceivedCoinsUseCase: ClaimReceivedCoinsUseCase = mockk()
-    private val balanceConverterUseCase: CoinageBalanceConverterUseCase = mockk()
 
     private val extension = CoinagePaymentProcessingExtension(
         paymentStatusUseCase = paymentStatusUseCase,
         claimReceivedCoinsUseCase = claimReceivedCoinsUseCase,
-        balanceConverterUseCase = balanceConverterUseCase,
     )
-
-    /** The outgoing path derives a keypair per coin key; only the seam matters, and the real one needs JNI. */
-    @Before
-    fun mockDerivation() {
-        mockkStatic(DERIVATION_FILE)
-        every { any<CoinPrivateKey>().deriveKeypair() } answers {
-            val key = firstArg<CoinPrivateKey>()
-            mockk<Sr25519Keypair> { every { publicKey } returns key.value }
-        }
-    }
-
-    @After
-    fun unmockDerivation() = unmockkStatic(DERIVATION_FILE)
 
     private val context: ChatExtensionContext = mockk(relaxed = true)
     private lateinit var scope: CoroutineScope
@@ -274,7 +245,7 @@ class CoinagePaymentProcessingExtensionTest {
             context.modifyMessage(
                 message.chatId,
                 message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Detected },
+                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detected(coins(2)) },
             )
         }
         coVerify(exactly = 0) {
@@ -353,7 +324,7 @@ class CoinagePaymentProcessingExtensionTest {
             context.modifyMessage(
                 message.chatId,
                 message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Transferred },
+                match { it is CoinagePayment && it.status == CoinagePayment.Status.Transferred(coins(2)) },
             )
         }
         coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
@@ -539,27 +510,14 @@ class CoinagePaymentProcessingExtensionTest {
         coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
     }
 
-    /**
-     * The coins cannot be valued — the conversion needs chain metadata, which may not be to hand.
-     *
-     * The payment still reports its stage, with an amount of zero. Failing to say anything would leave the
-     * sender staring at a message that never moves off "sending".
-     */
+    /** A payment the wallet cannot follow is looked at again on the next launch, not settled on nothing. */
     @Test
-    fun `an outgoing payment still reports its stage when the coins cannot be valued`() = runTest {
-        givenPeerHasTaken(claimed = 0, awaiting = 2, detecting = 0, failed = 0, finalized = true)
-        coEvery { balanceConverterUseCase.create() } returns Result.failure(IllegalStateException("no metadata"))
+    fun `an outgoing payment whose status cannot be read is left open`() = runTest {
+        every { paymentStatusUseCase.subscribeStatuses(any()) } returns flow { throw IllegalStateException("nothing handed out") }
 
-        val message = outgoingPayment()
-        startWork(message)
+        startWork(outgoingPayment())
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detected(Balance.ZERO) },
-            )
-        }
+        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
     }
 
     // ---- harness ----
@@ -598,36 +556,26 @@ class CoinagePaymentProcessingExtensionTest {
         failed: Int,
         finalized: Boolean,
     ) {
-        val states = buildMap {
-            repeat(claimed) { put(accountId(it), stateOf(CoinagePaymentStatus.Claimed(finalized))) }
-            repeat(awaiting) { put(accountId(claimed + it), stateOf(CoinagePaymentStatus.AwaitingClaim)) }
-            repeat(failed) { put(accountId(claimed + awaiting + it), stateOf(CoinagePaymentStatus.Failed)) }
-            repeat(detecting) {
-                put(accountId(claimed + awaiting + failed + it), stateOf(CoinagePaymentStatus.Detecting))
-            }
+        val statuses = List(claimed) { CoinagePaymentStatus.Claimed(finalized) } +
+            List(awaiting) { CoinagePaymentStatus.AwaitingClaim } +
+            List(failed) { CoinagePaymentStatus.Failed } +
+            List(detecting) { CoinagePaymentStatus.Detecting }
+        val states = statuses.mapIndexed { index, status ->
+            CoinagePaymentState(byteArrayOf(index.toByte()).intoAccountId(), COIN_VALUE, status)
         }
 
-        every { paymentStatusUseCase.subscribeStatuses(any()) } returns flow {
+        every { paymentStatusUseCase.subscribeStatuses(CoinageExportId.ofChatPayment(MESSAGE_ID)) } returns flow {
             emit(states)
             awaitCancellation()
         }
-        // formatCoinsToBalance is a top-level extension over this member, so stubbing the member is enough.
-        coEvery { balanceConverterUseCase.create() } returns Result.success(
-            mockk { every { formatExponentToBalance(any()) } returns PARTIAL }
-        )
     }
 
-    private fun accountId(seed: Int): AccountId = byteArrayOf(seed.toByte()).toDataByteArray()
-
-    private fun stateOf(status: CoinagePaymentStatus) = CoinagePaymentState(
-        coin = Coin(derivationIndex = CoinageKeyIndex(CoinageInstallationId(ByteArray(CoinageInstallationId.SIZE_BYTES).toDataByteArray()), 0), valueExponent = ValueExponent(3), age = Coin.Age.Unknown, isOnChain = false, accountId = accountId(0), provenance = CoinProvenance.UNKNOWN),
-        status = status,
-    )
+    private fun coins(count: Int) = COIN_VALUE * count
 
     private fun outgoingPayment() = incomingPayment().copy(origin = ChatMessageOrigin.User)
 
     private fun incomingPayment() = ChatMessage(
-        id = "message-1",
+        id = MESSAGE_ID,
         chatId = ChatId.fromContact(byteArrayOf(9).intoAccountId()),
         timestamp = SENT_AT,
         origin = ChatMessageOrigin.Contact(byteArrayOf(9).intoAccountId()),
@@ -647,9 +595,10 @@ class CoinagePaymentProcessingExtensionTest {
 
     private companion object {
         const val SENT_AT = 1_700_000_000_000L
-        const val DERIVATION_FILE = "io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferMemoKt"
+        const val MESSAGE_ID = "message-1"
 
         val FULL = BigInteger.valueOf(100).intoBalance()
         val PARTIAL = BigInteger.valueOf(12).intoBalance()
+        val COIN_VALUE = BigInteger.valueOf(10).intoBalance()
     }
 }

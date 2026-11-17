@@ -14,7 +14,6 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.getCandidat
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_balances_api.data.updaters.CandidateBalancesUpdateSystem
 import io.paritytech.polkadotapp.feature_balances_api.data.updaters.WalletBalancesUpdateSystem
-import io.paritytech.polkadotapp.feature_coinage_api.data.updaters.CoinageUpdateSystem
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.updaters.DotNsGatewayUpdateSystem
 import io.paritytech.polkadotapp.feature_people_api.data.updaters.PeopleUpdateSystem
@@ -49,7 +48,6 @@ class RealRootInteractor @Inject constructor(
     private val syncPricesUseCase: SyncPricesUseCase,
     private val peopleUpdateSystem: PeopleUpdateSystem,
     private val dotNsGatewayUpdateSystem: DotNsGatewayUpdateSystem,
-    private val coinageUpdateSystem: CoinageUpdateSystem,
     private val chainRegistry: ChainRegistry,
     private val accountRepository: AccountRepository,
     private val verifyUsernameOnChainUseCase: VerifyUsernameOnChainUseCase,
@@ -62,7 +60,6 @@ class RealRootInteractor @Inject constructor(
             add(walletBalancesUpdateSystem.updateSystem.start())
             add(candidateBalancesUpdateSystem.updateSystem.start())
             add(dotNsGatewayUpdateSystem.updateSystem.start())
-            add(coinageUpdateSystem.updateSystem.start())
 
             if (FeatureOption.PERSONHOOD.isEnabled) {
                 add(peopleUpdateSystem.updateSystem.start())

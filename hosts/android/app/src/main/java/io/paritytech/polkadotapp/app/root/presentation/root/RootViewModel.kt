@@ -25,7 +25,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBot
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
-import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
@@ -57,7 +56,6 @@ class RootViewModel @Inject constructor(
     private val remoteConfigService: RemoteConfigService,
     private val depositService: AutoConvertDepositService,
     private val coinageServiceStarter: CoinageServiceStarter,
-    private val externalPaymentWorkerStarter: ExternalPaymentWorkerStarter,
     private val statementStoreSlotAllocator: StatementStoreSlotAllocator,
     private val ssoService: SsoService,
     private val chatRequestServiceCoordinator: ChatRequestServiceCoordinator,
@@ -108,10 +106,9 @@ class RootViewModel @Inject constructor(
 
     init {
         with(servicesScope) {
-            // Durability must not hang off the remote config fetch: a failed sync would otherwise skip
-            // handoff release and transaction recovery for the whole session.
+            // The wallet must not hang off the remote config fetch: a failed sync would otherwise leave it
+            // stopped for the whole session.
             coinageServiceStarter.start()
-            externalPaymentWorkerStarter.start()
 
             launch {
                 remoteConfigService.sync()

@@ -5,5 +5,5 @@ import kotlinx.parcelize.Parcelize
 
 @Parcelize
 class TransactionSuccessPayload(
-    val unfinalizedCoins: List<ByteArray>?,
+    val unfinalizedExport: ByteArray?,
 ) : Parcelable

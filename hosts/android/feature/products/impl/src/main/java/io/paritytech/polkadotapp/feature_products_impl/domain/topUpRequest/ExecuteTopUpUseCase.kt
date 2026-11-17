@@ -2,21 +2,19 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.util.amountFromPlanks
-import io.paritytech.polkadotapp.common.utils.getOrEmpty
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
-import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageOperationStatusUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
-import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -60,8 +58,7 @@ interface ExecuteTopUpUseCase {
 class RealExecuteTopUpUseCase @Inject constructor(
     private val claimReceivedCoinsUseCase: ClaimReceivedCoinsUseCase,
     private val onboardingUseCase: OnboardingUseCase,
-    private val transactionService: CoinageTransactionService,
-    private val assetValueUseCase: CoinageAssetValueUseCase,
+    private val operationStatusUseCase: CoinageOperationStatusUseCase,
     @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
 ) : ExecuteTopUpUseCase {
     override fun execute(operation: TopUpOperation, source: TopUpSource): Flow<TopUpStatus> {
@@ -86,27 +83,14 @@ class RealExecuteTopUpUseCase @Inject constructor(
             .onEach { Timber.tag(COINAGE_LOG_TAG).i("Top-up status group=${groupId.value} status=$it") }
     }
 
-    override suspend fun statusOf(operation: TopUpOperation): TopUpStatus {
-        val groupId = operation.groupId
-
-        val entries = transactionService.getOperationGroupStatuses(groupId)
-            .logFailure("Failed to read the top-up group ${groupId.value}")
-            .getOrEmpty()
-
-        val arrived = entries.filter { it.status.isArrived }
-        val credited = assetValueUseCase.valueOf(arrived.flatMap { it.outputs })
-            .logFailure("Failed to value what the top-up minted")
-            .getOrDefault(Balance.ZERO)
-
-        return when {
-            credited >= operation.amount ->
-                TopUpStatus.Claimed(finalized = entries.all { it.status == DurableTxStatus.FINALIZED_SUCCESS })
-
-            credited.isPositive() -> TopUpStatus.ClaimedPartially(credited)
-
-            else -> TopUpStatus.NotClaimed
-        }
-    }
+    override suspend fun statusOf(operation: TopUpOperation): TopUpStatus =
+        operationStatusUseCase.follow(operation.groupId)
+            .map { it.toStatus(operation.amount) }
+            .catch { error ->
+                Timber.tag(COINAGE_LOG_TAG).w(error, "Failed to read the top-up ${operation.groupId.value}")
+                emit(TopUpStatus.NotClaimed)
+            }
+            .first()
 
     private fun onboard(
         signerSource: TransactionSignerSource.Signed,

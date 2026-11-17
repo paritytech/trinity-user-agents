@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_api.domain.usecase
 
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageExportId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferMemo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferPlan
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageHandoffCommit
@@ -13,44 +13,23 @@ interface PrepareCoinageTransferUseCase {
     suspend fun preparePlan(amount: BigDecimal): Result<TransferPlan>
 
     /**
-     * Builds the memo and reserves the coins it names. The reservation is provisional: commit
-     * [PreparedTransferMemo.handoffCommit] once the memo is durably on its way to the recipient, or leave it
-     * and a relaunch returns the coins.
+     * Hands coins worth the plan's amount out of the wallet under [exportId], with their keys in the memo. The
+     * handout is provisional: commit [PreparedTransferMemo.handoffCommit] before the memo is made durable anywhere,
+     * or release it when the payment is abandoned; a relaunch releases one never committed.
      *
-     * The memo's transactions are submitted before it is returned, and built again should an attempt be proven
-     * unable to land — until [retryUntil] has passed with their inputs gone from the chain.
-     *
-     * Reports its progress into [diagnostics]; callers with no UI attached pass
-     * [StalenessReportCollector.NoOp].
+     * The coins that still need minting are built once the handout is committed, and built again until [retryUntil].
+     * [exportId] must be stable for a payment that can be retried, so a second call joins the first.
      */
     @OptIn(ExperimentalTime::class)
-    context(diagnostics: StalenessReportCollector)
-    suspend fun prepareMemo(plan: TransferPlan, retryUntil: Instant): Result<PreparedTransferMemo>
-
-    /**
-     * Builds the memo like [prepareMemo], without reserving its coins or building or submitting any
-     * transaction: they are built afterwards, in the background, and retried the same way.
-     *
-     * [PreparedTransferMemo.handoffCommit] writes the reservation, already final, and registers those
-     * transactions in one step, so it must run inside the database transaction that persists the memo: a crash
-     * or a cancelled send then either loses all of it or keeps all of it.
-     */
-    @OptIn(ExperimentalTime::class)
-    context(diagnostics: StalenessReportCollector)
-    suspend fun prepareScheduledMemo(plan: TransferPlan, retryUntil: Instant): Result<PreparedTransferMemo>
+    suspend fun prepareMemo(plan: TransferPlan, exportId: CoinageExportId, retryUntil: Instant): Result<PreparedTransferMemo>
 }
 
 data class PreparedTransferMemo(
+    val exportId: CoinageExportId,
     val memo: TransferMemo,
     val handoffCommit: CoinageHandoffCommit,
 )
 
 @OptIn(ExperimentalTime::class)
-context(diagnostics: StalenessReportCollector)
-suspend fun PrepareCoinageTransferUseCase.prepareMemo(amount: BigDecimal, retryUntil: Instant) =
-    preparePlan(amount).flatMap { prepareMemo(it, retryUntil) }
-
-@OptIn(ExperimentalTime::class)
-context(diagnostics: StalenessReportCollector)
-suspend fun PrepareCoinageTransferUseCase.prepareScheduledMemo(amount: BigDecimal, retryUntil: Instant) =
-    preparePlan(amount).flatMap { prepareScheduledMemo(it, retryUntil) }
+suspend fun PrepareCoinageTransferUseCase.prepareMemo(amount: BigDecimal, exportId: CoinageExportId, retryUntil: Instant) =
+    preparePlan(amount).flatMap { prepareMemo(it, exportId, retryUntil) }
