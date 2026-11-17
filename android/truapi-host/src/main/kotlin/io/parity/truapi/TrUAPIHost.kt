@@ -78,7 +78,7 @@ import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
-import uniffi.truapi.CoinageUnavailableException
+import uniffi.truapi.CoinageUnavailable
 import uniffi.truapi.NativeCoinage
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
@@ -966,7 +966,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /**
      * The coinage layer, as the app's wallet screens and chat use it, once
-     * its start has returned. Throws [CoinageUnavailableException] saying why
+     * its start has returned. Throws [CoinageUnavailable] saying why
      * it does not run, until the runtime is constructed again.
      */
     suspend fun coinage(): NativeCoinage = inner.coinage()
