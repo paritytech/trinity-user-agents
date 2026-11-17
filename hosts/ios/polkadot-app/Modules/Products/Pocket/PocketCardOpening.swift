@@ -31,13 +31,12 @@ struct PocketCardOpening {
             }
 
             guard
-                let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: {
+                let view = pocket.cardHosts.open(card.key, pageQuery: pageQuery, make: {
                     makeView(for: card, page: page, pageQuery: pageQuery)
                 }),
-                let screen = product.view.controller as? PocketItemScreen
+                let screen = view.controller as? PocketItemScreen
             else { return }
 
-            let view = product.view
             view.origin = wallet.viewControllers.first as? PocketOrigin
             PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
 
