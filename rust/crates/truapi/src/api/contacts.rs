@@ -19,7 +19,7 @@ use crate::{
 /// contact in host UI is the consent, and a product that is never handed the
 /// list has nothing to be granted.
 #[wire_trait(id = 20)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Contacts: Send + Sync {
 	/// Ask the host to let the user pick one contact.
 	///

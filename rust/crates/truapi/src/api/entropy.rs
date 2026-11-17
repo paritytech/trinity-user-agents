@@ -10,7 +10,7 @@ use crate::{
 
 /// Deterministic entropy derivation.
 #[wire_trait(id = 6)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Entropy: Send + Sync {
 	/// Derive deterministic entropy.
 	///

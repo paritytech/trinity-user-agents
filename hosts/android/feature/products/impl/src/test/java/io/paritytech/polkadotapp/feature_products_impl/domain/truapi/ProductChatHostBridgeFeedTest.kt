@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
@@ -37,11 +36,12 @@ import uniffi.truapi.ChatReplyPreview
 import uniffi.truapi.ChatResource
 import uniffi.truapi.NativeChatFeedRejection
 import uniffi.truapi.ChatMessage as CoreChatMessage
+import uniffi.truapi.ProductId
 
 private const val ROOM = "lobby"
 
 class ProductChatHostBridgeFeedTest {
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
     private val room = ProductChatIdParameter(ROOM)
     private val messaging: ProductChatMessaging = mockk()
     private val bridge = ProductChatHostBridge(productId, messaging)

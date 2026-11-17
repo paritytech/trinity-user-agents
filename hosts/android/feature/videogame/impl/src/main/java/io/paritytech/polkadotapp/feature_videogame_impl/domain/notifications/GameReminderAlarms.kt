@@ -7,7 +7,7 @@ import android.content.Intent
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 interface GameReminderAlarms {
@@ -46,7 +46,7 @@ class RealGameReminderAlarms @Inject constructor(
     }
 
     private fun createPendingIntent(productId: ProductId): PendingIntent {
-        val notificationType = VideoGameNotificationType.ProductGameStartsSoon(productId.value)
+        val notificationType = VideoGameNotificationType.ProductGameStartsSoon(productId)
         val intent = Intent(contextManager.applicationContext, VideoGameReminderBroadcastReceiver::class.java).apply {
             action = VideoGameReminderBroadcastReceiver.ACTION_POST_NOTIFICATION
             putExtra(VideoGameReminderBroadcastReceiver.EXTRA_NOTIFICATION_TYPE, notificationType)

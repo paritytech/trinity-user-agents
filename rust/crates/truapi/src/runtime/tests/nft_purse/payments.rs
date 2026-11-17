@@ -16,6 +16,7 @@ use crate::{
 		statement_store::StatementField,
 		x25519_seal::{SealedBox, X25519PrivateKey},
 	},
+	nft_purse::{ENVELOPE_VERSION, EnvelopeContents},
 	test_support::{session_info, statement_page_frame, subscribe_ack_frame},
 };
 
@@ -24,7 +25,10 @@ type OneTimePayments = Subscription<
 	CallError<HostNftPurseListenOneTimePaymentError>,
 >;
 
-fn listen_one_time(host: &ProductRuntimeHost, key: v01::NftPurseReceiveKey) -> OneTimePayments {
+fn listen_one_time(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+	key: v01::NftPurseReceiveKey,
+) -> OneTimePayments {
 	let request = v01::HostNftPurseListenOneTimePaymentRequest { key };
 	let request = HostNftPurseListenOneTimePaymentRequest::V1(request);
 	block_on(host.listen_one_time_payment(&CallContext::default(), request))
@@ -149,7 +153,7 @@ type InboxPayments = Subscription<
 
 const INBOX_DOMAIN: [u8; 32] = [3; 32];
 
-fn listen_inbox(host: &ProductRuntimeHost) -> InboxPayments {
+fn listen_inbox(host: &ProductRuntimeHost<RemoteAccountHolder>) -> InboxPayments {
 	let request = v01::HostNftPurseListenPaymentInboxRequest { inbox_domain: INBOX_DOMAIN };
 	let request = HostNftPurseListenPaymentInboxRequest::V1(request);
 	block_on(host.listen_payment_inbox(&CallContext::default(), request))
@@ -168,7 +172,12 @@ fn inbox_topic() -> v01::StatementTopic {
 /// The statement a sender publishes to put `cheque` in the inbox: the
 /// envelope sealed to the static receive key.
 fn inbox_statement(cheque: &v01::NftPurseCheque) -> Vec<u8> {
-	let plaintext = (0u8, inbox_topic(), cheque).encode();
+	let plaintext = EnvelopeContents {
+		version: ENVELOPE_VERSION,
+		topic: inbox_topic(),
+		cheque: cheque.clone(),
+	}
+	.encode();
 	let static_key = X25519PrivateKey::from(TEST_STATIC_SECRET).public_key();
 	let sealed = SealedBox::seal(static_key, &plaintext).unwrap();
 	vec![StatementField::Data(sealed.to_bytes())].encode()

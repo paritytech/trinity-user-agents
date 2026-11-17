@@ -4,7 +4,6 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
@@ -17,13 +16,14 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private const val ROOM = "jollity"
 private const val MESSAGE_TYPE = "weekly-draw"
 
 class ProductsMessageViewModelRoomTest {
     private val testDispatcher = StandardTestDispatcher()
-    private val product = Product(ProductId.fromStoredValue("dim2.dot"), "Jollity", icon = null)
+    private val product = Product(ProductId.parse("dim2.dot").getOrThrow(), "Jollity", icon = null)
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)

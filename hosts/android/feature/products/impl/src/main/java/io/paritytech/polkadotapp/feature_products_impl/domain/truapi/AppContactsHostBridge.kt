@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -77,7 +78,7 @@ class AppContactsHostBridge @Inject constructor(
      * Resolution does not go through here: a handle minted earlier still
      * resolves, because that goes through [contacts] alone.
      */
-    override suspend fun pickContact(productId: String): HostContactPick {
+    override suspend fun pickContact(productId: ProductId): HostContactPick {
         val options = directory.getContacts().map { contact ->
             ContactPickOption(
                 account = contact.accountId.value,

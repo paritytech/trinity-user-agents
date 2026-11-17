@@ -28,6 +28,13 @@ public enum DSTabBarStyle {
         min(max(0, availableWidth - horizontalMargin * 2), maxWidth)
     }
 
+    /// Trailing edge of the bar row in a host `availableWidth` wide: the row is centred, so this is its x offset
+    /// plus its width.
+    public static func rowMaxX(inAvailableWidth availableWidth: CGFloat) -> CGFloat {
+        let width = rowWidth(inAvailableWidth: availableWidth)
+        return ((availableWidth - width) / 2).rounded() + width
+    }
+
     /// Height the bar occupies once it has settled, which is what a host publishes as bottom
     /// clearance for its content.
     public static func restingHeight(bottomSafeAreaInset: CGFloat) -> CGFloat {
@@ -59,13 +66,6 @@ public enum DSTabBarStyle {
     /// Gap the two inner slots leave around the notch. It is the cutout's width at the bar's top edge.
     static let notchShoulderWidth: CGFloat = 74
 
-    /// Whether a point in the bar row's coordinate space falls on the centre button, which the
-    /// fold gesture must not claim.
-    public static func isInCenterHole(_ point: CGPoint, inRowOfWidth width: CGFloat) -> Bool {
-        let center = CGPoint(x: width / 2, y: notchCenterY)
-        return hypot(point.x - center.x, point.y - center.y) <= notchRadius
-    }
-
     /// Strength of the bar's variable blur. The public API cannot set the backdrop blur radius or saturation,
     /// so this is tuned by eye toward the brief's radius.
     static let barBlurIntensity: Double = 0.35
@@ -79,10 +79,14 @@ public enum DSTabBarStyle {
     static let dimBlurIntensity: Double = 0.3
     /// `dimBlurIntensity` on iOS 26 and later, lighter under Liquid Glass.
     static let dimBlurIntensityGlass: Double = 0.15
-
-    /// Horizontal radius of the bar's wash ellipse as a fraction of the bar's width. Its vertical radius is the bar
-    /// height.
-    static let barWashRadiusFraction: CGFloat = 0.45
+    /// Opacity of the black layer over the Liquid Glass on iOS 26 and later, which takes 15% off its brightness.
+    static let glassDimming: Double = 0.15
+    /// Opacity of the theme's main surface tinting the Liquid Glass on iOS 26 and later.
+    static let glassTintOpacity: Double = 0.15
+    /// Strength of the frost under the Liquid Glass on iOS 26 and later, in dark themes.
+    static let glassFrostIntensity: Double = 0.15
+    /// `glassFrostIntensity` for light themes.
+    static let glassFrostIntensityLight: Double = 0.2
 
     /// Blur the bar row reaches as the centre panel opens fully. The slot items and selection pill take it.
     static let openItemBlurRadius: CGFloat = 3

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 import os
@@ -70,7 +71,9 @@ struct ProductWorkerOperationReconcilerTests {
     }
 
     @Test("holds one worker per operation and releases when operations disappear")
-    func reconcilesWorkersToOperations() async {
+    func reconcilesWorkersToOperations() async throws {
+        let paymentProduct = try ProductId("getcash.dot")
+        let chatProduct = try ProductId("chatapp.dot")
         let store = ControllableOperationStore()
         let manager = CountingWorkerManager()
         let reconciler = ProductWorkerOperationReconciler(store: store, manager: manager)
@@ -78,15 +81,15 @@ struct ProductWorkerOperationReconcilerTests {
         reconciler.start()
 
         // One operation opens -> one worker.
-        store.emit([record("getcash", 1)])
+        store.emit([record(paymentProduct, 1)])
         await manager.awaitCount(1)
 
         // A second operation for another product -> two workers.
-        store.emit([record("getcash", 1), record("chatapp", 2)])
+        store.emit([record(paymentProduct, 1), record(chatProduct, 2)])
         await manager.awaitCount(2)
 
         // The first operation ends -> back to one worker.
-        store.emit([record("chatapp", 2)])
+        store.emit([record(chatProduct, 2)])
         await manager.awaitCount(1)
 
         // All operations gone -> no workers.

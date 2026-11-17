@@ -99,7 +99,7 @@ The host owns operations and the lifecycle. The core forwards each call to a hos
 An open operation is also demand on the worker: the core takes one reference on the product's worker ledger per open id, so an operation reaches the host through the same `requestWorkerTransition` signal an on-screen surface produces, and a host reading that signal needs no second keep-alive rule. The reference is dropped when the operation ends, and a connection that goes away with operations still open drops the ones it held.
 
 ```rust
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ProductOperations: Send + Sync {
     /// `label` is empty when the product gave none.
     async fn begin_operation(

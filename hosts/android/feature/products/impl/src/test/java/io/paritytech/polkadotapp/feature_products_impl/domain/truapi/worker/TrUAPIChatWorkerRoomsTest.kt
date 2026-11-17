@@ -15,7 +15,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserAc
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -36,10 +35,11 @@ import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionError
 import uniffi.truapi.ProductChatUserActionResponse
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRuntimeException
 
 class TrUAPIChatWorkerRoomsTest {
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
     private val room = ProductChatIdParameter("lobby")
     private val execution: TrUAPIProductExecution = mockk(relaxed = true)
     private val runtime: TrUAPIHostRuntime = mockk(relaxed = true)
@@ -61,8 +61,8 @@ class TrUAPIChatWorkerRoomsTest {
         advanceUntilIdle()
         worker.closeRoom(room)
 
-        verify(exactly = 2) { runtime.acquireWorker(productId.value) }
-        verify(exactly = 1) { runtime.releaseWorker(productId.value) }
+        verify(exactly = 2) { runtime.acquireWorker(productId) }
+        verify(exactly = 1) { runtime.releaseWorker(productId) }
     }
 
     @Test
@@ -82,7 +82,7 @@ class TrUAPIChatWorkerRoomsTest {
     @Test
     fun `a worker that cannot be held fails the open`() = runTest {
         val worker = worker()
-        every { runtime.acquireWorker(productId.value) } throws IllegalStateException("runtime closed")
+        every { runtime.acquireWorker(productId) } throws IllegalStateException("runtime closed")
 
         assertTrue(worker.openRoom(room).isFailure)
         verify(exactly = 0) { workers.restartIfFailed(any()) }
@@ -97,7 +97,7 @@ class TrUAPIChatWorkerRoomsTest {
         scope.cancel()
         advanceUntilIdle()
 
-        verify(exactly = 2) { runtime.releaseWorker(productId.value) }
+        verify(exactly = 2) { runtime.releaseWorker(productId) }
     }
 
     @Test

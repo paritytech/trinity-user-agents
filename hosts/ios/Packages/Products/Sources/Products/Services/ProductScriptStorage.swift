@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 public protocol ChatScriptStorageProtocol: ProductFileProviding {
@@ -50,7 +51,7 @@ public final class FileChatScriptStorage: ChatScriptStorageProtocol {
 
     public func loadData(productId: ProductId, relativePath: String) -> Data? {
         let fileURL = baseDirectory
-            .appendingPathComponent(productId)
+            .appendingPathComponent(productId.rawValue)
             .appendingPathComponent(relativePath)
         return fileManager.contents(atPath: fileURL.path)
     }

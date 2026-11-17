@@ -114,3 +114,6 @@ tmp/
 
 # Merge leftovers
 *.orig
+
+## Bundled products, built locally
+polkadot-app/BundledProducts.bundle/

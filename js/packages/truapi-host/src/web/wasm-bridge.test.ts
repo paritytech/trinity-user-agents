@@ -1,8 +1,20 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
+import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
+
+/**
+ * {@link mockRuntimeConfig} with the bundled previewnet stack in place of its
+ * test stack: the production bundle reads only a signed `stack`.
+ */
+function bundledRuntimeConfig() {
+  const { testStack: _testStack, ...config } = mockRuntimeConfig();
+  return { ...config, stack: bundledTestStack() };
+}
 
 // Drives the REAL truapi WASM core against createMockHost's callbacks —
 // headless, no browser, no worker — to prove the JS↔SCALE↔WASM callback bridge.
@@ -28,6 +40,47 @@ const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
   : describe.skip;
 
 suite("real WASM core ↔ createMockHost bridge", () => {
+  it("constructs normalized product IDs through the existing Rust core", async () => {
+    const { initSync, parseProductId } = await import(glueUrl.href);
+    initSync({ module: readFileSync(wasmUrl) });
+    expect([
+      parseProductId(" PEOPL.DOT "),
+      parseProductId("localhost:3000"),
+      parseProductId("worker.truapi-playground.paseo"),
+    ]).toEqual([
+      "peopl.dot",
+      "localhost:3000",
+      "worker.truapi-playground.paseo",
+    ]);
+    expect(() => parseProductId("not a product")).toThrow();
+  });
+
+  it("distinguishes product IDs from shared labels in persisted storage keys", async () => {
+    const { initSync, describeCoreStorageKey } = await import(glueUrl.href);
+    initSync({ module: readFileSync(wasmUrl) });
+    const keys: CoreStorageKey[] = [
+      { tag: "ProductManifest", value: { productLabel: "peopl" } },
+      { tag: "AutoSigningKey", value: { productId: asProductId("peopl.dot") } },
+      {
+        tag: "PermissionAuthorization",
+        value: {
+          scope: "caller",
+          request: {
+            tag: "CrossProductSignature",
+            value: { target: "target", kind: "Raw" },
+          },
+        },
+      },
+    ];
+    expect(
+      keys.map((key) => describeCoreStorageKey(CoreStorageKey.enc(key))),
+    ).toEqual([
+      { kind: "ProductManifest", productLabel: "peopl" },
+      { kind: "AutoSigningKey", productId: "peopl.dot" },
+      { kind: "PermissionAuthorization", productLabel: "caller" },
+    ]);
+  });
+
   it("the core invokes createMockHost callbacks across the JS↔SCALE↔WASM boundary", async () => {
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
     const { createWasmRawCallbacks } =
@@ -52,7 +105,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       ...createWasmRawCallbacks(mock.callbacks),
       requestWorkerTransition: () => {},
     };
-    const { productId, ...hostConfig } = mockRuntimeConfig();
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
     const runtime = new WasmPairingHostRuntime(raw, hostConfig);
     // The core emits response frames through `emitFrame`; the worker supplies
     // it per-core outside the generated adapter, so the harness does too.
@@ -68,6 +121,32 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     expect(mock.getHostCallCount()).toBeGreaterThan(0);
   });
 
+  it("refuses a stack pointer without a key", async () => {
+    // A copy the host fetches later is checked against the pointer's key, so
+    // the production bundle refuses a pointer without one.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const pointer = new URL(hostConfig.stack.pointer);
+    pointer.searchParams.delete("key");
+
+    expect(
+      () =>
+        new WasmPairingHostRuntime(
+          {
+            ...createWasmRawCallbacks(createMockHost().callbacks),
+            requestWorkerTransition: () => {},
+          },
+          {
+            ...hostConfig,
+            stack: { ...hostConfig.stack, pointer: pointer.href },
+          },
+        ),
+    ).toThrow("runtimeConfig.stack: stack pointer has no key");
+  });
+
   it("isolates one real-core boot from the next through reset()", async () => {
     // The surface-agreement test proves the Rust and JS mocks expose the same
     // control methods. It cannot prove those methods hold against a real core.
@@ -79,7 +158,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     initSync({ module: readFileSync(wasmUrl) });
 
     const mock = createMockHost();
-    const { productId, ...hostConfig } = mockRuntimeConfig();
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
     const boot = async () => {
       const runtime = new WasmPairingHostRuntime(
         {

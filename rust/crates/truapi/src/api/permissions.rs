@@ -11,7 +11,7 @@ use crate::{
 
 /// Permission request methods.
 #[wire_trait(id = 10)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Permissions: Send + Sync {
 	/// Request a device-capability permission from the user.
 	///

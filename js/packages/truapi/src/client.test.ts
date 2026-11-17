@@ -261,7 +261,7 @@ describe("generated client transport", () => {
 
         const request = {
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         };
@@ -279,6 +279,32 @@ describe("generated client transport", () => {
         expectedFrame.set(expectedPayload, str.enc("p:1").length + 3);
 
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
+    });
+
+    it("sends a plain string room footer as the frame of its tagged value", () => {
+        for (const footer of ["Empty", "TextInput"] as const) {
+            const fixture = providerFixture();
+            const client = createClient(createTransport(fixture.provider));
+
+            void client.chat.setRoomFooter({ roomId: "room", footer });
+            void client.chat.setRoomFooter({ roomId: "room", footer: { tag: footer } });
+
+            const [plain, tagged] = fixture.sent.map((frame) =>
+                toHex(frame.slice(str.enc("p:1").length)),
+            );
+            expect(plain).toBe(tagged);
+        }
+    });
+
+    it("refuses a room footer string that names no unit variant", () => {
+        const client = createClient(createTransport(providerFixture().provider));
+
+        expect(() =>
+            client.chat.setRoomFooter({
+                roomId: "room",
+                footer: "Card" as "Empty",
+            }),
+        ).toThrow("Unknown enum variant: Card");
     });
 
     it("uses the transport codec version for generated handshake calls", () => {
@@ -336,14 +362,14 @@ describe("generated client transport", () => {
                 success: true,
                 value: {
                     tag: "V1",
-                    value: { productId: "truapi-playground.paseo" },
+                    value: { productId: T.asProductId("truapi-playground.paseo") },
                 },
             }),
         );
         fixture.receive(frame);
 
         expect((await response)._unsafeUnwrap()).toEqual({
-            productId: "truapi-playground.paseo",
+            productId: T.asProductId("truapi-playground.paseo"),
         });
     });
 
@@ -354,7 +380,7 @@ describe("generated client transport", () => {
 
         const response = client.account.getAccount({
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         });
@@ -852,7 +878,7 @@ describe("generated client transport", () => {
         const pending = client.account.getAccount(
             {
                 productAccountId: {
-                    dotNsIdentifier: "foo",
+                    dotNsIdentifier: T.asProductId("foo"),
                     derivationIndex: { tag: "Index", value: 0 },
                 },
             },
@@ -984,7 +1010,7 @@ describe("generated client transport", () => {
         // problem, not grounds for tearing down every pending call.
         void client.account.getAccount({
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         });
@@ -1035,7 +1061,7 @@ describe("generated client transport", () => {
 
         const response = client.account.getAccount({
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         });

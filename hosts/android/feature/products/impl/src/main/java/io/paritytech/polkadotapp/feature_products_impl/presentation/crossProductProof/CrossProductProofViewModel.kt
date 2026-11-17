@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.crossProductProof.
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 @HiltViewModel
@@ -21,8 +22,8 @@ class CrossProductProofViewModel @Inject constructor(
     val state: StateFlow<CrossProductProofUiState>
         field = MutableStateFlow(
             CrossProductProofUiState(
-                callingProduct = context.callingProduct.value,
-                onBehalfOf = context.onBehalfOf.value,
+                callingProduct = context.callingProduct,
+                onBehalfOf = context.onBehalfOf,
                 suffix = context.suffix.asDisplayString(),
                 message = context.message.asUtf8OrHex(),
             )
@@ -45,8 +46,8 @@ class CrossProductProofViewModel @Inject constructor(
 }
 
 data class CrossProductProofUiState(
-    val callingProduct: String,
-    val onBehalfOf: String,
+    val callingProduct: ProductId,
+    val onBehalfOf: ProductId,
     val suffix: String,
     val message: String,
 )

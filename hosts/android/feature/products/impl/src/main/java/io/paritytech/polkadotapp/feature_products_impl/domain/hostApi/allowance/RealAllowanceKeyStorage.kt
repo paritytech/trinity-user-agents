@@ -6,8 +6,8 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.withContext
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 

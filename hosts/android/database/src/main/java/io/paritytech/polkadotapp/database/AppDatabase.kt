@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.database.converters.ChainConverters
 import io.paritytech.polkadotapp.database.converters.ExternalApiConverters
 import io.paritytech.polkadotapp.database.converters.IntListConverter
 import io.paritytech.polkadotapp.database.converters.LongMathConverters
+import io.paritytech.polkadotapp.database.converters.ProductIdConverters
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
 import io.paritytech.polkadotapp.database.dao.ChainDao
 import io.paritytech.polkadotapp.database.dao.ChatAcceptanceDao
@@ -38,7 +39,6 @@ import io.paritytech.polkadotapp.database.dao.FileUploadDao
 import io.paritytech.polkadotapp.database.dao.MessageNotificationSentDao
 import io.paritytech.polkadotapp.database.dao.MessageRevisionDao
 import io.paritytech.polkadotapp.database.dao.MetaAccountDao
-import io.paritytech.polkadotapp.database.dao.PocketCardDao
 import io.paritytech.polkadotapp.database.dao.ProcessedChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
@@ -92,6 +92,7 @@ import io.paritytech.polkadotapp.database.migrations.Migration63To64
 import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
 import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
+import io.paritytech.polkadotapp.database.migrations.Migration72To73Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
 import io.paritytech.polkadotapp.database.model.ChatAcceptanceLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
@@ -121,8 +122,6 @@ import io.paritytech.polkadotapp.database.model.FileUploadLocal
 import io.paritytech.polkadotapp.database.model.MessageNotificationSentLocal
 import io.paritytech.polkadotapp.database.model.MessageRevisionLocal
 import io.paritytech.polkadotapp.database.model.MetaAccountLocal
-import io.paritytech.polkadotapp.database.model.PocketCardFaceLocal
-import io.paritytech.polkadotapp.database.model.PocketCardLocal
 import io.paritytech.polkadotapp.database.model.ProcessedChatMessageLocal
 import io.paritytech.polkadotapp.database.model.ProductFundingOperationLocal
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
@@ -150,7 +149,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 73,
+    version = 74,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -205,8 +204,6 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ProductTopUpLocal::class,
         ChatAcceptanceLocal::class,
         ChatIdentitySigningConsentLocal::class,
-        PocketCardLocal::class,
-        PocketCardFaceLocal::class,
         ChatRoomDeclarationsLocal::class,
     ],
     autoMigrations = [
@@ -296,8 +293,10 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 70, to = 71),
         // Add chat_acceptances, chat_identity_signing_consents and statement_store_slot_allocations.tag
         AutoMigration(from = 71, to = 72),
+        // Drop the Pocket card and face tables
+        AutoMigration(from = 72, to = 73, spec = Migration72To73Spec::class),
         // Add chat_room_declarations (what products declare for their rooms, Chat Extension v2)
-        AutoMigration(from = 72, to = 73),
+        AutoMigration(from = 73, to = 74),
     ]
 )
 @TypeConverters(
@@ -305,6 +304,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
     ExternalApiConverters::class,
     ChainConverters::class,
     IntListConverter::class,
+    ProductIdConverters::class,
 )
 abstract class AppDatabase : RoomDatabase() {
     companion object {
@@ -446,6 +446,4 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chatAcceptanceDao(): ChatAcceptanceDao
 
     abstract fun chatIdentitySigningConsentDao(): ChatIdentitySigningConsentDao
-
-    abstract fun pocketCardDao(): PocketCardDao
 }
