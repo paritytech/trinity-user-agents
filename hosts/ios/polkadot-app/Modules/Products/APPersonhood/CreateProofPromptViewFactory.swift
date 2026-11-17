@@ -48,8 +48,8 @@ private extension CreateProofPromptViewFactory {
         if let callingProductId = request.callingProductId {
             String(
                 localized: .Products.createProofTitle(
-                    productId: callingProductId,
-                    targetProductId: request.onBehalfOfProductId
+                    productId: callingProductId.rawValue,
+                    targetProductId: request.onBehalfOfProductId.rawValue
                 )
             )
         } else {
@@ -61,7 +61,7 @@ private extension CreateProofPromptViewFactory {
         [
             String(
                 localized: .Products.createProofBodyOnBehalfOf(
-                    targetProductId: request.onBehalfOfProductId
+                    targetProductId: request.onBehalfOfProductId.rawValue
                 )
             ),
             String(

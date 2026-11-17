@@ -290,8 +290,8 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_SET_ROOM_FOOTER,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatSetRoomFooterRequest.enc({
-                        tag: "V1",
-                        value: { roomId: "room", footer: "TextInput" },
+                        tag: "V2",
+                        value: { roomId: "room", footer: { tag: "TextInput" } },
                     }),
                 ),
             ],
@@ -469,9 +469,12 @@ describe("chat extension v2 frames", () => {
         expect((await room)._unsafeUnwrap()).toEqual({ status: "Exists", roomId: "room" });
     });
 
-    it("sends the first shapes of setRoomFooter and postMessage as the first SDK did", async () => {
+    it("sends setRoomFooter at v2 and postMessage in the first SDK's shape", async () => {
         const footed = recordingClient();
-        const footer = footed.client.chat.setRoomFooter({ roomId: "room", footer: "TextInput" });
+        const footer = footed.client.chat.setRoomFooter({
+            roomId: "room",
+            footer: { tag: "TextInput" },
+        });
         expect(footed.sent).toEqual([snapshot.get("6.set_room_footer.request")]);
         footed.receive(snapshot.get("6.set_room_footer.response")!);
         expect((await footer)._unsafeUnwrap()).toBeUndefined();
@@ -591,14 +594,14 @@ describe("chat extension v2 frames", () => {
         ).toEqual([pinned("14.reactions_query.receive")]);
     });
 
-    it("decodes the first requests of setRoomFooter and postMessage", () => {
+    it("decodes the setRoomFooter request and the first postMessage request", () => {
         const payload = (name: string): Uint8Array => {
             // The request id "p:1", then the trait, method and message type.
             return hexToBytes(snapshot.get(name)!).slice(4 + 3);
         };
         expect(
             T.VersionedHostChatSetRoomFooterRequest.dec(payload("6.set_room_footer.request")),
-        ).toEqual({ tag: "V1", value: { roomId: "room", footer: "TextInput" } });
+        ).toEqual({ tag: "V2", value: { roomId: "room", footer: { tag: "TextInput" } } });
         // The first SDK posted at V2 as well, with `alt` optional.
         expect(
             T.VersionedHostChatPostMessageRequest.dec(

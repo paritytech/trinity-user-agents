@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -42,6 +43,8 @@ const iosFallback = step(
   "registry-drift",
   "Compare the iOS published fallback against its newest release",
 );
+const checkCrate = step("release", "Check the crate version against crates.io");
+const confirmCrate = step("release", "Confirm the crate reached crates.io");
 const title =
   "Release drift: published versions do not match the default branch";
 const manifest = "js/packages/truapi/package.json";
@@ -540,4 +543,108 @@ test("recorded iOS drift reaches the report through the npm comparison", (t) => 
   assert.equal(result.status, 0);
   assert.match(result.output, /drift=true/);
   assert.match(result.output, /falls back to 0\.7\.0/);
+});
+
+// crates.io sparse index answers, served in order and the last one repeated.
+const indexListing = (...versions) => ({ status: 200, versions });
+const indexMissing = { status: 404, versions: [] };
+const indexFailure = { status: 503, versions: [] };
+const crateIndex = (...answers) => `
+const fs = require("node:fs");
+const answers = ${JSON.stringify(answers)};
+const args = process.argv.slice(2);
+fs.appendFileSync(__filename + ".urls", args.at(-1) + "\\n");
+const call = fs.readFileSync(__filename + ".urls", "utf8").trim().split("\\n").length - 1;
+const answer = answers[Math.min(call, answers.length - 1)];
+fs.writeFileSync(
+  args[args.indexOf("-o") + 1],
+  answer.versions.map((vers) => JSON.stringify({ name: "trinity-stack", vers })).join("\\n"),
+);
+process.stdout.write(String(answer.status));
+`;
+
+function crateFixture(context, { manifest = "0.3.0", answers }) {
+  const repository = fixture(context);
+  repository.write(
+    "rust/crates/trinity-stack/Cargo.toml",
+    `[package]\nname = "trinity-stack"\nversion = "${manifest}"\n`,
+  );
+  const indexScript = join(repository.cwd, "scripts/crates-io-index.sh");
+  repository.write(
+    "scripts/crates-io-index.sh",
+    readFileSync(new URL("../crates-io-index.sh", import.meta.url)),
+  );
+  chmodSync(indexScript, 0o755);
+  repository.stub("curl", crateIndex(...answers));
+  const run = (script, env = {}) =>
+    repository.execute(script, {
+      VERSION: "0.3.0",
+      CRATES_INDEX_INTERVAL_SECONDS: "1",
+      ...env,
+    });
+  const urlLog = join(repository.root, "bin/curl.urls");
+  const lookups = () =>
+    existsSync(urlLog) ? readFileSync(urlLog, "utf8").trim().split("\n") : [];
+  return { run, lookups };
+}
+
+test("a crate manifest that differs from the released version fails the crate publish", (context) => {
+  const crate = crateFixture(context, {
+    manifest: "0.2.0",
+    answers: [indexMissing],
+  });
+  const result = crate.run(checkCrate);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    /Cargo\.toml is 0\.2\.0, but the release declares 0\.3\.0/,
+  );
+  assert.equal(result.output, "");
+});
+
+test("a trinity-stack version already on crates.io is not published again", (context) => {
+  const crate = crateFixture(context, {
+    answers: [indexListing("0.2.0", "0.3.0")],
+  });
+  const result = crate.run(checkCrate);
+  passed(result);
+  assert.match(result.output, /^listed=true$/m);
+  assert.deepEqual(crate.lookups(), [
+    "https://index.crates.io/tr/in/trinity-stack",
+  ]);
+});
+
+for (const [label, answer] of [
+  ["the first trinity-stack version", indexMissing],
+  ["a new trinity-stack version", indexListing("0.2.0", "0.3.0-rc.1")],
+]) {
+  test(`${label} is sent to crates.io`, (context) => {
+    const crate = crateFixture(context, { answers: [answer] });
+    const result = crate.run(checkCrate);
+    passed(result);
+    assert.match(result.output, /^listed=false$/m);
+  });
+}
+
+test("a crates.io index error fails the crate publish", (context) => {
+  const crate = crateFixture(context, { answers: [indexFailure] });
+  const result = crate.run(checkCrate);
+  assert.equal(result.status, 1);
+  assert.equal(result.output, "");
+});
+
+test("the crate publish is confirmed once the index lists the version", (context) => {
+  const crate = crateFixture(context, {
+    answers: [indexMissing, indexFailure, indexListing("0.3.0")],
+  });
+  const result = crate.run(confirmCrate, { CRATES_INDEX_WAIT_SECONDS: "30" });
+  passed(result);
+  assert.equal(crate.lookups().length, 3);
+});
+
+test("the crate publish fails when the version is not on crates.io by the deadline", (context) => {
+  const crate = crateFixture(context, { answers: [indexMissing] });
+  const result = crate.run(confirmCrate, { CRATES_INDEX_WAIT_SECONDS: "1" });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /trinity-stack 0\.3\.0 is not on crates\.io/);
 });

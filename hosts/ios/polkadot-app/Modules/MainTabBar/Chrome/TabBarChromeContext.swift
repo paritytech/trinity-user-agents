@@ -3,7 +3,6 @@ import UIKit
 struct TabBarChromeContext {
     let tabController: UIViewController?
     let contentController: UIViewController?
-    let isTabRoot: Bool
     let foldDerived: TabBarFoldDerived
     let screen: UIViewController?
 }
@@ -13,8 +12,7 @@ extension TabBarChromeContext {
         TabBarChromeContext(
             tabController: controller,
             contentController: controller,
-            isTabRoot: false,
-            foldDerived: .folded,
+            foldDerived: .tucked,
             screen: controller
         )
     }

@@ -7,9 +7,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomSt
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIcon
 import kotlinx.coroutines.flow.firstOrNull
@@ -23,6 +23,7 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 
 /**
  * Answers the core's chat callbacks for one product against its chat binding. The core has checked
@@ -56,11 +57,12 @@ class ProductChatHostBridge(
 
     override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        val showsTextInput = when (footer) {
-            ChatRoomFooter.TEXT_INPUT -> true
-            ChatRoomFooter.EMPTY -> false
+        val roomFooter = when (footer) {
+            ChatRoomFooter.TextInput -> ProductRoomFooter.TextInput
+            ChatRoomFooter.Empty -> ProductRoomFooter.Empty
+            is ChatRoomFooter.Card -> ProductRoomFooter.Card(footer.v1.messageType, footer.v1.payload.toDataByteArray())
         }
-        chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), showsTextInput).orReject()
+        chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), roomFooter).orReject()
     }
 
     override suspend fun listRooms(): List<ChatRoom> =

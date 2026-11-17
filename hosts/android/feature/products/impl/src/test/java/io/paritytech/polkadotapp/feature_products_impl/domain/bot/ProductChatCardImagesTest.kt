@@ -10,8 +10,8 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
@@ -23,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 import java.io.File
 
 /**
@@ -31,7 +32,7 @@ import java.io.File
  * serves the chat, and the Bulletin gateway.
  */
 class ProductChatCardImagesTest {
-    private val product = Product(ProductId.fromStoredValue("game.paseo"), "Game", icon = null)
+    private val product = Product(ProductId.parse("game.paseo").getOrThrow(), "Game", icon = null)
     private val archive: ProductWorkerArchive = mockk()
     private val ipfsContentLookup: IpfsContentLookup = mockk()
     private val picture: Uri = mockk()
@@ -74,6 +75,7 @@ class ProductChatCardImagesTest {
             workerRefCounter = mockk(),
             imageResolver = RealProductImageResolver(archive, ipfsContentLookup, FakePinnedPocketCards(emptyList())),
             resolveProduct = mockk(),
+            roomFooterStorage = mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() },
         )
         val extension = factory.create(product, ProductChatExtensionOrigin.InstalledByUser)
         val renderer = extension.customMessageRenderers().single() as ProductsMessageRenderer

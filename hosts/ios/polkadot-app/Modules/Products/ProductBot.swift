@@ -96,7 +96,7 @@ extension ProductBot: ChatExtensionBotProtocol {
             name: product.name,
             icon: .product(domain: product.id),
             input: .inputField(.init(canPay: false, canAttachFile: false)),
-            moreActions: []
+            moreActions: HostPlacedProducts.contains(productId: product.id) ? [] : [.leaveChat]
         )
     }
 

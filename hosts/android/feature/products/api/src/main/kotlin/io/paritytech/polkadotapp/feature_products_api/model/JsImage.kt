@@ -26,11 +26,6 @@ enum class JsImageFit {
 }
 
 @Serializable
-enum class JsEffect {
-    RAINBOW,
-}
-
-@Serializable
 enum class JsBlendingMode {
     NORMAL,
     MULTIPLY,

@@ -1,8 +1,7 @@
 import TrUAPIHost
 @testable import polkadot_app
 
-/// Answers every request with an outcome no other path gives, so a test can
-/// tell its answer arrived.
+/// Answers with an outcome no other path gives, so a test can tell its answer arrived.
 @MainActor
 final class StubCardFace: ExpandedCardFaceShowing {
     private(set) var requests: [Bool] = []

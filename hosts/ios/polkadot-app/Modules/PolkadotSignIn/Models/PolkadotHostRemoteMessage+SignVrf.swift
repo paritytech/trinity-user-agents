@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import MessageExchangeKit
@@ -71,7 +72,7 @@ extension VrfTranscriptItem: @retroactive ScaleEncodable {
 
 extension PolkadotHostRemoteMessage.SignVrfRequest: MessageExchange.CodableMessage {
     init(scaleDecoder: any ScaleDecoding) throws {
-        callingProductId = try String(scaleDecoder: scaleDecoder)
+        callingProductId = try ProductId(String(scaleDecoder: scaleDecoder))
         payload = try SignVrfPayload(
             account: ProductAccountId(scaleDecoder: scaleDecoder),
             transcriptLabel: Data(scaleDecoder: scaleDecoder),
@@ -80,7 +81,7 @@ extension PolkadotHostRemoteMessage.SignVrfRequest: MessageExchange.CodableMessa
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
-        try callingProductId.encode(scaleEncoder: scaleEncoder)
+        try callingProductId.rawValue.encode(scaleEncoder: scaleEncoder)
         try payload.account.encode(scaleEncoder: scaleEncoder)
         try payload.transcriptLabel.encode(scaleEncoder: scaleEncoder)
         try payload.items.encode(scaleEncoder: scaleEncoder)

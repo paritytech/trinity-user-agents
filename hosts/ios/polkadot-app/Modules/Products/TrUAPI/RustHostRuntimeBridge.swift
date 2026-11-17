@@ -60,7 +60,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     /// Demand is runtime-wide, so it arrives here rather than on a product's
     /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
     /// the manager hands the transition off rather than acting on it here.
-    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
@@ -112,6 +112,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return chainRegistry.getConnection(for: chain.chainId) != nil
+        case .materials:
+            return false
         }
     }
 
@@ -139,10 +141,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func encryptedStorageDelete(key: Data) async throws {
         try encryptedStorage.delete(key: key)
-    }
-
-    func supportedChains() throws -> HostChainSet {
-        TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }
 
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {

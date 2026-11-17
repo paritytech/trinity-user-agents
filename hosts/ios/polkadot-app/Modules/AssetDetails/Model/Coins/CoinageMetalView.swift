@@ -69,11 +69,14 @@ final class CoinageFieldView: UIView {
             top = min(max(scrollView.bounds.minY - fieldTop, 0), reach)
 
             // What is really on screen and clear of the bars, in the field's own coordinates,
-            // which is where the band can go. The field may start below the top of the screen
-            // or end above its bottom, so both ends are clipped to it.
+            // which is where the band can go. The field may start below the top of the screen,
+            // so the top is clipped to it. The bottom is deliberately not: the field ends where
+            // the band was last put, so clipping to it placed the band against its own edge, and
+            // the inset off that edge shortened the field by eight points on every settle until
+            // the band reached the coins. Where the coins end is the arrangement's business.
             let insets = scrollView.adjustedContentInset
             clearTop = max(scrollView.bounds.minY + insets.top - fieldTop, 0)
-            clearBottom = min(scrollView.bounds.maxY - insets.bottom - fieldTop, bounds.height)
+            clearBottom = scrollView.bounds.maxY - insets.bottom - fieldTop
         }
 
         let frame = CGRect(x: 0, y: top, width: bounds.width, height: surfaceHeight)

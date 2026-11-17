@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 
@@ -42,7 +43,7 @@ struct PublishedPocketCards: PublishedPocketCardsResolving {
             return PublishedPocketCard(
                 productId: resolved.id,
                 productName: resolved.displayName,
-                workerContentId: resolved.contentId(for: .worker),
+                workerContentId: worker.identifier,
                 definition: definition
             )
         }
@@ -66,8 +67,8 @@ struct PublishedPocketCards: PublishedPocketCardsResolving {
 
         return PublishedPocketCard(
             productId: resolved?.id ?? productId,
-            productName: resolved?.displayName ?? productId,
-            workerContentId: resolved?.contentId(for: .worker) ?? productId,
+            productName: resolved?.displayName ?? productId.rawValue,
+            workerContentId: resolved?.executables.worker?.identifier ?? resolved?.id ?? productId,
             definition: definition
         )
     }

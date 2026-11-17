@@ -10,7 +10,7 @@ use crate::product_id::ProductId;
 /// bytes are genuinely necessary. Hosts expand `Index(n)` to the internal
 /// 32-byte index (`u32` little-endian plus the index magic).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum DerivationIndex {
 	/// Plain account index.
 	Index(u32),
@@ -21,7 +21,7 @@ pub enum DerivationIndex {
 /// Identifies a product-specific account by combining a dotNS domain name with a
 /// derivation index.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductAccountId {
 	/// A dotNS domain name identifier (e.g., `"my-product.dot"`).
 	pub dot_ns_identifier: ProductId,
@@ -60,7 +60,7 @@ pub struct ContextualAlias {
 
 /// A single step in a [`RingLocation`] path, addressing a ring within a chain.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum RingLocationJunction {
 	/// Pallet instance hosting the ring collection.
 	PalletInstance(u8),
@@ -71,7 +71,7 @@ pub enum RingLocationJunction {
 /// Locates a ring for ring VRF operations using only identifiers that are
 /// stable across membership changes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct RingLocation {
 	/// Genesis hash of the chain hosting the ring.
 	pub chain_id: [u8; 32],
@@ -85,10 +85,10 @@ pub struct RingLocation {
 /// to a ring VRF proof, so contexts cannot collide across products and the same
 /// member key under different contexts yields unlinkable aliases.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductProofContext {
 	/// dotNS product identifier (e.g. `"my-product.dot"`) scoping the context.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Selector distinguishing contexts within the product; expands to the
 	/// same 32-byte derivation index as [`ProductAccountId::derivation_index`].
 	pub suffix: DerivationIndex,
@@ -140,7 +140,7 @@ pub struct HostAccountRegisterRingVrfKeyRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostAccountListRingVrfKeysRequest {
 	/// Product whose registry entries should be listed.
-	pub owner: String,
+	pub owner: ProductId,
 	/// Disclosure level requested by the caller.
 	pub disclosure: RingVrfKeyDisclosure,
 }
@@ -155,7 +155,7 @@ pub struct HostAccountRingVrfSignRequest {
 }
 
 /// User's authentication state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostAccountConnectionStatusSubscribeItem {
 	/// User is not logged in to the host.
 	Disconnected,
@@ -366,7 +366,7 @@ pub struct HostGetLegacyAccountsResponse {
 
 /// One `append_message` call replayed against the signing transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct VrfTranscriptItem {
 	/// Merlin `append_message` label.
 	pub label: Vec<u8>,
@@ -377,7 +377,7 @@ pub struct VrfTranscriptItem {
 /// Request to produce an sr25519 VRF signature from a product account over a
 /// caller-supplied Merlin transcript.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostAccountSignVrfRequest {
 	/// Account whose key signs the VRF.
 	pub account: ProductAccountId,

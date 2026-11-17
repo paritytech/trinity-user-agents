@@ -1,16 +1,15 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
 @testable import polkadot_app
 
-/// Pressing a card opens the product's widget, so the archive the widget is
-/// served from is fetched ahead of the press. Only for host-placed cards: they
+/// Pressing a card opens the product's widget, or its app when there is none,
+/// so that archive is fetched ahead of the press. Only for host-placed cards: they
 /// are few and fixed, where a Pocket full of added cards would turn one visit
 /// to the tab into a fetch per product.
 @MainActor
 struct PocketPrewarmerTests {
-    /// A pressed card opens the widget, so warming the app archive fetches
-    /// something the press never loads and leaves the press slow anyway.
     @Test
     func warmsTheArchiveAPressedCardOpens() async {
         let archives = RecordingArchives()
@@ -64,14 +63,14 @@ struct PocketPrewarmerTests {
 // MARK: - Fixtures
 
 private let humanity = PocketCardViewModel(
-    key: PocketCardKey(productId: "peopl.testnet", cardId: PocketCardId(value: "humanity")),
+    key: PocketCardKey(productId: try! ProductId("peopl.testnet"), cardId: PocketCardId(value: "humanity")),
     title: "Humanity",
     privileged: true,
     face: nil
 )
 
 private let loyalty = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.testnet", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.testnet"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false,
     face: nil
@@ -81,15 +80,15 @@ private let loyalty = PocketCardViewModel(
 /// makes the archive a warm reaches for something the test can name.
 private func resolverPublishingWidgets() -> StubProductResolver {
     StubProductResolver { productId in
-        ResolvedProduct(
+        try ResolvedProduct(
             id: productId,
-            displayName: productId,
+            displayName: productId.rawValue,
             description: nil,
             icon: nil,
             executables: ProductExecutables(
-                app: ProductExecutable.App(identifier: "app.\(productId)", appVersion: .zero),
+                app: ProductExecutable.App(identifier: ProductId("app.\(productId.rawValue)"), appVersion: .zero),
                 widget: ProductExecutable.Widget(
-                    identifier: "widget.\(productId)",
+                    identifier: ProductId("widget.\(productId.rawValue)"),
                     appVersion: .zero,
                     description: nil,
                     heights: [2],

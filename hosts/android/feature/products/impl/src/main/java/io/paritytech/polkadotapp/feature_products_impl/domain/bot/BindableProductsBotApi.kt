@@ -67,8 +67,8 @@ class BindableProductsBotApi(
     override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit> =
         withChat { it.deleteRoom(chatIdParameter) }
 
-    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> =
-        withChat { it.setRoomFooter(chatIdParameter, showsTextInput) }
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit> =
+        withChat { it.setRoomFooter(chatIdParameter, footer) }
 
     private suspend fun <T> withChat(call: suspend (ProductChatMessaging) -> Result<T>): Result<T> =
         chatSlot.tryUse().fold(

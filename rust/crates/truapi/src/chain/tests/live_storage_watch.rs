@@ -11,10 +11,10 @@ use subxt::{ext::scale_value::Value, storage::dynamic, utils::H256};
 use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
 
 use crate::{
+	Spawner,
 	chain::{DecodedEntryChanges, StorageWatchError, WatchedHead, WatchedStorage},
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	platform::JsonRpcConnection,
-	subscription::Spawner,
 };
 
 const ASSET_HUB_WS: &str = "wss://paseo-asset-hub-next-rpc.polkadot.io";
@@ -69,10 +69,7 @@ pub fn live_asset_hub(genesis: H256) -> ChainRuntime {
 
 /// Runs tasks on the test's tokio runtime.
 pub fn tokio_spawner() -> Spawner {
-	let handle = tokio::runtime::Handle::current();
-	Arc::new(move |task| {
-		handle.spawn(task);
-	})
+	Spawner::new(tokio::runtime::Handle::current())
 }
 
 /// The next report of `changes`, failing the test on an error or a stall.
