@@ -351,6 +351,9 @@ enum MessageContent {
     // A long post. Its Markdown also has headings and tables.
     Article { title: String, blocks: Vec<ArticleBlock> },
 
+    // Each participant answers with `Answer`: 0 going, 1 maybe, 2 not going.
+    CalendarEvent(CalendarEvent),
+
     // A payment that the Host made. The origin is the payer. The Host of a
     // reader checks `reference` and draws the state that it reads
     // (pending, sent, claimed, failed), not one that the sender wrote.
@@ -371,6 +374,16 @@ enum PaymentAsset {
 enum PaymentReference {
     CoinCheque(Vec<u8>),
     Transfer { chain: String, block_hash: [u8; 32], extrinsic_hash: [u8; 32] },
+}
+
+struct CalendarEvent {
+    name: String,
+    description: Option<String>,
+    starts_at: Timestamp,
+    ends_at: Option<Timestamp>,
+    location: Option<String>,
+    allow_guests: bool,
+    cancelled: bool,
 }
 
 enum ArticleBlock {
@@ -656,8 +669,8 @@ enum UserChatAction {
         buttons: Vec<Vec<MessageButton>>,
     },
     // Changes only the text of `Text` or `RichText` (and keeps the media),
-    // or the point of a live `Location`. A reader drops any other edit,
-    // and an edit by another origin.
+    // the point of a live `Location`, or a `CalendarEvent` (also to cancel
+    // it). A reader drops any other edit, and an edit by another origin.
     EditMessage {
         message_id: MessageId,
         new_content: MessageContent,
@@ -1220,7 +1233,7 @@ This RFC follows the same transport and serialization rules as the Host API prot
 23. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
 24. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
 25. **Links and invites**: Links to a room, a message, a call or an invite, join requests, and consent before an add.
-26. **Polls**: Questions with options, quizzes and anonymous polls, with one tally for every Product.
+26. **Polls and events**: Questions with options, quizzes and anonymous polls, and calendar events with RSVP, with one tally for every Product.
 27. **Buttons and commands**: Buttons on a message with an answer to a press, and the commands of a room.
 28. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
 29. **Stories**: Posts that expire, for an audience, with views and replies.
@@ -1280,6 +1293,8 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 4. **Visible decline**: This RFC hides a decline from the requester. Should every Product show it instead?
 
 5. **Pinned messages**: How many pinned messages may one room hold? Chat apps range from three to no limit.
+
+6. **Event guests**: When a `CalendarEvent` allows guests, is the number of guests part of the answer?
 
 ## Related Discussions
 
