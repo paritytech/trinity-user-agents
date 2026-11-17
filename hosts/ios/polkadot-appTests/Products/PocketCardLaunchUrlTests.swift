@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -6,9 +7,11 @@ import Testing
 /// Where a card's product opens. Every host builds this the same way, so a
 /// product is handed the same address whichever host it is running on.
 struct PocketCardLaunchUrlTests {
+    private let personhoodId = try! ProductId("peopl.paseo")
+
     @Test
     func opensTheProductAtItsOwnPageNamingTheCard() throws {
-        let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
+        let key = PocketCardKey(productId: personhoodId, cardId: PocketCardId(value: "humanity"))
 
         let url = try #require(key.launchUrl())
 
@@ -19,7 +22,7 @@ struct PocketCardLaunchUrlTests {
     /// query, and the product reads the id back out of this address.
     @Test
     func encodesACardIdThatNeedsIt() throws {
-        let key = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "gold card"))
+        let key = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "gold card"))
 
         let url = try #require(key.launchUrl())
 
@@ -30,7 +33,7 @@ struct PocketCardLaunchUrlTests {
     /// reads the same values the link carried.
     @Test
     func appendsALinksPageParamsAfterTheCard() throws {
-        let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
+        let key = PocketCardKey(productId: personhoodId, cardId: PocketCardId(value: "humanity"))
 
         let url = try #require(key.launchUrl(pageQuery: "open=scratch&tag=a%26b"))
 

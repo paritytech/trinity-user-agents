@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import SubstrateSdk
@@ -11,7 +12,7 @@ final class PaymentApprovalRequester: PaymentApprovalRequesting, @unchecked Send
     }
 
     func requestApproval(
-        productId: String,
+        productId: ProductId,
         amount: Balance,
         destination: AccountId
     ) async -> PaymentApprovalDecision {

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import IssueMonitoring
 import os
@@ -5,12 +6,13 @@ import Testing
 @testable import polkadot_app
 
 struct GameReminderEventTests {
+    private let productId = try! ProductId("game.dot")
     private let startsAt = Date(timeIntervalSince1970: 2_000_000_000)
 
     @Test func eventCarriesTheProductTheStartAndHowLateItCameAsNumbers() {
         let event = GameReminderEvent(
             step: .productOpened,
-            productId: "game.dot",
+            productId: productId,
             startsAt: startsAt,
             occurredAt: startsAt.addingTimeInterval(1.5),
             openSource: .alarm,
@@ -51,7 +53,7 @@ struct GameReminderEventTests {
         )
 
         #expect(
-            GameReminderEvent(step: .tapped, productId: "game.dot", startsAt: nil)
+            GameReminderEvent(step: .tapped, productId: productId, startsAt: nil)
                 .hostEvent(origin: origin, monotonicMilliseconds: 7)
                 == HostEvent(
                     name: "host.reminder.tapped",
@@ -83,7 +85,7 @@ struct GameReminderEventTests {
             }
         )
 
-        diagnostics.tapped(productId: "game.dot", startsAt: {
+        diagnostics.tapped(productId: productId, startsAt: {
             reads.withLock { $0 += 1 }
             return nil
         }())
@@ -99,7 +101,7 @@ struct GameReminderEventTests {
 
         diagnostics.fired {
             reads += 1
-            return [("game.dot", Date())]
+            return [(productId, Date())]
         }
 
         #expect(reads == 0)

@@ -14,7 +14,7 @@ use crate::{
 
 /// Local key/value storage scoped to the calling product.
 #[wire_trait(id = 7)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait LocalStorage: Send + Sync {
 	/// Read a value by key.
 	///

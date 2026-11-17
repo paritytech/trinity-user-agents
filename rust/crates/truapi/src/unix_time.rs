@@ -21,7 +21,8 @@ pub fn current_unix_secs() -> u64 {
 pub fn current_unix_millis() -> u64 {
 	use std::time::{SystemTime, UNIX_EPOCH};
 
-	SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+	u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis())
+		.unwrap_or(u64::MAX)
 }
 
 /// Current unix time in milliseconds on wasm32, sourced from the JS clock.

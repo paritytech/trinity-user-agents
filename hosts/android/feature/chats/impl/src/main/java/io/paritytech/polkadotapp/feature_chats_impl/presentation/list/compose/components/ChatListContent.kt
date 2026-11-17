@@ -6,13 +6,18 @@ import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
+import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.common.utils.rememberCurrentTimeMillisWithDelay
 import io.paritytech.polkadotapp.design.components.empty.EmptyScreenState
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
@@ -46,6 +52,7 @@ internal fun ChatListContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .windowInsetsPadding(LocalAppNavigationBarInsets.current)
                 .scrollable(
                     state = rememberScrollableState { 0f },
@@ -64,12 +71,18 @@ internal fun ChatListContent(
         }
     } else {
         val currentTimestamp by rememberCurrentTimeMillisWithDelay(1.minutes)
+        val listState = rememberLazyListState()
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .reportsScrollToStatusBar(listState),
+            state = listState,
             contentPadding = WindowInsets(
                 bottom = PolkadotTheme.spacings.medium + bottomClearance
-            ).add(LocalAppNavigationBarInsets.current).asPaddingValues()
+            ).add(LocalAppNavigationBarInsets.current)
+                .add(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                .asPaddingValues()
         ) {
             if (state.hasNewRequests) {
                 item(key = "new_requests") {

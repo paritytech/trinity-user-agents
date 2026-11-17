@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 const RUST_TABLE: &str = include_str!("../src/generated/wire_table.rs");
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct Row {
 	method: String,
 	trait_id: u8,

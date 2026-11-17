@@ -2,9 +2,13 @@ import Kingfisher
 import UIKit
 import PolkadotUI
 
-final class StaticImageViewModel: ImageViewModelProtocol {
+final class StaticImageViewModel: IdentifiableImageViewModelProtocol {
     let image: UIImage?
     private let optionsFactory: ImageProcessingOptionsProducing
+
+    var identifier: String {
+        image.map { "static:\(ObjectIdentifier($0))" } ?? "static:nil"
+    }
 
     init(image: UIImage?, optionsFactory: ImageProcessingOptionsProducing = ImageProcessingOptionsFactory()) {
         self.image = image

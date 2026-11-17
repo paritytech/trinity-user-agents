@@ -168,6 +168,13 @@
         "identifier" : "ExtrinsicServiceExtTests",
         "name" : "ExtrinsicServiceExtTests"
       }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/IssueMonitoring",
+        "identifier" : "IssueMonitoringTests",
+        "name" : "IssueMonitoringTests"
+      }
     }
   ],
   "version" : 2

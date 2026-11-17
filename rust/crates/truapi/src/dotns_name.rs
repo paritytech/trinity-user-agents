@@ -1,5 +1,7 @@
 //! The names dotNS can register: its top-level domains and its label syntax.
 
+use unicode_normalization::UnicodeNormalization;
+
 /// Top-level domains dotNS registers names under, one per network a host can
 /// use, not only production.
 pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
@@ -22,4 +24,13 @@ pub fn is_dns_label(value: &str) -> bool {
 		!value.starts_with('-') &&
 		!value.ends_with('-') &&
 		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// Canonical host form: case-folded and NFC-normalized (belt-and-suspenders;
+/// `url` already applies IDNA to parsed hosts), with a trailing root dot
+/// dropped so the absolute form `example.dot.` keys identically to
+/// `example.dot`.
+pub fn normalize_host(host: &str) -> String {
+	let normalized: String = host.nfc().collect::<String>().to_lowercase();
+	normalized.strip_suffix('.').unwrap_or(&normalized).to_string()
 }

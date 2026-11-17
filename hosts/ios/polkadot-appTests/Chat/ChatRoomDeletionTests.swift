@@ -78,8 +78,9 @@ struct ChatInteractorRoomRemovalTests {
         #expect(await firstEvents(2, of: output) == [.metadata(chatId), .removedChat])
     }
 
-    /// Only a room of a product closes when its chat goes; a chat without a room is not closed here.
-    @Test func aPersonChatDoesNotCloseWhenItsChatIsMissing() async {
+    /// A person chat whose chat goes closes as well, unless the chat went with a cancelled request, which
+    /// keeps the screen with the cancelled banner.
+    @Test func aPersonChatClosesWhenItsChatIsMissing() async {
         let chatId = Chat.Id.person(Data(repeating: 1, count: 32))
         let output = RecordingChatInteractorOutput()
         let engine = RecordingChatEngine()
@@ -88,7 +89,7 @@ struct ChatInteractorRoomRemovalTests {
         let interactor = makeInteractor(chatId: chatId, engine: engine, output: output)
         interactor.setup()
 
-        #expect(await firstEvents(2, of: output) == [.metadata(chatId), .metadata(chatId)])
+        #expect(await firstEvents(2, of: output) == [.metadata(chatId), .removedChat])
     }
 }
 
@@ -185,7 +186,8 @@ private extension ChatInteractorRoomRemovalTests {
         ChatMetadata(
             chatId: chatId,
             peerMetadata: Chat.PeerMetadata(name: "Room", icon: .bot, input: .empty, moreActions: []),
-            state: .created
+            state: .created,
+            peerSeenOrder: 0
         )
     }
 

@@ -15,6 +15,7 @@
 // rather than a direct function call. What it does NOT exercise is the iframe
 // boundary and the browser's origin checks; the fixture covers those.
 
+import type { ProductId } from "@parity/truapi";
 import {
   createClient,
   createMessagePortProvider,
@@ -27,8 +28,8 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
 import {
   resolveAccount,
   type DevAccount,
@@ -40,7 +41,7 @@ export interface MockClientOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /** Account the host signs as. Defaults to `"alice"`. */
   account?: DevAccountName | DevAccount;
   /**
@@ -144,7 +145,7 @@ export async function createMockClient(
 interface SigningRuntime {
   activateLocalSession(secret: Uint8Array): Promise<void>;
   productRuntime(
-    product: { productId: string },
+    product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },
   ): ProductCore;
 }

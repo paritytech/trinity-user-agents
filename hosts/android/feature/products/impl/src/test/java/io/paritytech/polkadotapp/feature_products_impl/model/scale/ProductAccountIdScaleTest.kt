@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.scale.toDomain
 import io.paritytech.polkadotapp.feature_products_api.model.scale.toScale
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class ProductAccountIdScaleTest {
     @Test
@@ -38,7 +39,7 @@ class ProductAccountIdScaleTest {
     @Test
     fun `product account id matches the js sdk encoding`() {
         val encoded = BinaryScale.encodeToByteArrayCatching(
-            ProductAccountId("browse.dot", DerivationIndex32.fromUInt(5u)).toScale()
+            ProductAccountId(ProductId.parse("browse.dot").getOrThrow(), DerivationIndex32.fromUInt(5u)).toScale()
         ).getOrThrow()
 
         assertEquals("0x2862726f7773652e646f740005000000", encoded.toHexString(withPrefix = true))
@@ -53,7 +54,7 @@ class ProductAccountIdScaleTest {
 
     @Test
     fun `product account id round trips through scale`() {
-        val original = ProductAccountId("browse.dot", DerivationIndex32.fromUInt(5u))
+        val original = ProductAccountId(ProductId.parse("browse.dot").getOrThrow(), DerivationIndex32.fromUInt(5u))
 
         val encoded = BinaryScale.encodeToByteArrayCatching(original.toScale()).getOrThrow()
         val decoded = BinaryScale.decodeFromByteArrayCatching<ProductAccountIdScale>(encoded).getOrThrow()
@@ -64,7 +65,7 @@ class ProductAccountIdScaleTest {
     @Test
     fun `raw product account id round trips through scale`() {
         val raw = DerivationIndex32.fromBytes(ByteArray(DerivationIndex32.SIZE_BYTES) { it.toByte() }.toDataByteArray()).getOrThrow()
-        val original = ProductAccountId("browse.dot", raw)
+        val original = ProductAccountId(ProductId.parse("browse.dot").getOrThrow(), raw)
 
         val encoded = BinaryScale.encodeToByteArrayCatching(original.toScale()).getOrThrow()
         val decoded = BinaryScale.decodeFromByteArrayCatching<ProductAccountIdScale>(encoded).getOrThrow()

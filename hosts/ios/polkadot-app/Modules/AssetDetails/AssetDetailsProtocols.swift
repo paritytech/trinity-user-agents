@@ -12,8 +12,7 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceive(readyAmount: BalanceViewModelProtocol?)
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
     func didReceive(isRecoveryInProgress: Bool)
-    func didShowBackupNotification()
-    func didHideBackupNotification()
+    func didReceive(showsRestoredBalanceHint: Bool)
 
     func didReceive(topUpLoading: Bool)
 
@@ -28,9 +27,7 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func setup()
     func onSendMoney()
     func onAddMoney()
-    func onBackupSync()
-    func onBackupCancel()
-    func onBackupWhyUpdate()
+    func onOpenBackupSettings()
     func onTopUp()
 
     #if TESTNET_FEATURE
@@ -40,8 +37,6 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
 
 protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func setup()
-    func triggerSync()
-    func cancelBackupNotification()
 
     func openTopUpProduct()
 
@@ -74,10 +69,12 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
 }
 
 @MainActor
-protocol AssetDetailsWireframeProtocol: AlertPresentable, ErrorPresentable, BackupSyncPresentable {
+protocol AssetDetailsWireframeProtocol: AlertPresentable, ErrorPresentable {
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset)
 
     func showAddTokens(from view: ControllerBackedProtocol?)
 
     func showProduct(page: ProductPage)
+
+    func showBackupSettings()
 }

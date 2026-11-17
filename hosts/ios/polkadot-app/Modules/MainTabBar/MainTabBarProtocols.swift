@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import PolkadotUI
 import UIKitExt
@@ -11,6 +12,7 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func showSPATabs(_ viewModels: [SPATabChipViewModel])
     func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?)
+    func showSettingsAttention(_ isVisible: Bool)
 }
 
 @MainActor
@@ -19,6 +21,7 @@ protocol MainTabBarPresenterProtocol: AnyObject {
     func configureViews()
     func didRequestConnectionStatus()
     func didRequestSettings()
+    func didRequestBackupSettings()
     func didFindChat(_ model: ChatOpenModel)
 }
 
@@ -39,6 +42,7 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceiveProductGamePill(_ pill: ProductGamePill?)
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool)
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool)
 }
 
 @MainActor
@@ -49,6 +53,7 @@ protocol MainTabBarWireframeProtocol: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)
     func showSettings(from view: MainTabBarViewProtocol?)
+    func showBackupSettings(from view: MainTabBarViewProtocol?)
 }
 
 enum TabBarItem: String, CaseIterable {
@@ -68,12 +73,12 @@ enum TabBarItem: String, CaseIterable {
         return asset.withRenderingMode(.alwaysTemplate)
     }
 
-    var title: String {
+    var title: LocalizedStringResource {
         switch self {
-        case .chat: String(localized: .tabChat)
-        case .wallet: String(localized: .tabWallet)
-        case .browse: String(localized: .tabBrowse)
-        case .settings: String(localized: .tabSettings)
+        case .chat: .tabChat
+        case .wallet: .tabWallet
+        case .browse: .tabBrowse
+        case .settings: .tabSettings
         }
     }
 }
@@ -93,6 +98,5 @@ extension TabBarItem {
 protocol SPAHosting: AnyObject {
     func openProduct(page: ProductPage)
     func presentProduct(page: ProductPage)
-    func minimizeSPA()
     func closeSPA(tabId: UUID)
 }

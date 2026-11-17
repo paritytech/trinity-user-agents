@@ -12,15 +12,16 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ri
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfKeyDisclosure
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfSignError
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.DerivationIndexWire
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.DerivationIndexWireAdapter
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.ProductAccountIdTupleAdapter
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.ProductIdJsonAdapter
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.ContainerBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
+import uniffi.truapi.ProductId
 
 /**
  * RFC-0024 key management. Registration only ever touches the caller's own domain, and consuming a
@@ -47,7 +48,7 @@ class RingVrfKeyHostCalls(
             callingProductIdProvider.getProductId().flatMap { callingProductId ->
                 botApi.listRingVrfKeys(
                     callingProductId,
-                    ProductId.fromStoredValue(params.owner),
+                    params.owner,
                     params.disclosure.toDisclosure(),
                 )
             }
@@ -129,7 +130,10 @@ private data class RegisterRingVrfKeyParams(
 )
 private data class RingVrfPublicKeyWire(val publicKey: HexString)
 
-private data class ListRingVrfKeysParams(val owner: String, val disclosure: String)
+private data class ListRingVrfKeysParams(
+    @JsonAdapter(ProductIdJsonAdapter::class) val owner: ProductId,
+    val disclosure: String,
+)
 
 private data class RingVrfSignParams(
     @JsonAdapter(ProductAccountIdTupleAdapter::class)

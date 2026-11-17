@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 import java.io.File
 import javax.inject.Inject

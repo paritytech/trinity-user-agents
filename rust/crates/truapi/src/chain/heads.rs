@@ -16,7 +16,7 @@ pub struct Heads {
 }
 
 /// A new head reported by the node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HeadEvent {
 	/// A block was finalized.
 	Finalized(HashAndNumber),

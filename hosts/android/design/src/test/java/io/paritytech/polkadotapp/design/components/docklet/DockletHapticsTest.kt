@@ -39,9 +39,26 @@ class DockletHapticsTest {
         assertEquals(CLOCK_TICK, dockletHapticConstant(DockletMoment.SlotTap, sdkInt = 35))
     }
 
+    @Test
+    fun `a hide swipe crossing half plays CLOCK_TICK`() {
+        assertEquals(CLOCK_TICK, dockletHapticConstant(DockletMoment.HideCross, sdkInt = 35))
+    }
+
+    @Test
+    fun `a swipe hide landing plays LONG_PRESS`() {
+        assertEquals(LONG_PRESS, dockletHapticConstant(DockletMoment.Hidden, sdkInt = 35))
+    }
+
+    @Test
+    fun `the dock coming back plays CONFIRM from API 30 and CONTEXT_CLICK below`() {
+        assertEquals(CONFIRM, dockletHapticConstant(DockletMoment.Restored, sdkInt = 30))
+        assertEquals(CONTEXT_CLICK, dockletHapticConstant(DockletMoment.Restored, sdkInt = 29))
+    }
+
     private companion object {
         const val CONFIRM = 16
         const val CONTEXT_CLICK = 6
         const val CLOCK_TICK = 4
+        const val LONG_PRESS = 0
     }
 }

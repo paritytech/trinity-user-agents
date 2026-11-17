@@ -95,9 +95,7 @@ fn pairing_config_validation_cases() {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			[0xa2; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]),
 			case.pairing_deeplink_scheme.to_string(),
 		)
 		.map(|_| ());
@@ -124,7 +122,7 @@ fn product_id_validation_cases() {
 	for domain in ["example.com", "example.org", "dotli.dotty"] {
 		assert_eq!(
 			domain.parse::<ProductId>(),
-			Err(ProductIdError::Invalid { product_id: domain.to_string() }),
+			Err(ProductIdError::Invalid { input: domain.to_string() }),
 			"{domain} must not be accepted as a product identifier"
 		);
 	}
@@ -133,10 +131,7 @@ fn product_id_validation_cases() {
 
 #[test]
 fn product_storage_key_round_trips_scopes_and_arbitrary_keys() {
-	let key = ProductStorageKey::new(
-		"Test.DOT".parse::<ProductId>().expect("valid product key"),
-		"settings:theme",
-	);
+	let key = ProductStorageKey::new(ProductId::for_test("Test.DOT"), "settings:theme");
 	let encoded = key.encode();
 	let decoded = ProductStorageKey::decode(&encoded).expect("decode product key");
 

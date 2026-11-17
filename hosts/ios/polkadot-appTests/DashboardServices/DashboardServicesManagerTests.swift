@@ -4,6 +4,7 @@ import Testing
 @testable import polkadot_app
 
 @MainActor
+@Suite(.timeLimit(.minutes(5)))
 struct DashboardServicesManagerTests {
     @Test func interactiveLeaseCreatesAndStartsCoordinatorOnce() throws {
         let factory = DashboardServicesCoordinatorFactorySpy()
@@ -63,7 +64,7 @@ struct DashboardServicesManagerTests {
 
         async let first = manager.acquireDurability()
         async let second = manager.acquireDurability()
-        await waitUntil { bootstrapper.waitCallCount == 1 }
+        await bootstrapper.changes.wait { bootstrapper.waitCallCount == 1 }
         bootstrapper.releaseReadiness()
 
         let leases = await [first, second]
@@ -79,7 +80,7 @@ struct DashboardServicesManagerTests {
         let manager = makeManager(bootstrapper: bootstrapper, factory: factory)
 
         async let durability = manager.acquireDurability()
-        await waitUntil { bootstrapper.waitCallCount == 1 }
+        await bootstrapper.changes.wait { bootstrapper.waitCallCount == 1 }
         let interactive = try #require(manager.acquireInteractive())
         bootstrapper.releaseReadiness()
 
@@ -96,7 +97,7 @@ struct DashboardServicesManagerTests {
         let coordinator = interactive.coordinator
 
         interactive.release()
-        await waitUntil { coordinator.stopInteractiveCallCount == 1 }
+        await coordinator.changes.wait { coordinator.stopInteractiveCallCount == 1 }
 
         #expect(coordinator.stopAllCallCount == 0)
         withExtendedLifetime(durability) {}
@@ -109,7 +110,7 @@ struct DashboardServicesManagerTests {
         let coordinator = lease.coordinator
 
         lease.release()
-        await waitUntil { coordinator.stopAllCallCount == 1 }
+        await coordinator.changes.wait { coordinator.stopAllCallCount == 1 }
         let next = try #require(manager.acquireInteractive())
 
         #expect(next.coordinator !== coordinator)
@@ -123,7 +124,11 @@ struct DashboardServicesManagerTests {
 
         manager.reset()
         lease.release()
-        await settle()
+
+        // Main-actor hops run in order: once a later release is handled, the stale one has been too.
+        let probe = try #require(manager.acquireInteractive())
+        probe.release()
+        await probe.coordinator.changes.wait { probe.coordinator.stopAllCallCount == 1 }
 
         #expect(coordinator.stopAllCallCount == 1)
         #expect(coordinator.stopInteractiveCallCount == 0)
@@ -164,16 +169,92 @@ struct DashboardServicesManagerTests {
         #expect(retention.heldCount == 0)
     }
 
-    @Test func failedDurabilityStartDropsCoordinator() async {
+    @Test func failedDurabilityStartDropsCoordinator() async throws {
         let factory = DashboardServicesCoordinatorFactorySpy(durabilityStarts: false)
         let manager = makeManager(factory: factory)
 
         let lease = await manager.acquireDurability()
-        let coordinator = factory.made.first
-        await waitUntil { coordinator?.stopAllCallCount == 1 }
+        let coordinator = try #require(factory.made.first)
+        await coordinator.changes.wait { coordinator.stopAllCallCount == 1 }
 
         #expect(lease == nil)
-        #expect(coordinator?.stopAllCallCount == 1)
+        #expect(coordinator.stopAllCallCount == 1)
+    }
+
+    @Test func backgroundInteractiveLeaseDefersStartUntilForeground() async throws {
+        let activity = ApplicationActivityStub(isInBackground: true)
+        let manager = makeManager(activity: activity)
+
+        let lease = try #require(manager.acquireInteractive())
+        await activity.changes.wait { activity.waitCallCount == 1 }
+
+        #expect(lease.coordinator.startInteractiveCallCount == 0)
+        #expect(!manager.isInteractiveRunning)
+
+        activity.enterForeground()
+        await lease.coordinator.changes.wait { lease.coordinator.startInteractiveCallCount == 1 }
+
+        #expect(lease.coordinator.startInteractiveCallCount == 1)
+        #expect(manager.isInteractiveRunning)
+    }
+
+    @Test func voipRequestStartsDeferredInteractivePart() async throws {
+        let activity = ApplicationActivityStub(isInBackground: true)
+        let manager = makeManager(activity: activity)
+        let lease = try #require(manager.acquireInteractive())
+
+        manager.requestInteractiveStart()
+        await activity.changes.wait { activity.cancelledWaitCount == 1 }
+
+        #expect(lease.coordinator.startInteractiveCallCount == 1)
+    }
+
+    @Test func voipRequestBeforeLeaseStartsInteractiveAtOnce() throws {
+        let manager = makeManager(activity: ApplicationActivityStub(isInBackground: true))
+
+        manager.requestInteractiveStart()
+        let lease = try #require(manager.acquireInteractive())
+
+        #expect(lease.coordinator.startInteractiveCallCount == 1)
+    }
+
+    @Test func releasingInteractiveBeforeForegroundNeverStarts() async throws {
+        let activity = ApplicationActivityStub(isInBackground: true)
+        let manager = makeManager(activity: activity)
+        let lease = try #require(manager.acquireInteractive())
+        let coordinator = lease.coordinator
+        await activity.changes.wait { activity.waitCallCount == 1 }
+
+        lease.release()
+        await activity.changes.wait { activity.cancelledWaitCount == 1 }
+        await coordinator.changes.wait { coordinator.stopAllCallCount == 1 }
+
+        #expect(coordinator.startInteractiveCallCount == 0)
+    }
+
+    @Test func durabilityLeaseDuringDeferredStartStartsOnlyDurability() async throws {
+        let manager = makeManager(activity: ApplicationActivityStub(isInBackground: true))
+
+        let interactive = try #require(manager.acquireInteractive())
+        let durability = try #require(await manager.acquireDurability())
+
+        #expect(durability.coordinator === interactive.coordinator)
+        #expect(durability.coordinator.startDurabilityCallCount == 1)
+        #expect(durability.coordinator.startInteractiveCallCount == 0)
+        #expect(!manager.isInteractiveRunning)
+    }
+
+    @Test func isInteractiveRunningReflectsStartAndStop() async throws {
+        let manager = makeManager()
+        let lease = try #require(manager.acquireInteractive())
+        let coordinator = lease.coordinator
+
+        #expect(manager.isInteractiveRunning)
+
+        lease.release()
+        await coordinator.changes.wait { coordinator.stopAllCallCount == 1 }
+
+        #expect(!manager.isInteractiveRunning)
     }
 }
 
@@ -181,30 +262,15 @@ private extension DashboardServicesManagerTests {
     func makeManager(
         bootstrapper: BackgroundTaskBootstrapperStub = BackgroundTaskBootstrapperStub(),
         factory: DashboardServicesCoordinatorFactorySpy? = nil,
-        connectionRetention: ConnectionRetentionSpy = ConnectionRetentionSpy()
+        connectionRetention: ConnectionRetentionSpy = ConnectionRetentionSpy(),
+        activity: ApplicationActivityStub? = nil
     ) -> DashboardServicesManager<DashboardServicesCoordinatorSpy> {
         DashboardServicesManager(
-            bootstrapper: bootstrapper,
+            background: DashboardServicesBackground(bootstrapper: bootstrapper, deadline: .seconds(1)),
             coordinatorFactory: factory ?? DashboardServicesCoordinatorFactorySpy(),
             connectionRetention: connectionRetention,
-            headlessBootDeadline: .seconds(1),
+            activity: activity ?? ApplicationActivityStub(),
             logger: StubLogger()
         )
-    }
-
-    /// Lease releases hop to the main actor; give them a bounded number of turns to land.
-    func waitUntil(_ condition: () -> Bool) async {
-        var turns = 0
-
-        while !condition(), turns < 1_000 {
-            await Task.yield()
-            turns += 1
-        }
-    }
-
-    func settle() async {
-        for _ in 0 ..< 100 {
-            await Task.yield()
-        }
     }
 }

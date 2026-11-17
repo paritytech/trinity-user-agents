@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AlarmKit
 import AppIntents
 import Foundation
@@ -144,7 +145,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     ) async throws {
         let playIntent = GameAlarmPlayIntent()
         playIntent.alarmID = newAlarmId.uuidString
-        playIntent.productId = productId
+        playIntent.productId = productId.rawValue
 
         try await alarmManger.scheduleGameAlarm(id: newAlarmId, at: date, playIntent: playIntent)
     }

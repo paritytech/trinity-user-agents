@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Coinage
 import Foundation
@@ -6,7 +7,7 @@ import SubstrateSdk
 /// Context handed to a lifecycle reporter once the transfer has been submitted.
 enum TransferTrackingContext {
     case coinageMemo(TransferMemo)
-    case externalPayment(productId: String, paymentId: String, amountInPlanks: Balance)
+    case externalPayment(productId: ProductId?, paymentId: String, amountInPlanks: Balance)
 }
 
 /// Streams post-submission transfer lifecycle updates to the UI.

@@ -6,10 +6,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 
-enum class DockletMoment { Open, SwipeStart, Close, StepChange, SlotTap }
+enum class DockletMoment { Open, SwipeStart, Close, StepChange, SlotTap, HideCross, Hidden, Restored }
 
 fun dockletHapticConstant(moment: DockletMoment, sdkInt: Int): Int = when (moment) {
-    DockletMoment.Open -> if (sdkInt >= Build.VERSION_CODES.R) {
+    DockletMoment.Open,
+    DockletMoment.Restored -> if (sdkInt >= Build.VERSION_CODES.R) {
         HapticFeedbackConstants.CONFIRM
     } else {
         HapticFeedbackConstants.CONTEXT_CLICK
@@ -17,7 +18,10 @@ fun dockletHapticConstant(moment: DockletMoment, sdkInt: Int): Int = when (momen
 
     DockletMoment.SwipeStart,
     DockletMoment.Close,
-    DockletMoment.SlotTap -> HapticFeedbackConstants.CLOCK_TICK
+    DockletMoment.SlotTap,
+    DockletMoment.HideCross -> HapticFeedbackConstants.CLOCK_TICK
+
+    DockletMoment.Hidden -> HapticFeedbackConstants.LONG_PRESS
 
     DockletMoment.StepChange -> HapticFeedbackConstants.CONTEXT_CLICK
 }

@@ -1,10 +1,30 @@
 import SwiftUI
 
 /// Bar outline with the notch cut from its top edge at centre.
-struct DSTabBarShape: Shape {
+struct DSTabBarShape: InsettableShape {
+    private var insetAmount: CGFloat = 0
+
     func path(in rect: CGRect) -> Path {
-        Path(roundedRect: rect, cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
-            .subtracting(.notchCut(in: rect))
+        let outer = Path(
+            roundedRect: rect.insetBy(dx: insetAmount, dy: insetAmount),
+            cornerRadius: max(0, DSTabBarStyle.cornerRadius - insetAmount),
+            style: .continuous
+        )
+        return outer.subtracting(grownNotchCut(in: rect))
+    }
+
+    /// The outline shrinks inward and the notch grows by the same amount, so an inset stroke follows both edges
+    /// from inside the bar.
+    func inset(by amount: CGFloat) -> DSTabBarShape {
+        var copy = self
+        copy.insetAmount += amount
+        return copy
+    }
+
+    private func grownNotchCut(in rect: CGRect) -> Path {
+        let cut = Path.notchCut(in: rect)
+        guard insetAmount > 0 else { return cut }
+        return cut.union(cut.strokedPath(StrokeStyle(lineWidth: 2 * insetAmount)))
     }
 }
 

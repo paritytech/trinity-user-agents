@@ -27,20 +27,24 @@ struct TrUAPIProductOutboxWorkers: ProductOutboxWorkers {
 
     /// Takes a worker reference, and then waits until the execution of the worker runs.
     func holdWorker(productId: String) async {
+        guard let id = workerProductId(productId) else {
+            return
+        }
+
         do {
-            try references().acquireWorker(productId: productId)
+            try references().acquireWorker(productId: id)
         } catch {
             logger.warning("[outbox] cannot hold the worker of \(productId): \(error)")
             return
         }
 
-        guard let workers = workers(), workers.currentExecution(of: productId) == nil else {
+        guard let workers = workers(), workers.currentExecution(of: id) == nil else {
             return
         }
 
         do {
             try await withTimeout(executionWait) {
-                for try await execution in workers.executions(of: productId) where execution != nil {
+                for try await execution in workers.executions(of: id) where execution != nil {
                     return
                 }
             }
@@ -50,15 +54,19 @@ struct TrUAPIProductOutboxWorkers: ProductOutboxWorkers {
     }
 
     func releaseWorker(productId: String) {
-        try? references().releaseWorker(productId: productId)
+        guard let id = workerProductId(productId) else {
+            return
+        }
+
+        try? references().releaseWorker(productId: id)
     }
 
     func workerStarts(productId: String) -> AsyncStream<Void> {
-        guard let workers = workers() else {
+        guard let workers = workers(), let id = workerProductId(productId) else {
             return AsyncStream { $0.finish() }
         }
 
-        let executions = workers.executions(of: productId)
+        let executions = workers.executions(of: id)
         return AsyncStream { continuation in
             let task = Task {
                 var wasRunning = false
@@ -90,6 +98,16 @@ struct TrUAPIProductOutboxWorkers: ProductOutboxWorkers {
     static func sharedWorkers() -> (any TrUAPIWorkerManaging)? {
         let provider: TrUAPIHostRuntimeProviding? = RootDependencyLocator.getDependency()
         return provider?.attachedWorkerManager
+    }
+
+    /// The outbox names a product by its domain. A name that is not a product id holds no worker.
+    private func workerProductId(_ productId: String) -> ProductId? {
+        do {
+            return try ProductId(productId)
+        } catch {
+            logger.warning("[outbox] \(productId) is not a product id: \(error)")
+            return nil
+        }
     }
 }
 

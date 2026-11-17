@@ -47,7 +47,7 @@ private extension SignVrfPromptViewFactory {
 
     static func makeTitle(for request: SignVrfConfirmationRequest) -> String {
         if let callingProductId = request.callingProductId {
-            String(localized: .Products.signVrfTitle(productId: callingProductId))
+            String(localized: .Products.signVrfTitle(productId: callingProductId.rawValue))
         } else {
             String(localized: .Products.signVrfTitleUnknownCaller)
         }
@@ -60,7 +60,7 @@ private extension SignVrfPromptViewFactory {
             String(
                 localized: .Products.signVrfBody(
                     transcriptLabel: transcriptLabel,
-                    productId: callingProductId
+                    productId: callingProductId.rawValue
                 )
             )
         } else {
