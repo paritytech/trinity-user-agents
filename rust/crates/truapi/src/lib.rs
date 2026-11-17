@@ -935,9 +935,15 @@ cfg_select! {
 		pub use host_rpc_client::HostRpcClient;
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
+		pub use materials::{
+			MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
+			ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
+			UniformRole,
+		};
+		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
-			NativePublicProfileObserver, NativeRendererObserver, NativeSubscription,
-			WsBridgeEndpoint, WsBridgeStartError,
+			NativeMaterialsObserver, NativeMaterialsResolution, NativePublicProfileObserver,
+			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native_debug::{DebugSinkError, WsDebugSink};

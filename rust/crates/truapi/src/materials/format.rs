@@ -23,6 +23,12 @@ const MAX_BODY_UNITS: usize = 32_768;
 /// Most parameters one material declares.
 const MAX_PARAMS: usize = 32;
 
+/// The format version this core reads, which `HEADER` names.
+pub const FORMAT_VERSION: u32 = 1;
+
+/// The features this core reads. Version 1 defines none.
+pub const FEATURES: [&str; 0] = [];
+
 const HEADER: &str = "// @material 1";
 const REQUIRES: &str = "// @requires ";
 const CONTROL: &str = "// @control ";

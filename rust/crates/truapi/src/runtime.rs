@@ -145,7 +145,8 @@ use truapi::{
 		},
 		renderer::{
 			HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
-			HostRendererActionSubscribeRequest,
+			HostRendererActionSubscribeRequest, HostRendererFailureSubscribeError,
+			HostRendererFailureSubscribeItem, HostRendererFailureSubscribeRequest,
 		},
 	},
 };
@@ -411,6 +412,7 @@ pub struct ProductConnection {
 	chain: crate::chain_runtime::ChainRuntime,
 	chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
 	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
+	renderer_failures: Arc<ActionChannel<HostRendererFailureSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// Control of the card face under this connection's Widget, when the host draws one.
@@ -706,9 +708,11 @@ impl ProductConnection {
 		}
 	}
 
-	/// End the renderer action stream this connection's product is reading.
+	/// End the renderer action and failure streams this connection's product
+	/// is reading.
 	pub fn detach_renderer(&self) {
 		self.renderer.detach();
+		self.renderer_failures.detach();
 	}
 
 	/// Buffer one renderer action for this connection's product.
@@ -768,6 +772,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			chain,
 			chat: adapters.chat,
 			renderer: adapters.renderer,
+			renderer_failures: adapters.renderer_failures,
 			pocket_platform: adapters.pocket_platform,
 			game_platform: adapters.game_platform,
 			expanded_card: adapters.expanded_card,
@@ -1543,6 +1548,28 @@ impl<H: AccountHolder> Renderer for ProductRuntimeHost<H> {
 				Subscription::new(
 					self.connection
 						.renderer
+						.subscribe()
+						.map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "renderer.failure_subscribe"))]
+	async fn failure_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostRendererFailureSubscribeRequest,
+	) -> Subscription<HostRendererFailureSubscribeItem, CallError<HostRendererFailureSubscribeError>>
+	{
+		version(request)
+			.exec(|()| async move {
+				if self.connection.renderer_access().is_err() {
+					return Subscription::interrupted(CallError::Denied);
+				}
+				Subscription::new(
+					self.connection
+						.renderer_failures
 						.subscribe()
 						.map(|item| item.map(IntoLatest::into_latest)),
 				)

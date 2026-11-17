@@ -204,3 +204,33 @@ fn every_uniform_and_texture_says_what_fills_it() {
 	);
 	assert_eq!((shader.vertex_block_size, shader.fragment_block_size), (16, 128));
 }
+
+/// The device's driver decides in the end, but Khronos's reference compiler
+/// refuses what no conformant GLSL ES 3.00 driver accepts, so every Android
+/// shader the core builds must pass it. Skipped where it is not installed.
+#[test]
+fn every_android_shader_compiles_with_the_reference_compiler() {
+	let glslang = || std::process::Command::new("glslangValidator");
+	if glslang().arg("--version").output().is_err() {
+		return;
+	}
+	let compiled: Compiled = serde_json::from_str(COMPILED).unwrap();
+	let directory = tempfile::tempdir().unwrap();
+	for (index, case) in compiled.cases.iter().enumerate() {
+		let material = material(&case.text);
+		for float_filterable in [true, false] {
+			let shader = material.shader(ShaderLanguage::GlslEs, float_filterable).unwrap();
+			for (stage, source) in [("vert", &shader.vertex), ("frag", &shader.fragment)] {
+				let path = directory.path().join(format!("{index}-{float_filterable}.{stage}"));
+				std::fs::write(&path, source).unwrap();
+				let output = glslang().arg(&path).output().unwrap();
+				assert!(
+					output.status.success(),
+					"{} {stage} (float filterable: {float_filterable}):\n{}",
+					case.name,
+					String::from_utf8_lossy(&output.stdout)
+				);
+			}
+		}
+	}
+}
