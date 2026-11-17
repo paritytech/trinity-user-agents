@@ -1777,7 +1777,7 @@ fn the_durable_engine_serves_the_coinage_domains_once_the_host_turns_coinage_on(
 		let (runtime, _platform) = signing_runtime_on(stack);
 		runtime.set_core_db(crate::store::open_memory_core_db());
 		if enabled {
-			assert!(runtime.enable_coinage());
+			assert!(runtime.enable_coinage(Default::default()));
 		}
 		runtime.start_core_services();
 		runtime
@@ -1791,12 +1791,35 @@ fn the_durable_engine_serves_the_coinage_domains_once_the_host_turns_coinage_on(
 	assert!(register(&on).is_ok());
 }
 
+/// A native host shows a reason, not a spinner, when coinage does not run:
+/// turned off, or a stack without coinage.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_coinage_layer_says_why_it_does_not_run() {
+	use crate::coinage::layer::CoinageUnavailable;
+
+	let reason = |stack, enabled: bool| {
+		let (runtime, _platform) = signing_runtime_on(stack);
+		runtime.set_core_db(crate::store::open_memory_core_db());
+		if enabled {
+			assert!(runtime.enable_coinage(Default::default()));
+		}
+		runtime.start_core_services();
+		futures::executor::block_on(runtime.coinage_layer()).err()
+	};
+	assert_eq!(
+		[reason(coinage_stack(), false), reason(crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], [0xcc; 32]), true)],
+		[Some(CoinageUnavailable::Off), Some(CoinageUnavailable::Off)]
+	);
+}
+
 /// A stack whose People chain runs coinage instance 0.
 #[cfg(not(target_arch = "wasm32"))]
 fn coinage_stack() -> crate::platform::Stack {
 	let mut descriptor =
 		crate::test_support::test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor["contracts"] = serde_json::json!({ "accountDataStore": "0x58c9963308c7735cf72ab633e8a9d892f5ab9e05" });
 	let (pointer, bytes) = crate::test_support::sign_test_descriptor(&descriptor);
 	crate::platform::Stack::bundled(&pointer, &bytes, false).expect("the stack is valid")
 }

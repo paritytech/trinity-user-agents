@@ -175,7 +175,7 @@ fn serve_contracts(
 		scripted.lock().unwrap().respond(request)
 	}));
 	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
-	let extrinsics = ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost));
+	let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost)));
 	let caller = EvmContractCaller::new(chain, extrinsics, GENESIS);
 	(node, provider, caller)
 }

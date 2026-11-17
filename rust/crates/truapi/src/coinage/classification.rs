@@ -125,6 +125,7 @@ pub enum Selectability {
 
 /// What became of an exported coin.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum)]
 pub enum ExportStatus {
 	/// The transaction creating it has not succeeded finally.
 	NotYetMinted,

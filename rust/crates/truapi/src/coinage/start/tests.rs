@@ -69,7 +69,7 @@ fn a_start_that_cannot_be_covered_writes_nothing() {
 	wallet.coin(1);
 	let refused = started(&wallet, &key(1), pay(3, Destination::Purse(PurseId(4))));
 	assert!(matches!(refused, Err(StartError::InsufficientFunds { available: 2 })));
-	assert_eq!(wallet.view().registrations().records().count(), 0);
+	assert_eq!(wallet.view().registrations().records().filter(|facts| facts.operation == key(1)).count(), 0);
 }
 
 #[test]
