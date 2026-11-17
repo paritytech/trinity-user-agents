@@ -220,6 +220,18 @@ struct ChatRoomPreview {
     order: ChatRoomPreviewOrder,
     timestamp: Timestamp,
     badge: ChatRoomPreviewBadge,
+    // The user's own state of the room, from the room actions (4.3).
+    archived: bool,
+    muted_until: Option<Timestamp>,
+    marked_unread: bool,
+    request: Option<RoomRequest>,
+}
+
+// A direct room that waits for an answer.
+enum RoomRequest {
+    Incoming { since: Timestamp },
+    Outgoing { since: Timestamp },
+    Declined,
 }
 ```
 
@@ -341,6 +353,7 @@ enum RoomEvent {
     MemberAdded(ChatParticipantId),
     MemberRemoved(ChatParticipantId),
     MemberLeft,
+    RequestAccepted,
     Renamed(String),
     AvatarChanged,
     DescriptionChanged,
@@ -599,6 +612,20 @@ enum UserChatAction {
     // the user saw. It marks every earlier message of that origin as seen.
     Seen(Vec<MessageId>),
 
+    // Room actions. The Product keeps the result in the room preview, so
+    // it follows the user to the user's other devices.
+    PinRoom(bool),
+    ArchiveRoom(bool),
+    // None unmutes. Timestamp::MAX mutes until the user unmutes.
+    MuteRoom(Option<Timestamp>),
+    MarkUnread(bool),
+    // Removes the history on the user's own devices.
+    ClearRoom,
+    LeaveRoom,
+    AnswerRequest { accept: bool },
+    // Blocks (true) or unblocks the other participant of a direct room.
+    Block(bool),
+
     // A step of the call of a `Call` message. `payload` is for the call
     // transport, and the Host does not read it.
     CallSignal {
@@ -649,7 +676,10 @@ fn handle_chat_messages_source(
 );
 ```
 
+- `LeaveRoom`: the member that leaves sends it, and the member or Host that manages the room removes the member. In a direct room the user's devices clear the room, and the other participant sees `MemberLeft` and keeps it. A later message from either side opens the room again.
 - Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
+- A decline and a block are not shown to the other participant. A reader applies them, and tells its user nothing: a decline closes the request on both sides, a block stops delivery (or the reader drops the records of the blocked participant in that room), and an unblock ends that.
+
 #### 4.4 Message Details
 
 When a user asks who reacted, who read a message, or how it read before an edit, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
@@ -1063,11 +1093,12 @@ This RFC follows the same transport and serialization rules as the Host API prot
 19. **Chat placeholder**: Custom empty-state content for rooms with no messages.
 20. **Records between Products**: One record for the Products of a room, with ids bound to their origin and a rule for what a reader does not know.
 21. **Room events**: Lines such as "Ana added Ben" or "Ana renamed the group", with the participants they name.
-22. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
-23. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
-24. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
-25. **Stories**: Posts that expire, for an audience, with views and replies.
-26. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
+22. **Room actions**: Pin, archive, mute, mark unread, clear and leave a room, and answer or block a request, with the same state on all the user's devices.
+23. **Spaces and threads**: A tree of rooms (space, category, forum, thread) with an order and shared settings, and a reply count on the root of a thread.
+24. **Calls**: A call row that its participants update, for one-to-one calls, room calls and live streams.
+25. **Articles**: Long posts with a title, headings, tables and media between paragraphs.
+26. **Stories**: Posts that expire, for an audience, with views and replies.
+27. **Payments**: A payment row that points at a payment of the Host, with a state that the reader's Host checks.
 
 #### Non-Functional Requirements
 
@@ -1119,6 +1150,8 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
 
 3. **Text size**: Long pastes, code blocks and Markdown can be over 16 KiB. Should the limit be 64 KiB, or should a longer text go as a text file?
+
+4. **Visible decline**: This RFC hides a decline from the requester. Should every Product show it instead?
 
 ## Related Discussions
 
