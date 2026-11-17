@@ -80,10 +80,15 @@ internal fun ChatInputRow(
     onHeightChanged: (Dp) -> Unit,
 ) {
     val density = LocalDensity.current
+    val measuredModifier = Modifier
+        .fillMaxWidth()
+        .onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
+    if (inputState is ChatInputUiState.ExtensionCard) {
+        Box(modifier = measuredModifier) { inputState.renderer.drawInputSlot() }
+        return
+    }
     PolkadotSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) },
+        modifier = measuredModifier,
         brush = footerBackgroundBrush(inputState)
     ) {
         Box(
@@ -153,6 +158,8 @@ internal fun ChatInputRow(
                         onDecline = onDeclineIdentitySigningClick
                     )
                 }
+
+                is ChatInputUiState.ExtensionCard -> Unit
             }
         }
     }
@@ -171,6 +178,7 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
     is ChatInputUiState.IdentitySigningConsent -> SolidColor(PolkadotTheme.colors.bg.surface.container)
 
     is ChatInputUiState.Hidden,
+    is ChatInputUiState.ExtensionCard,
     is ChatInputUiState.PeerLeft,
     is ChatInputUiState.UnblockUser,
     is ChatInputUiState.WaitChatRequestApproval -> SolidColor(Color.Transparent)

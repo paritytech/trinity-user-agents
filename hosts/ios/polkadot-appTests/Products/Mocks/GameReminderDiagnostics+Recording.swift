@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import IssueMonitoring
 import UIKit
@@ -34,7 +35,7 @@ extension GameReminderDiagnostics {
 /// The host event `GameReminderDiagnostics.recording` records for a step, spelled out field by field.
 func expectedReminderHostEvent(
     _ step: String,
-    productId: String,
+    productId: ProductId,
     startsAt: Date,
     occurredAt: Date,
     tags: [String: String] = [:]
@@ -46,7 +47,7 @@ func expectedReminderHostEvent(
             "host.platform": "ios",
             "host.native_app_version": "1.2.3",
             "host.os_version": "26.5",
-            "reminder.product_id": productId
+            "reminder.product_id": productId.rawValue
         ].merging(tags) { _, new in new },
         extras: [
             "host.app_build": .integer(456),

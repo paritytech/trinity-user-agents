@@ -48,7 +48,7 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionAccountTitle),
                 String(
                     localized: .Products.permissionBodyAccountAccess(
-                        targetProductId: targetProductId
+                        targetProductId: targetProductId.rawValue
                     )
                 )
             )

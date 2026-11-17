@@ -240,6 +240,37 @@ struct JWTTokenManagerTests {
         #expect(receivedTokens[1] != soonToBeRejected)
     }
 
+    @Test("A TURN request rejected with 401 is retried once with a replaced token")
+    func turnUnauthorizedReplacesToken() async throws {
+        let store = MockJWTTokenStore()
+        try store.saveToken(validJWT)
+        try store.saveRefreshToken("valid-refresh")
+
+        let authLoader = StubHTTPLoader()
+        authLoader.setStub(
+            .init(body: tokenResponseJSON(token: "rotated-access", refreshToken: "rotated-refresh")),
+            for: AuthApi.refreshToken.url
+        )
+
+        let manager = JWTTokenManager(
+            tokenStore: store,
+            authStore: StubBackendAuthStore(),
+            urlSession: authLoader
+        )
+        manager.setup(authProvider: MockAppAttestProvider())
+
+        let turnLoader = TokenRejectingTURNLoader(rejectedToken: validJWT)
+        let service = TURNCredentialsService(
+            requestFactory: TURNCredentialsRequestFactory(urlSession: turnLoader),
+            tokenProvider: manager
+        )
+
+        let credentials = try await service.issueCredentials()
+
+        #expect(credentials.username == "turn-user")
+        #expect(turnLoader.authorizations == ["Bearer \(validJWT)", "Bearer rotated-access"])
+    }
+
     // MARK: - Refresh fallback
 
     @Test("Uses refresh token when access token is cleared")
@@ -608,4 +639,37 @@ private final class MockBackendAuthWallet: WalletManaging, @unchecked Sendable {
     }
 
     func hasAccount(in _: ChainProtocol) -> Bool { true }
+}
+
+// MARK: - TURN endpoint stub
+
+/// Rejects one token the way the backend does for a token it no longer accepts, and issues credentials otherwise.
+private final class TokenRejectingTURNLoader: HTTPDataLoading, @unchecked Sendable {
+    private let rejectedToken: String
+    private let lock = NSLock()
+    private var recordedAuthorizations: [String] = []
+
+    init(rejectedToken: String) {
+        self.rejectedToken = rejectedToken
+    }
+
+    var authorizations: [String] {
+        lock.withLock { recordedAuthorizations }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let authorization = request.value(forHTTPHeaderField: "Authorization") ?? ""
+        lock.withLock { recordedAuthorizations.append(authorization) }
+
+        let isRejected = authorization == "Bearer \(rejectedToken)"
+        let body = isRejected
+            ? #"{"error":"Token verification failed"}"#
+            : #"{"servers":["turn:turn.example.org:3478"],"username":"turn-user","password":"secret","ttl":600}"#
+
+        let url = try #require(request.url)
+        let response = try #require(
+            HTTPURLResponse(url: url, statusCode: isRejected ? 401 : 201, httpVersion: "HTTP/1.1", headerFields: nil)
+        )
+        return (Data(body.utf8), response)
+    }
 }

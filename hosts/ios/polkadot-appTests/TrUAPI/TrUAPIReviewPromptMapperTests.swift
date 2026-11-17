@@ -7,16 +7,18 @@ import TrUAPIHost
 @testable import polkadot_app
 
 struct TrUAPIReviewPromptMapperTests {
+    private let callerId = try! ProductId("caller.dot")
+    private let otherId = try! ProductId("other.dot")
     let mapper = TrUAPIReviewPromptMapper()
 
     @Test
     func mapsIdentityDisclosureToUserIdentityPermission() {
         let request = mapper.makePermissionRequest(
-            from: IdentityDisclosureReview(productId: "caller.dot")
+            from: IdentityDisclosureReview(productId: callerId)
         )
 
         #expect(request == TrUAPIPermissionRequest(
-            productId: "caller.dot",
+            productId: callerId,
             permissions: [.userIdentityAccess]
         ))
     }
@@ -24,37 +26,37 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsAccountAccessToTargetedPermission() {
         let request = mapper.makePermissionRequest(from: AccountAccessReview(
-            requestingProductId: "caller.dot",
-            targetProductId: "target.dot"
+            requestingProductId: callerId,
+            targetProductId: try! ProductId("target.dot")
         ))
 
         #expect(request == TrUAPIPermissionRequest(
-            productId: "caller.dot",
-            permissions: [.accountAccess(targetProductId: "target.dot")]
+            productId: callerId,
+            permissions: [.accountAccess(targetProductId: try! ProductId("target.dot"))]
         ))
     }
 
     @Test
     func mapsProductSubtreeToAccountRetrievalAction() {
         let request = mapper.makeActionRequest(
-            from: ProductSubtreeReview(productId: "caller.dot")
+            from: ProductSubtreeReview(productId: callerId)
         )
 
-        #expect(request == .productSubtree(productId: "caller.dot"))
+        #expect(request == .productSubtree(productId: callerId))
     }
 
     @Test
     func mapsNftPurseDrainOfARootPurseToAnExternalKey() {
         let request = mapper.makeActionRequest(from: NftPurseDrainReview(
-            callingProductId: "caller.dot",
+            callingProductId: callerId,
             fromPurse: 4,
             owner: .root,
             itemCount: 1,
-            destination: .externalKey(key: Data(repeating: 0xab, count: 32))
+            destination: .externalKey(key: Data(repeating: 0xAB, count: 32))
         ))
 
         #expect(request == .nftPurseDrain(
-            productId: "caller.dot",
+            productId: callerId,
             fromPurse: 4,
             ownerProductId: nil,
             itemCount: 1,
@@ -65,17 +67,17 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsNftPurseDrainIntoACheque() {
         let request = mapper.makeActionRequest(from: NftPurseDrainReview(
-            callingProductId: "caller.dot",
+            callingProductId: callerId,
             fromPurse: 4,
-            owner: .product("other.dot"),
+            owner: .product(otherId),
             itemCount: 2,
             destination: .cheque
         ))
 
         #expect(request == .nftPurseDrain(
-            productId: "caller.dot",
+            productId: callerId,
             fromPurse: 4,
-            ownerProductId: "other.dot",
+            ownerProductId: otherId,
             itemCount: 2,
             destination: .cheque
         ))
@@ -84,17 +86,17 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsNftPurseDrainBackToAChequeSender() {
         let request = mapper.makeActionRequest(from: NftPurseDrainReview(
-            callingProductId: "caller.dot",
+            callingProductId: callerId,
             fromPurse: 4,
-            owner: .product("other.dot"),
+            owner: .product(otherId),
             itemCount: 2,
             destination: .refund
         ))
 
         #expect(request == .nftPurseDrain(
-            productId: "caller.dot",
+            productId: callerId,
             fromPurse: 4,
-            ownerProductId: "other.dot",
+            ownerProductId: otherId,
             itemCount: 2,
             destination: .refund
         ))
@@ -103,14 +105,14 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsAccountAliasToContextProductAccountAccess() {
         let request = mapper.makePermissionRequest(from: AccountAliasReview(
-            callingProductId: "caller.dot",
-            context: ProductProofContext(productId: "ring-owner.dot", suffix: .index(3)),
+            callingProductId: callerId,
+            context: ProductProofContext(productId: try! ProductId("ring-owner.dot"), suffix: .index(3)),
             ringLocation: Self.makeRingLocation()
         ))
 
         #expect(request == TrUAPIPermissionRequest(
-            productId: "caller.dot",
-            permissions: [.accountAccess(targetProductId: "ring-owner.dot")]
+            productId: callerId,
+            permissions: [.accountAccess(targetProductId: try! ProductId("ring-owner.dot"))]
         ))
     }
 
@@ -119,14 +121,14 @@ struct TrUAPIReviewPromptMapperTests {
         let message = try Data.randomOrError(of: 24)
 
         let request = try mapper.makeCreateProofRequest(from: CreateProofReview(
-            callingProductId: "caller.dot",
-            context: ProductProofContext(productId: "ring-owner.dot", suffix: .index(9)),
+            callingProductId: callerId,
+            context: ProductProofContext(productId: try! ProductId("ring-owner.dot"), suffix: .index(9)),
             ringLocation: Self.makeRingLocation(),
             message: message
         ))
 
-        #expect(request.callingProductId == "caller.dot")
-        #expect(request.onBehalfOfProductId == "ring-owner.dot")
+        #expect(request.callingProductId?.rawValue == "caller.dot")
+        #expect(request.onBehalfOfProductId.rawValue == "ring-owner.dot")
         #expect(request.suffix == DerivationIndex32(index: 9).bytes)
         #expect(request.message == message)
     }
@@ -136,8 +138,8 @@ struct TrUAPIReviewPromptMapperTests {
         let rawSuffix = try Data.randomOrError(of: 32)
 
         let request = try mapper.makeCreateProofRequest(from: CreateProofReview(
-            callingProductId: "caller.dot",
-            context: ProductProofContext(productId: "ring-owner.dot", suffix: .raw(rawSuffix)),
+            callingProductId: callerId,
+            context: ProductProofContext(productId: try! ProductId("ring-owner.dot"), suffix: .raw(rawSuffix)),
             ringLocation: Self.makeRingLocation(),
             message: Data()
         ))
@@ -148,7 +150,7 @@ struct TrUAPIReviewPromptMapperTests {
     @Test
     func mapsAllowanceResources() throws {
         let request = try mapper.makeAllowanceRequest(from: ResourceAllocationReview(
-            callingProductId: "caller.dot",
+            callingProductId: callerId,
             resources: [
                 .statementStoreAllowance,
                 .bulletinAllowance,
@@ -158,7 +160,7 @@ struct TrUAPIReviewPromptMapperTests {
         ))
 
         #expect(request == TrUAPIAllowanceRequest(
-            productId: "caller.dot",
+            productId: callerId,
             resources: [
                 .statementStoreAllowance,
                 .bulletInAllowance,
@@ -175,10 +177,10 @@ struct TrUAPIReviewPromptMapperTests {
         let itemValue = try Data.randomOrError(of: 4)
 
         let request = try mapper.makeSignVrfRequest(from: SignVrfReview(
-            callingProductId: "caller.dot",
+            callingProductId: callerId,
             request: TrUAPIHostSignVrfRequest(
                 account: TrUAPIHostProductAccountId(
-                    dotNsIdentifier: "signer.dot",
+                    dotNsIdentifier: try! ProductId("signer.dot"),
                     derivationIndex: .index(2)
                 ),
                 transcriptLabel: label,
@@ -186,9 +188,9 @@ struct TrUAPIReviewPromptMapperTests {
             )
         ))
 
-        #expect(request.callingProductId == "caller.dot")
+        #expect(request.callingProductId?.rawValue == "caller.dot")
         #expect(request.payload == SignVrfPayload(
-            account: Products.ProductAccountId(productId: "signer.dot", derivationIndex: .index(2)),
+            account: Products.ProductAccountId(productId: try! ProductId("signer.dot"), derivationIndex: .index(2)),
             transcriptLabel: label,
             items: [KeyDerivation.VrfTranscriptItem(label: itemLabel, value: itemValue)]
         ))
@@ -201,14 +203,14 @@ struct TrUAPIReviewPromptMapperTests {
         let request = mapper.makeStatementSignRequest(from: StatementStoreProductSignReview(
             callingProductId: nil,
             account: TrUAPIHostProductAccountId(
-                dotNsIdentifier: "signer.dot",
+                dotNsIdentifier: try! ProductId("signer.dot"),
                 derivationIndex: .index(0)
             ),
             payload: payload
         ))
 
         #expect(request == StatementSignConfirmationRequest(
-            productId: "signer.dot",
+            productId: try! ProductId("signer.dot"),
             payload: payload
         ))
     }

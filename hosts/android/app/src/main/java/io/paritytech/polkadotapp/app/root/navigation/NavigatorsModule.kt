@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.app.root.navigation.w3spay.W3sPayNavigator
 import io.paritytech.polkadotapp.app.root.navigation.wallet.PocketNavigator
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabSelection
 import io.paritytech.polkadotapp.feature_backup_impl.BackupRouter
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
@@ -39,8 +40,8 @@ interface NavigatorsModule {
     companion object {
         @Provides
         @Singleton
-        fun provideNavigatorHolder(contextManager: ContextManager): NavigationHolder =
-            NavigationHolder(contextManager)
+        fun provideNavigatorHolder(contextManager: ContextManager, tabSelection: BottomTabSelection): NavigationHolder =
+            NavigationHolder(contextManager, tabSelection)
     }
 
     @Binds

@@ -2,6 +2,7 @@ import ChainRegistry
 import Foundation
 @testable import PolkadotUI
 import Testing
+import TrUAPIHost
 @testable import polkadot_app
 
 /// The chat list draws the activity line and the image badge that a product sets in the preview of its room.
@@ -95,7 +96,11 @@ private extension ProductRoomChatListRowTests {
         let asset = try #require(chain.assets.first)
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: NoChatMessageDecoderFactory(),
-            productIconViewModelFactory: NoProductIconViewModelFactory(),
+            iconViewModelFactory: ChatIconViewModelFactory(
+                productFactory: NoProductIconViewModelFactory(),
+                publicProfileFactory: NoPublicProfileAvatarFactory(),
+                options: .init(forceFresh: false, skipStale: false)
+            ),
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())
@@ -122,8 +127,14 @@ private struct NoChatMessageDecoderFactory: ChatMessageDecoderMaking {
     }
 }
 
+private struct NoPublicProfileAvatarFactory: PublicProfileAvatarViewModelMaking {
+    func createViewModel(for _: String, options _: PublicProfileResolutionOptions) -> AnyImageViewModel {
+        AnyImageViewModel(StaticImageViewModel(image: nil))
+    }
+}
+
 private struct NoProductIconViewModelFactory: ProductIconViewModelMaking {
-    func createViewModel(for _: String) -> any ImageViewModelProtocol {
+    func createViewModel(for _: ProductId) -> any IdentifiableImageViewModelProtocol {
         StaticImageViewModel(image: nil)
     }
 }

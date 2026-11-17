@@ -29,6 +29,8 @@ public protocol MembershipDepsResolving {
     /// Checks the ring location without constructing dependencies, using
     /// the same chain and pallet-index rules as ``resolve(genesisHash:palletIndex:)``.
     func validate(genesisHash: ChainId, palletIndex: UInt8?) async throws -> Bool
+
+    func membersPalletIndex(genesisHash: ChainId) async throws -> UInt8?
 }
 
 public final class MembershipDepsResolver {
@@ -67,6 +69,17 @@ extension MembershipDepsResolver: MembershipDepsResolving {
     public func validate(genesisHash: ChainId, palletIndex: UInt8?) async throws -> Bool {
         try await validatedChain(genesisHash: genesisHash, palletIndex: palletIndex) != nil
     }
+
+    public func membersPalletIndex(genesisHash: ChainId) async throws -> UInt8? {
+        guard
+            let chainId = chainRegistry.getChainInterfaceByGenesis(genesisHash)?.chainId,
+            let runtimeCodingService = chainRegistry.getRuntimeCodingService(for: chainId)
+        else {
+            return nil
+        }
+
+        return try await membersPalletIndex(runtimeCodingService: runtimeCodingService)
+    }
 }
 
 private extension MembershipDepsResolver {
@@ -85,9 +98,7 @@ private extension MembershipDepsResolver {
             return nil
         }
 
-        let codingFactory = try await runtimeCodingService.fetchCoderFactoryOperation().asyncExecute()
-
-        guard let membersIndex = codingFactory.metadata.getModuleIndex(MembersPallet.name) else {
+        guard let membersIndex = try await membersPalletIndex(runtimeCodingService: runtimeCodingService) else {
             return nil
         }
 
@@ -100,5 +111,10 @@ private extension MembershipDepsResolver {
             connection: connection,
             runtimeCodingService: runtimeCodingService
         )
+    }
+
+    func membersPalletIndex(runtimeCodingService: RuntimeCodingServiceProtocol) async throws -> UInt8? {
+        let codingFactory = try await runtimeCodingService.fetchCoderFactoryOperation().asyncExecute()
+        return codingFactory.metadata.getModuleIndex(MembersPallet.name)
     }
 }

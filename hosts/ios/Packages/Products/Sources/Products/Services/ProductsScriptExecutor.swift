@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SDKLogger
 import SubstrateSdk
@@ -295,7 +296,7 @@ private extension ProductsScriptExecutor {
 public enum ScriptExecutorError: Error, LocalizedError {
     case engineNotInitialized
     case engineInitFailed
-    case scriptNotFound(productId: String)
+    case scriptNotFound(productId: ProductId)
     case deallocated
 
     public var errorDescription: String? {

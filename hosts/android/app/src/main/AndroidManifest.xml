@@ -36,6 +36,7 @@
         android:name="io.paritytech.polkadotapp.app.App"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="${appName}"
@@ -145,8 +146,8 @@
                 <data android:host="*.dot.li" />
                 <data android:host="paseo.li" />
                 <data android:host="*.paseo.li" />
-                <data android:host="test.li" />
-                <data android:host="*.test.li" />
+                <data android:host="testnet.li" />
+                <data android:host="*.testnet.li" />
             </intent-filter>
         </activity>
 

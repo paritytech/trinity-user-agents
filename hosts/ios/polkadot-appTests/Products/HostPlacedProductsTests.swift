@@ -1,6 +1,5 @@
 import Testing
 import Keystore_iOS
-import KeyDerivation
 import Operation_iOS
 import TrUAPIHost
 @testable import polkadot_app
@@ -15,15 +14,14 @@ struct HostPlacedProductsTests {
 
         #expect(HostPlacedProducts.all.count == 1)
         #expect(hostPlaced.fallbackName == "Jollity")
-        #expect(hostPlaced.productId("paseo") == BuiltInProduct.dim2(for: "paseo"))
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
     /// whichever chain the build is pointed at. Writing the product id out would silently stop
     /// placing it on Paseo.
-    @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.test"])
-    func reservedIdentityMatchesEveryTld(productId: String) {
-        #expect(HostPlacedProducts.contains(productId: productId))
+    @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.testnet"])
+    func reservedIdentityMatchesEveryTld(input: String) throws {
+        #expect(try HostPlacedProducts.contains(productId: ProductId(input)))
     }
 
     /// An exact match, so a subdomain is a separate product and a separate publisher, and a bare
@@ -31,10 +29,10 @@ struct HostPlacedProductsTests {
     /// in `truapi::platform::has_trusted_remote_permissions`.
     @Test(
         "Only the reserved identity itself is host-placed",
-        arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "dim2", "", "notdim2.paseo"]
+        arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "notdim2.paseo", "localhost", "localhost:3000"]
     )
-    func neighbouringIdentifiersAreNotHostPlaced(productId: String) {
-        #expect(!HostPlacedProducts.contains(productId: productId))
+    func neighbouringIdentifiersAreNotHostPlaced(input: String) throws {
+        #expect(try !HostPlacedProducts.contains(productId: ProductId(input)))
     }
 }
 
@@ -56,15 +54,15 @@ struct HostPlacedRoomPlacerTests {
         await placer.placeRooms()
 
         let hostPlaced = try #require(HostPlacedProducts.all.first)
-        let productId = hostPlaced.productId("paseo")
+        let productId = try hostPlaced.productId("paseo")
         let roomId = try chatRoomId(productId: productId, roomIdSource: hostPlaced.roomIdSource)
         let repository = factory.createRepository(forFilter: nil)
         let placed = try await repository.fetchOperation(
-            by: { Chat.Id.chatExtension(productId, roomId: roomId).rawRepresentation },
+            by: { Chat.Id.chatExtension(productId.rawValue, roomId: roomId).rawRepresentation },
             options: RepositoryFetchOptions()
         ).asyncExecute()
         let underSource = try await repository.fetchOperation(
-            by: { Chat.Id.chatExtension(productId, roomId: hostPlaced.roomIdSource).rawRepresentation },
+            by: { Chat.Id.chatExtension(productId.rawValue, roomId: hostPlaced.roomIdSource).rawRepresentation },
             options: RepositoryFetchOptions()
         ).asyncExecute()
 
@@ -102,7 +100,7 @@ struct HostPlacedChatPinningTests {
     @Test("A host-placed product's bot is pinned")
     func hostPlacedBotIsPinned() throws {
         let hostPlaced = try #require(HostPlacedProducts.all.first)
-        let peer = Chat.Peer.chatExtension(hostPlaced.productId("paseo"), roomId: nil)
+        let peer = try Chat.Peer.chatExtension(hostPlaced.productId("paseo").rawValue, roomId: nil)
 
         #expect(peer.isPinnedToTop)
     }

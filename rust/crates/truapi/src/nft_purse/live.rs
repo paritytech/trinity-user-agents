@@ -7,7 +7,7 @@ use futures::StreamExt;
 use parity_scale_codec::Encode;
 use truapi::v01;
 
-use super::{TEST_STATIC_SECRET, test_purses_over};
+use super::{ENVELOPE_VERSION, EnvelopeContents, TEST_STATIC_SECRET, test_purses_over};
 use crate::{
 	host_logic::{
 		statement_store::{StatementField, sign_statement_fields},
@@ -25,7 +25,8 @@ fn signed_inbox_statement(
 	topic: v01::StatementTopic,
 	cheque: &v01::NftPurseCheque,
 ) -> Vec<u8> {
-	let plaintext = (0u8, topic, cheque).encode();
+	let plaintext =
+		EnvelopeContents { version: ENVELOPE_VERSION, topic, cheque: cheque.clone() }.encode();
 	let static_key = X25519PrivateKey::from(TEST_STATIC_SECRET).public_key();
 	let sealed = SealedBox::seal(static_key, &plaintext).unwrap();
 	let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
@@ -70,7 +71,7 @@ async fn a_payment_inbox_receives_a_cheque_published_on_the_live_chain() {
 	};
 	let statement = signed_inbox_statement(&signer, listen.statement_topic, &cheque);
 
-	statements.publish(statement).await.unwrap();
+	statements.publish(&statement).await.unwrap();
 
 	let arrived = tokio::time::timeout(LIVE_WAIT, listen.arrivals.next()).await;
 	assert_eq!(arrived.unwrap().map(Result::unwrap), Some(vec![cheque]));

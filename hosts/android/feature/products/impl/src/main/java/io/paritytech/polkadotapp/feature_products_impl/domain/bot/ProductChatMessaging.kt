@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
@@ -23,8 +24,8 @@ interface ProductChatMessaging {
 
     suspend fun sendMessage(chatIdParameter: ProductChatIdParameter, message: ProductBotMessage): Result<ChatMessageId>
 
-    /** Sets whether [chatIdParameter] shows the text input below its messages; the core's room footer. */
-    suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit>
+    /** Sets what [chatIdParameter] shows below its messages, the core's room footer. */
+    suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit>
 
     fun subscribeChatRooms(): Flow<List<ProductChatRoom>>
 
@@ -53,4 +54,14 @@ interface ProductChatMessaging {
 
     /** Gives a feed update of a room that the product keeps to the screens that show it. False when none does. */
     suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean
+}
+
+/** What a product room shows below its messages. */
+sealed interface ProductRoomFooter {
+    data object TextInput : ProductRoomFooter
+
+    data object Empty : ProductRoomFooter
+
+    /** A body the product draws itself, docked under the messages and never shown as a message. */
+    data class Card(val messageType: String, val payload: DataByteArray) : ProductRoomFooter
 }

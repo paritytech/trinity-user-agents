@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,6 +52,7 @@ fun ReportIssueScreen(contract: ReportIssueContract) {
     ReportIssueScreenInternal(
         state = state,
         onDescriptionChanged = contract::onDescriptionChanged,
+        onGitHubUsernameChanged = contract::onGitHubUsernameChanged,
         onSend = {
             keyboard?.hide()
             contract.onSendClick()
@@ -71,6 +74,7 @@ fun ReportIssueScreen(contract: ReportIssueContract) {
 private fun ReportIssueScreenInternal(
     state: ReportIssueState,
     onDescriptionChanged: (String) -> Unit,
+    onGitHubUsernameChanged: (String) -> Unit,
     onSend: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -125,6 +129,28 @@ private fun ReportIssueScreenInternal(
                 }
             }
             VerticalSpacer { mediumIncreased }
+            PolkadotSurface(
+                shape = RoundedCornerShape(24.dp),
+                color = PolkadotTheme.colors.bg.action.tertiary,
+            ) {
+                PolkadotInputField(
+                    modifier = Modifier.fillMaxWidth().padding(PolkadotTheme.spacings.mediumIncreased),
+                    value = state.gitHubUsername,
+                    onValueChange = onGitHubUsernameChanged,
+                    enabled = !state.isSending,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+                    placeholder = { NovaText(text = stringResource(RCommon.string.debug_report_github_username)) },
+                )
+            }
+            if (!state.isGitHubUsernameValid) {
+                VerticalSpacer { small }
+                NovaText(
+                    text = stringResource(RCommon.string.debug_report_github_username_invalid),
+                    style = PolkadotTheme.typography.body.small,
+                    color = PolkadotTheme.colors.fg.error,
+                )
+            }
+            VerticalSpacer { mediumIncreased }
             NovaText(
                 text = stringResource(RCommon.string.debug_report_attachments),
                 style = PolkadotTheme.typography.body.medium,
@@ -142,7 +168,7 @@ private fun ReportIssueScreenInternal(
             PolkadotTextButton(
                 modifier = Modifier.fillMaxWidth(),
                 text = stringResource(RCommon.string.common_send),
-                enabled = state.description.isNotBlank() && !state.isComplete,
+                enabled = state.description.isNotBlank() && state.isGitHubUsernameValid && !state.isComplete,
                 loading = state.isSending,
                 onClick = onSend,
             )
@@ -154,6 +180,6 @@ private fun ReportIssueScreenInternal(
 @Composable
 private fun ReportIssueScreenPreview() {
     PolkadotTheme {
-        ReportIssueScreenInternal(ReportIssueState("", "", false, false), {}, {}, {})
+        ReportIssueScreenInternal(ReportIssueState("", "", "", false, false), {}, {}, {}, {})
     }
 }

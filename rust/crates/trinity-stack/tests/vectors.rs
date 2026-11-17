@@ -641,6 +641,11 @@ fn document_cases() -> Vec<DocumentCase> {
 			"invalid-url",
 		),
 		plain(
+			"url-with-non-ascii-host",
+			with(|value| value["services"][0]["urls"] = json!(["https://faß.example/"])),
+			"invalid-url",
+		),
+		plain(
 			"fork-without-forked-at",
 			with(|value| value["fork"] = json!({ "of": { "url": URL }, "at": TWO_HOURS_AGO })),
 			"forked-at",
@@ -1019,6 +1024,17 @@ fn refresh_cases() -> Vec<Value> {
 					outcome("unchanged", 42, true),
 				),
 				json!({ "restart": NOW, "build": "refresh/42.json" }),
+				get(NOW, Some(42), fetch(None)),
+				get(NOW + 1, Some(42), Value::Null),
+			],
+		),
+		case(
+			"a-request-time-ahead-of-the-clock-is-due",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW + 86_400, Some(42), fetch(None)),
+				fetched(None, None, NOW + 86_400, outcome("unreachable", 42, false)),
 				get(NOW, Some(42), fetch(None)),
 				get(NOW + 1, Some(42), Value::Null),
 			],

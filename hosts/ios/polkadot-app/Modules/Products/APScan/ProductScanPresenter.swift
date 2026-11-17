@@ -56,7 +56,7 @@ final class ProductScanPresenter: QRScannerPresenter {
                 return
             case .notForThisProduct:
                 view?.present(
-                    message: String(localized: .Products.scanNotForThisProduct(productId: productId)),
+                    message: String(localized: .Products.scanNotForThisProduct(productId: productId.rawValue)),
                     animated: true
                 )
             case .ignore:

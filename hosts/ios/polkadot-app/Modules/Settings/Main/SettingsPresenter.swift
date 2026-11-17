@@ -18,6 +18,7 @@ final class SettingsPresenter {
     private var selectedPrivacyStrategy: RecyclingStrategyType?
     private var paymentsBackupStatus: CoinageAccountBackupStatus?
     private var isTabBarLabelsEnabled = false
+    private var isRestoredBalanceWaiting = false
 
     init(
         interactor: SettingsInteractorInputProtocol,
@@ -48,6 +49,7 @@ private extension SettingsPresenter {
         let input = SettingsContentInput(
             visibleCells: visibleCells(),
             attentionItems: attentionItems,
+            isRestoredBalanceWaiting: isRestoredBalanceWaiting,
             selectedCurrencyCode: selectedCurrencyCode,
             selectedThemeName: selectedThemeName,
             selectedPrivacyStrategy: selectedPrivacyStrategy,
@@ -153,6 +155,12 @@ extension SettingsPresenter: SettingsInteractorOutputProtocol {
     func didReceivePaymentsBackupStatus(_ status: CoinageAccountBackupStatus) {
         guard status != paymentsBackupStatus else { return }
         paymentsBackupStatus = status
+        refreshContent()
+    }
+
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool) {
+        guard isWaiting != isRestoredBalanceWaiting else { return }
+        isRestoredBalanceWaiting = isWaiting
         refreshContent()
     }
 }

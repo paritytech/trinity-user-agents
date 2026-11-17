@@ -40,9 +40,8 @@ The app ships two parallel distribution tracks:
 
 The `vanilla` edition is a first-class release track aimed at privacy-focused users
 running [GrapheneOS](https://grapheneos.org/). It carries the same core app
-functionality and is fully operational without Google Play Services. Google Sign-In,
-Firebase Auth, Firebase Analytics, and Firebase Crashlytics are excluded from the
-`vanilla` APK.
+functionality and is fully operational without Google Play Services. Google Sign-In
+and Firebase Auth are excluded from the `vanilla` APK.
 
 Both editions do initialize the default `FirebaseApp`, because **Firebase Remote
 Config is required for the app to function** (`tools/remoteconfig:impl` drives feature
@@ -192,7 +191,6 @@ Firebase services the app uses, so you can enable them in that project:
 | Remote Config | both | All runtime configuration (§4.1). Mandatory. |
 | Authentication (Google provider) + Firestore | `gp` | Cloud backups: the encryption-key record is stored in the `users-<suffix>` collection (`-debug`, `-nightly`, `-safetynet`, `-production`) of the database named by `FIRESTORE_DATABASE_ID`. Security rules must let a signed-in user read/write their own document. |
 | Cloud Messaging | `gp` | Push notifications. |
-| Crashlytics, Analytics | `gp` | Crash and usage reporting. |
 
 ### 4.1 Remote Config keys
 
@@ -361,9 +359,8 @@ step of whatever channel you choose:
 
 Distribution editions: `gp` (Google services — Google Play) and `vanilla` (no GMS —
 GrapheneOS / sideload). Build types: `debug`, `nightly`, `safetynet`, `release`.
-`safetynet` is a `nightly` derivative with the safety-mode flags on (`SAFETY_MODE`,
-`TAB_BAR_CONNECTIVITY_INDICATOR` in `common/build.gradle.kts`); it reuses the nightly
-manifest and the dev signing config.
+`safetynet` is a `nightly` derivative with `SAFETY_MODE` on (in `common/build.gradle.kts`);
+it reuses the nightly manifest and the dev signing config.
 
 Build types also pick the on-chain environment and the compile-time feature flags.
 Both are `buildConfigField`s in `common/build.gradle.kts`, consumed through
@@ -373,9 +370,9 @@ instead. Change them there if your fork needs a different cut.
 
 | Field | `debug` | `nightly` | `safetynet` | `release` | Effect |
 |-------|---------|-----------|-------------|-----------|--------|
-| `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also enables the faucet top-up outside `PRODUCTION`. |
+| `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also picks the Trinity stack the TrUAPI core runs (`TESTNET` previewnet, `NIGHTLY` paseo-next-v2, `PRODUCTION` Polkadot) and enables the faucet top-up outside `PRODUCTION`. |
 | `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, collectibles. |
-| `TAB_BAR_CONNECTIVITY_INDICATOR` | off | off | on | on | Chain-health indicators in the tab bar. |
+| `TAB_BAR_CONNECTIVITY_INDICATOR` | on | on | on | on | Chain-health indicators in the tab bar. The docklet has four item slots, so the browse tab shows only when this is off; it is the switch that brings the browse tab back. |
 | `COINAGE_DEBUG_FEATURES` | on | on | on | off | "Debug features" card under the balance card (breakdown, faucet top-up, log sharing). |
 | `TESTNET_FUND_ENABLED` | on | on | on | off | Log-sharing action on the Coinage card. |
 | `SAMPLE_BOT` | on | off | off | off | Sample bot chat pre-created for a new account. |
@@ -401,7 +398,7 @@ Outputs land in `app/build/outputs/apk/gp/<buildType>/`.
 ### 6.2 `vanilla` edition (GrapheneOS / GMS-free)
 
 The `vanilla` edition produces an APK with **no Google Play Services dependency**: no
-Play Integrity, no GMS-backed Sign-In, no Analytics or Crashlytics. It is designed to
+Play Integrity, no GMS-backed Sign-In. It is designed to
 run correctly on [GrapheneOS](https://grapheneos.org/) and any other Android
 distribution that does not ship Google Play Services. Firebase Remote Config is the
 one Firebase service it keeps, because the app cannot function without it; it needs no

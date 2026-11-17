@@ -1,11 +1,11 @@
 use super::*;
 use crate::{
 	host_internal::{
-		permissions::set_account_access_status,
+		permissions::set_authorization_status,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	platform::{PermissionAuthorizationStatus, PermissionDecision},
-	runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
@@ -40,19 +40,22 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 				signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 			futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 				.unwrap();
-			let session = authority.current_session().unwrap();
+			let session = authority.accounts().current_session().unwrap();
 			register_full_person_key(&authority, &session, &full_person_ring_location());
-			let owner = if operation == "alias" { "peopl" } else { "foreign" };
+			let owner =
+				ProductId::for_test(if operation == "alias" { "peopl.dot" } else { "foreign.dot" });
 			if let Some(status) = stored {
-				futures::executor::block_on(set_account_access_status(
+				futures::executor::block_on(set_authorization_status(
 					platform.as_ref(),
-					"myapp",
-					owner,
+					CoreStorageKey::product_account_access_authorization(
+						&ProductId::for_test("myapp.dot"),
+						&owner,
+					),
 					status,
 				))
 				.unwrap();
 			}
-			let service = SigningHostSsoService::new(authority.clone());
+			let service = sso_service(&authority);
 			let mut outcomes = Vec::new();
 			for request_id in ["first", "second"] {
 				let request = if operation == "alias" {
@@ -63,7 +66,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 							payload: HostAccountGetAliasRequest {
 								key_handle: full_person_key_handle(),
 								context: v01::ProductProofContext {
-									product_id: "myapp.dot".to_string(),
+									product_id: ProductId::for_test("myapp.dot"),
 									suffix: v01::DerivationIndex::Index(0),
 								},
 								ring_location: full_person_ring_location(),
@@ -76,13 +79,13 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 						ProductRequest {
 							calling_product_id: ProductId::for_test("myapp.dot"),
 							payload: HostAccountListRingVrfKeysRequest {
-								owner: "foreign.dot".to_string(),
+								owner: ProductId::for_test("foreign.dot"),
 								disclosure: RingVrfKeyDisclosure::PublicKey,
 							},
 						},
 					)
 				};
-				let Dispatch::Response(answer) =
+				let Ok(Dispatch::Response(answer)) =
 					futures::executor::block_on(service.answer(request))
 				else {
 					panic!("expected an account response")
@@ -107,10 +110,12 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 					outcomes,
 					platform.account_access_reviews.lock().unwrap().len(),
 					futures::executor::block_on(
-						crate::host_internal::permissions::account_access_status(
+						crate::host_internal::permissions::authorization_status(
 							platform.as_ref(),
-							"myapp",
-							owner
+							CoreStorageKey::product_account_access_authorization(
+								&ProductId::for_test("myapp.dot"),
+								&owner
+							),
 						)
 					)
 					.unwrap(),

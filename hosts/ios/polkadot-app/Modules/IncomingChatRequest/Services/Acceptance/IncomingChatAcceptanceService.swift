@@ -11,6 +11,7 @@ struct IncomingChatAcceptanceInput: IncomingStatementInput, Equatable {
     let peerAccountId: AccountId
     let requestId: String
     let device: Chat.PeerDevice
+    let message: Chat.RemoteMessage
 
     var statementId: String { requestId }
 }
@@ -74,7 +75,8 @@ private struct ChatAcceptanceStatementDecoder: IncomingStatementDecoding, @unche
             return IncomingChatAcceptanceInput(
                 peerAccountId: target.peer.accountId,
                 requestId: accepted.requestId,
-                device: accepted.device
+                device: accepted.device,
+                message: message.remoteMessage
             )
         }
     }

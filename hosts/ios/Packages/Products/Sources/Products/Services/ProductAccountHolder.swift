@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import SubstrateSdk
@@ -20,7 +21,7 @@ extension ProductAccountHolder: ProductAccountHolding {
     }
 
     public func deriveProductSubtreePublicKey(for productId: ProductId) throws -> Data {
-        let path = try ProductDerivationPath.productRoot(productId: productId)
+        let path = ProductDerivationPath.productRoot(productId: productId)
         let wallet = DynamicDerivedWallet(derivationPath: path, entropyManager: entropyManager)
         return try wallet.getRawPublicKey()
     }
@@ -57,7 +58,7 @@ extension ProductAccountHolder: ProductAccountHolding {
     }
 
     public func deriveAutoSigningSecrets(for productId: ProductId) throws -> AutoSigningSecrets {
-        let path = try ProductDerivationPath.productRoot(productId: productId)
+        let path = ProductDerivationPath.productRoot(productId: productId)
         return try AutoSigningSecrets(productRootPrivateKey: derivePrivateKey(at: path))
     }
 }

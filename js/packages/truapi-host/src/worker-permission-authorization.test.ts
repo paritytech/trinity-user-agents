@@ -1,3 +1,5 @@
+import { asProductId } from "@parity/truapi";
+import { type ProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 
 import type { PermissionAuthorizationStatus } from "./runtime.js";
@@ -9,7 +11,7 @@ import {
   type PermissionAuthorizationRuntime,
 } from "./worker-permission-authorization.js";
 
-const PRODUCT_ID = "playground.dot";
+const PRODUCT_ID = asProductId("playground.dot");
 
 function recordMessages() {
   const messages: WorkerToMain[] = [];
@@ -39,7 +41,7 @@ describe("worker permission authorization handlers", () => {
   it("responds with a single permission authorization status", async () => {
     const { messages, postToMain } = recordMessages();
     const request = new Uint8Array([1, 2, 3]);
-    const calls: { productId: string; request: Uint8Array }[] = [];
+    const calls: { productId: ProductId; request: Uint8Array }[] = [];
     const runtime = makeRuntime({
       permissionAuthorizationStatus: async (productId, receivedRequest) => {
         calls.push({ productId, request: receivedRequest });
@@ -70,7 +72,7 @@ describe("worker permission authorization handlers", () => {
     const { messages, postToMain } = recordMessages();
     const requests = [new Uint8Array([1]), new Uint8Array([2])];
     const statuses: PermissionAuthorizationStatus[] = ["Denied", "Authorized"];
-    const calls: { productId: string; requests: Uint8Array[] }[] = [];
+    const calls: { productId: ProductId; requests: Uint8Array[] }[] = [];
     const runtime = makeRuntime({
       permissionAuthorizationStatuses: async (productId, receivedRequests) => {
         calls.push({ productId, requests: receivedRequests });
@@ -101,7 +103,7 @@ describe("worker permission authorization handlers", () => {
     const { messages, postToMain } = recordMessages();
     const request = new Uint8Array([9, 10]);
     const calls: {
-      productId: string;
+      productId: ProductId;
       request: Uint8Array;
       status: PermissionAuthorizationStatus;
     }[] = [];

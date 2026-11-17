@@ -55,9 +55,11 @@ fn fail_on_chain(
 	events: &mpsc::UnboundedSender<WatchEvent>,
 	extrinsic: &MortalExtrinsic,
 ) {
-	harness
-		.chain()
-		.include(125, extrinsic.extrinsic.hash(), DispatchOutcome::Failed);
+	harness.chain().include(
+		125,
+		extrinsic.extrinsic.hash(),
+		DispatchOutcome::Failed(String::new()),
+	);
 	let finalized = WatchEvent::InFinalizedBlock(block_hash(125));
 	events.unbounded_send(finalized).unwrap();
 }

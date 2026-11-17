@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -26,7 +27,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     // MARK: - Persistent grants
 
     func getPermissionState(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> ProductPermissionState {
         let identifier = ProductPermissionGrant.makeIdentifier(
@@ -52,7 +53,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func isAnyAlwaysGranted(
-        productId: String,
+        productId: ProductId,
         typeName: String,
         keys: [String]
     ) async throws -> Bool {
@@ -75,7 +76,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         return grants.contains { $0.granted && identifiers.contains($0.identifier) }
     }
 
-    func grant(productId: String, permission: ProductPermission) async throws {
+    func grant(productId: ProductId, permission: ProductPermission) async throws {
         let grant = ProductPermissionGrant(
             productId: productId,
             permission: permission,
@@ -86,7 +87,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         try await repository.saveOperation({ [grant] }, { [] }).asyncExecute()
     }
 
-    func deny(productId: String, permission: ProductPermission) async throws {
+    func deny(productId: ProductId, permission: ProductPermission) async throws {
         let grant = ProductPermissionGrant(
             productId: productId,
             permission: permission,
@@ -99,7 +100,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         try await repository.saveOperation({ [grant] }, { [] }).asyncExecute()
     }
 
-    func revoke(productId: String, permission: ProductPermission) async throws {
+    func revoke(productId: ProductId, permission: ProductPermission) async throws {
         let identifier = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -110,7 +111,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         try await repository.saveOperation({ [] }, { [identifier] }).asyncExecute()
     }
 
-    func revoke(productId: String, permissions: [ProductPermission]) async throws {
+    func revoke(productId: ProductId, permissions: [ProductPermission]) async throws {
         guard !permissions.isEmpty else { return }
 
         let identifiers = permissions.map {
@@ -124,7 +125,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         try await repository.saveOperation({ [] }, { identifiers }).asyncExecute()
     }
 
-    func revokeAllByProduct(productId: String) async throws {
+    func revokeAllByProduct(productId: ProductId) async throws {
         let allGrants = try await getAllByProduct(productId: productId)
         let identifiers = allGrants.map(\.identifier)
 
@@ -137,7 +138,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         try await repository.saveOperation({ [] }, { identifiers }).asyncExecute()
     }
 
-    func getAllByProduct(productId: String) async throws -> [ProductPermissionGrant] {
+    func getAllByProduct(productId: ProductId) async throws -> [ProductPermissionGrant] {
         try await productRepository(for: productId)
             .fetchAllOperation(with: .init())
             .asyncExecute()
@@ -145,7 +146,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 
     // MARK: - One-time grants
 
-    func grantOneTime(productId: String, permission: ProductPermission) {
+    func grantOneTime(productId: ProductId, permission: ProductPermission) {
         let key = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -156,7 +157,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         oneTimeGrants.insert(key)
     }
 
-    func consumeOneTimeGrant(productId: String, permission: ProductPermission) -> Bool {
+    func consumeOneTimeGrant(productId: ProductId, permission: ProductPermission) -> Bool {
         let key = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -184,7 +185,7 @@ private extension ProductPermissionRepository {
     }
 
     func productRepository(
-        for productId: String
+        for productId: ProductId
     ) -> AnyDataProviderRepository<ProductPermissionGrant> {
         AnyDataProviderRepository(
             storageFacade.createRepository(

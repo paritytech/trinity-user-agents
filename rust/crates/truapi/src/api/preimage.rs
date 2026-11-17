@@ -12,7 +12,7 @@ use crate::{
 
 /// Preimage lookup and submission methods.
 #[wire_trait(id = 11)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Preimage: Send + Sync {
 	/// Subscribe to preimage lookups for a given key.
 	///
