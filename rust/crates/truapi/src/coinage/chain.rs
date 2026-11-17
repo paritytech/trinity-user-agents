@@ -16,7 +16,7 @@ use subxt::{
 	utils::{AccountId32, H256},
 };
 
-use crate::chain::{ChainHeads, Heads, StorageWatchError, WatchedStorage};
+use crate::chain::{ChainHeads, Heads, StorageEntryName, StorageWatchError, WatchedStorage};
 
 /// The pallet's name in the runtime.
 pub const PALLET: &str = "Coinage";
@@ -88,6 +88,9 @@ pub const COIN_FAILURE_LOCK_PERIOD: &str = "CoinFailureLockPeriod";
 /// The members pallet, which holds the recycler rings.
 const MEMBERS: &str = "Members";
 
+/// The pallet's storage of each alias's lock or unload.
+const ALIAS_STATES: &str = "RecyclerAliasStates";
+
 /// The identifier of the recycler ring collection for `exponent` of
 /// `instance`: `coinage/recycler`, the instance little-endian, the exponent
 /// as a byte, padded with zeros.
@@ -140,6 +143,19 @@ pub struct RingPlace {
 	pub revision: u32,
 }
 
+/// Where a member key stands in its recycler collection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingPosition {
+	/// Queued to join a ring. It was never in one, so its entry was never
+	/// unloaded.
+	Onboarding,
+	/// In a ring.
+	Included(RingPlace),
+	/// Taken out of its ring, or any other position the layer does not
+	/// read: the pallet holds no ring index to read its alias under.
+	Suspended,
+}
+
 /// The coinage pallet's storage, and the members pallet's recycler rings,
 /// read at one block. Every read is batched over its keys, and a missing
 /// value reads as none.
@@ -151,14 +167,17 @@ pub trait CoinageChain: Send + Sync {
 	async fn coins_at(&self, at: H256, accounts: &[[u8; 32]]) -> Result<Vec<Option<ChainCoin>>, StorageWatchError>;
 	/// The instance and exponent each member key was loaded under.
 	async fn members_at(&self, at: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError>;
-	/// The place of each member key in its recycler ring of `exponent`.
+	/// The position of each member key in the recycler collection of
+	/// `exponent`; none for a key that is not a member.
 	async fn places_at(
 		&self,
 		at: H256,
 		exponent: i8,
 		members: &[[u8; 32]],
-	) -> Result<Vec<Option<RingPlace>>, StorageWatchError>;
-	/// The state of each alias in ring `ring` of `exponent`.
+	) -> Result<Vec<Option<RingPosition>>, StorageWatchError>;
+	/// The state of each alias in ring `ring` of `exponent`, none for an
+	/// alias the pallet holds nothing for. A held value that is not an
+	/// `AliasState` fails the read, so it is never taken for a free alias.
 	async fn aliases_at(
 		&self,
 		at: H256,
@@ -174,6 +193,9 @@ pub trait CoinageChain: Send + Sync {
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError>;
 	/// An account's next nonce.
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError>;
+	/// What an account holds of the instance's external asset, in the
+	/// asset's units; zero for an account that holds none.
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError>;
 }
 
 /// [`CoinageChain`] over the storage and heads of the People chain.
@@ -261,20 +283,28 @@ impl CoinageChain for CoinageStorage {
 		at: H256,
 		exponent: i8,
 		members: &[[u8; 32]],
-	) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+	) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
 		let collection = recycler_collection(self.instance, exponent);
 		let keys: Vec<([u8; 32], [u8; 32])> = members.iter().map(|member| (collection, *member)).collect();
 		let positions = self.values(at, MEMBERS, "Members", &keys).await?;
 		let mut places = Vec::with_capacity(positions.len());
 		for position in positions {
-			let Some((ring, page, slot)) = position.as_ref().and_then(included_position) else {
+			let Some(position) = position else {
 				places.push(None);
+				continue;
+			};
+			if variant_name(&position) == Some("Onboarding") {
+				places.push(Some(RingPosition::Onboarding));
+				continue;
+			}
+			let Some((ring, page, slot)) = included_position(&position) else {
+				places.push(Some(RingPosition::Suspended));
 				continue;
 			};
 			let (status, revision) = self.ring_status(at, collection, ring).await?;
 			let field = |name: &str| status.as_ref().and_then(|status| number(status, name));
 			let immutable_since = status.as_ref().and_then(|status| status.at("immutable_since")).and_then(|since| since.at(0));
-			places.push(Some(RingPlace {
+			places.push(Some(RingPosition::Included(RingPlace {
 				ring,
 				page,
 				position: slot,
@@ -282,7 +312,7 @@ impl CoinageChain for CoinageStorage {
 				included: field("included").unwrap_or(0) as u32,
 				immutable_since: immutable_since.and_then(Value::as_u128).map(|since| since as u64),
 				revision,
-			}));
+			})));
 		}
 		Ok(places)
 	}
@@ -296,8 +326,17 @@ impl CoinageChain for CoinageStorage {
 	) -> Result<Vec<Option<AliasState>>, StorageWatchError> {
 		let keys: Vec<(u32, i8, u32, [u8; 32])> =
 			aliases.iter().map(|alias| (self.instance, exponent, ring, *alias)).collect();
-		let states = self.values(at, PALLET, "RecyclerAliasStates", &keys).await?;
-		Ok(states.iter().map(|state| state.as_ref().and_then(alias_state)).collect())
+		let states = self.values(at, PALLET, ALIAS_STATES, &keys).await?;
+		states
+			.iter()
+			.map(|state| match state {
+				None => Ok(None),
+				Some(value) => alias_state(value).map(Some).ok_or_else(|| StorageWatchError::Incompatible {
+					entry: StorageEntryName { pallet: PALLET.to_owned(), entry: ALIAS_STATES.to_owned() },
+					reason: "a stored value is not an AliasState".to_owned(),
+				}),
+			})
+			.collect()
 	}
 
 	async fn ring_members_at(&self, at: H256, exponent: i8, ring: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {
@@ -326,6 +365,13 @@ impl CoinageChain for CoinageStorage {
 		let info = self.values(at, "System", "Account", &[(AccountId32(account),)]).await?;
 		Ok(info.into_iter().flatten().next().as_ref().and_then(|info| number(info, "nonce")).unwrap_or(0) as u32)
 	}
+
+	async fn funds_at(&self, at: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		let instance = self.values(at, PALLET, "Instances", &[(self.instance,)]).await?.into_iter().flatten().next();
+		let Some(asset) = instance.as_ref().and_then(|record| record.at("asset_id")).cloned() else { return Ok(0) };
+		let held = self.values(at, "Assets", "Account", &[(asset, AccountId32(account))]).await?;
+		Ok(held.into_iter().flatten().next().as_ref().and_then(|held| number(held, "balance")).unwrap_or(0))
+	}
 }
 
 /// The unsigned number in the named field of a composite value.
@@ -333,12 +379,16 @@ fn number(value: &Value, field: &str) -> Option<u128> {
 	value.at(field).and_then(Value::as_u128)
 }
 
-/// An alias's state, from the pallet's `AliasState`.
+/// An alias's state, from the pallet's `AliasState`; none when the value is
+/// not one, such as a lock without its end.
 fn alias_state(state: &Value) -> Option<AliasState> {
 	let variant = variant_name(state)?;
 	match variant {
 		"Unloaded" => Some(AliasState::Unloaded),
-		"Locked" => Some(AliasState::Locked(state.at(0).and_then(|lock| number(lock, "until")).unwrap_or(0) as u64)),
+		"Locked" => {
+			let until = state.at(0).and_then(|lock| number(lock, "until"))?;
+			Some(AliasState::Locked(u64::try_from(until).ok()?))
+		},
 		_ => None,
 	}
 }
