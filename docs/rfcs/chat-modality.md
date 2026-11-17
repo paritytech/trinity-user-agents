@@ -465,6 +465,7 @@ struct Message {
     expires_at: Option<Timestamp>,
     forward: Option<ForwardSource>,
     last_edited: Option<Timestamp>,
+    edit_count: u32,
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
     extensions: Vec<Extension>,
@@ -565,6 +566,8 @@ enum UserChatAction {
         expires_at: Option<Timestamp>,
         forward: Option<ForwardSource>,
     },
+    // Changes only the text of `Text` or `RichText`, and keeps the media.
+    // A reader drops any other edit, and an edit by another origin.
     EditMessage {
         message_id: MessageId,
         new_content: MessageContent,
@@ -580,7 +583,9 @@ enum UserChatAction {
         reaction: MessageReaction,
     },
     MessageDeleted {
-        message_id: MessageId
+        message_id: MessageId,
+        // false: hide the message on the user's own devices only.
+        for_everyone: bool,
     },
     // The user opened the view-once media of a message.
     Opened { message_id: MessageId },
@@ -645,17 +650,25 @@ fn handle_chat_messages_source(
 - Every reader removes a message at its `expires_at`, also one that arrives late. A scheduled send is a Product matter: the Product sends the message at its time.
 #### 4.4 Message Details
 
-When a user taps on a reaction to see who reacted, or on a status to see who read, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
+When a user asks who reacted, who read a message, or how it read before an edit, the Host requests the full list from the Product. This is **not paginated**. For large chats where tracking individual participants is impractical, the Product returns `NotAvailable`.
 
 ```rust
 enum MessageDetailsKind {
     Reactions,
     Receipts,
+    Edits,
 }
 
 enum MessageDetails {
     Reactions(Vec<MessageReaction>),
     Receipts(Vec<MessageReceipt>),
+    // The earlier versions, oldest first.
+    Edits(Vec<MessageVersion>),
+}
+
+struct MessageVersion {
+    content: MessageContent,
+    edited_at: Timestamp,
 }
 
 struct MessageReceipt {
@@ -672,7 +685,7 @@ enum MessageDetailsErr {
 }
 
 // Register a handler to load the details of a message.
-// If not registered, the Host offers no "see who reacted" or "see who read" UI.
+// If not registered, the Host offers none of these views.
 fn handle_message_details(
     room_id: RoomId,
     get_details: fn(MessageId, MessageDetailsKind) -> Result<MessageDetails, MessageDetailsErr>,
@@ -1008,7 +1021,7 @@ When a Product does **not** register a handler, the Host applies these defaults:
 | Chat footer | Default input, payment disabled, default attachments |
 | Participants | Two participants: user and Product |
 | Participant actions | Based on participant type (open contact, open product info) |
-| Message details | Not available: no "see who reacted" or "see who read" UI |
+| Message details | Not available: no view of who reacted, who read, or earlier versions |
 | Placeholder | None |
 
 ### 11. Transport & Serialization
@@ -1099,7 +1112,7 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 
 ## Unresolved Questions
 
-1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows content edits.
+1. **Full message editing**: Should it be possible to edit all fields of a message (origin, timestamp), or only content? Current design only allows text edits that keep the media.
 
 2. **Bot extension**: v1 defined bot registration (`host_chat_register_bot`). The bot concept needs to be revisited in the context of v2's handler model. Deferred to a future RFC.
 
