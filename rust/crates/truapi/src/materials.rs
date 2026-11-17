@@ -60,6 +60,17 @@ pub fn draws(enabled: bool, version: u32, features: &[String]) -> bool {
 		features.iter().all(|feature| format::FEATURES.contains(&feature.as_str()))
 }
 
+/// Why a material was not kept.
+#[derive(Debug, thiserror::Error)]
+pub enum KeepMaterialError {
+	/// The core cannot read the material, or the host draws no materials.
+	#[error("refused: {0:?}")]
+	Refused(MaterialFailure),
+	/// The core database did not save it.
+	#[error("not saved: {0}")]
+	NotSaved(#[from] DbError),
+}
+
 /// Largest material the format allows.
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 
@@ -198,7 +209,12 @@ impl Materials {
 			// An answer already in hand beats the deadline.
 			select_biased! {
 				answer = lookup.next() => match answer {
-					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => return self.keep(id, bytes).await,
+					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => {
+						if let Err(error) = self.keep(id, bytes.clone()).await? {
+							tracing::warn!(%error, "a material was not kept, and is fetched again next time");
+						}
+						return Ok(bytes)
+					},
 					Some(Ok(Some(_))) => return Err(MaterialFailure::Integrity),
 					Some(Ok(None)) => {},
 					Some(Err(error)) => {
@@ -222,8 +238,12 @@ impl Materials {
 	}
 
 	/// Keeps `text` as material `id` once the core can read it, as a fetch
-	/// does.
-	pub async fn keep(&self, id: [u8; 32], text: Vec<u8>) -> Result<Vec<u8>, MaterialFailure> {
+	/// does. The inner result says whether the database saved it.
+	pub async fn keep(
+		&self,
+		id: [u8; 32],
+		text: Vec<u8>,
+	) -> Result<Result<(), DbError>, MaterialFailure> {
 		if let Err(error) = read_material(&text) {
 			tracing::info!(
 				target: crate::markers::MATERIALS_NODE_PLAIN.target,
@@ -232,19 +252,14 @@ impl Materials {
 			);
 			return Err(error.into());
 		}
-		let row = text.clone();
-		let kept = self
+		Ok(self
 			.0
 			.db
 			.write(move |tx| {
-				tx.prepare_cached(KEEP)?.execute(rusqlite::params![id, row])?;
+				tx.prepare_cached(KEEP)?.execute(rusqlite::params![id, text])?;
 				evict(tx)
 			})
-			.await;
-		if let Err(error) = kept {
-			tracing::warn!(%error, "a material was not kept, and is fetched again next time");
-		}
-		Ok(text)
+			.await)
 	}
 
 	fn report(&self, id: [u8; 32], failure: MaterialFailure, own: &AbortHandle) {

@@ -10,8 +10,8 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use futures::StreamExt;
 use truapi::{
-	MaterialShader, NodeMaterials, ResolvedMaterials, ShaderLanguage, SigningHostConfig,
-	SigningHostRuntime, Spawner, latest::RenderContext,
+	KeepMaterialError, MaterialShader, NodeMaterials, ResolvedMaterials, ShaderLanguage,
+	SigningHostConfig, SigningHostRuntime, Spawner, latest::RenderContext,
 };
 
 use crate::{
@@ -101,7 +101,8 @@ async fn keep_all(runtime: &SigningHostRuntime, directory: &Path) -> Result<()> 
 		let text = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
 		match runtime.keep_material(text).await {
 			Ok(id) => println!("kept {name} 0x{}", hex::encode(id)),
-			Err(reason) => println!("refused {name}: {reason:?}"),
+			Err(KeepMaterialError::Refused(reason)) => println!("refused {name}: {reason:?}"),
+			Err(error) => return Err(error).with_context(|| format!("keeping {name}")),
 		}
 	}
 	Ok(())

@@ -1779,7 +1779,10 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
 	let no_entry_point = b"// @material 1\nfloat shade(vec2 uv) {\n  return 1.0;\n}\n";
 	let keep = |runtime: &SigningHostRuntime, text: &[u8]| {
-		futures::executor::block_on(runtime.keep_material(text.to_vec()))
+		match futures::executor::block_on(runtime.keep_material(text.to_vec())) {
+			Err(crate::KeepMaterialError::Refused(failure)) => Err(failure),
+			kept => Ok(kept.expect("the database saves it")),
+		}
 	};
 	let (without_database, _platform) = test_signing_runtime();
 	without_database.services.enable_materials();
@@ -1811,6 +1814,30 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 		"{:?}",
 		materials.nodes
 	);
+}
+
+/// A material reported kept has to draw on later runs without Bulletin, so one
+/// the database does not save is an error rather than an ID.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_material_the_database_does_not_save_is_not_reported_kept() {
+	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
+	let (runtime, _platform) = test_signing_runtime();
+	let db = crate::store::open_memory_core_db();
+	runtime.set_core_db(db.clone());
+	runtime.start_core_services();
+	runtime.services.enable_materials();
+	futures::executor::block_on(db.write(|tx| {
+		Ok(tx.execute_batch(
+			"CREATE TRIGGER fail BEFORE INSERT ON material
+				BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+		)?)
+	}))
+	.expect("trigger created");
+
+	let kept = futures::executor::block_on(runtime.keep_material(text.to_vec()));
+
+	assert!(matches!(kept, Err(crate::KeepMaterialError::NotSaved(_))), "{kept:?}");
 }
 
 /// The runtime keeps one set of materials, so every renderer tree shares
