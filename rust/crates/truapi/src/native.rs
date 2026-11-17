@@ -26,6 +26,7 @@ mod executor;
 mod funding;
 mod funding_feed;
 mod funding_page;
+mod materials;
 mod platform;
 mod pocket;
 mod public_profile;
@@ -50,7 +51,7 @@ pub use bundled_products::{
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeTopUpCallbacks,
+	NativeStackCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
@@ -64,6 +65,7 @@ pub use funding_page::{
 	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,
 	funding_page_origin,
 };
+pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
 pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
