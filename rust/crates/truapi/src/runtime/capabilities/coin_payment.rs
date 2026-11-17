@@ -64,7 +64,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	) -> Result<HostCoinPaymentCreatePurseResponse, CallError<HostCoinPaymentCreatePurseError>> {
 		version(request)
 			.exec(|latest::HostCoinPaymentCreatePurseRequest { name }| async move {
-				let payments = self.coinage()?;
+				let payments = self.coinage().await?;
 				self.authorize(cx, PurseId::MAIN, None, Action::TopUp, 0, false).await?;
 				let tag = self.connection.product_id().as_str().as_bytes().to_vec();
 				let purse = payments.layer().create_purse(name, tag).await.map_err(layer_failure)?;
@@ -81,7 +81,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	) -> Result<HostCoinPaymentQueryPurseResponse, CallError<HostCoinPaymentQueryPurseError>> {
 		version(request)
 			.exec(|latest::HostCoinPaymentQueryPurseRequest { purse }| async move {
-				let payments = self.coinage()?;
+				let payments = self.coinage().await?;
 				let info = self.purse(&payments, PurseId(purse)).await?;
 				self.authorize(cx, info.id, Some(&info.tag), Action::Query, 0, false).await?;
 				Ok(latest::HostCoinPaymentQueryPurseResponse { info: purse_info(&info) })
@@ -98,7 +98,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentRebalancePurseRequest { from, to, amount }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let source = self.purse(&payments, PurseId(from)).await?;
 					let destination = self.purse(&payments, PurseId(to)).await?;
 					self.authorize(cx, source.id, Some(&source.tag), Action::Spend, amount, false).await?;
@@ -123,7 +123,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentDeletePurseRequest { target, drain_into }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let purse = self.purse(&payments, PurseId(target)).await?;
 					let drain = self.purse(&payments, PurseId(drain_into)).await?;
 					if purse.tag != self.connection.product_id().as_str().as_bytes() {
@@ -150,7 +150,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	) -> Result<HostCoinPaymentCreateReceivableResponse, CallError<HostCoinPaymentCreateReceivableError>> {
 		version(request)
 			.exec(|latest::HostCoinPaymentCreateReceivableRequest { into }| async move {
-				let payments = self.coinage()?;
+				let payments = self.coinage().await?;
 				let purse = self.purse(&payments, PurseId(into)).await?;
 				self.authorize(cx, purse.id, Some(&purse.tag), Action::Receive, 0, false).await?;
 				let receivable = payments.create_receivable(purse.id).await.map_err(internal)?;
@@ -167,7 +167,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	) -> Result<HostCoinPaymentCreateChequeResponse, CallError<HostCoinPaymentCreateChequeError>> {
 		version(request)
 			.exec(|latest::HostCoinPaymentCreateChequeRequest { from, to, amount }| async move {
-				let payments = self.coinage()?;
+				let payments = self.coinage().await?;
 				let source = self.purse(&payments, PurseId(from)).await?;
 				self.authorize(cx, source.id, Some(&source.tag), Action::Spend, amount, false).await?;
 				let product = self.connection.product_id().as_str().to_owned();
@@ -198,7 +198,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentDepositRequest { cheque }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let purse = self.receivable_purse(&payments, Receivable(cheque.id)).await?;
 					self.authorize(cx, purse.id, Some(&purse.tag), Action::Receive, 0, true).await?;
 					let product = self.connection.product_id().as_str().to_owned();
@@ -218,7 +218,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentRefundRequest { receivable }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let receivable = Receivable(receivable);
 					let purse = self.receivable_purse(&payments, receivable).await?;
 					self.authorize(cx, purse.id, Some(&purse.tag), Action::Spend, 0, true).await?;
@@ -239,7 +239,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentListenForRequest { receivable }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let receivable = Receivable(receivable);
 					let purse = self.receivable_purse(&payments, receivable).await?;
 					self.authorize(cx, purse.id, Some(&purse.tag), Action::Receive, 0, true).await?;
@@ -266,7 +266,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentChequeStatusRequest { cheque }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let hash = cheque_hash(&cheque);
 					let source = self.cheque_source(&payments, hash).await?;
 					self.authorize(cx, source.id, Some(&source.tag), Action::Query, 0, true).await?;
@@ -287,7 +287,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|latest::HostCoinPaymentCancelChequeRequest { cheque }| async move {
 				let started = async {
-					let payments = self.coinage()?;
+					let payments = self.coinage().await?;
 					let hash = cheque_hash(&cheque);
 					let source = self.cheque_source(&payments, hash).await?;
 					self.authorize(cx, source.id, Some(&source.tag), Action::Spend, cheque.amount, true).await?;
@@ -306,7 +306,7 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 	) -> Result<HostCoinPaymentListPursesResponse, CallError<HostCoinPaymentListPursesError>> {
 		version(request)
 			.exec(|latest::HostCoinPaymentListPursesRequest {}| async move {
-				let payments = self.coinage()?;
+				let payments = self.coinage().await?;
 				let product = self.connection.product_id().as_str().as_bytes().to_vec();
 				let mut purses = Vec::new();
 				for info in payments.layer().list_purses().await.map_err(layer_failure)? {
@@ -322,9 +322,9 @@ impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
 
 impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// The coinage payments of this host, after the session check;
-	/// `Unsupported` where no coinage layer runs.
-	fn coinage<E>(&self) -> Result<Payments, CallError<E>> {
-		let payments = self.connection.services.coinage_payments().ok_or(CallError::Unsupported)?;
+	/// `Unsupported` where no coinage layer runs. Waits while the layers start.
+	async fn coinage<E>(&self) -> Result<Payments, CallError<E>> {
+		let payments = self.connection.services.coinage_payments().await.ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		Ok(payments)
 	}
@@ -364,7 +364,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		amount: u32,
 		takes_held_back_value: bool,
 	) -> Result<(), CallError<CoinPaymentError>> {
-		let unit = self.coinage::<CoinPaymentError>()?.layer().asset_unit();
+		let unit = self.coinage::<CoinPaymentError>().await?.layer().asset_unit();
 		let review = UserConfirmationReview::CoinPaymentSpend(CoinPaymentSpendReview {
 			calling_product_id: self.connection.product_id().clone(),
 			from_purse: purse.0,
