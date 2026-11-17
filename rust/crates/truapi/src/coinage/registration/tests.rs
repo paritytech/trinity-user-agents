@@ -178,3 +178,16 @@ fn an_operations_records_are_its_own_in_registration_order_with_what_each_mints(
 	let own: Vec<_> = view.registrations().of_operation(&op(1)).map(|facts| (facts.record, facts.rows.outputs.clone())).collect();
 	assert_eq!(own, [(first[0], assets[1..2].to_vec()), (third[0], assets[4..6].to_vec())]);
 }
+
+/// Two records of one batch minting the same address would both be its
+/// creator, so the batch is refused whole.
+#[test]
+fn a_batch_minting_one_output_twice_is_refused() {
+	let db = ledger();
+	let engine = unbuilt_engine(db.clone());
+	let assets = coins(&db, 3);
+	let batch = vec![spend(&assets[..1], &assets[2..]), spend(&assets[1..2], &assets[2..])];
+	let refused = register_rows(&engine, &op(1), Admission::Ordinary, batch);
+	let view = block_on(db.read(snapshot)).unwrap();
+	assert_eq!((refused, view.registrations().records().count()), (Err(RegisterError::OutputNotFresh(assets[2])), 0));
+}

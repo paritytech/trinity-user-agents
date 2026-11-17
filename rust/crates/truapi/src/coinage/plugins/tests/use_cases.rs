@@ -227,6 +227,8 @@ fn a_claim_whose_coin_never_arrived_is_given_up_once_its_window_closes() {
 	let setup = setup();
 	let claim = setup.claim(&key(1), peer_coin(1), Retry::Until(NOW + 10));
 	assert_eq!(setup.prepare(&[claim]), HashMap::from([]), "the window is open");
+	assert_eq!(setup.prepare_at(&[claim], NOW + 11), HashMap::from([]), "nothing is given up without a look");
+	setup.observe_peer(&peer_coin(1), 2, false);
 	assert_eq!(setup.prepare_at(&[claim], NOW + 11), HashMap::from([(claim.0, Answer::GivenUp)]));
 }
 

@@ -11,7 +11,7 @@ use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
 	chain_runtime::RuntimeFailure,
 	coinage::{
-		chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace},
+		chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPosition},
 		namespace::datastore_key,
 		reconstruction::{InstallationRegistry, RegistryKey},
 	},
@@ -74,7 +74,7 @@ impl CoinageChain for RecordingChain {
 		self.chain.members_at(at, members).await
 	}
 
-	async fn places_at(&self, at: H256, exponent: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+	async fn places_at(&self, at: H256, exponent: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
 		self.chain.places_at(at, exponent, members).await
 	}
 

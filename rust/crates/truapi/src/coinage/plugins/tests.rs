@@ -1,3 +1,13 @@
+mod assets;
+mod evidence;
+mod fuzz;
+mod reorgs;
+mod rules;
+mod submission;
+mod system;
+mod vouchers;
+mod watches;
+
 use std::collections::HashMap;
 
 use futures::executor::block_on;
@@ -190,6 +200,27 @@ fn the_installation_registry_domain_lives_on_asset_hub() {
 		(registry.chain(&registry_domain()), registry.chain(&coinage_domain())),
 		(Some(H256([0xcd; 32])), Some(H256([0xab; 32])))
 	);
+}
+
+/// An onboarding entry was never in a ring, so no unload can have consumed
+/// it; a suspended one holds no ring index to read its alias under, and may
+/// have been unloaded before it left its ring (invariant 2).
+#[test]
+fn only_an_onboarding_entry_proves_its_alias_is_not_unloaded() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let entry = wallet.entry(3, 7);
+	let engine = unbuilt_engine(wallet.db.clone());
+	let rows = vec![Rows { inputs: vec![entry], outputs: Vec::new(), tokens: Vec::new() }];
+	let record = register_rows(&engine, &OpKey::own([1; 32]), Admission::Ordinary, rows).unwrap()[0];
+	let vrf = block_on(load_vrf()).unwrap();
+	let Asset::Entry { purse, installation, index } = entry else { unreachable!("held as an entry") };
+	let member = vrf.member(&entry_seed(&ENTROPY, purse, installation, index).0).unwrap();
+	let judged_at = |position| {
+		let chain = Arc::new(FakeChain::default());
+		chain.unplaced.lock().insert(member, (3, position));
+		judged(&wallet, chain, record)
+	};
+	assert_eq!([judged_at(RingPosition::Onboarding), judged_at(RingPosition::Suspended)], [(false, true), (false, false)]);
 }
 
 mod use_cases;

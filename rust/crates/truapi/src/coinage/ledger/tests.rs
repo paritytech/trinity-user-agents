@@ -308,3 +308,15 @@ fn an_allocation_without_a_current_installation_fails() {
 		assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, kind, &outputs))).is_err(), "{kind:?}");
 	}
 }
+
+/// A released export frees its coin: the mark is gone, so the coin can be
+/// disclosed again.
+#[test]
+fn a_released_mark_can_be_marked_again() {
+	let db = ledger();
+	let coin = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0)]))).unwrap()[0];
+	block_on(db.write(move |tx| mark_disclosed(tx, &[coin]))).unwrap().unwrap();
+	block_on(db.write(move |tx| release_disclosed(tx, &[coin]))).unwrap();
+	assert_eq!(block_on(db.write(move |tx| mark_disclosed(tx, &[coin]))).unwrap(), Ok(()));
+	assert_eq!(view(&db).mark(&coin), Some(Mark::Uncommitted));
+}
