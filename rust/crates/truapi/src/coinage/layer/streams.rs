@@ -153,7 +153,7 @@ impl Layer {
 	}
 
 	/// How far the scan of a handed-over wallet has come: at once, then each
-	/// change (native interface, section 5).
+	/// change (G2).
 	pub fn hand_over(&self) -> BoxStream<'static, HandOverProgress> {
 		distinct(self.reads(|_, view| Some(view.hand_over_progress())))
 	}

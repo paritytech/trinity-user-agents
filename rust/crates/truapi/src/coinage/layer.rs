@@ -114,7 +114,7 @@ pub struct Interfaces {
 	/// The initial policy, stored only on a fresh store.
 	pub policy: PrivacyPolicy,
 	/// A wallet a shipped app hands over, recorded only on a fresh store,
-	/// with its installation (native interface, section 5).
+	/// with its installation (G3 step 2).
 	pub hand_over: Option<Handover>,
 }
 
@@ -715,6 +715,20 @@ impl Layer {
 		Ok(self.launch(&op, OpKind::Import, arguments, request).await?.0)
 	}
 
+	/// Whether a claim that has not reached a stable verdict holds one of
+	/// `coins`, so that another import of it could not start.
+	pub async fn importing(&self, coins: &[CoinSecret]) -> Result<bool, Error> {
+		let view = self.view().await?;
+		Ok(coins.iter().filter_map(account_of).any(|account| {
+			view.registrations().consumers(&Asset::PeerCoin(account)).any(|claim| {
+				!matches!(
+					claim.state.status,
+					crate::durable::DurableTxStatus::FinalizedSuccess { .. } | crate::durable::DurableTxStatus::Failure(_)
+				)
+			})
+		}))
+	}
+
 	// ---- Maintenance and recovery ----
 
 	/// Runs whatever maintenance is due at `now` (F2), starts or resumes
@@ -1076,8 +1090,7 @@ impl Layer {
 	/// After the start sequence: starts or joins the import of each payment
 	/// the hand-over recorded as received, and forgets its secrets once the
 	/// import has started or was refused. A payment whose import cannot be
-	/// started now is tried again at the next start (native interface,
-	/// section 5).
+	/// started now is tried again at the next start (G3 invariant 8).
 	async fn import_handed_over(&self) -> Result<(), StartError> {
 		let Some(hand_over) = self.0.store.read(handover::read).await.map_err(undecodable)? else { return Ok(()) };
 		for payment in hand_over.incoming {
@@ -1093,8 +1106,8 @@ impl Layer {
 		Ok(())
 	}
 
-	/// How far the scan of a handed-over wallet has come (native interface,
-	/// section 5).
+	/// How far the scan of a handed-over wallet has come (B2
+	/// `hand_over_progress`).
 	pub async fn hand_over_progress(&self) -> Result<HandOverProgress, Error> {
 		Ok(self.view().await?.hand_over_progress())
 	}
