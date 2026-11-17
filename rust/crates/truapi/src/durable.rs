@@ -24,7 +24,7 @@ mod testing;
 #[cfg(test)]
 pub use testing::engine_on;
 
-pub use dao::{group, group_exists};
+pub use dao::{entry, group, group_exists};
 pub use engine::{
 	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
 	EmptyRequest, MAX_REBUILD_COOLDOWN, RecoveryError, RegistrationError,
