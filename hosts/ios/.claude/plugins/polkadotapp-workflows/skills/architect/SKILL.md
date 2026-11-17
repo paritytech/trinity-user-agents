@@ -89,6 +89,11 @@ out_of_scope:
 
 <How this change aligns with or progresses toward the project's north-star architecture>
 
+## Test Strategy
+
+<Triage table from the `tester` skill (Mode A, step 2): unit, tier, risk driver, behaviors,
+seam/doubles. List any testability refactors (extract from humble object, inject clock).>
+
 ## Risks
 
 - <Risk 1 and mitigation>

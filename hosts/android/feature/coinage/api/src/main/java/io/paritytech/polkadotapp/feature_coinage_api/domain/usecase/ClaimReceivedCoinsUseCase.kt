@@ -20,11 +20,12 @@ interface ClaimReceivedCoinsUseCase {
      * to [CoinageTransferDetection.Detected].
      *
      * Each coin's claim is registered once, as soon as the chain shows the coin, and a claim that fails is built
-     * again by its submission policy into the same coin until [retryUntil] allows no more. The flow completes
-     * once every coin has a claim that can no longer change, or when [retryUntil] has passed on coins that never
-     * appeared — and never before at least one attempt has been made and the chain has answered at least once, so
-     * a message first seen after its window has closed is still tried rather than abandoned. Pass
-     * [Instant.DISTANT_FUTURE] to never give up.
+     * again by its submission policy into the same coin until [retryUntil] allows no more. A coin the chain shows
+     * in a coinage instance other than the app's configured one is never claimed and counts as not received. The
+     * flow completes once every coin has a claim that can no longer change or was refused that way, or when
+     * [retryUntil] has passed on coins that never appeared — and never before at least one attempt has been made
+     * and the chain has answered at least once, so a message first seen after its window has closed is still tried
+     * rather than abandoned. Pass [Instant.DISTANT_FUTURE] to never give up.
      *
      * Because it ends only when nothing further will be attempted, completion is what tells a caller the
      * payment is finished. No status emitted along the way means that, a partial

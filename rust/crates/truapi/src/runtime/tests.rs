@@ -7783,10 +7783,14 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 			.err(),
 		));
 	});
-	let reason = "Asset Hub follow stopped before initialization";
+	let reason = r#"Asset Hub connection: legacy_connection: remote_chain_connect: Host { reason: "fixture serves no chain" }"#;
 	let lookup_failed = format!(
 		"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup failed \
 		 {{target=peopl.dot, reason={reason}}}"
+	);
+	let lookup_unopened = format!(
+		"truapi.tracing.warn truapi::dotns: the dotNS lookup could not open at a best Asset Hub \
+		 block; every grant behind it is refused {{reason={reason}}}"
 	);
 	let refusal =
 		manifest_refusal_line("manifest unavailable", &format!("dotNS lookup failed: {reason}"));
@@ -7801,7 +7805,14 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 					v01::HostAccountRingVrfSignError::NotAllowlisted
 				))),
 			)),
-			vec![lookup_failed.clone(), refusal.clone(), lookup_failed, refusal],
+			vec![
+				lookup_unopened.clone(),
+				lookup_failed.clone(),
+				refusal.clone(),
+				lookup_unopened,
+				lookup_failed,
+				refusal
+			],
 		)
 	);
 }
@@ -8142,6 +8153,28 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 
 	host.connection.publish_renderer_action(card_tap()).unwrap();
 	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+}
+
+/// A product connection that ends leaves the failures reported after it for
+/// the execution's next connection, as it leaves the user's taps.
+#[test]
+fn a_detached_connection_leaves_later_failures_for_the_next_one() {
+	let host = scanner_host_for(ExecutableKind::Worker, None);
+	let failures = &host.connection.renderer_failures;
+	let _first = failures.subscribe::<truapi::latest::GenericError>();
+	let failure = truapi::latest::HostRendererFailureSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+		node: 0,
+		material: None,
+		reason: truapi::latest::MaterialFailure::NotFound,
+	};
+
+	host.connection.detach_renderer();
+	failures.publish(failure.clone().into()).unwrap();
+	let mut second = failures.subscribe::<truapi::latest::GenericError>();
+
+	let delivered = crate::test_support::next(&mut second).expect("a failure").unwrap();
+	assert_eq!(delivered.into_latest(), failure);
 }
 
 #[test]
