@@ -114,7 +114,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
             scrollToReactionConfiguration: scrollToReactionConfiguration,
             sections: sections,
             footerConfiguration: footerConfiguration,
-            placeholder: metadata.placeholder(showsMessages: !sections.isEmpty)
+            placeholder: metadata.placeholder(showsMessages: !sections.isEmpty, readiness: model.readiness)
         )
     }
 
