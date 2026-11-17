@@ -21,8 +21,8 @@ use crate::platform::StackChains;
 use crate::{
 	Spawner,
 	platform::{
-		CoreStorage, CoreStorageKey, ReplaceCheck, Stack, StackFetchRequest, StackFetchResponse,
-		StackHost, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+		CoreStorage, CoreStorageRecords, Stack, StackFetchRequest, StackFetchResponse, StackHost,
+		StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -59,7 +59,7 @@ pub async fn stack_from_js(
 		&pointer,
 		&descriptor,
 		allows_reserved_values,
-		Box::new(CoreStorageRecords(storage)),
+		Box::new(CoreStorageRecords::new(storage)),
 		Arc::new(RealTimer),
 		Box::new(SystemClock),
 	)
@@ -147,36 +147,6 @@ fn bytes_at(stack: &JsValue, name: &str) -> Result<Option<Vec<u8>>, JsValue> {
 		.dyn_into::<Uint8Array>()
 		.map(|bytes| Some(bytes.to_vec()))
 		.map_err(|_| JsValue::from_str(&format!("runtimeConfig.stack.{name} must be a Uint8Array")))
-}
-
-/// The stack's record, kept in the host's core storage with the rest of the
-/// browser core's data.
-struct CoreStorageRecords(Arc<dyn CoreStorage>);
-
-#[async_trait::async_trait]
-impl StackRecords for CoreStorageRecords {
-	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
-		self.0
-			.read_core_storage(CoreStorageKey::StackRecord { stack_id: stack_id.to_string() })
-			.await
-	}
-
-	/// Reads the stored record before it writes. The two steps are not one
-	/// transaction, since core storage has none, so a second runtime writing
-	/// in between can still be overwritten.
-	async fn write_stack_record(
-		&self,
-		stack_id: &str,
-		record: Vec<u8>,
-		check: ReplaceCheck,
-	) -> Result<(), GenericError> {
-		let key = CoreStorageKey::StackRecord { stack_id: stack_id.to_string() };
-		let stored = self.0.read_core_storage(key.clone()).await?;
-		if stored.is_some_and(|stored| !check.replaces(&stored)) {
-			return Ok(());
-		}
-		self.0.write_core_storage(key, record).await
-	}
 }
 
 /// [`StackHost`] over the host's `fetchStackDescriptor` and `stackChanged`

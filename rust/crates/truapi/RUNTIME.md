@@ -196,7 +196,9 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start.
+whichever has the higher `sequence`. It never waits on the network to start,
+and waits a few seconds at most for the stored copy before it starts from the
+bundled one.
 
 The core has no HTTP client. A native host installs `NativeStackCallbacks` with
 `set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,

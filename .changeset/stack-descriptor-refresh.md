@@ -5,7 +5,8 @@
 The wasm core fetches newer copies of its Trinity stack descriptor while it runs. Breaking for a host that uses the raw
 glue: `WasmPairingHostRuntime`, `WasmSigningHostRuntime` and `WasmProductRuntime` have no constructor. Build each with
 `await WasmPairingHostRuntime.create(callbacks, hostConfig)` instead, which resolves once the core has read its stack
-record from the host's core storage. Hosts built with `createWebWorkerPairingHostRuntime` need no change.
+record from the host's core storage, or after a few seconds without it. Hosts built with
+`createWebWorkerPairingHostRuntime` need no change.
 
 A host passes two raw callbacks to `create`, typed as `StackCallbacks`: `fetchStackDescriptor` makes the HTTP request,
 and `stackChanged` receives a `StackStatus` at start and on each change. The core asks for a fetch once its copy is an

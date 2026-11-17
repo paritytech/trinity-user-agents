@@ -492,14 +492,18 @@ fn runtime_config_from_js(
 	Ok((host_config, product))
 }
 
+/// Refuses a missing host config before anything reads it.
+fn require_host_config(value: &JsValue) -> Result<(), JsValue> {
+	if value.is_null() || value.is_undefined() {
+		return Err(JsValue::from_str("hostConfig is required"));
+	}
+	Ok(())
+}
+
 fn pairing_host_config_from_js(
 	value: &JsValue,
 	stack: Stack,
 ) -> Result<PairingHostConfig, JsValue> {
-	if value.is_null() || value.is_undefined() {
-		return Err(JsValue::from_str("hostConfig is required"));
-	}
-
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
 	let pairing = get_required_object(value, "pairing", "runtimeConfig.pairing")?;
@@ -555,10 +559,6 @@ fn signing_host_config_from_js(
 	value: &JsValue,
 	stack: Stack,
 ) -> Result<SigningHostConfig, JsValue> {
-	if value.is_null() || value.is_undefined() {
-		return Err(JsValue::from_str("hostConfig is required"));
-	}
-
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
 	SigningHostConfig::new(
@@ -935,13 +935,14 @@ impl WasmPairingHostRuntime {
 
 	/// Build a shared runtime from host-level platform callbacks and host
 	/// config. Resolves once the core has read its stack record from the
-	/// host's core storage.
+	/// host's core storage, or after a few seconds without it.
 	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmPairingHostRuntime, JsValue> {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&host_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let WasmPlatformAdapters {
 			platform,
@@ -954,14 +955,11 @@ impl WasmPairingHostRuntime {
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
-		if let Some(refresh) = &stack_refresh {
-			start_refresh(refresh, &callbacks, &spawner)?;
-		}
 		let host_config = pairing_host_config_from_js(&host_config, stack)?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
 			host_config,
-			spawner,
+			spawner.clone(),
 			chat_platform,
 			contacts_platform,
 		);
@@ -978,6 +976,10 @@ impl WasmPairingHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		// Last, so a host is told of a stack only once the runtime exists.
+		if let Some(refresh) = &stack_refresh {
+			start_refresh(refresh, &callbacks, &spawner)?;
+		}
 		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
 	}
 
@@ -990,8 +992,9 @@ impl WasmPairingHostRuntime {
 	}
 
 	/// Fetch the stack's descriptor now instead of when the copy is an hour
-	/// old. Returns at once; the result arrives through `stackChanged`. Does
-	/// nothing for a test stack or without a `fetchStackDescriptor` callback.
+	/// old. Returns at once. A status the fetch changes arrives through
+	/// `stackChanged`, and `stackStatus()` reads it at any time. Does nothing
+	/// for a test stack or without a `fetchStackDescriptor` callback.
 	#[wasm_bindgen(js_name = refreshStack)]
 	pub fn refresh_stack(&self) {
 		if let Some(refresh) = &self.stack_refresh {
@@ -1318,13 +1321,14 @@ impl WasmSigningHostRuntime {
 
 	/// Build a shared signing runtime from host callbacks and host config.
 	/// Resolves once the core has read its stack record from the host's core
-	/// storage.
+	/// storage, or after a few seconds without it.
 	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmSigningHostRuntime, JsValue> {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&host_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let WasmPlatformAdapters {
 			platform,
@@ -1337,14 +1341,11 @@ impl WasmSigningHostRuntime {
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
-		if let Some(refresh) = &stack_refresh {
-			start_refresh(refresh, &callbacks, &spawner)?;
-		}
 		let host_config = signing_host_config_from_js(&host_config, stack)?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
 			host_config,
-			spawner,
+			spawner.clone(),
 			chat_platform,
 			contacts_platform,
 		);
@@ -1361,6 +1362,10 @@ impl WasmSigningHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		// Last, so a host is told of a stack only once the runtime exists.
+		if let Some(refresh) = &stack_refresh {
+			start_refresh(refresh, &callbacks, &spawner)?;
+		}
 		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
 	}
 
@@ -1373,8 +1378,9 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Fetch the stack's descriptor now instead of when the copy is an hour
-	/// old. Returns at once; the result arrives through `stackChanged`. Does
-	/// nothing for a test stack or without a `fetchStackDescriptor` callback.
+	/// old. Returns at once. A status the fetch changes arrives through
+	/// `stackChanged`, and `stackStatus()` reads it at any time. Does nothing
+	/// for a test stack or without a `fetchStackDescriptor` callback.
 	#[wasm_bindgen(js_name = refreshStack)]
 	pub fn refresh_stack(&self) {
 		if let Some(refresh) = &self.stack_refresh {
@@ -1649,7 +1655,8 @@ impl WasmProductRuntime {
 	/// every host capability the [`crate::platform::Platform`] trait set
 	/// requires (camelCase property names; see the source for the full
 	/// list). Resolves once the core has read its stack record from the host's
-	/// core storage. A product runtime built on its own starts from that
+	/// core storage, or after a few seconds without it. A product runtime
+	/// built on its own starts from that
 	/// record but does not refresh the descriptor: it has no `stackStatus`
 	/// or `refreshStack`, and a host runtime is what keeps the stack current.
 	pub async fn create(
@@ -1662,6 +1669,7 @@ impl WasmProductRuntime {
 		// core rather than continue using it.
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&runtime_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let channel = CoreChannel::from_js(&callbacks)?;
 		let frame_sink =

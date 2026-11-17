@@ -732,6 +732,46 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
+  it("answers the worker's host calls before it is ready", async () => {
+    // Building the core reads its stack record from core storage through the
+    // host while the worker is still in init. Left unanswered until `ready`,
+    // every start would wait out the read's timeout and lose the record.
+    const worker = new FakeWorker();
+    const stackRecordKey = CoreStorageKey.enc({
+      tag: "StackRecord",
+      value: { stackId: "0xabc" },
+    });
+    const reads: unknown[] = [];
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        coreStorage: {
+          readCoreStorage: async (key) => {
+            reads.push(key);
+            return undefined;
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 3,
+      name: "readCoreStorage",
+      args: [stackRecordKey],
+    });
+    await settle();
+
+    expect([
+      reads.length,
+      lastMessageOfKind(worker, "callbackResponse"),
+    ]).toEqual([1, expect.objectContaining({ requestId: 3, ok: true })]);
+    worker.emit({ kind: "ready" });
+    (await runtimePromise).dispose();
+  });
+
   it("reports unknown callback requests", async () => {
     const worker = new FakeWorker();
     const providerPromise = createProviderFromRuntime(

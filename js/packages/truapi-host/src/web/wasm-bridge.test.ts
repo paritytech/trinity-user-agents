@@ -120,11 +120,15 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(invoked.some((c) => c.startsWith("readCoreStorage:"))).toBe(true);
+    // Building the runtime also reads the stack record, so the auth session
+    // read is named: it is the one that proves the startup traffic crossed.
+    expect(invoked).toContain("readCoreStorage:AuthSession");
 
     // The same traffic must be visible through the control surface, because
     // that count is what a harness waits on to decide the wire is live.
-    expect(mock.getHostCallCount()).toBeGreaterThan(0);
+    expect(mock.getHostCallCount()).toBeGreaterThan(
+      invoked.filter((call) => call === "readCoreStorage:StackRecord").length,
+    );
   });
 
   it("refuses a stack pointer without a key", async () => {
@@ -138,7 +142,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const pointer = new URL(hostConfig.stack.pointer);
     pointer.searchParams.delete("key");
 
-    expect(
+    await expect(
       WasmPairingHostRuntime.create(
         {
           ...createWasmRawCallbacks(createMockHost().callbacks),
@@ -246,6 +250,33 @@ suite("real WASM core ↔ createMockHost bridge", () => {
 
     expect(statuses).toEqual([runtime.stackStatus()]);
     expect(statuses[0].lastRefresh).toBeUndefined();
+  });
+
+  it("tells a host of its stack only once the runtime exists", async () => {
+    // A config the core refuses must not leave the host holding the status of
+    // a runtime that was never built.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const {
+      productId: _productId,
+      pairing: _pairing,
+      ...withoutPairing
+    } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+
+    await expect(
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(createMockHost().callbacks),
+          requestWorkerTransition: () => {},
+          stackChanged: (status: StackStatus) => statuses.push(status),
+        },
+        withoutPairing,
+      ),
+    ).rejects.toThrow("runtimeConfig.pairing");
+    expect(statuses).toEqual([]);
   });
 
   it("isolates one real-core boot from the next through reset()", async () => {
