@@ -47,9 +47,10 @@ final class CoinageMetalRenderer {
     private let framesAvailable = DispatchSemaphore(value: framesInFlight)
     private var hasGeneratedMipmaps = false
 
-    /// Three frames in flight, so the CPU can write next frame's instances while the GPU reads this
-    /// one's. `setVertexBytes` would cap a draw at sixty-four coins.
-    private static let framesInFlight = 3
+    /// Two frames in flight, so the CPU can write next frame's instances while the GPU reads this
+    /// one's. `setVertexBytes` would cap a draw at sixty-four coins. A third slot only let frames
+    /// queue up behind a slow GPU, a frame of latency for nothing.
+    private static let framesInFlight = 2
 
     /// What the instance ring starts at. It grows to fit rather than dropping coins on the floor.
     private static let initialCoins = 600
@@ -120,18 +121,25 @@ final class CoinageMetalRenderer {
         viewport: CGSize,
         dpr: CGFloat,
         light: CoinageTilt.Turn,
+        lean: CoinageTilt.Turn = .zero,
+        coinSet: CoinageScene.CoinSet = .shipped,
         withinTransaction: Bool = false
     ) {
         ensureCapacity(batches.reduce(0) { $0 + $1.instances.count })
+
+        // Skip the frame rather than stall the main thread while the GPU is still on the last ones.
+        // Motion readings arrive on that thread, and a stall ages every reading queued behind it:
+        // with the GPU clocked down under Low Power Mode the light fell a second behind the hand.
+        guard framesAvailable.wait(timeout: .now()) == .success else { return }
 
         guard let descriptor = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
               let command = queue.makeCommandBuffer()
         else {
+            framesAvailable.signal()
             return
         }
 
-        framesAvailable.wait()
         command.addCompletedHandler { [framesAvailable] _ in framesAvailable.signal() }
 
         // The atlas ships without mips, and the box filter has to be the GPU's, unnormalised.
@@ -146,12 +154,14 @@ final class CoinageMetalRenderer {
         params.viewportHeight = Float(viewport.height)
         params.dpr = Float(dpr)
         params.lightTurn = SIMD3(Float(light.x), Float(light.y), Float(light.z))
+        params.coinTurn = SIMD3(Float(lean.x), Float(lean.y), Float(lean.z))
+        params.grain = coinSet == .plain ? 1 : 0
 
         let packed = params.packed()
         let metals = store.metalRows
 
         if let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) {
-            encode(batches, into: encoder, params: packed, metals: metals)
+            encode(batches, into: encoder, params: packed, metals: metals, environment: store.environment)
             encoder.endEncoding()
         }
 
@@ -191,7 +201,8 @@ private extension CoinageMetalRenderer {
         _ batches: [Batch],
         into encoder: MTLRenderCommandEncoder,
         params: [Float],
-        metals: [Float]
+        metals: [Float],
+        environment: MTLTexture
     ) {
         guard let ring = instanceRing[safe: ringSlot] else { return }
 
@@ -203,7 +214,7 @@ private extension CoinageMetalRenderer {
         encoder.setFragmentBytes(params, length: params.count * MemoryLayout<Float>.size, index: 4)
         encoder.setFragmentBytes(metals, length: metals.count * MemoryLayout<Float>.size, index: 5)
         encoder.setFragmentTexture(store.reliefAtlas, index: 0)
-        encoder.setFragmentTexture(store.environment, index: 1)
+        encoder.setFragmentTexture(environment, index: 1)
         encoder.setFragmentSamplerState(sampler, index: 0)
 
         let stride = MemoryLayout<Instance>.stride

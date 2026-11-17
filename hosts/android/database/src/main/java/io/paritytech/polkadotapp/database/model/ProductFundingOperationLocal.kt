@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import uniffi.truapi.ProductId
 
 /**
  * An open product funding operation. Persisted so a funding flow can resume after an app restart:
@@ -10,6 +11,6 @@ import androidx.room.PrimaryKey
 @Entity(tableName = "product_funding_operations")
 class ProductFundingOperationLocal(
     @PrimaryKey(autoGenerate = true) val operationId: Long,
-    val productId: String,
+    val productId: ProductId,
     val label: String?,
 )

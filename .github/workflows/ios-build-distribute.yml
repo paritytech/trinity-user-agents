@@ -52,7 +52,7 @@ on:
       pr_list_markdown:
         value: ${{ jobs.prepare_build_metadata.outputs.pr_list_markdown }}
       succeeded:
-        value: ${{ jobs.check_build_result.outputs.succeeded }}
+        value: ${{ jobs.check_and_build.outputs.succeeded }}
     # Declared rather than inherited, so a caller hands over exactly what this
     # workflow reads and nothing else.
     secrets:
@@ -270,8 +270,7 @@ jobs:
   check_and_build:
     # The configuration is part of the name so that a caller invoking this workflow
     # twice in one run (ios-nightly.yml has a Nightly and a Safetynet leg)
-    # produces distinct job names — check-job-conclusion matches by name suffix and
-    # would otherwise resolve both lookups to the same leg.
+    # produces distinct job names and commit status contexts.
     name: Check and Build TestFlight (${{ inputs.build_configuration }})
     # The same runner as the pull request test gate, because the app's
     # timing-sensitive tests exceed their limits on shared hosted runners.
@@ -280,6 +279,11 @@ jobs:
     # Twice the longest upload in October. A hung upload holds the night's
     # concurrency group, and with it every retry, so it is bounded.
     timeout-minutes: 90
+    # Set by the last step, so it is 'true' only when every step passed. The
+    # caller reads it straight from this job, with no job in between that an
+    # Actions outage could leave queued.
+    outputs:
+      succeeded: ${{ steps.done.outputs.succeeded }}
     steps:
       # Again here, because "Re-run failed jobs" re-runs this job without the
       # metadata job, so the check there does not see a re-run's actor.
@@ -350,21 +354,55 @@ jobs:
           match_auth_required: "true"
           match_repository_pat: ${{ secrets.FASTLANE_RO_PAT }}
 
+      # "Re-run failed jobs" keeps the build number the metadata job chose. When
+      # an earlier attempt already uploaded that build, Apple refuses a second
+      # upload, so the re-run skips the tests and the build and only finishes
+      # the distribution. A first attempt never skips: a build with its number
+      # there belongs to another run, and the upload should fail loudly. When
+      # App Store Connect cannot answer, the job builds, as a first attempt does.
+      - name: Look for this build in App Store Connect
+        id: existing
+        if: github.run_attempt > 1
+        working-directory: hosts/ios
+        env:
+          BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
+          MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
+          IOS_BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/testflight-build-uploaded.log"
+          bundle exec fastlane testflight_build_uploaded 2>&1 | tee "${log}" || true
+          if grep -q "Apple marked build ${BUILD_NUMBER} invalid" "${log}"; then
+            echo "::error::Apple marked build ${BUILD_NUMBER} invalid. Use \"Re-run all jobs\" so the run picks a new build number."
+            exit 1
+          fi
+          answer="$(grep -oE "TestFlight build ${BUILD_NUMBER} uploaded: (true|false)" "${log}" | grep -oE "(true|false)$" || true)"
+          if [ -z "${answer}" ]; then
+            echo "::warning::Could not tell whether build ${BUILD_NUMBER} is already in App Store Connect, so this attempt builds it"
+            answer=false
+          fi
+          echo "uploaded=${answer}" >> "$GITHUB_OUTPUT"
+          echo "Build ${BUILD_NUMBER} already uploaded: ${answer}"
+
       # Package.swift resolves targets at generated paths that are gitignored,
       # so xcodebuild cannot resolve dependencies until the core is built from
       # this tree. The app repository got the core as a published package and
       # needed none of this; here it has to be generated before any build.
       - name: Bootstrap the in-tree core
-        if: inputs.core_artifact == ''
+        if: inputs.core_artifact == '' && steps.existing.outputs.uploaded != 'true'
         uses: ./.github/actions/bootstrap-ios-core
 
       - name: Restore the in-tree core
-        if: inputs.core_artifact != ''
+        if: inputs.core_artifact != '' && steps.existing.outputs.uploaded != 'true'
         uses: ./.github/actions/restore-ios-core
         with:
           name: ${{ inputs.core_artifact }}
 
       - name: Distribute TestFlight build
+        if: steps.existing.outputs.uploaded != 'true'
         uses: ./hosts/ios/.github/actions/distribute-testflight
         with:
           ios_bundle_id: ${{ env.IOS_BUNDLE_ID }}
@@ -378,6 +416,7 @@ jobs:
           distribute_to_external_group: ${{ inputs.distribute_to_external_group }}
           external_group_name: ${{ inputs.external_group_name }}
           build_number: ${{ needs.prepare_build_metadata.outputs.build_number }}
+          marketing_version: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
           build_configuration: ${{ inputs.build_configuration }}
           asc_key_id: ${{ secrets.ASC_KEY_ID }}
           asc_issuer_id: ${{ secrets.ASC_ISSUER_ID }}
@@ -387,6 +426,24 @@ jobs:
           google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
+
+      # Sets the changelog on every path, and hands the build to the external
+      # group only when this run distributes to one.
+      - name: Finish distributing the uploaded build
+        if: steps.existing.outputs.uploaded == 'true'
+        working-directory: hosts/ios
+        env:
+          BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
+          MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
+          RELEASE_NOTES: ${{ needs.prepare_build_metadata.outputs.release_notes }}
+          EXTERNAL_GROUP_NAME: ${{ inputs.distribute_to_external_group && inputs.external_group_name || '' }}
+          IOS_BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          bundle exec fastlane finish_testflight
 
       # The distribute action runs the unit tests before it archives. xcpretty
       # drops the failing test names, and on a reused runner the result bundle
@@ -485,30 +542,14 @@ jobs:
               core.warning(`Failed to set commit status for PR #${prNumber}: ${error.message}`);
             }
 
-  check_build_result:
-    name: Check build result
-    runs-on: ubuntu-latest
-    needs: [prepare_build_metadata, check_and_build]
-    permissions:
-      contents: read
-      actions: read
-    if: ${{ !cancelled() && needs.prepare_build_metadata.result == 'success' }}
-    outputs:
-      succeeded: ${{ steps.check.outputs.succeeded }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Check the build result
-        id: check
-        uses: ./hosts/ios/.github/actions/check-job-conclusion
-        with:
-          job_name: "Check and Build TestFlight (${{ inputs.build_configuration }})"
-          github_token: ${{ github.token }}
+      - name: Record that the build shipped
+        id: done
+        run: echo "succeeded=true" >> "$GITHUB_OUTPUT"
 
   send_failure_notification:
     name: Send Failure Notification
     runs-on: ubuntu-latest
-    needs: [prepare_build_metadata, check_and_build, check_build_result]
+    needs: [prepare_build_metadata, check_and_build]
     # Held: the only room configured is the one the release announcements go
     # to, and a build failure is not news for that audience. Restoring this
     # wants a room of its own.

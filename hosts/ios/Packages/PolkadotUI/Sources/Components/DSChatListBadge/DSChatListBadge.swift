@@ -1,5 +1,6 @@
 import DesignSystem
 import SwiftUI
+import UIKit
 
 public struct DSChatListBadge: View, Equatable {
     public enum Kind: Hashable {
@@ -92,7 +93,7 @@ public struct DSChatListImageBadge: View, Equatable {
         let side = DSChatListBadgeMetrics.badgeMinSize
 
         AsyncImageView(
-            viewModel: image.viewModel,
+            viewModel: AnyImageViewModel(KeyedBadgeImageViewModel(identifier: image.key, base: image.viewModel)),
             settings: ImageViewModelSettings(targetSize: CGSize(width: side, height: side))
         )
         .frame(width: side, height: side)
@@ -126,3 +127,24 @@ private enum DSChatListBadgeMetrics {
         .background(Color.bgSurfaceMain)
     }
 #endif
+
+/// Gives a badge image the identity of its key, which is what `AsyncImageView` compares.
+private struct KeyedBadgeImageViewModel: IdentifiableImageViewModelProtocol {
+    let identifier: String
+    let base: any ImageViewModelProtocol
+
+    @MainActor
+    func loadImage(
+        on imageView: UIImageView,
+        settings: ImageViewModelSettings,
+        animated: Bool,
+        completion: ((Bool) -> Void)?
+    ) {
+        base.loadImage(on: imageView, settings: settings, animated: animated, completion: completion)
+    }
+
+    @MainActor
+    func cancel(on imageView: UIImageView) {
+        base.cancel(on: imageView)
+    }
+}

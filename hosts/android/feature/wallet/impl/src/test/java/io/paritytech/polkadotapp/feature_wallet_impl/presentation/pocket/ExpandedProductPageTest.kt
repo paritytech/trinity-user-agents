@@ -1,11 +1,10 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import android.webkit.WebView
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -17,33 +16,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExpandedProductPageTest {
-    private class FakeSession : SpaHostSession {
-        override val webView = MutableStateFlow<WebView?>(null)
-        override val currentUrl = MutableStateFlow("")
-        override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
-        override val title = MutableStateFlow("")
+    private val opened = mutableListOf<Triple<String, CoroutineScope, SpaHostSession>>()
 
-        var paused = 0
-        var resumed = 0
-
-        override fun pauseConnections() {
-            paused++
-        }
-
-        override fun resumeConnections() {
-            resumed++
-        }
-    }
-
-    private val opened = mutableListOf<Triple<String, CoroutineScope, FakeSession>>()
-
-    private val sessions: List<FakeSession> get() = opened.map { it.third }
+    private val sessions: List<SpaHostSession> get() = opened.map { it.third }
 
     // The screen's own scope, separate from the test's, so a page left open does not hold runTest open.
     private fun TestScope.screenScope() = CoroutineScope(StandardTestDispatcher(testScheduler))
 
     private fun page(screenScope: CoroutineScope) = ExpandedProductPage(screenScope) { scope, url ->
-        FakeSession().also { opened += Triple(url, scope, it) }
+        mockk<SpaHostSession>(relaxed = true).also { opened += Triple(url, scope, it) }
     }
 
     // Named by its card's URL, so a screen drawn for another card leaves its one WebView alone.
@@ -55,7 +36,7 @@ class ExpandedProductPageTest {
 
         assertEquals(listOf("https://game.dot?card=loyalty"), opened.map { it.first })
         assertEquals("https://game.dot?card=loyalty", page.shown.value?.url)
-        assertTrue(page.shown.value?.session is FakeSession)
+        assertEquals(sessions.single(), page.shown.value?.session)
     }
 
     // The product costs a WebView and a page load to build, and a user who looks at a card usually
@@ -69,7 +50,7 @@ class ExpandedProductPageTest {
 
         assertNull(page.shown.value)
         assertTrue(opened.single().second.isActive)
-        assertEquals(1, sessions.single().paused)
+        verify(exactly = 1) { sessions.single().pauseConnections() }
     }
 
     @Test
@@ -82,7 +63,7 @@ class ExpandedProductPageTest {
 
         assertEquals(1, opened.size)
         assertEquals(sessions.single(), page.shown.value?.session)
-        assertEquals(1, sessions.single().resumed)
+        verify(exactly = 1) { sessions.single().resumeConnections() }
     }
 
     // Showing a product that already exists costs the card's move nothing.
@@ -96,7 +77,7 @@ class ExpandedProductPageTest {
 
         assertEquals(1, opened.size)
         assertEquals(sessions.single(), page.shown.value?.session)
-        assertEquals(1, sessions.single().resumed)
+        verify(exactly = 1) { sessions.single().resumeConnections() }
     }
 
     // Only one product is ever held, so a second card cannot leave the first one's WebView behind.
@@ -136,7 +117,7 @@ class ExpandedProductPageTest {
 
         assertEquals(1, opened.size)
         assertTrue(opened.single().second.isActive)
-        assertEquals(0, sessions.single().resumed)
+        verify(exactly = 0) { sessions.single().resumeConnections() }
     }
 
     @Test

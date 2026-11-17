@@ -109,7 +109,7 @@ struct ChatExtensionV2RoomScenarioTests {
             timestamp: 42,
             badge: .unreadCount(count: 3),
             // The product gives a message of the contact that the user has not seen as `Delivered`.
-            lastMessage: message("m1", text: "Your turn", timestamp: 42, status: .delivered),
+            lastMessage: previewMessage("m1", text: "Your turn", timestamp: 42, status: .delivered),
             lastReaction: nil,
             unseenReactions: 1,
             pinned: false,
@@ -144,10 +144,11 @@ struct ChatExtensionV2RoomScenarioTests {
         try await create(bridge, metadata: metadata, config: config, preview: preview)
 
         let workers = StubWorkerManager()
+        let productId = try ProductId(fixture.productId)
         let productBot = ProductBot(
-            product: Product(id: fixture.productId, name: "Game"),
+            product: Product(id: productId, name: "Game"),
             description: nil,
-            runtime: TrUAPIChatHandler(productId: fixture.productId, workers: workers),
+            runtime: TrUAPIChatHandler(productId: productId, workers: workers),
             resolveImage: WidgetImageResolver { _ in nil }
         )
 
@@ -210,11 +211,30 @@ private extension ChatExtensionV2RoomScenarioTests {
         ChatRoomPreview(
             timestamp: nil,
             badge: nil,
-            lastMessage: message("m0", text: "Your turn"),
+            lastMessage: previewMessage("m0", text: "Your turn"),
             lastReaction: nil,
             unseenReactions: 0,
             pinned: false,
             activity: nil
+        )
+    }
+
+    /// The line a preview shows: a message without reactions.
+    func previewMessage(
+        _ id: String,
+        text: String,
+        timestamp: UInt64 = 1,
+        status: ChatMessageStatus = .sent
+    ) -> ChatPreviewMessage {
+        ChatPreviewMessage(
+            messageId: id,
+            origin: ChatMessageOrigin(participantId: "product"),
+            timestamp: timestamp,
+            body: .text(text: text),
+            status: status,
+            replyTo: nil,
+            editedAt: nil,
+            request: false
         )
     }
 

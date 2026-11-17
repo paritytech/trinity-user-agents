@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Operation_iOS
 
@@ -18,8 +19,8 @@ extension ScheduledNotificationMapper: CoreDataMapperProtocol {
             )
         }
 
-        return ScheduledNotificationEntry(
-            productId: productId,
+        return try ScheduledNotificationEntry(
+            productId: ProductId(productId),
             notificationId: UInt32(bitPattern: entity.notificationId)
         )
     }
@@ -30,7 +31,7 @@ extension ScheduledNotificationMapper: CoreDataMapperProtocol {
         using _: NSManagedObjectContext
     ) throws {
         entity.identifier = model.identifier
-        entity.productId = model.productId
+        entity.productId = model.productId.rawValue
         entity.notificationId = Int32(bitPattern: model.notificationId)
     }
 }

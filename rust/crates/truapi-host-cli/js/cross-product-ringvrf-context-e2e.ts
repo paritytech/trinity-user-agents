@@ -1,3 +1,5 @@
+import { asProductId } from "../../../../js/packages/truapi/src/index.ts";
+
 // A ring-VRF proof in a third product's context, for
 // paritytech/platform-bugs#99. Run by `scripts/cross-product-ringvrf-context-e2e.sh`,
 // once per phase, with the grants from local product configs:
@@ -11,7 +13,7 @@
 // `Rejected` for an alias.
 
 const index = { tag: "Index" as const, value: 0 };
-const keyHandle = { dotNsIdentifier: "peopl.paseo", derivationIndex: index };
+const keyHandle = { dotNsIdentifier: asProductId("peopl.paseo"), derivationIndex: index };
 
 const people = await truapi.chain.getChainInfo({ chain: "People" });
 assert(people.isOk(), "get_chain_info failed", people);
@@ -42,8 +44,8 @@ if (process.env.E2E_PHASE === "register") {
   console.log("registered peopl.paseo's ring-VRF key");
 } else {
   for (const [productId, proof, alias] of [
-    ["dim2.paseo", "NotMember", "Ok"],
-    ["stash.paseo", "NotAllowlisted", "Rejected"],
+    [asProductId("dim2.paseo"), "NotMember", "Ok"] as const,
+    [asProductId("stash.paseo"), "NotAllowlisted", "Rejected"] as const,
   ]) {
     const context = { productId, suffix: index };
     const proved = outcome(

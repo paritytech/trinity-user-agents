@@ -11,7 +11,7 @@ use crate::store::DbError;
 pub struct PurseId(pub u32);
 
 /// No purse has this id.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 #[error("purse {} does not exist", .0.0)]
 pub struct UnknownPurse(pub PurseId);
 
@@ -26,11 +26,11 @@ impl PurseId {
 /// tag. Layer 1 stores and matches tags but never reads their contents. The
 /// empty tag marks a purse no caller has claimed: the main purse, and purses
 /// recovered without metadata.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, Hash)]
 pub struct PurseTag(pub Vec<u8>);
 
 /// A stored purse.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct PurseRecord {
 	/// Its id.
 	pub id: PurseId,

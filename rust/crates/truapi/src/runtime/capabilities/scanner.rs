@@ -10,16 +10,16 @@ use truapi::{
 
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
-	platform::{HostScan, ProductExecutionKind},
-	runtime::{ProductRuntimeHost, until_cancelled, versioning::version},
+	platform::{ExecutableKind, HostScan},
+	runtime::{AccountHolder, ProductRuntimeHost, until_cancelled, versioning::version},
 };
 
 fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
 	CallError::Domain(latest::HostScannerScanError::Unknown { reason: reason.to_string() })
 }
 
-#[truapi::async_trait]
-impl Scanner for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Scanner for ProductRuntimeHost<H> {
 	/// Checked in this order so a host without a scanner, or a request the
 	/// product could not make, never opens a viewfinder.
 	#[instrument(skip_all, fields(runtime.method = "scanner.scan"))]
@@ -35,7 +35,7 @@ impl Scanner for ProductRuntimeHost {
 				validate_request(&request).map_err(|reason| {
 					CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
 				})?;
-				if self.connection.execution_kind() == ProductExecutionKind::Worker &&
+				if self.connection.execution_kind() == ExecutableKind::Worker &&
 					!self.connection.recently_tapped()
 				{
 					return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));

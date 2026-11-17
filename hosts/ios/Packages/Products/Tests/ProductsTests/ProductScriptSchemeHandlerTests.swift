@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
@@ -53,7 +54,7 @@ struct ProductScriptSchemeHandlerTests {
 private extension ProductScriptSchemeHandlerTests {
     func makeHandler(files: [String: String]) -> ProductScriptSchemeHandler {
         ProductScriptSchemeHandler(
-            productId: "browse.dot",
+            productId: try! ProductId("browse.dot"),
             entryRelativePath: Self.entry,
             productFileProvider: StubProductFileProvider(files: files.mapValues(data))
         )

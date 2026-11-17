@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_api.domain.game
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /** Reminds the player of a product's next game start; each product holds one reminder. */
 interface ProductGameReminder {

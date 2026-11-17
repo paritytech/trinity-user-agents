@@ -6,7 +6,6 @@
 //! needs in the database, then reads the secret by key. The store cannot list
 //! its keys, so the database is also how a feature finds what to delete.
 
-use async_trait::async_trait;
 use truapi::latest::GenericError;
 use zeroize::Zeroizing;
 
@@ -16,7 +15,7 @@ use zeroize::Zeroizing;
 ///
 /// Each feature prefixes its keys with its own namespace, so features never
 /// share a key.
-#[async_trait]
+#[async_trait::async_trait]
 pub trait EncryptedStorage: Send + Sync {
 	/// The value stored under `key`, or `None` when nothing is. A store that
 	/// cannot be read, or a value that no longer decrypts, is an error, never
@@ -57,7 +56,7 @@ impl MemoryEncryptedStorage {
 }
 
 #[cfg(test)]
-#[async_trait]
+#[async_trait::async_trait]
 impl EncryptedStorage for MemoryEncryptedStorage {
 	async fn read_encrypted(&self, key: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>, GenericError> {
 		Ok(self.values().get(key).cloned().map(Zeroizing::new))

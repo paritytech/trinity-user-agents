@@ -106,7 +106,7 @@ labels:
     addedBy: humans
 
   # status: who acts next on a pull request. One at a time. pr-triage.yml sets
-  # the first one on a pull request that has none.
+  # all but blocked from the review decision.
   - name: "status:waiting-on-review"
     color: "fbca04"
     description: "Ready for a reviewer"
@@ -116,12 +116,12 @@ labels:
     color: "fef2c0"
     description: "The author has changes to make before the next review"
     target: prs
-    addedBy: humans
+    addedBy: pr-triage
   - name: "status:ready-to-merge"
     color: "0e8a16"
     description: "Approved and waiting only to be queued"
     target: prs
-    addedBy: humans
+    addedBy: pr-triage
   - name: "status:blocked"
     color: "b60205"
     description: "Cannot move until something else lands; say what in a comment"

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 73,
-    "identityHash": "8f9f1dd9166c39a5b87203b154605d61",
+    "identityHash": "9cf779237fece3fd3a27b46c281da020",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -3111,128 +3111,11 @@
             ]
           }
         ]
-      },
-      {
-        "tableName": "pocket_cards",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `cardId` TEXT NOT NULL, `title` TEXT NOT NULL, PRIMARY KEY(`productId`, `cardId`))",
-        "fields": [
-          {
-            "fieldPath": "productId",
-            "columnName": "productId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "cardId",
-            "columnName": "cardId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "title",
-            "columnName": "title",
-            "affinity": "TEXT",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "productId",
-            "cardId"
-          ]
-        }
-      },
-      {
-        "tableName": "pocket_card_faces",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `cardId` TEXT NOT NULL, `face` BLOB NOT NULL, PRIMARY KEY(`productId`, `cardId`))",
-        "fields": [
-          {
-            "fieldPath": "productId",
-            "columnName": "productId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "cardId",
-            "columnName": "cardId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "face",
-            "columnName": "face",
-            "affinity": "BLOB",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "productId",
-            "cardId"
-          ]
-        }
-      },
-      {
-        "tableName": "chat_room_declarations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` BLOB NOT NULL, `config` BLOB, `configGeneration` INTEGER NOT NULL DEFAULT 0, `description` TEXT, `placeholder` TEXT, `preview` BLOB, `features` BLOB, `contact` BLOB, PRIMARY KEY(`chatId`))",
-        "fields": [
-          {
-            "fieldPath": "chatId",
-            "columnName": "chatId",
-            "affinity": "BLOB",
-            "notNull": true
-          },
-          {
-            "fieldPath": "config",
-            "columnName": "config",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "configGeneration",
-            "columnName": "configGeneration",
-            "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
-          },
-          {
-            "fieldPath": "description",
-            "columnName": "description",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "placeholder",
-            "columnName": "placeholder",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "preview",
-            "columnName": "preview",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "features",
-            "columnName": "features",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "contact",
-            "columnName": "contact",
-            "affinity": "BLOB"
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "chatId"
-          ]
-        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8f9f1dd9166c39a5b87203b154605d61')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9cf779237fece3fd3a27b46c281da020')"
     ]
   }
 }
