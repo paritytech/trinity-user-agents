@@ -74,6 +74,8 @@ pub struct RuntimeFacts {
 	pub instance: Option<InstanceRecord>,
 	/// The maximum coin age the runtime reports; none when it reports none.
 	pub maximum_age: Option<u16>,
+	/// The runtime's spec version.
+	pub version: u32,
 }
 
 /// Reads [`RuntimeFacts`] from the People chain.
@@ -82,6 +84,9 @@ pub trait RuntimeSource: Send + Sync {
 	/// The facts at block `at`, or at the finalized head when none; none
 	/// when they cannot be read.
 	async fn runtime(&self, at: Option<HashAndNumber>) -> Option<RuntimeFacts>;
+	/// The runtime's spec version at block `at`; none when it cannot be
+	/// read.
+	async fn version(&self, at: HashAndNumber) -> Option<u32>;
 }
 
 /// §1's interfaces, supplied by the host.
@@ -109,7 +114,7 @@ pub struct Interfaces {
 	/// The initial policy, stored only on a fresh store.
 	pub policy: PrivacyPolicy,
 	/// A wallet a shipped app hands over, recorded only on a fresh store,
-	/// with its installation (native interface, section 5).
+	/// with its installation (G3 step 2).
 	pub hand_over: Option<Handover>,
 }
 
@@ -134,7 +139,11 @@ pub enum StartError {
 }
 
 /// A failure to start an operation, or a query that cannot be answered.
-#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+///
+/// It crosses UniFFI as `CoinageError`: a bare `Error` would shadow Swift's
+/// own `Error` in every file that imports the bindings.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From, uniffi::Error)]
+#[uniffi(flat_error, name = "CoinageError")]
 pub enum Error {
 	/// The purse is unknown, closed, or, as a destination, being deleted.
 	#[display("purse {} not found", _0.0)]
@@ -297,6 +306,8 @@ struct Inner {
 	scan: ScanConfig,
 	running: Running,
 	failed_check: Mutex<Option<String>>,
+	/// The runtime version of the latest check.
+	checked_version: Mutex<u32>,
 	streams: streams::Wakes,
 	/// The reconstructions whose scan runs in this process.
 	reconstructing: Mutex<BTreeSet<OpKey>>,
@@ -362,6 +373,7 @@ pub async fn start(
 		scan,
 		running,
 		failed_check: Mutex::new(None),
+		checked_version: Mutex::new(facts.version),
 		streams: streams::Wakes::default(),
 		reconstructing: Mutex::new(BTreeSet::new()),
 		registry_read: AtomicBool::new(false),
@@ -667,6 +679,20 @@ impl Layer {
 		Ok(self.launch(&op, OpKind::Import, arguments, request).await?.0)
 	}
 
+	/// Whether a claim that has not reached a stable verdict holds one of
+	/// `coins`, so that another import of it could not start.
+	pub async fn importing(&self, coins: &[CoinSecret]) -> Result<bool, Error> {
+		let view = self.view().await?;
+		Ok(coins.iter().filter_map(account_of).any(|account| {
+			view.registrations().consumers(&Asset::PeerCoin(account)).any(|claim| {
+				!matches!(
+					claim.state.status,
+					crate::durable::DurableTxStatus::FinalizedSuccess { .. } | crate::durable::DurableTxStatus::Failure(_)
+				)
+			})
+		}))
+	}
+
 	// ---- Maintenance and recovery ----
 
 	/// Runs whatever maintenance is due at `now` (F2), starts or resumes
@@ -842,8 +868,11 @@ impl Layer {
 	/// in use for reads (G3 invariant 7).
 	pub async fn revalidate(&self, at: HashAndNumber) {
 		let checked = match self.0.runtime.runtime(Some(at)).await {
-			Some(facts) => validate(&facts.metadata, facts.instance.as_ref(), facts.maximum_age, self.0.config.clone())
-				.map_err(|unsupported| unsupported.check),
+			Some(facts) => {
+				*self.0.checked_version.lock() = facts.version;
+				validate(&facts.metadata, facts.instance.as_ref(), facts.maximum_age, self.0.config.clone())
+					.map_err(|unsupported| unsupported.check)
+			},
 			None => Err("the runtime could not be read".to_owned()),
 		};
 		match checked {
@@ -861,10 +890,15 @@ impl Layer {
 		}
 	}
 
-	/// Observes `block` (F1) and tells the streams; the host's entry point
-	/// may run maintenance on it.
+	/// Observes `block` (F1), checks the runtime again when its version at
+	/// `block` is not the version of the latest check (G3 invariant 1), and
+	/// tells the streams; the host's entry point may run maintenance on it.
 	pub async fn on_block(&self, block: HashAndNumber) -> Result<(), Error> {
 		observation::on_block(&self.observer(), block, self.now(), &self.params()).await.map_err(observe_error)?;
+		let version = self.0.runtime.version(block).await;
+		if version.is_some_and(|version| version != *self.0.checked_version.lock()) {
+			self.revalidate(block).await;
+		}
 		self.0.streams.new_block(block);
 		self.changed();
 		Ok(())
@@ -1020,8 +1054,7 @@ impl Layer {
 	/// After the start sequence: starts or joins the import of each payment
 	/// the hand-over recorded as received, and forgets its secrets once the
 	/// import has started or was refused. A payment whose import cannot be
-	/// started now is tried again at the next start (native interface,
-	/// section 5).
+	/// started now is tried again at the next start (G3 invariant 8).
 	async fn import_handed_over(&self) -> Result<(), StartError> {
 		let Some(hand_over) = self.0.store.read(handover::read).await.map_err(undecodable)? else { return Ok(()) };
 		for payment in hand_over.incoming {
@@ -1037,8 +1070,8 @@ impl Layer {
 		Ok(())
 	}
 
-	/// How far the scan of a handed-over wallet has come (native interface,
-	/// section 5).
+	/// How far the scan of a handed-over wallet has come (B2
+	/// `hand_over_progress`).
 	pub async fn hand_over_progress(&self) -> Result<HandOverProgress, Error> {
 		Ok(self.view().await?.hand_over_progress())
 	}
