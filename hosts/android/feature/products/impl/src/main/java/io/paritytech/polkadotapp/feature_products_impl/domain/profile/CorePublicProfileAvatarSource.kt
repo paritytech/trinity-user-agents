@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.profile
 import android.content.Context
 import coil.request.ImageRequest
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.design.components.avatar.PublicProfileAvatarSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.flow.Flow
@@ -19,18 +20,21 @@ class CorePublicProfileAvatarSource @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
 ) : PublicProfileAvatarSource {
     override fun observe(username: String, forceFresh: Boolean): Flow<ImageRequest?> = flow {
-        val runtime = runtimeProvider.runtime().getOrThrow()
-        emitAll(
-            runtime.observePublicProfile(
-                username,
-                PublicProfileResolutionOptions(forceFresh = forceFresh, skipStale = false),
-            ).distinctUntilChangedBy { it.avatar }.map { profile ->
-                profile.avatar?.let { avatar ->
-                    ImageRequest.Builder(context)
-                        .data(ImageReference.Bulletin(avatar.cid, avatar.format))
-                        .build()
-                }
+        runtimeProvider.runtime()
+            .logFailure("Public profile runtime")
+            .onSuccess { runtime ->
+                emitAll(
+                    runtime.observePublicProfile(
+                        username,
+                        PublicProfileResolutionOptions(forceFresh = forceFresh, skipStale = false),
+                    ).distinctUntilChangedBy { it.avatar }.map { profile ->
+                        profile.avatar?.let { avatar ->
+                            ImageRequest.Builder(context)
+                                .data(ImageReference.Bulletin(avatar.cid, avatar.format))
+                                .build()
+                        }
+                    }
+                )
             }
-        )
     }
 }
