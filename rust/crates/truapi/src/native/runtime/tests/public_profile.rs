@@ -31,6 +31,7 @@ fn profile_runtime(platform: Arc<StubPlatform>, db: Db) -> Arc<NativeTrUApiHostR
 	let signing = SigningHostConfig {
 		host: config.host,
 		stack: crate::test_support::test_stack("paseo", [1; 32], [2; 32], [3; 32]),
+		materials_enabled: false,
 	};
 	let core = SigningHostRuntime::new(platform, signing, Spawner::for_test());
 	assert!(core.set_core_db(db));

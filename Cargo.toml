@@ -65,6 +65,9 @@ ratatui = { version = "0.30.2", default-features = false }
 reqwest = { version = "0.12", default-features = false }
 rqrr = { version = "0.10.1", default-features = false }
 rusqlite = "0.40"
+# The GLSL reader and Metal writer that build iOS material shaders. naga 30 builds its
+# GLSL reader only beside another reader, so the WGSL one comes too, unused.
+naga = { version = "30.0.1", default-features = false, features = ["glsl-in", "msl-out", "wgsl-in"] }
 rusqlite_migration = "2.6"
 rustix = "1"
 scale-decode = "0.16"
