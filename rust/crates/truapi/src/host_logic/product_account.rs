@@ -14,6 +14,8 @@
 //! `ProductAccountId` shape:
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L66-L128>
 
+use core::ops::Range;
+
 use parity_scale_codec::Encode;
 use schnorrkel::{
 	ExpansionMode, Keypair, PublicKey, SecretKey,
@@ -269,6 +271,24 @@ pub fn derive_hard_path_from_keypair(
 		keypair = mini_secret.expand_to_keypair(ExpansionMode::Ed25519);
 	}
 	Ok(keypair)
+}
+
+/// The public key at `prefix//index` for each of `indices`, in order, with
+/// every junction hard, derived from the canonical BIP-39 root key. The prefix
+/// is derived once for the whole range.
+pub fn derive_hard_public_keys_under(
+	entropy: &[u8],
+	prefix: &[&str],
+	indices: Range<u32>,
+) -> Result<Vec<[u8; 32]>, ProductAccountError> {
+	let prefix_keypair = derive_sr25519_hard_path(entropy, prefix)?;
+	indices.map(|index| hard_public_key_at(prefix_keypair.clone(), index)).collect()
+}
+
+/// The public key at `keypair//index`, a hard junction.
+fn hard_public_key_at(keypair: Keypair, index: u32) -> Result<[u8; 32], ProductAccountError> {
+	let junction = index.to_string();
+	Ok(derive_hard_path_from_keypair(keypair, &[junction.as_str()])?.public.to_bytes())
 }
 
 /// Create a Substrate soft-derivation chain code for one junction.

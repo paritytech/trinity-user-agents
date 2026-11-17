@@ -841,6 +841,8 @@ cfg_select! {
 		mod dotns_views;
 		mod dynamic_vrf;
 		mod evm_contract;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod gap_scan;
 		pub mod frame;
 		mod host_core;
 		mod host_internal;

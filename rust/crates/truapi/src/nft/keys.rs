@@ -25,6 +25,12 @@ pub struct ItemIndex(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct ItemKey(pub [u8; 32]);
 
+impl From<[u8; 32]> for ItemKey {
+	fn from(public_key: [u8; 32]) -> Self {
+		Self(public_key)
+	}
+}
+
 /// Where an item key sits in the derivation tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct ItemSlot {
@@ -42,9 +48,16 @@ impl ItemSlot {
 	/// reveals nothing about its siblings. The installation is written as
 	/// `0x` and lowercase hex, as coinage writes it.
 	pub fn junctions(&self) -> [String; 4] {
-		let installation = format!("0x{}", hex::encode(self.installation.0));
-		["nft".to_string(), self.purse.0.to_string(), installation, self.index.0.to_string()]
+		let [nft, purse, installation] = item_key_prefix(self.purse, self.installation);
+		[nft, purse, installation, self.index.0.to_string()]
 	}
+}
+
+/// The hard junctions `//nft//<purse>//<installation>` every item key of
+/// `purse` allocated by `installation` sits under.
+pub fn item_key_prefix(purse: PurseId, installation: InstallationId) -> [String; 3] {
+	let installation = format!("0x{}", hex::encode(installation.0));
+	["nft".to_string(), purse.0.to_string(), installation]
 }
 
 /// Derives item public keys from the user's root entropy.

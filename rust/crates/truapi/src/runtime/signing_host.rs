@@ -275,6 +275,17 @@ impl crate::nft::ItemKeyDeriver for SigningHost {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+impl crate::gap_scan::HardKeyDerivation for SigningHost {
+	fn public_keys_under(
+		&self,
+		prefix: &[String],
+		indices: core::ops::Range<u32>,
+	) -> Result<Vec<[u8; 32]>, AuthorityError> {
+		self.wallet.hard_public_keys_under(prefix, indices)
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 impl crate::nft::ItemSigner for SigningHost {
 	fn item_signer(
 		&self,

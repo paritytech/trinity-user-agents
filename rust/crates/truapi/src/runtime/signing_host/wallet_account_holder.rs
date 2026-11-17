@@ -318,6 +318,24 @@ impl WalletAccountHolder {
 		})
 	}
 
+	/// The sr25519 public key at `prefix//index` for each of `indices`, every
+	/// junction hard.
+	pub fn hard_public_keys_under(
+		&self,
+		prefix: &[String],
+		indices: core::ops::Range<u32>,
+	) -> Result<Vec<[u8; 32]>, AuthorityError> {
+		let prefix: Vec<&str> = prefix.iter().map(String::as_str).collect();
+		self.with_installed_keys(|keys| {
+			crate::host_logic::product_account::derive_hard_public_keys_under(
+				&keys.entropy,
+				&prefix,
+				indices,
+			)
+			.map_err(AuthorityError::from)
+		})
+	}
+
 	/// The identity chat key.
 	pub fn identity_chat_private_key(&self) -> Result<[u8; 32], AuthorityError> {
 		self.with_installed_keys(|keys| Ok(derive_identity_chat_private_key(&keys.entropy)))
