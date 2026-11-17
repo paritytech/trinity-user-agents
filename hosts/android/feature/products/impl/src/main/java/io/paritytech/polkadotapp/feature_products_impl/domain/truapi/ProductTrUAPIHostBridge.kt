@@ -10,6 +10,7 @@ import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.parity.truapi.LightClient
 import io.parity.truapi.LocalhostBridgeBootstrap
 import io.parity.truapi.RpcChainProvider
 import io.parity.truapi.TrUAPIHostRuntime
@@ -84,6 +85,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val lightClient: LightClient,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -106,6 +108,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // this inline on its dispatcher thread, where blocking on the registry
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
+        lightClient = lightClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 

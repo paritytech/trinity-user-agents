@@ -6,6 +6,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.parity.truapi.LightClient
 import io.parity.truapi.RpcChainProvider
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
@@ -65,6 +66,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val environment: TestnetEnvironment,
     private val chainDirectory: TrUAPIChainDirectory,
+    private val lightClient: LightClient,
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
@@ -97,6 +99,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private val chainProvider = RpcChainProvider(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
+        lightClient = lightClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
