@@ -417,6 +417,7 @@ struct Message {
     reply_to: Option<MessageId>,
     silent: bool,
     expires_at: Option<Timestamp>,
+    forward: Option<ForwardSource>,
     last_edited: Option<Timestamp>,
     reactions: Map<Emoji, AggregatedReaction>,
     // The extensions of the record that made the message (4.6).
@@ -425,6 +426,19 @@ struct Message {
     thread: Option<ThreadSummary>,
     // The readers of a post of a Channel.
     views: Option<u32>,
+}
+
+// A forward keeps the resources of the media, so a receiver fetches the
+// same bytes. A Host marks a message that came through many forwards.
+struct ForwardSource {
+    // None: the forwarder hides the author.
+    origin: Option<ChatParticipantId>,
+    room_id: Option<RoomId>,
+    room_name: Option<String>,
+    message_id: Option<MessageId>,
+    timestamp: Timestamp,
+    // The forwards that brought the message here, this one included.
+    count: u32,
 }
 
 struct ThreadSummary {
@@ -496,6 +510,7 @@ enum UserChatAction {
         // No notification for the receivers.
         silent: bool,
         expires_at: Option<Timestamp>,
+        forward: Option<ForwardSource>,
     },
     EditMessage {
         message_id: MessageId,
