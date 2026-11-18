@@ -542,8 +542,9 @@ The product includes a development-only blocking tag before product code:
 ```
 
 The script installs the shared browser container and publishes
-`window.__HOST_API_CLIENT__`. SDK calls and authorization requests use this
-stable client, sharing one WebSocket and one Rust execution. The container
+`window.__HOST_API_TRANSPORT__`, a frame channel the SDK builds its own client
+over. SDK calls and authorization requests share one WebSocket and one Rust
+execution. The container
 consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
 same TCP port. After a disconnect, the SDK replaces the socket. Calls and
 subscriptions already sent fail and are not replayed. Calls not yet sent go out
@@ -953,7 +954,7 @@ execution, preserving Allow once, Allow always and Deny semantics. These wrapper
 are also used by the full browser container loaded by dev's first blocking
 bootstrap tag.
 
-The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_CLIENT__`, and
+The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_TRANSPORT__`, and
 the legacy `__HOST_API_PORT__` adapter over that same connection. Published Product
 SDK imports discover the host automatically. Scripts using an older SDK's
 legacy port must be rerun after a host disconnect.
