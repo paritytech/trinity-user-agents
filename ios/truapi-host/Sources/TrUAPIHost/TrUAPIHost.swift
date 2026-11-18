@@ -63,6 +63,15 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Lifecycle logger. Marker is a stable slug, detail is free-form.
     func onCoreLog(marker: String, detail: String)
 
+    /// Structured lifecycle fact. Marker is the same stable slug
+    /// ``onCoreLog(marker:detail:)`` carries, and each attribute is a key the
+    /// core names with a label, a count or a condition under it. Hand these to
+    /// the reporter as attributes, so a marker can be grouped and filtered by
+    /// what it carries. Every marker here is listed in the table
+    /// `coreMarkers()` returns, and its class decides what the host may do
+    /// with it, exactly as for a log line.
+    func onCoreEvent(marker: String, attributes: [CoreAttribute])
+
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
@@ -70,6 +79,13 @@ public protocol HostBridge: AnyObject, Sendable {
     /// `.notPresented` when the product is not under its card and `.userMoving` while the user
     /// moves the card. Defaults to `.unsupported`, so an app without cards says so.
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+
+    /// Turn this execution's expanded card so its back (`true`) or its front
+    /// (`false`) is up. Answers `.noBack` when the card has no back to show,
+    /// and the face call's outcomes otherwise, without waiting for the
+    /// animation. Defaults to `.unsupported`, so an app that cannot turn cards
+    /// says so.
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
@@ -409,6 +425,7 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
     func authStateChanged(state: AuthState) {}
@@ -451,6 +468,9 @@ public extension HostBridge {
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
         .unsupported
     }
     /// Defaults opt out of worker keep-alive; override to run background work
@@ -680,6 +700,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
+        bridge.onCoreEvent(marker: marker, attributes: attributes)
+    }
+
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         bridge.requestWorkerTransition(productId: productId, transition: transition)
     }
@@ -761,6 +785,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
         try await withHostRejection {
             try await bridge.setExpandedCardFaceShown(shown: shown)
+        }
+    }
+
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
+        try await withHostRejection {
+            try await bridge.setExpandedCardBackShown(shown: shown)
         }
     }
 
@@ -1215,9 +1245,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.removePocketCard(productId: productId, cardId: cardId)
     }
 
-    /// The newest face kept for a card, if one is.
-    public func pocketCardFace(productId: ProductId, cardId: String) async throws -> RendererNode? {
-        try await inner.pocketCardFace(productId: productId, cardId: cardId)
+    /// The newest face kept for one side of a card, if one is.
+    public func pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = .front
+    ) async throws -> RendererNode? {
+        try await inner.pocketCardFace(productId: productId, cardId: cardId, side: side)
     }
 
     /// Decides durable transactions from the chain until none is live, then

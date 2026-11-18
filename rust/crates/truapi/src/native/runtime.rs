@@ -21,7 +21,7 @@ use truapi::{Bytes32, latest, v01, versioned::IntoLatest};
 
 use super::{
 	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
-	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	pocket::{NativePocketObserver, card_side, keeping_faces, observe_pocket_cards},
 	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
@@ -35,7 +35,7 @@ use crate::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -63,6 +63,28 @@ use super::{
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
+
+/// Carries both kinds of core traffic to one host's callbacks.
+///
+/// The callbacks are held weakly, so a line in flight cannot resurrect a host
+/// being torn down, and a host that has gone simply stops receiving.
+struct CallbackSink {
+	callbacks: std::sync::Weak<dyn HostCallbacks>,
+}
+
+impl crate::logging::HostSink for CallbackSink {
+	fn log(&self, marker: &str, detail: &str) {
+		if let Some(callbacks) = self.callbacks.upgrade() {
+			callbacks.on_core_log(marker.to_string(), detail.to_string());
+		}
+	}
+
+	fn event(&self, marker: &str, attributes: Vec<crate::logging::CoreAttribute>) {
+		if let Some(callbacks) = self.callbacks.upgrade() {
+			callbacks.on_core_event(marker.to_string(), attributes);
+		}
+	}
+}
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
@@ -108,11 +130,8 @@ impl NativeTrUApiHostRuntime {
 		// regardless of the trace level, which defaults to ERROR and so drops
 		// everything the core would otherwise say about itself. The callbacks are
 		// held weakly so a line in flight cannot resurrect a host being torn down.
-		let log_callbacks = Arc::downgrade(&callbacks);
-		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
-			if let Some(callbacks) = log_callbacks.upgrade() {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
-			}
+		let host_sink = crate::logging::set_host_sink(Arc::new(CallbackSink {
+			callbacks: Arc::downgrade(&callbacks),
 		}));
 		// Raised through tracing rather than called directly, so a host log
 		// carries proof that the layer forwarding to this sink is alive. A host
@@ -1028,13 +1047,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.pocket.remove(product_id, card_id).await?)
 	}
 
-	/// The newest face kept for a card, if one is.
+	/// The newest face kept for one side of a card, if one is.
 	pub async fn pocket_card_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
-		Ok(self.pocket.face(product_id, card_id).await?)
+		Ok(self.pocket.face(product_id, card_id, side).await?)
 	}
 
 	/// Decides durable transactions from the chain until none is live, then
@@ -1353,16 +1373,14 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
-		let card_id = match &request.context {
-			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
-			_ => None,
-		};
+		let card = card_side(&request.context);
 		let stream = control.render(request)?;
-		let observer = match card_id {
-			Some(card_id) => keeping_faces(
+		let observer = match card {
+			Some((card_id, side)) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
+				side,
 				observer,
 				&self.spawner,
 			),
