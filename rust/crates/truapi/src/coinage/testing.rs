@@ -9,6 +9,7 @@ use subxt::{Metadata, utils::H256};
 
 use super::{
 	ChainConfig, ChainParams,
+	ledger::{self, BlockRef, Facts, Read, Subject},
 	operation::OpKey,
 	params::{InstanceRecord, validate},
 	registration::{Admission, RegisterError, Rows, coinage_domain, register, registry_domain},
@@ -19,7 +20,7 @@ use crate::{
 		PolicyError, PolicyParams, Preparation, RegistrationError, SubmissionPolicy, Unobservable,
 		VerdictFailureKind,
 	},
-	store::Db,
+	store::{Db, DbError},
 };
 
 /// Metadata of the Paseo Next People chain, which runs the coinage pallet.
@@ -131,4 +132,14 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 		Ok(())
 	}))
 	.expect("the status is written");
+}
+
+/// Stores `allowance` as the free unload tokens of one period, read at
+/// block 1, as a wallet whose chain has been observed holds it.
+pub fn observe_allowance(tx: &rusqlite::Transaction<'_>, allowance: u32) -> Result<(), DbError> {
+	let facts = Facts {
+		at: BlockRef { number: 1, hash: [1; 32] },
+		reads: vec![(Subject::UnloadAllowance, Read::UnloadAllowance(allowance))],
+	};
+	ledger::observe(tx, &facts, 0, 255)
 }
