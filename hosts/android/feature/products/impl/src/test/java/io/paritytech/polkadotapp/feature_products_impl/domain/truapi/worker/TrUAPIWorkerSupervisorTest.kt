@@ -13,7 +13,6 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
-import io.paritytech.polkadotapp.feature_products_impl.domain.product.ResolvedWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -32,9 +31,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import uniffi.truapi.BundleEntry
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
@@ -50,8 +47,6 @@ class TrUAPIWorkerSupervisorTest {
     private var includesChat = true
     private var attachFailure: Throwable? = null
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
-    private val configs = mutableListOf<ChatWebViewConfig>()
-    private var source: ProductSource? = null
 
     @Before
     fun parseScriptUrls() {
@@ -61,12 +56,6 @@ class TrUAPIWorkerSupervisorTest {
             every { host } returns "worker.paseo"
             every { port } returns -1
             every { path } returns "/worker.js"
-        }
-        every { Uri.parse(BUNDLED_SCRIPT_URL) } returns mockk {
-            every { scheme } returns "https"
-            every { host } returns "worker.worker.paseo"
-            every { port } returns -1
-            every { path } returns "/index.js"
         }
     }
 
@@ -163,19 +152,6 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
-    // The resolver decides where the worker runs from, so its WebView serves the script from there and decides nothing.
-    @Test
-    fun `a worker's WebView serves it from where the resolver says it runs from`() = runTest {
-        val bundled = ProductSource.Bundled(BundleEntry(PRODUCT, "bundled-products/worker.paseo", true, false, null, null))
-        source = bundled
-        val supervisor = supervisor()
-
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
-        advanceUntilIdle()
-
-        assertEquals(listOf(bundled), configs.map { it.source })
-    }
-
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(runtime) }
@@ -186,20 +162,14 @@ class TrUAPIWorkerSupervisorTest {
         chainDirectory = mockk { coEvery { resolve() } returns mockk() },
         scriptResolver = object : ProductScriptResolver {
             override suspend fun resolveWorker(productId: ProductId) = Result.success(
-                ResolvedWorker(
-                    mockk<ProductExecutable.Worker> {
-                        every { scriptUrl } returns SCRIPT_URL
-                        every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
-                    },
-                    source = source,
-                ),
+                mockk<ProductExecutable.Worker> {
+                    every { scriptUrl } returns SCRIPT_URL
+                    every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
+                },
             )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
-            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also {
-                workerScopes += scope
-                configs += config
-            }
+            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also { workerScopes += scope }
         },
         bootstrapInstaller = bootstrapInstaller,
         refCounter = { mockk(relaxed = true) },
@@ -232,6 +202,5 @@ class TrUAPIWorkerSupervisorTest {
     private companion object {
         val PRODUCT = ProductId.parse("worker.paseo").getOrThrow()
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
-        const val BUNDLED_SCRIPT_URL = "https://worker.worker.paseo/index.js"
     }
 }

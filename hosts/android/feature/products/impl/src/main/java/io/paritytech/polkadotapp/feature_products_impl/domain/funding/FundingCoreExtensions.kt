@@ -6,11 +6,7 @@ import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingQuoteUnavailable
-import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStage
-
-/** The order the rail tabs are drawn in. */
-val FUNDING_RAIL_ORDER: List<FundingRail> = listOf(FundingRail.CRYPTO, FundingRail.CARD, FundingRail.BANK)
 
 val FundingQuoteState.quote: FundingQuote?
     get() = (this as? FundingQuoteState.Quoted)?.quote

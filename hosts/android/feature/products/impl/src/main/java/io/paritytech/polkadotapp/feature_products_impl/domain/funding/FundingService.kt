@@ -27,6 +27,9 @@ interface FundingService {
      */
     fun entryState(id: String): Flow<FundingEntry>
 
+    /** The screens of session [id] are up, so the core no longer takes it as dismissed when they do not appear. */
+    fun shown(id: String)
+
     /** Starts the core, which resumes the sessions it holds. */
     suspend fun resume(): Result<Unit>
 
@@ -43,7 +46,7 @@ interface FundingService {
     fun quote(amount: U128?, id: String)
 
     /** Why [amount] cannot go ahead for the reported selection, given what a withdrawal can spend. */
-    suspend fun amountIssue(amount: U128, spendable: U128?, id: String): FundingAmountIssue?
+    suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?>
 
     /**
      * Hands the session to [provider] on the quote on screen. With no provider the core hands it to the latest ask's
@@ -77,10 +80,10 @@ interface FundingService {
      * Lets the provider of session [entryId] show the screen it asked for, once the session is on screen or the user
      * tapped the notice. The screen then comes as [FundingEvent.FrameOpened]; answers whether one was waiting.
      */
-    suspend fun openProviderFrame(entryId: String): Boolean
+    suspend fun openProviderFrame(entryId: String): Result<Boolean>
 
     /** Whether the provider of session [entryId] waits for its screen to be opened, so the notice can show again. */
-    suspend fun isFrameWaiting(entryId: String): Boolean
+    suspend fun isFrameWaiting(entryId: String): Result<Boolean>
 
     /** Answers the provider's screen [request], once it is gone. */
     fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome)

@@ -25,15 +25,13 @@ class RemoteConfigFundingProvidersConfigTest {
     }
 
     @Test
-    fun `leaves out null names and lists none without providers`() = runTest {
-        remoteConfigEmits("""{ "providers": [null, "ramp"] }""", """{ "onrampUrl": "legacy.dot" }""")
-
-        assertEquals(listOf(listOf("ramp"), emptyList()), config.publishedNames().toList())
-    }
-
-    @Test
-    fun `skips a value that does not parse`() = runTest {
-        remoteConfigEmits("not json", """{ "providers": ["ramp"] }""")
+    fun `skips a value that does not decode`() = runTest {
+        remoteConfigEmits(
+            "not json",
+            """{ "onrampUrl": "legacy.dot" }""",
+            """{ "providers": [null, "other"] }""",
+            """{ "providers": ["ramp"] }""",
+        )
 
         assertEquals(listOf(listOf("ramp")), config.publishedNames().toList())
     }

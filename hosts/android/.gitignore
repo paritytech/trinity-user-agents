@@ -80,6 +80,3 @@ tmp/
 
 # Agent scratch notes (worklog, memory, tools)
 .agent/
-
-# Bundled products, built locally
-feature/products/impl/bundled-assets/

@@ -38,7 +38,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.Transact
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFragmentClass
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
-import io.paritytech.polkadotapp.feature_products_impl.data.bundled.AssetBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingProvidersConfig
@@ -81,7 +80,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
@@ -156,6 +154,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealT
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashListener
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
@@ -415,13 +414,13 @@ internal interface ProductsModule {
     fun bindFundingProvidersConfig(impl: RemoteConfigFundingProvidersConfig): FundingProvidersConfig
 
     @Binds
-    fun bindBundledProductFiles(impl: AssetBundledProductFiles): BundledProductFiles
-
-    @Binds
     fun bindFundingCore(impl: TrUAPIFundingCore): FundingCore
 
     @Binds
     fun bindFundingService(impl: RealFundingService): FundingService
+
+    @Binds
+    fun bindWorkerCrashListener(impl: RealFundingService): WorkerCrashListener
 
     @Binds
     @Singleton

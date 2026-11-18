@@ -242,6 +242,9 @@ data class FundingFlowState(
     )
 }
 
+/** The order the rail tabs are drawn in. */
+val FUNDING_RAIL_ORDER: List<FundingRail> = listOf(FundingRail.CRYPTO, FundingRail.CARD, FundingRail.BANK)
+
 // The asset a quote is read in before the core named one.
 private const val DEFAULT_ASSET = "USD"
 

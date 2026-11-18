@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
-import io.paritytech.polkadotapp.feature_products_impl.domain.product.ResolvedWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
@@ -27,7 +27,7 @@ class TrUAPIWorkerSupervisorFailureTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
 
     private class FailingScriptResolver(private val error: Throwable) : ProductScriptResolver {
-        override suspend fun resolveWorker(productId: ProductId): Result<ResolvedWorker> =
+        override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> =
             Result.failure(error)
     }
 
@@ -37,7 +37,7 @@ class TrUAPIWorkerSupervisorFailureTest {
     ) : ProductScriptResolver {
         private var calls = 0
 
-        override suspend fun resolveWorker(productId: ProductId): Result<ResolvedWorker> {
+        override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> {
             calls++
             if (calls == 1) return Result.failure(error)
             gate.await()
