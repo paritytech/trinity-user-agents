@@ -17,9 +17,10 @@ use crate::{
 };
 use futures::StreamExt;
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, v01, versioned::IntoLatest};
+use truapi::{Bytes32, latest, v01, versioned::IntoLatest};
 
 use super::{
+	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
 	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
@@ -27,8 +28,8 @@ use super::{
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
-	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
+	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfileResolutionOptions,
+	ResponderExit, SigningHostRuntime, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -147,7 +148,11 @@ impl NativeTrUApiHostRuntime {
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
 		))?;
-		let signing = SigningHostConfig { host: runtime_config.host, stack: stack_refresh.stack() };
+		let signing = SigningHostConfig {
+			host: runtime_config.host,
+			stack: stack_refresh.stack(),
+			materials_enabled: runtime_config.materials_enabled,
+		};
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -250,6 +255,7 @@ impl NativeTrUApiHostRuntime {
 			closed: AtomicBool::new(false),
 			chat_connection: Arc::new(crate::runtime::ActionChannel::chat()),
 			renderer_connection: Arc::new(crate::runtime::ActionChannel::renderer()),
+			renderer_failures: Arc::new(crate::runtime::ActionChannel::renderer_failures()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
 			product_control: Arc::new(Mutex::new(None)),
@@ -421,8 +427,8 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names)?)
+	) {
+		self.runtime.set_funding_provider_config(published_names);
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
@@ -941,18 +947,6 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.core_database_status().await.map_err(Into::into)
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Records expire after one hour; `force` skips the cache. Invalid usernames and
-	/// lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: String,
-		force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		self.runtime.resolve_public_profile(&username, force).await
-	}
-
 	/// Observes public profile metadata until resolution completes or fails.
 	///
 	/// Options control forced lookups and stale stored values. Failures follow any
@@ -979,6 +973,29 @@ impl NativeTrUApiHostRuntime {
 	/// checked against its CID and the image policy. Dropping the future stops the load.
 	pub async fn load_image(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		self.runtime.load_image(reference).await
+	}
+
+	/// Follow the resolved materials of `tree` in `context`, a saved face or a preview:
+	/// `observer` gets it now and after each change, until cancelled. A node
+	/// that falls back is logged. Unless `float_filterable`, the shaders filter
+	/// 32-bit float images themselves.
+	pub fn resolve_materials(
+		&self,
+		tree: truapi::latest::RendererNode,
+		context: truapi::latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		let failures = Box::new(|_| {});
+		resolve_materials(
+			&self.runtime,
+			tree,
+			context,
+			float_filterable,
+			observer.into(),
+			failures,
+			&self.spawner,
+		)
 	}
 
 	/// Follow the Pocket collection: `observer` gets every card now and
@@ -1097,6 +1114,13 @@ pub struct NativeProductExecution {
 	renderer_connection: Arc<
 		crate::runtime::ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>,
 	>,
+	/// The `Materials` nodes that fell back in this execution's bodies, shared
+	/// with every product connection it opens.
+	renderer_failures: Arc<
+		crate::runtime::ActionChannel<
+			truapi::versioned::renderer::HostRendererFailureSubscribeItem,
+		>,
+	>,
 	closed: AtomicBool,
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
@@ -1112,6 +1136,7 @@ impl NativeProductExecution {
 			permission_grants: self.permission_grants.clone(),
 			chat: self.chat_connection.clone(),
 			renderer: self.renderer_connection.clone(),
+			renderer_failures: self.renderer_failures.clone(),
 			pocket_platform: Some(Arc::new(self.pocket.clone())),
 			expanded_card: Some(self.expanded_card.clone()),
 			game_platform: self.game.clone(),
@@ -1346,6 +1371,37 @@ impl NativeProductExecution {
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
 
+	/// Follow the resolved materials of `tree`, a body this execution's product rendered in
+	/// `context`: `observer` gets it now and after each change, until
+	/// cancelled. A node that falls back is logged and reported to the product
+	/// through `Renderer::failure_subscribe`. Unless `float_filterable`, the
+	/// shaders filter 32-bit float images themselves.
+	pub fn resolve_materials(
+		&self,
+		tree: latest::RendererNode,
+		context: latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		let channel = self.renderer_failures.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			let item = failure.report(reported.clone());
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = channel.publish(item.into());
+		});
+		resolve_materials(
+			&self.runtime,
+			tree,
+			context,
+			float_filterable,
+			observer.into(),
+			failures,
+			&self.spawner,
+		)
+	}
+
 	/// Publish one action triggered inside a product-rendered body, buffering
 	/// it until the product connection subscribes.
 	pub fn publish_renderer_action(
@@ -1369,6 +1425,7 @@ impl NativeProductExecution {
 		self.permission_grants.clear();
 		self.chat_connection.close();
 		self.renderer_connection.close();
+		self.renderer_failures.close();
 	}
 }
 

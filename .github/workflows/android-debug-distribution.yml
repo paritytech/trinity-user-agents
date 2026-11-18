@@ -8,9 +8,9 @@
 #
 # Authentication is federated. The job proves its identity with the run's OIDC
 # token and receives a short lived credential, so no long lived key for this
-# project is stored anywhere. The identity is bound to main, so the run starts
-# from a push to main: a pull request event's token names the pull request
-# rather than the branch, and the binding never accepts it.
+# project is stored anywhere. The identity is bound to main, so a delivering run
+# starts from a push to main: a pull request event's token names the pull
+# request rather than the branch, and the binding never accepts it.
 name: Android debug distribution
 
 on:
@@ -20,7 +20,15 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+  # A dispatch with deliver off only builds and checks the signature, which is
+  # how a branch exercises this build: the identity is bound to main, so a
+  # branch run could not reach Firebase anyway.
   workflow_dispatch:
+    inputs:
+      deliver:
+        description: "Distribute the build to testers"
+        type: boolean
+        default: true
 
 concurrency:
   # Keyed on the commit, not the workflow. One pending run is kept per group,
@@ -39,6 +47,7 @@ jobs:
   # every read-only call is available to a role that cannot upload.
   preflight:
     name: Check delivery is possible
+    if: github.event_name != 'workflow_dispatch' || inputs.deliver
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -61,10 +70,13 @@ jobs:
   distribute:
     name: Build and distribute
     needs: preflight
+    if: ${{ !cancelled() && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      DELIVER: ${{ github.event_name != 'workflow_dispatch' || inputs.deliver }}
     steps:
-      # The pushed commit, which is what landed on main.
+      # The pushed commit, which is what landed on main, or the dispatched ref.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -105,7 +117,22 @@ jobs:
           CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
           CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
-        run: ./gradlew assembleGpDebug --no-daemon
+        # gradle.properties gives Gradle and the Kotlin daemon 8 GB each, which
+        # would fill this runner's 16 GB before Cargo and KSP. Capped here so
+        # local builds keep their settings. Memory is printed every 30 seconds
+        # so a runner that still dies leaves its last reading in this log.
+        run: |
+          set -euo pipefail
+          free -m
+          while sleep 30; do
+            free -m | awk '/^Mem:/ { m = "used=" $3 "M available=" $7 "M" }
+              /^Swap:/ { print "memory: " m " swap=" $3 "M" }'
+          done &
+          sampler=$!
+          trap 'kill "${sampler}" 2>/dev/null || true' EXIT
+          ./gradlew assembleGpDebug --no-daemon \
+            "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" \
+            "-Pkotlin.daemon.jvmargs=-Xmx4g"
 
       - name: Check the APK is signed by the expected key
         id: package
@@ -154,7 +181,8 @@ jobs:
 
       # Exchanges the run's OIDC assertion for a short lived credential and
       # writes it where Application Default Credentials will find it.
-      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+      - if: env.DELIVER == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
@@ -164,6 +192,7 @@ jobs:
       # CLI resolves it through the standard credential chain instead of
       # parsing the file itself.
       - name: Distribute to testers
+        if: env.DELIVER == 'true'
         working-directory: hosts/android
         env:
           APP_ID: ${{ secrets.ANDROID_FIREBASE_APP_ID }}

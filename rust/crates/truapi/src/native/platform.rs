@@ -427,6 +427,9 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 		if let Err(err) = self.callbacks.chain_send(self.id, request) {
 			self.callbacks
 				.on_core_log(markers::NATIVE_CHAIN_SEND_FAILED.target.to_string(), err.to_string());
+			// The request is lost, so end the response stream and let the
+			// client fail what it is still waiting on.
+			self.close();
 		}
 	}
 

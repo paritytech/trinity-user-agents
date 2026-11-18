@@ -262,18 +262,6 @@ impl PairingHostRuntime {
 		}
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		self.services.public_profiles.resolve(username, force).await
-	}
-
 	/// The image `reference` names, checked against its CID and the image policy.
 	///
 	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
@@ -777,6 +765,9 @@ impl SigningHostRuntime {
 		if let Some(contacts_platform) = contacts_platform {
 			services.install_contacts_platform(contacts_platform);
 		}
+		if config.materials_enabled {
+			services.enable_materials();
+		}
 		let signing_host = SigningHostRole::new(services.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
@@ -924,8 +915,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names)?)
+	) {
+		self.services.set_funding_provider_config(published_names);
 	}
 
 	/// Record that the host told the user how ended session `intent` went.
@@ -957,10 +948,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_providers(
 		&self,
 		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), v01::GenericError> {
-		self.services
-			.set_funding_providers(providers)
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	) {
+		self.services.set_funding_providers(providers);
 	}
 
 	/// Quotes of `amount` for funding session `intent` on the rail, asset,
@@ -1293,18 +1282,6 @@ impl SigningHostRuntime {
 		self.services.core_db()?.status().await
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		self.services.public_profiles.resolve(username, force).await
-	}
-
 	/// Resolves public profile metadata with optional cached-first delivery.
 	///
 	/// Options control forced lookups and stale stored values; browsers resolve once.
@@ -1323,6 +1300,43 @@ impl SigningHostRuntime {
 		reference: crate::ImageReference,
 	) -> Result<crate::LoadedImage, crate::ImageError> {
 		self.image_loader.load(reference).await
+	}
+
+	/// Keeps `text` on the device as a material and returns its ID, for
+	/// resolutions started afterwards to draw without Bulletin. Keep before
+	/// anything resolves the material: a resolution that is already waiting on
+	/// Bulletin for it keeps waiting, and does not get the kept text. Refused
+	/// with its reason when the core cannot read it, and as unsupported when the
+	/// host draws no materials or before the core services start over a core
+	/// database.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn keep_material(&self, text: Vec<u8>) -> Result<[u8; 32], crate::KeepMaterialError> {
+		use crate::KeepMaterialError::Refused;
+		let materials = self
+			.services
+			.materials()
+			.filter(|_| self.services.materials_enabled())
+			.ok_or(Refused(truapi::latest::MaterialFailure::Unsupported))?;
+		let id = crate::host_internal::bulletin::preimage_key(&text);
+		materials.keep(id, text).await.map_err(Refused)??;
+		Ok(id)
+	}
+
+	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		self.services
+			.resolve_materials(tree, context, language, float_filterable, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -1614,13 +1628,13 @@ impl SigningHostRuntime {
 	}
 }
 
-/// Installs the materials on the device over `db`, and fetches what saved
-/// Pocket faces draw and `db` lacks. Does nothing when materials are already
-/// installed.
+/// Installs the materials on the device over `db` and, when the host draws
+/// them, fetches what saved Pocket faces draw and `db` lacks. Does nothing
+/// when materials are already installed.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
 	let materials = materials(services, db);
-	if services.install_materials(materials.clone()) {
+	if services.install_materials(materials.clone()) && services.materials_enabled() {
 		services.spawner.spawn(materials.fetch_saved());
 	}
 }
@@ -1842,9 +1856,11 @@ pub struct ConnectionAdapters {
 	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
 	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+	pub renderer_failures:
+		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
@@ -1858,6 +1874,7 @@ impl ConnectionAdapters {
 			permission_grants: Arc::default(),
 			chat: Arc::new(ActionChannel::chat()),
 			renderer: Arc::new(ActionChannel::renderer()),
+			renderer_failures: Arc::new(ActionChannel::renderer_failures()),
 			pocket_platform: services.pocket_platform(),
 			expanded_card: None,
 			game_platform: services.game_platform(),
@@ -2089,6 +2106,30 @@ impl ProductRuntimeControl {
 		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
 		self.connection()?.publish_renderer_action(item.into())
+	}
+
+	/// The resolved materials of `tree`, a body this connection's product
+	/// rendered in `context`, its shaders in `language`, filtering 32-bit float
+	/// images themselves unless `float_filterable`. A node that falls back is
+	/// logged and reported to the product through `Renderer::failure_subscribe`,
+	/// once.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<crate::MaterialsResolution, ProductRuntimeError> {
+		let services = self.connection()?.services();
+		let connection = self.connection.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
+		});
+		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement

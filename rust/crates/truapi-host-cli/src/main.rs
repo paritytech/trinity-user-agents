@@ -25,6 +25,7 @@ mod frame_server;
 mod funding_host;
 mod game;
 mod installation;
+mod materials;
 mod network;
 mod platform;
 mod pocket;
@@ -339,6 +340,11 @@ enum Command {
 		#[command(subcommand)]
 		command: stack::StackCommand,
 	},
+	/// Resolve card faces' materials as a phone would, to check materials without one.
+	Materials {
+		#[command(subcommand)]
+		command: materials::MaterialsCommand,
+	},
 }
 
 /// Execution kind the CLI serves a product as.
@@ -532,6 +538,9 @@ fn command_base_path(command: &Command) -> PathBuf {
 		Command::PairingHost(args) => args.base_path.clone(),
 		Command::Dev(args) => args.base_path.clone(),
 		Command::SigningHost(args) => args.base_path.clone(),
+		Command::Materials { command: materials::MaterialsCommand::Resolve { base_path, .. } } => {
+			base_path.clone()
+		},
 		_ => None,
 	};
 	state_base_path(base_path)
@@ -694,6 +703,7 @@ async fn dispatch(
 			Ok(())
 		},
 		Command::Stack { command } => stack::run(command).await,
+		Command::Materials { command } => materials::run(command, &source.resolve().await?).await,
 	}
 }
 
@@ -1440,8 +1450,12 @@ async fn run_signing_host(
 		terminal_ui::output_event(SystemEvent::BridgeReady { url });
 	}
 	report_debugger(debugger.as_ref());
-	let runtime_for_frames =
-		tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
+	let tapped = tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
+	// Outside the tap, so the debugger sees each card's render from its first frame.
+	let runtime_for_frames: Arc<dyn frame_server::ProductRuntimeFactory> = match &session.pocket {
+		Some(pocket) => pocket::PocketFaces::new(tapped, pocket.clone()),
+		None => tapped,
+	};
 
 	if let Some(script) = args.script {
 		let product_id = product.current();
@@ -1851,12 +1865,15 @@ fn build_signing_runtime(
 		approval,
 		ui,
 	);
-	let config = SigningHostConfig::new(
+	let mut config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
 		network.core_stack().context("invalid stack")?,
 	)
 	.context("invalid signing host config")?;
+	// It draws nothing, but with a Pocket host it resolves the materials of every face its Worker
+	// renders, as a phone does.
+	config.materials_enabled = pocket.is_some();
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),
@@ -5159,6 +5176,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 			vec!["truapi-host", "pairing-host", "--base-path", "custom-state"],
 			vec!["truapi-host", "signing-host", "--base-path", "custom-state"],
 			vec!["truapi-host", "dev", "--base-path", "custom-state"],
+			vec!["truapi-host", "materials", "resolve", "face.json", "--base-path", "custom-state"],
 		] {
 			let cli = Cli::try_parse_from(arguments).expect("host command should parse");
 
