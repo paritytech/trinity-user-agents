@@ -275,10 +275,6 @@ private extension TrUAPIHostRuntimeProvider {
     }
 
     func apply(publishedNames: [String], on runtime: TrUAPIHostRuntime) {
-        do {
-            try runtime.setFundingProviderConfig(publishedNames: publishedNames)
-        } catch {
-            logger.error("[truapi] the funding providers were refused: \(error)")
-        }
+        runtime.setFundingProviderConfig(publishedNames: publishedNames)
     }
 }
