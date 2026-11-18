@@ -49,7 +49,10 @@ CHAT_SCRIPT="rust/crates/truapi-host-cli/js/scripts/chat-battery.ts"
 POCKET_SCRIPT="rust/crates/truapi-host-cli/js/scripts/pocket-battery.ts"
 FUNDING_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-battery.ts"
 FUNDING_WORKER_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-worker.ts"
-FUNDING_PROVIDER_ID="fundtest.dot"
+# The funding provider published on dotNS that the funding phase offers, by
+# its name and as a product id on the default network (Paseo Next v2).
+FUNDING_PROVIDER_NAME="fundtest-provider"
+FUNDING_PROVIDER_ID="fundtest-provider.paseo"
 PRODUCT_ID="truapi-playground.dot"
 REPORTS="explorer/diagnosis-reports/spa"
 LOG_DIR="target/battery"
@@ -254,9 +257,14 @@ funding_phase() {
   # Overlay requests and session changes as the host saw them. The cases read
   # it so a pass cannot rest on the product's word alone.
   export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript.jsonl"
-  # The overlay offers one provider, whose worker the host launches from its
-  # own script when the core asks for it.
-  export TRUAPI_FUNDING_PROVIDERS="$FUNDING_PROVIDER_ID=$ROOT/$FUNDING_WORKER_SCRIPT"
+  # The overlay offers one provider published on dotNS, whose manifest the core
+  # reads from dotNS. The host runs the battery's scripted worker for it in
+  # place of the published one, launched when the core asks for it.
+  export TRUAPI_FUNDING_PROVIDER_NAMES="$FUNDING_PROVIDER_NAME"
+  export TRUAPI_FUNDING_WORKERS="$FUNDING_PROVIDER_ID=$ROOT/$FUNDING_WORKER_SCRIPT"
+  # The route every overlay picks, which the scripted worker serves, rather
+  # than the first one the published manifest lists.
+  export TRUAPI_FUNDING_SELECT="crypto:polkadot:USDT"
   # What the worker was asked and did, across every process the host runs it in.
   export TRUAPI_FUNDING_WORKER_LOG="$ROOT/$LOG_DIR/funding-worker-journal.jsonl"
   # The ledger top-up and payment engines' record, kept across the restart.

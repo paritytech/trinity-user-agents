@@ -2,7 +2,7 @@
 // The funding battery's provider worker.
 //
 // The battery names this script as the provider's worker in
-// `TRUAPI_FUNDING_PROVIDERS`, and the signing host launches it as its own
+// `TRUAPI_FUNDING_WORKERS`, and the signing host launches it as its own
 // process, served as a Worker execution, when the core asks for the
 // provider's worker, and kills it when the core lets it go. It serves the
 // sessions the core assigns and records what it was asked and did in

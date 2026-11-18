@@ -1790,7 +1790,7 @@ async fn start_signing_host(
 		pocket.clone(),
 	)?;
 	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
-	funding_host::offer_providers(&runtime, platform.as_ref(), network.tld()).await?;
+	funding_host::offer_providers(&runtime);
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	runtime_factory.set_platform(platform.clone());
 	let last_script = profile
@@ -3365,7 +3365,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 
 	// Each runtime the host builds offers its funding providers, so one
 	// provisioned or imported after startup serves them as the first did.
-	funding_host::offer_providers(&runtime, platform.as_ref(), session.network.tld()).await?;
+	funding_host::offer_providers(&runtime);
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
 	session.runtime_factory.set_platform(platform.clone());
@@ -3460,7 +3460,7 @@ async fn import_mnemonic_session(
 
 	// Each runtime the host builds offers its funding providers, so one
 	// provisioned or imported after startup serves them as the first did.
-	funding_host::offer_providers(&runtime, platform.as_ref(), session.network.tld()).await?;
+	funding_host::offer_providers(&runtime);
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
 	session.runtime_factory.set_platform(platform.clone());

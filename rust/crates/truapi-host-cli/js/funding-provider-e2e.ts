@@ -1,6 +1,6 @@
 // End-to-end check of a provider's worker serving funding sessions, against
-// the CLI signing host with `TRUAPI_FUNDING_PROVIDERS` naming the provider and
-// its worker script. The overlay offers the provider, the auto-accepting user
+// the CLI signing host offering a provider published on dotNS, with
+// `TRUAPI_FUNDING_WORKERS` naming the local script its worker runs. The overlay offers the provider, the auto-accepting user
 // picks it, and the host launches the worker as its own process when the core
 // asks for it and stops it when the core lets it go.
 //

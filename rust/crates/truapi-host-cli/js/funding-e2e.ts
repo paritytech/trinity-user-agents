@@ -1,8 +1,8 @@
 // End-to-end funding check against the CLI signing host's funding overlay.
 //
-// The host shows the overlay, the auto-accepting user picks the provider
-// `TRUAPI_FUNDING_PROVIDERS` names, and the host launches that provider's
-// worker (`scripts/funding-worker.ts`) as its own process once the core asks
+// The host shows the overlay, the auto-accepting user picks the published
+// provider `TRUAPI_FUNDING_WORKERS` gives a local worker, and the host launches
+// that (`scripts/funding-worker.ts`) as its own process once the core asks
 // for it. The worker delivers, releases or fails each session through
 // top-ups, payments and reports, by the session's direction and amount, so
 // the core settles it as it would any other. The host records every request,
@@ -187,7 +187,7 @@ export async function runFundingE2e(
       row(
         "e2e",
         "skipped",
-        "TRUAPI_FUNDING_LOG, TRUAPI_FUNDING_WORKER_LOG or TRUAPI_FUNDING_PROVIDERS not set; cannot read what the host and the worker observed",
+        "TRUAPI_FUNDING_LOG, TRUAPI_FUNDING_WORKER_LOG or TRUAPI_FUNDING_WORKERS not set; cannot read what the host and the worker observed",
         performance.now(),
       ),
     ];

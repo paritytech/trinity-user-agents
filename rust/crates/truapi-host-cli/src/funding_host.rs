@@ -1,19 +1,17 @@
 //! The CLI signing host's funding surface: the overlay, provider screens, and
 //! the user's answers, as a host app serves them.
 //!
-//! The host offers the providers named in `TRUAPI_FUNDING_PROVIDERS`, each
-//! bundled with the manifest in [`SHIPPED_PROVIDER_MANIFEST`], as an app
-//! bundles its providers. Each entry is a product id, optionally
-//! followed by `=` and the path of the script its worker runs
-//! (`ramp.dot=./worker.ts,other.dot`). The host launches that script as the
-//! provider's worker when the core asks for it, and stops it when the core
-//! lets it go; a provider without a script has no worker here.
-//!
-//! It also offers the providers published on dotNS that
+//! The host offers the funding providers published on dotNS that
 //! `TRUAPI_FUNDING_PROVIDER_NAMES` names, each by its name without a TLD
 //! (`fundtest-provider`), as an app's remote configuration lists them: the
 //! core reads each one on the stack's TLD, with its manifest from dotNS, and
 //! the host runs the worker each one publishes, fetched from dotNS.
+//!
+//! `TRUAPI_FUNDING_WORKERS` runs a local script as an offered provider's
+//! worker instead: each entry is a product id, `=` and the path of the script
+//! (`fundtest-provider.paseo=./worker.ts`). The host launches that script when
+//! the core asks for the provider's worker, and stops it when the core lets
+//! it go. The provider's manifest still comes from dotNS.
 //!
 //! A product's funding request shows the overlay: the user takes the core's
 //! default rail and, for crypto, its first token and network, or the route
@@ -55,8 +53,7 @@ use truapi::{
 	host_logic::{
 		funding::{CancelTerms, FundingCancel, FundingSession},
 		funding_providers::{
-			FUNDING_MIN_AMOUNT, FundingOptions, FundingProviderApp, FundingProviderEntry,
-			FundingProviderOrigin, FundingSelection, provider_config,
+			FUNDING_MIN_AMOUNT, FundingOptions, FundingSelection, provider_config,
 		},
 	},
 	latest::{
@@ -67,7 +64,7 @@ use truapi::{
 		HostPaymentTopUpStatusSubscribeItem,
 	},
 	platform::{
-		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteList,
+		FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteList,
 		FundingQuoteRow, FundingQuoteState, PaymentPlatform, ProductContext, ProductId,
 		ProductStorage, ProductStorageKey, TopUpPlatform,
 	},
@@ -82,92 +79,58 @@ use crate::{
 	worker_host::{CliWorkerHost, WorkerSource},
 };
 
-/// The manifest the CLI ships for every provider it offers: card in, and
-/// crypto in and out, quoted by its worker.
-const SHIPPED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"],"networks":["polkadot"]}]}}}"#;
-
-/// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` as a funding
-/// provider bundled with [`SHIPPED_PROVIDER_MANIFEST`], so the core never
-/// reads dotNS for what it serves. The manifest is also kept as its cached
-/// dotNS manifest, which its worker execution is read from. Then each
-/// provider `TRUAPI_FUNDING_PROVIDER_NAMES` names, published on `tld`, whose
-/// manifests the core reads from dotNS.
-pub async fn offer_providers(
-	runtime: &SigningHostRuntime,
-	platform: &dyn CoreStorage,
-	tld: &str,
-) -> anyhow::Result<()> {
-	let entries = provider_entries();
-	let published = published_providers(tld);
-	if entries.is_empty() && published.is_empty() {
-		return Ok(());
+/// Offer the providers `TRUAPI_FUNDING_PROVIDER_NAMES` names, comma-separated
+/// and each without a TLD, as an app offers those its remote configuration
+/// lists. The core reads each one's manifest from dotNS on the stack's TLD,
+/// and skips a name that carries a TLD or is not a product id.
+pub fn offer_providers(runtime: &SigningHostRuntime) {
+	let names = provider_names();
+	if !names.is_empty() {
+		runtime.set_funding_provider_config(names);
 	}
-	let now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
-	let mut providers = Vec::new();
-	for (entry, _script) in entries {
-		let product_id: truapi::platform::ProductId = entry
-			.parse()
-			.map_err(|error| anyhow::anyhow!("funding provider {entry}: {error}"))?;
-		platform
-			.write_core_storage(
-				truapi::worker_manifest_cache_key(&product_id),
-				truapi::encode_cached_root_manifest(Some(SHIPPED_PROVIDER_MANIFEST), now_secs),
-			)
-			.await
-			.map_err(|error| anyhow::anyhow!("caching the manifest of {entry}: {error:?}"))?;
-		providers.push(FundingProviderEntry {
-			product_id,
-			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: FundingProviderOrigin::Bundled,
-			// The host links any App route through the dotNS gateway.
-			app: FundingProviderApp::Shipped,
-		});
-	}
-	for entry in published {
-		if providers.iter().all(|offered| offered.product_id != entry.product_id) {
-			providers.push(entry);
-		}
-	}
-	runtime
-		.set_funding_providers(providers)
-		.map_err(|error| anyhow::anyhow!("offering funding providers: {}", error.reason))
 }
 
-/// Each entry of `TRUAPI_FUNDING_PROVIDERS`: a product id, and the path of
-/// its worker script when `=` follows it.
-fn provider_entries() -> Vec<(String, Option<PathBuf>)> {
-	std::env::var("TRUAPI_FUNDING_PROVIDERS")
-		.unwrap_or_default()
-		.split(',')
-		.map(str::trim)
-		.filter(|entry| !entry.is_empty())
-		.map(|entry| match entry.split_once('=') {
-			Some((provider, script)) => {
-				(provider.trim().to_string(), Some(PathBuf::from(script.trim())))
-			},
-			None => (entry.to_string(), None),
-		})
-		.collect()
-}
-
-/// The providers `TRUAPI_FUNDING_PROVIDER_NAMES` names, comma-separated and
-/// each without a TLD, as published on `tld`. A name that is not one is
-/// skipped.
-fn published_providers(tld: &str) -> Vec<FundingProviderEntry> {
-	let names: Vec<String> = std::env::var("TRUAPI_FUNDING_PROVIDER_NAMES")
+/// The names `TRUAPI_FUNDING_PROVIDER_NAMES` lists, comma-separated.
+fn provider_names() -> Vec<String> {
+	std::env::var("TRUAPI_FUNDING_PROVIDER_NAMES")
 		.unwrap_or_default()
 		.split(',')
 		.map(str::trim)
 		.filter(|name| !name.is_empty())
 		.map(str::to_string)
-		.collect();
-	let (entries, invalid) = provider_config(&names, tld);
-	for name in invalid {
-		tracing::warn!(%name, "skipping a published funding provider that is not a name without a TLD");
-	}
-	entries
+		.collect()
 }
+
+/// The product ids of the providers [`offer_providers`] offers on `tld`.
+fn offered_providers(tld: &str) -> Vec<ProductId> {
+	let (entries, _invalid) = provider_config(&provider_names(), tld);
+	entries.into_iter().map(|entry| entry.product_id).collect()
+}
+
+/// Each entry of `TRUAPI_FUNDING_WORKERS`: a product id, and the path of the
+/// local script its worker runs. An entry without `=` names no script and is
+/// skipped.
+fn worker_scripts() -> Vec<(String, PathBuf)> {
+	std::env::var("TRUAPI_FUNDING_WORKERS")
+		.unwrap_or_default()
+		.split(',')
+		.map(str::trim)
+		.filter(|entry| !entry.is_empty())
+		.filter_map(|entry| match entry.split_once('=') {
+			Some((provider, script)) => {
+				Some((provider.trim().to_string(), PathBuf::from(script.trim())))
+			},
+			None => {
+				tracing::warn!(%entry, "skipping a funding worker without `=` and a script");
+				None
+			},
+		})
+		.collect()
+}
+
+/// How long an overlay no provider serves yet waits for the core to read the
+/// offered providers' manifests from dotNS.
+const PROVIDER_READ_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The funding overlay and provider screens of the CLI signing host.
 pub struct CliFundingHost {
@@ -180,6 +143,12 @@ pub struct CliFundingHost {
 	/// Bumped on every quote list the core pushes, so an overlay waiting on
 	/// its quotes reads the core's latest list again.
 	quotes_pushed: watch::Sender<u64>,
+	/// Bumped every time the core says an overlay's options changed, so an
+	/// overlay waiting on its providers reads its options again.
+	options_changed: watch::Sender<u64>,
+	/// Whether the host offers any provider, so an overlay with none yet
+	/// waits for the core to read their manifests from dotNS.
+	offers_providers: bool,
 	/// The route `TRUAPI_FUNDING_SELECT` picks in every overlay.
 	route: Option<ScriptedRoute>,
 	/// Whether provider screens wait for the provider or the user even under
@@ -201,16 +170,16 @@ impl CliFundingHost {
 		let hold_screens =
 			std::env::var("TRUAPI_FUNDING_HOLD_SCREENS").is_ok_and(|value| value == "1");
 		let mut workers = HashMap::new();
-		let published = published_providers(network.tld());
-		if !published.is_empty() {
+		let offered = offered_providers(network.tld());
+		if !offered.is_empty() {
 			match PublishedWorkers::new(network, user.chains()).zip(user.state_dir()) {
 				Some((source, state_dir)) => {
 					let source = WorkerSource::Published {
 						workers: Arc::new(source),
 						cache: state_dir.join("published-workers"),
 					};
-					for entry in published {
-						workers.insert(entry.product_id, source.clone());
+					for product_id in &offered {
+						workers.insert(product_id.clone(), source.clone());
 					}
 				},
 				None => tracing::warn!(
@@ -219,13 +188,13 @@ impl CliFundingHost {
 				),
 			}
 		}
-		for (provider, script) in provider_entries() {
-			let Some(script) = script else {
-				continue;
-			};
+		for (provider, script) in worker_scripts() {
 			match provider.parse::<ProductId>() {
-				Ok(provider) => {
+				Ok(provider) if offered.contains(&provider) => {
 					workers.insert(provider, WorkerSource::Script(script));
+				},
+				Ok(provider) => {
+					tracing::warn!(%provider, "skipping a funding worker for a provider not offered");
 				},
 				Err(error) => {
 					tracing::warn!(%provider, %error, "skipping a funding worker that is not a product id");
@@ -246,6 +215,8 @@ impl CliFundingHost {
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
 			quotes_pushed: watch::Sender::new(0),
+			options_changed: watch::Sender::new(0),
+			offers_providers: !offered.is_empty(),
 			route,
 			hold_screens,
 		});
@@ -347,6 +318,34 @@ impl CliFundingHost {
 				}
 			},
 			FundingRail::Card | FundingRail::Bank => Some((rail, options)),
+		}
+	}
+
+	/// [`Self::select_route`] for session `intent`, once a provider serves
+	/// it. The core offers a published provider only once it has read its
+	/// manifest from dotNS, so while none serves the session the overlay
+	/// waits for its options to change, as a user watches it load, for up to
+	/// [`PROVIDER_READ_WAIT`].
+	async fn served_route(
+		&self,
+		runtime: &SigningHostRuntime,
+		intent: &str,
+	) -> Option<(FundingRail, FundingOptions)> {
+		let mut changed = self.options_changed.subscribe();
+		let deadline = tokio::time::Instant::now() + PROVIDER_READ_WAIT;
+		loop {
+			let options = Self::select_route(runtime, intent, self.route.as_ref());
+			// Selecting sends the options again; only a later change is news.
+			changed.borrow_and_update();
+			let served =
+				options.as_ref().is_some_and(|(_, options)| !options.candidates.is_empty());
+			if served || !self.offers_providers {
+				return options;
+			}
+			// The sender lives as long as `self`, so only the deadline ends this.
+			if tokio::time::timeout_at(deadline, changed.changed()).await.is_err() {
+				return options;
+			}
 		}
 	}
 
@@ -579,7 +578,7 @@ impl FundingPlatform for CliFundingHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let options = Self::select_route(&runtime, &session.intent, self.route.as_ref());
+		let options = self.served_route(&runtime, &session.intent).await;
 		let candidates: Vec<ProductId> = options
 			.iter()
 			.flat_map(|(_, options)| &options.candidates)
@@ -724,7 +723,9 @@ impl FundingFeed for CliFundingHost {
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
-	fn funding_options_changed(&self, _intent: String) {}
+	fn funding_options_changed(&self, _intent: String) {
+		self.options_changed.send_modify(|changed| *changed = changed.wrapping_add(1));
+	}
 }
 
 /// Top-up and payment engines over a ledger file: every top-up claims in full

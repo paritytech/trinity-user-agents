@@ -4,9 +4,9 @@
 // Run via:
 //   scripts/battery.sh --funding-host
 //
-// which starts a signing host whose funding overlay offers one provider, with
-// `scripts/funding-worker.ts` as its worker, and ledger engines for top-ups
-// and payments with no chain behind them. This script is the product asking
+// which starts a signing host whose funding overlay offers one provider
+// published on dotNS, with `scripts/funding-worker.ts` as its worker, and
+// ledger engines for top-ups and payments with no chain behind them. This script is the product asking
 // for funds. The host launches the provider's worker as its own process when
 // the core asks for it, and the battery types the user's commands into the
 // host through TRUAPI_FUNDING_USER.
@@ -57,8 +57,9 @@ if (
 
 const fundingLog = process.env.TRUAPI_FUNDING_LOG;
 const workerLog = process.env.TRUAPI_FUNDING_WORKER_LOG;
-// The provider the overlay offers first, which the auto-accepting user picks.
-const provider = process.env.TRUAPI_FUNDING_PROVIDERS?.split(",")[0]
+// The provider whose worker the battery runs, which the auto-accepting user
+// picks.
+const provider = process.env.TRUAPI_FUNDING_WORKERS?.split(",")[0]
   ?.split("=")[0]
   ?.trim();
 const stage = process.env.TRUAPI_FUNDING_STAGE;

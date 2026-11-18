@@ -823,27 +823,32 @@ Scripts under `js/scripts/` include:
   rather than resting on the product's word.
 
   The funding phase runs the signing host's funding overlay as a host app
-  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers,
-  comma-separated, each with a Worker manifest the CLI ships for it, and each
-  a product id optionally followed by `=` and the path of its worker script
-  (`fundtest.dot=./worker.ts,other.dot`). The host acts as the provider's
+  would. The host offers providers published on dotNS, as the apps do (see
+  below), and `TRUAPI_FUNDING_WORKERS` runs a local script as an offered
+  provider's worker in place of the one it publishes: comma-separated
+  entries, each a product id, `=` and the path of the script
+  (`fundtest-provider.paseo=./worker.ts`). The host acts as the provider's
   host: when the core asks for a provider's worker, it launches that script
   as its own process on a frame socket of its own, served as a Worker
   execution of the provider, and kills it when the core lets the worker go.
-  A provider without a script has no worker on this host. The phase runs the
-  product script (`funding-battery.ts`, an App) and the provider
-  `fundtest.dot` with `funding-worker.ts` as its worker, which serves
+  The provider's manifest still comes from dotNS. The phase runs the
+  product script (`funding-battery.ts`, an App) and offers
+  `fundtest-provider`, as published on Paseo Next v2, with
+  `funding-worker.ts` as its worker, which serves
   sessions through `onQuote`, `onAssign`, `onCancel` and `onSettleCancel` by
   their direction and amount and records what it did in
   `TRUAPI_FUNDING_WORKER_LOG`. The overlay takes the core's default rail,
   and for crypto its first token and network, and lists the providers serving
-  the session and the quotes of those routing that rail.
+  the session and the quotes of those routing that rail. Until the core has
+  read a provider's manifest from dotNS it offers none, so an overlay no
+  provider serves yet waits up to 30 seconds for one.
   `TRUAPI_FUNDING_SELECT` picks the route instead, as a user would:
   `crypto:<network>:<token>` (`crypto:ethereum:USDC`) or
   `card|bank:<currency>[:<country>]` (`card:EUR:DE`); a part left out takes
-  the default, and a value the host cannot read stops it at startup. The cases check that no worker runs until the
-  overlay asks the provider for a quote, and that once its sessions end the
-  host stops it and a new worker process is started for the next session.
+  the default, and a value the host cannot read stops it at startup. The
+  battery picks `crypto:polkadot:USDT`, the route its worker serves. The
+  cases check that no worker runs until the overlay asks the provider for a
+  quote, and that once its sessions end the host stops it and a new worker process is started for the next session.
   The auto-accepting user picks the first quote and accepts cancel offers,
   including one the worker makes on a withdrawal only once it is released,
   which it then refunds; a paid-out withdrawal's payout is reported through
@@ -878,18 +883,19 @@ Scripts under `js/scripts/` include:
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
-  chain.
+  chain. It needs `fundtest-provider` published on Paseo Next v2, with a
+  manifest routing USDT on Polkadot both ways and an App.
 
-  The signing host also offers funding providers published on dotNS, as the
+  The signing host offers funding providers published on dotNS, as the
   apps do from their remote configuration: `TRUAPI_FUNDING_PROVIDER_NAMES`
   lists them comma-separated, each by its name without a TLD
   (`TRUAPI_FUNDING_PROVIDER_NAMES=fundtest-provider` offers
   `fundtest-provider.paseo` on Paseo Next v2). The core reads each one's
-  Worker manifest from dotNS, and a name that carries a TLD is skipped. Both
-  variables can be set together. When the core asks for a published
-  provider's worker, the host reads the `worker.<name>.<tld>` subname's
-  contenthash and the `entrypoint` of its `executable` manifest, fetches the
-  archive from the stack's `ipfs-gateway` as a CAR (a directory, or an
+  Worker manifest from dotNS, and a name that carries a TLD is skipped. These
+  are the only providers the host offers. When the core asks for a published
+  provider's worker that `TRUAPI_FUNDING_WORKERS` does not replace, the host
+  reads the `worker.<name>.<tld>` subname's contenthash and the
+  `entrypoint` of its `executable` manifest, fetches the archive from the stack's `ipfs-gateway` as a CAR (a directory, or an
   uploaded CAR file of one, the two shapes the iOS app loads), checks every
   block against its CID, and unpacks it under the session's state directory
   in `published-workers/<cid>/`. The entry script then runs as a local worker
@@ -915,7 +921,7 @@ Scripts under `js/scripts/` include:
   another platform, the host refuses to run it.
   `TRUAPI_FUNDING_UNSANDBOXED=1` runs published workers without the sandbox,
   still with the cleared environment, and logs a warning at every launch.
-  Local worker scripts from `TRUAPI_FUNDING_PROVIDERS` run unsandboxed with
+  Local worker scripts from `TRUAPI_FUNDING_WORKERS` run unsandboxed with
   the host's environment.
 
   The CLI accepts and logs Game reminders on every execution kind, without
