@@ -974,4 +974,32 @@ describe("chat rooms of the injected client", () => {
         );
         expect((await created)._unsafeUnwrap()).toEqual(answer);
     });
+
+    it("fills in the default config of a source request that declares none", async () => {
+        const fixture = controlledHost();
+        const request = { roomIdSource: "jollity", name: "Polkadot", icon: "" };
+        const created = fixture.connection.client.chat.createRoom(request as never);
+        fixture.sockets[0]!.open();
+        const frame = await sentCreateRoom(fixture.sockets[0]!);
+        expect(Array.from(frame.payload.value)).toEqual(
+            Array.from(
+                T.VersionedHostChatCreateRoomRequest.enc({
+                    tag: "V2",
+                    value: {
+                        ...request,
+                        config: { productSource: false, reactionDetails: false, reportSeen: false },
+                    },
+                }),
+            ),
+        );
+        const answer = { status: "New", roomId: "0x01" } as const;
+        fixture.sockets[0]!.reply(
+            frame,
+            S.Result(
+                T.VersionedHostChatCreateRoomResponse,
+                S.CallError(T.VersionedHostChatCreateRoomError),
+            ).enc({ success: true, value: { tag: "V2", value: answer } }),
+        );
+        expect((await created)._unsafeUnwrap()).toEqual(answer);
+    });
 });

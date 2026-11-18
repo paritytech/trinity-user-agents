@@ -57,6 +57,16 @@ const CreateRoomErrorV1 = S.indexedTaggedUnion({
   ] as const,
 });
 
+/**
+ * The config of a room whose request declares none: the host stores every
+ * part of the room and asks the product nothing.
+ */
+const DEFAULT_CHAT_ROOM_CONFIG: T.ChatRoomConfig = {
+  productSource: false,
+  reactionDetails: false,
+  reportSeen: false,
+};
+
 /** Whether `request` has the shape of the earlier client: a `roomId` and no `roomIdSource`. */
 function isV1Request(request: unknown): request is HostChatCreateRoomRequestV1 {
   if (typeof request !== "object" || request === null) return false;
@@ -72,7 +82,9 @@ function isV1Request(request: unknown): request is HostChatCreateRoomRequestV1 {
  * which needs `roomIdSource` and `config`, so it cannot encode that request.
  * With this, such a request goes out in version 1 and the answer is read in
  * version 1, as the earlier client did, and the host keeps the room under the
- * product's `roomId`. Every other request goes to the generated method.
+ * product's `roomId`. Every other request goes to the generated method, with
+ * the default config filled in for the fields it leaves out, since the
+ * generated encoder cannot encode a request without one.
  */
 export function acceptChatV1CreateRoom(
   client: TrUApiClient,
@@ -103,7 +115,13 @@ export function acceptChatV1CreateRoom(
   ) =>
     isV1Request(request)
       ? createRoomV1(request, options)
-      : createRoomV2(request, options);
+      : createRoomV2(
+          {
+            ...request,
+            config: { ...DEFAULT_CHAT_ROOM_CONFIG, ...request.config },
+          },
+          options,
+        );
   Object.defineProperty(client.chat, "createRoom", {
     value: createRoom as TrUApiClient["chat"]["createRoom"],
     enumerable: false,

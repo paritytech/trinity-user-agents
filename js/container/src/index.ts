@@ -1,6 +1,5 @@
 // Subframes need the same gates even though only the main frame has an endpoint.
 import { installContainer } from './container.js';
-import { withChatRoomDefaults } from './chat-defaults.js';
 import { createHostConnection } from '@parity/truapi/internal';
 import { freezeAndDelete, freezeValue } from './freeze.js';
 import { logHostLinkReturn } from './link-log.js';
@@ -18,16 +17,9 @@ const connection = typeof config?.url === 'string'
   ? createHostConnection(config.url)
   : undefined;
 if (connection) {
-  let wrapped: ReturnType<typeof withChatRoomDefaults> | undefined;
   freezeValue(window, '__HOST_WEBVIEW_MARK__', true);
-  // Wrap the client on its first read, so a config-less v1 createRoom
-  // encodes instead of throwing. Reading it still activates, and the
-  // client instance is stable, so the wrap happens exactly once.
   freezeValue(window, '__HOST_API_CLIENT__', Object.freeze({
-    get client() {
-      wrapped ??= withChatRoomDefaults(connection.client);
-      return wrapped;
-    },
+    get client() { return connection.client; },
     subscribeConnectionStatus: connection.subscribeConnectionStatus,
   }));
   // TODO: Remove the port once deployed products adopt the injected client.
