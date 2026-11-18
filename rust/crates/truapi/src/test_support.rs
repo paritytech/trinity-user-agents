@@ -506,7 +506,7 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 			0xc1, 0xd7, 0x20, 0x23,
 		]),
 		identity_chat_private_key: None,
-		device_enc_public_key: None,
+		peer_device_enc_public_key: None,
 		lite_username: Some("alice".to_string()),
 		full_username: Some("Alice Smith".to_string()),
 	}

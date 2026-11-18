@@ -12,12 +12,15 @@ import javax.inject.Inject
  * runs with the core's development wildcard, or as the product its `product_id` query names.
  */
 class DevServers @Inject constructor() : DevServerAddresses {
+    val enabled: Boolean
+        get() = !FeatureOption.DEV_SERVER_PRODUCTS.isDisabled
+
     fun productAt(url: String): DevServerProduct? = parse(url).getOrNull()
 
     override fun urlOf(address: String): Result<String> = parse(address).map(DevServerProduct::url)
 
     private fun parse(address: String): Result<DevServerProduct> =
-        if (FeatureOption.DEV_SERVER_PRODUCTS.isDisabled) {
+        if (!enabled) {
             Result.failure(IllegalStateException("This build opens no development server"))
         } else {
             runCatching { parseDevServer(address) }

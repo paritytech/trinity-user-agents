@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.design.components.compound.NovaSwitch
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.AlertOutlined
@@ -31,6 +32,36 @@ fun PolkadotMenuListScope.SettingsMenuItem(
     icon: ImageVector? = null,
     label: String? = null
 ) {
+    SettingsMenuRow(
+        title = title,
+        icon = icon,
+        trailing = { MenuValueChevron(label) },
+        onClick = onClick
+    )
+}
+
+@Composable
+fun PolkadotMenuListScope.SettingsSwitchMenuItem(
+    title: String,
+    icon: ImageVector,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    SettingsMenuRow(
+        title = title,
+        icon = icon,
+        trailing = { NovaSwitch(checked = checked, onCheckedChange = onCheckedChange) },
+        onClick = { onCheckedChange(!checked) }
+    )
+}
+
+@Composable
+private fun PolkadotMenuListScope.SettingsMenuRow(
+    title: String,
+    icon: ImageVector?,
+    trailing: @Composable () -> Unit,
+    onClick: () -> Unit
+) {
     PolkadotMenuListItem(
         leading = icon?.let {
             {
@@ -50,7 +81,7 @@ fun PolkadotMenuListScope.SettingsMenuItem(
                 overflow = TextOverflow.Ellipsis
             )
         },
-        trailing = { MenuValueChevron(label) },
+        trailing = trailing,
         onClick = onClick
     )
 }
