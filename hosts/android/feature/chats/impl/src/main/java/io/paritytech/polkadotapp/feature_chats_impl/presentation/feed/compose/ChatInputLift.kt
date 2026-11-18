@@ -5,7 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.visibleDockletBandPx
 
-internal fun Modifier.shrinkAboveDocklet(
+internal fun Modifier.liftAboveDocklet(
     barInsets: WindowInsets,
     navigationBars: WindowInsets,
     ime: WindowInsets,
@@ -13,7 +13,7 @@ internal fun Modifier.shrinkAboveDocklet(
 ): Modifier = layout { measurable, constraints ->
     val systemBottom = maxOf(navigationBars.getBottom(this), ime.getBottom(this))
     val lift = visibleDockletBandPx(barInsets.getBottom(this), systemBottom, hiddenFraction())
-    val height = (constraints.maxHeight - lift).coerceAtLeast(0)
-    val placeable = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
-    layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(0, 0) }
+    val placeable = measurable.measure(constraints.copy(minHeight = 0))
+    val height = (placeable.height + lift).coerceIn(constraints.minHeight, constraints.maxHeight)
+    layout(placeable.width, height) { placeable.place(0, 0) }
 }
