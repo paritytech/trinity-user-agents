@@ -49,7 +49,7 @@ use std::{
 use futures::stream::{self, BoxStream, StreamExt};
 use tokio::sync::watch;
 use truapi::{
-	FundingFeed, SigningHostRuntime,
+	FundingFeed, HostRuntime, SigningHost,
 	host_logic::{
 		funding::{CancelTerms, FundingCancel, FundingSession},
 		funding_providers::{
@@ -83,7 +83,7 @@ use crate::{
 /// and each without a TLD, as an app offers those its remote configuration
 /// lists. The core reads each one's manifest from dotNS on the stack's TLD,
 /// and skips a name that carries a TLD or is not a product id.
-pub fn offer_providers(runtime: &SigningHostRuntime) {
+pub fn offer_providers(runtime: &HostRuntime<SigningHost>) {
 	let names = provider_names();
 	if !names.is_empty() {
 		runtime.set_funding_provider_config(names);
@@ -137,7 +137,7 @@ pub struct CliFundingHost {
 	/// Where the user's answers come from.
 	user: Arc<CliPlatform>,
 	transcript: Arc<Transcript>,
-	runtime: Weak<SigningHostRuntime>,
+	runtime: Weak<HostRuntime<SigningHost>>,
 	/// Sessions whose current cancel offer the user was asked about.
 	asked: Mutex<HashSet<String>>,
 	/// Bumped on every quote list the core pushes, so an overlay waiting on
@@ -161,7 +161,7 @@ impl CliFundingHost {
 	/// providers, worker scripts and files the environment names. Worker
 	/// output goes to `ui` when the host runs one.
 	pub fn install(
-		runtime: &Arc<SigningHostRuntime>,
+		runtime: &Arc<HostRuntime<SigningHost>>,
 		network: &Stack,
 		user: Arc<CliPlatform>,
 		ui: Option<UiHandle>,
@@ -281,7 +281,7 @@ impl CliFundingHost {
 	/// network it lists. The core answers a selection with the options it
 	/// leads to before `select_funding_options` returns.
 	fn select_route(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		intent: &str,
 		route: Option<&ScriptedRoute>,
 	) -> Option<(FundingRail, FundingOptions)> {
@@ -328,7 +328,7 @@ impl CliFundingHost {
 	/// [`PROVIDER_READ_WAIT`].
 	async fn served_route(
 		&self,
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		intent: &str,
 	) -> Option<(FundingRail, FundingOptions)> {
 		let mut changed = self.options_changed.subscribe();
@@ -354,7 +354,7 @@ impl CliFundingHost {
 	/// user waits on the list. Empty when the selection cannot be quoted.
 	async fn answered_quotes(
 		&self,
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		intent: &str,
 		amount: u128,
 	) -> Vec<FundingQuoteRow> {
@@ -482,7 +482,7 @@ pub fn answer_frame(intent: &str, outcome: FundingFrameOutcome) -> bool {
 
 /// Each session the core holds in full, newest opened first, with where it
 /// stands now.
-pub fn sessions(runtime: &SigningHostRuntime) -> Vec<(String, String)> {
+pub fn sessions(runtime: &HostRuntime<SigningHost>) -> Vec<(String, String)> {
 	let now = truapi::current_unix_millis();
 	runtime
 		.funding_entries()
@@ -492,7 +492,7 @@ pub fn sessions(runtime: &SigningHostRuntime) -> Vec<(String, String)> {
 }
 
 /// Cancel session `intent` at the user's request, and record what that did.
-pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String, String> {
+pub async fn cancel(runtime: &HostRuntime<SigningHost>, intent: &str) -> Result<String, String> {
 	let outcome = runtime
 		.cancel_funding(intent)
 		.await
@@ -510,7 +510,7 @@ pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String
 /// serving session `intent`, as the provider's own screen would, and record
 /// it. The provider's worker hears it through `localStorage.subscribe`.
 pub async fn write_provider_storage(
-	runtime: &SigningHostRuntime,
+	runtime: &HostRuntime<SigningHost>,
 	storage: &dyn ProductStorage,
 	intent: &str,
 	key: String,

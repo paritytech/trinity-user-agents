@@ -93,6 +93,7 @@ use truapi::{
 
 use super::{
 	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	sso_request_service::SsoRequestService,
 	*,
 };
 use crate::{
@@ -133,7 +134,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 pub fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
 	asset_hub_chain_genesis_hash: [u8; 32],
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	let config = crate::platform::SigningHostConfig::new(
 		crate::platform::HostInfo {
 			name: "Polkadot Mobile".to_string(),
@@ -151,13 +152,14 @@ pub fn signing_runtime_on_asset_hub(
 		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone());
+	let signing_host = SigningHost::new(services.clone());
 	(services, signing_host)
 }
 
 /// A signing host whose wallet is active under [`ENTROPY`].
-pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host
@@ -165,7 +167,7 @@ pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> 
 
 pub fn product_runtime_for(
 	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
+	authority: Arc<SigningHost>,
 	product_id: &str,
 ) -> ProductRuntimeHost<signing_host::WalletAccountHolder> {
 	ProductRuntimeHost::from_services(
@@ -871,12 +873,11 @@ fn contacts_host(
 	connected: bool,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		platform as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(contacts) = contacts {
 		services.install_contacts_platform(contacts);
@@ -941,12 +942,11 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	// default is truthful: a product learns the picker will never work here,
 	// rather than a dismissal it would keep retrying.
 	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -1263,14 +1263,14 @@ fn host_with_contacts(
 	contacts: Arc<dyn crate::platform::ContactsPlatform>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::with_platforms(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
 		None,
+		Some(contacts),
 	);
-	services.install_contacts_platform(contacts);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
 	let host = ProductRuntimeHost::from_services(
@@ -2328,21 +2328,41 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
 	assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// Records the visibility the host is asked for and answers a configured result.
+/// Records the face visibility and card sides the host is asked for and
+/// answers both with a configured result.
 struct RecordingExpandedCardHost {
-	answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	requested: Mutex<Vec<bool>>,
+	turned: Mutex<Vec<bool>>,
 }
 
 impl RecordingExpandedCardHost {
 	fn answering(
-		answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	) -> Arc<Self> {
-		Arc::new(Self { answer, requested: Mutex::new(Vec::new()) })
+		Arc::new(Self {
+			face_answer,
+			turn_answer,
+			requested: Mutex::new(Vec::new()),
+			turned: Mutex::new(Vec::new()),
+		})
+	}
+
+	fn applying() -> Arc<Self> {
+		Self::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		)
 	}
 
 	fn requested(&self) -> Vec<bool> {
 		self.requested.lock().expect("requested mutex poisoned").clone()
+	}
+
+	fn turned(&self) -> Vec<bool> {
+		self.turned.lock().expect("turned mutex poisoned").clone()
 	}
 }
 
@@ -2353,7 +2373,15 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
 		self.requested.lock().expect("requested mutex poisoned").push(shown);
-		self.answer.clone()
+		self.face_answer.clone()
+	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError> {
+		self.turned.lock().expect("turned mutex poisoned").push(shown);
+		self.turn_answer.clone()
 	}
 }
 
@@ -2393,11 +2421,11 @@ fn set_back_shown(
 }
 
 /// The host must see exactly what the Widget asked for, in order, so a hide
-/// followed by a show never collapses into one state change.
+/// followed by a show, or a turn and a turn back, never collapses into one
+/// state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let card = RecordingExpandedCardHost::applying();
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
 
 	for shown in [false, true, false] {
@@ -2407,7 +2435,14 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 		));
 	}
 
-	assert_eq!(card.requested(), [false, true, false]);
+	for shown in [true, false] {
+		assert!(matches!(
+			set_back_shown(&host, shown),
+			Ok(HostExpandedCardSetBackShownResponse::V1)
+		));
+	}
+
+	assert_eq!((card.requested(), card.turned()), (vec![false, true, false], vec![true, false]));
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind
@@ -2416,14 +2451,12 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
-		let card = RecordingExpandedCardHost::answering(Ok(
-			crate::platform::ExpandedCardFaceOutcome::Applied,
-		));
+		let card = RecordingExpandedCardHost::applying();
 		let host = expanded_card_host(kind, Some(card.clone()));
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
 		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
-		assert!(card.requested().is_empty());
+		assert!(card.requested().is_empty() && card.turned().is_empty());
 	}
 }
 
@@ -2435,18 +2468,7 @@ fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
-}
-
-/// This runtime cannot turn a card, so a Widget must read "not supported"
-/// rather than a failure, even under a card whose host moves its face.
-#[test]
-fn expanded_card_back_is_unsupported() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
-	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
-
 	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
-	assert!(card.requested().is_empty());
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
@@ -2457,7 +2479,10 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 	use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
 
 	let answer = |outcome| {
-		let card = RecordingExpandedCardHost::answering(outcome);
+		let card = RecordingExpandedCardHost::answering(
+			outcome,
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
 		set_face_shown(&host, false)
 	};
@@ -2481,6 +2506,45 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 		panic!("a host failure is reported as an unknown domain error");
 	};
 	assert_eq!(reason, "drawer crashed");
+}
+
+/// A turn answers what the host did, so a Widget can tell a card without a
+/// back from one the user is holding, and retry only the latter.
+#[test]
+fn expanded_card_back_outcomes_map_to_wire_answers() {
+	use crate::platform::ExpandedCardTurnOutcome;
+	use v01::HostExpandedCardSetBackShownError as Answer;
+
+	let answer = |outcome| {
+		let card = RecordingExpandedCardHost::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			outcome,
+		);
+		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
+		set_back_shown(&host, true)
+	};
+	let domain = |outcome| match answer(Ok(outcome)) {
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(error))) => Some(error),
+		_ => None,
+	};
+
+	assert_eq!(
+		[
+			domain(ExpandedCardTurnOutcome::NotPresented),
+			domain(ExpandedCardTurnOutcome::UserMoving),
+			domain(ExpandedCardTurnOutcome::NoBack),
+		],
+		[Some(Answer::NotPresented), Some(Answer::UserMoving), Some(Answer::NoBack)]
+	);
+	assert!(matches!(
+		answer(Ok(ExpandedCardTurnOutcome::Unsupported)),
+		Err(CallError::Unsupported)
+	));
+	assert!(matches!(
+		answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() })),
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(Answer::Unknown { reason })))
+			if reason == "drawer crashed"
+	));
 }
 
 #[test]
@@ -7457,7 +7521,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
+		vec![AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&stored)))]
 	);
 }
 
@@ -8071,12 +8135,11 @@ fn scanner_host_for(
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
 	product.execution_kind = kind;
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(scanner) = scanner {
 		services.install_scanner_platform(scanner);

@@ -38,8 +38,8 @@ use tracing::{debug, warn};
 
 use crate::bootstrap;
 use truapi::{
-	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime,
+	ChannelId, DebugSink, FrameSink, HostRuntime, PairingHost, ProductContext, ProductRuntime,
+	ProductRuntimeError, SigningHost,
 	platform::{ExecutableKind, ProductId},
 };
 
@@ -130,15 +130,15 @@ impl ConnectionRuntime for ProductRuntime {
 	}
 }
 
-impl ProductRuntimeFactory for PairingHostRuntime {
+impl ProductRuntimeFactory for HostRuntime<PairingHost> {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		PairingHostRuntime::product_runtime(self, product, sink)
+		HostRuntime::product_runtime(self, product, sink)
 	}
 }
 
-impl ProductRuntimeFactory for SigningHostRuntime {
+impl ProductRuntimeFactory for HostRuntime<SigningHost> {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
-		SigningHostRuntime::product_runtime(self, product, sink)
+		HostRuntime::product_runtime(self, product, sink)
 	}
 }
 
@@ -188,7 +188,7 @@ impl ProductRuntimeFactory for DebugTappedRuntime {
 /// Signing runtime factory whose active session can be replaced without
 /// restarting the frame listener.
 pub struct SwitchableSigningRuntime {
-	current: RwLock<Arc<SigningHostRuntime>>,
+	current: RwLock<Arc<HostRuntime<SigningHost>>>,
 	/// The host platform the current runtime was built with, for what acts
 	/// on the session from outside a product, such as a script's user.
 	platform: RwLock<Option<Arc<crate::platform::CliPlatform>>>,
@@ -196,13 +196,13 @@ pub struct SwitchableSigningRuntime {
 }
 
 impl SwitchableSigningRuntime {
-	pub fn new(runtime: Arc<SigningHostRuntime>) -> Arc<Self> {
+	pub fn new(runtime: Arc<HostRuntime<SigningHost>>) -> Arc<Self> {
 		let (generation, _) = watch::channel(0);
 		Arc::new(Self { current: RwLock::new(runtime), platform: RwLock::new(None), generation })
 	}
 
 	/// The runtime products are served by now.
-	pub fn current(&self) -> Arc<SigningHostRuntime> {
+	pub fn current(&self) -> Arc<HostRuntime<SigningHost>> {
 		self.current.read().expect("runtime lock poisoned").clone()
 	}
 
@@ -217,7 +217,7 @@ impl SwitchableSigningRuntime {
 	}
 
 	/// Replace the runtime and disconnect every product using the old one.
-	pub fn replace(&self, runtime: Arc<SigningHostRuntime>) {
+	pub fn replace(&self, runtime: Arc<HostRuntime<SigningHost>>) {
 		*self.current.write().expect("runtime lock poisoned") = runtime;
 		self.reset_connections();
 	}

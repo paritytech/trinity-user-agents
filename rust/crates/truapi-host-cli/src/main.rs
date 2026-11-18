@@ -67,9 +67,9 @@ use clap::{
 use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
-	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
-	PairingProposal, ResponderExit, ResumePairingError, SigningHostConfig, SigningHostRuntime,
-	Spawner, StatementRenewalTarget, WsDebugSink,
+	AnnouncedPairing, DebugSink, HostRuntime, PairedSsoPeer, PairingHost, PairingHostConfig,
+	PairingProposal, ResponderExit, ResumePairingError, SigningHost, SigningHostConfig, Spawner,
+	StatementRenewalTarget, WsDebugSink,
 	chain::{EvmContractCaller, ExtrinsicService},
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
@@ -1340,7 +1340,7 @@ async fn run_pairing_host(
 	let chat_host = args.execution_kind.chat_host();
 	let pocket_host = args.execution_kind.pocket_host();
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
-	let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
+	let pairing_runtime = Arc::new(HostRuntime::<PairingHost>::with_chat_platform(
 		platform,
 		config,
 		Spawner::new(tokio::runtime::Handle::current()),
@@ -1583,7 +1583,7 @@ async fn run_signing_host(
 }
 
 struct SigningHostSession {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	platform: Arc<CliPlatform>,
 	runtime_factory: Arc<frame_server::SwitchableSigningRuntime>,
 	responders: ResponderManager,
@@ -1865,7 +1865,7 @@ fn build_signing_runtime(
 	ui: Option<UiHandle>,
 	chat: Option<Arc<chat::CliChatHost>>,
 	pocket: Option<Arc<pocket::CliPocketHost>>,
-) -> Result<(Arc<SigningHostRuntime>, Arc<CliPlatform>)> {
+) -> Result<(Arc<HostRuntime<SigningHost>>, Arc<CliPlatform>)> {
 	std::fs::create_dir_all(&storage_path)
 		.with_context(|| format!("creating state directory {}", storage_path.display()))?;
 	let core_db = futures::executor::block_on(truapi::store::Db::open(
@@ -1893,7 +1893,7 @@ fn build_signing_runtime(
 	// renders, as a phone does.
 	config.materials_enabled = pocket.is_some();
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
-	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
+	let runtime = Arc::new(HostRuntime::<SigningHost>::with_chat_platform(
 		platform.clone(),
 		config,
 		Spawner::new(tokio::runtime::Handle::current()),
@@ -2057,7 +2057,7 @@ const RESET_RESTART_PAUSES_AFTER: Duration = Duration::from_secs(30);
 /// Fails without restarting when the session cannot be served at all, such
 /// as without an active local session.
 async fn supervise_responder(
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	host: PairedHost,
 	persisted: Option<(SessionCatalog, SessionProfile)>,
 ) -> Result<(), ResumePairingError> {
@@ -2101,7 +2101,7 @@ async fn supervise_responder(
 /// Remove a disconnected pairing host from the session and stop renewing its
 /// statement allowance.
 async fn forget_disconnected_peer(
-	runtime: &SigningHostRuntime,
+	runtime: &HostRuntime<SigningHost>,
 	peer: PairedSsoPeer,
 	catalog: &SessionCatalog,
 	profile: &SessionProfile,
@@ -2813,7 +2813,7 @@ fn read_script_user_commands(sessions: Arc<frame_server::SwitchableSigningRuntim
 /// Act on a funding session as the user, and say what that did. `platform`
 /// holds the provider storage a `/funding write` writes to.
 async fn run_funding(
-	runtime: &SigningHostRuntime,
+	runtime: &HostRuntime<SigningHost>,
 	platform: Option<&CliPlatform>,
 	command: FundingCommand,
 ) -> Result<String> {
@@ -3502,7 +3502,7 @@ async fn import_mnemonic_session(
 async fn pairing_interactive_loop(
 	frame_url: String,
 	product: Arc<frame_server::ProductSelection>,
-	runtime: Arc<PairingHostRuntime>,
+	runtime: Arc<HostRuntime<PairingHost>>,
 	storage: Arc<CliPlatform>,
 	script_projects: PathBuf,
 	mut ui: ActiveTerminalUi,
@@ -3605,7 +3605,7 @@ async fn pairing_interactive_loop(
 }
 
 async fn run_pairing_login(
-	runtime: &PairingHostRuntime,
+	runtime: &HostRuntime<PairingHost>,
 	product_id: &ProductId,
 	label: String,
 	ui: &mut ActiveTerminalUi,

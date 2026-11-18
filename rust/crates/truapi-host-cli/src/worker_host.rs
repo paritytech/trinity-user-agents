@@ -24,7 +24,7 @@ use std::{
 
 use tokio::{runtime::Handle, task::JoinHandle};
 use truapi::{
-	SigningHostRuntime,
+	HostRuntime, SigningHost,
 	host_logic::worker::{WorkerController, WorkerTransition},
 	platform::{ExecutableKind, ProductId},
 };
@@ -47,7 +47,7 @@ pub enum WorkerSource {
 pub struct CliWorkerHost {
 	/// Where each product's worker script comes from.
 	scripts: HashMap<ProductId, WorkerSource>,
-	runtime: Weak<SigningHostRuntime>,
+	runtime: Weak<HostRuntime<SigningHost>>,
 	/// Where worker output goes when the host runs a terminal UI.
 	ui: Option<UiHandle>,
 	transcript: Arc<Transcript>,
@@ -64,7 +64,7 @@ impl CliWorkerHost {
 	/// Run the workers in `scripts` on `runtime`'s demand. Must be called
 	/// inside the Tokio runtime the workers are to run on.
 	pub fn install(
-		runtime: &Arc<SigningHostRuntime>,
+		runtime: &Arc<HostRuntime<SigningHost>>,
 		scripts: HashMap<ProductId, WorkerSource>,
 		ui: Option<UiHandle>,
 		transcript: Arc<Transcript>,
@@ -143,7 +143,7 @@ impl WorkerController for CliWorkerHost {
 
 /// One launch of a product's worker, and the table it is live in.
 struct Launch {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	product_id: ProductId,
 	launch: u64,
 	launches: Arc<WorkerLaunchTable>,
@@ -213,7 +213,7 @@ async fn script_of(
 /// `script` against it, sandboxed to `archive` when it is published.
 /// Dropping the future kills the script.
 async fn run(
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	product_id: &ProductId,
 	(script, archive): (PathBuf, Option<PathBuf>),
 	ui: Option<UiHandle>,
