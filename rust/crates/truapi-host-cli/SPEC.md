@@ -291,6 +291,7 @@ Commands:
 | `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
 | `network-check` | Resolve the network and print its routing as JSON, without contacting a chain. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
+| `materials` | Resolve a card face's materials as a phone would (section 6.8). |
 
 ### 4.1 Global logging option
 
@@ -592,6 +593,31 @@ current time in seconds. The state file is written before the descriptor, and
 both writes are atomic. Keep it outside anything a wipe deletes.
 
 Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
+
+### 6.8 Top-level `materials`
+
+```sh
+truapi-host materials resolve <face.json> [--materials <dir>] [--metal] [--out <dir>] [--base-path <dir>]
+```
+
+`materials resolve` reads a card face as the generated client writes a renderer
+tree and prints what its `Materials` nodes resolve to, with the same core a
+phone uses: one `materials:` block each time that changes, with one line per node
+(`node <n>: loading`, `node <n>: ready, 1 layer`, `node <n>: ready, <k> layers`
+or `node <n>: plain, <reason>`). It exits once no node is loading. A material Bulletin does not
+answer within 30 seconds draws plain as `NotFound`.
+
+| Option | Behavior |
+| --- | --- |
+| `--materials <dir>` | Keeps each file in `<dir>` first, as a fetch from Bulletin would, printing `kept <file> 0x<id>` or `refused <file>: <reason>`. A file the database cannot save stops the command with an error. A face naming only kept materials resolves without Bulletin. |
+| `--metal` | Builds Metal shaders, as iOS draws, instead of GLSL ES 3.00, as Android does. |
+| `--out <dir>` | Writes each ready layer's shaders as `node<n>-layer<k>.vert` and `.frag` (or `.vertex.metal` and `.fragment.metal`), and what feeds them (uniform blocks, uniforms, textures) as `node<n>-layer<k>.txt`. |
+
+The face is resolved on a Pocket card, the only surface that draws materials in
+this release, with shaders that filter 32-bit float images themselves. Kept
+materials live in their own core database under
+`<base-path>/v2/<network>/materials`, apart from every signing host's, so a
+later run draws them without the files or Bulletin.
 
 ## 7. Product identifiers and switching
 
@@ -2073,16 +2099,21 @@ Deliberately unavailable methods:
 - the product-initiated `Renderer/action_subscribe`, because
   `renderer_access_for` grants product Renderer access only to a `Worker`
   execution and these reports run the CLI as `App`; the host-initiated
-  `Renderer` render subscription is also unused because the CLI draws no
-  product-rendered bodies;
-- the product-initiated `Renderer/failure_subscribe`, which no host serves yet;
+  `Renderer` render subscription opens only on a signing host serving Pocket,
+  which these reports do not run;
+- the product-initiated `Renderer/failure_subscribe`, which reports only on the
+  Pocket cards a `Worker` execution draws, so these reports never hear from it;
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
 A successful `System/feature_supported` call returns `true` for the People,
 Bulletin and Asset Hub genesis hashes of the host's stack, the chains
-`Chain/get_chain_info` answers for, and `false` for anything else. A materials question returns `false`, answered
-by the core. Success means the method is wired, not that every feature is present.
+`Chain/get_chain_info` answers for, and `false` for anything else. A materials
+question returns `false` here: only a signing host serving Pocket
+(`--execution-kind worker` with `TRUAPI_POCKET_CARDS`) answers `true`, because
+it resolves the materials of every face its Worker renders as a phone does. The
+core answers it. Success means the method is wired, not that every feature is
+present.
 
 ### 15.2 Platform-specific semantics
 
