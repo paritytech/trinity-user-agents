@@ -82,18 +82,15 @@ type ContactsPicker =
 	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
-#[cfg(test)]
-use pairing_host::PairingHost;
-pub use pairing_host::PairingHost as PairingHostRole;
+pub use pairing_host::PairingHost;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -337,6 +334,18 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 	AuthorityError::Cancelled(AuthorityCancelError::new(cx.request_id(), reason))
 }
 
+/// The accounts and session that a host shares with its product connections.
+pub trait HostRole {
+	/// Holder used for product account requests.
+	type Holder: AccountHolder;
+
+	/// Account policy and grants for this host.
+	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>>;
+
+	/// Session used for product login, identity and disconnection.
+	fn host_session(self: &Arc<Self>) -> Arc<dyn HostSession>;
+}
+
 /// Product adapter for the generated TrUAPI dispatcher.
 pub struct ProductRuntimeHost<H: AccountHolder> {
 	connection: Arc<ProductConnection>,
@@ -367,6 +376,10 @@ pub trait ProductRuntimeAdmin: truapi::api::TrUApi {
 		product_id: &ProductId,
 		timeout: Duration,
 	) -> Result<Option<[u8; 32]>, AuthorityError>;
+
+	/// This device's X25519 encryption secret, as the connection's account
+	/// holder keeps it.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError>;
 }
 
 #[async_trait::async_trait]
@@ -395,6 +408,10 @@ impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
 		timeout: Duration,
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
 		self.accounts.product_subtree_public_key_within(product_id, timeout).await
+	}
+
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.accounts.device_encryption_secret().await
 	}
 }
 
@@ -1156,20 +1173,31 @@ pub(crate) fn forget_chain_failures() {
 	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }
 
-/// Host-UI projection of an active session for `AuthState::Connected`.
-fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
+/// Host-UI projection of an active session for `AuthState::Connected`, with
+/// the public half of the device encryption key the session's account holder
+/// serves.
+fn connected_session_ui_info(
+	session: &SessionInfo,
+	device_enc_public_key: Option<[u8; 32]>,
+) -> SessionUiInfo {
 	SessionUiInfo {
 		public_key: session.public_key,
 		identity_account_id: session.identity_account_id,
 		chat_public_key: session
 			.identity_chat_private_key
 			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
-		device_enc_public_key: session.device_enc_public_key,
+		peer_device_enc_public_key: session.peer_device_enc_public_key,
 		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
 		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
+		device_enc_public_key,
 		lite_username: session.lite_username.clone(),
 		full_username: session.full_username.clone(),
 	}
+}
+
+/// Public half of a device encryption secret, as `SessionUiInfo` names it.
+fn device_enc_public_key(secret: [u8; 32]) -> [u8; 32] {
+	X25519PrivateKey::from(secret).public_key().0
 }
 
 const MAX_VRF_TRANSCRIPT_ITEMS: usize = 32;
