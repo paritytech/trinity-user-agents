@@ -147,9 +147,10 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core stored a newer copy that changes a chain, the network, the TLD
-   * or the generation. It runs that copy from its next
-   * start, so build the runtime again to follow it.
+   * The core stored a newer copy that changes a chain, the network or the
+   * generation. It runs that copy from its next start, so build the runtime
+   * again to follow it. A copy that names another TLD than the bundled
+   * descriptor never sets it: the core refuses that copy.
    */
   restartRequired: boolean;
   /** The last finished fetch. Not set before the first one. */

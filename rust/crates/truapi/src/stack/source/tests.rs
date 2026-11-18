@@ -344,6 +344,84 @@ fn a_stored_copy_the_core_cannot_run_is_ignored() {
 	assert!(source.due_fetch(START).is_some(), "the bundled copy is due at once");
 }
 
+/// The published copy `descriptor`, moved to the `testnet` TLD.
+fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["tld"] = "testnet".into();
+	descriptor
+}
+
+fn refused_for_its_tld() -> Option<StackRefreshOutcome> {
+	Some(StackRefreshOutcome::Refused {
+		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+	})
+}
+
+/// Accounts derive under the TLD, so a descriptor signed with a stolen key
+/// must not move a stack to another one. The copy is refused on every fetch
+/// and never stored, and the core keeps the copy it holds.
+#[test]
+fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let held = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let moved = on_testnet(published_test_descriptor(3, "first", TEST_STACK_PEOPLE));
+	let held_record = serve(&mut source, &held, START);
+
+	let refusals = [START + 3600, START + 7200].map(|now| {
+		(serve(&mut source, &moved, now), source.status(), source.stack().tld() == "paseo")
+	});
+
+	let refused = (None, status(&held, refused_for_its_tld()), true);
+	assert_eq!((held_record.is_some(), refusals), (true, [refused.clone(), refused]));
+}
+
+/// The reader judges every fetch against the copy it holds. A copy refused
+/// for its TLD must not become that copy, or the operator's corrected
+/// descriptor at the same `sequence` would be turned away as a conflict.
+#[test]
+fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+
+	let refused = serve(&mut source, &on_testnet(corrected.clone()), START);
+	let record = serve(&mut source, &corrected, START + 3600);
+
+	assert_eq!(
+		(refused, record.is_some(), source.status()),
+		(None, true, status(&corrected, Some(StackRefreshOutcome::Current)))
+	);
+}
+
+/// A record may hold a copy on another TLD than the build bundles: one a core
+/// stored before it held copies to the bundled TLD, or one from before an app
+/// update moved the stack. The bundled copy starts the host, and the
+/// published copy the record came from is refused when it is fetched again.
+#[test]
+fn a_stored_copy_on_another_tld_is_ignored() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let (link, _) = sign_test_descriptor(&bundled);
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	let moved = on_testnet(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
+	let mut reader = StackReader::new(Refresh::Never);
+	let record = reader
+		.fetched(&pointer, Served::Document { bytes: &signed(&moved), etag: None }, START)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored");
+
+	let mut source = load(&bundled, Some(&record));
+	let at_start = (source.stack().tld().to_string(), source.status());
+	let fetched = serve(&mut source, &moved, START);
+
+	assert_eq!(
+		(at_start, fetched, source.status()),
+		(
+			("paseo".to_string(), status(&bundled, None)),
+			None,
+			status(&bundled, refused_for_its_tld())
+		)
+	);
+}
+
 /// The descriptor's server sees one request an hour from each core, and a
 /// host can still ask for one sooner.
 #[test]

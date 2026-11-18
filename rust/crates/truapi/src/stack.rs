@@ -5,9 +5,11 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy. The [`Stack`] it resolves holds the network, the dotNS TLD
-//! and each chain's genesis hash, and answers `get_chain_info`.
+//! the same policy, and a stored or fetched copy that names another TLD than
+//! the bundled one is refused. The [`Stack`] it resolves holds the network,
+//! the dotNS TLD and each chain's genesis hash, and answers `get_chain_info`.
 
+mod pinned;
 mod records;
 mod refresh;
 mod source;
@@ -215,6 +217,13 @@ pub enum StackError {
 	ReservedGenesis {
 		/// The reserved genesis hash.
 		genesis_hash: [u8; 32],
+	},
+	/// A copy the core stored or fetched changes a field the bundled copy
+	/// pins.
+	#[display("stack descriptor changes {field}, which the bundled copy pins")]
+	PinnedFieldChanged {
+		/// The field that differs, as the descriptor spells it.
+		field: &'static str,
 	},
 }
 

@@ -7,6 +7,7 @@ use std::{
 	time::Instant,
 };
 
+use trinity_stack::{Descriptor, Refresh, Served, StackReader};
 use truapi::latest::GenericError;
 
 use super::*;
@@ -277,6 +278,107 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 			(Some(StackRefreshOutcome::NotStored { reason: "disk full".to_string() }), false),
 			(Some(StackRefreshOutcome::Current), true),
 		]
+	);
+}
+
+/// The published copy at `sequence`, moved to the `testnet` TLD.
+fn on_testnet(sequence: u32) -> serde_json::Value {
+	let mut descriptor = published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE);
+	descriptor["tld"] = "testnet".into();
+	descriptor
+}
+
+/// What the host is told while the core runs the bundled copy.
+fn bundled_status(last_refresh: Option<StackRefreshOutcome>) -> StackStatus {
+	let bundled: Descriptor =
+		serde_json::from_value(published_test_descriptor(1, "first", TEST_STACK_PEOPLE))
+			.expect("test descriptor is valid");
+	StackStatus {
+		descriptor: serde_json::to_string(&bundled).expect("a descriptor always serialises"),
+		generation: "first".to_string(),
+		stale: false,
+		expired: false,
+		restart_required: false,
+		last_refresh,
+	}
+}
+
+fn refused_for_its_tld() -> Option<StackRefreshOutcome> {
+	Some(StackRefreshOutcome::Refused {
+		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+	})
+}
+
+/// A descriptor signed with a stolen key must not move a stack to another
+/// TLD. The copy never reaches the store, so the host is told it was refused
+/// even while the disk is full, and the next start runs the same stack.
+#[test]
+fn a_fetched_copy_on_another_tld_is_refused_without_a_write() {
+	let records = Arc::<MemoryRecords>::default();
+	records.disk_full.store(true, Ordering::SeqCst);
+	let started = start(records.clone(), vec![published(&on_testnet(2))]);
+
+	let at_start = started.next_status();
+	let after_fetch = started.next_status();
+	records.disk_full.store(false, Ordering::SeqCst);
+	let restarted = load(records.clone(), Arc::default(), manual_clock());
+
+	assert_eq!(
+		(
+			[at_start, after_fetch, restarted.status()],
+			[started.refresh.stack().tld(), restarted.stack().tld()],
+			records.records.lock().expect("records mutex poisoned").len(),
+		),
+		(
+			[bundled_status(None), bundled_status(refused_for_its_tld()), bundled_status(None)],
+			["paseo", "paseo"],
+			0
+		)
+	);
+}
+
+/// A record written before the core held copies to the bundled TLD may name
+/// another one. The host starts on the bundled copy and the record stays as
+/// it is, until a copy the core takes replaces it.
+#[test]
+fn a_stored_copy_on_another_tld_is_ignored_and_left_in_place() {
+	let (link, _) = sign_test_descriptor(&on_testnet(2));
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	let moved = Served::Document { bytes: &sign_test_descriptor(&on_testnet(2)).1, etag: None };
+	let record = StackReader::new(Refresh::Never)
+		.fetched(&pointer, moved, 0)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored");
+	let records = Arc::<MemoryRecords>::default();
+	let stored = || records.records.lock().expect("records mutex poisoned").clone();
+	records
+		.records
+		.lock()
+		.expect("records mutex poisoned")
+		.insert(pointer.stack_id(), record.clone());
+	let corrected = published_test_descriptor(3, "first", TEST_STACK_PEOPLE);
+	let started = start(records.clone(), vec![published(&on_testnet(2)), published(&corrected)]);
+
+	let at_start = started.next_status();
+	let after_fetch = started.next_status();
+	let left_in_place = stored();
+	started.refresh.refresh_now();
+	let once_corrected = started.next_status();
+
+	assert_eq!(
+		(
+			[at_start, after_fetch],
+			left_in_place,
+			once_corrected.last_refresh,
+			stored() == HashMap::from([(pointer.stack_id(), record.clone())]),
+		),
+		(
+			[bundled_status(None), bundled_status(refused_for_its_tld())],
+			HashMap::from([(pointer.stack_id(), record)]),
+			Some(StackRefreshOutcome::Current),
+			false
+		)
 	);
 }
 
