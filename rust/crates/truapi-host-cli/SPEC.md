@@ -956,7 +956,9 @@ bootstrap tag.
 
 The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_TRANSPORT__`, and
 the legacy `__HOST_API_PORT__` adapter over that same connection. Published Product
-SDK imports discover the host automatically.
+SDK imports discover the host automatically. The injected transport serves one
+client, so a script that imports an SDK built on it takes the connection over
+from the `truapi` global.
 
 Scripts retain Bun/Node filesystem, environment, subprocess and module imports.
 Native networking APIs can bypass the web API wrappers; this is not

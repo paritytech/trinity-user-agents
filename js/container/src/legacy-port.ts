@@ -37,8 +37,6 @@ export interface LegacyPort {
   connected(): void;
   /** End every call and stream the product has open; none of them survives. */
   lost(): void;
-  /** Close the port for good. */
-  close(): void;
 }
 
 type Address = Pick<ProtocolMessage["payload"], "traitId" | "methodId">;
@@ -125,17 +123,13 @@ export function createLegacyPort(link: LegacyPortLink): LegacyPort {
       host.postMessage(frame);
     },
     connected() {
-      for (const frame of waiting.splice(0))
-        if (!link.send(frame)) waiting.push(frame);
+      for (const frame of waiting.splice(0)) link.send(frame);
     },
     lost() {
       waiting.length = 0;
       end(calls, MESSAGE_TYPE_RESPONSE, LOST);
       end(streams, MESSAGE_TYPE_INTERRUPT, LOST);
       end(hostStreams, MESSAGE_TYPE_STOP, STOPPED);
-    },
-    close() {
-      host.close();
     },
   };
 }

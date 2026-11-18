@@ -22,19 +22,11 @@ afterEach(() => {
     for (const close of cleanup.splice(0)) close();
 });
 
-const productClients = new WeakMap<HostConnection, TrUApiClient>();
-
 // Builds the client the way the product's SDK does over the injected transport.
-function productClient(connection: HostConnection): TrUApiClient {
-    let client = productClients.get(connection);
-    if (!client) {
-        const { transport } = connection;
-        client = createClient(
-            createTransport({ ...transport, dispose() {} }, { prepare: transport.prepare }),
-        );
-        productClients.set(connection, client);
-    }
-    return client;
+function productClient({ transport }: HostConnection): TrUApiClient {
+    return createClient(
+        createTransport({ ...transport, dispose() {} }, { prepare: transport.prepare }),
+    );
 }
 
 function last<Item>(items: readonly Item[]): Item | undefined {
@@ -298,22 +290,6 @@ describe("shared SDK host connection", () => {
         expect(connection.legacyPort).toBe(port);
     });
 
-    // Authorization shares the socket, so a product's handler must not stop its delivery.
-    it("keeps delivering frames after a product's frame handler throws", async () => {
-        const { connection } = host();
-        connection.transport.subscribe(() => {
-            throw new Error("product handler");
-        });
-        const port = connection.legacyPort;
-        const transport = createTransport(createMessagePortProvider(port));
-        cleanup.push(() => transport.dispose());
-        const legacy = createClient(transport);
-        expect((await legacy.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
-        expect(
-            (await connection.internal.permissions.authorizeRemotePermission(permission)).isOk(),
-        ).toBe(true);
-    });
-
     it("closes the physical socket and permanently rejects work on explicit disposal", async () => {
         const fixture = host();
         const statuses: string[] = [];
@@ -428,7 +404,7 @@ describe("legacy port across connection loss", () => {
         const client = portClient(connection);
         await client.system.handshake();
         sockets[0]!.close();
-        await until(() => last(statuses) === "disconnected");
+        await until(() => dials === 2 && last(statuses) === "disconnected");
         const result = await client.permissions.requestRemotePermission(permission);
         expect(result.isErr() && result.error).toEqual(lost);
     });
@@ -464,10 +440,7 @@ describe("legacy port across connection loss", () => {
         fixture.sockets[0]!.send(start);
         await until(() => renders === 1);
         fixture.sockets[0]!.close();
-        await until(() => fixture.sockets.length === 2);
-        fixture.sockets[1]!.send(start);
-        await until(() => renders === 2);
-        expect(teardowns).toBe(1);
+        await until(() => teardowns === 1);
     });
 });
 

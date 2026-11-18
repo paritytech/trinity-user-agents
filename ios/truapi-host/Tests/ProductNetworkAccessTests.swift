@@ -196,14 +196,14 @@ struct ProductNetworkAccessTests {
     }
 
     /// The SDK a product would ship, built from `js/container/src/test-sdk.ts`.
-private func productSdk() throws -> String {
-    let bundle = Bundle(for: ProductPageReady.self)
-    return try String(
-        contentsOf: #require(bundle.url(forResource: "truapi-test-sdk", withExtension: "js")), encoding: .utf8
-    )
-}
+    private func productSdk() throws -> String {
+        let bundle = Bundle(for: ProductPageReady.self)
+        return try String(
+            contentsOf: #require(bundle.url(forResource: "truapi-test-sdk", withExtension: "js")), encoding: .utf8
+        )
+    }
 
-private func fetch(_ webView: WKWebView, _ url: URL) async throws -> String {
+    private func fetch(_ webView: WKWebView, _ url: URL) async throws -> String {
         try await withNetworkTestTimeout("fetch \(url.absoluteString)") {
             try await webView.callAsyncJavaScript(
                 "try { const response = await fetch(url); return await response.text(); } catch { return 'denied'; }",

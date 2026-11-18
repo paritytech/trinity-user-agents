@@ -21,9 +21,9 @@ export interface HostConnection {
   readonly transport: HostTransport;
   /** Private generated authorization methods on the same transport. */
   readonly internal: InternalTrUApiClient;
-  /** Startup compatibility for SDKs predating the injected client. */
+  /** Frame channel for SDKs that predate the injected transport. */
   readonly legacyPort: MessagePort;
-  /** Observe connection readiness without replacing the client. */
+  /** Observe the connection's status, starting with the current one. */
   subscribeConnectionStatus(
     callback: (status: ConnectionStatus) => void,
   ): () => void;
@@ -43,7 +43,7 @@ interface Connection {
 const VISIBLE_RETRY_DELAYS_MS = [250, 1_000, 4_000];
 
 /**
- * Creates a client that fails the operations a lost connection carried and
+ * Creates a connection that fails the operations a lost connection carried and
  * sends the ones still waiting on its replacement.
  */
 export function createHostConnection(
@@ -129,11 +129,7 @@ export function createHostConnection(
       const decoded = decodeWireMessage(frame);
       if (decoded.isErr()) return retire(connection, decoded.error);
       if (decoded.value.requestId.startsWith("host:")) return receive?.(frame);
-      try {
-        productReceive?.(frame);
-      } catch {
-        /* A product's handler cannot stop the host's delivery. */
-      }
+      productReceive?.(frame);
       legacy?.receive(frame, decoded.value);
     });
     provider.subscribeClose?.((error) => retire(connection, error));
@@ -167,7 +163,9 @@ export function createHostConnection(
     try {
       void ready(open()).catch(() => {});
     } catch {
-      /* A later call can try again. */
+      // A later call can try again, but nothing will carry the frames
+      // waiting on the port.
+      legacy?.lost();
     }
   }
 
@@ -183,7 +181,6 @@ export function createHostConnection(
     page?.removeEventListener("visibilitychange", onVisibilityChange);
     stopped = true;
     if (current) retire(current);
-    legacy?.close();
   }
 
   function prepare(ids: MethodIds): Promise<void> {
@@ -208,11 +205,7 @@ export function createHostConnection(
         // A call made ready on a connection that retired before its frame was
         // written has nowhere to go, so it fails now instead of at its deadline.
         if (!connection) return reset?.(new ConnectionResetError());
-        try {
-          connection.provider.postMessage(frame);
-        } catch (error) {
-          retire(connection, error);
-        }
+        write(connection, frame);
       },
       subscribe(callback) {
         receive = callback;
@@ -239,25 +232,19 @@ export function createHostConnection(
   const client = createClient(transport);
   const handshake = client.system.handshake.bind(client.system);
 
-  const portLink = {
-    send(frame: Uint8Array): boolean {
-      const connection = current;
-      if (!connection?.verified) return false;
-      try {
-        connection.provider.postMessage(frame);
-      } catch (error) {
-        retire(connection, error);
-      }
-      return true;
-    },
-    dial(): void {
-      try {
-        void ready(open()).catch(() => {});
-      } catch {
-        legacy?.lost();
-      }
-    },
-  };
+  function write(connection: Connection, frame: Uint8Array): void {
+    try {
+      connection.provider.postMessage(frame);
+    } catch (error) {
+      retire(connection, error);
+    }
+  }
+
+  function sendFromPort(frame: Uint8Array): boolean {
+    if (!current?.verified) return false;
+    write(current, frame);
+    return true;
+  }
 
   function subscribeConnectionStatus(
     callback: (status: ConnectionStatus) => void,
@@ -271,17 +258,15 @@ export function createHostConnection(
 
   return {
     transport: {
-      postMessage(frame) {
+      postMessage(product) {
+        // A copy, so the bytes checked are the bytes sent whatever the
+        // product put on its own object.
+        const frame = new Uint8Array(product);
         const decoded = decodeWireMessage(frame);
         if (decoded.isErr() || decoded.value.requestId.startsWith("host:"))
           return;
-        const connection = current;
-        if (!connection) return productReset?.(new ConnectionResetError());
-        try {
-          connection.provider.postMessage(frame);
-        } catch (error) {
-          retire(connection, error);
-        }
+        if (!current) return productReset?.(new ConnectionResetError());
+        write(current, frame);
       },
       subscribe(callback) {
         productReceive = callback;
@@ -302,8 +287,8 @@ export function createHostConnection(
     internal: createInternalClient(transport),
     get legacyPort() {
       if (!legacy) {
-        legacy = createLegacyPort(portLink);
-        portLink.dial();
+        legacy = createLegacyPort({ send: sendFromPort, dial: activate });
+        activate();
       }
       return legacy.port;
     },

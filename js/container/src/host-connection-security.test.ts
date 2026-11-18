@@ -219,10 +219,9 @@ describe('shared connection permission isolation', () => {
       };
     `],
     ['the injected transport', `
-      const transport = window.__HOST_API_TRANSPORT__;
-      transport.subscribe(frame => { if (frame instanceof Uint8Array) frame[frame.length - 1] = 1; });
-      transport.postMessage = () => {};
-      transport.subscribe = () => () => {};
+      window.__HOST_API_TRANSPORT__.subscribe(frame => {
+        if (frame instanceof Uint8Array) frame[frame.length - 1] = 1;
+      });
     `],
   ]) {
     it(`cannot make native fetch run after a denied reply through ${name}`, async () => {
@@ -357,6 +356,7 @@ describe('shared connection permission isolation', () => {
       (() => {
         'use strict';
         window.__HOST_API_PORT__ = { postMessage() { throw new Error('replacement port'); } };
+        window.__HOST_API_TRANSPORT__ = { postMessage() { throw new Error('replacement transport'); } };
         window.__HOST_WEBVIEW_MARK__ = false;
       })();
     `, host.context);
@@ -439,6 +439,11 @@ describe('shared connection permission isolation', () => {
     const post = (bytes: Uint8Array) => transport.postMessage(ProductBytes.from(bytes));
     for (let messageType = 0; messageType <= 4; messageType++) post(frame(`host:forged:${messageType}`, messageType));
     for (const malformed of [new Uint8Array(), Uint8Array.of(1), Uint8Array.of(252)]) post(malformed);
+    // A product owns the object it passes, and can make it read as another frame.
+    const disguised = ProductBytes.from(frame('host:forgery'));
+    const decoy = ProductBytes.from(frame('p:legitimate'));
+    Object.defineProperty(disguised, 'subarray', { value: (...range: number[]) => decoy.subarray(...range) });
+    transport.postMessage(disguised);
     post(frame('p:allowed'));
     await until(() => socket.sent.some(request => request.requestId === 'p:allowed'));
     expect(socket.sent.map(request => request.requestId)).toEqual(['host:1', 'p:allowed']);

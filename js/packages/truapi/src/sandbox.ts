@@ -39,7 +39,11 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 export interface HostTransport {
   /** Send one encoded frame to the host. */
   postMessage(frame: Uint8Array): void;
-  /** Receive the frames addressed to the product. Subscribing opens the connection. */
+  /**
+   * Receive the frames addressed to the product. Subscribing opens the
+   * connection. The channel serves one client: a later subscriber replaces
+   * the earlier one.
+   */
   subscribe(callback: (frame: Uint8Array) => void): () => void;
   /** Learn that the connection was replaced, losing the work the host may have started. */
   subscribeReset(callback: (error: Error) => void): () => void;
@@ -347,10 +351,13 @@ function createInjectedClient(host: HostTransport): TrUApiClient {
         dispose() {},
       },
       {
-        prepare: (ids) =>
-          host.prepare(ids).catch((cause: unknown) => {
+        prepare: async (ids) => {
+          try {
+            await host.prepare(ids);
+          } catch (cause) {
             throw new ConnectionResetError({ cause });
-          }),
+          }
+        },
       },
     ),
   );

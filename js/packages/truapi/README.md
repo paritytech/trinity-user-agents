@@ -143,8 +143,8 @@ const unsubscribe = subscribeConnectionStatus((status) => {
 | `subscribeConnectionStatus(cb): () => void` | Connected / disconnected status listener.       |
 | `connectWebSocketHost(url): TrUApiClient`   | Use a host that serves frames over a WebSocket. |
 
-Native and CLI browser hosts inject a shared SDK client. Keep the client
-returned by `getClientSync()`:
+Native and CLI browser hosts inject a frame channel, and the SDK builds its
+client over it. Keep the client returned by `getClientSync()`:
 it remains usable when the host replaces a disconnected connection. A request or
 subscription whose frame reached the host fails: the request rejects with
 `ConnectionResetError` and the subscription ends with that error as its cause. A

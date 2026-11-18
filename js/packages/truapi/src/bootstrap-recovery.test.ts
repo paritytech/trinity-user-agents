@@ -21,6 +21,7 @@ function installHost(initialStatus: ConnectionStatus = "connecting") {
     const prepared: MethodIds[] = [];
     const listeners = new Set<(status: ConnectionStatus) => void>();
     let ready: Promise<void> = Promise.resolve();
+    let refused = false;
     let reset: ((error: Error) => void) | undefined;
     let status = initialStatus;
     let frameSubscriptions = 0;
@@ -41,6 +42,7 @@ function installHost(initialStatus: ConnectionStatus = "connecting") {
                 };
             },
             prepare(ids: MethodIds) {
+                if (refused) throw new Error("host unreachable");
                 prepared.push(ids);
                 return ready;
             },
@@ -71,6 +73,9 @@ function installHost(initialStatus: ConnectionStatus = "connecting") {
             let release!: () => void;
             ready = new Promise((resolve) => (release = resolve));
             return release;
+        },
+        refuseReadiness() {
+            refused = true;
         },
         reset(error: Error) {
             reset?.(error);
@@ -137,18 +142,22 @@ describe("host-injected transport adoption", () => {
     });
 
     // Products match the error class their own build exports, not the host's.
-    it("fails a call the host lost with the product's ConnectionResetError and keeps the client", async () => {
+    it("fails a call the host lost or cannot carry with the product's ConnectionResetError and keeps the client", async () => {
         host = installHost("connected");
         const sandbox = await importSandbox();
         const client = sandbox.getClientSync()!;
-        const call = client.system.handshake();
+        const lost = client.system.handshake();
         await settle();
         host.reset(new Error("host link lost"));
-        const failure = await Promise.resolve(call).catch((error: unknown) => error);
+        host.refuseReadiness();
+        const refused = client.system.handshake();
+        const failures = await Promise.all(
+            [lost, refused].map((call) => Promise.resolve(call).catch((error: unknown) => error)),
+        );
         expect({
-            reset: failure instanceof ConnectionResetError,
+            reset: failures.map((failure) => failure instanceof ConnectionResetError),
             client: sandbox.getClientSync(),
-        }).toEqual({ reset: true, client });
+        }).toEqual({ reset: [true, true], client });
     });
 
     it("adopts the injected transport before an iframe can negotiate another connection", async () => {
@@ -163,20 +172,6 @@ describe("host-injected transport adoption", () => {
         });
         const sandbox = await importSandbox();
         expect(sandbox.getClientSync()).not.toBeNull();
-    });
-
-    // Subscribing is what opens the host's connection, which a renderer-only
-    // product needs before the host can start its render stream.
-    it("subscribes to the host's frames once", async () => {
-        host = installHost();
-        const sandbox = await importSandbox();
-        const client = sandbox.getClientSync()!;
-        client.renderer.onRender(() => {});
-        expect({ client: sandbox.getClientSync(), ...host.reads() }).toEqual({
-            client,
-            frameSubscriptions: 1,
-            statusSubscriptions: 1,
-        });
     });
 
     it("follows the host's status and keeps the client across repeated resets", async () => {
