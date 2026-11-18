@@ -10,8 +10,8 @@ use subxt::{Metadata, utils::H256};
 use super::{
 	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
 	ledger::{
-		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
-		snapshot,
+		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation,
+		observe, snapshot,
 	},
 	operation::OpKey,
 	params::{InstanceRecord, validate},
@@ -24,7 +24,7 @@ use crate::{
 		VerdictFailureKind,
 	},
 	installation::InstallationId,
-	store::Db,
+	store::{Db, DbError},
 };
 
 /// Metadata of the Paseo Next People chain, which runs the coinage pallet.
@@ -47,7 +47,6 @@ pub fn chain_config() -> ChainConfig {
 		ring_lifetime: Duration::from_secs(90 * 24 * 3600),
 		ring_page_size: 255,
 		token_grace: Duration::from_secs(3600),
-		unload_allowance: 20,
 		external_minimum_balance: 1,
 		block_time: Duration::from_secs(6),
 		rescue_margin: Duration::from_secs(7 * 24 * 3600),
@@ -127,12 +126,13 @@ pub struct TestWallet {
 }
 
 impl TestWallet {
-	/// A wallet with the given policy.
+	/// A wallet with the given policy, whose chain allows 20 free unload
+	/// tokens a period.
 	pub fn new(policy: PrivacyPolicy) -> Self {
 		let db = crate::store::open_memory_core_db();
 		block_on(db.write(move |tx| {
 			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.expect("a fresh store");
-			Ok(())
+			observe_allowance(tx, 20)
 		}))
 		.expect("the installation is minted");
 		Self { db }
@@ -208,4 +208,14 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 		Ok(())
 	}))
 	.expect("the status is written");
+}
+
+/// Stores `allowance` as the free unload tokens of one period, read at
+/// block 1, as a wallet whose chain has been observed holds it.
+pub fn observe_allowance(tx: &rusqlite::Transaction<'_>, allowance: u32) -> Result<(), DbError> {
+	let facts = Facts {
+		at: BlockRef { number: 1, hash: [1; 32] },
+		reads: vec![(Subject::UnloadAllowance, Read::UnloadAllowance(allowance))],
+	};
+	ledger::observe(tx, &facts, 0, 255)
 }
