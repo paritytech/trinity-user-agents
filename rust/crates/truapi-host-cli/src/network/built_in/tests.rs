@@ -49,17 +49,56 @@ fn test_built_in_runnable_check() {
 }
 
 /// A built-in's copy runs on either chain backend, so one without a light
-/// spec is not written: every light-client command would fail on it.
+/// spec is not written: every light-client command would fail on it. Any
+/// other stack may run over RPC only, so it is bundled without one.
 #[test]
 fn test_built_in_runnable_check_on_the_light_client() {
 	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
+	let url = paseo.url();
 	for role in ["Relay", "People", "AssetHub", "Bulletin"] {
 		let without_spec = super::super::testing::edit_chain(role, |chain| {
 			chain.as_object_mut().unwrap().remove("lightSpec");
 		});
 		let error = ensure_built_in_runnable(&paseo, &without_spec).unwrap_err();
-		assert!(error.to_string().contains(&format!("no lightSpec for {role}")), "{error}");
+		assert_eq!(
+			error.to_string(),
+			format!(
+				"{url} is a built-in network's stack the CLI cannot run on the light client: its \
+				 descriptor names no lightSpec for {role}"
+			)
+		);
+		ensure_built_in_runnable(&POLKADOT_REFERENCE_STACK.pointer(), &without_spec)
+			.expect("a stack other than a built-in network checked for its light specs");
 	}
+}
+
+/// `stack bundle` refuses a built-in's copy by this check and a light-client
+/// command refuses it by `Stack::new`, each with its own list of the chains
+/// that need a light spec. They agree for every chain of every built-in, so
+/// no copy is written that a light-client command refuses, and none is
+/// refused that would run.
+#[test]
+fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
+	let light_client = test_access(ChainBackend::LightClient);
+	let mut refused_by_check = Vec::new();
+	let mut refused_by_light_client = Vec::new();
+	for network in Network::value_variants() {
+		let built_in = network.built_in_stack();
+		let bundled = built_in.open_bundled();
+		for (index, chain) in bundled.chains.iter().enumerate() {
+			let mut document = serde_json::to_value(&bundled).expect("descriptor not JSON");
+			let edited = document["chains"][index].as_object_mut().expect("a chain is an object");
+			edited.remove("lightSpec");
+			let without_spec = Descriptor::from_json(document).expect("invalid edited descriptor");
+
+			let refused = ensure_built_in_runnable(&built_in.pointer(), &without_spec).is_err();
+			refused_by_check.push((*network, chain.role.clone(), refused));
+			let refused = Stack::new(without_spec, &light_client).is_err();
+			refused_by_light_client.push((*network, chain.role.clone(), refused));
+		}
+	}
+
+	assert_eq!(refused_by_check, refused_by_light_client);
 }
 
 /// A light client on a fresh state directory starts from the specs this build

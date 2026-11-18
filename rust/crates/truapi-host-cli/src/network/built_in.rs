@@ -86,10 +86,10 @@ pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> R
 		bail!("{url} is a built-in network's stack the CLI cannot run: {error}");
 	}
 	if let Some(chain) = light_client_chains(descriptor).find(|chain| chain.light_spec.is_none()) {
+		let role = &chain.role;
 		bail!(
 			"{url} is a built-in network's stack the CLI cannot run on the light client: its \
-			 descriptor names no lightSpec for {}",
-			chain.role
+			 descriptor names no lightSpec for {role}"
 		);
 	}
 	Ok(())
