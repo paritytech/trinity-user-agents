@@ -60,8 +60,13 @@ class MortalityConstructor @Inject constructor(
         val era = Era.getEraFromBlockPeriod(startBlockNumber, unmappedPeriod)
         val eraBlockNumber = ((startBlockNumber - era.phase) / era.period) * era.period + era.phase
 
-        val eraBlockHash = rpcCalls.getBlockHash(chainId, eraBlockNumber.toBlockNumber())
-            .fromHex().toDataByteArray()
+        // An era of up to 4096 blocks is not quantised, so it starts at the finalized block, whose hash is
+        // already known. A light client cannot look a block up by number except the genesis block.
+        val eraBlockHash = if (eraBlockNumber == startBlockNumber) {
+            finalizedHash()
+        } else {
+            rpcCalls.getBlockHash(chainId, eraBlockNumber.toBlockNumber())
+        }.fromHex().toDataByteArray()
 
         Mortality(era, eraBlockHash, eraBlockNumber.toLong())
     }

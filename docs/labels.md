@@ -82,16 +82,16 @@ A draft carries no status, and converting a pull request back to draft removes i
 
 ## size
 
-Set on every pull request from the lines it adds and removes, and kept current as it changes.
+Set on every pull request from the lines it adds and removes, and kept current as it changes. Size is for pull requests only: it measures how much there is to read, not how much work an issue is.
 
 | Label | Lines |
 | --- | --- |
-| `size:XS` | under 10 |
-| `size:S` | 10 to 29 |
-| `size:M` | 30 to 99 |
-| `size:L` | 100 to 499 |
-| `size:XL` | 500 to 999 |
-| `size:XXL` | 1000 or more |
+| `size:XS` | under 50 |
+| `size:S` | 50 to 199 |
+| `size:M` | 200 to 499 |
+| `size:L` | 500 to 999 |
+| `size:XL` | 1000 to 1999 |
+| `size:XXL` | 2000 or more |
 
 Lines a reviewer does not read are left out: anything `.gitattributes` marks `linguist-generated`, which GitHub also collapses in the diff, plus lockfiles, Room database schemas and Core Data models. Marking a new generated file there keeps it out of the count. A backport of a vendored host tree carries no size, because its line count says nothing about how much there is to review.
 

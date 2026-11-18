@@ -159,16 +159,29 @@ class DockletHideState internal constructor(
         if (!isShownAtRest) return
         quiet = true
         landingPending = true
+        hideAfterTwoFrames(from = 0f, spec = DockletSpring.Quiet)
+    }
+
+    fun tuck() = snapTo(hidden = true)
+
+    fun slideTuck() {
+        if (isHeld) return
+        if (targetHidden && !settling) return tuck()
+        val start = stopMotion()
+        landingPending = false
+        hideAfterTwoFrames(from = start, spec = DockletSpring.Move) { quiet = false }
+    }
+
+    private fun hideAfterTwoFrames(from: Float, spec: SpringSpec<Float>, onHidden: () -> Unit = {}) {
         targetHidden = true
         settling = true
         settleJob = scope.launch {
             withFrameNanos { }
             withFrameNanos { }
-            runSettle(from = 0f, to = 1f, velocity = 0f, spec = DockletSpring.Quiet)
+            runSettle(from = from, to = 1f, velocity = 0f, spec = spec)
+            onHidden()
         }
     }
-
-    fun tuck() = snapTo(hidden = true)
 
     fun untuck() = snapTo(hidden = false)
 
@@ -190,6 +203,10 @@ class DockletHideState internal constructor(
         val start = stopMotion()
         residualPose = DockletPose.Zero
         settle(from = start, to = 0f, velocity = 0f, spec = DockletSpring.Move)
+    }
+
+    fun undoQuietHide() {
+        if (quiet) restore()
     }
 
     fun peek() {
