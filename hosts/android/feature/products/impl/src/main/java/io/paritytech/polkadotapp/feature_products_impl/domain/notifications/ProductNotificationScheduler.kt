@@ -18,7 +18,6 @@ import kotlin.time.Instant
 interface ProductNotificationScheduler {
     suspend fun schedule(
         productId: ProductId,
-        title: String?,
         text: String,
         deeplink: String?,
         scheduledAt: Instant,
@@ -44,7 +43,6 @@ class RealProductNotificationScheduler @Inject constructor(
 
     override suspend fun schedule(
         productId: ProductId,
-        title: String?,
         text: String,
         deeplink: String?,
         scheduledAt: Instant,
@@ -63,7 +61,6 @@ class RealProductNotificationScheduler @Inject constructor(
         val scheduled = ScheduledProductNotification(
             productId = productId,
             notificationId = notificationId,
-            title = title,
             text = text,
             deeplink = deeplink,
             scheduledAt = scheduledAt,
