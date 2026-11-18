@@ -463,7 +463,20 @@ batched with profile writes or after one second. Avatar CIDs key the image cache
 only misses call `loadImage`.
 WASM resolves once without caching. A lookup requires the stack's Asset Hub.
 
-Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
+finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
+explicitly supply both resolution options.
+
+Android avatar views collect the profile stream for their composition's lifetime.
+Each distinct avatar becomes a Coil request whose data is the canonical
+`ImageReference.Bulletin`; metadata resolution runs independently of image loading.
+Conversation entry forces freshness, while list and search loads use ordinary freshness. All
+callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
+on disk and decoded variants in memory without an image freshness expiry. The
+displayed image remains visible during replacement, metadata errors or image errors; a profile
+without an avatar restores the letter tile. Changing the username or removing the
+view cancels observation and image loading. The shared Coil loader is installed
+before startup initializers.
 
 iOS contacts, search results and chat views consume
 `resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
@@ -604,7 +617,9 @@ The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from
 `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), which is what makes one
 card removable and one privileged, and records every removal it is asked for in
-the transcript named by `TRUAPI_POCKET_LOG`. The cases read that transcript, so
+the transcript named by `TRUAPI_POCKET_LOG`. As the product connects, the host
+renders each card, resolves the materials of every face, reports each fallback
+to the product and records each result in the same transcript. The cases read that transcript, so
 a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
@@ -875,7 +890,9 @@ when `main` has not moved past what their last successful run built. `android-de
 on every push to `main`, and answers what `main` does right now. It builds the
 pushed commit, the one that landed. A push rather than the pull request's merge
 event, because the Firebase identity is bound to `main`, and a pull request
-event's token never matches that binding.
+event's token never matches that binding. A manual run of either with
+`deliver` off builds and checks any branch without sending it to testers or
+publishing it.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that

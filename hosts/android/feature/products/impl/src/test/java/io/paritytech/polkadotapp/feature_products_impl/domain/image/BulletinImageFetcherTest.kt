@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.profile
+package io.paritytech.polkadotapp.feature_products_impl.domain.image
 
 import coil.ComponentRegistry
 import coil.ImageLoader
@@ -29,16 +29,15 @@ import org.junit.rules.TemporaryFolder
 import uniffi.truapi.ImageFormat
 import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
-import uniffi.truapi.ProfileAvatar
 
 private val WEBP_BYTES = byteArrayOf(0x52, 0x49, 0x46, 0x46)
 
 @OptIn(ExperimentalCoilApi::class)
-class PublicProfileAvatarFetcherTest {
+class BulletinImageFetcherTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
-    private val avatar = ProfileAvatar("avatar-cid", ImageFormat.WEBP)
+    private val reference = ImageReference.Bulletin("image-cid", ImageFormat.WEBP)
     private val runtime: TrUAPIHostRuntime = mockk()
     private val runtimeProvider: TrUAPIHostRuntimeProvider = mockk {
         coEvery { runtime() } returns Result.success(runtime)
@@ -49,37 +48,37 @@ class PublicProfileAvatarFetcherTest {
     }
     private val directory by lazy { temporaryFolder.newFolder("cache") }
     private val diskCache by lazy { diskCache(directory) }
-    private val imageLoader: ImageLoader by lazy { mockk { every { diskCache } returns this@PublicProfileAvatarFetcherTest.diskCache } }
-    private val factory = PublicProfileAvatarFetcher.Factory(runtimeProvider)
+    private val imageLoader: ImageLoader by lazy { mockk { every { diskCache } returns this@BulletinImageFetcherTest.diskCache } }
+    private val factory = BulletinImageFetcher.Factory(runtimeProvider)
 
     @Test
     fun `immutable bytes survive reopening the disk cache`() = runTest {
-        coEvery { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) } returns
-            LoadedImage(WEBP_BYTES, avatar.format, avatar.cid)
-        fetch(avatar).source.close()
+        coEvery { runtime.loadImage(reference) } returns LoadedImage(WEBP_BYTES, ImageFormat.WEBP, reference.cid)
+        fetch(reference).source.close()
         val restartedDirectory = temporaryFolder.newFolder("restarted")
         directory.copyRecursively(restartedDirectory)
         val restartedCache = diskCache(restartedDirectory)
         val restartedLoader: ImageLoader = mockk { every { diskCache } returns restartedCache }
 
-        val cached = factory.create(avatar, options, restartedLoader).fetch() as SourceResult
+        for (declaredFormat in listOf(reference.declaredFormat, null)) {
+            val cached = factory.create(reference.copy(declaredFormat = declaredFormat), options, restartedLoader).fetch() as SourceResult
 
-        assertEquals(DataSource.DISK, cached.dataSource)
-        cached.source.use { assertArrayEquals(WEBP_BYTES, it.source().readByteArray()) }
+            assertEquals(DataSource.DISK to "image/webp", cached.dataSource to cached.mimeType)
+            cached.source.use { assertArrayEquals(WEBP_BYTES, it.source().readByteArray()) }
+        }
         coVerify(exactly = 1) { runtime.loadImage(any()) }
     }
 
     @Test
     fun `a changed declaration cannot display cached bytes of another format`() = runTest {
-        coEvery { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) } returns
-            LoadedImage(WEBP_BYTES, avatar.format, avatar.cid)
-        fetch(avatar).source.close()
+        coEvery { runtime.loadImage(reference) } returns LoadedImage(WEBP_BYTES, ImageFormat.WEBP, reference.cid)
+        fetch(reference).source.close()
 
-        val changed = ProfileAvatar(avatar.cid, ImageFormat.PNG)
-        val components = ComponentRegistry.Builder().also { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(it) }.build()
+        val changed = reference.copy(declaredFormat = ImageFormat.PNG)
+        val components = ComponentRegistry.Builder().also { BulletinImageLoaderRegistrar(runtimeProvider).register(it) }.build()
         val result = factory.create(changed, options, imageLoader).fetch()
 
-        assertNotEquals(components.key(avatar, options), components.key(changed, options))
+        assertNotEquals(components.key(reference, options), components.key(changed, options))
         assertNull(result)
         coVerify(exactly = 1) { runtime.loadImage(any()) }
     }
@@ -92,7 +91,7 @@ class PublicProfileAvatarFetcherTest {
             started.complete(Unit)
             pending.await()
         }
-        val loading = async { factory.create(avatar, options, imageLoader).fetch() }
+        val loading = async { factory.create(reference, options, imageLoader).fetch() }
         started.await()
         pending.cancel()
         try {
@@ -101,10 +100,10 @@ class PublicProfileAvatarFetcherTest {
         } catch (error: CancellationException) {
             assertTrue(loading.isCancelled)
         }
-        assertNull(diskCache.openSnapshot(avatar.cid))
+        assertNull(diskCache.openSnapshot(reference.cid))
     }
 
-    private suspend fun fetch(profile: ProfileAvatar): SourceResult = factory.create(profile, options, imageLoader).fetch() as SourceResult
+    private suspend fun fetch(reference: ImageReference.Bulletin): SourceResult = factory.create(reference, options, imageLoader).fetch() as SourceResult
 
     private fun diskCache(directory: java.io.File): DiskCache = DiskCache.Builder()
         .directory(directory)
