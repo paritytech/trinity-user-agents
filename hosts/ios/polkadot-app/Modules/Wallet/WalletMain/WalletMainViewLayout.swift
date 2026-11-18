@@ -123,7 +123,7 @@ private extension WalletView {
         } label: {
             CollectiblesCardView(isColoured: viewModel.collectiblesPeek != .resting)
         }
-        .buttonStyle(CollectiblesPressStyle())
+        .buttonStyle(CollectiblesPressStyle { viewModel.onCollectiblesPress?($0) })
         .accessibilityLabel(String(localized: .Products.collectibles))
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .global)
@@ -178,9 +178,14 @@ private struct ConditionalOverlayModifier<V: View>: ViewModifier {
 
 /// The Collectibles peek shrinks a little while it is pressed, as Android's does.
 private struct CollectiblesPressStyle: ButtonStyle {
+    let onPressChange: (Bool) -> Void
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? CollectiblesBookTiming.pressedScale : 1)
             .animation(.easeOut(duration: CollectiblesBookTiming.pressDuration), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, isPressed in
+                onPressChange(isPressed)
+            }
     }
 }
