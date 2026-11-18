@@ -433,7 +433,7 @@ impl RegistryWriter for NoRegistryWriter {
 pub const BLOCK: HashAndNumber = HashAndNumber { hash: H256([2; 32]), number: 20 };
 
 /// A small reconstruction scan.
-pub const SCAN: ScanConfig = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+pub const SCAN: ScanConfig = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
 
 /// The interfaces a test layer starts with, over `store`, at [`NOW`].
 pub fn layer_interfaces(store: Db, runtime: Arc<TestRuntime>) -> Interfaces {
