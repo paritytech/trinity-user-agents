@@ -19,3 +19,18 @@ fn a_product_runs_from_a_dev_server_then_dotns() {
 	assert_eq!(link.canonical_url, "https://shop.paseo/cart");
 	assert_eq!(source("https://shop.dot/", false), None);
 }
+
+#[test]
+fn a_bare_id_and_its_app_and_worker_subdomains_are_published() {
+	for (input, identifier, canonical_url) in [
+		("ramp.paseo", "ramp.paseo", "https://ramp.paseo/"),
+		("https://app.ramp.paseo/settings", "app.ramp.paseo", "https://app.ramp.paseo/settings"),
+		("worker.ramp.paseo", "worker.ramp.paseo", "https://worker.ramp.paseo/"),
+	] {
+		let Some(ProductSource::Published { link }) = source(input, false) else {
+			panic!("{input} is published");
+		};
+		assert_eq!(link.identifier.as_str(), identifier, "{input}");
+		assert_eq!(link.canonical_url, canonical_url, "{input}");
+	}
+}

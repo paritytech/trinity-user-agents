@@ -58,10 +58,7 @@ impl OfferedProvider {
 	/// The manifest the core goes by: dotNS's answer once it has one, the
 	/// host's snapshot until then.
 	fn manifest(&self) -> Option<WorkerManifest> {
-		match &self.live {
-			Some(live) => live.clone(),
-			None => self.snapshot.clone(),
-		}
+		self.live.clone().unwrap_or_else(|| self.snapshot.clone())
 	}
 }
 
@@ -588,7 +585,8 @@ struct Offered {
 
 /// The host's `entries` with their shipped manifests read, in its order,
 /// each product once. An entry whose shipped manifest does not parse is the
-/// host's mistake for that provider alone: it is logged and left out, and the rest are still offered.
+/// host's mistake for that provider alone: it is logged and left out, and
+/// the rest are still offered.
 fn offered_providers(entries: Vec<FundingProviderEntry>) -> Vec<OfferedProvider> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
