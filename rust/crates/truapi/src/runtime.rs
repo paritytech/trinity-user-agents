@@ -532,6 +532,16 @@ impl ProductConnection {
 			.map_err(|err| format!("permission storage failed: {err:?}"))
 	}
 
+	/// Whether the product holds `permission` now, without prompting.
+	#[cfg(not(target_arch = "wasm32"))]
+	async fn holds_remote_permission(&self, permission: latest::RemotePermission) -> bool {
+		let request = latest::RemotePermissionRequest { permission };
+		matches!(
+			self.permissions_service().peek_remote(&request).await,
+			Ok(PermissionAuthorizationStatus::Authorized)
+		)
+	}
+
 	/// Require remote authorization, prompting only when no decision is stored.
 	async fn require_remote_permission<E>(
 		&self,

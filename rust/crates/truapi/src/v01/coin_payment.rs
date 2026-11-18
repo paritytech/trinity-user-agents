@@ -206,3 +206,52 @@ pub enum HostCoinPaymentListenForItem {
 	/// Cheque received through the handoff channel.
 	Cheque(CoinPaymentCheque),
 }
+
+/// What became of a cheque's value, by its coins' state. A claim counts only
+/// once it is final.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct CoinPaymentChequeProgress {
+	/// Not yet claimable: its coins are still being minted.
+	pub minting: u32,
+	/// Minted and not claimed.
+	pub claimable: u32,
+	/// Claimed by the payee, finally.
+	pub claimed: u32,
+	/// Back with the payer: reclaimed, cancelled, or never minted.
+	pub returned: u32,
+}
+
+/// Request to follow the progress of one of the caller's cheques.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostCoinPaymentChequeStatusRequest {
+	/// The cheque, as `create_cheque` returned it.
+	pub cheque: CoinPaymentCheque,
+}
+
+/// Request to take back what a payee has not claimed of one of the caller's
+/// cheques.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostCoinPaymentCancelChequeRequest {
+	/// The cheque, as `create_cheque` returned it.
+	pub cheque: CoinPaymentCheque,
+}
+
+/// Request to list the purses the caller may see.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostCoinPaymentListPursesRequest {}
+
+/// One purse the caller may see.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct CoinPaymentListedPurse {
+	/// The purse's identifier.
+	pub purse: u32,
+	/// Its metadata and balance.
+	pub info: CoinPaymentPurseInfo,
+}
+
+/// The purses the caller may see.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostCoinPaymentListPursesResponse {
+	/// The purses, by identifier.
+	pub purses: Vec<CoinPaymentListedPurse>,
+}
