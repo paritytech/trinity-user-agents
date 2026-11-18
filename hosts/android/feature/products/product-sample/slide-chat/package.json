@@ -1,0 +1,17 @@
+{
+  "name": "slide-chat-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rm -rf out && esbuild src/worker.ts --bundle --outfile=out/worker/index.js --format=esm --target=es2022 && cp index.html out/index.html",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@parity/truapi": "file:../../../../../../js/packages/truapi"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -99,10 +99,10 @@ pub mod latest {
 		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
 		RemoteStatementStoreSubscribeRequest, RendererNode, ResourceAllocationError, RingLocation,
 		RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-		ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StatementTopic,
-		StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
-		ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature, X25519PublicKey,
+		ScanOutcome, Shape, SignedStatement, Size, SlideToConfirmProps, SlideToConfirmVariant,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{ChatRoomFooter, RenderContext};
