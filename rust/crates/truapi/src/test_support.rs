@@ -30,7 +30,7 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
 	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
@@ -1146,6 +1146,17 @@ impl PlatformProductStorage for StubPlatform {
 		}
 		self.local_storage.lock().expect("local storage mutex poisoned").remove(&key);
 		self.push_storage_change(&key, None);
+		Ok(())
+	}
+	async fn clear_product(&self, product_id: ProductId) -> Result<(), v01::GenericError> {
+		if let Some(reason) = self.local_storage_error {
+			return Err(v01::GenericError { reason: reason.to_string() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.retain(|key, _| !key.starts_with(&owned));
 		Ok(())
 	}
 

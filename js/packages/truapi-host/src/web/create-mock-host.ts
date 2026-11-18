@@ -80,6 +80,17 @@ function normalizePermissionPolicy(
 const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
 
 /**
+ * The prefix of every key the core hands the host for `productId`'s values,
+ * as `ProductStorageKey::owner_prefix` builds it. The id's length is in UTF-8
+ * bytes, so one product's prefix never matches a product whose id merely
+ * starts with it.
+ */
+function coreProductStorageOwnerPrefix(productId: ProductId): string {
+  const length = new TextEncoder().encode(productId).length;
+  return `truapi:product-storage:v1:${length}:${productId}:`;
+}
+
+/**
  * The product's own key inside a core-namespaced one, or `undefined`.
  *
  * Reading the tail rather than any `:key` suffix is what keeps a prefixed store
@@ -1115,6 +1126,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(productKey(key));
         publishStorage(key, undefined);
+      },
+      async clearProduct(productId) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        const owned = productKey(coreProductStorageOwnerPrefix(productId));
+        for (const stored of [...storage.keys()]) {
+          if (stored.startsWith(owned)) storage.delete(stored);
+        }
       },
       subscribeStorage(key) {
         const current = storage.get(productKey(key));

@@ -35,6 +35,21 @@ public protocol HostStorageBackend: AnyObject, Sendable {
     func read(key: String) throws -> Data?
     func write(key: String, value: Data) throws
     func clear(key: String) throws
+    /// Remove every value `productId` owns. Idempotent. The core calls this
+    /// on the runtime's bridge when it clears the product's state. Every key
+    /// the product owns starts with
+    /// `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`, so a
+    /// shared store removes keys with that prefix; a store kept per product
+    /// drops that product's store. Defaults to a rejection, so clearing the
+    /// product's state fails on a host that keeps product storage but does
+    /// not implement this.
+    func clearProduct(productId: ProductId) throws
+}
+
+public extension HostStorageBackend {
+    func clearProduct(productId _: ProductId) throws {
+        throw HostRejection.Rejected(reason: "this host does not clear product storage")
+    }
 }
 
 /// Core-owned host-private storage backend. Keys are SCALE-encoded
@@ -906,6 +921,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func localStorageClearProduct(productId: ProductId) throws {
+        try withHostRejection {
+            try bridge.storage.clearProduct(productId: productId)
+        }
+    }
+
     func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         try await withHostRejection {
             try await bridge.beginOperation(productId: productId, label: label)
@@ -1117,6 +1138,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// host may stop the worker. Releasing with none held is a no-op.
     public func releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId: productId)
+    }
+
+    /// Forget one product: revoke its grants and Allow once answers, then
+    /// remove its values from product storage through
+    /// ``HostStorageBackend/clearProduct(productId:)`` on the bridge this
+    /// runtime was built with. The wallet session and other products are kept.
+    public func clearProductState(productId: ProductId) async throws {
+        try await inner.clearProductState(productId: productId)
     }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is

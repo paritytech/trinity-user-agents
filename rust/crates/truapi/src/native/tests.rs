@@ -422,6 +422,12 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
+	async fn local_storage_clear_product(
+		&self,
+		_product_id: ProductId,
+	) -> Result<(), HostRejection> {
+		Ok(())
+	}
 	async fn begin_operation(
 		&self,
 		_product_id: ProductId,
@@ -2285,6 +2291,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
+		async fn local_storage_clear_product(
+			&self,
+			_product_id: ProductId,
+		) -> Result<(), HostRejection> {
+			Ok(())
+		}
 		async fn begin_operation(
 			&self,
 			_product_id: ProductId,
@@ -2487,6 +2499,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			&self,
 			_key: String,
 		) -> Result<(), v01::HostLocalStorageReadError> {
+			Ok(())
+		}
+		async fn local_storage_clear_product(
+			&self,
+			_product_id: ProductId,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 		async fn begin_operation(

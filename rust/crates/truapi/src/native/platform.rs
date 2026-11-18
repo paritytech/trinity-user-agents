@@ -349,6 +349,10 @@ impl ProductStorage for CallbackPlatform {
 		Ok(())
 	}
 
+	async fn clear_product(&self, product_id: ProductId) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.local_storage_clear_product(product_id).await?)
+	}
+
 	fn subscribe_storage(
 		&self,
 		key: String,

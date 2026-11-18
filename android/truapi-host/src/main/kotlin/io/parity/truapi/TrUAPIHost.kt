@@ -150,6 +150,20 @@ interface HostStorage {
 
     @Throws(HostLocalStorageReadException::class)
     suspend fun clear(key: String)
+
+    /**
+     * Remove every value [productId] owns. Idempotent. The core calls this on
+     * the runtime's bridge when it clears the product's state. Every key the
+     * product owns starts with
+     * `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`, so a
+     * shared store removes keys with that prefix; a store kept per product
+     * drops that product's store. Defaults to a rejection, so clearing the
+     * product's state fails on a host that keeps product storage but does not
+     * implement this.
+     */
+    @Throws(HostRejection::class)
+    suspend fun clearProduct(productId: ProductId): Unit =
+        throw HostRejection.Rejected("this host does not clear product storage")
 }
 
 /**
@@ -703,6 +717,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
 
+    override suspend fun localStorageClearProduct(productId: ProductId) =
+        withHostRejection { bridge.storage.clearProduct(productId) }
+
     override suspend fun beginOperation(productId: ProductId, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
 
@@ -1139,6 +1156,16 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId)
+    }
+
+    /**
+     * Forget one product: revoke its grants and Allow once answers, then
+     * remove its values from product storage through [HostStorage.clearProduct]
+     * on the bridge this runtime was built with. The wallet session and other
+     * products are kept.
+     */
+    suspend fun clearProductState(productId: ProductId) {
+        inner.clearProductState(productId)
     }
 
     /**

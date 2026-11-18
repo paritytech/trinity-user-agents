@@ -529,14 +529,16 @@ impl HostRuntime<PairingHost> {
 		self.role.logout_and_reset_pairing().await.map_err(Into::into)
 	}
 
-	/// Clear one product's capability state while preserving the active
-	/// session and unrelated products.
+	/// Clear one product's capability state and the values it wrote to
+	/// product storage, while preserving the active session and unrelated
+	/// products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(
 		&self,
 		product_id: &ProductId,
 	) -> Result<(), v01::GenericError> {
-		self.role.clear_product_state(product_id).await.map_err(Into::into)
+		self.role.clear_product_state(product_id).await?;
+		self.services.platform.clear_product(product_id.clone()).await
 	}
 
 	/// Read the active session's X25519 chat identity private key, for hosts
@@ -1204,11 +1206,13 @@ impl HostRuntime<SigningHost> {
 		self.role.session_state().current().is_some()
 	}
 
-	/// Revoke one product's grants from the current local activation while
-	/// preserving unrelated products.
+	/// Revoke one product's grants from the current local activation and
+	/// clear the values it wrote to product storage, while preserving
+	/// unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) {
+	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id);
+		self.services.platform.clear_product(product_id.clone()).await
 	}
 
 	/// Activate a wallet-local session from host-held secret material (raw

@@ -529,6 +529,14 @@ impl ProductStorage for CliPlatform {
 		Ok(())
 	}
 
+	async fn clear_product(&self, product_id: ProductId) -> Result<(), api::GenericError> {
+		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
+		let values = storage.entry(product_id.clone()).or_default();
+		values.clear();
+		self.persist_product_storage(&product_id, values)?;
+		Ok(())
+	}
+
 	fn subscribe_storage(
 		&self,
 		key: String,

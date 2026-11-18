@@ -655,6 +655,44 @@ fn product_storage_uses_safe_per_product_files() {
 }
 
 #[test]
+fn a_cleared_product_stays_cleared_after_a_restart() {
+	let temporary = tempdir().expect("create product storage root");
+	let cleared = ProductStorageKey::new(ProductId::for_test("cleared.dot"), "theme");
+	let kept = ProductStorageKey::new(ProductId::for_test("kept.dot"), "theme");
+	let open = || {
+		CliPlatform::new(
+			&test_network(),
+			Some(test_storage_paths(temporary.path(), "test")),
+			ApprovalPolicy::AutoAccept,
+			None,
+		)
+	};
+	let platform = open();
+	futures::executor::block_on(async {
+		platform.write(cleared.encode(), b"dark".to_vec()).await.expect("write cleared");
+		platform.write(kept.encode(), b"light".to_vec()).await.expect("write kept");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clear product");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clearing again is Ok");
+	});
+
+	drop(platform);
+	let restored = open();
+	let values = futures::executor::block_on(async {
+		(
+			restored.read(cleared.encode()).await.expect("read cleared"),
+			restored.read(kept.encode()).await.expect("read kept"),
+		)
+	});
+	assert_eq!(values, (None, Some(b"light".to_vec())));
+}
+
+#[test]
 fn product_storage_is_isolated_by_session_then_product() {
 	let temporary = tempdir().expect("create session storage root");
 	let same_product = ProductId::for_test("same.dot");
