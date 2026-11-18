@@ -243,8 +243,8 @@ fn a_presigned_transaction_keeps_the_plan_that_rebuilds_it() {
 
 	let id = harness.defer(request)[0];
 
-	let plan = block_on(harness.engine().db.read(move |conn| dao::submission_plan(conn, id)));
-	assert_eq!(plan.unwrap(), Some(test_plan(vec![1])));
+	let entry = block_on(harness.engine().db.read(move |conn| dao::entry(conn, id)));
+	assert_eq!(entry.unwrap().and_then(|entry| entry.plan), Some(test_plan(vec![1])));
 	let presigned_sent = || harness.broadcast() == vec![extrinsic(1, 100, 64).extrinsic];
 	wait_until(presigned_sent, "the presigned extrinsic is broadcast");
 }
