@@ -9,6 +9,7 @@ enum ExpandedPocketCardViewFactory {
         card: PocketCardViewModel,
         page: ProductPage,
         contentSource: SPAContentSource,
+        openTap: HostOpenTap? = nil,
         flowState: SPAFlowState
     ) -> ExpandedPocketCardViewProtocol? {
         guard let rust = SPAViewFactory.makeRustEnvironment(hostProvider: flowState.hostProvider) else { return nil }
@@ -18,7 +19,8 @@ enum ExpandedPocketCardViewFactory {
             isRootScreen: false,
             showMoreButton: false,
             page: page,
-            contentSource: contentSource
+            contentSource: contentSource,
+            openTap: openTap
         )
         let routers = ProductRoutersFacade.spa()
         let schemeHandlerProxy = SchemeHandlerProxy()
@@ -85,12 +87,28 @@ private extension ExpandedPocketCardViewFactory {
     }
 }
 
-private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking {
+private final class ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking {
     let rust: RustRuntimeEnvironment
     let configuration: SPAConfiguration
     let flowState: SPAFlowState
     let schemeHandlerProxy: SchemeHandlerProxy
     let routers: ProductRoutersFacadeProtocol
+    private var hostSession: SPARustRuntimeFactory.HostSession
+
+    init(
+        rust: RustRuntimeEnvironment,
+        configuration: SPAConfiguration,
+        flowState: SPAFlowState,
+        schemeHandlerProxy: SchemeHandlerProxy,
+        routers: ProductRoutersFacadeProtocol
+    ) {
+        self.rust = rust
+        self.configuration = configuration
+        self.flowState = flowState
+        self.schemeHandlerProxy = schemeHandlerProxy
+        self.routers = routers
+        hostSession = SPARustRuntimeFactory.HostSession(openTap: configuration.openTap)
+    }
 
     func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
         let executionModel = try rust.makeExpandedCardExecution(
@@ -98,6 +116,9 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
             routers: routers,
             face: face
         )
+
+        // Taken once the execution opened, so a runtime that never got one is not an attempt.
+        let attempt = hostSession.nextAttempt()
 
         return SPARustRuntime(
             executionModel: executionModel,
@@ -109,7 +130,10 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
             ),
             schemeHandlerProxy: schemeHandlerProxy,
             logger: rust.logger,
-            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder(),
+            hostSessionID: hostSession.id,
+            loadAttempt: attempt.number,
+            openTap: attempt.openTap
         )
     }
 }

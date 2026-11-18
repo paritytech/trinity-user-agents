@@ -1,5 +1,6 @@
 import Foundation
 import Products
+@testable import polkadot_app
 
 final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     var evaluatedScripts: [String] = []
@@ -72,5 +73,16 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
         let handler = terminationHandler
         terminationHandler = nil
         handler?()
+    }
+
+    private var mainFrameCommitHandler: (@Sendable () -> Void)?
+
+    func onMainFrameCommit(_ handler: @escaping @Sendable () -> Void) async {
+        mainFrameCommitHandler = handler
+    }
+
+    /// Commits the main frame the way a web view does when its page first becomes visible.
+    func commitMainFrame() {
+        mainFrameCommitHandler?()
     }
 }

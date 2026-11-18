@@ -8,5 +8,9 @@ final class MockDeferredLinkHandler: DeferredLinkHandling {
         handledURLs.append(url)
     }
 
+    func handle(with url: URL, arrival _: LinkArrival) {
+        handledURLs.append(url)
+    }
+
     func register(_: URLHandlingServiceProtocol) {}
 }

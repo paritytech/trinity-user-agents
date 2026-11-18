@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKit
 
@@ -11,26 +12,43 @@ import UIKit
 /// `remove_card` does, `pocketCollection` for the bare link, and `reject` for a
 /// Pocket link it cannot make sense of, including an action it does not serve.
 /// All three are the host's to answer. A link to anything else is not ours.
+///
+/// A Pocket link is the user's tap for the page it opens, so its `HostOpenTap` is built from the link's
+/// arrival: the one `DeferredLinkHandler` carried from where the system handed the link over, or, for a link
+/// handed straight here, one read before the hops onto the main actor that follow.
 final class PocketOpenService: URLHandlingServiceProtocol {
     private let parser = PocketDeeplinkParser()
-    private let present: @MainActor (PocketDeeplink) -> Void
+    private let present: @MainActor (PocketDeeplink, HostOpenTap) -> Void
     private let openCollection: @MainActor () -> Void
     private let refuse: @MainActor (String) -> Void
+    /// Read synchronously as a link arrives with no arrival of its own: an async `DateProviding` read would add a hop.
+    private let arrivalClock: LinkArrivalClock
 
     init(
-        present: @escaping @MainActor (PocketDeeplink) -> Void,
+        present: @escaping @MainActor (PocketDeeplink, HostOpenTap) -> Void,
         openCollection: @escaping @MainActor () -> Void = {},
-        refuse: @escaping @MainActor (String) -> Void = { _ in }
+        refuse: @escaping @MainActor (String) -> Void = { _ in },
+        arrivalClock: LinkArrivalClock = SystemLinkArrivalClock()
     ) {
         self.present = present
         self.openCollection = openCollection
         self.refuse = refuse
+        self.arrivalClock = arrivalClock
     }
 
     func handle(url: URL) -> Bool {
+        handle(url: url, arrival: arrivalClock.read())
+    }
+
+    func handle(url: URL, arrival: LinkArrival) -> Bool {
         switch parser.classify(url) {
         case let .pocket(link):
-            Task { @MainActor in present(link) }
+            let tap = HostOpenTap(
+                source: .deeplink,
+                openedAt: arrival.date,
+                openedAtMonotonicMilliseconds: arrival.monotonicMilliseconds
+            )
+            Task { @MainActor in present(link, tap) }
             return true
         case .collection:
             Task { @MainActor in openCollection() }
@@ -53,7 +71,7 @@ extension PocketOpenService {
         moduleNavigator: ModuleNavigating
     ) -> PocketOpenService {
         PocketOpenService(
-            present: { link in
+            present: { link, tap in
                 Task { @MainActor in
                     // A session with no Pocket has nowhere to put the card and
                     // nothing to open. The host claimed the link, so it says so
@@ -78,8 +96,12 @@ extension PocketOpenService {
                         // presentation.
                         UIWindow.topWindow?.topmostViewController?.present(view, animated: true)
                     case .open:
-                        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket)
-                            .open(link: link)
+                        PocketCardOpening(
+                            flowState: flowState,
+                            navigator: moduleNavigator,
+                            pocket: pocket,
+                            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
+                        ).open(link: link, tap: tap)
                     }
                 }
             },
