@@ -14,9 +14,9 @@ interface ProductRuntimeSettings {
     fun setTrUAPIRuntimeEnabled(enabled: Boolean)
 
     /**
-     * Whether a session for a product run from [source] uses the TrUAPI core. A product the app ships or one served
-     * from a development server always does, since only the core serves it; any other follows the toggle.
+     * Whether a session for a product run from [source] uses the TrUAPI core. A product served from a development
+     * server always does, since only the core gives it its id; any other follows the toggle.
      */
     fun isTrUAPIRuntimeEnabledFor(source: ProductSource?): Boolean =
-        source is ProductSource.Bundled || source is ProductSource.DevServer || isTrUAPIRuntimeEnabled()
+        source is ProductSource.DevServer || isTrUAPIRuntimeEnabled()
 }

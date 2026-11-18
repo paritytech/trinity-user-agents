@@ -4,8 +4,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.test.TestScope
@@ -34,18 +32,11 @@ class ProductTabSessionFactoryTest {
         override fun setTrUAPIRuntimeEnabled(enabled: Boolean) = Unit
     }
     private val scope = TestScope()
-    private val bundledProducts = bundledProducts(
-        mapOf(
-            "bundled-products/provider.dot/worker/index.js" to "export {}",
-            "bundled-products/provider.dot/app/index.html" to "<html></html>",
-        ),
-    )
-
     private val factory = ProductTabSessionFactory(
         native,
         TrUAPIProductTabSessionFactory(webViewProviders, sessionStarter, mockk(relaxed = true)),
         runtimeSettings,
-        productSources(bundledProducts),
+        productSources(),
     )
 
     @Test
@@ -65,29 +56,6 @@ class ProductTabSessionFactoryTest {
                 servedExecutable = any(),
             )
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)
-        }
-        verify(exactly = 0) { native.create(any(), any(), any()) }
-    }
-
-    // A tab opened on a product the app ships serves it from its own files, as a sheet does, and only
-    // TrUAPI serves it, so the runtime toggle does not apply.
-    @Test
-    fun `a bundled product's page runs on TrUAPI from its own files under its own id`() {
-        val url = "https://provider.dot/card"
-        val product = bundledProducts.entry(ProductId.parse("provider.dot").getOrThrow())!!
-
-        factory.create(url, scope) {}
-
-        verify {
-            webViewProviders.create(
-                url,
-                any(),
-                true,
-                scope,
-                source = ProductSource.Bundled(product),
-                servedExecutable = any(),
-            )
-            sessionStarter.start(provider, url, scope, any(), null, product.productId)
         }
         verify(exactly = 0) { native.create(any(), any(), any()) }
     }

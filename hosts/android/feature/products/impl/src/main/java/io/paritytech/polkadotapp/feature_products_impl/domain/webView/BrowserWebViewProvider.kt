@@ -53,14 +53,12 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: ProductServingHostResolver,
-    productContents: ProductContents,
     dispatchers: CoroutineDispatchers,
     @Assisted("initialUrl") private val initialUrl: String,
     @Assisted private val navigationPolicy: NavigationPolicy,
     @Assisted private val allowIframes: Boolean,
     @Assisted private val scope: CoroutineScope,
-    /** Where the product runs from, decided when it opened; `null` reads it off each URL as a published one. */
-    @Assisted private val source: ProductSource?,
+    @Assisted source: ProductSource?,
     @Assisted private val servedExecutable: ExecutableKind,
     @Assisted("waitForInitialTheme") private val waitForInitialTheme: Boolean,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
@@ -80,7 +78,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val fixedProductId = source?.fixedProductId
     private val firstPartyOrigin = source?.firstPartyOrigin
 
-    // A bundled or dev server page has no dotNS host to read its product from. The id stays fixed across
+    // A page served from a debug loopback url has no dotNS host to read its product from. The id stays fixed across
     // navigations, so a debug page that navigates to another product's page runs that page as the debug product.
     override val callingProductIdProvider: CallingProductIdProvider =
         fixedProductId?.let(::FixedProductId) ?: UrlDerivedProductId(dotNsTldProvider) {
@@ -91,9 +89,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     // exposes its download/unpack progress for the host UI to render.
     private val contentLoader = DotNsContentLoader(dotNsResolver)
 
-    private val ownContent = productContents.app(source, frameEmbeddingResponseHeaders(allowIframes))
-
-    // No dotNS load reports progress for a bundled or dev server page, so its own load does.
+    // No dotNS load reports progress for a page served from a loopback url, so its own load does.
     private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
 
     /** Load progress of the domain the WebView is currently resolving content for. */
@@ -194,13 +190,10 @@ class BrowserWebViewProvider @AssistedInject constructor(
             request: WebResourceRequest,
         ): WebResourceResponse? {
             return permissionClient.shouldInterceptRequest(view, request)
-                ?: ownContent?.intercept(request)
                 ?: innerClient.shouldInterceptRequest(view, request)
         }
 
         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-            // Pages the app serves itself are answered by the interception above.
-            if (ownContent?.serves(request?.url?.host) == true) return false
             return innerClient.shouldOverrideUrlLoading(view, request)
         }
 
