@@ -10,10 +10,14 @@ use subxt::{Metadata, utils::H256};
 use super::{
 	Asset, ChainConfig, ChainParams, CoinSecret, Exponent, PrivacyPolicy, PurseId, Snapshot,
 	chain::{AliasState, ChainCoin, CoinageChain, Emptying, FreeTokenLimits, RingPlace, RingPosition},
-	plugins::{PersonhoodSource, RegistryWriter, Seed},
+	layer::{Interfaces, Layer, Randomness, RuntimeFacts, RuntimeSource, start},
+	plugins::{PersonhoodSource, RegistryWriter, Running, Seed},
+	reconstruction::ScanConfig,
+	registry::NoRegistry,
 	ledger::{
-		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation,
-		observe, snapshot,
+		self,
+		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
+		snapshot,
 	},
 	operation::{self, OpKey, OpKind},
 	params::{InstanceRecord, validate},
@@ -389,6 +393,39 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 	.expect("the status is written");
 }
 
+/// A runtime that passes A3's check until `failing` is set.
+#[derive(Default)]
+pub struct TestRuntime {
+	/// Every read fails.
+	pub failing: core::sync::atomic::AtomicBool,
+	/// The spec version, which stays readable while the rest fails.
+	pub version: core::sync::atomic::AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl RuntimeSource for TestRuntime {
+	async fn runtime(&self, _: Option<HashAndNumber>) -> Option<RuntimeFacts> {
+		if self.failing.load(core::sync::atomic::Ordering::SeqCst) {
+			return None;
+		}
+		let version = self.version.load(core::sync::atomic::Ordering::SeqCst);
+		Some(RuntimeFacts { metadata: Arc::new(people_metadata()), instance: Some(instance_record()), maximum_age: Some(16), version })
+	}
+
+	async fn version(&self, _: HashAndNumber) -> Option<u32> {
+		Some(self.version.load(core::sync::atomic::Ordering::SeqCst))
+	}
+}
+
+/// Draws that mint the installation `[7; 32]`.
+pub struct TestDraws;
+
+impl Randomness for TestDraws {
+	fn installation(&self) -> InstallationId {
+		InstallationId([7; 32])
+	}
+}
+
 /// A registry writer that cannot build an append yet, as before the
 /// `//datastore` account can pay for one.
 pub struct NoRegistryWriter;
@@ -398,6 +435,40 @@ impl RegistryWriter for NoRegistryWriter {
 	async fn append(&self, _: &CoinSecret, _: &[u8]) -> Result<MortalExtrinsic, String> {
 		Err("this test builds no registry append".into())
 	}
+}
+
+/// The block tests revalidate at.
+pub const BLOCK: HashAndNumber = HashAndNumber { hash: H256([2; 32]), number: 20 };
+
+/// A small reconstruction scan.
+pub const SCAN: ScanConfig = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
+
+/// The interfaces a test layer starts with, over `store`, at [`NOW`].
+pub fn layer_interfaces(store: Db, runtime: Arc<TestRuntime>) -> Interfaces {
+	Interfaces {
+		engine: unbuilt_engine(store.clone()),
+		store,
+		chain: Arc::new(FakeChain::default()),
+		runtime,
+		seed: Arc::new(FixedSeed),
+		clock: Arc::new(|| NOW),
+		randomness: Arc::new(TestDraws),
+		personhood: Arc::new(NoPerson),
+		registry: Arc::new(NoRegistry),
+		spawner: crate::Spawner::new(tokio::runtime::Handle::current()),
+		policy: PrivacyPolicy::fastest(),
+		hand_over: None,
+	}
+}
+
+/// A layer started over `store`, with its running handle and its runtime.
+pub async fn started_layer(store: Db) -> (Layer, Running, Arc<TestRuntime>) {
+	let runtime = Arc::new(TestRuntime::default());
+	let running = Running::new();
+	let layer = start(layer_interfaces(store, runtime.clone()), chain_config(), SCAN, None, running.clone())
+		.await
+		.expect("the layer starts");
+	(layer, running, runtime)
 }
 
 /// Stores `allowance` as the free unload tokens of one period, read at

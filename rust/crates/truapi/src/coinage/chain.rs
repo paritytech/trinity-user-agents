@@ -17,6 +17,10 @@ use subxt::{
 	utils::{AccountId32, H256, MultiAddress},
 };
 
+use super::{
+	layer::{RuntimeFacts, RuntimeSource},
+	params::InstanceRecord,
+};
 use crate::{
 	chain::{BlockBackend, ChainHeads, HashAndNumber, Heads, StorageEntryName, StorageWatchError, WatchedStorage},
 	chain_runtime::RuntimeFailure,
@@ -513,5 +517,47 @@ fn variant_name(value: &Value) -> Option<&str> {
 	match &value.value {
 		ValueDef::Variant(variant) => Some(variant.name.as_str()),
 		_ => None,
+	}
+}
+
+/// [`RuntimeSource`] over the People chain: the runtime description at a
+/// block and the record of the configured instance. The maximum coin age is
+/// a runtime view this reader does not call, so A3 falls back to the
+/// configured age cutoff.
+pub struct PeopleRuntime {
+	storage: Arc<dyn WatchedStorage>,
+	heads: Arc<dyn ChainHeads>,
+	genesis: H256,
+	instance: u32,
+}
+
+impl PeopleRuntime {
+	/// Reads of the chain with `genesis`, for the pallet's `instance`.
+	pub fn new(storage: Arc<dyn WatchedStorage>, heads: Arc<dyn ChainHeads>, genesis: H256, instance: u32) -> Self {
+		Self { storage, heads, genesis, instance }
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeSource for PeopleRuntime {
+	async fn runtime(&self, at: Option<HashAndNumber>) -> Option<RuntimeFacts> {
+		let at = match at {
+			Some(at) => at,
+			None => self.heads.heads(self.genesis).await.ok()?.finalized,
+		};
+		let client = self.storage.client_at(self.genesis, at).await.ok()?;
+		let metadata = client.metadata();
+		let instances = dynamic::<(u32,), Value>(PALLET, "Instances");
+		let records = self.storage.read_entries_at(self.genesis, at.hash, &instances, &[(self.instance,)]).await.ok()?;
+		let instance = records
+			.into_iter()
+			.flatten()
+			.next()
+			.and_then(|record| Some(InstanceRecord { asset_unit: number(&record, "asset_unit")? }));
+		Some(RuntimeFacts { metadata, instance, maximum_age: None, version: client.spec_version() })
+	}
+
+	async fn version(&self, at: HashAndNumber) -> Option<u32> {
+		Some(self.storage.client_at(self.genesis, at).await.ok()?.spec_version())
 	}
 }
