@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     outputs:
       pushed: ${{ steps.commits.outputs.pushed }}
     steps:
@@ -35,6 +36,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          open="$(gh pr list --repo "$GITHUB_REPOSITORY" --head auto/chain-spec-update --state open \
+            --json number --jq length)"
+          if [ "$open" -eq 0 ]; then
+            exit 0
+          fi
           if ! count="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...auto/chain-spec-update" \
             --jq '[.commits[] | select(.commit.committer.name != "github-actions[bot]")] | length' 2>&1)"; then
             if [[ "$count" != *"HTTP 404"* ]]; then
