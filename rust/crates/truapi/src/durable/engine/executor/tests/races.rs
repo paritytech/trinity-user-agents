@@ -148,9 +148,11 @@ fn a_rebuild_into_the_failed_attempts_bytes_is_broadcast_again() {
 
 /// A watch writes the failure that sends its transaction back to the policy
 /// before it lets the transaction go. A build in that gap would start a
-/// second watch beside the first, so the row waits for a later round.
+/// second watch beside the first, so the row waits until the release. The
+/// release changes nothing in the ledger, so without hearing it the worker
+/// would build the row only after it asks again, much later.
 #[test]
-fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
+fn a_waiting_row_still_owned_by_a_watch_is_built_once_released() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 	// Owned before it is written, so no worker ever sees it unowned. A fresh
 	// ledger gives its first row id 1.
@@ -162,7 +164,6 @@ fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
 	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
 
 	harness.engine().ownership.release(id);
-	harness.timer().advance(core::time::Duration::from_secs(3600));
 
 	harness.wait_for(id, DurableTxStatus::Pending);
 	assert_eq!(harness.policy().batches(), vec![vec![id]]);
