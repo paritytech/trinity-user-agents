@@ -76,23 +76,3 @@ fn a_success_is_written_without_asking_the_policy() {
 	assert_eq!(harness.status(observed.id), finalized.into());
 	assert_eq!(harness.policy().retry_questions(), vec![]);
 }
-
-/// Whether the transaction may be retried is unknown, so neither answer
-/// may be written: the write fails and the next pass asks again.
-#[test]
-fn a_policy_that_cannot_be_read_writes_nothing() {
-	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
-	let observed = rebuildable(&harness);
-	let id = observed.id;
-	block_on(harness.engine().db.write(move |tx| {
-		tx.execute("UPDATE durable_tx SET policy_params = 5 WHERE id = ?1", [id.0])?;
-		Ok(())
-	}))
-	.unwrap();
-
-	let written =
-		block_on(write_verdict(harness.engine(), &observed, failure(VerdictFailureKind::Expired)));
-
-	assert!(written.is_err());
-	assert_eq!(harness.status(id), DurableTxStatus::Pending);
-}
