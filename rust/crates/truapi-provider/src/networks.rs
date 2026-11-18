@@ -85,7 +85,7 @@ const CATALOG: &[NetworkDef] = &[
 	NetworkDef {
 		name: "previewnet",
 		relay: ChainDef {
-			genesis_hex: "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+			genesis_hex: "0x48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6",
 			spec: include_str!("../networks/previewnet.json"),
 			statement_protocol: false,
 		},
@@ -95,12 +95,12 @@ const CATALOG: &[NetworkDef] = &[
 			statement_protocol: false,
 		},
 		bulletin: ChainDef {
-			genesis_hex: "0xa081192b90c1f6a3f8e9ce7b2a8246f41af805c66456c84e05fd97c2b3502425",
+			genesis_hex: "0x1c0a1c27946ca0e7def02955315633db590bc38b0c537936e423efeb6c554876",
 			spec: include_str!("../networks/previewnet-bulletin.json"),
 			statement_protocol: false,
 		},
 		people: ChainDef {
-			genesis_hex: "0x55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9",
+			genesis_hex: "0x732abb4e3052154ebd9201a375b0aacf2d1fe7015700235c0a8b30d44b401c19",
 			spec: include_str!("../networks/previewnet-people.json"),
 			statement_protocol: true,
 		},
