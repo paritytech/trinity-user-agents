@@ -4,7 +4,14 @@ import { readFileSync } from "node:fs";
 
 import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
-import type { BundledStack, ReservedValuesPolicy } from "../runtime.js";
+import type {
+  BundledStack,
+  ReservedValuesPolicy,
+  StackCallbacks,
+  StackFetchRequest,
+  StackFetchResponse,
+  StackStatus,
+} from "../runtime.js";
 import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
 
@@ -35,14 +42,16 @@ const glueUrl = new URL(
   import.meta.url,
 );
 /** Starts a pairing host on a stack, as the production bundle does. */
-async function pairingHostStarter(): Promise<(stack: BundledStack) => unknown> {
+async function pairingHostStarter(): Promise<
+  (stack: BundledStack) => Promise<unknown>
+> {
   const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
   const { createWasmRawCallbacks } =
     await import("../generated/host-callbacks-adapter.js");
   initSync({ module: readFileSync(wasmUrl) });
   const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
   return (stack) =>
-    new WasmPairingHostRuntime(
+    WasmPairingHostRuntime.create(
       {
         ...createWasmRawCallbacks(createMockHost().callbacks),
         requestWorkerTransition: () => {},
@@ -124,7 +133,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       requestWorkerTransition: () => {},
     };
     const { productId, ...hostConfig } = bundledRuntimeConfig();
-    const runtime = new WasmPairingHostRuntime(raw, hostConfig);
+    const runtime = await WasmPairingHostRuntime.create(raw, hostConfig);
     // The core emits response frames through `emitFrame`; the worker supplies
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
@@ -132,11 +141,15 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(invoked.some((c) => c.startsWith("readCoreStorage:"))).toBe(true);
+    // Building the runtime also reads the stack record, so the auth session
+    // read is named: it is the one that proves the startup traffic crossed.
+    expect(invoked).toContain("readCoreStorage:AuthSession");
 
     // The same traffic must be visible through the control surface, because
     // that count is what a harness waits on to decide the wire is live.
-    expect(mock.getHostCallCount()).toBeGreaterThan(0);
+    expect(mock.getHostCallCount()).toBeGreaterThan(
+      invoked.filter((call) => call === "readCoreStorage:StackRecord").length,
+    );
   });
 
   it("refuses a stack pointer without a key", async () => {
@@ -147,7 +160,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const pointer = new URL(stack.pointer);
     pointer.searchParams.delete("key");
 
-    expect(() => start({ ...stack, pointer: pointer.href })).toThrow(
+    await expect(start({ ...stack, pointer: pointer.href })).rejects.toThrow(
       "runtimeConfig.stack: stack pointer has no key",
     );
   });
@@ -161,19 +174,23 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
     const genesisHash: string = JSON.parse(atob(envelope.payload)).chains[0]
       .genesisHash;
-    const reserving = (reservedValues: ReservedValuesPolicy) => () =>
+    const reserving = (reservedValues: ReservedValuesPolicy) =>
       start({ ...stack, reservedValues });
 
-    expect(reserving({ extraTlds: ["testnet"] })).toThrow(
+    await expect(reserving({ extraTlds: ["testnet"] })).rejects.toThrow(
       "runtimeConfig.stack: stack uses the reserved tld testnet",
     );
-    expect(reserving({ extraGenesisHashes: [genesisHash] })).toThrow(
+    await expect(
+      reserving({ extraGenesisHashes: [genesisHash] }),
+    ).rejects.toThrow(
       `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
     );
-    expect(reserving({ allowed: true, extraTlds: ["testnet"] })).toThrow(
+    await expect(
+      reserving({ allowed: true, extraTlds: ["testnet"] }),
+    ).rejects.toThrow(
       "runtimeConfig.stack: reserved values that allow the stack every reserved value cannot reserve extra ones",
     );
-    expect(reserving({ allowed: true })).not.toThrow();
+    await expect(reserving({ allowed: true })).resolves.toBeDefined();
   });
 
   it("refuses a stack field it does not have", async () => {
@@ -182,7 +199,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const start = await pairingHostStarter();
     const stack = { ...bundledTestStack(), allowsReservedValues: true };
 
-    expect(() => start(stack)).toThrow(
+    await expect(start(stack)).rejects.toThrow(
       "runtimeConfig.stack.allowsReservedValues is not a field; runtimeConfig.stack takes pointer, descriptor, reservedValues",
     );
   });
@@ -193,9 +210,9 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const start = await pairingHostStarter();
     const stack = bundledTestStack();
     const path = "runtimeConfig.stack.reservedValues";
-    const refusal = (reservedValues: unknown) => {
+    const refusal = async (reservedValues: unknown) => {
       try {
-        start({ ...stack, reservedValues } as BundledStack);
+        await start({ ...stack, reservedValues } as BundledStack);
         return "started";
       } catch (error) {
         return String(error);
@@ -203,17 +220,19 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     };
 
     expect(
-      [
-        ["testnet"],
-        { extraTLDs: ["testnet"] },
-        { allowed: "true" },
-        { extraTlds: "testnet" },
-        { extraTlds: ["paseo", null] },
-        { extraTlds: [".testnet"] },
-        { extraTlds: ["kusama"] },
-        { extraGenesisHashes: ["0x1234"] },
-        { extraGenesisHashes: [new Uint8Array(31)] },
-      ].map(refusal),
+      await Promise.all(
+        [
+          ["testnet"],
+          { extraTLDs: ["testnet"] },
+          { allowed: "true" },
+          { extraTlds: "testnet" },
+          { extraTlds: ["paseo", null] },
+          { extraTlds: [".testnet"] },
+          { extraTlds: ["kusama"] },
+          { extraGenesisHashes: ["0x1234"] },
+          { extraGenesisHashes: [new Uint8Array(31)] },
+        ].map(refusal),
+      ),
     ).toEqual([
       `${path} must be an object`,
       `${path}.extraTLDs is not a field; ${path} takes allowed, extraGenesisHashes, extraTlds`,
@@ -225,6 +244,129 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       `${path}.extraGenesisHashes[0]: expected 32-byte hex string, got 4 hex chars`,
       `${path}.extraGenesisHashes[0] must be exactly 32 bytes, got 31`,
     ]);
+  });
+
+  it("refreshes the stack through the host's fetch and reports each change", async () => {
+    // The published descriptor moves when a stack restarts its chains. The
+    // core has no HTTP client, so a web host follows it only if the request,
+    // the answer, the status and the record all cross the bridge intact.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const requests: StackFetchRequest[] = [];
+    const statuses: StackStatus[] = [];
+    const answers: StackFetchResponse[] = [
+      { status: "document", bytes: hostConfig.stack.descriptor, etag: '"v1"' },
+    ];
+    let online = false;
+    const stackCallbacks: StackCallbacks = {
+      fetchStackDescriptor: async (request) => {
+        requests.push(request);
+        const answer = online ? answers.shift() : undefined;
+        if (!answer) throw new Error("offline");
+        return answer;
+      },
+      stackChanged: (status) => statuses.push(status),
+    };
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 200));
+    // One host, so the core storage the first runtime writes is what the
+    // second one reads.
+    const mock = createMockHost();
+    const start = () =>
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(mock.callbacks),
+          requestWorkerTransition: () => {},
+          ...stackCallbacks,
+        },
+        hostConfig,
+      );
+
+    const runtime = await start();
+    await settled();
+    online = true;
+    runtime.refreshStack();
+    await settled();
+
+    const pointer = new URL(hostConfig.stack.pointer);
+    const request = {
+      url: pointer.searchParams.get("url"),
+      maxBytes: 1024 * 1024,
+    };
+    expect(requests).toEqual([request, request]);
+    expect(statuses.map((status) => status.lastRefresh)).toEqual([
+      undefined,
+      { outcome: "unreachable", reason: "offline" },
+      { outcome: "current" },
+    ]);
+    expect(runtime.stackStatus()).toEqual(statuses[2]);
+    const descriptor = JSON.parse(statuses[2].descriptor);
+    expect([descriptor.id, statuses[2].generation]).toEqual([
+      "previewnet",
+      descriptor.generation,
+    ]);
+
+    // The record went to core storage. A core built from the bundled copy
+    // alone would fetch at once; one that read the record knows its copy was
+    // fetched moments ago and waits for the hour.
+    const restarted = await start();
+    await settled();
+    expect([requests.length, restarted.stackStatus().descriptor]).toEqual([
+      2,
+      statuses[2].descriptor,
+    ]);
+  });
+
+  it("tells a host without fetchStackDescriptor the status at start", async () => {
+    // stackChanged is documented to report the status at start. A host that
+    // does not fetch the descriptor still shows which stack it runs.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+        stackChanged: (status: StackStatus) => statuses.push(status),
+      },
+      hostConfig,
+    );
+
+    expect(statuses).toEqual([runtime.stackStatus()]);
+    expect(statuses[0].lastRefresh).toBeUndefined();
+  });
+
+  it("tells a host of its stack only once the runtime exists", async () => {
+    // A config the core refuses must not leave the host holding the status of
+    // a runtime that was never built.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const {
+      productId: _productId,
+      pairing: _pairing,
+      ...withoutPairing
+    } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+
+    await expect(
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(createMockHost().callbacks),
+          requestWorkerTransition: () => {},
+          stackChanged: (status: StackStatus) => statuses.push(status),
+        },
+        withoutPairing,
+      ),
+    ).rejects.toThrow("runtimeConfig.pairing");
+    expect(statuses).toEqual([]);
   });
 
   it("isolates one real-core boot from the next through reset()", async () => {
@@ -240,7 +382,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const mock = createMockHost();
     const { productId, ...hostConfig } = bundledRuntimeConfig();
     const boot = async () => {
-      const runtime = new WasmPairingHostRuntime(
+      const runtime = await WasmPairingHostRuntime.create(
         {
           ...createWasmRawCallbacks(mock.callbacks),
           requestWorkerTransition: () => {},

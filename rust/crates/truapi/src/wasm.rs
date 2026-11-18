@@ -24,13 +24,11 @@ use std::{
 
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
-#[cfg(feature = "test-host")]
-use crate::platform::StackChains;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
 	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
-	ProductContext, ProductId, ProductIdError, ProviderError, ReservedValuesPolicy,
-	RuntimeConfigValidationError, ScannerPlatform, Stack,
+	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
+	ScannerPlatform, Stack, StackRefresh,
 };
 use futures::{
 	channel::mpsc,
@@ -55,8 +53,10 @@ use crate::{
 };
 
 mod generated_bridge;
+mod stack;
 
 use generated_bridge::JsBridge;
+use stack::{stack_from_js, stack_status_to_js, start_refresh};
 
 /// Per-core JS channel: outgoing frames and teardown for one product core.
 struct CoreChannel {
@@ -492,17 +492,27 @@ fn missing_callback(name: &str) -> Function {
 		.unchecked_into()
 }
 
-fn runtime_config_from_js(value: &JsValue) -> Result<(PairingHostConfig, ProductContext), JsValue> {
-	let host_config = pairing_host_config_from_js(value)?;
+fn runtime_config_from_js(
+	value: &JsValue,
+	stack: Stack,
+) -> Result<(PairingHostConfig, ProductContext), JsValue> {
+	let host_config = pairing_host_config_from_js(value, stack)?;
 	let product = product_context_from_js(value)?;
 	Ok((host_config, product))
 }
 
-fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsValue> {
+/// Refuses a missing host config before anything reads it.
+fn require_host_config(value: &JsValue) -> Result<(), JsValue> {
 	if value.is_null() || value.is_undefined() {
 		return Err(JsValue::from_str("hostConfig is required"));
 	}
+	Ok(())
+}
 
+fn pairing_host_config_from_js(
+	value: &JsValue,
+	stack: Stack,
+) -> Result<PairingHostConfig, JsValue> {
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
 	let pairing = get_required_object(value, "pairing", "runtimeConfig.pairing")?;
@@ -530,7 +540,7 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		stack_from_js(value)?,
+		stack,
 		get_required_string_at(&pairing, "deeplinkScheme", "runtimeConfig.pairing.deeplinkScheme")?,
 	)
 	.map_err(runtime_config_validation_to_js)
@@ -554,11 +564,10 @@ fn host_platform_from_js(value: Option<String>) -> Result<HostPlatform, JsValue>
 }
 
 #[cfg(feature = "wasm-signing-host")]
-fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsValue> {
-	if value.is_null() || value.is_undefined() {
-		return Err(JsValue::from_str("hostConfig is required"));
-	}
-
+fn signing_host_config_from_js(
+	value: &JsValue,
+	stack: Stack,
+) -> Result<SigningHostConfig, JsValue> {
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
 	SigningHostConfig::new(
@@ -584,115 +593,9 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		stack_from_js(value)?,
+		stack,
 	)
 	.map_err(runtime_config_validation_to_js)
-}
-
-/// The stack `runtimeConfig` names: `stack`, the pointer and descriptor copy a
-/// host build bundles, or, in a test-host build only, `testStack`, built from
-/// its parts because a test host has no descriptor to bundle.
-fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
-	#[cfg(feature = "test-host")]
-	if let Some(test_stack) = get_optional_object(value, "testStack", "runtimeConfig.testStack")? {
-		return test_stack_from_js(&test_stack);
-	}
-	let stack = get_required_object(value, "stack", "runtimeConfig.stack")?;
-	refuse_unknown_fields(
-		&stack,
-		"runtimeConfig.stack",
-		&["pointer", "descriptor", "reservedValues"],
-	)?;
-	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
-	let descriptor = Reflect::get(&stack, &JsValue::from_str("descriptor"))?
-		.dyn_into::<Uint8Array>()
-		.map_err(|_| JsValue::from_str("runtimeConfig.stack.descriptor must be a Uint8Array"))?
-		.to_vec();
-	let reserved_values = reserved_values_from_js(&stack, "runtimeConfig.stack.reservedValues")?;
-	Stack::bundled(&pointer, &descriptor, &reserved_values)
-		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
-}
-
-/// Refuses a field of the config object at `path` outside `fields`. A misspelt
-/// or retired field would otherwise be read as absent, and its value ignored.
-fn refuse_unknown_fields(object: &JsValue, path: &str, fields: &[&str]) -> Result<(), JsValue> {
-	if Array::is_array(object) {
-		return Err(JsValue::from_str(&format!("{path} must be an object")));
-	}
-	let unknown_field = Reflect::own_keys(object)?
-		.iter()
-		.filter_map(|key| key.as_string())
-		.find(|key| !fields.contains(&key.as_str()));
-	match unknown_field {
-		Some(field) => Err(JsValue::from_str(&format!(
-			"{path}.{field} is not a field; {path} takes {}",
-			fields.join(", ")
-		))),
-		None => Ok(()),
-	}
-}
-
-/// A stack config's optional `reservedValues`, at `path`. Each of its fields
-/// is optional, and one it does not have is refused.
-fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValuesPolicy, JsValue> {
-	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
-		return Ok(ReservedValuesPolicy::default());
-	};
-	refuse_unknown_fields(&reserved_values, path, &["allowed", "extraGenesisHashes", "extraTlds"])?;
-	Ok(ReservedValuesPolicy {
-		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
-			.unwrap_or(false),
-		extra_genesis_hashes: get_optional_array_at(
-			&reserved_values,
-			"extraGenesisHashes",
-			&format!("{path}.extraGenesisHashes"),
-			bytes32_from_js,
-		)?,
-		extra_tlds: get_optional_array_at(
-			&reserved_values,
-			"extraTlds",
-			&format!("{path}.extraTlds"),
-			string_from_js,
-		)?,
-	})
-}
-
-/// `runtimeConfig.testStack`: `network`, `tld`, `assetHub`, `people`,
-/// `bulletin` and the optional `relay`, each `{ genesisHash }`, and the
-/// optional `reservedValues`.
-#[cfg(feature = "test-host")]
-fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
-	refuse_unknown_fields(
-		stack,
-		"runtimeConfig.testStack",
-		&["network", "tld", "relay", "assetHub", "people", "bulletin", "reservedValues"],
-	)?;
-	let genesis = |role: &str| {
-		let path = format!("runtimeConfig.testStack.{role}");
-		get_optional_object(stack, role, &path)?
-			.map(|chain| {
-				get_required_bytes32_at(&chain, "genesisHash", &format!("{path}.genesisHash"))
-			})
-			.transpose()
-	};
-	let required = |role: &str| {
-		genesis(role)?.ok_or_else(|| {
-			JsValue::from_str(&format!("runtimeConfig.testStack.{role} is required"))
-		})
-	};
-	let chains = StackChains {
-		relay: genesis("relay")?,
-		asset_hub: required("assetHub")?,
-		people: required("people")?,
-		bulletin: required("bulletin")?,
-	};
-	Stack::new(
-		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
-		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
-		chains,
-		&reserved_values_from_js(stack, "runtimeConfig.testStack.reservedValues")?,
-	)
-	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
 }
 
 fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
@@ -1038,6 +941,8 @@ fn install_worker_controller(
 #[wasm_bindgen]
 pub struct WasmPairingHostRuntime {
 	runtime: Rc<PairingHostRuntime>,
+	/// The refresh of the stack's descriptor, or `None` for a test stack.
+	stack_refresh: Option<StackRefresh>,
 }
 
 #[wasm_bindgen]
@@ -1055,14 +960,16 @@ impl WasmPairingHostRuntime {
 		self.runtime.set_submit_preimages_locally(local);
 	}
 
-	/// Build a shared runtime from host-level platform callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
+	/// Build a shared runtime from host-level platform callbacks and host
+	/// config. Resolves once the core has read its stack record from the
+	/// host's core storage, or after a few seconds without it.
+	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmPairingHostRuntime, JsValue> {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&host_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let WasmPlatformAdapters {
 			platform,
@@ -1074,11 +981,12 @@ impl WasmPairingHostRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let host_config = pairing_host_config_from_js(&host_config)?;
+		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
+		let host_config = pairing_host_config_from_js(&host_config, stack)?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
 			host_config,
-			spawner,
+			spawner.clone(),
 			chat_platform,
 			contacts_platform,
 		);
@@ -1095,7 +1003,30 @@ impl WasmPairingHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
-		Ok(Self { runtime: Rc::new(runtime) })
+		// Last, so a host is told of a stack only once the runtime exists.
+		if let Some(refresh) = &stack_refresh {
+			start_refresh(refresh, &callbacks, &spawner)?;
+		}
+		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+	}
+
+	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
+	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
+	/// callback receives. `undefined` for a test stack.
+	#[wasm_bindgen(js_name = stackStatus)]
+	pub fn stack_status(&self) -> JsValue {
+		stack_status_to_js(self.stack_refresh.as_ref())
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old. Returns at once. A status the fetch changes arrives through
+	/// `stackChanged`, and `stackStatus()` reads it at any time. Does nothing
+	/// for a test stack or without a `fetchStackDescriptor` callback.
+	#[wasm_bindgen(js_name = refreshStack)]
+	pub fn refresh_stack(&self) {
+		if let Some(refresh) = &self.stack_refresh {
+			refresh.refresh_now();
+		}
 	}
 
 	/// Build one product-scoped runtime from this pairing host runtime.
@@ -1350,6 +1281,8 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 #[wasm_bindgen]
 pub struct WasmSigningHostRuntime {
 	runtime: Rc<SigningHostRuntime>,
+	/// The refresh of the stack's descriptor, or `None` for a test stack.
+	stack_refresh: Option<StackRefresh>,
 }
 
 #[cfg(feature = "wasm-signing-host")]
@@ -1414,13 +1347,15 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Build a shared signing runtime from host callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
+	/// Resolves once the core has read its stack record from the host's core
+	/// storage, or after a few seconds without it.
+	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmSigningHostRuntime, JsValue> {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&host_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let WasmPlatformAdapters {
 			platform,
@@ -1432,11 +1367,12 @@ impl WasmSigningHostRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let host_config = signing_host_config_from_js(&host_config)?;
+		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
+		let host_config = signing_host_config_from_js(&host_config, stack)?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
 			host_config,
-			spawner,
+			spawner.clone(),
 			chat_platform,
 			contacts_platform,
 		);
@@ -1453,7 +1389,30 @@ impl WasmSigningHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
-		Ok(Self { runtime: Rc::new(runtime) })
+		// Last, so a host is told of a stack only once the runtime exists.
+		if let Some(refresh) = &stack_refresh {
+			start_refresh(refresh, &callbacks, &spawner)?;
+		}
+		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+	}
+
+	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
+	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
+	/// callback receives. `undefined` for a test stack.
+	#[wasm_bindgen(js_name = stackStatus)]
+	pub fn stack_status(&self) -> JsValue {
+		stack_status_to_js(self.stack_refresh.as_ref())
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old. Returns at once. A status the fetch changes arrives through
+	/// `stackChanged`, and `stackStatus()` reads it at any time. Does nothing
+	/// for a test stack or without a `fetchStackDescriptor` callback.
+	#[wasm_bindgen(js_name = refreshStack)]
+	pub fn refresh_stack(&self) {
+		if let Some(refresh) = &self.stack_refresh {
+			refresh.refresh_now();
+		}
 	}
 
 	/// Build one product-scoped runtime from this signing host.
@@ -1722,15 +1681,22 @@ impl WasmProductRuntime {
 	/// Build the core from a JS callbacks object. The object must define
 	/// every host capability the [`crate::platform::Platform`] trait set
 	/// requires (camelCase property names; see the source for the full
-	/// list).
-	#[wasm_bindgen(constructor)]
-	pub fn new(callbacks: JsValue, runtime_config: JsValue) -> Result<WasmProductRuntime, JsValue> {
+	/// list). Resolves once the core has read its stack record from the host's
+	/// core storage, or after a few seconds without it. A product runtime
+	/// built on its own starts from that record but does not refresh the
+	/// descriptor: it has no `stackStatus` or `refreshStack`, and a host
+	/// runtime is what keeps the stack current.
+	pub async fn create(
+		callbacks: JsValue,
+		runtime_config: JsValue,
+	) -> Result<WasmProductRuntime, JsValue> {
 		// Surface Rust panics to the browser console. A panic mid-dispatch
 		// aborts the call as a wasm trap; the host should treat a thrown error
 		// from `receiveFrame` as a fatal-instance signal and rebuild the
 		// core rather than continue using it.
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&runtime_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let channel = CoreChannel::from_js(&callbacks)?;
 		let frame_sink =
@@ -1745,7 +1711,8 @@ impl WasmProductRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let (host_config, product) = runtime_config_from_js(&runtime_config)?;
+		let (stack, _no_refresh) = stack_from_js(&runtime_config, platform.clone()).await?;
+		let (host_config, product) = runtime_config_from_js(&runtime_config, stack)?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.
 		let pairing =

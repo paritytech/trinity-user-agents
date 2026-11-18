@@ -31,8 +31,8 @@ suite("test stack against the real core", () => {
       await import("../generated/host-callbacks-adapter.js");
     initSync({ module: readFileSync(wasmUrl) });
     const { productId: _productId, ...hostConfig } = mockRuntimeConfig();
-    const starting = (testStack: TestStack) => () =>
-      new WasmPairingHostRuntime(
+    const starting = (testStack: TestStack) =>
+      WasmPairingHostRuntime.create(
         {
           ...createWasmRawCallbacks(createMockHost().callbacks),
           requestWorkerTransition: () => {},
@@ -41,21 +41,23 @@ suite("test stack against the real core", () => {
       );
     const onDot = { ...mockTestStack(), tld: "dot" };
 
-    expect(starting(onDot)).toThrow(
+    await expect(starting(onDot)).rejects.toThrow(
       "runtimeConfig.testStack: stack uses the reserved tld dot",
     );
-    expect(
+    await expect(
       starting({ ...onDot, reservedValues: { allowed: true } }),
-    ).not.toThrow();
-    expect(
+    ).resolves.toBeDefined();
+    await expect(
       starting({
         ...mockTestStack(),
         reservedValues: { extraTlds: ["paseo"] },
       }),
-    ).toThrow("runtimeConfig.testStack: stack uses the reserved tld paseo");
-    expect(
+    ).rejects.toThrow(
+      "runtimeConfig.testStack: stack uses the reserved tld paseo",
+    );
+    await expect(
       starting({ ...onDot, allowsReservedValues: true } as TestStack),
-    ).toThrow(
+    ).rejects.toThrow(
       "runtimeConfig.testStack.allowsReservedValues is not a field; runtimeConfig.testStack takes network, tld, relay, assetHub, people, bulletin, reservedValues",
     );
   });

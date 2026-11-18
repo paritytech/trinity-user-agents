@@ -33,7 +33,8 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError, StackFetchRequest,
+		CoreStorageRecords, ReplaceCheck, ReservedValuesPolicy, Stack, StackChains, StackError,
+		StackFetchRequest,
 		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
 		StackStatus,
 	},
@@ -1214,6 +1215,14 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// The last descriptor a browser core verified for a stack, so its next
+	/// start does not go back to the bundled copy. A native core keeps this
+	/// record in its own database instead.
+	#[codec(index = 17)]
+	StackRecord {
+		/// The stack's `stack_id`, the key in its link.
+		stack_id: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1332,6 +1341,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
