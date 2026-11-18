@@ -32,7 +32,7 @@ fn handed_off() -> HandedOff {
 	block_on(ledger.create_purse("cheques".to_owned(), PurseTag::default())).unwrap();
 	let keys = allocate_held_items(&ledger, PURSE, 2);
 	let request = HandoffRequest { from: PURSE, keys: keys.iter().copied().collect(), tag: tag() };
-	block_on(ledger.hand_off(request, |_| Ok::<_, ()>(()))).unwrap();
+	block_on(ledger.hand_off(request, |_| Ok::<_, ()>(()), |_, _| Ok(()))).unwrap();
 	HandedOff { _dir: dir, db, ledger, keys }
 }
 
