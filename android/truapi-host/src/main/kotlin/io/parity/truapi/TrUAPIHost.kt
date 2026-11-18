@@ -78,6 +78,8 @@ import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
+import uniffi.truapi.CoinageUnavailable
+import uniffi.truapi.NativeCoinage
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
@@ -961,6 +963,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
     private val inner: NativeTrUApiHostRuntime =
         NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
+
+    /**
+     * The coinage layer, as the app's wallet screens and chat use it, once
+     * its start has returned. Throws [CoinageUnavailable] saying why
+     * it does not run, until the runtime is constructed again.
+     */
+    suspend fun coinage(): NativeCoinage = inner.coinage()
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null

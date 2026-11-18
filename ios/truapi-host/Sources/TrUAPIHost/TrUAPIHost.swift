@@ -1140,6 +1140,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.establishPairing(deeplink: deeplink)
     }
 
+    /// The coinage layer, as the app's wallet screens and chat use it, once
+    /// its start has returned. Throws ``CoinageUnavailable`` saying why it
+    /// does not run, until the runtime is constructed again.
+    public func coinage() async throws -> NativeCoinage {
+        try await inner.coinage()
+    }
+
     /// Serve a paired host's SSO session until it ends.
     ///
     /// Runs for the life of the session, so give it its own task. Only
