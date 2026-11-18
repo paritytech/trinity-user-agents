@@ -110,9 +110,9 @@ fn peer_coin(index: u32) -> CoinSecret {
 	coin_key(&[5; 16], PurseId::MAIN, InstallationId([1; 32]), index).unwrap().0
 }
 
-/// A load of 8 cents at the fixture's unit of 10 000, keeping the minimum
-/// balance of 1.
-const LOAD_COST: u128 = 8 * 10_000 + 1;
+/// A load of 8 cents at the fixture's unit of 10 000; a load may empty the
+/// funding account.
+const LOAD_COST: u128 = 8 * 10_000;
 
 /// A load the funding account cannot pay would fail on chain; it waits
 /// for the funds instead, and is built once they land.
@@ -124,7 +124,7 @@ fn a_load_waits_while_its_funding_account_cannot_cover_it_and_is_built_once_it_c
 	let load = setup.load(&key(1), paying.account(), 3, Retry::Until(NOW + 3600));
 	assert_eq!(setup.prepare(&[load]), HashMap::from([]), "an empty account pays nothing");
 	setup.chain.funds.lock().insert(paying.account(), LOAD_COST - 1);
-	assert_eq!(setup.prepare(&[load]), HashMap::from([]), "nor one that would fall below its minimum balance");
+	assert_eq!(setup.prepare(&[load]), HashMap::from([]), "nor one short of the load's value");
 	setup.chain.funds.lock().insert(paying.account(), LOAD_COST);
 	assert_eq!(setup.prepare(&[load]), HashMap::from([(load.0, Answer::Built)]));
 }
