@@ -132,3 +132,5 @@ fn a_free_token_context_is_the_prefix_the_period_and_the_counter() {
 	assert_eq!(context[24..28], [4, 3, 2, 1]);
 	assert_eq!(context[28..], [7, 0, 0, 0]);
 }
+
+mod app_vectors;
