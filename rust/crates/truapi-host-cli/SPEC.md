@@ -544,13 +544,13 @@ The product includes a development-only blocking tag before product code:
 The script installs the shared browser container and publishes
 `window.__HOST_API_TRANSPORT__`, a frame channel the SDK builds its own client
 over. SDK calls and authorization requests share one WebSocket and one Rust
-execution. The container
-consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
-same TCP port. After a disconnect, the SDK replaces the socket. Calls and
-subscriptions already sent fail and are not replayed. Calls not yet sent go out
-on the replacement once its handshake completes. Older SDKs use the compatibility
-`window.__HOST_API_PORT__` MessagePort, which requires a page reload after a
-disconnect.
+execution. The container consumes `window.__truapi_localhost` during startup.
+HTTP and WebSocket share the same TCP port. After a disconnect, the host
+replaces the socket. Calls and subscriptions already sent fail and are not
+replayed. Calls not yet sent go out on the replacement once its handshake
+completes. Older SDKs use the compatibility `window.__HOST_API_PORT__`
+MessagePort, which behaves the same way and reports what was lost as a
+`HostFailure` error.
 Production builds must omit the tag.
 
 On Unix the wrapped command is the leader of a process group retained by the
@@ -956,8 +956,7 @@ bootstrap tag.
 
 The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_TRANSPORT__`, and
 the legacy `__HOST_API_PORT__` adapter over that same connection. Published Product
-SDK imports discover the host automatically. Scripts using an older SDK's
-legacy port must be rerun after a host disconnect.
+SDK imports discover the host automatically.
 
 Scripts retain Bun/Node filesystem, environment, subprocess and module imports.
 Native networking APIs can bypass the web API wrappers; this is not

@@ -13,6 +13,7 @@ import {
 } from "@parity/truapi/internal";
 import type { ConnectionStatus, HostTransport } from "@parity/truapi/sandbox";
 import { SYSTEM_HANDSHAKE } from "@parity/truapi/wire-table";
+import { createLegacyPort, type LegacyPort } from "./legacy-port.js";
 
 /** One native host connection shared by product calls and browser authorization. */
 export interface HostConnection {
@@ -58,8 +59,7 @@ export function createHostConnection(
   let reset: ((error: Error) => void) | undefined;
   let productReceive: ((frame: Uint8Array) => void) | undefined;
   let productReset: ((error: Error) => void) | undefined;
-  let legacy: { receive(frame: Uint8Array): void; close(): void } | undefined;
-  let legacyPort: MessagePort | undefined;
+  let legacy: LegacyPort | undefined;
   let status: ConnectionStatus = "disconnected";
   let retries = 0;
   let nextDial: Promise<void> | undefined;
@@ -81,9 +81,7 @@ export function createHostConnection(
   function retire(connection: Connection, cause?: unknown): void {
     if (current !== connection) return;
     current = undefined;
-    const oldLegacy = legacy;
-    legacy = undefined;
-    oldLegacy?.close();
+    legacy?.lost();
     for (const notify of [reset, productReset]) {
       try {
         notify?.(new ConnectionResetError({ cause }));
@@ -136,7 +134,7 @@ export function createHostConnection(
       } catch {
         /* A product's handler cannot stop the host's delivery. */
       }
-      legacy?.receive(frame);
+      legacy?.receive(frame, decoded.value);
     });
     provider.subscribeClose?.((error) => retire(connection, error));
     setStatus("connecting");
@@ -154,6 +152,7 @@ export function createHostConnection(
         connection.checkedAt = now();
         retries = 0;
         setStatus("connected");
+        legacy?.connected();
       })
       .catch((error) => {
         retire(connection, error);
@@ -184,6 +183,7 @@ export function createHostConnection(
     page?.removeEventListener("visibilitychange", onVisibilityChange);
     stopped = true;
     if (current) retire(current);
+    legacy?.close();
   }
 
   function prepare(ids: MethodIds): Promise<void> {
@@ -239,6 +239,26 @@ export function createHostConnection(
   const client = createClient(transport);
   const handshake = client.system.handshake.bind(client.system);
 
+  const portLink = {
+    send(frame: Uint8Array): boolean {
+      const connection = current;
+      if (!connection?.verified) return false;
+      try {
+        connection.provider.postMessage(frame);
+      } catch (error) {
+        retire(connection, error);
+      }
+      return true;
+    },
+    dial(): void {
+      try {
+        void ready(open()).catch(() => {});
+      } catch {
+        legacy?.lost();
+      }
+    },
+  };
+
   function subscribeConnectionStatus(
     callback: (status: ConnectionStatus) => void,
   ): () => void {
@@ -281,44 +301,11 @@ export function createHostConnection(
     },
     internal: createInternalClient(transport),
     get legacyPort() {
-      if (legacyPort) return legacyPort;
-      const { port1: product, port2: host } = new MessageChannel();
-      legacyPort = product;
-      const adapter = {
-        receive(frame: Uint8Array) {
-          host.postMessage(frame);
-        },
-        close() {
-          host.close();
-        },
-      };
-      legacy = adapter;
-      const onMessage = (event: MessageEvent) => {
-        if (legacy !== adapter || !current?.verified) return;
-        const { data: frame } = event;
-        if (!(frame instanceof Uint8Array)) return;
-        const decoded = decodeWireMessage(frame);
-        if (decoded.isErr() || decoded.value.requestId.startsWith("host:"))
-          return;
-        try {
-          current.provider.postMessage(frame);
-        } catch (error) {
-          if (current) retire(current, error);
-        }
-      };
-      try {
-        void ready(open()).then(
-          () => {
-            if (legacy !== adapter) return;
-            host.addEventListener("message", onMessage);
-            host.start();
-          },
-          () => adapter.close(),
-        );
-      } catch {
-        adapter.close();
+      if (!legacy) {
+        legacy = createLegacyPort(portLink);
+        portLink.dial();
       }
-      return product;
+      return legacy.port;
     },
     subscribeConnectionStatus,
     dispose() {

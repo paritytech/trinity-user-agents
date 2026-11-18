@@ -330,7 +330,7 @@ describe('shared connection permission isolation', () => {
     expect((await decision)._unsafeUnwrap()).toEqual({ granted: false });
   });
 
-  it('recovers without calling a close method installed on the public legacy port', async () => {
+  it('keeps the public legacy port across a reconnect without calling a close method installed on it', async () => {
     const host = browser();
     const port = host.port();
     await host.connect();
@@ -345,12 +345,9 @@ describe('shared connection permission isolation', () => {
     expect(await decision).toBe('ConnectionResetError');
     await until(() => host.sockets.length === 2);
     await host.connect();
-    port.postMessage(frame('p:retired'));
-    await settle();
-    expect({
-      intercepted,
-      forwarded: host.sockets[1]!.sent.some(request => request.requestId === 'p:retired'),
-    }).toEqual({ intercepted: false, forwarded: false });
+    port.postMessage(frame('p:after'));
+    await until(() => host.sockets[1]!.sent.some(request => request.requestId === 'p:after'));
+    expect(intercepted).toBe(false);
   });
 
   it('accepts legacy assignment without replacing the pinned port or transport', () => {

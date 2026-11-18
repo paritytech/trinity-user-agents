@@ -367,6 +367,110 @@ describe("shared SDK host connection", () => {
     });
 });
 
+// Products built with an SDK that predates the injected transport reach the
+// host only through this port, and have no other signal that a connection was
+// replaced.
+describe("legacy port across connection loss", () => {
+    const lost = {
+        tag: "HostFailure" as const,
+        value: { reason: "TrUAPI host connection interrupted" },
+    };
+
+    function portClient(connection: HostConnection): TrUApiClient {
+        const transport = createTransport(createMessagePortProvider(connection.legacyPort));
+        cleanup.push(() => transport.dispose());
+        return createClient(transport);
+    }
+
+    it("keeps a port client working on the replacement connection", async () => {
+        const { connection, sockets } = host();
+        const client = portClient(connection);
+        expect((await client.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
+        sockets[0]!.close();
+        await until(() => sockets.length === 2);
+        expect((await client.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
+    });
+
+    it("ends the calls and subscriptions a lost connection carried with a host failure", async () => {
+        const fixture = host();
+        const client = portClient(fixture.connection);
+        await client.system.handshake();
+        fixture.answer(false);
+        const call = client.permissions.requestRemotePermission(permission);
+        const interrupted: unknown[] = [];
+        client.theme.subscribe().subscribe({ error: (error) => interrupted.push(error.reason) });
+        await until(
+            () =>
+                fixture.frames.filter(
+                    (frame) =>
+                        frame.payload.traitId === W.THEME_SUBSCRIBE.trait ||
+                        frame.payload.traitId === W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait,
+                ).length === 2,
+        );
+        fixture.sockets[0]!.close();
+        const result = await call;
+        await until(() => interrupted.length === 1);
+        expect({ call: result.isErr() && result.error, interrupted }).toEqual({
+            call: lost,
+            interrupted: [lost],
+        });
+    });
+
+    it("fails a call it could not send when the host cannot be dialed", async () => {
+        const dial = createWebSocketProviderFactory();
+        let dials = 0;
+        const { connection, sockets } = host((url) => {
+            if (dials++ > 0) throw new Error("refused");
+            return dial(url);
+        });
+        const statuses: string[] = [];
+        connection.subscribeConnectionStatus((status) => statuses.push(status));
+        const client = portClient(connection);
+        await client.system.handshake();
+        sockets[0]!.close();
+        await until(() => last(statuses) === "disconnected");
+        const result = await client.permissions.requestRemotePermission(permission);
+        expect(result.isErr() && result.error).toEqual(lost);
+    });
+
+    it("stops the streams the host started on a lost connection", async () => {
+        const fixture = host();
+        const client = portClient(fixture.connection);
+        let renders = 0;
+        let teardowns = 0;
+        client.renderer.onRender(() => {
+            renders++;
+            return () => {
+                teardowns++;
+            };
+        });
+        const request: T.V01ProductRendererRenderRequest = {
+            context: {
+                tag: "ChatMessage",
+                value: { roomId: "room", messageId: "message", messageType: "vote" },
+            },
+            payload: "0x",
+        };
+        const start = encodeWireMessage({
+            requestId: "h:1",
+            payload: {
+                traitId: W.RENDERER_RENDER.trait,
+                methodId: W.RENDERER_RENDER.method,
+                messageType: 0,
+                value: T.VersionedProductRendererRenderRequest.enc({ tag: "V1", value: request }),
+            },
+        })._unsafeUnwrap();
+        await client.system.handshake();
+        fixture.sockets[0]!.send(start);
+        await until(() => renders === 1);
+        fixture.sockets[0]!.close();
+        await until(() => fixture.sockets.length === 2);
+        fixture.sockets[1]!.send(start);
+        await until(() => renders === 2);
+        expect(teardowns).toBe(1);
+    });
+});
+
 describe("shared SDK connection failure timing", () => {
     async function untilPrepared(condition: () => boolean) {
         for (let turn = 0; turn < 200 && !condition(); turn++) await Promise.resolve();

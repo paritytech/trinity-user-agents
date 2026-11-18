@@ -18,9 +18,9 @@ extensible product objects create ordinary own properties. Explicit redefinition
   reply listeners. Promise and SDK Result methods carry asynchronous permission decisions.
 - `String`, `Number`, `Uint8Array`, and `DataView` protect request IDs, numeric validation, and encoded request/reply
   bytes. The global `BigInt` conversion and timeout functions are also pinned.
-- `MessageChannel`, `MessagePort`, and `EventTarget` remain protected. The [legacy port getter](src/host-connection.ts)
-  creates its channel lazily, then reads port methods and `addEventListener` after the handshake. Capturing native
-  WebSocket operations at startup does not protect this path.
+- `MessageChannel`, `MessagePort`, and `EventTarget` remain protected. The [legacy port](src/legacy-port.ts) creates its
+  channel lazily, when a product first reads the getter, and reads port methods and `addEventListener` then. Capturing
+  native WebSocket operations at startup does not protect this path.
 - Text encoder/decoder prototypes remain protected because SCALE codecs retain their instances but read their methods on
   each call.
 

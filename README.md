@@ -677,8 +677,9 @@ needed. It installs the shared host transport and browser container before
 product code runs. Keep the tag before application scripts, without `async` or
 `defer`. SDK calls and permission checks share one connection. Each product
 encodes its frames with its own `@parity/truapi`. Updated SDKs keep their
-client across reconnects; older SDKs can still start through the MessagePort
-adapter but require a page reload after a disconnect.
+client across reconnects. SDKs that predate the injected transport use the
+MessagePort adapter, which survives a reconnect too: what the lost connection
+carried ends with a `HostFailure` error.
 A visible page retries a failed reconnect after 250 ms, 1 s and 4 s; after that, the next API
 call or return to a visible page tries again.
 On iOS the host rebinds its localhost listener on the same port each time the app
