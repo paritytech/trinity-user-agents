@@ -24,7 +24,7 @@ In this document, **layer 1** means the coinage layer, and **layer 2** means the
 | **Store** | The [shared store](store-contract.md). Layer 2's records are kept in the same store as layer 1's records. The store is never restored, and layer 2's records are never lost unless layer 1's records are lost too |
 | **Parameters** | The claim timeout, the refund window and the clock tolerance, which each implementation sets within protocol-wide bounds (RFC deviations, gap 5). Also how long a top-up waits for its source to have the funds |
 
-Layer 2 runs where layer 1 runs, on the device that holds the seed (layer 1, section 6). A host paired with that device answers every RFC-6 and RFC-17 call as unsupported.
+Layer 2 runs where layer 1 runs, on the device that holds the seed (layer 1, section 6). A host paired with that device answers every RFC-6 and RFC-17 call as unsupported. On the device that holds the seed, a call made while the layers start waits for the start (layer 1, G3), and is answered as unsupported only if they do not start.
 
 The chat does not use layer 2. It has its own transport and its own encryption, it needs no receivable and no product permission, and it calls layer 1 directly, through the core's native interface ([`native-interface.md`](native-interface.md)), as the app's other wallet screens do.
 
