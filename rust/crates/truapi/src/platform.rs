@@ -33,9 +33,9 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse,
-		StackHost, StackIdentity, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
-		StackStorage,
+		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
+		StackFetchResponse, StackHost, StackIdentity, StackRecords, StackRefresh,
+		StackRefreshOutcome, StackStatus, StackStorage,
 	},
 };
 
@@ -1214,12 +1214,20 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// The last descriptor a browser core verified for a stack, so its next
+	/// start does not go back to the bundled copy. A native core keeps this
+	/// record in its own database instead.
+	#[codec(index = 17)]
+	StackRecord {
+		/// The stack's `stack_id`, the key in its link.
+		stack_id: String,
+	},
 	/// Id of the stack that holds the values a host stored under a slot alone,
 	/// before keys included a stack id.
 	///
 	/// Kept under the slot alone itself, so every stack the host runs reads the
 	/// same entry. See [`StackStorage`].
-	#[codec(index = 17)]
+	#[codec(index = 18)]
 	UnscopedEntriesOwner,
 }
 
@@ -1361,6 +1369,7 @@ pub fn describe_core_storage_key(
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
 		CoreStorageKey::UnscopedEntriesOwner => ("UnscopedEntriesOwner", None),
+		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 	};
 	Ok(CoreStorageKeyDescription { stack, kind, owner })
 }

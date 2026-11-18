@@ -1,8 +1,12 @@
 //! Where the core keeps the last descriptor it verified for a stack, so the
 //! next start does not go back to the bundled copy.
 
+use std::sync::Arc;
+
 use trinity_stack::{Pointer, Refresh, StackReader};
 use truapi::latest::GenericError;
+
+use crate::platform::{CoreStorage, CoreStorageKey, StackStorageKey};
 
 /// The store of each stack's descriptor record. A record is opaque to the
 /// store.
@@ -53,6 +57,49 @@ fn record_sequence(pointer: &Pointer, record: &[u8]) -> Option<u32> {
 	Some(reader.get(pointer, 0).current?.stack.descriptor.sequence)
 }
 
+/// The stack's record kept in a host's [`CoreStorage`], in the
+/// [`CoreStorageKey::StackRecord`] slot under the stack's own id, which for a
+/// bundled stack is its `stack_id`. A browser core keeps it there with the
+/// rest of its data; a native core uses its own database instead.
+pub struct CoreStorageRecords(Arc<dyn CoreStorage>);
+
+impl CoreStorageRecords {
+	/// The record store in `storage`.
+	pub fn new(storage: Arc<dyn CoreStorage>) -> Self {
+		Self(storage)
+	}
+}
+
+#[async_trait::async_trait]
+impl StackRecords for CoreStorageRecords {
+	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
+		self.0.read_core_storage(record_key(stack_id)).await
+	}
+
+	/// Reads the stored record before it writes. The two steps are not one
+	/// transaction, since core storage has none, so a second runtime writing
+	/// in between can still be overwritten.
+	async fn write_stack_record(
+		&self,
+		stack_id: &str,
+		record: Vec<u8>,
+		check: ReplaceCheck,
+	) -> Result<(), GenericError> {
+		let stored = self.0.read_core_storage(record_key(stack_id)).await?;
+		if stored.is_some_and(|stored| !check.replaces(&stored)) {
+			return Ok(());
+		}
+		self.0.write_core_storage(record_key(stack_id), record).await
+	}
+}
+
+fn record_key(stack_id: &str) -> StackStorageKey {
+	StackStorageKey {
+		stack: stack_id.to_string(),
+		slot: CoreStorageKey::StackRecord { stack_id: stack_id.to_string() },
+	}
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
 impl StackRecords for crate::store::Db {
@@ -97,3 +144,6 @@ fn stored_record(conn: &rusqlite::Connection, stack_id: &str) -> rusqlite::Resul
 	})
 	.optional()
 }
+
+#[cfg(test)]
+mod tests;

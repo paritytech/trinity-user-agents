@@ -257,6 +257,12 @@ export type CoreStorageKey =
    */
   | { tag: "AppManifest"; value: { productLabel: string } }
   /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } }
+  /**
    * Id of the stack that holds the values a host stored under a slot alone,
    * before keys included a stack id.
    *
@@ -1131,7 +1137,11 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
-      UnscopedEntriesOwner: [17, S._void] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
+      UnscopedEntriesOwner: [18, S._void] as const,
     }),
 );
 
