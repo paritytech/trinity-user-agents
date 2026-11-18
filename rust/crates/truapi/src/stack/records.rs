@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use trinity_stack::{Pointer, Refresh, StackReader};
 use truapi::latest::GenericError;
 
+use super::held::CopyRules;
 use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// The store of each stack's descriptor record. A record is opaque to the
@@ -17,9 +17,9 @@ pub trait StackRecords: Send + Sync {
 	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError>;
 
 	/// Stores `record` for `stack_id`, unless `check` says the record already
-	/// there holds a newer copy. Two runtimes can refresh at once while a host
-	/// rebuilds its runtime, and the slower one must not put an older copy
-	/// back. A store checks and writes in one transaction where it can.
+	/// there stays. Two runtimes can refresh at once while a host rebuilds its
+	/// runtime, and the slower one must not put an older copy back. A store
+	/// checks and writes in one transaction where it can.
 	async fn write_stack_record(
 		&self,
 		stack_id: &str,
@@ -29,32 +29,36 @@ pub trait StackRecords: Send + Sync {
 }
 
 /// Whether a record may replace the one already stored for its stack: not
-/// when the stored one holds a higher `sequence`. A stored record that no
-/// longer reads is replaced.
+/// when the core would start from the stored one and it holds a higher
+/// `sequence`.
+///
+/// A stored record the core would not start from is replaced: one that no
+/// longer reads, or one whose copy the core cannot run or that changes a
+/// field the bundled copy pins. Left in place, it would keep every copy the
+/// core takes out of the store.
 pub struct ReplaceCheck {
-	pointer: Pointer,
+	rules: CopyRules,
 	sequence: Option<u32>,
 }
 
 impl ReplaceCheck {
-	/// The check for storing `record`, a record of the stack `pointer` names.
-	pub fn new(pointer: Pointer, record: &[u8]) -> Self {
-		let sequence = record_sequence(&pointer, record);
-		Self { pointer, sequence }
+	/// The check for storing `record`, a record of the stack `rules` are for.
+	pub fn new(rules: CopyRules, record: &[u8]) -> Self {
+		let sequence = startable_sequence(&rules, record);
+		Self { rules, sequence }
 	}
 
 	/// Whether the record may replace `existing`.
 	#[must_use]
 	pub fn replaces(&self, existing: &[u8]) -> bool {
-		record_sequence(&self.pointer, existing) <= self.sequence
+		startable_sequence(&self.rules, existing) <= self.sequence
 	}
 }
 
-/// The `sequence` of the copy in `record`, or `None` when it no longer reads.
-fn record_sequence(pointer: &Pointer, record: &[u8]) -> Option<u32> {
-	let mut reader = StackReader::new(Refresh::Never);
-	reader.load(pointer, None, Some(record)).ok()?;
-	Some(reader.get(pointer, 0).current?.stack.descriptor.sequence)
+/// The `sequence` of the copy the core would start from in `record`, or
+/// `None` when it would not start from the record.
+fn startable_sequence(rules: &CopyRules, record: &[u8]) -> Option<u32> {
+	Some(rules.stored_copy(record).ok()??.descriptor.sequence)
 }
 
 /// The stack's record kept in a host's [`CoreStorage`], under

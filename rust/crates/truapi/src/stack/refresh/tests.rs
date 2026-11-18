@@ -7,14 +7,15 @@ use std::{
 	time::Instant,
 };
 
-use trinity_stack::{Descriptor, Refresh, Served, StackReader};
 use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
 	stack::{ReplaceCheck, StackRefreshOutcome},
 	test_support::{
-		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
+		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
+		refused_for_its_tld, sign_test_descriptor, stack_status, stored_test_record,
+		without_bulletin,
 	},
 	time::ManualTimer,
 };
@@ -39,6 +40,14 @@ fn manual_clock() -> Arc<ManualClock> {
 
 fn published(descriptor: &serde_json::Value) -> Result<StackFetchResponse, GenericError> {
 	Ok(StackFetchResponse::Document { bytes: sign_test_descriptor(descriptor).1, etag: None })
+}
+
+/// `descriptor` served with an `ETag`, which the core keeps with the copy.
+fn published_with_etag(descriptor: &serde_json::Value) -> Result<StackFetchResponse, GenericError> {
+	Ok(StackFetchResponse::Document {
+		bytes: sign_test_descriptor(descriptor).1,
+		etag: Some("\"held\"".to_string()),
+	})
 }
 
 fn unreachable() -> Result<StackFetchResponse, GenericError> {
@@ -151,13 +160,44 @@ impl Started {
 	}
 }
 
+/// The test stack's descriptor as bundled.
+fn bundled() -> serde_json::Value {
+	published_test_descriptor(1, "first", TEST_STACK_PEOPLE)
+}
+
+/// The test stack's `stack_id`, which its record is stored under.
+fn stack_id() -> String {
+	let (link, _) = sign_test_descriptor(&bundled());
+	signed_pointer(&link).expect("test link carries a key").stack_id()
+}
+
+/// A store that holds `record` for the test stack.
+fn holding(record: Vec<u8>) -> Arc<MemoryRecords> {
+	let records = Arc::<MemoryRecords>::default();
+	records
+		.records
+		.lock()
+		.expect("records mutex poisoned")
+		.insert(stack_id(), record);
+	records
+}
+
+/// The record `records` holds for the test stack.
+fn stored(records: &MemoryRecords) -> Option<Vec<u8>> {
+	records
+		.records
+		.lock()
+		.expect("records mutex poisoned")
+		.get(&stack_id())
+		.cloned()
+}
+
 fn load(
 	records: Arc<MemoryRecords>,
 	timer: Arc<ManualTimer>,
 	clock: Arc<ManualClock>,
 ) -> StackRefresh {
-	let (link, bundled) =
-		sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
+	let (link, bundled) = sign_test_descriptor(&bundled());
 	futures::executor::block_on(StackRefresh::load(
 		&link,
 		&bundled,
@@ -257,105 +297,133 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 	);
 }
 
-/// The published copy at `sequence`, moved to the `testnet` TLD.
-fn on_testnet(sequence: u32) -> serde_json::Value {
-	let mut descriptor = published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE);
-	descriptor["tld"] = "testnet".into();
-	descriptor
-}
-
-/// What the host is told while the core runs the bundled copy.
-fn bundled_status(last_refresh: Option<StackRefreshOutcome>) -> StackStatus {
-	let bundled: Descriptor =
-		serde_json::from_value(published_test_descriptor(1, "first", TEST_STACK_PEOPLE))
-			.expect("test descriptor is valid");
-	StackStatus {
-		descriptor: serde_json::to_string(&bundled).expect("a descriptor always serialises"),
-		generation: "first".to_string(),
-		stale: false,
-		expired: false,
-		restart_required: false,
-		last_refresh,
-	}
-}
-
-fn refused_for_its_tld() -> Option<StackRefreshOutcome> {
-	Some(StackRefreshOutcome::Refused {
-		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
-	})
+/// The test stack's copy at `sequence`, on the chains it is bundled with.
+fn published_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
 }
 
 /// A descriptor signed with a stolen key must not move a stack to another
-/// TLD. The copy never reaches the store, so the host is told it was refused
-/// even while the disk is full, and the next start runs the same stack.
+/// TLD. The host is told the copy was refused, nothing is written for it, and
+/// the next start runs the same stack.
 #[test]
-fn a_fetched_copy_on_another_tld_is_refused_without_a_write() {
+fn a_fetched_copy_on_another_tld_is_refused_and_not_stored() {
 	let records = Arc::<MemoryRecords>::default();
-	records.disk_full.store(true, Ordering::SeqCst);
-	let started = start(records.clone(), vec![published(&on_testnet(2))]);
+	let started = start(records.clone(), vec![published(&on_testnet(published_at(2)))]);
 
 	let at_start = started.next_status();
 	let after_fetch = started.next_status();
-	records.disk_full.store(false, Ordering::SeqCst);
 	let restarted = load(records.clone(), Arc::default(), manual_clock());
 
 	assert_eq!(
 		(
 			[at_start, after_fetch, restarted.status()],
 			[started.refresh.stack().tld(), restarted.stack().tld()],
-			records.records.lock().expect("records mutex poisoned").len(),
+			stored(&records),
 		),
 		(
-			[bundled_status(None), bundled_status(refused_for_its_tld()), bundled_status(None)],
+			[
+				stack_status(&bundled(), None),
+				stack_status(&bundled(), refused_for_its_tld()),
+				stack_status(&bundled(), None)
+			],
 			["paseo", "paseo"],
-			0
+			None
 		)
 	);
 }
 
-/// A record written before the core held copies to the bundled TLD may name
-/// another one. The host starts on the bundled copy and the record stays as
-/// it is, until a copy the core takes replaces it.
+/// A copy that came with an `ETag` has its record written again without it
+/// when the next fetch is refused or fails. That write stores no new copy, so
+/// whether it works or not the host is told what the fetch came to, and the
+/// next start runs the copy the core held.
 #[test]
-fn a_stored_copy_on_another_tld_is_ignored_and_left_in_place() {
-	let (link, _) = sign_test_descriptor(&on_testnet(2));
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let moved = Served::Document { bytes: &sign_test_descriptor(&on_testnet(2)).1, etag: None };
-	let record = StackReader::new(Refresh::Never)
-		.fetched(&pointer, moved, 0)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored");
-	let records = Arc::<MemoryRecords>::default();
-	let stored = || records.records.lock().expect("records mutex poisoned").clone();
-	records
-		.records
-		.lock()
-		.expect("records mutex poisoned")
-		.insert(pointer.stack_id(), record.clone());
-	let corrected = published_test_descriptor(3, "first", TEST_STACK_PEOPLE);
-	let started = start(records.clone(), vec![published(&on_testnet(2)), published(&corrected)]);
+fn a_refused_or_failed_fetch_is_reported_as_such_whatever_the_store_does() {
+	let held = published_at(2);
+	let moved = on_testnet(published_at(3));
+	let fetches = [(published(&moved), true), (published(&moved), false), (unreachable(), true)];
+
+	let told_and_stored = fetches.map(|(answer, disk_full)| {
+		let records = Arc::<MemoryRecords>::default();
+		let started = start(records.clone(), vec![published_with_etag(&held), answer]);
+		let _at_start = started.next_status();
+		let _held = started.next_status();
+		records.disk_full.store(disk_full, Ordering::SeqCst);
+		started.refresh.refresh_now();
+		let after_fetch = started.next_status();
+		records.disk_full.store(false, Ordering::SeqCst);
+		(after_fetch, load(records, Arc::default(), manual_clock()).status())
+	});
+
+	let refused = (stack_status(&held, refused_for_its_tld()), stack_status(&held, None));
+	let unreachable =
+		(stack_status(&held, unreachable_because("connection refused")), stack_status(&held, None));
+	assert_eq!(told_and_stored, [refused.clone(), refused, unreachable]);
+}
+
+/// A record may hold a copy on another TLD than the build bundles, such as
+/// one written by another build of the app. The host starts on the bundled
+/// copy and the record stays as it is while the published copy is refused.
+/// The next copy the core takes replaces it, and the next start runs that
+/// copy.
+#[test]
+fn a_stored_copy_on_another_tld_is_ignored_until_a_copy_the_core_takes_replaces_it() {
+	let moved = on_testnet(published_at(2));
+	let corrected = published_at(3);
+	let records = holding(stored_test_record(&moved));
+	let started = start(records.clone(), vec![published(&moved), published(&corrected)]);
 
 	let at_start = started.next_status();
 	let after_fetch = started.next_status();
-	let left_in_place = stored();
+	let left_in_place = stored(&records);
 	started.refresh.refresh_now();
 	let once_corrected = started.next_status();
+	let restarted = load(records, Arc::default(), manual_clock());
 
 	assert_eq!(
+		([at_start, after_fetch, once_corrected, restarted.status()], left_in_place),
 		(
-			[at_start, after_fetch],
-			left_in_place,
-			once_corrected.last_refresh,
-			stored() == HashMap::from([(pointer.stack_id(), record.clone())]),
-		),
-		(
-			[bundled_status(None), bundled_status(refused_for_its_tld())],
-			HashMap::from([(pointer.stack_id(), record)]),
-			Some(StackRefreshOutcome::Current),
-			false
+			[
+				stack_status(&bundled(), None),
+				stack_status(&bundled(), refused_for_its_tld()),
+				stack_status(&corrected, Some(StackRefreshOutcome::Current)),
+				stack_status(&corrected, None)
+			],
+			Some(stored_test_record(&moved))
 		)
 	);
+}
+
+/// A record the core does not start from can hold a higher `sequence` than
+/// the published copy: one on another TLD, or one the core cannot run. It
+/// must not keep the published copy out of the store. The host would be told
+/// to restart, start from the bundled copy again and be told to restart
+/// again, for as long as the record stayed.
+#[test]
+fn an_ignored_record_with_a_higher_sequence_does_not_keep_a_newer_copy_out() {
+	let wiped = published_test_descriptor(3, "second", TEST_STACK_WIPED_PEOPLE);
+	let ignored = [on_testnet(published_at(5)), without_bulletin(published_at(5))];
+
+	let told = ignored.map(|ignored| {
+		let records = holding(stored_test_record(&ignored));
+		let started = start(records.clone(), vec![published(&wiped)]);
+		let at_start = started.next_status();
+		let after_fetch = started.next_status();
+		let rebuilt = start(records, vec![published(&wiped)]);
+		let rebuilt_at_start = rebuilt.next_status();
+		rebuilt.refresh.refresh_now();
+		[at_start, after_fetch, rebuilt_at_start, rebuilt.next_status()]
+	});
+
+	let follows_the_wipe = [
+		stack_status(&bundled(), None),
+		StackStatus {
+			restart_required: true,
+			..stack_status(&bundled(), Some(StackRefreshOutcome::Current))
+		},
+		stack_status(&wiped, None),
+		stack_status(&wiped, Some(StackRefreshOutcome::Current)),
+	];
+	assert_eq!(told, [follows_the_wipe.clone(), follows_the_wipe]);
 }
 
 /// A browser host's storage may never answer. Building the runtime must not

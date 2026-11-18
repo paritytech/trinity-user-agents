@@ -1,12 +1,14 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use parity_scale_codec::Encode;
-use trinity_stack::{Refresh, Served, StackReader};
 
 use super::*;
 use crate::{
 	stack::signed_pointer,
-	test_support::{TEST_STACK_PEOPLE, published_test_descriptor, sign_test_descriptor},
+	test_support::{
+		TEST_STACK_PEOPLE, on_testnet, published_test_descriptor, sign_test_descriptor,
+		stored_test_record, without_bulletin,
+	},
 };
 
 /// Core storage held in memory, as a browser host's might be.
@@ -37,15 +39,21 @@ impl CoreStorage for MemoryCoreStorage {
 	}
 }
 
+/// The test stack's copy at `sequence`.
+fn published_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
+}
+
 /// The record a reader stores for the test stack's descriptor at `sequence`.
-fn record_at(pointer: &Pointer, sequence: u32) -> Vec<u8> {
-	let (_, bytes) =
-		sign_test_descriptor(&published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE));
-	StackReader::new(Refresh::Never)
-		.fetched(pointer, Served::Document { bytes: &bytes, etag: None }, 0)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored")
+fn record_at(sequence: u32) -> Vec<u8> {
+	stored_test_record(&published_at(sequence))
+}
+
+/// The rules of a build that bundles the test stack at `sequence` 1.
+fn bundled_rules() -> CopyRules {
+	let (link, bundled) = sign_test_descriptor(&published_at(1));
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	CopyRules::new(pointer, &bundled, false).expect("bundled copy is valid")
 }
 
 /// Two runtimes can refresh at once while a host rebuilds its runtime. The
@@ -53,13 +61,12 @@ fn record_at(pointer: &Pointer, sequence: u32) -> Vec<u8> {
 /// or the next start would go back to chains that no longer exist.
 #[test]
 fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
-	let (link, _) = sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let stack_id = pointer.stack_id();
+	let rules = bundled_rules();
+	let stack_id = rules.pointer().stack_id();
 	let records = CoreStorageRecords::new(Arc::new(MemoryCoreStorage::default()));
 	let write = |sequence| {
-		let record = record_at(&pointer, sequence);
-		let check = ReplaceCheck::new(pointer.clone(), &record);
+		let record = record_at(sequence);
+		let check = ReplaceCheck::new(rules.clone(), &record);
 		futures::executor::block_on(records.write_stack_record(&stack_id, record, check))
 			.expect("memory storage writes");
 	};
@@ -73,8 +80,23 @@ fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
 	let after_an_older_one = stored();
 	write(4);
 
-	assert_eq!(
-		[after_an_older_one, stored()],
-		[Some(record_at(&pointer, 3)), Some(record_at(&pointer, 4))]
-	);
+	assert_eq!([after_an_older_one, stored()], [Some(record_at(3)), Some(record_at(4))]);
+}
+
+/// The core ignores a record it would not start from, on every start. If
+/// such a record kept a copy the core took out of the store, that copy would
+/// never be the one the next start reads. A record the core would start from
+/// still keeps an older copy out.
+#[test]
+fn only_a_record_the_core_would_start_from_keeps_an_older_copy_out() {
+	let check = ReplaceCheck::new(bundled_rules(), &record_at(3));
+	let existing = [
+		record_at(5),
+		record_at(3),
+		stored_test_record(&on_testnet(published_at(5))),
+		stored_test_record(&without_bulletin(published_at(5))),
+		b"not a record".to_vec(),
+	];
+
+	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true, true, true, true]);
 }

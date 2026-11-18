@@ -8,6 +8,7 @@
 //! it resolves holds the network, the dotNS TLD and each chain's genesis
 //! hash, and answers `get_chain_info`.
 
+mod held;
 mod pinned;
 mod records;
 mod refresh;

@@ -15,6 +15,7 @@ use super::StackError;
 /// stack's descriptors cannot change it. A copy signed with a stolen key
 /// therefore cannot move the stack off a pinned value. The TLD is pinned on
 /// every stack: the signing role derives its accounts under it.
+#[derive(Clone)]
 pub struct Pinned {
 	tld: String,
 }
