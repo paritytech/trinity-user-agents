@@ -314,11 +314,11 @@ fn the_host_sink_receives_warnings_and_errors_only() {
 /// not silence the runtime that replaced it.
 #[test]
 fn dropping_a_registration_removes_only_its_own_sink() {
-	static SINK: RwLock<Option<HostSink>> = RwLock::new(None);
+	static SINK: RwLock<Option<HostSinkHandle>> = RwLock::new(None);
 	let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
-	let recording = |name: &'static str| -> HostSink {
+	let recording = |name: &'static str| -> HostSinkHandle {
 		let recorded = lines.clone();
-		Arc::new(move |_marker, _detail| recorded.lock().unwrap().push(name))
+		Arc::new(move |_marker: &str, _detail: &str| recorded.lock().unwrap().push(name))
 	};
 	let warn_through_sink = || {
 		let subscriber =
@@ -369,4 +369,135 @@ fn parse_level_reads_each_named_level() {
 	assert_eq!(parse_level("info"), LevelFilter::INFO);
 	assert_eq!(parse_level("debug"), LevelFilter::DEBUG);
 	assert_eq!(parse_level("trace"), LevelFilter::TRACE);
+}
+
+/// Records both kinds of traffic, so a test can tell which path carried a
+/// marker.
+#[derive(Default)]
+struct RecordingSink {
+	logs: Mutex<Vec<(String, String)>>,
+	events: Mutex<Vec<(String, Vec<CoreAttribute>)>>,
+}
+
+impl HostSink for RecordingSink {
+	fn log(&self, marker: &str, detail: &str) {
+		self.logs.lock().unwrap().push((marker.to_string(), detail.to_string()));
+	}
+
+	fn event(&self, marker: &str, attributes: &[CoreAttribute]) {
+		self.events.lock().unwrap().push((marker.to_string(), attributes.to_vec()));
+	}
+}
+
+/// An event arrives with its fields still named, which is the whole point of
+/// the path: a host can hand them to its reporter as attributes rather than
+/// parsing them back out of a line.
+#[test]
+fn an_event_reaches_the_host_sink_with_its_fields_named() {
+	let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	init();
+	let sink = Arc::new(RecordingSink::default());
+	let _registration = set_host_sink(sink.clone());
+
+	CoreEvent::new(markers::CORE_STARTED)
+		.text("outcome", "sent")
+		.count("age_ms", 1_200)
+		.flag("money_moved", true)
+		.emit();
+
+	let events = sink.events.lock().unwrap().clone();
+	assert_eq!(
+		events,
+		vec![(
+			"truapi.core.started".to_string(),
+			vec![
+				CoreAttribute {
+					key: "outcome".to_string(),
+					value: CoreAttributeValue::Text { value: "sent".to_string() },
+				},
+				CoreAttribute {
+					key: "age_ms".to_string(),
+					value: CoreAttributeValue::Count { value: 1_200 },
+				},
+				CoreAttribute {
+					key: "money_moved".to_string(),
+					value: CoreAttributeValue::Flag { value: true },
+				},
+			],
+		)],
+	);
+	assert!(sink.logs.lock().unwrap().is_empty(), "an event also went out as a log line");
+
+	*HOST_SINK.write().unwrap() = None;
+}
+
+/// The table gates both ways out of the core, not just the tracing one, so a
+/// marker nobody declared cannot reach a host by taking the newer path.
+#[test]
+fn an_unregistered_marker_is_refused_on_the_event_path() {
+	let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	init();
+	let sink = Arc::new(RecordingSink::default());
+	let _registration = set_host_sink(sink.clone());
+
+	CoreEvent::new(markers::Marker {
+		target: "truapi.not.registered",
+		class: markers::MarkerClass::Export { severity: markers::Severity::Info },
+	})
+	.text("outcome", "sent")
+	.emit();
+
+	assert!(
+		sink.events.lock().unwrap().is_empty(),
+		"a marker the table does not list reached the sink as an event",
+	);
+
+	*HOST_SINK.write().unwrap() = None;
+}
+
+/// Attribute values leave the device, so one is bounded on the way out the
+/// same way a detail line is.
+#[test]
+fn a_text_attribute_is_bounded() {
+	let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	init();
+	let sink = Arc::new(RecordingSink::default());
+	let _registration = set_host_sink(sink.clone());
+
+	CoreEvent::new(markers::CORE_STARTED)
+		.text("outcome", "o".repeat(CORE_EVENT_TEXT_MAX_CHARS * 2))
+		.emit();
+
+	let events = sink.events.lock().unwrap().clone();
+	let [(_, attributes)] = events.as_slice() else {
+		panic!("the bounded event did not arrive: {events:?}");
+	};
+	assert_eq!(
+		attributes[0].value,
+		CoreAttributeValue::Text { value: "o".repeat(CORE_EVENT_TEXT_MAX_CHARS) },
+	);
+
+	*HOST_SINK.write().unwrap() = None;
+}
+
+/// A host that installed a sink before this path existed keeps its log
+/// traffic, and events it never asked for go nowhere rather than anywhere
+/// surprising.
+#[test]
+fn a_log_only_sink_keeps_its_lines_and_drops_events() {
+	let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	init();
+	set_level(DEFAULT_LEVEL);
+	let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+	let recorder = seen.clone();
+	let _registration = set_host_sink(Arc::new(move |marker: &str, _detail: &str| {
+		recorder.lock().unwrap().push(marker.to_string());
+	}));
+
+	CoreEvent::new(markers::CORE_STARTED).text("outcome", "sent").emit();
+	tracing::info!(target: "truapi.core.started", "a line the host still gets");
+
+	assert_eq!(seen.lock().unwrap().as_slice(), ["truapi.core.started".to_string()]);
+
+	*HOST_SINK.write().unwrap() = None;
 }

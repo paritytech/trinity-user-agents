@@ -63,6 +63,13 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Lifecycle logger. Marker is a stable slug, detail is free-form.
     func onCoreLog(marker: String, detail: String)
 
+    /// Structured lifecycle fact. Marker is the same stable slug
+    /// ``onCoreLog(marker:detail:)`` carries, and each attribute is a key the
+    /// core names with a label, a count or a condition under it. Hand these to
+    /// the reporter as attributes, so a marker can be grouped and filtered by
+    /// what it carries.
+    func onCoreEvent(marker: String, attributes: [CoreAttribute])
+
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
@@ -409,6 +416,7 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
     func authStateChanged(state: AuthState) {}
@@ -678,6 +686,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func onCoreLog(marker: String, detail: String) {
         bridge.onCoreLog(marker: marker, detail: detail)
+    }
+
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
+        bridge.onCoreEvent(marker: marker, attributes: attributes)
     }
 
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
