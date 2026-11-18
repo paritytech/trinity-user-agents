@@ -28,24 +28,16 @@ store gets no rollback protection. Errors from a rule of the RFC carry a `code`,
 
 ## Known stacks
 
-`knownStacks` maps the name of each Trinity stack below to its signed link, and `trinity-stack add <name>` without a
-link adds the known stack of that name. `trinity-stack known` prints each name and link.
+`knownStacks` maps the name of each known Trinity stack to its signed link, and `trinity-stack add <name>` without a
+link adds the known stack of that name:
 
 ```sh
 npx @parity/trinity-stack add previewnet
 ```
 
-| Name            | Operator                      | Descriptor                                                                         |
-| --------------- | ----------------------------- | ---------------------------------------------------------------------------------- |
-| `paseo-next-v2` | Parity                        | <https://stack-paseo-next.parity-testnet.parity.io/.well-known/trinity-stack.json> |
-| `pcf-devnet`    | Polkadot Community Foundation | <https://stack.api.polkadotcommunity.foundation/.well-known/trinity-stack.json>    |
-| `polkadot`      | Polkadot Community Foundation | <https://stack.api.pcf.network/.well-known/trinity-stack.json>                     |
-| `previewnet`    | Parity                        | <https://previewnet.substrate.dev/.well-known/trinity-stack.json>                  |
-
-To add a stack to the list, open a pull request that adds its name and signed link to
-[`known-stacks.json`](https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/trinity-stack/known-stacks.json)
-and runs `scripts/update-stacks.sh` for the copies in `stacks/`. Users get the stack with the next release of
-`@parity/trinity-stack` and the crate. Only signed stacks are listed.
+`trinity-stack known` prints each name and link. The
+[trinity-stack crate's README](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack#known-stacks)
+lists who operates each stack and how to add one.
 
 ## Running from build copies
 
