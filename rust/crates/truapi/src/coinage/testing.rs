@@ -170,6 +170,8 @@ pub struct FakeChain {
 	pub unloaded: parking_lot::Mutex<HashMap<(i8, u32), u32>>,
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
+	/// Reads of coins that ask for any of these accounts fail.
+	pub failing_accounts: parking_lot::Mutex<Vec<[u8; 32]>>,
 	/// What each account holds of the external asset; none for the rest.
 	pub funds: parking_lot::Mutex<HashMap<[u8; 32], u128>>,
 	/// The transaction that emptied each account, and the block it is in.
@@ -198,6 +200,10 @@ impl CoinageChain for FakeChain {
 
 	async fn coins_at(&self, _: H256, accounts: &[[u8; 32]]) -> Result<Vec<Option<ChainCoin>>, StorageWatchError> {
 		self.check()?;
+		if accounts.iter().any(|account| self.failing_accounts.lock().contains(account)) {
+			let failure = RuntimeFailure::host_failure("fake_chain", "the test fails this read");
+			return Err(StorageWatchError::Chain(failure));
+		}
 		let coins = self.coins.lock();
 		Ok(accounts.iter().map(|account| coins.get(account).copied()).collect())
 	}
@@ -427,7 +433,7 @@ impl RegistryWriter for NoRegistryWriter {
 pub const BLOCK: HashAndNumber = HashAndNumber { hash: H256([2; 32]), number: 20 };
 
 /// A small reconstruction scan.
-pub const SCAN: ScanConfig = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+pub const SCAN: ScanConfig = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
 
 /// The interfaces a test layer starts with, over `store`, at [`NOW`].
 pub fn layer_interfaces(store: Db, runtime: Arc<TestRuntime>) -> Interfaces {
