@@ -50,7 +50,7 @@ The crate lists the links of the Trinity stacks below, signed by their operators
 name, and `known_stack_links` lists every name and link:
 
 ```rust
-let pointer = trinity_stack::known_stack("previewnet").expect("previewnet is a known stack");
+let pointer = trinity_stack::known_stack("previewnet").expect("unknown stack previewnet");
 assert_eq!(pointer.url().host_str(), Some("previewnet.substrate.dev"));
 ```
 
