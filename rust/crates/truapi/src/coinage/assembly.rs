@@ -197,7 +197,7 @@ pub async fn assemble(
 				.map(|(output, exponent)| {
 					let seed = entry_seed_of(output, keys)?;
 					Ok(UnpaidLoadInput {
-						preservation: CodecPreservation::Preserve,
+						preservation: CodecPreservation::Expendable,
 						value: chain_exponent(*exponent),
 						member_key: member_of(&seed, keys)?,
 						proof_of_ownership: signature(keys.vrf.sign(&seed, &from.encode()).map_err(key_error)?)?,
@@ -483,7 +483,7 @@ struct LoadWithCoinArgs {
 #[derive(EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 enum CodecPreservation {
-	Preserve,
+	Expendable,
 }
 
 #[derive(EncodeAsType)]
