@@ -68,7 +68,8 @@ An `App` route never leaves your App (`https://…`, `//other.dot` → `InvalidU
 
 One mode per route · fiat assets are ISO 4217, crypto assets are symbols · countries ISO 3166-1 alpha-2. Routes only
 narrow who is asked; your quotes are what count. Publishing is not listing: each host offers the providers its operator
-lists, so ask to be added.
+lists, so ask to be added. The core re-reads your manifest from dotNS at every app launch, so a redeploy shows at the
+next launch; a manifest that doesn't parse leaves you out of the list.
 
 ## 3. Register four handlers at start
 

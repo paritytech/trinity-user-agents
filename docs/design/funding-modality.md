@@ -65,11 +65,15 @@ flowchart LR
   H -- "actions · reads" --> C
 ```
 
-| Host ↔ core (native names) | Methods                                                                                                                                                                                                                                                                                 |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Callbacks (core → host)    | `present_funding` · `provider_frame_requested` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)`                                                                                                                                                            |
-| Actions (host → core)      | `set_funding_provider_config` · `open_funding` · `open_provider_frame` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `worker_exited` |
-| Reads (host → core)         | `funding_session` · `funding_progress` · `funding_options` · `funding_quotes` · `funding_amount_issue` · `funding_entries` · `funding_summary` · `funding_history` · `funding_available` · `funding_resume_pending`                                                                     |
+| Host ↔ core (native names)  | Methods                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Callbacks (core → host)     | `present_funding` · `provider_frame_requested` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)`                                                                                                                                                                                 |
+| Actions (host → core)       | `set_funding_callbacks` · `set_funding_provider_config` · `open_funding` · `open_provider_frame` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `worker_exited` |
+| Reads (host → core)         | `funding_session` · `funding_session_open` · `funding_progress` · `funding_options` · `funding_quotes` · `funding_amount_issue` · `funding_frame_waiting` · `funding_entries` · `funding_summary` · `funding_history` · `funding_available`                                                                                               |
+| Free functions (no runtime) | `funding_resume_pending(database_directory)` · `funding_status_in_flight(status)`                                                                                                                                                                                                                                                         |
+
+`set_funding_provider_config` takes the providers' published names; a provider whose Worker manifest doesn't parse is
+logged and left out, and the rest are still offered.
 
 Session id: `fs_` + nanoid(10). Another product's session reads as `NotFound`. Amounts cross the FFI as decimal strings.
 
@@ -122,6 +126,7 @@ sequenceDiagram
   H->>C: select_funding_provider (or start_funding_when_quoted)
   C->>C: store the session · other quotes end
   C->>W: assign
+  C->>H: funding_changed(Session), overlay up or not
   opt provider screen
     W->>C: presentFrame
     C->>H: provider_frame_requested · held
@@ -252,7 +257,7 @@ flowchart LR
   end
   subgraph kv["Core storage · host-backed"]
     l[(FundingSupport<br/>learned limits · 12 h)]
-    m[(WorkerManifest cache · 24 h)]
+    m[(Worker manifest cache · 24 h<br/>providers re-read at every launch)]
   end
   s -- "ends · same transaction" --> k
   s & k -- funding_history --> hv[Host history]
