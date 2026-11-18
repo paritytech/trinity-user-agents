@@ -154,3 +154,7 @@ codegen-units = 16
 # Most core edits touch one crate, so reusing the previous compilation is the
 # largest remaining win on this path.
 incremental = true
+
+[patch.crates-io]
+smoldot = { git = "https://github.com/paritytech/smoldot", rev = "ba24e116e9e35d224a97bcf4feec397c89d74d9f" }
+smoldot-light = { git = "https://github.com/paritytech/smoldot", rev = "ba24e116e9e35d224a97bcf4feec397c89d74d9f" }

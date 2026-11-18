@@ -5079,8 +5079,7 @@ dependencies = [
 [[package]]
 name = "smoldot"
 version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a808fdc5606c4b4d65fb864c9e8e44bf219dc5319b9892bd611e7ea953a879f6"
+source = "git+https://github.com/paritytech/smoldot?rev=ba24e116e9e35d224a97bcf4feec397c89d74d9f#ba24e116e9e35d224a97bcf4feec397c89d74d9f"
 dependencies = [
  "ark-bls12-381 0.6.0",
  "ark-ec 0.6.0",
@@ -5169,8 +5168,7 @@ dependencies = [
 [[package]]
 name = "smoldot-light"
 version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dccf0434fee16df9b515a72225e39d478244724bd667b6d47e930618febef10c"
+source = "git+https://github.com/paritytech/smoldot?rev=ba24e116e9e35d224a97bcf4feec397c89d74d9f#ba24e116e9e35d224a97bcf4feec397c89d74d9f"
 dependencies = [
  "async-channel",
  "async-lock",
