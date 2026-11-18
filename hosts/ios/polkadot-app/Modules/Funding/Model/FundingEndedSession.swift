@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import TrUAPIHost
 
 /// An ended session as its detail screen draws it: the core's summary, whose
@@ -77,7 +78,7 @@ extension FundingEndedSession {
     var quotedAmount: String? {
         guard let quote, let asset = summary.choice?.asset else { return nil }
         let units = direction == .in ? quote.sendAmount : quote.receiveAmount
-        return FundingAssetUnit(code: asset, decimals: quote.assetDecimals).format(units)
+        return AssetBalanceDisplayInfo.from(assetCode: asset, decimals: Int16(quote.assetDecimals)).amount(units: units)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.

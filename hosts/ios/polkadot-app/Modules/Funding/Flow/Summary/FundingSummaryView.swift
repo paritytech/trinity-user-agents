@@ -60,7 +60,7 @@ private extension FundingSummaryView {
     var headline: some View {
         if let quote = model.selectedQuote,
            let figure = model.state.quoteUnit(quote)
-           .format(model.direction == .in ? quote.sendAmount : quote.receiveAmount) {
+           .amount(units: model.direction == .in ? quote.sendAmount : quote.receiveAmount) {
             Text(verbatim: figure)
                 .typography(.displayLarge)
                 .foregroundStyle(.fgPrimary)
@@ -163,7 +163,7 @@ private extension FundingSummaryView {
     func payout(_ quote: FundingQuote) -> String? {
         model.direction == .in
             ? model.cash.label(units: quote.receiveAmount)
-            : model.state.quoteUnit(quote).format(quote.receiveAmount)
+            : model.state.quoteUnit(quote).amount(units: quote.receiveAmount)
     }
 
     var arrivesRow: some View {

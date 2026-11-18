@@ -6,17 +6,20 @@ import SubstrateSdk
 import TrUAPIHost
 
 /// The payment balance as the funding screens show it: amounts cross the FFI
-/// as decimal strings of the asset's smallest unit, and are drawn in the fiat
-/// currency the asset tracks, followed by the asset's symbol.
+/// as decimal strings of the asset's smallest unit, and are drawn as the app
+/// draws the digital dollar figure, followed by the asset's symbol.
 struct FundingCash: Equatable {
     let symbol: String
-    let precision: Int16
-    /// The fiat currency the asset is pegged to, whose sign leads each figure.
-    var fiat: Currency = .usd
+    let figureInfo: AssetBalanceDisplayInfo
+
+    init(symbol: String, precision: Int16) {
+        self.symbol = symbol
+        figureInfo = .digitalDollarFigure(assetPrecision: precision)
+    }
 
     /// Nil when `units` is not a number.
     func decimal(_ units: U128) -> Decimal? {
-        BigUInt(units).flatMap { Decimal.fromSubstrateAmount($0, precision: precision) }
+        figureInfo.decimal(units: units)
     }
 
     func decimal(_ units: U128?) -> Decimal? {
@@ -24,7 +27,7 @@ struct FundingCash: Equatable {
     }
 
     func decimal(fromPlanks balance: Balance) -> Decimal? {
-        Decimal.fromSubstrateAmount(balance, precision: precision)
+        Decimal.fromSubstrateAmount(balance, precision: figureInfo.assetPrecision)
     }
 
     /// `value` in CASH units, rounded down, so the host never asks for more
@@ -32,7 +35,7 @@ struct FundingCash: Equatable {
     func units(_ value: Decimal) -> U128? {
         guard value >= 0 else { return nil }
 
-        return value.toSubstrateAmount(precision: precision).map { String($0) }
+        return value.toSubstrateAmount(precision: figureInfo.assetPrecision).map { String($0) }
     }
 
     /// `text`, a typed amount with `.` as its separator, in CASH units; nil
@@ -47,20 +50,9 @@ struct FundingCash: Equatable {
         return units(value)
     }
 
-    /// "$50.20" for a dollar-pegged asset, with cents only when there are any.
+    /// "$50.20", with cents only when there are any.
     func figure(_ value: Decimal) -> String {
-        let info = AssetBalanceDisplayInfo(
-            displayPrecision: 2,
-            assetPrecision: precision,
-            symbol: fiat.symbol ?? fiat.code,
-            symbolValueSeparator: "",
-            symbolPosition: .prefix,
-            icon: nil
-        )
-        return AssetBalanceFormatterFactory()
-            .createExactFormatter(for: info, minimumFractionDigits: value.hasFraction ? 2 : 0)
-            .value(for: .current)
-            .stringFromDecimal(value) ?? ""
+        figureInfo.amount(value)
     }
 
     /// "$50.20 CASH".

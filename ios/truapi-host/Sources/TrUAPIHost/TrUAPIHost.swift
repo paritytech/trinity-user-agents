@@ -66,11 +66,9 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
-    /// Show or hide the face above this execution's expanded card. Answers
-    /// `.notPresented` when the product is not under its card and `.userMoving`
-    /// while the user drags it, and returns without waiting for the animation.
-    /// Defaults to `.unsupported`, so an app without cards says so instead of
-    /// pretending it moved one.
+    /// Uncover (`true`) or cover (`false`) the face under this execution's page. Answers
+    /// `.notPresented` when the product is not under its card and `.userMoving` while the user
+    /// moves the card. Defaults to `.unsupported`, so an app without cards says so.
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
@@ -1499,6 +1497,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         }
     }
 
+    /// The materials of `tree`, a saved face or a preview, in `context`: for each
+    /// `Materials` node, whether it loads, draws its layers or draws plain.
+    /// Unless `floatFilterable`, the shaders filter 32-bit float images
+    /// themselves. To resolve a new tree for the same body, start its resolution
+    /// before cancelling the old one.
+    public func resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialsResolution {
+        MaterialsResolution { observer in
+            inner.resolveMaterials(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
+        }
+    }
+
     /// Adds a card the user approved, with the face they approved it by. An id
     /// or title a product could not use is refused with `PocketAddError`.
     public func addPocketCard(productId: ProductId, cardId: String, title: String, face: RendererNode) async throws {
@@ -1712,6 +1721,15 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         try inner.publishRendererAction(item: item)
     }
 
+    /// The materials of `tree`, a body this execution's product rendered in
+    /// `context`, as ``TrUAPIHostRuntime/resolveMaterials(tree:context:floatFilterable:)``.
+    /// A node that falls back is also reported to the product.
+    public func resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialsResolution {
+        MaterialsResolution { observer in
+            inner.resolveMaterials(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
+        }
+    }
+
     public func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus {
@@ -1870,6 +1888,54 @@ private final class RendererStreamObserver: NativeRendererObserver, @unchecked S
     /// partial. Finishing with an error keeps that distinct from a clean end.
     func onError(reason: String) {
         continuation.finish(throwing: RendererStreamError(reason: reason))
+    }
+}
+
+/// The resolved materials of one tree, now and after each change, and the
+/// reports the app makes against them. Cancel it, or let it go, to stop.
+public final class MaterialsResolution: @unchecked Sendable {
+    /// Each update replaces the last, so only the newest is kept. The tree is
+    /// followed until this stream ends or is dropped.
+    public let resolved: AsyncStream<ResolvedMaterials>
+    private let handle: NativeMaterialsResolution
+    private let continuation: AsyncStream<ResolvedMaterials>.Continuation
+
+    fileprivate init(_ subscribe: (NativeMaterialsObserver) -> NativeMaterialsResolution) {
+        let (resolved, continuation) = AsyncStream.makeStream(
+            of: ResolvedMaterials.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let handle = subscribe(MaterialsStreamObserver(continuation: continuation))
+        continuation.onTermination = { @Sendable _ in
+            handle.cancel()
+        }
+        self.resolved = resolved
+        self.handle = handle
+        self.continuation = continuation
+    }
+
+    /// Draws node `node` plain for the rest of this resolution: its shader did not
+    /// compile (`.unsupported`), or an image argument could not be used
+    /// (`checkMaterialImage`'s reason, or `.notFound`).
+    public func report(node: UInt32, material: Bytes32?, reason: MaterialFailure) {
+        handle.report(node: node, material: material, reason: reason)
+    }
+
+    /// Stops following the tree and ends `resolved`.
+    public func cancel() {
+        continuation.finish()
+    }
+}
+
+private final class MaterialsStreamObserver: NativeMaterialsObserver, @unchecked Sendable {
+    private let continuation: AsyncStream<ResolvedMaterials>.Continuation
+
+    init(continuation: AsyncStream<ResolvedMaterials>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onResolved(materials: ResolvedMaterials) {
+        continuation.yield(materials)
     }
 }
 

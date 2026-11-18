@@ -1,0 +1,44 @@
+{
+  "format": "shaderlab-conformance-core",
+  "version": 1,
+  "subject": "r_noise field: 1024x1024 bytes, row-major, BLAKE2b-256(seed u32 LE || chunk u32 LE) per 32-byte chunk",
+  "notes": "Computed independently with Python hashlib. Field hashes are SHA-256 of the full 1,048,576-byte field. Local interpretation of the requirements recipe; needs cross-renderer agreement.",
+  "chunks": [
+    {
+      "name": "chunk seed=0 chunk=0",
+      "seed": 0,
+      "chunk": 0,
+      "expectHex": "81e47a19e6b29b0a65b9591762ce5143ed30d0261e5d24a3201752506b20f15c"
+    },
+    {
+      "name": "chunk seed=1 chunk=0",
+      "seed": 1,
+      "chunk": 0,
+      "expectHex": "1dbd7d0b561a41d23c2a469ad42fbd70d5438bae826f6fd607413190c37c363b"
+    },
+    {
+      "name": "chunk seed=305419896 chunk=1",
+      "seed": 305419896,
+      "chunk": 1,
+      "expectHex": "d81aef914befaf02fef489e2b26f8796ccb86dec524cde1503a3667f53dc477e"
+    },
+    {
+      "name": "chunk seed=4294967295 chunk=32767",
+      "seed": 4294967295,
+      "chunk": 32767,
+      "expectHex": "03d320e881bc1e360e334623233fa846d7b3c8090544b378e7e045369621ad1b"
+    }
+  ],
+  "fields": [
+    {
+      "name": "field seed=0",
+      "seed": 0,
+      "expectSha256": "0825925cb9b9612826cc1ba9396ba66f12c4dac7b70561eacc7442affe78ccfb"
+    },
+    {
+      "name": "field seed=305419896",
+      "seed": 305419896,
+      "expectSha256": "c8e4d4084716bf5039385edc88a5722ca052862155912dffb0945b4a05a1591b"
+    }
+  ]
+}

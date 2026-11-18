@@ -2,10 +2,10 @@ import Foundation
 import TrUAPIHost
 import WebKit
 
-/// Serves an App's archive on disk, bundled or published, under the
-/// product's own origin. The core picks the file that answers each request
-/// and its MIME type, with the system's type for extensions the core leaves
-/// untyped; a request nothing answers gets a 404.
+/// Serves a published App's archive on disk under the product's own origin.
+/// The core picks the file that answers each request and its MIME type, with
+/// the system's type for extensions the core leaves untyped; a request
+/// nothing answers gets a 404.
 public final class ProductArchiveSchemeHandler: NSObject {
     private let productId: ProductId
     private let root: URL
@@ -30,7 +30,7 @@ public final class ProductArchiveSchemeHandler: NSObject {
             root: root.path,
             requestPath: requestPath,
             isMainFrame: isMainFrame,
-            reader: FileBundleReader()
+            reader: FileArchiveReader()
         ),
             let data = fileManager.contents(atPath: file.path)
         else { return nil }

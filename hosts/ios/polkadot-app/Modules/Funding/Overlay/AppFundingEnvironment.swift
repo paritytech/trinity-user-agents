@@ -1,4 +1,3 @@
-import BulletinChain
 import Coinage
 import Foundation
 import Products
@@ -13,21 +12,15 @@ import UIKitExt
 final class AppFundingEnvironment: FundingOverlayEnvironment {
     private let router: ProductsRouting
     private let flowStateProvider: SPAFlowStateProviding
-    private let bundledProducts: BundledProducts
     let branding: FundingProviderBranding
 
     init(
         router: ProductsRouting,
-        flowStateProvider: SPAFlowStateProviding = SPAFlowStateProvider(),
-        bundledProducts: BundledProducts = .app
+        flowStateProvider: SPAFlowStateProviding = SPAFlowStateProvider()
     ) {
         self.router = router
         self.flowStateProvider = flowStateProvider
-        self.bundledProducts = bundledProducts
-        branding = ManifestFundingProviderBranding(
-            flowStateProvider: flowStateProvider,
-            bundledProducts: bundledProducts
-        )
+        branding = ManifestFundingProviderBranding(flowStateProvider: flowStateProvider)
     }
 
     var cash: FundingCash {
@@ -66,21 +59,13 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         let destination = providerId.rawValue + path
         let flowState = flowStateProvider.flowState()
 
-        // A provider the app ships opens from its own files, under its own id.
-        var bundled: BundleEntry?
-        if case let .bundled(entry) = bundledProducts.source(of: providerId), entry.hasApp {
-            bundled = entry
-        }
-        let page = bundled.flatMap { $0.page(navigationDestination: destination) }
-            ?? flowState.hostProvider.page(navigationDestination: destination)
-        guard let page else { return nil }
+        guard let page = flowState.hostProvider.page(navigationDestination: destination) else { return nil }
 
         let configuration = SPAConfiguration(
             title: title,
             isRootScreen: false,
             showMoreButton: false,
-            page: page,
-            contentSource: bundled.map { .bundled($0.appDirectory) } ?? .dotNs
+            page: page
         )
         return SPAViewFactory.createView(configuration: configuration, flowState: flowState)?.controller
     }
@@ -105,42 +90,22 @@ private final class FundingPresentedController: ControllerBackedProtocol {
     var isSetup: Bool { controller.isViewLoaded }
 }
 
-/// A provider's name and icon from its product's root manifest, resolved
-/// once per provider: the bundled copy for a provider the app ships, the
-/// published one otherwise.
+/// A provider's name and icon from its product's published root manifest,
+/// resolved once per provider.
 actor ManifestFundingProviderBranding: FundingProviderBranding {
     private let flowStateProvider: SPAFlowStateProviding
-    private let bundledProducts: BundledProducts
-    private let ipfsFetcher: IpfsFetching
     private var resolved: [ProductId: FundingProviderBrand] = [:]
 
-    init(
-        flowStateProvider: SPAFlowStateProviding,
-        bundledProducts: BundledProducts = .none,
-        ipfsFetcher: IpfsFetching = IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main)
-    ) {
+    init(flowStateProvider: SPAFlowStateProviding) {
         self.flowStateProvider = flowStateProvider
-        self.bundledProducts = bundledProducts
-        self.ipfsFetcher = ipfsFetcher
     }
 
     func brand(for providerId: ProductId) async -> FundingProviderBrand {
         if let brand = resolved[providerId] { return brand }
 
-        let name: String?
-        let iconData: Data?
-        if case let .bundled(entry) = bundledProducts.source(of: providerId) {
-            name = entry.displayName
-            if let cid = entry.iconCid {
-                iconData = try? await ipfsFetcher.lookupBy(cid: cid)
-            } else {
-                iconData = nil
-            }
-        } else {
-            let resolver = flowStateProvider.flowState().productResolver
-            name = try? await resolver.resolve(providerId).displayName
-            iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: providerId)
-        }
+        let resolver = flowStateProvider.flowState().productResolver
+        let name = try? await resolver.resolve(providerId).displayName
+        let iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: providerId)
 
         let brand = FundingProviderBrand(
             name: name ?? FundingProviderBrand.placeholder(for: providerId).name,

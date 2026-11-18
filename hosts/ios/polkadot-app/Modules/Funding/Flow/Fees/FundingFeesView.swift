@@ -28,13 +28,17 @@ private extension FundingFeesView {
     /// the balance for value out.
     func feeText(_ units: U128, of quote: FundingQuote) -> String? {
         if model.direction == .in {
-            return model.state.quoteUnit(quote).format(units)
+            return model.state.quoteUnit(quote).amount(units: units)
         }
         return model.cash.label(units: units)
     }
 
     func breakdown(_ quote: FundingQuote) -> some View {
-        let fees = FundingFees(quote: quote, direction: model.direction, cashPrecision: model.cash.precision)
+        let fees = FundingFees(
+            quote: quote,
+            direction: model.direction,
+            cashPrecision: model.cash.figureInfo.assetPrecision
+        )
         let total = fees.total.units
 
         return VStack(spacing: DSSpacings.small) {
@@ -76,12 +80,12 @@ private extension FundingFeesView {
     /// What one CASH is worth in the provider-side asset, net of fees as the
     /// amount line above it.
     func rate(_ fees: FundingFees, of quote: FundingQuote) -> String? {
-        guard let providerSide = model.state.quoteUnit(quote).decimal(fees.rateNum.units),
+        guard let providerSide = model.state.quoteUnit(quote).decimal(units: fees.rateNum.units),
               let cashSide = model.cash.decimal(fees.rateDen.units),
               cashSide > 0
         else { return nil }
 
-        let perCash = model.state.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
+        let perCash = model.state.quoteUnit(quote).amount((providerSide / cashSide).fundingRounded(scale: 4))
         return String(localized: .Funding.feesRateValue(cash: model.cash.label(1), value: perCash))
     }
 
