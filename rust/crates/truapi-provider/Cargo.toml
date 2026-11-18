@@ -53,6 +53,7 @@ smoldot = [
     "dep:smoldot",
     "dep:smoldot-light",
     "dep:thiserror",
+    "dep:trinity-stack",
     "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:web-sys",
@@ -77,6 +78,8 @@ futures = { workspace = true }
 hex = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+# Opens a stack's descriptor and checks the light specs handed with it; see `stack`.
+trinity-stack = { path = "../trinity-stack", optional = true }
 tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
 url = { workspace = true }
 
@@ -128,8 +131,8 @@ web-sys = { workspace = true, features = [
 web-time = { workspace = true, optional = true }
 
 [dev-dependencies]
-# Derives a bundled spec's genesis hash so the catalog cannot drift off it.
-blake2b_simd = { workspace = true }
+# Computes the digest a test descriptor names for a spec.
+sha2 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 jsonrpsee = { workspace = true, features = ["server"] }

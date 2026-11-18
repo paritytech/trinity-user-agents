@@ -32,6 +32,9 @@ pub enum Error {
 	/// Two chains have the same role.
 	#[error("chain role {0:?} appears more than once")]
 	DuplicateChainRole(String),
+	/// Two chains have the same genesis hash.
+	#[error("genesisHash {0} appears on more than one chain")]
+	DuplicateGenesisHash(String),
 	/// Two services have the same kind.
 	#[error("service kind {0:?} appears more than once")]
 	DuplicateServiceKind(String),
