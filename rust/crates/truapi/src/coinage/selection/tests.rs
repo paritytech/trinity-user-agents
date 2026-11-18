@@ -4,12 +4,11 @@ use futures::executor::block_on;
 use super::*;
 use crate::{
 	coinage::{
-		ChainConfig, PrivacyPolicy, RecycleAge,
+		PrivacyPolicy, RecycleAge,
 		ledger::{AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, allocate, mint_installation, observe, snapshot},
-		params::validate,
 		testing::{
-			TestWallet, chain_config, chain_params, instance_record, people_metadata,
-			planning::{aged_coin, in_ring},
+			observe_allowance,
+			TestWallet, chain_params, planning::{aged_coin, in_ring},
 		},
 	},
 	installation::InstallationId,
@@ -22,6 +21,7 @@ fn wallet() -> Db {
 	let db = open_memory_core_db();
 	block_on(db.write(|tx| {
 		mint_installation(tx, InstallationId([9; 32]), &PrivacyPolicy::fastest(), None, 0)?.unwrap();
+		observe_allowance(tx, 20)?;
 		Ok(())
 	}))
 	.unwrap();
@@ -72,9 +72,8 @@ fn raw(exponents: &[Exponent]) -> Vec<u8> {
 	exponents.iter().map(|exponent| exponent.get()).collect()
 }
 
-fn params_with_allowance(allowance: u32) -> ChainParams {
-	let config = ChainConfig { unload_allowance: allowance, ..chain_config() };
-	validate(&people_metadata(), Some(&instance_record()), Some(16), config).unwrap()
+fn allow(db: &Db, allowance: u32) {
+	block_on(db.write(move |tx| observe_allowance(tx, allowance))).unwrap();
 }
 
 #[test]
@@ -133,8 +132,10 @@ fn selection_fails_only_for_lack_of_value_or_tokens() {
 		Err(SelectError::InsufficientFunds { available: 10 })
 	);
 	let only_entries = SelectRequest { forms: Forms::EntriesOnly, ..request(Want::Amount(8)) };
-	assert_eq!(select_on(&db, only_entries, &params_with_allowance(0)), Err(SelectError::NoUnloadToken));
-	assert!(select_on(&db, only_entries, &params_with_allowance(1)).is_ok());
+	allow(&db, 0);
+	assert_eq!(select_on(&db, only_entries, &chain_params()), Err(SelectError::NoUnloadToken));
+	allow(&db, 1);
+	assert!(select_on(&db, only_entries, &chain_params()).is_ok());
 }
 
 #[test]

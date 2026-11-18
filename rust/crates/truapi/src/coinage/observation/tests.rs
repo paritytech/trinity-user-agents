@@ -7,12 +7,13 @@ use super::*;
 use crate::{
 	coinage::{
 		PrivacyPolicy, PurseId,
-		chain::{ChainCoin, RingPlace},
+		chain::{ChainCoin, FreeTokenLimits, RingPlace},
 		ledger::{AssetKind, Observed},
 		namespace::entry_key,
 		testing::{ENTROPY, FakeChain, FixedSeed, NOW, NoPerson, TestWallet, chain_params, coin_read, entry_read},
 	},
 	installation::InstallationId,
+	runtime::statement_allowance::{PersonhoodSigner, StatementAllowanceError, ring::RingParams},
 };
 
 fn deps(wallet: &TestWallet, chain: Arc<FakeChain>) -> ObserverDeps {
@@ -125,3 +126,43 @@ fn a_peer_coin_a_record_imports_is_observed() {
 }
 
 mod use_cases;
+
+/// A person of one collection, whose every alias is the same.
+struct Person(PersonhoodCollection);
+
+impl PersonhoodSigner for Person {
+	fn member(&self, _: PersonhoodCollection) -> Result<[u8; 32], StatementAllowanceError> {
+		Ok([7; 32])
+	}
+
+	fn alias(&self, _: PersonhoodCollection, _: &[u8]) -> Result<[u8; 32], StatementAllowanceError> {
+		Ok([8; 32])
+	}
+
+	fn prove(&self, _: &RingParams, _: &[u8], _: &[u8]) -> Result<Vec<u8>, StatementAllowanceError> {
+		Ok(Vec::new())
+	}
+}
+
+#[async_trait::async_trait]
+impl PersonhoodSource for Person {
+	async fn person(&self) -> Option<(Arc<dyn PersonhoodSigner>, RingParams, u32)> {
+		let ring = RingParams { collection: self.0, members: Vec::new(), exponent: 9, ring_index: 0, block_hash: String::new() };
+		Some((Arc::new(Person(self.0)), ring, 0))
+	}
+}
+
+/// Each collection has its own allowance, and it follows the unload fee, so
+/// every block reads the one of the user's collection.
+#[test]
+fn every_block_reads_the_allowance_of_the_users_collection() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let chain = Arc::new(FakeChain::default());
+	*chain.free_tokens.lock() = Some(FreeTokenLimits { people: 30, lite_people: 5 });
+	let observed = |collection| {
+		let deps = ObserverDeps { personhood: Arc::new(Person(collection)), ..deps(&wallet, chain.clone()) };
+		block_on(on_block(&deps, block(20), NOW, &chain_params())).unwrap();
+		wallet.view().unload_allowance()
+	};
+	assert_eq!([observed(PersonhoodCollection::LitePeople), observed(PersonhoodCollection::People)], [Some(5), Some(30)]);
+}

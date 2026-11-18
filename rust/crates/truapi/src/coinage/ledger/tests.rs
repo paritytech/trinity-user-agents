@@ -321,3 +321,21 @@ fn a_released_mark_can_be_marked_again() {
 	assert_eq!(block_on(db.write(move |tx| mark_disclosed(tx, &[coin]))).unwrap(), Ok(()));
 	assert_eq!(view(&db).mark(&coin), Some(Mark::Uncommitted));
 }
+
+/// The allowance follows the unload fee, so a failed read must keep the last
+/// value rather than leave the wallet without free tokens.
+#[test]
+fn the_allowance_is_the_last_value_read() {
+	let db = ledger();
+	let report = |at: u32, read: Read| {
+		let facts = Facts { at: block(at), reads: vec![(Subject::UnloadAllowance, read)] };
+		block_on(db.write(move |tx| observe(tx, &facts, 100, 255))).unwrap();
+		view(&db).unload_allowance()
+	};
+	assert_eq!(view(&db).unload_allowance(), None, "nothing is known before the first read");
+	assert_eq!([report(10, Read::UnloadAllowance(20)), report(11, Read::Failed), report(12, Read::UnloadAllowance(7))], [
+		Some(20),
+		Some(20),
+		Some(7)
+	]);
+}

@@ -4,13 +4,13 @@ use futures::executor::block_on;
 use super::*;
 use crate::{
 	coinage::{
-		ChainConfig, PrivacyPolicy,
+		PrivacyPolicy,
 		ledger::{AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, allocate, create_purse, mint_installation, observe, snapshot},
 		operation::OpKey,
-		params::validate,
 		registration::{Admission, Rows},
 		testing::{
-			TestWallet, chain_config, chain_params, instance_record, people_metadata, register_rows, set_status,
+			observe_allowance,
+			TestWallet, chain_params, register_rows, set_status,
 			unbuilt_engine,
 			planning::{allocated, in_ring},
 		},
@@ -26,6 +26,7 @@ fn wallet() -> Db {
 	let db = open_memory_core_db();
 	block_on(db.write(|tx| {
 		mint_installation(tx, InstallationId([9; 32]), &PrivacyPolicy::fastest(), None, 0)?.unwrap();
+		observe_allowance(tx, 20)?;
 		Ok(())
 	}))
 	.unwrap();
@@ -62,9 +63,9 @@ fn entry(ring: u32) -> Read {
 	}))
 }
 
-fn params_with_allowance(allowance: u32) -> ChainParams {
-	let config = ChainConfig { unload_allowance: allowance, ..chain_config() };
-	validate(&people_metadata(), Some(&instance_record()), Some(16), config).unwrap()
+fn balance_with_allowance(db: &Db, purse: PurseId, allowance: u32) -> Balance {
+	block_on(db.write(move |tx| observe_allowance(tx, allowance))).unwrap();
+	balance(&block_on(db.read(snapshot)).unwrap(), purse, NOW, &chain_params())
 }
 
 #[test]
@@ -84,12 +85,11 @@ fn an_entry_is_spendable_only_while_a_token_can_unload_it() {
 	holding(&db, PurseId::MAIN, AssetKind::Entry, 4, entry(0));
 	holding(&db, PurseId::MAIN, AssetKind::Entry, 4, entry(0));
 	holding(&db, PurseId::MAIN, AssetKind::Entry, 2, entry(5));
-	let view = block_on(db.read(snapshot)).unwrap();
-	let both = balance(&view, PurseId::MAIN, NOW, &params_with_allowance(2));
+	let both = balance_with_allowance(&db, PurseId::MAIN, 2);
 	assert_eq!(both, Balance { spendable: 36, held_back: 0, arriving: 0 }, "one token per ring");
-	let one = balance(&view, PurseId::MAIN, NOW, &params_with_allowance(1));
+	let one = balance_with_allowance(&db, PurseId::MAIN, 1);
 	assert_eq!(one, Balance { spendable: 32, held_back: 0, arriving: 4 }, "the larger group gets the token");
-	let none = balance(&view, PurseId::MAIN, NOW, &params_with_allowance(0));
+	let none = balance_with_allowance(&db, PurseId::MAIN, 0);
 	assert_eq!(none, Balance { spendable: 0, held_back: 0, arriving: 36 });
 }
 
@@ -99,10 +99,8 @@ fn the_main_purse_takes_tokens_before_product_purses() {
 	let product = block_on(db.write(|tx| create_purse(tx, "p".into(), Vec::new(), 0))).unwrap();
 	holding(&db, product, AssetKind::Entry, 6, entry(0));
 	holding(&db, PurseId::MAIN, AssetKind::Entry, 1, entry(3));
-	let view = block_on(db.read(snapshot)).unwrap();
-	let params = params_with_allowance(1);
-	assert_eq!(balance(&view, PurseId::MAIN, NOW, &params).spendable, 2);
-	assert_eq!(balance(&view, product, NOW, &params), Balance { spendable: 0, held_back: 0, arriving: 64 });
+	assert_eq!(balance_with_allowance(&db, PurseId::MAIN, 1).spendable, 2);
+	assert_eq!(balance_with_allowance(&db, product, 1), Balance { spendable: 0, held_back: 0, arriving: 64 });
 }
 
 /// Registers the record that mints `assets` and gives it `status`.
