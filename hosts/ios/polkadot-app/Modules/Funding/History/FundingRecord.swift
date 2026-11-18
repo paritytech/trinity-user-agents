@@ -158,12 +158,6 @@ extension FundingRecord.Payout {
     }
 }
 
-extension Date {
-    init(milliseconds: UInt64) {
-        self.init(timeIntervalSince1970: milliseconds.millisecondsToSeconds())
-    }
-}
-
 extension FundingRecord {
     /// Cancelled before any money moved: the history leaves it out, as the
     /// user called it off before paying. A payment that arrives anyway opens
