@@ -304,8 +304,9 @@ impl StackSource {
 	/// Says the record the last [`Self::fetched`] returned could not be
 	/// stored, and why. The host sees it in [`StackStatus::last_refresh`]
 	/// when that fetch found the published copy to be the one the core holds.
-	/// A refused or failed fetch brought no copy to store, so the host is
-	/// still told what that fetch came to.
+	/// After a refused or failed fetch the record holds the copy the core
+	/// already held, which may be one whose earlier store failed, and the
+	/// host is still told what that fetch came to.
 	pub fn record_not_stored(&mut self, reason: String) {
 		if self.last_refresh == Some(StackRefreshOutcome::Current) {
 			self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });

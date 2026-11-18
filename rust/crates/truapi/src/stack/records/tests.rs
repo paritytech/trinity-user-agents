@@ -6,9 +6,8 @@ use super::*;
 use crate::{
 	stack::{ReservedValuesPolicy, signed_pointer},
 	test_support::{
-		TEST_STACK_PEOPLE, on_testnet, published_test_descriptor,
-		redeployed_reserved_test_descriptor, reserved_test_descriptor, sign_test_descriptor,
-		stored_test_record, without_bulletin,
+		on_testnet, published_test_descriptor_at, redeployed_reserved_test_descriptor,
+		reserved_test_descriptor, sign_test_descriptor, stored_test_record, without_bulletin,
 	},
 };
 
@@ -40,19 +39,14 @@ impl CoreStorage for MemoryCoreStorage {
 	}
 }
 
-/// The test stack's copy at `sequence`.
-fn published_at(sequence: u32) -> serde_json::Value {
-	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
-}
-
 /// The record a reader stores for the test stack's descriptor at `sequence`.
 fn record_at(sequence: u32) -> Vec<u8> {
-	stored_test_record(&published_at(sequence))
+	stored_test_record(&published_test_descriptor_at(sequence), 0)
 }
 
 /// The rules of a build that bundles the test stack at `sequence` 1.
 fn bundled_rules() -> CopyRules {
-	rules_of(&published_at(1), ReservedValuesPolicy::default())
+	rules_of(&published_test_descriptor_at(1), ReservedValuesPolicy::default())
 }
 
 /// The rules of a build that bundles `bundled` under `reserved_values`.
@@ -89,18 +83,18 @@ fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
 	assert_eq!([after_an_older_one, stored()], [Some(record_at(3)), Some(record_at(4))]);
 }
 
-/// The core ignores a record it would not start from, on every start. If
+/// The core ignores a record whose copy fails its rules, on every start. If
 /// such a record kept a copy the core took out of the store, that copy would
-/// never be the one the next start reads. A record the core would start from
-/// still keeps an older copy out.
+/// never be the one the next start reads. A record whose copy passes the
+/// rules still keeps an older copy out.
 #[test]
-fn only_a_record_the_core_would_start_from_keeps_an_older_copy_out() {
+fn only_a_record_whose_copy_passes_the_cores_rules_keeps_an_older_copy_out() {
 	let check = ReplaceCheck::new(bundled_rules(), &record_at(3));
 	let existing = [
 		record_at(5),
 		record_at(3),
-		stored_test_record(&on_testnet(published_at(5))),
-		stored_test_record(&without_bulletin(published_at(5))),
+		stored_test_record(&on_testnet(published_test_descriptor_at(5)), 0),
+		stored_test_record(&without_bulletin(published_test_descriptor_at(5)), 0),
 		b"not a record".to_vec(),
 	];
 
@@ -113,11 +107,39 @@ fn only_a_record_the_core_would_start_from_keeps_an_older_copy_out() {
 #[test]
 fn a_record_that_changes_a_reserved_pin_keeps_no_copy_out() {
 	let rules = rules_of(&reserved_test_descriptor(1), ReservedValuesPolicy::ALLOWED);
-	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3)));
+	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3), 0));
 	let existing = [
-		stored_test_record(&reserved_test_descriptor(5)),
-		stored_test_record(&redeployed_reserved_test_descriptor(5)),
+		stored_test_record(&reserved_test_descriptor(5), 0),
+		stored_test_record(&redeployed_reserved_test_descriptor(5), 0),
 	];
 
 	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true]);
+}
+
+/// iOS and Android keep the record in the core database, which checks and
+/// writes in one transaction. It applies the same check as the browser's
+/// store: a record on another TLD is replaced whatever its `sequence`, and a
+/// record the core can run keeps an older one out.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run() {
+	let (_directory, db) = crate::store::open_temporary_core_db();
+	let rules = bundled_rules();
+	let stack_id = rules.pointer().stack_id();
+	let write = |record: Vec<u8>| {
+		let check = ReplaceCheck::new(rules.clone(), &record);
+		futures::executor::block_on(db.write_stack_record(&stack_id, record, check))
+			.expect("the database writes");
+	};
+	let stored = || {
+		futures::executor::block_on(db.read_stack_record(&stack_id)).expect("the database reads")
+	};
+
+	write(stored_test_record(&on_testnet(published_test_descriptor_at(5)), 0));
+	write(record_at(3));
+	let over_an_ignored_one = stored();
+	write(record_at(5));
+	write(record_at(4));
+
+	assert_eq!([over_an_ignored_one, stored()], [Some(record_at(3)), Some(record_at(5))]);
 }

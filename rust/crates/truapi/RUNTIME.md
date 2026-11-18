@@ -222,8 +222,9 @@ accounts derive under the TLD, so only a new build changes it. A stored
 descriptor the core refuses is ignored: the core starts from the bundled copy,
 and the next descriptor it takes replaces the stored one, whatever its
 `sequence`. After a refused or failed fetch `last_refresh` says so even when
-the core could not write its record, since that write stores no new
-descriptor.
+the core could not write its record. That record holds the descriptor the core
+already holds, which may be one whose earlier store failed, and never the one
+just refused.
 
 On a stack whose build allows it reserved values the core pins more of the
 bundled copy: the set of chain roles and each role's genesis hash, `assets`,
