@@ -96,4 +96,15 @@ sealed interface TrUAPIConfirmation {
             data object Refund : Destination
         }
     }
+
+    /** Spend value from a coinage purse; every spend is confirmed, whoever created the purse. */
+    data class CoinPaymentSpend(
+        override val requesterProductId: ProductId,
+        /** The purse the value leaves, or null for the main purse. */
+        val fromPurse: UInt?,
+        /** Decimal, in the payment asset's smallest units. */
+        val amount: String,
+        /** Whether the spend also takes value that is still gaining privacy. */
+        val takesHeldBackValue: Boolean,
+    ) : TrUAPIConfirmation.Prompt
 }

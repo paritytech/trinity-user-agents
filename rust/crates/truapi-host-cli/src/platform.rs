@@ -1023,6 +1023,16 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 drain_destination(&review.destination),
             ),
         ),
+        UserConfirmationReview::CoinPaymentSpend(review) => (
+            "spend from a coinage purse",
+            format!(
+                "Product {} requested to spend {} from coinage purse {}{}.",
+                review.calling_product_id,
+                review.amount,
+                review.from_purse,
+                if review.takes_held_back_value { ", including value still gaining privacy" } else { "" },
+            ),
+        ),
     }
 }
 

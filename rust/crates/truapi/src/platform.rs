@@ -1861,6 +1861,22 @@ pub enum NftPurseDrainDestination {
 	Refund,
 }
 
+/// Review shown before value leaves a coinage purse: every spend is
+/// confirmed, whoever created the purse.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoinPaymentSpendReview {
+	/// Product making the request.
+	pub calling_product_id: ProductId,
+	/// Purse the value leaves.
+	pub from_purse: u32,
+	/// How much leaves it, in the payment asset's own units.
+	pub amount: u128,
+	/// Whether the spend also takes value that is still gaining privacy,
+	/// which the user agrees to separately.
+	pub takes_held_back_value: bool,
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -1895,6 +1911,9 @@ pub enum UserConfirmationReview {
 	/// Move items out of an NFT purse the product does not own.
 	#[codec(index = 12)]
 	NftPurseDrain(NftPurseDrainReview),
+	/// Spend value from a coinage purse.
+	#[codec(index = 13)]
+	CoinPaymentSpend(CoinPaymentSpendReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.

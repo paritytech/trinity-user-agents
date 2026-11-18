@@ -112,6 +112,8 @@ pub struct StubPlatform {
 	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
 	pub nft_purse_drain_confirmed: bool,
 	pub nft_purse_drain_reviews: Arc<Mutex<Vec<NftPurseDrainReview>>>,
+	pub coin_payment_spend_confirmed: bool,
+	pub coin_payment_spend_reviews: Arc<Mutex<Vec<crate::platform::CoinPaymentSpendReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
 	pub identity_disclosure_calls: Arc<AtomicUsize>,
@@ -2145,6 +2147,13 @@ impl UserConfirmation for StubPlatform {
 					.expect("NFT purse drain review list mutex poisoned")
 					.push(review);
 				(None, self.nft_purse_drain_confirmed)
+			},
+			UserConfirmationReview::CoinPaymentSpend(review) => {
+				self.coin_payment_spend_reviews
+					.lock()
+					.expect("coinage spend review list mutex poisoned")
+					.push(review);
+				(None, self.coin_payment_spend_confirmed)
 			},
 		};
 		if let Some(reason) = error {

@@ -105,6 +105,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealWh
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.WhitelistedProductsProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.AccountAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.BalanceAccessPermissionHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.CoinPaymentPermissionHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.CoinPaymentPursePermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.NftPurseReadPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
@@ -351,6 +353,16 @@ internal interface ProductsModule {
     fun bindNftPurseReadPermissionHandler(
         impl: NftPurseReadPermissionHandler,
     ): ProductPermissionHandler<ProductPermission.NftPurseRead>
+
+    @Binds
+    fun bindCoinPaymentPermissionHandler(
+        impl: CoinPaymentPermissionHandler,
+    ): ProductPermissionHandler<ProductPermission.CoinPayment>
+
+    @Binds
+    fun bindCoinPaymentPursePermissionHandler(
+        impl: CoinPaymentPursePermissionHandler,
+    ): ProductPermissionHandler<ProductPermission.CoinPaymentPurse>
 
     @Binds
     @Singleton

@@ -32,6 +32,8 @@ class RealProductPermissionGuardTest {
     private val deviceHandler: ProductPermissionHandler<ProductPermission.DeviceCapability> = mock()
     private val identityHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess> = mock()
     private val nftPurseReadHandler: ProductPermissionHandler<ProductPermission.NftPurseRead> = mock()
+    private val coinPaymentHandler: ProductPermissionHandler<ProductPermission.CoinPayment> = mock()
+    private val coinPaymentPurseHandler: ProductPermissionHandler<ProductPermission.CoinPaymentPurse> = mock()
     private val repository: ProductPermissionRepository = mock()
     private val requester: ProductPermissionRequester = mock()
 
@@ -229,6 +231,8 @@ class RealProductPermissionGuardTest {
         deviceHandler,
         identityHandler,
         nftPurseReadHandler,
+        coinPaymentHandler,
+        coinPaymentPurseHandler,
         repository,
         requester,
     )

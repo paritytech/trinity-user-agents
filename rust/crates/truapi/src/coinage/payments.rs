@@ -8,6 +8,7 @@ pub mod channel;
 pub mod cheque;
 pub mod clearing;
 pub mod flows;
+pub mod permissions;
 pub mod receivable;
 pub mod records;
 pub mod status;

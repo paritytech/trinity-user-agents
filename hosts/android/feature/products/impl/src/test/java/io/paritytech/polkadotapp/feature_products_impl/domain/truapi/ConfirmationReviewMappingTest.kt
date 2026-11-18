@@ -12,6 +12,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.truapi.AccountAccessReview
 import uniffi.truapi.AllocatableResource
+import uniffi.truapi.CoinPaymentSpendReview
 import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostAccountSignVrfRequest
@@ -45,6 +46,7 @@ private const val ALICE_SS58 = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY
 class ConfirmationReviewMappingTest {
     private val drainer = ProductId.parse("drainer.dot").getOrThrow()
     private val owner = ProductId.parse("owner.dot").getOrThrow()
+    private val spender = ProductId.parse("spender.dot").getOrThrow()
     private val caller = ProductId.parse("caller-product.dot").getOrThrow()
 
     @OptIn(ExperimentalStdlibApi::class)
@@ -401,6 +403,50 @@ class ConfirmationReviewMappingTest {
             ownerProductId = owner,
             itemCount = 2u,
             destination = TrUAPIConfirmation.NftPurseDrain.Destination.Refund,
+        )
+        assertEquals(expected, confirmation)
+    }
+
+    @Test
+    fun `coin payment spend maps the purse, the amount and the held-back value`() {
+        val review = UserConfirmationReview.CoinPaymentSpend(
+            CoinPaymentSpendReview(
+                callingProductId = spender,
+                fromPurse = 3u,
+                amount = "340282366920938463463374607431768211455",
+                takesHeldBackValue = true,
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller)
+
+        val expected = TrUAPIConfirmation.CoinPaymentSpend(
+            requesterProductId = spender,
+            fromPurse = 3u,
+            amount = "340282366920938463463374607431768211455",
+            takesHeldBackValue = true,
+        )
+        assertEquals(expected, confirmation)
+    }
+
+    @Test
+    fun `coin payment spend from the main purse maps to no purse number`() {
+        val review = UserConfirmationReview.CoinPaymentSpend(
+            CoinPaymentSpendReview(
+                callingProductId = spender,
+                fromPurse = UInt.MAX_VALUE,
+                amount = "250",
+                takesHeldBackValue = false,
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller)
+
+        val expected = TrUAPIConfirmation.CoinPaymentSpend(
+            requesterProductId = spender,
+            fromPurse = null,
+            amount = "250",
+            takesHeldBackValue = false,
         )
         assertEquals(expected, confirmation)
     }

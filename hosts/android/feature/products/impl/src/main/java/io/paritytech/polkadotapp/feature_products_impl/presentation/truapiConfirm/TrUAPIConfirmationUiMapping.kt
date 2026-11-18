@@ -54,6 +54,18 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         detail(RCommon.string.truapi_confirm_label_nft_item_count, "$itemCount"),
         destination.toDetail(),
     )
+
+    is TrUAPIConfirmation.CoinPaymentSpend -> build(
+        RCommon.string.truapi_confirm_title_coin_payment_spend,
+        fromPurse?.let { detail(RCommon.string.truapi_confirm_label_coin_from_purse, "$it") }
+            ?: detailRes(RCommon.string.truapi_confirm_label_coin_from_purse, RCommon.string.truapi_confirm_value_coin_main_purse),
+        detail(RCommon.string.truapi_confirm_label_coin_amount, amount),
+        *if (takesHeldBackValue) {
+            arrayOf(detailRes(RCommon.string.truapi_confirm_label_coin_held_back, RCommon.string.truapi_confirm_value_coin_held_back))
+        } else {
+            emptyArray()
+        },
+    )
 }
 
 private fun TrUAPIConfirmation.NftPurseDrain.Destination.toDetail() = when (this) {
