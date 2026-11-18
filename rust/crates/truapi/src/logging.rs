@@ -77,9 +77,10 @@ pub struct CoreAttribute {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum CoreAttributeValue {
 	/// A label, either one the core chooses from a fixed set or a runtime
-	/// identifier that has passed a gate admitting a short plain value and
+	/// identifier. The builder only bounds its length, so a caller passing a
+	/// runtime identifier gates it first, admitting a short plain value and
 	/// collapsing anything else to a fallback. Free text a provider, a product
-	/// or a manifest wrote does not reach a host this way.
+	/// or a manifest wrote does not belong here.
 	Text {
 		/// The label.
 		value: String,

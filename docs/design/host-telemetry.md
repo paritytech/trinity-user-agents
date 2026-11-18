@@ -165,7 +165,8 @@ pub enum CoreAttributeValue {
     Flag { value: bool },
 }
 
-CoreEvent::new(markers::CORE_STARTED)
+// Any marker the table lists.
+CoreEvent::new(markers::SOME_MARKER)
     .text("outcome", "sent")
     .count("age_ms", age)
     .flag("money_moved", true)
