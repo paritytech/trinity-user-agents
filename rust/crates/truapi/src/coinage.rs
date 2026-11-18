@@ -13,6 +13,7 @@ pub mod classification;
 pub mod denominations;
 pub mod handover;
 pub mod layer;
+pub mod payments;
 pub mod ledger;
 pub mod maintenance;
 pub mod namespace;

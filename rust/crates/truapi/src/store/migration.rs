@@ -7,6 +7,7 @@ mod v12_to_v13_durable_birth_hash;
 mod v13_to_v14_coinage_ledger;
 mod v14_to_v15_coinage_operations;
 mod v15_to_v16_coinage_registration;
+mod v16_to_v17_coinage_payments;
 mod v1_to_v2_scheduled_submissions;
 mod v2_to_v3_nft_purses;
 mod v3_to_v4_nft_items;
@@ -39,5 +40,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v13_to_v14_coinage_ledger::create_coinage_ledger(),
 		v14_to_v15_coinage_operations::create_coinage_operations(),
 		v15_to_v16_coinage_registration::create_coinage_registration(),
+		v16_to_v17_coinage_payments::create_coinage_payments(),
 	])
 }
