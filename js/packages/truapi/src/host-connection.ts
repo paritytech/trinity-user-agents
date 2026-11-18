@@ -1,3 +1,4 @@
+import { acceptChatV1CreateRoom } from "./chat-v1.js";
 import { createTransport } from "./client.js";
 import { createClient, type TrUApiClient } from "./generated/client.js";
 import {
@@ -231,6 +232,7 @@ export function createHostConnection(
     },
   );
   const client = createClient(transport);
+  acceptChatV1CreateRoom(client, transport);
   const handshake = client.system.handshake.bind(client.system);
 
   return {

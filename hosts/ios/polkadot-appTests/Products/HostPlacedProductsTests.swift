@@ -16,6 +16,26 @@ struct HostPlacedProductsTests {
         #expect(hostPlaced.fallbackName == "Jollity")
     }
 
+    /// Jollity's `createRoom` still gives its own `roomId`, and the core keeps that id for the room.
+    /// Placed under the derived id, the row would stay empty beside the room Jollity writes to.
+    @Test("Jollity's room is placed under the id Jollity gives")
+    func jollityRoomKeepsTheIdJollityGives() throws {
+        let hostPlaced = try #require(HostPlacedProducts.all.first)
+
+        #expect(hostPlaced.room == .roomId("jollity"))
+    }
+
+    @Test("A room id stays as given, and a room source resolves to the id the core derives")
+    func placedRoomResolvesTheIdOfCreateRoom() throws {
+        let productId = try ProductId("dim2.paseo")
+
+        #expect(try HostPlacedRoom.roomId("jollity").roomId(of: productId) == "jollity")
+        #expect(
+            try HostPlacedRoom.roomIdSource("jollity").roomId(of: productId)
+                == chatRoomId(productId: productId, roomIdSource: "jollity")
+        )
+    }
+
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
     /// whichever chain the build is pointed at. Writing the product id out would silently stop
     /// placing it on Paseo.
@@ -39,9 +59,9 @@ struct HostPlacedProductsTests {
 @Suite("Placing a host-placed room")
 struct HostPlacedRoomPlacerTests {
     /// The product's own `createRoom` must find the placed row, or the user sees a second, empty
-    /// chat beside it. The core derives that room id from the product and the source.
+    /// chat beside it.
     @Test("The placed room has the id that the product's createRoom resolves")
-    func placedRoomHasTheDerivedId() async throws {
+    func placedRoomHasTheIdOfCreateRoom() async throws {
         let factory = ChatRepositoryFactory(storageFacade: UserDataStorageTestFacade())
         let settings = InMemorySettingsManager()
         settings.set(value: true, for: .hostPlacementEnabled)
@@ -55,19 +75,21 @@ struct HostPlacedRoomPlacerTests {
 
         let hostPlaced = try #require(HostPlacedProducts.all.first)
         let productId = try hostPlaced.productId("paseo")
-        let roomId = try chatRoomId(productId: productId, roomIdSource: hostPlaced.roomIdSource)
+        let roomId = try hostPlaced.room.roomId(of: productId)
+        let derivedId = try chatRoomId(productId: productId, roomIdSource: "jollity")
         let repository = factory.createRepository(forFilter: nil)
         let placed = try await repository.fetchOperation(
             by: { Chat.Id.chatExtension(productId.rawValue, roomId: roomId).rawRepresentation },
             options: RepositoryFetchOptions()
         ).asyncExecute()
-        let underSource = try await repository.fetchOperation(
-            by: { Chat.Id.chatExtension(productId.rawValue, roomId: hostPlaced.roomIdSource).rawRepresentation },
+        let underDerivedId = try await repository.fetchOperation(
+            by: { Chat.Id.chatExtension(productId.rawValue, roomId: derivedId).rawRepresentation },
             options: RepositoryFetchOptions()
         ).asyncExecute()
 
+        #expect(roomId == "jollity")
         #expect(placed != nil)
-        #expect(underSource == nil)
+        #expect(underDerivedId == nil)
     }
 }
 
