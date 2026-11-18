@@ -1,10 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.extension
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.common.domain.model.AccountId
-import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.markMessageProcessed
@@ -14,18 +11,16 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Cont
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isIncoming
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.paymentContentOrNull
-import io.paritytech.polkadotapp.feature_coinage_api.domain.common.formatCoinsToBalance
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageExportId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.deriveKeypair
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatusUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.isTerminal
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.lastOrNull
@@ -42,24 +37,23 @@ import kotlin.time.Instant
 
 private const val COINAGE_LOG_TAG = "CoinageTransfer"
 
+const val COINAGE_PAYMENT_EXTENSION_ID = "CoinagePaymentProcessing"
+
 /** How long after a payment was sent its coins are still worth waiting for. */
-private val CLAIM_RETRY_WINDOW = 7.days
+val CLAIM_RETRY_WINDOW = 7.days
 
 /**
  * Keeps a payment message's status in step with the ledger, in both directions.
  *
- * Neither direction owns any state of its own. An outgoing payment is answered by our own coins' presence and
- * the status of whatever minted them; an incoming one by the group its claims were registered under, found
- * again from the message's id. That is why a restart mid-payment needs nothing to resume from: the message
- * says which coins, and the ledger says what happened to them.
+ * Neither direction owns any state of its own. An outgoing payment is the wallet's export, and an incoming one
+ * its claim, both found again from the message's id, so a restart mid-payment needs nothing to resume from.
  */
 @OptIn(ExperimentalTime::class)
 class CoinagePaymentProcessingExtension @Inject constructor(
     private val paymentStatusUseCase: CoinagePaymentStatusUseCase,
     private val claimReceivedCoinsUseCase: ClaimReceivedCoinsUseCase,
-    private val balanceConverterUseCase: CoinageBalanceConverterUseCase,
 ) : ChatExtension {
-    override val id = "CoinagePaymentProcessing"
+    override val id = COINAGE_PAYMENT_EXTENSION_ID
 
     override val activationStateExternallyControlled: Boolean = false
 
@@ -85,14 +79,23 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         chatExtensionContext.scope.launch {
             val coinKeys = content.coinKeys.map { it.toDataByteArray() }
 
-            val outcome = if (message.isIncoming) {
+            val statuses = if (message.isIncoming) {
                 claimStatuses(message, content, coinKeys)
             } else {
-                handoffStatuses(coinKeys)
+                handoffStatuses(message.id)
             }
-                .distinctUntilChanged()
-                .onEach { status -> modifyPaymentContent(message, status) }
-                .lastOrNull()
+            val outcome = try {
+                statuses
+                    .distinctUntilChanged()
+                    .onEach { status -> modifyPaymentContent(message, status) }
+                    .lastOrNull()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A payment the wallet cannot follow stays unprocessed and is looked at again on the next launch.
+                Timber.tag(COINAGE_LOG_TAG).w(error, "Payment not followed message=${message.id}")
+                return@launch
+            }
 
             // Reaching the end of the flow is the finish, not any status seen along the way. An incoming
             // payment's claim keeps retrying while a coin is still there to be claimed, so a partial
@@ -131,44 +134,30 @@ class CoinagePaymentProcessingExtension @Inject constructor(
      * Ours until the peer takes them. Stops once every coin has been claimed or proven never to have existed,
      * since nothing after that can change.
      */
-    private fun handoffStatuses(coinKeys: List<CoinPrivateKey>): Flow<Status> {
-        val accountIds = coinKeys.map { it.deriveKeypair().publicKey.intoAccountId() }
-
+    private fun handoffStatuses(messageId: ChatMessageId): Flow<Status> {
         // Watched until every coin is beyond recall, not until it merely looks settled: a claim seen only
         // in a best-chain block can be forked away, and a closed message is one nothing is watching.
-        return paymentStatusUseCase.subscribeStatuses(accountIds).transformWhile { states ->
+        return paymentStatusUseCase.subscribeStatuses(CoinageExportId.ofChatPayment(messageId)).transformWhile { states ->
             emit(states.toPaymentStatus())
 
-            states.isEmpty() || states.hasOngoing()
+            states.isEmpty() || states.any { !it.status.isTerminal }
         }
-    }
-
-    /**
-     * Whether anything about this payment could still change.
-     *
-     * Knowing nothing counts as ongoing. An empty read is not a payment with nothing left to do — it is one
-     * we cannot yet say anything about, and treating the two alike would close it for good on the single
-     * reading that carries no information.
-     */
-    private fun Map<AccountId, CoinagePaymentState>.hasOngoing(): Boolean {
-        return values.any { !it.status.isTerminal }
     }
 
     /**
      * What the message says now, which is a different question from whether to keep watching.
      *
      * This reports what the best chain shows, so a payment reads as claimed the moment the peer takes it
-     * rather than a whole finality later. Whether it may be *closed* is [hasOngoing]'s business, and that
+     * rather than a whole finality later. Whether it may be *closed* is [handoffStatuses]' business, and that
      * one does wait for finality.
      */
-    private suspend fun Map<AccountId, CoinagePaymentState>.toPaymentStatus(): Status {
-        val claimed = coinsMatching { it is CoinagePaymentStatus.Claimed }
-        val awaiting = coinsMatching { it is CoinagePaymentStatus.AwaitingClaim }
+    private fun List<CoinagePaymentState>.toPaymentStatus(): Status {
+        val claimed = filter { it.status is CoinagePaymentStatus.Claimed }
+        val awaiting = filter { it.status is CoinagePaymentStatus.AwaitingClaim }
 
-        // Coins the peer has yet to take: on chain waiting, or not yet minted. Not the same as unproven —
-        // a claim seen in a best block has been taken, whether or not it can still be rolled back.
-        val outstanding = coinsMatching {
-            it is CoinagePaymentStatus.AwaitingClaim || it is CoinagePaymentStatus.Detecting
+        // Coins the peer has yet to take: on chain waiting, or not yet minted.
+        val outstanding = filter {
+            it.status is CoinagePaymentStatus.AwaitingClaim || it.status is CoinagePaymentStatus.Detecting
         }
 
         return when {
@@ -191,14 +180,7 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         }
     }
 
-    private fun Map<AccountId, CoinagePaymentState>.coinsMatching(predicate: (CoinagePaymentStatus) -> Boolean) =
-        values.filter { predicate(it.status) }.map { it.coin }
-
-    private suspend fun valueOf(coins: List<Coin>) =
-        balanceConverterUseCase.create()
-            .map { it.formatCoinsToBalance(coins) }
-            .logFailure("Failed to value payment coins")
-            .getOrDefault(Balance.ZERO)
+    private fun valueOf(coins: List<CoinagePaymentState>) = coins.fold(Balance.ZERO) { sum, coin -> sum + coin.value }
 
     context(chatExtensionContext: ChatExtensionContext)
     private suspend fun modifyPaymentContent(message: ChatMessage, status: Status) {
@@ -219,10 +201,10 @@ class CoinagePaymentProcessingExtension @Inject constructor(
 }
 
 /**
- * Derived from the message rather than stored, so a retry after process death rejoins the claims the previous
- * attempt registered instead of submitting a second set.
+ * Derived from the message rather than stored, so a retry after process death rejoins the claim the previous
+ * attempt started instead of starting a second one.
  */
-private fun claimGroupOf(messageId: ChatMessageId) = CoinageOperationGroupId("chat-claim:$messageId")
+fun claimGroupOf(messageId: ChatMessageId) = CoinageOperationGroupId("chat-claim:$messageId")
 
 /**
  * [expected] stands in for the amount while claiming is still under way: what is worth reporting then is the

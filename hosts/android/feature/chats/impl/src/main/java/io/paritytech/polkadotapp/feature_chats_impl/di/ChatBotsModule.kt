@@ -9,9 +9,11 @@ import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
+import io.paritytech.polkadotapp.feature_chats_impl.domain.extension.ChatCoinageHandOverPayments
 import io.paritytech.polkadotapp.feature_chats_impl.domain.extension.CoinagePaymentProcessingExtension
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.bot.RealChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.bot.sample.SampleBot
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageHandOverPayments
 import javax.inject.Singleton
 
 @Module
@@ -21,6 +23,9 @@ internal interface ChatBotsModule {
     @Singleton
     @IntoSet
     fun bindCoinagePaymentProcessingExtension(impl: CoinagePaymentProcessingExtension): ChatExtension
+
+    @Binds
+    fun bindCoinageHandOverPayments(impl: ChatCoinageHandOverPayments): CoinageHandOverPayments
 
     @Binds
     @Singleton

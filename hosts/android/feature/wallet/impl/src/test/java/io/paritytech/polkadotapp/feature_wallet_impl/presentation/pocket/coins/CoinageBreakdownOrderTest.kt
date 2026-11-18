@@ -6,7 +6,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstall
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHolding
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHolding
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -108,7 +108,7 @@ class CoinageBreakdownOrderTest {
         id = id,
         exponent = ValueExponent(exponent),
         value = Balance.ONE,
-        derivationIndex = CoinageKeyIndex(INSTALLATION, id.hashCode()),
+        keyIndex = CoinageKeyIndex(INSTALLATION, id.hashCode()),
         isReady = isReady,
         recyclerFungibility = fungibility?.let(RecyclerFungibility::ofPercent),
         isBatchUnloaded = false,

@@ -6,10 +6,9 @@ import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
-import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageOperationStatusUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
@@ -19,7 +18,9 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -44,16 +45,13 @@ import kotlin.time.Instant
 class RealExecuteTopUpUseCaseTest {
     private val claimReceivedCoinsUseCase = FakeClaimReceivedCoinsUseCase()
     private val onboardingUseCase = FakeOnboardingUseCase()
+    private val operationStatusUseCase = FakeOperationStatusUseCase()
     private val chainAssetProvider: ChainAssetProvider = mock()
-
-    private val transactionService: CoinageTransactionService = mock()
-    private val assetValueUseCase: CoinageAssetValueUseCase = mock()
 
     private val useCase = RealExecuteTopUpUseCase(
         claimReceivedCoinsUseCase = claimReceivedCoinsUseCase,
         onboardingUseCase = onboardingUseCase,
-        transactionService = transactionService,
-        assetValueUseCase = assetValueUseCase,
+        operationStatusUseCase = operationStatusUseCase,
         chainAssetProvider = chainAssetProvider,
     )
 
@@ -168,6 +166,23 @@ class RealExecuteTopUpUseCaseTest {
             listOf(TopUpStatus.ClaimedPartially(96.intoBalance())),
             statusesOf(onboardOperation()),
         )
+    }
+
+    // ---- a top-up that cannot be run ----
+
+    @Test
+    fun `a top-up that cannot be run reports where its operation stands`() = runTest {
+        operationStatusUseCase.follows(CoinageTransferDetection.Claimed(80.intoBalance(), finalized = true))
+
+        assertEquals(TopUpStatus.ClaimedPartially(80.intoBalance()), useCase.statusOf(onboardOperation().operation))
+    }
+
+    /** Nothing registered under the group means nothing was ever paid for it. */
+    @Test
+    fun `a top-up whose operation cannot be read is not claimed`() = runTest {
+        operationStatusUseCase.fails()
+
+        assertEquals(TopUpStatus.NotClaimed, useCase.statusOf(onboardOperation().operation))
     }
 
     // ---- how the operation is identified and bounded ----
@@ -309,4 +324,18 @@ private class FakeOnboardingUseCase : OnboardingUseCase {
 
         return flow { states.forEach { emit(it) } }
     }
+}
+
+private class FakeOperationStatusUseCase : CoinageOperationStatusUseCase {
+    private var detections: Flow<CoinageTransferDetection> = emptyFlow()
+
+    fun follows(vararg states: CoinageTransferDetection) {
+        detections = flowOf(*states)
+    }
+
+    fun fails() {
+        detections = flow { throw IllegalStateException("Nothing was started under the group") }
+    }
+
+    override fun follow(groupId: CoinageOperationGroupId): Flow<CoinageTransferDetection> = detections
 }

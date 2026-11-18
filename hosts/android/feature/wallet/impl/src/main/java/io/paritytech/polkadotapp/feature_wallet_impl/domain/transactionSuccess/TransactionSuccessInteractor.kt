@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.domain.transactionSuccess
 
-import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageExportId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatusUseCase
@@ -13,8 +13,8 @@ import javax.inject.Inject
 class TransactionSuccessInteractor @Inject constructor(
     private val coinagePaymentStatusUseCase: CoinagePaymentStatusUseCase,
 ) {
-    fun subscribeClaimsFinalized(coins: List<AccountId>): Flow<Boolean> =
-        coinagePaymentStatusUseCase.subscribeStatuses(coins)
+    fun subscribeClaimsFinalized(exportId: CoinageExportId): Flow<Boolean> =
+        coinagePaymentStatusUseCase.subscribeStatuses(exportId)
             .map { states -> states.allClaimsFinalized() }
             .distinctUntilChanged()
             .transformWhile { finalized ->
@@ -22,6 +22,6 @@ class TransactionSuccessInteractor @Inject constructor(
                 !finalized
             }
 
-    private fun Map<AccountId, CoinagePaymentState>.allClaimsFinalized(): Boolean =
-        isNotEmpty() && values.all { it.status == CoinagePaymentStatus.Claimed(finalized = true) }
+    private fun List<CoinagePaymentState>.allClaimsFinalized(): Boolean =
+        isNotEmpty() && all { it.status == CoinagePaymentStatus.Claimed(finalized = true) }
 }

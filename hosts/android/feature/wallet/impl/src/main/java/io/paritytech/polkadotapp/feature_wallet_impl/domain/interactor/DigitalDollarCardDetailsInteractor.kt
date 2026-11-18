@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageTestnetFundUseCase
@@ -15,9 +14,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.FundingConfig
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.toHoldingsInfo
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
@@ -28,8 +26,7 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
     private val coinageBackupService: CoinageBackupService,
     private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase,
     private val fundingDomainProvider: FundingDomainProvider,
-    private val coinageHoldingsUseCase: CoinageHoldingsUseCase,
-    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase
+    private val coinageHoldingsUseCase: CoinageHoldingsUseCase
 ) {
     companion object {
         private val TOP_UP_AMOUNT = 150.toBigDecimal()
@@ -46,9 +43,10 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
      * Deliberately not two streams: the composition bar is a picture of the same numbers printed above it,
      * so reading them a tick apart is the one way they could ever disagree.
      */
-    fun observeHoldings(): Flow<Result<CoinageHoldingsInfo>> =
+    fun observeHoldings(): Flow<Result<CoinageHoldings>> =
         coinageHoldingsUseCase.subscribeHoldings()
-            .map { holdingsInfoOf(it) }
+            .map { Result.success(it) }
+            .catch { emit(Result.failure(it)) }
             .logFailure("DigitalDollarCardDetailsInteractor: Failed to classify coinage holdings")
 
     fun observeActionsEnabled(): Flow<Boolean> = coinageBackupService.subscribeProgress()
@@ -76,9 +74,4 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
     }
 
     private fun BackupProgress.actionsEnabled() = this !is BackupProgress.Initial && this !is BackupProgress.Deep
-
-    private suspend fun holdingsInfoOf(holdings: CoinageHoldings): Result<CoinageHoldingsInfo> =
-        coinageBalanceConverterUseCase.create().map { conversion ->
-            with(conversion) { holdings.toHoldingsInfo() }
-        }
 }

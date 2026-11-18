@@ -76,7 +76,7 @@ class RealRequestPaymentUseCaseTest {
 
         assertTrue(result.isSuccess)
         coVerify(exactly = 0) { router.openPaymentRequestPrompt() }
-        coVerify { externalPaymentService.initiatePayment(key, planks(10), destination) }
+        coVerify { externalPaymentService.initiatePayment(key, planks(10), destination, confirmed = true) }
     }
 
     @Test
@@ -150,7 +150,7 @@ class RealRequestPaymentUseCaseTest {
         val result = useCase.requestPayment(product, id, planks(10), destination)
 
         assertTrue(result.exceptionOrNull() is PaymentRequestError.Rejected)
-        coVerify(exactly = 0) { externalPaymentService.initiatePayment(any(), any(), any()) }
+        coVerify(exactly = 0) { externalPaymentService.initiatePayment(any(), any(), any(), any()) }
     }
 
     // ---- balance ----
@@ -198,14 +198,14 @@ class RealRequestPaymentUseCaseTest {
 
         assertTrue(result.exceptionOrNull() is PaymentRequestError.AlreadyExists)
         coVerify(exactly = 0) { router.openPaymentRequestPrompt() }
-        coVerify(exactly = 0) { externalPaymentService.initiatePayment(any(), any(), any()) }
+        coVerify(exactly = 0) { externalPaymentService.initiatePayment(any(), any(), any(), any()) }
     }
 
     /** Two requests under one id raced past the check; the store lets only one of them in. */
     @Test
     fun `an id taken while the user was deciding is refused`() = runBlocking<Unit> {
         givenProduct(whitelisted = true, strategy = RecyclingStrategyType.MIN_PRIVACY)
-        coEvery { externalPaymentService.initiatePayment(key, any(), any()) } returns
+        coEvery { externalPaymentService.initiatePayment(key, any(), any(), any()) } returns
             Result.failure(ExternalPaymentError.AlreadyExists(key))
 
         val result = useCase.requestPayment(product, id, planks(10), destination)
@@ -239,7 +239,7 @@ class RealRequestPaymentUseCaseTest {
     }
 
     private fun givenNewPaymentRegisters() {
-        coEvery { externalPaymentService.initiatePayment(key, any(), any()) } returns Result.success(Unit)
+        coEvery { externalPaymentService.initiatePayment(key, any(), any(), any()) } returns Result.success(Unit)
     }
 
     private fun balance(availablePrivate: Int, gainingPrivacy: Int) = CoinageBalance(

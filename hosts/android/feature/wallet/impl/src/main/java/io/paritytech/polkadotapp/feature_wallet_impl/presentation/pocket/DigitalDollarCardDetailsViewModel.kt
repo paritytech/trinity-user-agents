@@ -13,10 +13,10 @@ import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldings
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
@@ -73,7 +73,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         Presentation(expanded, focused, debug)
     }
 
-    private val holdingsFlow: Flow<Result<CoinageHoldingsInfo>> = interactor.observeHoldings()
+    private val holdingsFlow: Flow<Result<CoinageHoldings>> = interactor.observeHoldings()
 
     val coinageState: StateFlow<LoadingState<CoinageUiState>> = combine(
         holdingsFlow,
@@ -182,7 +182,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             .onFailure { showPresentationError(ShareCoinageLogsFailedPresentationError(it)) }
     }
 
-    private fun CoinageHoldingsInfo.toTokensState(asset: Chain.Asset) = CoinageUiState.TokensState(
+    private fun CoinageHoldings.toTokensState(asset: Chain.Asset) = CoinageUiState.TokensState(
         totalBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.total)),
         readyBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.availablePrivate)),
         clearingBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.clearing)),

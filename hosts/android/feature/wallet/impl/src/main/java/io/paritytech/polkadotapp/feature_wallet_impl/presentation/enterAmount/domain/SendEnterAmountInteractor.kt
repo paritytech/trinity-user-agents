@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.chains.util.fullId
 import io.paritytech.polkadotapp.chains.util.planksFromAmount
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.domain.model.AccountId
-import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.validation.Validation
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.filterResultSuccessNotNull
@@ -24,8 +23,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.Exte
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentPlanner
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.awaitTransferOutcome
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferMemo
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.deriveKeypair
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageExportId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.submitter.CoinsSubmitter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatus
@@ -34,7 +32,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.PrepareCoina
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.PreparedTransferMemo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.prepareMemo
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.prepareScheduledMemo
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.data.origins.FreeTransactionOrigins
@@ -179,9 +176,14 @@ class RealSendEnterAmountInteractor @Inject constructor(
     context(diagnostics: StalenessReportCollector)
     private suspend fun sendCoinage(recipient: AccountId, value: BigDecimal): Result<Unit> =
         diagnostics.markRegion(RCommon.string.wallet_stall_sending) {
-            prepareCoinageTransferUseCase.prepareScheduledMemo(value, retryUntil = timeProvider.now() + CHAT_PAYMENT_RETRY_WINDOW)
+            val messageId = UUID.randomUUID().toString()
+            val exportId = CoinageExportId.ofChatPayment(messageId)
+            prepareCoinageTransferUseCase.prepareMemo(value, exportId, retryUntil = timeProvider.now() + CHAT_PAYMENT_RETRY_WINDOW)
                 // A refused commit throws to roll the message back; here it ends as a failed send.
-                .flatMap { prepared -> runCancellableCatching { sendChatMessage(recipient, prepared) } }
+                .flatMap { prepared ->
+                    runCancellableCatching { sendChatMessage(recipient, messageId, prepared) }
+                        .onFailure { prepared.handoffCommit.release().logFailure("Failed to take back an unsent payment") }
+                }
                 .onSuccess { Timber.d("CoinageTransfer: Successful") }
                 .logFailure("Coinage transfer failed")
         }
@@ -196,10 +198,12 @@ class RealSendEnterAmountInteractor @Inject constructor(
 
         val key = ExternalPaymentKey(origin = WALLET_PAYMENT_ORIGIN, id = UUID.randomUUID().toString())
 
+        // The send validation already asked the user about value still gaining privacy.
         return externalPaymentService.initiatePayment(
             key = key,
             amount = amount,
             destination = recipient,
+            confirmed = true,
         )
             .flatMap { externalPaymentService.awaitTransferOutcome(key) }
             .logFailure("External payment failed")
@@ -217,10 +221,11 @@ class RealSendEnterAmountInteractor @Inject constructor(
         }
 
         diagnostics.markRegion(RCommon.string.wallet_stall_sending) {
-            prepareCoinageTransferUseCase.prepareMemo(value, retryUntil = timeProvider.now() + MERCHANT_PAYMENT_RETRY_WINDOW)
+            val exportId = CoinageExportId.of("submitter:${UUID.randomUUID()}")
+            prepareCoinageTransferUseCase.prepareMemo(value, exportId, retryUntil = timeProvider.now() + MERCHANT_PAYMENT_RETRY_WINDOW)
                 .flatMap { prepared -> handOverToSubmitter(submitter, prepared, value, method) }
                 .logFailure("Coins submission via '${method.submitterId}' failed")
-                .onSuccess { memo -> emitAll(settlementStates(memo)) }
+                .onSuccess { emitAll(settlementStates(exportId)) }
                 .onFailure { emit(SendState.Failed(it)) }
         }
     }
@@ -231,12 +236,11 @@ class RealSendEnterAmountInteractor @Inject constructor(
         prepared: PreparedTransferMemo,
         value: BigDecimal,
         method: TransferMethod.CoinsViaSubmitter,
-    ): Result<TransferMemo> = diagnostics.markRegion(RCommon.string.wallet_stall_delivering) {
-        submitter.submit(prepared.memo, value, method.submitterPayload)
-            // The submitter took the keys, so the handoff is real from here. There is no local
-            // transaction to tie this to, unlike the chat path, so the commit is its own step.
-            .flatMap { prepared.handoffCommit.commit() }
-            .map { prepared.memo }
+    ): Result<Unit> = diagnostics.markRegion(RCommon.string.wallet_stall_delivering) {
+        // Committed before the keys leave: a submitter that took them while the wallet still counted the
+        // coins as its own could see them spent twice.
+        prepared.handoffCommit.commit()
+            .flatMap { submitter.submit(prepared.memo, value, method.submitterPayload) }
     }
 
     /**
@@ -246,14 +250,12 @@ class RealSendEnterAmountInteractor @Inject constructor(
      * recoverable however long the recipient takes, so giving up here only stops watching.
      */
     context(diagnostics: StalenessReportCollector)
-    private fun settlementStates(memo: TransferMemo): Flow<SendState> = flow {
-        val accountIds = memo.coins.map { it.privateKey.deriveKeypair().publicKey.intoAccountId() }
-
+    private fun settlementStates(exportId: CoinageExportId): Flow<SendState> = flow {
         val completed = diagnostics.markRegion(RCommon.string.wallet_stall_awaiting_claim) {
             withTimeoutOrNull(SETTLEMENT_TIMEOUT) {
-                coinagePaymentStatusUseCase.subscribeStatuses(accountIds)
+                coinagePaymentStatusUseCase.subscribeStatuses(exportId)
                     .transformWhile { states ->
-                        val state = states.toSendState(accountIds)
+                        val state = states.toSendState(exportId)
                         emit(state)
                         !state.isTerminal
                     }
@@ -276,7 +278,7 @@ class RealSendEnterAmountInteractor @Inject constructor(
      * either strand the coins or release keys a peer already has — and the commit also registers the
      * payment's transactions, which are built and submitted once this transaction has committed.
      */
-    private suspend fun sendChatMessage(recipient: AccountId, prepared: PreparedTransferMemo) {
+    private suspend fun sendChatMessage(recipient: AccountId, messageId: String, prepared: PreparedTransferMemo) {
         val chatId = ChatId.fromContact(recipient)
         val content = ChatMessage.Content.CoinagePayment(
             totalValue = prepared.memo.totalValue,
@@ -284,6 +286,7 @@ class RealSendEnterAmountInteractor @Inject constructor(
             status = ChatMessage.Content.CoinagePayment.Status.Detecting
         )
         chatMessageSender.sendUserMessage(
+            messageId = messageId,
             chatId = chatId,
             content = content,
             onSaved = { prepared.handoffCommit.commit().getOrThrow() },
@@ -292,24 +295,24 @@ class RealSendEnterAmountInteractor @Inject constructor(
 }
 
 private fun Result<*>.toTerminalState(): SendState = fold(
-    onSuccess = { SendState.Complete(unfinalizedCoins = null) },
+    onSuccess = { SendState.Complete(unfinalizedExport = null) },
     onFailure = { SendState.Failed(it) }
 )
 
 /**
  * Complete only when every coin has been taken: one still on chain means the recipient has not finished, and
- * one not on chain yet means we have not. An empty map is not agreement that nothing is left — it is not
+ * one not on chain yet means we have not. An empty list is not agreement that nothing is left — it is not
  * knowing yet.
  */
-private fun Map<AccountId, CoinagePaymentState>.toSendState(coins: List<AccountId>): SendState = when {
+private fun List<CoinagePaymentState>.toSendState(exportId: CoinageExportId): SendState = when {
     isEmpty() -> SendState.Detecting
 
-    values.any { it.status == CoinagePaymentStatus.AwaitingClaim } -> SendState.Detected
+    any { it.status == CoinagePaymentStatus.AwaitingClaim } -> SendState.Detected
 
     // A best-block claim is enough, although a fork can still undo it: finality is too long to keep the payer waiting.
-    values.all { it.status is CoinagePaymentStatus.Claimed } -> SendState.Complete(unfinalizedCoins = coins)
+    all { it.status is CoinagePaymentStatus.Claimed } -> SendState.Complete(unfinalizedExport = exportId)
 
-    values.any { it.status == CoinagePaymentStatus.Failed } ->
+    any { it.status == CoinagePaymentStatus.Failed } ->
         SendState.Failed(IllegalStateException("Coins to settle were never minted on chain"))
 
     else -> SendState.Detecting

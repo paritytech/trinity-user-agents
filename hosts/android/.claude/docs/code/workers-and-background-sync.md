@@ -202,6 +202,5 @@ Failing to override `getForegroundInfo` while requesting expedited execution cau
 
 ## Canonical examples
 
-- Stateful worker: `ExternalPaymentWorker` (`feature/coinage/impl/.../domain/externalPayment/`) — drives `ExternalPaymentStateMachine`, a `BaseWorkerStateMachine`.
 - File-pipeline worker: `FileUploadWorker` (`feature/chats/impl/.../data/hop/upload/`), HOP upload with a `getForegroundInfo()` notification surface.
 - Simple one-shot: any of the notification cancellation enqueuers, plain `CoroutineWorker` with no state machine.

@@ -81,7 +81,8 @@ class RealRequestPaymentUseCase @Inject constructor(
                 if (exists) Result.failure(PaymentRequestError.AlreadyExists(id)) else totalBalanceUseCase.getBalance()
             }
             .flatMap { balance -> authorize(productId, amount, balance, shortfallDisclosure) }
-            .flatMap { externalPaymentService.initiatePayment(key, amount, destination) }
+            // Authorized means the user saw the privacy warning whenever the payment needs it.
+            .flatMap { externalPaymentService.initiatePayment(key, amount, destination, confirmed = true) }
             .mapErrorInstance<_, ExternalPaymentError.AlreadyExists> { PaymentRequestError.AlreadyExists(id) }
     }
 
