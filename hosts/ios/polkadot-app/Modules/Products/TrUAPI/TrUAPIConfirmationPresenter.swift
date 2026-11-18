@@ -79,6 +79,8 @@ private extension TrUAPIConfirmationPresenter {
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         case let .nftPurseDrain(drainReview):
             await confirmAction(promptMapper.makeActionRequest(from: drainReview))
+        case let .coinPaymentSpend(spendReview):
+            try await confirmAction(promptMapper.makeActionRequest(from: spendReview))
         case .identityDisclosure,
              .accountAccess,
              .accountAlias:

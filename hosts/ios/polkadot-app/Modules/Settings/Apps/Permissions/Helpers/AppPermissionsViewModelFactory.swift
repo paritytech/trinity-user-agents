@@ -34,6 +34,7 @@ extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
 private extension AppPermissionsViewModelFactory {
     typealias DisplayInfo = (title: String, description: String)
 
+    // swiftlint:disable:next cyclomatic_complexity
     func displayInfo(for permission: ProductPermission) -> DisplayInfo {
         switch permission {
         case let .deviceCapability(capability):
@@ -86,6 +87,16 @@ private extension AppPermissionsViewModelFactory {
             (
                 String(localized: .Products.appPermissionNftPursesTitle),
                 NftPurseReadCopy.description(ownerProductId: ownerProductId)
+            )
+        case .coinPayment:
+            (
+                String(localized: .Products.appPermissionCoinPaymentTitle),
+                String(localized: .Products.permissionBodyCoinPayment)
+            )
+        case let .coinPaymentPurse(purse, action):
+            (
+                String(localized: .Products.appPermissionCoinPaymentPurseTitle),
+                CoinPaymentPurseCopy.description(purse: purse, action: action)
             )
         }
     }

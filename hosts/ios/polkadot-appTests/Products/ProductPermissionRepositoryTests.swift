@@ -215,6 +215,24 @@ struct ProductPermissionRepositoryTests {
         #expect(grants.allSatisfy { $0.productId.rawValue == "product-a.dot" })
     }
 
+    /// A coinage purse grant covers one purse and one action, so both must survive storage.
+    @Test("getAllByProduct restores coinage grants with their purse and action")
+    func getAllByProductRestoresCoinageGrants() async throws {
+        let sut = makeSUT()
+        let permissions: [ProductPermission] = [
+            .coinPayment,
+            .coinPaymentPurse(purse: 3, action: .receive),
+            .coinPaymentPurse(purse: .max, action: .spend)
+        ]
+
+        for permission in permissions {
+            try await sut.grant(productId: productA, permission: permission)
+        }
+
+        let grants = try await sut.getAllByProduct(productId: productA)
+        #expect(grants.map(\.permission).sorted { $0.key < $1.key } == permissions)
+    }
+
     @Test("getAllByProduct returns empty for unknown product")
     func getAllByProductEmpty() async throws {
         let sut = makeSUT()

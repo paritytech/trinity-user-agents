@@ -1,6 +1,7 @@
 import Foundation
 import Products
 import KeyDerivation
+import SubstrateSdk
 import TrUAPIHost
 
 /// Inputs for a product permission prompt raised on behalf of the rust core.
@@ -23,6 +24,7 @@ protocol TrUAPIReviewPromptMapping: Sendable {
     func makePermissionRequest(from review: AccountAccessReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest
     func makeActionRequest(from review: NftPurseDrainReview) -> TrUAPIActionConfirmationRequest
+    func makeActionRequest(from review: CoinPaymentSpendReview) throws -> TrUAPIActionConfirmationRequest
     func makePermissionRequest(from review: AccountAliasReview) -> TrUAPIPermissionRequest
     func makeCreateProofRequest(from review: CreateProofReview) throws -> CreateProofConfirmationRequest
     func makeAllowanceRequest(from review: ResourceAllocationReview) throws -> TrUAPIAllowanceRequest
@@ -70,6 +72,18 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
             ownerProductId: ownerProductId,
             itemCount: review.itemCount,
             destination: destination
+        )
+    }
+
+    func makeActionRequest(from review: CoinPaymentSpendReview) throws -> TrUAPIActionConfirmationRequest {
+        guard let amount = Balance(review.amount) else {
+            throw TrUAPIReviewMappingError.invalidAmount(review.amount)
+        }
+        return .coinPaymentSpend(
+            productId: review.callingProductId,
+            fromPurse: review.fromPurse,
+            amount: amount,
+            takesHeldBackValue: review.takesHeldBackValue
         )
     }
 

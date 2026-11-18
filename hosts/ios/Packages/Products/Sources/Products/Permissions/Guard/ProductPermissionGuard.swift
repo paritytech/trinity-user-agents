@@ -79,7 +79,9 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .preimageSubmitAccess,
              .statementSubmitAccess,
              .userIdentityAccess,
-             .nftPurseRead:
+             .nftPurseRead,
+             .coinPayment,
+             .coinPaymentPurse:
             try await remoteHandler.request(productId: productId, permission: permission)
         }
     }
@@ -184,7 +186,9 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .preimageSubmitAccess,
              .statementSubmitAccess,
              .userIdentityAccess,
-             .nftPurseRead:
+             .nftPurseRead,
+             .coinPayment,
+             .coinPaymentPurse:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
         }
     }
