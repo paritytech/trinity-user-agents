@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccou
 import io.paritytech.polkadotapp.feature_settings_api.data.storage.DockletAutoHideStorage
 import io.paritytech.polkadotapp.tools_backup_api.data.BackupExistsStorage
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.onStart
 import javax.inject.Inject
 
@@ -28,9 +29,7 @@ class SettingsInteractor @Inject constructor(
 
     fun observePaymentsBackupStatus(): Flow<CoinageAccountBackupStatus?> = coinageAccountBackupObserver.subscribeStatus().onStart<CoinageAccountBackupStatus?> { emit(null) }
 
-    fun isDockletAutoHideEnabled(): Boolean = dockletAutoHideStorage.isEnabled()
-
-    fun observeDockletAutoHide(): Flow<Boolean> = dockletAutoHideStorage.observeEnabled()
+    fun observeDockletAutoHide(): StateFlow<Boolean> = dockletAutoHideStorage.enabled
 
     fun setDockletAutoHide(enabled: Boolean) {
         dockletAutoHideStorage.setEnabled(enabled)

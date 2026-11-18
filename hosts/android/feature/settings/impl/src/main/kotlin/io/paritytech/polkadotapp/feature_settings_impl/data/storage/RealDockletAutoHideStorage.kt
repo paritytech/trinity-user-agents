@@ -2,18 +2,19 @@ package io.paritytech.polkadotapp.feature_settings_impl.data.storage
 
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.feature_settings_api.data.storage.DockletAutoHideStorage
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 class RealDockletAutoHideStorage @Inject constructor(
     private val preferences: Preferences,
 ) : DockletAutoHideStorage {
-    override fun isEnabled(): Boolean = preferences.getBoolean(ENABLED_KEY, DEFAULT_ENABLED)
-
-    override fun observeEnabled(): Flow<Boolean> = preferences.booleanFlow(ENABLED_KEY, DEFAULT_ENABLED)
+    override val enabled = MutableStateFlow(preferences.getBoolean(ENABLED_KEY, DEFAULT_ENABLED))
 
     override fun setEnabled(enabled: Boolean) {
         preferences.putBoolean(ENABLED_KEY, enabled)
+        this.enabled.value = enabled
     }
 
     private companion object {

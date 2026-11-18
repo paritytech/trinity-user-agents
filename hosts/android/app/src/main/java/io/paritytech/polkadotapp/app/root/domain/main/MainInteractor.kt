@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_settings_api.data.storage.DockletAutoHideStorage
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 
 class MainInteractor @Inject constructor(
@@ -35,9 +36,7 @@ class MainInteractor @Inject constructor(
 
     fun observeTabWarnings(): Flow<Map<BottomTab, Boolean>> = observeTabWarningsUseCase()
 
-    fun isDockletAutoHideEnabled(): Boolean = dockletAutoHideStorage.isEnabled()
-
-    fun observeDockletAutoHide(): Flow<Boolean> = dockletAutoHideStorage.observeEnabled()
+    fun observeDockletAutoHide(): StateFlow<Boolean> = dockletAutoHideStorage.enabled
 
     fun shouldShowScannerTooltip(): Boolean = !tooltipStorage.wasShown(OneShotTooltip.Scanner)
 

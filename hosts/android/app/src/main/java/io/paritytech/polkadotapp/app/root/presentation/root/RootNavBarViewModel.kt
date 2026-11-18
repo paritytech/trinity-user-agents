@@ -46,8 +46,7 @@ class RootNavBarViewModel @Inject constructor(
     scanPanelRequests: ScanPanelRequests,
 ) : BaseViewModel() {
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
-    val barMode: StateFlow<TabBarMode> = tabBarVisibilityHolder.settledMode
-        .stateInBackground(started = SharingStarted.Eagerly, initialValue = tabBarVisibilityHolder.mode.value)
+    val barMode: StateFlow<TabBarMode> = tabBarVisibilityHolder.mode
     val openApps: StateFlow<ImmutableList<TabInfo>> = productSessionController.openTabs
         .map { it.toImmutableList() }
         .stateInBackground(started = SharingStarted.Eagerly, initialValue = persistentListOf())
@@ -60,7 +59,6 @@ class RootNavBarViewModel @Inject constructor(
         field = MutableStateFlow(interactor.shouldShowScannerTooltip())
 
     val dockletAutoHideEnabled: StateFlow<Boolean> = interactor.observeDockletAutoHide()
-        .stateInBackground(started = SharingStarted.Eagerly, initialValue = interactor.isDockletAutoHideEnabled())
 
     val scanPanelOpenRequests: SharedFlow<Unit> = scanPanelRequests.openRequests
 

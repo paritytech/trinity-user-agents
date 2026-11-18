@@ -33,14 +33,14 @@ class SettingsViewModel @Inject constructor(
         interactor.observePrivacyMode(),
         interactor.observePaymentsBackupStatus(),
         combineToPair(appThemeSelector.selectedTheme, interactor.observeDockletAutoHide())
-    ) { backupExists, hasBlockedUsers, privacyMode, paymentsBackupStatus, (selectedTheme, dockletAutoHide) ->
+    ) { backupExists, hasBlockedUsers, privacyMode, paymentsBackupStatus, (selectedTheme, dockletAutoHideEnabled) ->
         SettingsUiState(
             debugMenuEnabled = FeatureOption.DEBUG_MENU.isEnabled,
             linkedDevicesEnabled = FeatureOption.LINKED_DEVICES.isEnabled,
             productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
             isLanguageSettingsAvailable = isLanguageSettingsAvailable,
             selectedTheme = selectedTheme,
-            dockletAutoHide = dockletAutoHide,
+            dockletAutoHideEnabled = dockletAutoHideEnabled,
             privacyMode = privacyMode,
             paymentsBackupStatus = paymentsBackupStatus,
             isBackupMissing = !backupExists,
@@ -56,7 +56,7 @@ class SettingsViewModel @Inject constructor(
                 productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
                 isLanguageSettingsAvailable = isLanguageSettingsAvailable,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
-                dockletAutoHide = interactor.isDockletAutoHideEnabled(),
+                dockletAutoHideEnabled = interactor.observeDockletAutoHide().value,
                 privacyMode = null,
                 paymentsBackupStatus = null,
                 isBackupMissing = false,

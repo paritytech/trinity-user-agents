@@ -12,7 +12,7 @@ data class SettingsUiState(
     val productSettingsEnabled: Boolean,
     val isLanguageSettingsAvailable: Boolean,
     val selectedTheme: PolkadotAppTheme,
-    val dockletAutoHide: Boolean,
+    val dockletAutoHideEnabled: Boolean,
     /** Null until the stored preference has been read — the selector stays hidden rather than showing a guess. */
     val privacyMode: RecyclingStrategyType?,
     val paymentsBackupStatus: CoinageAccountBackupStatus?,

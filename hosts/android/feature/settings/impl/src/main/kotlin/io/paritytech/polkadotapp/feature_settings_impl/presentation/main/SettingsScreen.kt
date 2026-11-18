@@ -111,7 +111,7 @@ private fun SettingsScreenInternal(
                 SettingsSwitchMenuItem(
                     icon = NovaIcons.HideDocklet,
                     title = stringResource(RCommon.string.settings_auto_hide_docklet),
-                    checked = state.dockletAutoHide,
+                    checked = state.dockletAutoHideEnabled,
                     onCheckedChange = onDockletAutoHideChange
                 )
                 SettingsMenuItem(
@@ -216,7 +216,7 @@ private fun SettingsScreenPreview() = CompositionLocalProvider(
                 linkedDevicesEnabled = true,
                 productSettingsEnabled = true,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
-                dockletAutoHide = true,
+                dockletAutoHideEnabled = true,
                 privacyMode = RecyclingStrategyType.BALANCED,
                 paymentsBackupStatus = CoinageAccountBackupStatus.Delayed,
                 isLanguageSettingsAvailable = true,
