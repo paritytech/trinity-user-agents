@@ -103,6 +103,14 @@ runs:
         distribution: temurin
         java-version: "21"
 
+    # Gradle applies every script in the user home's init.d to each build, so
+    # this reaches the app, its included build-logic and every caller's tasks.
+    - name: Resolve Maven Central through its mirror
+      shell: bash
+      env:
+        SCRIPT: ${{ github.action_path }}/maven-central-mirror.gradle
+      run: install -D -m 0644 "${SCRIPT}" "${GRADLE_USER_HOME:-${HOME}/.gradle}/init.d/maven-central-mirror.gradle"
+
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: "22"
