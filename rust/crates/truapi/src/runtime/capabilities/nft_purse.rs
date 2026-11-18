@@ -18,21 +18,22 @@ mod browser {
 			HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
 			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 			HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
-			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse, HostNftPurseListenOneTimePaymentError,
-			HostNftPurseListenOneTimePaymentItem, HostNftPurseListenOneTimePaymentRequest,
-			HostNftPurseListenPaymentInboxError, HostNftPurseListenPaymentInboxItem,
-			HostNftPurseListenPaymentInboxRequest, HostNftPurseObserveOperationStatusError,
-			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
-			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
-			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
-			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseRefundError, HostNftPurseRefundRequest, HostNftPurseRefundResponse,
-			HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
-			HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
-			HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
-			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
-			HostNftPurseTransferItemResponse,
+			HostNftPurseListChequesError, HostNftPurseListChequesRequest,
+			HostNftPurseListChequesResponse, HostNftPurseListPursesError,
+			HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+			HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
+			HostNftPurseListenOneTimePaymentRequest, HostNftPurseListenPaymentInboxError,
+			HostNftPurseListenPaymentInboxItem, HostNftPurseListenPaymentInboxRequest,
+			HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+			HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+			HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
+			HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
+			HostNftPurseRefundResponse, HostNftPurseRevokeChequeError,
+			HostNftPurseRevokeChequeRequest, HostNftPurseRevokeChequeResponse,
+			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
+			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
+			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -105,6 +106,14 @@ mod browser {
 			_cx: &CallContext,
 			_request: HostNftPurseRevokeChequeRequest,
 		) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn list_cheques(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseListChequesRequest,
+		) -> Result<HostNftPurseListChequesResponse, CallError<HostNftPurseListChequesError>> {
 			Err(CallError::Unsupported)
 		}
 
