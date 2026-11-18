@@ -410,7 +410,7 @@ has a final status.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -453,6 +453,12 @@ The generated `SsoRequestOutcome` distinguishes these results:
 Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
 
 `runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
+
+## Device encryption key
+
+The core keeps this device's X25519 encryption key. Chat and device sync encrypt with `deviceEncryptionKey()`, and `SessionUiInfo.deviceEncPublicKey` carries its public key on every `AuthState.connected`. The core generates the key on first read.
+
+A host that announced a key of its own before the core kept one passes it as `HostRuntimeConfig.deviceEncryptionKey`. The core adopts it before the local session activates, so contacts addressing that key stay reachable, and the host can delete its own copy once the runtime is built.
 
 ## Statement-store allowance renewal
 

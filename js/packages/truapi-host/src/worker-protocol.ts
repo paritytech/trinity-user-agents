@@ -304,7 +304,7 @@ export type WorkerToMain =
       kind: "deviceEncryptionKeyResponse";
       requestId: number;
       ok: true;
-      key: Uint8Array;
+      key: Uint8Array | undefined;
     }
   | {
       kind: "deviceEncryptionKeyResponse";
