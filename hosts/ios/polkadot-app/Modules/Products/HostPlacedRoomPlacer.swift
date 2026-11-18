@@ -2,7 +2,6 @@ import Foundation
 import Keystore_iOS
 import Operation_iOS
 import Products
-import TrUAPIHost
 
 /// Draws a host-placed product's chat room before that product has run, so a first launch is not
 /// an empty list while the worker downloads and boots. Pocket bundles a card's face for the same
@@ -53,7 +52,7 @@ private extension HostPlacedRoomPlacer {
         do {
             let productId = try hostPlaced.productId(tld)
             let extensionId = productId.rawValue
-            let roomId = try chatRoomId(productId: productId, roomIdSource: hostPlaced.roomIdSource)
+            let roomId = try hostPlaced.room.roomId(of: productId)
             let chatId = Chat.Id.chatExtension(extensionId, roomId: roomId)
             let existing = try await chatRepository
                 .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())

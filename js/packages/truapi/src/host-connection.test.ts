@@ -901,3 +901,77 @@ describe("shared SDK connection failure timing", () => {
         expect(reopenedOn).toEqual({ sockets: 2, verified: true });
     });
 });
+
+describe("chat rooms of the injected client", () => {
+    async function sentCreateRoom(socket: { sent: ProtocolMessage[] }) {
+        for (let turn = 0; turn < 200; turn++) {
+            const frame = socket.sent.find(
+                (message) =>
+                    message.payload.traitId === W.CHAT_CREATE_ROOM.trait &&
+                    message.payload.methodId === W.CHAT_CREATE_ROOM.method,
+            );
+            if (frame) return frame;
+            await Promise.resolve();
+        }
+        throw new Error("createRoom was not sent");
+    }
+
+    // The request of a product built against the earlier client, as Jollity sends it.
+    const v1Request = { roomId: "jollity", name: "Polkadot", icon: "" };
+
+    it("creates the room of the earlier client in version 1", async () => {
+        const fixture = controlledHost();
+        const created = fixture.connection.client.chat.createRoom(v1Request as never);
+        fixture.sockets[0]!.open();
+        const frame = await sentCreateRoom(fixture.sockets[0]!);
+        // V1, then the three strings: the bytes of the earlier client.
+        expect(Array.from(frame.payload.value)).toEqual([
+            0,
+            ...S.str.enc("jollity"),
+            ...S.str.enc("Polkadot"),
+            ...S.str.enc(""),
+        ]);
+        // Ok, V1, New.
+        fixture.sockets[0]!.reply(frame, Uint8Array.of(0, 0, 0));
+        expect((await created)._unsafeUnwrap()).toEqual({ status: "New" } as never);
+    });
+
+    it("reads a refusal of version 1 as that version names it", async () => {
+        const fixture = controlledHost();
+        const created = fixture.connection.client.chat.createRoom(v1Request as never);
+        fixture.sockets[0]!.open();
+        const frame = await sentCreateRoom(fixture.sockets[0]!);
+        // Err, Domain, V1, PermissionDenied.
+        fixture.sockets[0]!.reply(frame, Uint8Array.of(1, 0, 0, 0));
+        expect((await created)._unsafeUnwrapErr()).toEqual({
+            tag: "Domain",
+            value: { tag: "V1", value: { tag: "PermissionDenied" } },
+        } as never);
+    });
+
+    it("creates a room with a source in version 2", async () => {
+        const fixture = controlledHost();
+        const request: T.HostChatCreateRoomRequest = {
+            roomIdSource: "jollity",
+            name: "Polkadot",
+            icon: "",
+            config: { productSource: false, reactionDetails: false, reportSeen: false },
+        };
+        const created = fixture.connection.client.chat.createRoom(request);
+        fixture.sockets[0]!.open();
+        const frame = await sentCreateRoom(fixture.sockets[0]!);
+        expect(Array.from(frame.payload.value)).toEqual(
+            Array.from(T.VersionedHostChatCreateRoomRequest.enc({ tag: "V2", value: request })),
+        );
+        expect(frame.payload.value[0]).toBe(1);
+        const answer = { status: "New", roomId: "0x01" } as const;
+        fixture.sockets[0]!.reply(
+            frame,
+            S.Result(
+                T.VersionedHostChatCreateRoomResponse,
+                S.CallError(T.VersionedHostChatCreateRoomError),
+            ).enc({ success: true, value: { tag: "V2", value: answer } }),
+        );
+        expect((await created)._unsafeUnwrap()).toEqual(answer);
+    });
+});

@@ -2072,6 +2072,107 @@ fn each_spelling_of_a_room_source_names_one_room() {
 }
 
 #[test]
+fn a_room_of_the_earlier_client_keeps_the_id_the_product_gives() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.accounts().clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	// A product built against the earlier client, as Jollity is: its answer
+	// names no room, so its later calls can only name the room by its own id.
+	let created = futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "jollity".to_string(),
+			name: "Jollity".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+	assert_eq!(
+		created,
+		HostChatCreateRoomResponse::V1(v01::HostChatCreateRoomResponse {
+			status: v01::ChatRoomRegistrationStatus::New,
+		})
+	);
+
+	futures::executor::block_on(Chat::post_message(
+		&host,
+		&CallContext::default(),
+		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+			room_id: "jollity".to_string(),
+			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+		}),
+	))
+	.expect("post_message accepts the id the product gave");
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "jollity".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	))
+	.expect("set_room_footer finds the room under the id the product gave");
+
+	// The same name as a source makes another room, under the derived id.
+	let sourced = futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "jollity".to_string(),
+			name: "Jollity".to_string(),
+			icon: String::new(),
+			config: Default::default(),
+		}),
+	))
+	.expect("create_room accepts the source");
+	let derived = ProductId::for_test("chat.dot").chat_room_id("jollity");
+	assert_eq!(
+		sourced,
+		HostChatCreateRoomResponse::V2(v02::HostChatCreateRoomResponse {
+			status: v02::ChatRoomRegistrationStatus::New,
+			room_id: derived.clone(),
+		})
+	);
+
+	assert_eq!(
+		*chat_platform.created_rooms.lock().expect("created rooms mutex poisoned"),
+		["jollity".to_string(), derived]
+	);
+	assert_eq!(
+		*chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned"),
+		["jollity".to_string()]
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("jollity".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+	);
+}
+
+#[test]
 fn chat_register_bot_rejects_unsafe_product_fields() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(

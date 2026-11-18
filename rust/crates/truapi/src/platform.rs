@@ -1997,9 +1997,10 @@ pub trait PreimageHost: Send + Sync {
 #[async_trait::async_trait]
 pub trait ChatPlatform: Send + Sync {
 	/// Create or resolve a product-scoped native chat room. `room_id` is the id
-	/// that the core derived from the product and `request.room_id_source`. The
-	/// host stores the room under this id, and every later call names the room
-	/// with it.
+	/// that the core derived from the product and `request.room_id_source`, or,
+	/// for a product built against the earlier client, the id that the product
+	/// gave. The host stores the room under this id, and every later call names
+	/// the room with it.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
