@@ -274,16 +274,14 @@ impl crate::nft::ItemKeyDeriver for SigningHost {
 	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
 		self.wallet.item_keys(slots)
 	}
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl crate::gap_scan::HardKeyDerivation for SigningHost {
-	fn public_keys_under(
+	fn derive_item_key_range(
 		&self,
-		prefix: &[String],
+		purse: crate::nft::PurseId,
+		installation: crate::installation::InstallationId,
 		indices: core::ops::Range<u32>,
-	) -> Result<Vec<[u8; 32]>, AuthorityError> {
-		self.wallet.hard_public_keys_under(prefix, indices)
+	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
+		self.wallet.item_key_range(purse, installation, indices)
 	}
 }
 
@@ -293,11 +291,11 @@ impl crate::installation_registry::DataStoreKeys for SigningHost {
 		self.wallet.data_store_owner()
 	}
 
-	fn open_installation_records(
+	fn decrypt_installation_records(
 		&self,
 		records: &[Vec<u8>],
-	) -> Result<Vec<crate::installation::InstallationId>, AuthorityError> {
-		self.wallet.open_installation_records(records)
+	) -> Result<std::collections::HashSet<crate::installation::InstallationId>, AuthorityError> {
+		self.wallet.decrypt_installation_records(records)
 	}
 }
 

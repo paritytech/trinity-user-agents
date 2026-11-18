@@ -1,33 +1,41 @@
 //! Finds what a seed holds under keys it derives in order, by reading them until a run of
 //! empty ones.
 //!
-//! [`scan_until_gap`] scans one index space: it derives keys in batches through a [`KeyRange`],
-//! reads what they hold through a [`HoldingLookup`], and stops after a run of empty keys.
-//! [`scan_purse_passes`] scans many index spaces, one per purse, in a list of
-//! [`PurseScanPass`]es: each pass takes purse ids from its own [`PurseScanIdGenerator`] and may
-//! stop after a run of empty purses, and a purse an earlier pass scanned is skipped.
-//! [`HardPathKeys`] is the [`KeyRange`] of sr25519 keys under a hard derivation path.
+//! [`scan_until_gap`] scans one index space, the keys of one purse under one installation:
+//! it derives keys in batches through a [`KeyRange`], reads what they hold through a
+//! [`HoldingLookup`], and stops after a run of empty keys. [`PurseScanner`] scans many purses
+//! under every installation in a list of [`PurseScanPass`]es: each pass takes purse ids from its
+//! own [`PurseScanIdGenerator`] and may stop after a run of empty purses, a purse an earlier
+//! pass scanned is skipped, and what each purse holds goes to a [`ScannedPursesStore`].
 
-use core::{marker::PhantomData, num::NonZeroU32, ops::Range};
-use std::{
-	collections::HashSet,
-	hash::Hash,
-	sync::{Arc, Weak},
-};
+use core::{fmt::Display, num::NonZeroU32, ops::Range};
+use std::{collections::HashSet, hash::Hash, sync::Arc};
 
 use futures::{StreamExt, stream::BoxStream};
+use truapi::latest::GenericError;
 
-use crate::runtime::AuthorityError;
+use crate::{
+	chain_runtime::RuntimeFailure, installation::InstallationId,
+	installation_registry::RegistryReadError, store::DbError,
+};
 
-/// Derives the keys of an index space for a range of indices.
+/// Derives the keys of a purse's index space under one installation.
 pub trait KeyRange: Send + Sync {
+	/// The id of a purse.
+	type PurseId;
 	/// The key one index derives.
 	type Key;
 	/// Why a range could not be derived.
 	type Error;
 
-	/// The keys at `indices`, one per index, in index order.
-	fn derive_range(&self, indices: Range<u32>) -> Result<Vec<Self::Key>, Self::Error>;
+	/// The keys of `purse` allocated by `installation` at `indices`, one per index, in index
+	/// order.
+	fn derive_range(
+		&self,
+		purse: &Self::PurseId,
+		installation: InstallationId,
+		indices: Range<u32>,
+	) -> Result<Vec<Self::Key>, Self::Error>;
 }
 
 /// Reads what keys hold on chain.
@@ -42,10 +50,10 @@ pub trait HoldingLookup<Key: Sync>: Send + Sync {
 	async fn read_holdings(&self, keys: &[Key]) -> Result<Vec<Option<Self::Holding>>, Self::Error>;
 }
 
-/// When a scan of one index space ends and how many keys it reads at once.
-pub struct GapLimit {
+/// How a scan of one index space reads its keys and when it ends.
+pub struct GapScanConfig {
 	/// The scan ends once more than this many keys in a row have held nothing.
-	pub max_empty_run: u32,
+	pub gap_size: u32,
 	/// The number of keys derived and read in one batch.
 	pub batch_size: NonZeroU32,
 }
@@ -90,17 +98,19 @@ pub type ScanError<Keys, Lookup> = GapScanError<
 	<Lookup as HoldingLookup<<Keys as KeyRange>::Key>>::Error,
 >;
 
-/// Scans one index space from index 0 in whole batches and returns every key that holds
-/// something, in index order.
+/// Scans the index space of `purse` under `installation` from index 0 in whole batches and
+/// returns every key that holds something, in index order.
 ///
-/// Before each batch it stops if more than `limit.max_empty_run` keys in a row have held
-/// nothing, so at least that many plus one empty keys follow the last key found. A batch is
-/// always read whole, and what it finds past the limit is kept. Fails at the first batch that
-/// cannot be derived or read.
+/// Before each batch it stops if more than `config.gap_size` keys in a row have held nothing,
+/// so at least that many plus one empty keys follow the last key found. A batch is always read
+/// whole, and what it finds past the gap is kept. Fails at the first batch that cannot be
+/// derived or read.
 pub async fn scan_until_gap<Keys, Lookup>(
 	keys: &Keys,
+	purse: &Keys::PurseId,
+	installation: InstallationId,
 	lookup: &Lookup,
-	limit: GapLimit,
+	config: &GapScanConfig,
 ) -> Result<FoundKeys<Keys, Lookup>, ScanError<Keys, Lookup>>
 where
 	Keys: KeyRange + ?Sized,
@@ -109,9 +119,12 @@ where
 {
 	let mut found = Vec::new();
 	let mut position = ScanPosition { next_index: 0, empty_run: 0 };
-	while let Some(indices) = position.next_batch(&limit) {
-		let hits = read_batch(keys, lookup, indices.clone()).await?;
-		position = position.after_batch(indices, hits.last().map(|hit| hit.index));
+	while let Some(indices) = position.next_batch_indices(config) {
+		let derived = keys
+			.derive_range(purse, installation, indices.clone())
+			.map_err(GapScanError::Derive)?;
+		let hits = read_batch::<Keys, Lookup>(derived, lookup, indices.clone()).await?;
+		position = position.advance_for_scan_result(indices, hits.last().map(|hit| hit.index));
 		found.extend(hits);
 	}
 	Ok(found)
@@ -126,30 +139,30 @@ struct ScanPosition {
 }
 
 impl ScanPosition {
-	/// The indices of the next batch, or `None` once more than `limit.max_empty_run` keys in a
-	/// row have held nothing or no index is left.
-	fn next_batch(&self, limit: &GapLimit) -> Option<Range<u32>> {
-		if self.empty_run > limit.max_empty_run || self.next_index == u32::MAX {
+	/// The indices of the next batch, or `None` once more than `config.gap_size` keys in a row
+	/// have held nothing or no index is left.
+	fn next_batch_indices(&self, config: &GapScanConfig) -> Option<Range<u32>> {
+		if self.empty_run > config.gap_size || self.next_index == u32::MAX {
 			return None;
 		}
-		let end = self.next_index.saturating_add(limit.batch_size.get());
+		let end = self.next_index.saturating_add(config.batch_size.get());
 		Some(self.next_index..end)
 	}
 
-	/// The position after reading `indices`, in which `last_hit` is the highest index that held
-	/// something, if any did.
-	fn after_batch(&self, indices: Range<u32>, last_hit: Option<u32>) -> Self {
+	/// The position after reading `scanned_indices`, in which `last_hit` is the highest index
+	/// that held something, if any did.
+	fn advance_for_scan_result(&self, scanned_indices: Range<u32>, last_hit: Option<u32>) -> Self {
 		let empty_run = match last_hit {
-			Some(hit) => indices.end - hit - 1,
-			None => self.empty_run.saturating_add(indices.end - indices.start),
+			Some(hit) => scanned_indices.end - hit - 1,
+			None => self.empty_run.saturating_add(scanned_indices.end - scanned_indices.start),
 		};
-		Self { next_index: indices.end, empty_run }
+		Self { next_index: scanned_indices.end, empty_run }
 	}
 }
 
-/// Derives and reads the keys at `indices`, and returns those that hold something.
+/// Reads the keys derived at `indices` and returns those that hold something.
 async fn read_batch<Keys, Lookup>(
-	keys: &Keys,
+	derived: Vec<Keys::Key>,
 	lookup: &Lookup,
 	indices: Range<u32>,
 ) -> Result<FoundKeys<Keys, Lookup>, ScanError<Keys, Lookup>>
@@ -158,7 +171,6 @@ where
 	Keys::Key: Sync,
 	Lookup: HoldingLookup<Keys::Key> + ?Sized,
 {
-	let derived = keys.derive_range(indices.clone()).map_err(GapScanError::Derive)?;
 	let holdings = lookup.read_holdings(&derived).await.map_err(GapScanError::Lookup)?;
 	if holdings.len() != derived.len() {
 		return Err(GapScanError::ResultCountMismatch {
@@ -166,11 +178,45 @@ where
 			results: holdings.len(),
 		});
 	}
-	Ok(indices
+	Ok(build_found_keys(indices, derived, holdings))
+}
+
+/// The keys of `derived`, at `indices`, whose entry in `holdings` holds something.
+fn build_found_keys<Key, Holding>(
+	indices: Range<u32>,
+	derived: Vec<Key>,
+	holdings: Vec<Option<Holding>>,
+) -> Vec<FoundKey<Key, Holding>> {
+	indices
 		.zip(derived)
 		.zip(holdings)
 		.filter_map(|((index, key), holding)| Some(FoundKey { index, key, holding: holding? }))
-		.collect())
+		.collect()
+}
+
+/// Why a backup recovery run stopped before it finished.
+#[derive(Debug, thiserror::Error)]
+pub enum RecoveryError {
+	/// The finalized block or a contract read could not be reached.
+	#[error(transparent)]
+	Chain(#[from] RuntimeFailure),
+	/// The installation registry could not be read.
+	#[error(transparent)]
+	Registry(#[from] RegistryReadError),
+	/// The current installation is not known yet.
+	#[error("the current installation is unknown: {0}")]
+	Installation(GenericError),
+	/// A purse could not be scanned.
+	#[error("scanning purse {purse} failed: {reason}")]
+	Scan {
+		/// The purse's id.
+		purse: String,
+		/// Why its scan failed.
+		reason: String,
+	},
+	/// The core database failed.
+	#[error(transparent)]
+	Db(#[from] DbError),
 }
 
 /// The purse ids one pass scans, in order.
@@ -196,89 +242,139 @@ impl<PurseId> PurseScanPass<PurseId> {
 	}
 }
 
-/// Whether a scanned purse held anything.
+/// What became of one purse id a pass took.
 pub enum PurseScanOutcome {
 	/// At least one of its keys holds something.
 	Held,
 	/// None of its keys holds anything.
 	Empty,
+	/// It was not scanned, because an earlier pass or an earlier id of this pass scanned it.
+	Skipped,
 }
 
-/// Scans one purse's index spaces to their gap and keeps what it finds.
+/// Keeps what a purse scan finds.
 #[async_trait::async_trait]
-pub trait PurseScanner<PurseId: Send>: Send + Sync {
-	/// Why a purse could not be scanned.
-	type Error;
-
-	/// Scans `purse` from its first index and says whether it held anything.
-	async fn scan_purse(&self, purse: PurseId) -> Result<PurseScanOutcome, Self::Error>;
+pub trait ScannedPursesStore<PurseId: Sync, Key: Sync, Holding: Sync>: Send + Sync {
+	/// Records `purse` and the keys in `found`, all of `purse` under `installation`, keeping
+	/// what is already recorded.
+	async fn record_recovered_keys(
+		&self,
+		purse: &PurseId,
+		installation: InstallationId,
+		found: &[FoundKey<Key, Holding>],
+	) -> Result<(), DbError>;
 }
 
-/// Runs `passes` in order, each over a fresh stream of its ids.
-///
-/// A purse id already scanned in this call, by an earlier pass or earlier in the same one, is
-/// skipped, and the skip resets the current pass's run of empty purses. A pass ends when its
-/// stream ends or its gap is reached, and takes no id after that. Fails at the first purse that
-/// cannot be scanned.
-pub async fn scan_purse_passes<PurseId, Scanner>(
-	passes: &[PurseScanPass<PurseId>],
-	scanner: &Scanner,
-) -> Result<(), Scanner::Error>
-where
-	PurseId: Eq + Hash + Clone + Send + Sync,
-	Scanner: PurseScanner<PurseId>,
-{
-	let mut scanned = HashSet::new();
-	for pass in passes {
-		run_purse_pass(pass, scanner, &mut scanned).await?;
-	}
-	Ok(())
+/// Scans purses under every installation, each to its gap, and keeps what it finds.
+pub struct PurseScanner<Keys: ?Sized, Lookup: ?Sized, Store> {
+	/// Derives each purse's keys under an installation.
+	pub keys: Arc<Keys>,
+	/// Reads what the keys hold.
+	pub holdings: Arc<Lookup>,
+	/// The installations each purse is scanned under. A purse is empty only when it is empty
+	/// under all of them.
+	pub installations: Vec<InstallationId>,
+	/// Where what is found goes.
+	pub store: Store,
+	/// How each index space is read and when it ends.
+	pub config: GapScanConfig,
 }
 
-/// Runs one pass, adding each purse it scans to `scanned`.
-async fn run_purse_pass<PurseId, Scanner>(
-	pass: &PurseScanPass<PurseId>,
-	scanner: &Scanner,
-	scanned: &mut HashSet<PurseId>,
-) -> Result<(), Scanner::Error>
+impl<Keys, Lookup, Store> PurseScanner<Keys, Lookup, Store>
 where
-	PurseId: Eq + Hash + Clone + Send + Sync,
-	Scanner: PurseScanner<PurseId>,
+	Keys: KeyRange + ?Sized,
+	Keys::PurseId: Eq + Hash + Display + Send + Sync,
+	Keys::Key: Send + Sync,
+	Keys::Error: Display,
+	Lookup: HoldingLookup<Keys::Key> + ?Sized,
+	Lookup::Holding: Send + Sync,
+	Lookup::Error: Display,
+	Store: ScannedPursesStore<Keys::PurseId, Keys::Key, Lookup::Holding>,
 {
-	let mut purse_ids = pass.purse_ids.purse_ids();
-	let mut empty_run = 0;
-	while !pass.gap_reached(empty_run) &&
-		let Some(purse) = purse_ids.next().await
-	{
-		let outcome = scan_unless_scanned(scanner, scanned, purse).await?;
-		empty_run = empty_run_after(empty_run, outcome);
+	/// Runs `passes` in order, each over a fresh stream of its ids.
+	///
+	/// A purse id already scanned in this call, by an earlier pass or earlier in the same one,
+	/// is skipped, and the skip resets the current pass's run of empty purses. A pass ends when
+	/// its stream ends or its gap is reached, and takes no id after that. Fails at the first
+	/// purse that cannot be scanned or recorded.
+	pub async fn scan_purse_passes(
+		&self,
+		passes: &[PurseScanPass<Keys::PurseId>],
+	) -> Result<(), RecoveryError> {
+		let mut scanned = HashSet::new();
+		for pass in passes {
+			self.run_purse_pass(pass, &mut scanned).await?;
+		}
+		Ok(())
 	}
-	Ok(())
-}
 
-/// Scans `purse` and records it in `scanned`, or returns `None` without scanning when
-/// `scanned` already holds it.
-async fn scan_unless_scanned<PurseId, Scanner>(
-	scanner: &Scanner,
-	scanned: &mut HashSet<PurseId>,
-	purse: PurseId,
-) -> Result<Option<PurseScanOutcome>, Scanner::Error>
-where
-	PurseId: Eq + Hash + Clone + Send + Sync,
-	Scanner: PurseScanner<PurseId>,
-{
-	if !scanned.insert(purse.clone()) {
-		return Ok(None);
+	/// Runs one pass, adding each purse it scans to `scanned`.
+	async fn run_purse_pass(
+		&self,
+		pass: &PurseScanPass<Keys::PurseId>,
+		scanned: &mut HashSet<Keys::PurseId>,
+	) -> Result<(), RecoveryError> {
+		let mut purse_ids = pass.purse_ids.purse_ids();
+		let mut empty_run = 0;
+		while !pass.gap_reached(empty_run) &&
+			let Some(purse) = purse_ids.next().await
+		{
+			let outcome = self.scan_unless_scanned(scanned, purse).await?;
+			empty_run = adjust_empty_purses_gap_from_outcome(empty_run, outcome);
+		}
+		Ok(())
 	}
-	scanner.scan_purse(purse).await.map(Some)
+
+	/// Scans `purse` and records it in `scanned`, or skips it when `scanned` already holds it.
+	async fn scan_unless_scanned(
+		&self,
+		scanned: &mut HashSet<Keys::PurseId>,
+		purse: Keys::PurseId,
+	) -> Result<PurseScanOutcome, RecoveryError> {
+		if scanned.contains(&purse) {
+			return Ok(PurseScanOutcome::Skipped);
+		}
+		let outcome = self.scan_purse(&purse).await?;
+		scanned.insert(purse);
+		Ok(outcome)
+	}
+
+	/// Scans `purse` under each installation from its first index, records what it holds, and
+	/// says whether it held anything under any of them.
+	async fn scan_purse(&self, purse: &Keys::PurseId) -> Result<PurseScanOutcome, RecoveryError> {
+		let mut outcome = PurseScanOutcome::Empty;
+		for installation in &self.installations {
+			let found = self.find_held_keys(purse, *installation).await?;
+			if found.is_empty() {
+				continue;
+			}
+			self.store.record_recovered_keys(purse, *installation, &found).await?;
+			outcome = PurseScanOutcome::Held;
+		}
+		Ok(outcome)
+	}
+
+	/// The keys of `purse` under `installation` that hold something.
+	async fn find_held_keys(
+		&self,
+		purse: &Keys::PurseId,
+		installation: InstallationId,
+	) -> Result<FoundKeys<Keys, Lookup>, RecoveryError> {
+		let found =
+			scan_until_gap(&*self.keys, purse, installation, &*self.holdings, &self.config).await;
+		found.map_err(|error| RecoveryError::Scan {
+			purse: purse.to_string(),
+			reason: error.to_string(),
+		})
+	}
 }
 
 /// The run of empty purses after one more purse: an empty one adds to it, and one that held
 /// something or was skipped resets it.
-fn empty_run_after(empty_run: u32, outcome: Option<PurseScanOutcome>) -> u32 {
+fn adjust_empty_purses_gap_from_outcome(empty_run: u32, outcome: PurseScanOutcome) -> u32 {
 	match outcome {
-		Some(PurseScanOutcome::Empty) => empty_run.saturating_add(1),
-		Some(PurseScanOutcome::Held) | None => 0,
+		PurseScanOutcome::Empty => empty_run.saturating_add(1),
+		PurseScanOutcome::Held | PurseScanOutcome::Skipped => 0,
 	}
 }
 
@@ -299,46 +395,6 @@ pub struct SequentialPurseIds(pub Range<u32>);
 impl<PurseId: From<u32> + Send + 'static> PurseScanIdGenerator<PurseId> for SequentialPurseIds {
 	fn purse_ids(&self) -> BoxStream<'static, PurseId> {
 		futures::stream::iter(self.0.clone().map(PurseId::from)).boxed()
-	}
-}
-
-/// Derives public keys under hard paths from the session's seed, without exposing it.
-pub trait HardKeyDerivation: Send + Sync {
-	/// The sr25519 public key at `prefix//index` for each of `indices`, in order, with every
-	/// junction hard. Fails without a session.
-	fn public_keys_under(
-		&self,
-		prefix: &[String],
-		indices: Range<u32>,
-	) -> Result<Vec<[u8; 32]>, AuthorityError>;
-}
-
-/// The sr25519 public keys `prefix//index`, every junction hard, as the keys of an index space.
-pub struct HardPathKeys<Key> {
-	derivation: Weak<dyn HardKeyDerivation>,
-	prefix: Vec<String>,
-	key: PhantomData<fn() -> Key>,
-}
-
-impl<Key> HardPathKeys<Key> {
-	/// The keys under `prefix`, derived by `derivation` while it is alive.
-	pub fn new(derivation: Weak<dyn HardKeyDerivation>, prefix: Vec<String>) -> Self {
-		Self { derivation, prefix, key: PhantomData }
-	}
-}
-
-/// Fails with [`AuthorityError::Unavailable`] once the derivation is dropped.
-impl<Key: From<[u8; 32]>> KeyRange for HardPathKeys<Key> {
-	type Key = Key;
-	type Error = AuthorityError;
-
-	fn derive_range(&self, indices: Range<u32>) -> Result<Vec<Key>, AuthorityError> {
-		let Some(derivation) = self.derivation.upgrade() else {
-			let reason = "the hard key derivation was dropped".to_string();
-			return Err(AuthorityError::Unavailable { reason });
-		};
-		let keys = derivation.public_keys_under(&self.prefix, indices)?;
-		Ok(keys.into_iter().map(Key::from).collect())
 	}
 }
 

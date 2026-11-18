@@ -1,7 +1,6 @@
 use subxt::tx::Signer;
 
 use super::*;
-use crate::host_logic::product_account::derive_hard_public_keys_under;
 
 #[test]
 fn the_signer_at_a_slot_signs_for_the_key_derived_at_it() {
@@ -46,11 +45,9 @@ fn keys_under_the_item_prefix_are_the_allocated_item_keys() {
 	let entropy = [0x42; 16];
 	let (purse, installation) = (PurseId(3), InstallationId([0x1d; 32]));
 	let slots = [0, 1, 7].map(|index| ItemSlot { purse, installation, index: ItemIndex(index) });
-	let prefix = item_key_prefix(purse, installation);
-	let prefix = prefix.each_ref().map(String::as_str);
 
-	let under_prefix = derive_hard_public_keys_under(&entropy, &prefix, 0..8).unwrap();
+	let range = item_key_range_from_entropy(&entropy, purse, installation, 0..8).unwrap();
 	let allocated = item_keys_from_entropy(&entropy, &slots).unwrap();
 
-	assert_eq!([0, 1, 7].map(|index| ItemKey(under_prefix[index])), allocated.as_slice());
+	assert_eq!([0, 1, 7].map(|index| range[index]), allocated.as_slice());
 }

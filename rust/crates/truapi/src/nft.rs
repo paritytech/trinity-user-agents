@@ -16,7 +16,6 @@ mod ledger;
 mod live;
 mod operation;
 mod purse;
-mod purse_id_gate;
 mod reclaim;
 mod recovery;
 mod returns;
@@ -32,7 +31,8 @@ pub use imported_secrets::ImportedSecretStore;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{
 	ImportedItemKey, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot,
-	item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
+	item_key_range_from_entropy, item_keys_from_entropy, item_secrets_from_entropy,
+	item_signer_from_entropy,
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{
@@ -40,7 +40,6 @@ pub use operation::{
 	TransferType,
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
-pub use purse_id_gate::PurseIdGate;
 pub use reclaim::ReclaimRequest;
 pub use recovery::{AssetHubRecoveryChain, NftRecovery, NftRecoveryDeps};
 pub use returns::ReturnRequest;

@@ -318,21 +318,17 @@ impl WalletAccountHolder {
 		})
 	}
 
-	/// The sr25519 public key at `prefix//index` for each of `indices`, every
-	/// junction hard.
-	pub fn hard_public_keys_under(
+	/// The item keys of `purse` allocated by `installation` at each of
+	/// `indices`, in order.
+	pub fn item_key_range(
 		&self,
-		prefix: &[String],
+		purse: crate::nft::PurseId,
+		installation: crate::installation::InstallationId,
 		indices: core::ops::Range<u32>,
-	) -> Result<Vec<[u8; 32]>, AuthorityError> {
-		let prefix: Vec<&str> = prefix.iter().map(String::as_str).collect();
+	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
 		self.with_installed_keys(|keys| {
-			crate::host_logic::product_account::derive_hard_public_keys_under(
-				&keys.entropy,
-				&prefix,
-				indices,
-			)
-			.map_err(AuthorityError::from)
+			crate::nft::item_key_range_from_entropy(&keys.entropy, purse, installation, indices)
+				.map_err(AuthorityError::from)
 		})
 	}
 
@@ -344,15 +340,15 @@ impl WalletAccountHolder {
 		})
 	}
 
-	/// The distinct installations in `records` that were sealed under this
+	/// The distinct installations in `records` that were encrypted under this
 	/// seed, skipping every other record.
-	pub fn open_installation_records(
+	pub fn decrypt_installation_records(
 		&self,
 		records: &[Vec<u8>],
-	) -> Result<Vec<crate::installation::InstallationId>, AuthorityError> {
+	) -> Result<std::collections::HashSet<crate::installation::InstallationId>, AuthorityError> {
 		self.with_installed_keys(|keys| {
-			let key = super::data_store::installation_record_key(&keys.entropy)?;
-			Ok(super::data_store::open_installation_records(&key, records))
+			let key = super::data_store::installation_record_encryption_key(&keys.entropy)?;
+			Ok(super::data_store::decrypt_installation_records(&key, records))
 		})
 	}
 

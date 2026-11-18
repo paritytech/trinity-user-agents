@@ -276,17 +276,22 @@ pub fn derive_hard_path_from_keypair(
 /// The public key at `prefix//index` for each of `indices`, in order, with
 /// every junction hard, derived from the canonical BIP-39 root key. The prefix
 /// is derived once for the whole range.
-pub fn derive_hard_public_keys_under(
+pub fn derive_hard_public_keys_for_range(
 	entropy: &[u8],
 	prefix: &[&str],
 	indices: Range<u32>,
 ) -> Result<Vec<[u8; 32]>, ProductAccountError> {
 	let prefix_keypair = derive_sr25519_hard_path(entropy, prefix)?;
-	indices.map(|index| hard_public_key_at(prefix_keypair.clone(), index)).collect()
+	indices
+		.map(|index| derive_hard_public_key_for_index(prefix_keypair.clone(), index))
+		.collect()
 }
 
 /// The public key at `keypair//index`, a hard junction.
-fn hard_public_key_at(keypair: Keypair, index: u32) -> Result<[u8; 32], ProductAccountError> {
+fn derive_hard_public_key_for_index(
+	keypair: Keypair,
+	index: u32,
+) -> Result<[u8; 32], ProductAccountError> {
 	let junction = index.to_string();
 	Ok(derive_hard_path_from_keypair(keypair, &[junction.as_str()])?.public.to_bytes())
 }

@@ -161,7 +161,7 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		durable: engine,
 		secrets,
 		imported,
-		purse_ids: super::PurseIdGate::opened(),
+		recovery: Arc::new(super::NftRecovery::off()),
 	};
 	let ledger = NftLedger::new(deps);
 	let tracking = super::HoldingTrackerDeps {

@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use subxt::utils::H256;
 
-use super::chain::{ScarcityChain, ScarcityStorage};
+use super::chain::ScarcityChain;
 use crate::{
-	chain::{ChainHeads, StorageWatchError, WatchedStorage},
+	chain::StorageWatchError,
 	gap_scan::HoldingLookup,
 	nft::{HeldItem, ItemKey},
 };
@@ -18,15 +18,9 @@ pub struct ScarcityHoldings {
 }
 
 impl ScarcityHoldings {
-	/// Reads the pallet on the chain with `genesis`, every read at the block
-	/// `at`.
-	pub fn new(
-		storage: Arc<dyn WatchedStorage>,
-		heads: Arc<dyn ChainHeads>,
-		genesis: H256,
-		at: H256,
-	) -> Self {
-		Self { chain: Arc::new(ScarcityStorage::new(storage, heads, genesis)), at }
+	/// Reads the pallet through `chain`, every read at the block `at`.
+	pub fn new(chain: Arc<dyn ScarcityChain>, at: H256) -> Self {
+		Self { chain, at }
 	}
 }
 

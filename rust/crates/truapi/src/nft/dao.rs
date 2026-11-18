@@ -112,9 +112,10 @@ const RECOVERY_FINISHED: &str = "SELECT EXISTS (SELECT 1 FROM nft_recovery)
 	AND NOT EXISTS (SELECT 1 FROM nft_recovery WHERE done = 0)";
 
 /// Whether backup recovery has read the installation registry on this
-/// install and finished every installation it found there.
-pub fn recovery_finished(conn: &Connection) -> Result<bool, DbError> {
-	Ok(conn.prepare_cached(RECOVERY_FINISHED)?.query_row([], |row| row.get(0))?)
+/// install and finished every installation it found there, now and after
+/// each change.
+pub fn observe_recovery_finished(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
+	db.observe(RECOVERY_FINISHED, |statement| statement.query_row([], |row| row.get(0)))
 }
 
 const PURSES_TAGGED: &str = "SELECT id, name, tag FROM nft_purse WHERE tag = :tag ORDER BY id";

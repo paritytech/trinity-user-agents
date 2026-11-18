@@ -34,7 +34,7 @@ use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
 	materials::Materials,
-	nft::{HoldingTracker, NftLedger, NftRecovery},
+	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
 use truapi::latest;
@@ -145,10 +145,6 @@ pub struct RuntimeServices {
 	/// Keeps the ledger's holdings in step with the chain, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	holding_tracker: OnceLock<HoldingTracker>,
-	/// Finds the NFTs earlier installations held, installed with the ledger
-	/// when the stack names the installation registry.
-	#[cfg(not(target_arch = "wasm32"))]
-	nft_recovery: OnceLock<NftRecovery>,
 	/// Provider of the installation id NFT purse item keys are derived under.
 	#[cfg(not(target_arch = "wasm32"))]
 	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
@@ -285,8 +281,6 @@ impl RuntimeServices {
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			holding_tracker: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
-			nft_recovery: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			installation_provider: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -573,13 +567,6 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
 		self.holding_tracker.set(tracker).is_ok()
-	}
-
-	/// Install NFT backup recovery, which runs for as long as the services
-	/// live. Set-once; returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn install_nft_recovery(&self, recovery: NftRecovery) -> bool {
-		self.nft_recovery.set(recovery).is_ok()
 	}
 
 	/// Install the provider of the installation id. Set-once; returns
