@@ -98,6 +98,8 @@ pub use sso_responder_service::{
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
+#[cfg(not(target_arch = "wasm32"))]
+pub use vrf::Vrf;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{

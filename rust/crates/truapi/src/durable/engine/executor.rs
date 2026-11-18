@@ -10,6 +10,8 @@ mod schedule;
 #[cfg(test)]
 mod tests;
 
+pub use backoff::MAX_REBUILD_COOLDOWN;
+
 use core::future::Future;
 use std::{
 	collections::{HashMap, HashSet},
