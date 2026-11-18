@@ -14,8 +14,8 @@ use crate::{
 	stack::{ReplaceCheck, StackRefreshOutcome},
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
-		refused_for_its_tld, sign_test_descriptor, stack_status, stored_test_record,
-		without_bulletin,
+		published_test_descriptor_at, refused_for_its_tld, sign_test_descriptor, stack_status,
+		stored_test_record, without_bulletin,
 	},
 	time::ManualTimer,
 };
@@ -297,18 +297,14 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 	);
 }
 
-/// The test stack's copy at `sequence`, on the chains it is bundled with.
-fn published_at(sequence: u32) -> serde_json::Value {
-	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
-}
-
 /// A descriptor signed with a stolen key must not move a stack to another
 /// TLD. The host is told the copy was refused, nothing is written for it, and
 /// the next start runs the same stack.
 #[test]
 fn a_fetched_copy_on_another_tld_is_refused_and_not_stored() {
 	let records = Arc::<MemoryRecords>::default();
-	let started = start(records.clone(), vec![published(&on_testnet(published_at(2)))]);
+	let started =
+		start(records.clone(), vec![published(&on_testnet(published_test_descriptor_at(2)))]);
 
 	let at_start = started.next_status();
 	let after_fetch = started.next_status();
@@ -333,13 +329,14 @@ fn a_fetched_copy_on_another_tld_is_refused_and_not_stored() {
 }
 
 /// A copy that came with an `ETag` has its record written again without it
-/// when the next fetch is refused or fails. That write stores no new copy, so
-/// whether it works or not the host is told what the fetch came to, and the
-/// next start runs the copy the core held.
+/// when the next fetch is refused or fails. That record holds the copy the
+/// core already holds, never the one just refused, so whether the write works
+/// or not the host is told what the fetch came to, and the next start runs
+/// the copy the core held.
 #[test]
 fn a_refused_or_failed_fetch_is_reported_as_such_whatever_the_store_does() {
-	let held = published_at(2);
-	let moved = on_testnet(published_at(3));
+	let held = published_test_descriptor_at(2);
+	let moved = on_testnet(published_test_descriptor_at(3));
 	let fetches = [(published(&moved), true), (published(&moved), false), (unreachable(), true)];
 
 	let told_and_stored = fetches.map(|(answer, disk_full)| {
@@ -360,6 +357,40 @@ fn a_refused_or_failed_fetch_is_reported_as_such_whatever_the_store_does() {
 	assert_eq!(told_and_stored, [refused.clone(), refused, unreachable]);
 }
 
+/// A newer copy whose store failed is not lost when the next fetch fails. The
+/// record that fetch writes, to drop the copy's `ETag`, holds that copy, so
+/// the host is told to restart while the last fetch is reported as failed,
+/// and the next start runs the newer copy.
+#[test]
+fn a_copy_whose_store_failed_is_stored_when_the_next_fetch_fails() {
+	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
+	let records = Arc::<MemoryRecords>::default();
+	records.disk_full.store(true, Ordering::SeqCst);
+	let started = start(records.clone(), vec![published_with_etag(&wiped), unreachable()]);
+	let _at_start = started.next_status();
+	let while_full = started.next_status();
+
+	records.disk_full.store(false, Ordering::SeqCst);
+	started.refresh.refresh_now();
+	let once_stored = started.next_status();
+	let restarted = load(records, Arc::default(), manual_clock());
+
+	assert_eq!(
+		[while_full, once_stored, restarted.status()],
+		[
+			stack_status(
+				&bundled(),
+				Some(StackRefreshOutcome::NotStored { reason: "disk full".to_string() })
+			),
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled(), unreachable_because("connection refused"))
+			},
+			stack_status(&wiped, None),
+		]
+	);
+}
+
 /// A record may hold a copy on another TLD than the build bundles, such as
 /// one written by another build of the app. The host starts on the bundled
 /// copy and the record stays as it is while the published copy is refused.
@@ -367,9 +398,9 @@ fn a_refused_or_failed_fetch_is_reported_as_such_whatever_the_store_does() {
 /// copy.
 #[test]
 fn a_stored_copy_on_another_tld_is_ignored_until_a_copy_the_core_takes_replaces_it() {
-	let moved = on_testnet(published_at(2));
-	let corrected = published_at(3);
-	let records = holding(stored_test_record(&moved));
+	let moved = on_testnet(published_test_descriptor_at(2));
+	let corrected = published_test_descriptor_at(3);
+	let records = holding(stored_test_record(&moved, START.cast_signed()));
 	let started = start(records.clone(), vec![published(&moved), published(&corrected)]);
 
 	let at_start = started.next_status();
@@ -388,7 +419,7 @@ fn a_stored_copy_on_another_tld_is_ignored_until_a_copy_the_core_takes_replaces_
 				stack_status(&corrected, Some(StackRefreshOutcome::Current)),
 				stack_status(&corrected, None)
 			],
-			Some(stored_test_record(&moved))
+			Some(stored_test_record(&moved, START.cast_signed()))
 		)
 	);
 }
@@ -401,10 +432,13 @@ fn a_stored_copy_on_another_tld_is_ignored_until_a_copy_the_core_takes_replaces_
 #[test]
 fn an_ignored_record_with_a_higher_sequence_does_not_keep_a_newer_copy_out() {
 	let wiped = published_test_descriptor(3, "second", TEST_STACK_WIPED_PEOPLE);
-	let ignored = [on_testnet(published_at(5)), without_bulletin(published_at(5))];
+	let ignored = [
+		on_testnet(published_test_descriptor_at(5)),
+		without_bulletin(published_test_descriptor_at(5)),
+	];
 
 	let told = ignored.map(|ignored| {
-		let records = holding(stored_test_record(&ignored));
+		let records = holding(stored_test_record(&ignored, START.cast_signed()));
 		let started = start(records.clone(), vec![published(&wiped)]);
 		let at_start = started.next_status();
 		let after_fetch = started.next_status();

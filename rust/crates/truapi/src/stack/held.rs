@@ -66,13 +66,15 @@ impl CopyRules {
 		Ok(HeldCopy { descriptor: verified.descriptor, stack })
 	}
 
-	/// The copy the core would start from in `record`, a record of the
-	/// stack's store, or `None` when the record does not read or holds no
+	/// The copy `record` holds, a record of the stack's store, when that copy
+	/// passes these rules. `None` when the record does not read or holds no
 	/// copy that verifies under the pointer.
 	///
 	/// Fails like [`Self::hold`] when the record holds a copy the core
 	/// refuses. The core starts from neither kind of record, and neither
-	/// keeps a copy the core takes out of the store.
+	/// keeps a copy the core takes out of the store. A copy that passes is
+	/// one the core can start from, and it does so unless the bundled copy
+	/// is newer.
 	pub fn stored_copy(&self, record: &[u8]) -> Result<Option<HeldCopy>, StackError> {
 		let mut reader = StackReader::new(Refresh::Never);
 		reader.load(&self.pointer, None, Some(record)).map_err(StackError::Descriptor)?;

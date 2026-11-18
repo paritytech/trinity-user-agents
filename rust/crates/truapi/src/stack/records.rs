@@ -29,13 +29,13 @@ pub trait StackRecords: Send + Sync {
 }
 
 /// Whether a record may replace the one already stored for its stack: not
-/// when the core would start from the stored one and it holds a higher
+/// when the stored one holds a copy that passes the core's rules, at a higher
 /// `sequence`.
 ///
-/// A stored record the core would not start from is replaced: one that no
-/// longer reads, or one whose copy the core cannot run or that changes a
-/// field the bundled copy pins. Left in place, it would keep every copy the
-/// core takes out of the store.
+/// A stored record without such a copy is replaced: one that no longer reads,
+/// or one whose copy the core cannot run or that changes a field the bundled
+/// copy pins. The core never starts from it, so left in place it would keep
+/// every copy with a lower `sequence` out of the store.
 pub struct ReplaceCheck {
 	rules: CopyRules,
 	sequence: Option<u32>,
@@ -44,20 +44,20 @@ pub struct ReplaceCheck {
 impl ReplaceCheck {
 	/// The check for storing `record`, a record of the stack `rules` are for.
 	pub fn new(rules: CopyRules, record: &[u8]) -> Self {
-		let sequence = startable_sequence(&rules, record);
+		let sequence = passing_sequence(&rules, record);
 		Self { rules, sequence }
 	}
 
 	/// Whether the record may replace `existing`.
 	#[must_use]
 	pub fn replaces(&self, existing: &[u8]) -> bool {
-		startable_sequence(&self.rules, existing) <= self.sequence
+		passing_sequence(&self.rules, existing) <= self.sequence
 	}
 }
 
-/// The `sequence` of the copy the core would start from in `record`, or
-/// `None` when it would not start from the record.
-fn startable_sequence(rules: &CopyRules, record: &[u8]) -> Option<u32> {
+/// The `sequence` of the copy in `record`, or `None` when the record holds no
+/// copy that passes the core's rules.
+fn passing_sequence(rules: &CopyRules, record: &[u8]) -> Option<u32> {
 	Some(rules.stored_copy(record).ok()??.descriptor.sequence)
 }
 

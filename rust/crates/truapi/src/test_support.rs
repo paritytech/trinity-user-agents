@@ -443,6 +443,12 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
+/// The test stack's descriptor as published at `sequence`, on the chains and
+/// in the generation every test bundles it with.
+pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
+}
+
 /// `descriptor` moved to the `testnet` TLD.
 pub fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
 	descriptor["tld"] = "testnet".into();
@@ -459,13 +465,17 @@ pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value 
 	descriptor
 }
 
+/// The `ETag` every [`stored_test_record`] carries.
+pub const STORED_TEST_ETAG: &str = "\"stored\"";
+
 /// The record a store holds once a reader stored `descriptor`, fetched at
-/// Unix time 0 without an `ETag`.
-pub fn stored_test_record(descriptor: &serde_json::Value) -> Vec<u8> {
+/// the Unix time `fetched_at` and served with [`STORED_TEST_ETAG`].
+pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
 	let (link, bytes) = sign_test_descriptor(descriptor);
 	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");
+	let served = trinity_stack::Served::Document { bytes: &bytes, etag: Some(STORED_TEST_ETAG) };
 	trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
-		.fetched(&pointer, trinity_stack::Served::Document { bytes: &bytes, etag: None }, 0)
+		.fetched(&pointer, served, fetched_at)
 		.expect("the copy passes the descriptor rules")
 		.stored
 		.expect("a first copy is stored")
