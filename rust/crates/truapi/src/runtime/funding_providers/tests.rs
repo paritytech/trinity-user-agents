@@ -76,9 +76,6 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 			.map(|(product_id, worker_manifest)| FundingProviderEntry {
 				product_id: ProductId::for_test(product_id),
 				worker_manifest: worker_manifest.clone(),
-				root_manifest: None,
-				origin: FundingProviderOrigin::Published,
-				app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 			})
 			.collect(),
 	);
@@ -119,46 +116,18 @@ fn candidates_come_from_the_snapshot_until_dotns_answers() {
 	);
 }
 
-// A provider the host ships in the app is never published, so dotNS
-// answering "nothing" must not drop it the way it drops a listed one.
-#[test]
-fn a_bundled_provider_keeps_the_hosts_manifest() {
-	let providers = providers(&[("listed.dot", Some(manifest(CARD_IN)))]);
-	lock(&providers.entries).extend(
-		offered_providers(vec![FundingProviderEntry {
-			product_id: ProductId::for_test("bundled.dot"),
-			worker_manifest: Some(manifest(CARD_IN)),
-			root_manifest: None,
-			origin: FundingProviderOrigin::Bundled,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}]),
-	);
-	providers.answered(&ProductId::for_test("listed.dot"), None);
-	providers.answered(&ProductId::for_test("bundled.dot"), None);
-
-	assert_eq!(
-		ids(providers.candidates(FundingDirection::In)),
-		vec![ProductId::for_test("bundled.dot")]
-	);
-}
-
-// A snapshot the core cannot read, or a bundled provider shipped without
-// one, is the host's mistake for that provider alone: it is left out, and
-// the providers listed with it are still offered.
+// A snapshot the core cannot read is the host's mistake for that provider
+// alone: it is left out, and the providers listed with it are still offered.
 #[test]
 fn an_unreadable_snapshot_leaves_out_only_its_provider() {
-	let entry = |product_id: &str, worker_manifest: Option<String>, origin| FundingProviderEntry {
+	let entry = |product_id: &str, worker_manifest: Option<String>| FundingProviderEntry {
 		product_id: ProductId::for_test(product_id),
 		worker_manifest,
-		root_manifest: None,
-		origin,
-		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 
 	let offered = offered_providers(vec![
-		entry("broken.dot", Some("{".to_string()), FundingProviderOrigin::Published),
-		entry("card.dot", Some(manifest(CARD_IN)), FundingProviderOrigin::Published),
-		entry("empty.dot", None, FundingProviderOrigin::Bundled),
+		entry("broken.dot", Some("{".to_string())),
+		entry("card.dot", Some(manifest(CARD_IN))),
 	]);
 
 	assert_eq!(
@@ -202,9 +171,6 @@ fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
 				.map(|product_id| FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(manifest(CARD_IN)),
-					root_manifest: None,
-					origin: FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
 		)
@@ -285,8 +251,7 @@ fn quotes_go_to_the_providers_a_session_can_be_handed_to() {
 }
 
 // A provider's candidate carries the name and icon its root manifest gives
-// it, so hosts load no brand of their own; a brand read later replaces the
-// shipped one.
+// it, so hosts load no brand of their own.
 #[test]
 fn a_candidate_carries_its_providers_brand() {
 	let root = |name: &str| {
@@ -294,18 +259,9 @@ fn a_candidate_carries_its_providers_brand() {
 			r#"{{"$v":1,"displayName":"{name}","description":"d","icon":{{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}}}"#
 		)
 	};
-	let providers = providers(&[]);
-	lock(&providers.entries).extend(
-		offered_providers(vec![FundingProviderEntry {
-			product_id: ProductId::for_test("bundled.dot"),
-			worker_manifest: Some(manifest(CARD_IN)),
-			root_manifest: Some(root("Shipped")),
-			origin: FundingProviderOrigin::Bundled,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}]),
-	);
+	let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
 	let branded = providers.branded(
-		&ProductId::for_test("bundled.dot"),
+		&ProductId::for_test("card.dot"),
 		ProductBrand::parse(&root("Live")).expect("brand"),
 	);
 	let names = |providers: &FundingProviders| {

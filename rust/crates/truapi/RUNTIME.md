@@ -714,8 +714,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  when the provider publishes an `app` subname on dotNS, read within ten
+  seconds; otherwise `NoApp`). The
   core never shows it on its own: it holds the call, tells the host through
   `provider_frame_requested`, and presents it once the host calls
   `open_provider_frame`, at once while the user looks at the session or when

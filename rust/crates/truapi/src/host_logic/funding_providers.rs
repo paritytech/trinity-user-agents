@@ -27,28 +27,6 @@ pub struct FundingProviderEntry {
 	/// has read the live one. `None` waits for that read: until dotNS answers,
 	/// the provider is neither asked for quotes nor offered for a session.
 	pub worker_manifest: Option<String>,
-	/// The root manifest JSON the host shipped for it, which its name and
-	/// icon are read from until the core has read the live one.
-	pub root_manifest: Option<String>,
-	/// Where the provider's manifests come from.
-	pub origin: FundingProviderOrigin,
-	/// Whether the provider ships an App, as the host knows for one it
-	/// bundles.
-	pub app: FundingProviderApp,
-}
-
-/// Whether a funding provider ships an App, so an App route of its can be
-/// shown.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum FundingProviderApp {
-	/// The host does not know: the core looks the App up on dotNS when an
-	/// App route is shown.
-	#[default]
-	Unknown,
-	/// It ships one.
-	Shipped,
-	/// It ships none, so it shows only external pages.
-	Absent,
 }
 
 /// The providers the host offers from its remote configuration's
@@ -74,25 +52,10 @@ pub fn provider_config(
 			entries.push(FundingProviderEntry {
 				product_id,
 				worker_manifest: None,
-				root_manifest: None,
-				origin: FundingProviderOrigin::Published,
-				app: FundingProviderApp::Unknown,
 			});
 		}
 	}
 	(entries, invalid)
-}
-
-/// Where the core reads a provider's manifests.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum FundingProviderOrigin {
-	/// Published on dotNS: the core reads the live manifests, and goes by the
-	/// host's snapshots until it has.
-	#[default]
-	Published,
-	/// Shipped inside the host: its `worker_manifest` and `root_manifest` are
-	/// what the core goes by, and dotNS is never read for it.
-	Bundled,
 }
 
 /// How long what a quote answer showed about a provider is trusted over its
