@@ -17,10 +17,7 @@ interface HostFunding {
      */
     suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?>
 
-    /**
-     * The sessions in flight and the ended ones the core keeps. Observing it acknowledges each ended session once
-     * its row is built.
-     */
+    /** The sessions in flight and the ended ones the core keeps, again on every change. Reading it changes nothing. */
     fun observeActivity(): Flow<FundingActivity>
 
     /**

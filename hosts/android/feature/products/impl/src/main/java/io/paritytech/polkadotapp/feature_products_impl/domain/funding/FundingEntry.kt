@@ -4,11 +4,9 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
-import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
-import uniffi.truapi.ProductId
 import uniffi.truapi.U128
 
 enum class FundingPhase {
@@ -34,12 +32,10 @@ data class FundingEntry(
     val summary: FundingSessionSummary?,
     /** What the core offers for the reported selection, while the session is being set up. */
     val options: FundingOptions?,
-    /** The core's list for the latest ask; `null` from a new ask until its first list. */
+    /** The amount of the latest ask; `null` while none is. */
+    val askedAmount: U128?,
+    /** The core's list for [askedAmount]; `null` from a new ask until its first list. */
     val quotes: FundingQuoteList?,
-    /** The quotes on screen before the same amount was asked again, kept while their providers answer again. */
-    val staleQuotes: Map<ProductId, FundingQuote>,
-    /** An ask waits for its first list. */
-    val isQuoting: Boolean,
     /** The core waits on the session's screens for the user to start it or leave. */
     val isPresented: Boolean,
     val phase: FundingPhase,
@@ -67,9 +63,8 @@ data class FundingEntry(
             progress: FundingProgress?,
             summary: FundingSessionSummary?,
             options: FundingOptions?,
+            askedAmount: U128?,
             quotes: FundingQuoteList?,
-            staleQuotes: Map<ProductId, FundingQuote>,
-            isQuoting: Boolean,
             isPresented: Boolean,
         ) = FundingEntry(
             id = id,
@@ -80,9 +75,8 @@ data class FundingEntry(
             progress = progress,
             summary = summary,
             options = options,
+            askedAmount = askedAmount,
             quotes = quotes,
-            staleQuotes = staleQuotes,
-            isQuoting = isQuoting,
             isPresented = isPresented,
             phase = phaseOf(session, summary),
         )

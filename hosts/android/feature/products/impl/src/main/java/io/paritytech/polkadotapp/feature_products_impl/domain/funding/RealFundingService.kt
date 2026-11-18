@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +30,6 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
-import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
@@ -48,7 +49,7 @@ import javax.inject.Singleton
 class RealFundingService @Inject constructor(
     private val core: FundingCore,
     dispatchers: CoroutineDispatchers,
-) : FundingService {
+) : FundingService, WorkerCrashListener {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.io)
     private val readDispatcher = dispatchers.io
     private val calls = FundingCoreCalls(scope)
@@ -71,10 +72,7 @@ class RealFundingService @Inject constructor(
         .flowOn(readDispatcher)
 
     override fun entryState(id: String): Flow<FundingEntry> = changes
-        .onSubscription {
-            synchronized(lock) { presentations[id]?.shown?.complete(Unit) }
-            emit(Change.Entry(id))
-        }
+        .onSubscription { emit(Change.Entry(id)) }
         .filter { it == Change.Entry(id) }
         .conflate()
         .mapNotNull { readEntry(id) }
@@ -83,6 +81,10 @@ class RealFundingService @Inject constructor(
             !entry.isGone && !entry.hasEnded
         }
         .flowOn(readDispatcher)
+
+    override fun shown(id: String) {
+        synchronized(lock) { presentations[id]?.shown?.complete(Unit) }
+    }
 
     override suspend fun resume(): Result<Unit> = core.start()
 
@@ -112,8 +114,8 @@ class RealFundingService @Inject constructor(
         }
     }
 
-    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): FundingAmountIssue? =
-        core.amountIssue(id, amount, spendable).logFailure("Funding amount check failed").getOrNull()
+    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?> =
+        core.amountIssue(id, amount, spendable).logFailure("Funding amount check failed")
 
     override suspend fun start(id: String, provider: ProductId?): Result<Unit> {
         if (provider == null) {
@@ -126,14 +128,14 @@ class RealFundingService @Inject constructor(
             asks[id]?.shown?.rows?.firstOrNull { it.providerId == provider }?.state?.quote?.quoteId
         } ?: return Result.failure(FundingStartError.NoQuote())
 
-        return core.selectProvider(id, provider, quoteId).mapCatching { selected ->
+        return core.selectProvider(id, provider, quoteId).flatMap { selected ->
             when {
-                !isPresenting(id) -> throw FundingStartError.Left()
+                !isPresenting(id) -> Result.failure(FundingStartError.Left())
                 !selected -> {
                     changed(id)
-                    throw FundingStartError.NotSelected(core.session(id).getOrNull()?.stage?.failure)
+                    Result.failure(FundingStartError.NotSelected(core.session(id).getOrNull()?.stage?.failure))
                 }
-                else -> resolve(id, FundingPresentOutcome.STARTED)
+                else -> Result.success(resolve(id, FundingPresentOutcome.STARTED))
             }
         }
     }
@@ -166,11 +168,11 @@ class RealFundingService @Inject constructor(
         changes.tryEmit(Change.Entries)
     }
 
-    override suspend fun openProviderFrame(entryId: String): Boolean =
-        core.openFrame(entryId).logFailure("Funding provider screen could not open").getOrDefault(false)
+    override suspend fun openProviderFrame(entryId: String): Result<Boolean> =
+        core.openFrame(entryId).logFailure("Funding provider screen could not open")
 
-    override suspend fun isFrameWaiting(entryId: String): Boolean =
-        core.frameWaiting(entryId).logFailure("Funding provider screen read failed").getOrDefault(false)
+    override suspend fun isFrameWaiting(entryId: String): Result<Boolean> =
+        core.frameWaiting(entryId).logFailure("Funding provider screen read failed")
 
     override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) {
         val pending = synchronized(lock) { frames.remove(request.id) }
@@ -178,8 +180,8 @@ class RealFundingService @Inject constructor(
     }
 
     /**
-     * The core waits on the session's screens. A session nobody follows within [SHOWN_TIMEOUT_MS] of asking for its
-     * screens is taken as dismissed, so a navigation that silently failed does not hold the core forever.
+     * The core waits on the session's screens. A session whose screens are not [shown] within [SHOWN_TIMEOUT_MS] is
+     * taken as dismissed, so a navigation that silently failed does not hold the core forever.
      */
     suspend fun present(intent: String, direction: FundingDirection, amount: U128?): FundingPresentOutcome {
         val presentation = Presentation(direction, amount)
@@ -245,11 +247,8 @@ class RealFundingService @Inject constructor(
         }
     }
 
-    /**
-     * A product's worker keeps crashing. Answers whether it provides a session this service has seen, which the app
-     * is then told of through [events].
-     */
-    fun workerCrashing(productId: ProductId): Boolean {
+    /** A provider of a session this service has seen is reported through [events] instead of the generic notice. */
+    override fun onWorkerCrashing(productId: ProductId): Boolean {
         val provides = synchronized(lock) { productId in providers }
         if (provides) eventQueue.trySend(FundingEvent.ProviderNotWorking(productId))
         return provides
@@ -290,9 +289,9 @@ class RealFundingService @Inject constructor(
 
     private suspend fun readEntry(id: String): FundingEntry? {
         val session = core.session(id).logFailure("Funding session read failed").getOrElse { return null }
-        val summary = if (session?.stage?.isOpen == true) null else core.summary(id).getOrNull()
-        val options = if (session?.providerId == null && summary == null) core.options(id).getOrNull() else null
-        val progress = session?.let { core.progress(id).getOrNull() }
+        val summary = if (session?.stage?.isOpen == true) null else core.summary(id).logFailure("Funding summary read failed").getOrNull()
+        val options = if (session?.providerId == null && summary == null) core.options(id).logFailure("Funding options read failed").getOrNull() else null
+        val progress = session?.let { core.progress(id).logFailure("Funding progress read failed").getOrNull() }
 
         return synchronized(lock) {
             remember(options?.candidates?.map { it.providerId })
@@ -307,9 +306,8 @@ class RealFundingService @Inject constructor(
                 progress = progress,
                 summary = summary,
                 options = options,
+                askedAmount = ask?.amount,
                 quotes = ask?.shown,
-                staleQuotes = ask?.stale.orEmpty(),
-                isQuoting = ask?.awaiting == true,
                 isPresented = presentation != null,
             )
         }
@@ -334,9 +332,8 @@ class RealFundingService @Inject constructor(
                 // As the history has it, which leaves out a cancel that moved no money.
                 summary = ended[session.intent],
                 options = null,
+                askedAmount = null,
                 quotes = null,
-                staleQuotes = emptyMap(),
-                isQuoting = false,
                 isPresented = isPresenting(session.intent),
             )
         }
@@ -349,9 +346,8 @@ class RealFundingService @Inject constructor(
                 progress = null,
                 summary = summary,
                 options = null,
+                askedAmount = null,
                 quotes = null,
-                staleQuotes = emptyMap(),
-                isQuoting = false,
                 isPresented = false,
             )
         }
@@ -371,7 +367,6 @@ class RealFundingService @Inject constructor(
     private class Presentation(val direction: FundingDirection, val amount: U128?) {
         val outcome = CompletableDeferred<FundingPresentOutcome>()
 
-        /** Something follows the session, so its screens are up. */
         val shown = CompletableDeferred<Unit>()
     }
 
@@ -382,7 +377,6 @@ class RealFundingService @Inject constructor(
     /** The quotes of one session: only the latest ask's list is shown. Guarded by the service's lock. */
     private class QuoteAsk {
         private var number = 0
-        private var amount: U128? = null
 
         /** The core's id for the latest ask, once it returned it. */
         private var requestId: ULong? = null
@@ -390,19 +384,17 @@ class RealFundingService @Inject constructor(
         /** The ask the core was last told to start the session on. */
         private var startedOn: ULong? = null
 
+        private var awaiting = false
+
+        var amount: U128? = null
+            private set
         var shown: FundingQuoteList? = null
-            private set
-        var stale: Map<ProductId, FundingQuote> = emptyMap()
-            private set
-        var awaiting = false
             private set
 
         /** The session is handed to the latest ask's best quote once every provider answered. */
         var startsWhenQuoted = false
 
-        /** A new ask of [asked]: the quotes on screen for the same amount stay, greyed, until they are answered again. */
         fun ask(asked: U128): Int {
-            stale = if (asked == amount) shown?.quotes().orEmpty() + stale else emptyMap()
             amount = asked
             shown = null
             awaiting = true
@@ -414,7 +406,6 @@ class RealFundingService @Inject constructor(
             number++
             amount = null
             shown = null
-            stale = emptyMap()
             awaiting = false
             requestId = null
         }
@@ -437,15 +428,13 @@ class RealFundingService @Inject constructor(
         fun receive(list: FundingQuoteList?) {
             if (list == null) {
                 if (!awaiting) {
+                    amount = null
                     shown = null
-                    stale = emptyMap()
                 }
                 return
             }
             if (list.requestId != requestId) return
 
-            val previous = shown?.quotes().orEmpty() + stale
-            stale = list.rows.filter { it.state.isPending }.mapNotNull { row -> previous[row.providerId]?.let { row.providerId to it } }.toMap()
             shown = list
             awaiting = false
         }
@@ -463,9 +452,6 @@ class RealFundingService @Inject constructor(
             startedOn = null
             return was
         }
-
-        private fun FundingQuoteList.quotes(): Map<ProductId, FundingQuote> =
-            rows.mapNotNull { row -> row.state.quote?.let { row.providerId to it } }.toMap()
     }
 
     private companion object {
