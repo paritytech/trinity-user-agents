@@ -105,7 +105,11 @@ describe("host-injected transport adoption", () => {
         await settle();
         const frames = host.sent.map((frame) => {
             const { requestId, payload } = decodeWireMessage(frame)._unsafeUnwrap();
-            return { requestId, ids: { trait: payload.traitId, method: payload.methodId }, type: payload.messageType };
+            return {
+                requestId,
+                ids: { trait: payload.traitId, method: payload.methodId },
+                type: payload.messageType,
+            };
         });
         expect(frames).toEqual([
             {
@@ -201,7 +205,10 @@ describe("host-injected transport adoption", () => {
         const sandbox = await importSandbox();
         const clients: ReturnType<typeof sandbox.getClientSync>[] = [];
         sandbox.subscribeConnectionStatus(() => clients.push(sandbox.getClientSync()));
-        expect({ cached: clients.length === 1 && clients[0] === sandbox.getClientSync(), ...host.reads() }).toEqual({
+        expect({
+            cached: clients.length === 1 && clients[0] === sandbox.getClientSync(),
+            ...host.reads(),
+        }).toEqual({
             cached: true,
             frameSubscriptions: 1,
             statusSubscriptions: 1,

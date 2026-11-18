@@ -298,6 +298,22 @@ describe("shared SDK host connection", () => {
         expect(connection.legacyPort).toBe(port);
     });
 
+    // Authorization shares the socket, so a product's handler must not stop its delivery.
+    it("keeps delivering frames after a product's frame handler throws", async () => {
+        const { connection } = host();
+        connection.transport.subscribe(() => {
+            throw new Error("product handler");
+        });
+        const port = connection.legacyPort;
+        const transport = createTransport(createMessagePortProvider(port));
+        cleanup.push(() => transport.dispose());
+        const legacy = createClient(transport);
+        expect((await legacy.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
+        expect(
+            (await connection.internal.permissions.authorizeRemotePermission(permission)).isOk(),
+        ).toBe(true);
+    });
+
     it("closes the physical socket and permanently rejects work on explicit disposal", async () => {
         const fixture = host();
         const statuses: string[] = [];

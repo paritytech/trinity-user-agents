@@ -131,7 +131,11 @@ export function createHostConnection(
       const decoded = decodeWireMessage(frame);
       if (decoded.isErr()) return retire(connection, decoded.error);
       if (decoded.value.requestId.startsWith("host:")) return receive?.(frame);
-      productReceive?.(frame);
+      try {
+        productReceive?.(frame);
+      } catch {
+        /* A product's handler cannot stop the host's delivery. */
+      }
       legacy?.receive(frame);
     });
     provider.subscribeClose?.((error) => retire(connection, error));
