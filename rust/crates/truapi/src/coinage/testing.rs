@@ -8,8 +8,11 @@ use parity_scale_codec::Decode;
 use subxt::{Metadata, utils::H256};
 
 use super::{
-	ChainConfig, ChainParams,
-	ledger::{self, BlockRef, Facts, Read, Subject},
+	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
+	ledger::{
+		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation,
+		observe, snapshot,
+	},
 	operation::OpKey,
 	params::{InstanceRecord, validate},
 	registration::{Admission, RegisterError, Rows, coinage_domain, register, registry_domain},
@@ -20,6 +23,7 @@ use crate::{
 		PolicyError, PolicyParams, Preparation, RegistrationError, SubmissionPolicy, Unobservable,
 		VerdictFailureKind,
 	},
+	installation::InstallationId,
 	store::{Db, DbError},
 };
 
@@ -110,6 +114,78 @@ pub fn register_rows(
 		Err(RegistrationError::Hook(error)) => Err(error),
 		Err(other) => panic!("the registration did not run: {other}"),
 	}
+}
+
+/// The time tests classify at, in Unix seconds.
+pub const NOW: u64 = 1_000_000;
+
+/// A store with a minted installation, and helpers to hold assets in it.
+pub struct TestWallet {
+	/// The store.
+	pub db: Db,
+}
+
+impl TestWallet {
+	/// A wallet with the given policy, whose chain allows 20 free unload
+	/// tokens a period.
+	pub fn new(policy: PrivacyPolicy) -> Self {
+		let db = crate::store::open_memory_core_db();
+		block_on(db.write(move |tx| {
+			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.expect("a fresh store");
+			observe_allowance(tx, 20)
+		}))
+		.expect("the installation is minted");
+		Self { db }
+	}
+
+	/// An asset allocated in `purse`, observed as `read` a little before
+	/// [`NOW`].
+	pub fn hold(&self, purse: PurseId, kind: AssetKind, exponent: u8, read: Read) -> Asset {
+		let outputs = [Exponent::new(exponent).expect("a legal exponent")];
+		let asset = block_on(self.db.write(move |tx| allocate(tx, purse, kind, &outputs))).expect("allocated")[0];
+		let facts = Facts { at: BlockRef { number: 1, hash: [1; 32] }, reads: vec![(Subject::Asset(asset), read)] };
+		block_on(self.db.write(move |tx| observe(tx, &facts, NOW - 100, 255))).expect("observed");
+		asset
+	}
+
+	/// A spendable coin of the main purse.
+	pub fn coin(&self, exponent: u8) -> Asset {
+		self.hold(PurseId::MAIN, AssetKind::Coin, exponent, coin_read(exponent))
+	}
+
+	/// A spendable entry of the main purse, in `ring`.
+	pub fn entry(&self, exponent: u8, ring: u32) -> Asset {
+		self.hold(PurseId::MAIN, AssetKind::Entry, exponent, entry_read(ring))
+	}
+
+	/// The store as committed now.
+	pub fn view(&self) -> Snapshot {
+		block_on(self.db.read(snapshot)).expect("a snapshot")
+	}
+}
+
+/// A young, unlocked coin as F1 reads it.
+pub fn coin_read(exponent: u8) -> Read {
+	Read::Coin {
+		now: Some(CoinOnChain { exponent: Exponent::new(exponent).expect("a legal exponent"), age: 0, locked_until: None }),
+		emptied_by: None,
+	}
+}
+
+/// An entry whose key the root of `ring` includes, as F1 reads it.
+pub fn entry_read(ring: u32) -> Read {
+	Read::Entry(Some(EntryOnChain {
+		ring,
+		revision: 1,
+		page: 0,
+		position: 0,
+		members: 10,
+		included: 10,
+		closed: false,
+		expires_at: None,
+		locked_until: None,
+		unloaded: None,
+	}))
 }
 
 /// Writes the durability layer's status of `record`; a success is recorded

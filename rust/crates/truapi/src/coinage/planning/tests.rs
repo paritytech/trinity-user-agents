@@ -1,0 +1,104 @@
+use super::*;
+use crate::coinage::{
+	PrivacyPolicy,
+	selection::{Forms, SelectRequest, Want, select},
+	testing::{NOW, TestWallet, chain_params},
+};
+
+fn spend_of(wallet: &TestWallet, amount: u64, to: Destination, forms: Forms) -> PlanInput {
+	let request =
+		SelectRequest { purse: PurseId::MAIN, want: Want::Amount(amount), forms, entries_first: false, held_back: false };
+	let selection = select(&wallet.view(), request, NOW, &chain_params()).expect("covered");
+	PlanInput::Spend { selection, to }
+}
+
+fn value_of(wallet: &TestWallet, assets: &[Asset]) -> u64 {
+	let view = wallet.view();
+	assets.iter().filter_map(|asset| view.asset(asset)).map(|record| record.exponent.value()).sum()
+}
+
+fn outputs_value(planned: &Planned) -> u64 {
+	planned.outputs.iter().map(|output| output.exponent.value()).sum()
+}
+
+fn delivered(plan: &Plan) -> u64 {
+	plan.transactions
+		.iter()
+		.flat_map(|planned| &planned.outputs)
+		.filter(|output| output.delivered)
+		.map(|output| output.exponent.value())
+		.sum()
+}
+
+#[test]
+fn every_split_and_transfer_conserves_value_and_delivers_the_amount() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.coin(5);
+	wallet.coin(2);
+	let input = spend_of(&wallet, 27, Destination::Purse(PurseId(4)), Forms::Any);
+	let plan = plan(&input, &[], &wallet.view(), &chain_params());
+	for planned in &plan.transactions {
+		assert_eq!(outputs_value(planned), value_of(&wallet, &planned.inputs), "{planned:?}");
+		assert!(planned.depends_on.is_empty(), "within one operation there are no dependencies");
+	}
+	assert_eq!(delivered(&plan), 27);
+	let delivered_purses: Vec<PurseId> = plan
+		.transactions
+		.iter()
+		.flat_map(|planned| &planned.outputs)
+		.map(|output| if output.delivered { output.purse } else { PurseId(99) })
+		.filter(|purse| *purse != PurseId(99))
+		.collect();
+	assert!(delivered_purses.iter().all(|purse| *purse == PurseId(4)));
+}
+
+#[test]
+fn an_export_hands_out_coins_already_in_shape_without_a_transaction() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let four = wallet.coin(2);
+	wallet.coin(3);
+	let input = spend_of(&wallet, 4, Destination::Export(PurseId::MAIN), Forms::Any);
+	let plan = plan(&input, &[], &wallet.view(), &chain_params());
+	assert_eq!(plan.handed_out, [four]);
+	assert!(plan.transactions.is_empty());
+}
+
+#[test]
+fn each_unload_group_presents_its_own_token_and_conserves_value() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(4, 0);
+	wallet.entry(4, 1);
+	let input = spend_of(&wallet, 20, Destination::External([7; 32]), Forms::EntriesOnly);
+	let tokens = [TokenId { period: 1, slot: 0 }, TokenId { period: 1, slot: 1 }];
+	assert_eq!(tokens_needed(&input, &wallet.view(), &chain_params()), 2, "one per ring");
+	let plan = plan(&input, &tokens, &wallet.view(), &chain_params());
+	let presented: Vec<_> = plan.transactions.iter().map(|planned| planned.token).collect();
+	assert_eq!(presented, [Some(tokens[0]), Some(tokens[1])]);
+	let change: u64 = plan.transactions.iter().map(outputs_value).sum();
+	assert_eq!(change, 32 - 20, "the surplus is reloaded as entries");
+	for planned in &plan.transactions {
+		assert_eq!(planned.call, Call::UnloadToExternal([7; 32]));
+		assert!(planned.outputs.iter().all(|output| output.kind == AssetKind::Entry && !output.delivered));
+	}
+}
+
+#[test]
+fn a_load_is_cut_at_the_per_load_cap() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let input = PlanInput::Load { from: [3; 32], amount: (1 << 12) - 1, into: PurseId::MAIN };
+	let plan = plan(&input, &[], &wallet.view(), &chain_params());
+	let sizes: Vec<usize> = plan.transactions.iter().map(|planned| planned.outputs.len()).collect();
+	assert_eq!(sizes, [10, 2], "twelve entries, ten per load");
+	assert_eq!(plan.transactions.iter().map(outputs_value).sum::<u64>(), (1 << 12) - 1);
+}
+
+#[test]
+fn a_recycle_turns_each_coin_into_an_entry_of_its_value() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let coin = wallet.coin(6);
+	let plan = plan(&PlanInput::Recycle { coins: vec![coin], into: PurseId(2) }, &[], &wallet.view(), &chain_params());
+	assert_eq!(plan.transactions.len(), 1);
+	let planned = &plan.transactions[0];
+	assert_eq!((planned.call, planned.inputs.clone()), (Call::Recycle, vec![coin]));
+	assert_eq!(planned.outputs, [Output { kind: AssetKind::Entry, purse: PurseId(2), exponent: Exponent::new(6).unwrap(), delivered: true }]);
+}
