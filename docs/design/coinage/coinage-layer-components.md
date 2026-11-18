@@ -288,7 +288,7 @@ The reference implementation of these rules is the `schnorrkel` library [schnorr
 - **`ChainParams`**: the validated parameters. Only `validate` produces a value of this type, so holding one means every check below passed. A value contains the configuration; the limits the runtime publishes; the instance's external asset and its `asset_unit`, the amount of the external asset in one cent; and the index of every call and origin the layer uses (§1, the chain).
 - **`validate(runtime_description, instance_record, maximum_age, config)`** → `ChainParams`, or `UnsupportedRuntime` naming the check that failed. G3 reads the runtime description, the record of the configured instance and the runtime's maximum coin age from the chain and calls it at connection, and again whenever F1 observes a new runtime version. If the chain has no instance with the configured identifier, there is no record, and `validate` fails.
 
-The **limits** in `ChainParams` are: the legal exponent range, coins per split, entries per unload, entries per unpaid load (the batch a top-up's load may carry), entries per reload (the fresh entries one unload may load with its surplus, which the chain bounds by the per-split output cap), the recycler ring size, which is the same for every denomination, and the ring lifetime, the age cutoff, the unload allowance and its period (D1), the external asset's minimum balance, and the lock periods applied after a failure.
+The **limits** in `ChainParams` are: the legal exponent range, coins per split, entries per unload, entries per unpaid load (the batch a top-up's load may carry), entries per reload (the fresh entries one unload may load with its surplus, which the chain bounds by the per-split output cap), the recycler ring size, which is the same for every denomination, and the ring lifetime, the age cutoff, the unload-token period (D1), the external asset's minimum balance, and the lock periods applied after a failure.
 
 The **age cutoff** is the coin age from which the layer no longer spends a coin and only recycles it (B1, F2). It is two below the maximum coin age the runtime reports. `maximum_age` is none when the runtime reports no maximum or the read fails, and the cutoff is then the fallback `ChainConfig` gives, 14 in the shipped configuration. Both rules are the shipped wallet's (§5).
 
@@ -556,13 +556,14 @@ struct PurseRecord { id: PurseId, name: String, created: Time, tag: Vec<u8>, sta
 
 // what F1 reports; all reads of one call are at one block (F1 invariant 5)
 struct Facts { at: BlockRef, reads: Vec<(Subject, Read)> }
-enum Subject { Asset(Asset), Token(TokenId) }
+enum Subject { Asset(Asset), Token(TokenId), UnloadAllowance }
 enum Read {
     Failed,                                         // the read did not return (invariant 6)
     Coin { now: Option<CoinOnChain>, emptied_by: Option<Emptied> },   // now None: the account is empty;
                                                     // emptied_by: for an exported coin, the transaction that emptied it
     Entry(Option<EntryOnChain>),                    // None: the key is in no ring
     Token { consumed: bool },
+    UnloadAllowance(u32),                           // the free unload tokens of one period (D1)
 }
 struct Emptied { by: TxHash, stable: bool }      // stable: its block was finalized at the read
 struct CoinOnChain { exponent: Exponent, age: u32, locked_until: Option<Time> }
@@ -980,7 +981,7 @@ waiting to be built ──prepare: bytes──▶ submitted ──▶ succeeded 
 
 **Owns** nothing; it decides over the token state that C1's rows, the records' statuses and F1's observation give. **Band:** pure.
 
-Unloading a recycler entry costs one **unload token**. The layer uses only the free tokens of the user's personhood credential (§6). One key produces a fresh token identity per counter value, so a single key covers a whole period's allowance. Every wallet holds such a credential. A **period** is the chain's accounting window for the allowance, and a **slot** is one counter value within a period, that is, one token identity.
+Unloading a recycler entry costs one **unload token**. The layer uses only the free tokens of the user's personhood credential (§6). One key produces a fresh token identity per counter value, so a single key covers a whole period's allowance. Every wallet holds such a credential. A **period** is the chain's accounting window for the allowance, and a **slot** is one counter value within a period, that is, one token identity. The **allowance**, the free tokens of one period, is the chain's: its `get_free_unload_token_info` view function gives one for members of People and one for members of LitePeople, each the allowance at the current unload fee capped by the pallet, so it can change at any block. F1 reads the one of the user's collection with each block, as the shipped wallet does.
 
 An unload that presents a token is **feeless**: it declares a fee ceiling of zero, and no account pays anything. So the layer holds no fee account, and nothing needs funding from outside.
 
@@ -989,7 +990,7 @@ enum TokenState { Applied, NotApplied, Unknown }
 
 struct Supply {
     period: u32,
-    allowance: u32,                      // tokens per period (A3)
+    allowance: Option<u32>,              // tokens per period, as F1 last read them; none before the first read
     reserve: u32,                        // invariant 2; zero for a small allowance
     states: Vec<TokenState>,             // one per slot of the period, by slot
     held: Vec<bool>,                     // one per slot: an input of a transaction that has not failed (C1 invariant 2)
@@ -1002,7 +1003,7 @@ fn running_low(supply: Supply) -> bool;
 ```
 
 - **`token_state`** computes a token's application state, defined below, from the records that present it (C1 `presenters`), their statuses, and F1's observation in the snapshot.
-- **`supply`** gives the current period's supply: the period that contains `now`, the allowance from A3, the reserve (invariant 2), and every slot's state.
+- **`supply`** gives the current period's supply: the period that contains `now`, the allowance F1 last read (B2's `UnloadAllowance` observation), the reserve (invariant 2), and every slot's state. Before the first read it has no slot, so no unload can start, and `running_low` does not hold: an allowance not read is no evidence of an exhausted one.
 - **`resolve`** returns `needed` token identities, or none if the supply is short (invariant 1). A slot is free when it is `NotApplied` and not held. It takes free slots lowest first (invariant 3).
 - **`running_low`** holds when the number of free slots is at most the reserve (invariant 2).
 
@@ -1176,14 +1177,14 @@ For the other failures, whether to retry depends on **why** an attempt failed. A
 
 **Owns** nothing; it feeds B2. **Band:** effectful. It reads the chain, writes only B2's observation, and publishes through G2.
 
-F1 keeps B2's observation current. The core calls it for each finalized head of the People chain (F2 invariant 2). At each block it reads every piece of chain state that backs a record (coin storage and coin locks, ring membership and status, each ring's unloaded count, entry identity state, and consumed-token state), and hands the result to B2. It also reads the runtime version, so that a new runtime is checked (G3 invariant 1).
+F1 keeps B2's observation current. The core calls it for each finalized head of the People chain (F2 invariant 2). At each block it reads every piece of chain state that backs a record (coin storage and coin locks, ring membership and status, each ring's unloaded count, entry identity state, consumed-token state, and the unload-token allowance of the user's collection), and hands the result to B2. It also reads the runtime version, so that a new runtime is checked (G3 invariant 1).
 
 ```rust
 fn on_block(block: BlockRef, now: Time);   // called by the core for each new finalized head
 fn observe_now(now: Time);                 // the same reads at the latest finalized block, for a deployment that polls
 ```
 
-- **`on_block`** reads, at `block`, the facts of every coin, entry and unload-token identity B2 holds, and passes them to B2 `observe(txn, facts, now)` as one `Facts` value read at that block, in one store transaction (B2). For an entry in a ring, the facts include the ring's unloaded count, none when the runtime keeps no such count or its read failed. For an exported coin whose account is empty, the facts include the transaction that emptied it (B1): the transaction the coin signed in the first block, after the account was last read holding the coin (or after the coin was minted), at which the account is empty. It is stable once that block is at or below the finalized height, and a move found stable is not searched for again. An exported coin still being minted, or moved by one of this layer's own records, is not searched for. In the same store transaction, the first read of a peer coin present fixes the denomination of the output its waiting claim mints (B1). An item whose read failed is passed as `Read::Failed`, never as absent, so the last stored value stands (B2 invariant 6). If the runtime version at `block` differs from the version of G3's latest check, F1 then calls G3 `revalidate(block)`. Finally it publishes `Event::NewBlock(block)` through G2, on which the host's entry point is called (F2 invariant 2).
+- **`on_block`** reads, at `block`, the facts of every coin, entry and unload-token identity B2 holds, and the unload-token allowance (D1), and passes them to B2 `observe(txn, facts, now)` as one `Facts` value read at that block, in one store transaction (B2). For an entry in a ring, the facts include the ring's unloaded count, none when the runtime keeps no such count or its read failed. For an exported coin whose account is empty, the facts include the transaction that emptied it (B1): the transaction the coin signed in the first block, after the account was last read holding the coin (or after the coin was minted), at which the account is empty. It is stable once that block is at or below the finalized height, and a move found stable is not searched for again. An exported coin still being minted, or moved by one of this layer's own records, is not searched for. In the same store transaction, the first read of a peer coin present fixes the denomination of the output its waiting claim mints (B1). An item whose read failed is passed as `Read::Failed`, never as absent, so the last stored value stands (B2 invariant 6). If the runtime version at `block` differs from the version of G3's latest check, F1 then calls G3 `revalidate(block)`. Finally it publishes `Event::NewBlock(block)` through G2, on which the host's entry point is called (F2 invariant 2).
 - **`observe_now`** does the same reads at the latest finalized block. It exists for a deployment that cannot subscribe (invariant 6).
 
 **Invariants**
@@ -1721,7 +1722,7 @@ The soft coin item junction matters most, because it is a security property, not
   - **Other ways to pay for an unload.** The chain also sells unload tokens, for a coin, the native currency or the external asset, and lets an unload pay its fee from the value it unloads. The layer uses only the credential's free tokens (D1).
   - **Negative exponents.** Coins smaller than a cent exist on chain. The layer neither creates nor accepts them (A1).
   - **Direct offboarding.** The chain can turn a coin directly into the external asset, which links the coin's transfer history unless the coin is fresh. Offload always goes through a recycler (F3).
-  - **Parameters changed at run time.** Governance can change the maximum coin age, the token allowances and the load deposit without a runtime upgrade. The design assumes they stay as read at connection.
+  - **Parameters changed at run time.** Governance can change the maximum coin age and the load deposit without a runtime upgrade. The design assumes they stay as read at connection. The token allowance is read with every block (D1).
   - **Batched loads.** The chain accepts several unpaid loads in one call. A top-up makes one load per transaction.
   - **Sponsored instances.** An instance whose loads take a deposit from its pot can refuse a load when the pot is short. The design assumes the configured instance takes no load deposit.
 - **The core's top-up check, to replace.** Today's core runtime validates the secrets of an RFC-6 coin or private-key top-up with `sr25519_secret_from_bytes` (in [TrUAPI core], `rust/crates/truapi/src/host_internal/extrinsic.rs`), which tries the canonical layout and falls back to the ed25519-compatible one. That function was written for pairing keys, where a derived public key is checked against the expected one, and was reused for top-ups, where no such check exists. The implementation of this design replaces that check: a top-up's secrets are read in the canonical layout only (G1 invariant 5; layer 2, N2 invariant 4), and a secret in any other layout is refused with `InvalidSource` when the call is made. The pairing keys keep their fallback.
