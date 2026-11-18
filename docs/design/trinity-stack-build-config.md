@@ -4,6 +4,7 @@ type: design
 status: draft
 author: Mikelle
 created: 2026-11-18
+pr: 2200
 ---
 
 # Trinity stack build config
