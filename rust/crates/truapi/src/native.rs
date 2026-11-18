@@ -42,7 +42,9 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
-	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
+	pocket_cards::{
+		PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketEntry,
+	},
 };
 pub use bundled_products::{
 	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_products,
@@ -326,8 +328,13 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 
 	// Read back the way a kept face is, so the reader accepts exactly what the
 	// store and the renderer subscription accept.
-	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut node.encode().as_slice())
-		.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })
+	let mut node = latest::RendererNode::decode_all_with_depth_limit(
+		MAX_FACE_DEPTH,
+		&mut node.encode().as_slice(),
+	)
+	.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })?;
+	node.clear_refused_inline_images();
+	Ok(node)
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the

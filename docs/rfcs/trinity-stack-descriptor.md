@@ -214,8 +214,8 @@ schemes.
   ignored members included. Readers MUST refuse one that is not. Two parsers that resolve a duplicate differently would
   read one signed descriptor two ways.
 - Each chain `role`, each service `kind` and each `Asset.role` MUST appear at most once. A descriptor MUST have exactly
-  one `Relay` chain, and `paraId` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name a role present in
-  `chains`, and a descriptor with `dotns` MUST have an `AssetHub` chain. Chain roles are those of
+  one `Relay` chain, and `paraId` and `genesisHash` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name
+  a role present in `chains`, and a descriptor with `dotns` MUST have an `AssetHub` chain. Chain roles are those of
   [RFC 0026](0026-supported-chains.md), plus others such as `Web3Storage`.
 - Every number MUST be an integer written without a fraction or exponent (`42`, never `42.0` or `4.2e1`), from 0 to
   2^32 - 1: `sequence`, ids, block numbers and times. That range holds a publish time in seconds until 2106 and is exact

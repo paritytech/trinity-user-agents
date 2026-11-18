@@ -4,16 +4,14 @@ use anyhow::{Context, Result, ensure};
 use trinity_stack::Descriptor;
 
 use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
-use crate::{
-	chain::ChainBackend,
-	stack_descriptor::{ROLE_NAMES, Roles},
-};
+use crate::{chain::ChainBackend, stack_descriptor::ROLE_NAMES};
 
 impl Stack {
 	/// `descriptor` connected to over `chain_backend`. Fails when People,
-	/// Asset Hub or Bulletin is missing, when two of them share a genesis hash,
-	/// when the namespace is not a lowercase label or is the `polkadot` one,
-	/// and when the stack has no `dub` service or no `dotns.popController`.
+	/// Asset Hub or Bulletin is missing, when the namespace is not a lowercase
+	/// label or is the `polkadot` one, and when the stack has no `dub` service
+	/// or no `dotns.popController`. No two of its chains share a genesis hash,
+	/// which the descriptor's own rules refuse.
 	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
@@ -31,14 +29,6 @@ impl Stack {
 				.with_context(|| format!("the {id} stack has no {role} chain"))?;
 			anyhow::Ok(ChainEndpoint { genesis: chain.genesis(), ws: chain.rpc[0].clone() })
 		})?;
-		let Roles { people, asset_hub, bulletin } = &chains;
-		ensure!(
-			people.genesis != asset_hub.genesis &&
-				people.genesis != bulletin.genesis &&
-				asset_hub.genesis != bulletin.genesis,
-			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each role \
-			 by its genesis"
-		);
 		let dub = descriptor.service("dub").with_context(|| {
 			format!("the {id} stack has no dub service, which the CLI uses as its identity backend")
 		})?;

@@ -506,11 +506,15 @@ impl PairingHostRuntime {
 		Some(self.pairing_host.session().session_state().current()?.sso?.ss_secret)
 	}
 
-	/// Read this device's X25519 encryption secret, for hosts running device
-	/// sync. Generated and persisted on first read.
+	/// Read this device's X25519 encryption secret, the key the phone
+	/// registered at pairing, or `None` before pairing.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
-	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services.device_encryption_secret().await.map_err(Into::into)
+	pub async fn device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
+		self.pairing_host
+			.accounts()
+			.device_encryption_secret()
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
@@ -702,6 +706,29 @@ impl SigningHostRuntime {
 		self.signing_host
 			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// Read this install's X25519 encryption secret, the key behind
+	/// `SessionUiInfo::device_enc_public_key` on a signing host. Generated and
+	/// persisted on first read unless the host adopted one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
+	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+		self.signing_host.device_encryption_secret().await.map_err(Into::into)
+	}
+
+	/// Make `secret` this device's X25519 encryption secret, for a host that
+	/// announced a key of its own before the core kept one.
+	///
+	/// Refused while a wallet session is active.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.adopt_device_encryption_key"))]
+	pub async fn adopt_device_encryption_key(
+		&self,
+		secret: [u8; 32],
+	) -> Result<(), v01::GenericError> {
+		self.signing_host
+			.adopt_device_encryption_secret(secret)
+			.await
+			.map_err(Into::into)
 	}
 
 	/// End funding session `intent` with `stage` as though its funds had
@@ -1997,13 +2024,11 @@ impl CoreAdmin for HostAdmin {
 			.map(|sso| sso.ss_secret.to_vec()))
 	}
 
-	async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+	async fn get_device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.product_runtime
-			.connection()
-			.services()
 			.device_encryption_secret()
 			.await
-			.map_err(Into::into)
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	async fn get_product_subtree_public_key(
@@ -2125,6 +2150,12 @@ impl ProductRuntimeControl {
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = self.connection.hold_worker();
+		let back = match &request.context {
+			truapi::latest::RenderContext::PocketCardBack { card_id } => {
+				Some((self.connection.clone(), card_id.clone()))
+			},
+			_ => None,
+		};
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
 			request,
 			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
@@ -2140,16 +2171,22 @@ impl ProductRuntimeControl {
 		// and is not polled past, so it releases there rather than waiting for
 		// the caller to drop the handle.
 		let stream = futures::stream::unfold(
-			(stream, Some(reference)),
-			|(mut stream, reference)| async move {
+			(stream, Some(reference), back),
+			|(mut stream, reference, mut back)| async move {
 				match stream.next().await? {
 					Ok(
-						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
-						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
-					) => Some((Ok(node), (stream, reference))),
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(mut node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(mut node),
+					) => {
+						node.clear_refused_inline_images();
+						if let Some((connection, card_id)) = back.take() {
+							connection.mark_back_drawn(card_id);
+						}
+						Some((Ok(node), (stream, reference, back)))
+					},
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None),
+						(stream, None, None),
 					)),
 				}
 			},

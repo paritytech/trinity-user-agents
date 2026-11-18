@@ -58,6 +58,8 @@ class RootNavBarViewModel @Inject constructor(
     val isScannerTooltipVisible: StateFlow<Boolean>
         field = MutableStateFlow(interactor.shouldShowScannerTooltip())
 
+    val dockletAutoHideEnabled: StateFlow<Boolean> = interactor.observeDockletAutoHide()
+
     val scanPanelOpenRequests: SharedFlow<Unit> = scanPanelRequests.openRequests
 
     val dockletTip: StateFlow<DockletTip?>
