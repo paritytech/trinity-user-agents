@@ -19,6 +19,7 @@ class MainInteractorDockletTipTest {
         messageSender = mockk(relaxed = true),
         observeTabWarningsUseCase = mockk(relaxed = true),
         tooltipStorage = tooltipStorage,
+        dockletAutoHideStorage = mockk(),
     )
 
     @Test

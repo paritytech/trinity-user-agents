@@ -233,7 +233,7 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 /// `resolution_gate`, when given, is released.
 fn kept_key_in_its_own_ring(
 	resolution_gate: Option<futures::channel::oneshot::Receiver<()>>,
-) -> Arc<SigningHostRole> {
+) -> Arc<SigningHost> {
 	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let entropy =
 		derive_ring_vrf_entropy(&ENTROPY, &product.product_id, &v01::DerivationIndex::Index(0))
