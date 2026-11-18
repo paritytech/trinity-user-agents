@@ -151,6 +151,8 @@ pub enum Subject {
 	Asset(Asset),
 	/// An unload-token identity.
 	Token(TokenId),
+	/// The free unload tokens the user's collection may spend in one period.
+	UnloadAllowance,
 }
 
 /// The outcome of one read.
@@ -172,6 +174,8 @@ pub enum Read {
 		/// It does.
 		consumed: bool,
 	},
+	/// The free unload tokens of one period.
+	UnloadAllowance(u32),
 }
 
 /// The transaction that emptied an exported coin's account, as F1 found it.
@@ -362,6 +366,15 @@ impl Snapshot {
 	/// What the chain last showed for `subject`.
 	pub fn observation(&self, subject: &Subject) -> Option<&Observation> {
 		self.observations.get(subject)
+	}
+
+	/// The free unload tokens of one period, as F1 last read them; none
+	/// before the first read.
+	pub fn unload_allowance(&self) -> Option<u32> {
+		match self.observation(&Subject::UnloadAllowance)?.value {
+			Some(Read::UnloadAllowance(allowance)) => Some(allowance),
+			_ => None,
+		}
 	}
 
 	/// The asset's disclosure mark.
