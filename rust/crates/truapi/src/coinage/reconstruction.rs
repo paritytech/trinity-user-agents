@@ -31,17 +31,20 @@ use crate::{
 pub struct ScanConfig {
 	/// Indices derived and read per request.
 	pub batch: u32,
-	/// Consecutive empty batches that end a default scan of one index space.
+	/// Consecutive empty batches that end a scan of one index space.
 	pub gap: u32,
-	/// The same for a deep scan; larger than `gap`.
-	pub deep_gap: u32,
+	/// Batches a deep scan reads past where the last scan of an index space
+	/// stopped.
+	pub deep_batches: u32,
 	/// Consecutive empty purses that end a walk over product purses.
 	pub purse_gap: u32,
 }
 
 impl ScanConfig {
-	/// The scan the core runs with.
-	pub const SHIPPED: Self = Self { batch: 32, gap: 2, deep_gap: 8, purse_gap: 2 };
+	/// The scan the core runs with, the shipped wallet's: a default scan of
+	/// a space ends after 2,000 consecutive empty indices, and a deep scan
+	/// reads 5,000 more.
+	pub const SHIPPED: Self = Self { batch: 500, gap: 4, deep_batches: 10, purse_gap: 2 };
 }
 
 /// Which purses a reconstruction scans; the main purse always.
@@ -86,13 +89,12 @@ pub enum ReconstructError {
 	Store(crate::store::DbError),
 }
 
-/// Where an interrupted scan of one installation resumes (F4): the purse,
-/// the index space and the next index, SCALE-encoded as the installation's
-/// `ScanProgress::resume`. An empty or unreadable `resume`, or one naming a
-/// purse the reconstruction does not list, starts the scan from the
-/// beginning.
+/// Where the next scan of one index space of one installation's namespace
+/// starts (F4): the index after the last batch read. An installation's
+/// cursors are SCALE-encoded as its `ScanProgress::resume`; a space with no
+/// cursor, or an unreadable `resume`, starts at index 0.
 #[derive(Clone, Copy, Encode, Decode)]
-struct Position {
+struct Cursor {
 	purse: PurseId,
 	space: Space,
 	next: u32,
@@ -156,148 +158,205 @@ async fn run(
 	}
 	let (view, hand_over) = deps.store.read(|conn| Ok((ledger::snapshot(conn)?, handover::read(conn)?))).await?;
 	let at = deps.chain.heads().await.map_err(|_| ReconstructError::Unavailable)?.finalized.hash;
-	let gap = if deep { config.deep_gap } else { config.gap };
-	let context = ScanContext { entropy: &entropy, at, gap, batch: config.batch, params, hand_over: hand_over.as_ref() };
+	let limit = if deep { Limit::Batches(config.deep_batches) } else { Limit::Gap(config.gap) };
+	let context = ScanContext { entropy: &entropy, at, limit, batch: config.batch, params, hand_over: hand_over.as_ref() };
+	let known: Vec<PurseId> = view.purses().map(|purse| purse.id).collect();
 	let mut adopted = 0;
+	let mut failure = None;
 	for (installation, progress) in view.installations().to_vec() {
 		if installations == Installations::Unscanned && progress.first_scan_done {
 			continue;
 		}
-		let mut scanned: Vec<PurseId> = match purses {
-			Purses::MainOnly | Purses::Walk => vec![PurseId::MAIN],
-			Purses::These(listed) => core::iter::once(PurseId::MAIN).chain(listed.iter().copied()).collect(),
+		let mut scan = InstallationScan {
+			installation,
+			first_scan_done: progress.first_scan_done,
+			cursors: Vec::decode(&mut progress.resume.as_slice()).unwrap_or_default(),
 		};
-		scanned.extend(view.purses().map(|purse| purse.id).filter(|id| *id != PurseId::MAIN));
-		scanned.sort();
-		scanned.dedup();
-		let resume = Position::decode(&mut progress.resume.as_slice())
-			.ok()
-			.filter(|position| scanned.contains(&position.purse));
-		let first_scan_done = progress.first_scan_done;
-		let skipped = |purse: &PurseId| resume.is_some_and(|position| position.purse != *purse);
-		for purse in scanned.iter().copied().skip_while(skipped) {
-			let namespace = Namespace { purse, installation, first_scan_done };
-			adopted += scan(deps, &context, namespace, resume.filter(|position| position.purse == purse)).await?;
+		match scan.run(deps, &context, purses, &known, config.purse_gap).await {
+			Ok(found) => adopted += found,
+			Err(error) => {
+				tracing::warn!(%error, "an installation's scan stopped; the next reconstruction continues it");
+				failure.get_or_insert(error);
+			},
 		}
-		if *purses == Purses::Walk {
-			let mut empty = 0;
-			let mut purse = 0;
-			while empty < config.purse_gap {
-				let namespace = Namespace { purse: PurseId(purse), installation, first_scan_done };
-				let found = scan(deps, &context, namespace, None).await?;
-				adopted += found;
-				empty = if found == 0 { empty + 1 } else { 0 };
-				purse += 1;
-			}
-		}
-		let progress = ScanProgress { first_scan_done: true, resume: Vec::new() };
-		deps.store.write(move |tx| ledger::record_scan(tx, installation, &progress)).await?;
 	}
-	Ok(adopted)
+	failure.map_or(Ok(adopted), Err)
+}
+
+/// When a scan of one index space ends (F4).
+#[derive(Clone, Copy)]
+enum Limit {
+	/// After this many consecutive empty batches: the default scan.
+	Gap(u32),
+	/// After this many batches: a deep scan.
+	Batches(u32),
+}
+
+impl Limit {
+	fn reached(self, batches: u32, empty: u32) -> bool {
+		match self {
+			Self::Gap(gap) => empty >= gap,
+			Self::Batches(count) => batches >= count,
+		}
+	}
 }
 
 /// What every namespace of one reconstruction is scanned with.
 struct ScanContext<'a> {
 	entropy: &'a [u8],
 	at: subxt::utils::H256,
-	gap: u32,
+	limit: Limit,
 	batch: u32,
 	params: &'a ChainParams,
 	hand_over: Option<&'a Handover>,
 }
 
-/// One namespace, with whether its installation's first scan has completed,
-/// which the progress recorded after each batch keeps.
-#[derive(Clone, Copy)]
-struct Namespace {
-	purse: PurseId,
+/// One installation's scan: the cursors of its index spaces, and whether its
+/// first scan has completed, which the progress recorded after each batch
+/// keeps.
+struct InstallationScan {
 	installation: InstallationId,
 	first_scan_done: bool,
+	cursors: Vec<Cursor>,
 }
 
-/// Scans one namespace's coin and entry spaces, batch by batch, from
-/// `resume` when given, until `gap` consecutive batches are empty, adopting
-/// every index the chain shows and the ledger does not hold, and recording
-/// after each batch where the scan resumes.
-async fn scan(
-	deps: &ReconstructionDeps,
-	context: &ScanContext<'_>,
-	namespace: Namespace,
-	resume: Option<Position>,
-) -> Result<usize, ReconstructError> {
-	let ScanContext { entropy, at, gap, batch, params, hand_over } = *context;
-	let Namespace { purse, installation, first_scan_done } = namespace;
-	let marks = hand_over.filter(|_| purse == PurseId::MAIN).and_then(|hand_over| hand_over.marks(installation));
-	let vrf = load_vrf().await.map_err(|_| ReconstructError::Unavailable)?;
-	let instance = params.config().instance;
-	let mut adopted = 0;
-	for space in [Space::Coins, Space::Entries] {
-		if resume.is_some_and(|position| space < position.space) {
-			continue;
+impl InstallationScan {
+	/// Scans the namespace of every purse in `purses`, and of every purse
+	/// in `known`, then records the first scan as done. Returns how many
+	/// assets it adopted; the first failed read or write ends the scan, and
+	/// the cursors recorded so far keep what it covered.
+	async fn run(
+		&mut self,
+		deps: &ReconstructionDeps,
+		context: &ScanContext<'_>,
+		purses: &Purses,
+		known: &[PurseId],
+		purse_gap: u32,
+	) -> Result<usize, ReconstructError> {
+		let mut scanned: Vec<PurseId> = match purses {
+			Purses::MainOnly | Purses::Walk => vec![PurseId::MAIN],
+			Purses::These(listed) => core::iter::once(PurseId::MAIN).chain(listed.iter().copied()).collect(),
+		};
+		scanned.extend(known.iter().copied().filter(|id| *id != PurseId::MAIN));
+		scanned.sort();
+		scanned.dedup();
+		let mut adopted = 0;
+		for purse in scanned {
+			adopted += self.scan(deps, context, purse).await?;
 		}
-		let mut empty = 0;
-		let mut start = resume.filter(|position| position.space == space).map_or(0, |position| position.next);
-		let mark = marks.map_or(0, |(coins, entries)| if space == Space::Coins { coins } else { entries });
-		while empty < gap || start < mark {
-			let indices: Vec<u32> = (start..start.saturating_add(batch)).collect();
-			let mut disclosed = Vec::new();
-			let found: Vec<AssetRecord> = if space == Space::Coins {
-				let accounts = indices
-					.iter()
-					.map(|index| coin_key(entropy, purse, installation, *index).map(|(_, account)| account))
-					.collect::<Result<Vec<_>, _>>()
-					.map_err(|_| ReconstructError::Unavailable)?;
-				let read = deps.chain.coins_at(at, &accounts).await.map_err(|_| ReconstructError::Unavailable)?;
-				indices
-					.iter()
-					.zip(accounts)
-					.zip(read)
-					.filter_map(|((index, account), coin)| {
-						let coin = coin.filter(|coin| coin.instance == instance)?;
-						let exponent = Exponent::from_chain(coin.value, params)?;
-						let asset = Asset::Coin { purse, installation, index: *index };
-						if let Some(payment) = hand_over.and_then(|hand_over| hand_over.payment_of(&account)) {
-							disclosed.push((payment, asset, exponent));
+		if *purses == Purses::Walk {
+			let mut empty = 0;
+			let mut purse = 0;
+			while empty < purse_gap {
+				let found = self.scan(deps, context, PurseId(purse)).await?;
+				adopted += found;
+				empty = if found == 0 && !known.contains(&PurseId(purse)) { empty + 1 } else { 0 };
+				purse += 1;
+			}
+		}
+		self.first_scan_done = true;
+		let (installation, progress) = (self.installation, self.progress());
+		deps.store.write(move |tx| ledger::record_scan(tx, installation, &progress)).await?;
+		Ok(adopted)
+	}
+
+	/// Scans one namespace's coin and entry spaces, batch by batch, each from
+	/// its cursor until the context's limit, adopting every index the chain
+	/// shows and the ledger does not hold, and recording the cursors after
+	/// each batch.
+	async fn scan(
+		&mut self,
+		deps: &ReconstructionDeps,
+		context: &ScanContext<'_>,
+		purse: PurseId,
+	) -> Result<usize, ReconstructError> {
+		let ScanContext { entropy, at, limit, batch, params, hand_over } = *context;
+		let installation = self.installation;
+		let marks = hand_over.filter(|_| purse == PurseId::MAIN).and_then(|hand_over| hand_over.marks(installation));
+		let vrf = load_vrf().await.map_err(|_| ReconstructError::Unavailable)?;
+		let instance = params.config().instance;
+		let mut adopted = 0;
+		for space in [Space::Coins, Space::Entries] {
+			let mut start = self.next(purse, space);
+			let mark = marks.map_or(0, |(coins, entries)| if space == Space::Coins { coins } else { entries });
+			let (mut batches, mut empty) = (0, 0);
+			while !limit.reached(batches, empty) || start < mark {
+				let indices: Vec<u32> = (start..start.saturating_add(batch)).collect();
+				let mut disclosed = Vec::new();
+				let found: Vec<AssetRecord> = if space == Space::Coins {
+					let accounts = indices
+						.iter()
+						.map(|index| coin_key(entropy, purse, installation, *index).map(|(_, account)| account))
+						.collect::<Result<Vec<_>, _>>()
+						.map_err(|_| ReconstructError::Unavailable)?;
+					let read = deps.chain.coins_at(at, &accounts).await.map_err(|_| ReconstructError::Unavailable)?;
+					indices
+						.iter()
+						.zip(accounts)
+						.zip(read)
+						.filter_map(|((index, account), coin)| {
+							let coin = coin.filter(|coin| coin.instance == instance)?;
+							let exponent = Exponent::from_chain(coin.value, params)?;
+							let asset = Asset::Coin { purse, installation, index: *index };
+							if let Some(payment) = hand_over.and_then(|hand_over| hand_over.payment_of(&account)) {
+								disclosed.push((payment, asset, exponent));
+							}
+							Some(AssetRecord { asset, exponent })
+						})
+						.collect()
+				} else {
+					let members: Vec<[u8; 32]> = indices
+						.iter()
+						.filter_map(|index| vrf.member(&entry_seed(entropy, purse, installation, *index).0).ok())
+						.collect();
+					let read = deps.chain.members_at(at, &members).await.map_err(|_| ReconstructError::Unavailable)?;
+					let loaded: Vec<(u32, i8, AssetRecord)> = indices
+						.iter()
+						.zip(read)
+						.filter_map(|(index, loaded)| {
+							let (_, value) = loaded.filter(|(loaded_instance, _)| *loaded_instance == instance)?;
+							let exponent = Exponent::from_chain(value, params)?;
+							let asset = Asset::Entry { purse, installation, index: *index };
+							Some((*index, value, AssetRecord { asset, exponent }))
+						})
+						.collect();
+					not_unloaded(deps, &vrf, entropy, at, (purse, installation), loaded).await?
+				};
+				batches += 1;
+				empty = if found.is_empty() { empty + 1 } else { 0 };
+				adopted += found.len();
+				start = start.saturating_add(batch);
+				self.advance(purse, space, start);
+				let progress = self.progress();
+				deps.store
+					.write(move |tx| {
+						ledger::adopt(tx, &found)?;
+						for (payment, coin, exponent) in disclosed {
+							handover::adopt_disclosed(tx, payment, coin, exponent)?;
 						}
-						Some(AssetRecord { asset, exponent })
+						ledger::record_scan(tx, installation, &progress)
 					})
-					.collect()
-			} else {
-				let members: Vec<[u8; 32]> = indices
-					.iter()
-					.filter_map(|index| vrf.member(&entry_seed(entropy, purse, installation, *index).0).ok())
-					.collect();
-				let read = deps.chain.members_at(at, &members).await.map_err(|_| ReconstructError::Unavailable)?;
-				let loaded: Vec<(u32, i8, AssetRecord)> = indices
-					.iter()
-					.zip(read)
-					.filter_map(|(index, loaded)| {
-						let (_, value) = loaded.filter(|(loaded_instance, _)| *loaded_instance == instance)?;
-						let exponent = Exponent::from_chain(value, params)?;
-						let asset = Asset::Entry { purse, installation, index: *index };
-						Some((*index, value, AssetRecord { asset, exponent }))
-					})
-					.collect();
-				not_unloaded(deps, &vrf, entropy, at, (purse, installation), loaded).await?
-			};
-			empty = if found.is_empty() { empty + 1 } else { 0 };
-			adopted += found.len();
-			start = start.saturating_add(batch);
-			let progress = ScanProgress { first_scan_done, resume: Position { purse, space, next: start }.encode() };
-			deps.store
-				.write(move |tx| {
-					ledger::adopt(tx, &found)?;
-					for (payment, coin, exponent) in disclosed {
-						handover::adopt_disclosed(tx, payment, coin, exponent)?;
-					}
-					ledger::record_scan(tx, installation, &progress)
-				})
-				.await?;
+					.await?;
+			}
+		}
+		Ok(adopted)
+	}
+
+	fn next(&self, purse: PurseId, space: Space) -> u32 {
+		self.cursors.iter().find(|cursor| cursor.purse == purse && cursor.space == space).map_or(0, |cursor| cursor.next)
+	}
+
+	fn advance(&mut self, purse: PurseId, space: Space, next: u32) {
+		match self.cursors.iter_mut().find(|cursor| cursor.purse == purse && cursor.space == space) {
+			Some(cursor) => cursor.next = next,
+			None => self.cursors.push(Cursor { purse, space, next }),
 		}
 	}
-	Ok(adopted)
-}
 
+	fn progress(&self) -> ScanProgress {
+		ScanProgress { first_scan_done: self.first_scan_done, resume: self.cursors.encode() }
+	}
+}
 /// The entries of `loaded`, each given with its index and the exponent the
 /// chain shows, whose alias in their ring is not unloaded.
 ///
