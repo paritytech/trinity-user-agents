@@ -43,11 +43,12 @@ class FundingAmountViewModel @AssistedInject constructor(
         .distinctUntilChanged { old, new -> old.first == new.first }
         .mapLatest { (key, flow) ->
             key.first?.let { units -> service.amountIssue(units, flow.spendable?.let(flow.cash::units), sheet.intent) }
+                ?: Result.success(null)
         }
 
     /** The sheet's picks with why the amount cannot go ahead, as the core last answered for it. */
     private val checked: StateFlow<FundingFlowState?> = combine(sheet.flow.filterNotNull(), issue) { flow, issue ->
-        flow.withAmountIssue(issue)
+        flow.withAmountCheck(issue)
     }.stateIn(this, WhileOnScreen, null)
 
     val state: StateFlow<FundingAmountUiState?> = checked.map { it?.toAmountUiState() }.stateIn(this, WhileOnScreen, null)

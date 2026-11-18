@@ -113,7 +113,7 @@ class FundingSessionPresenter @Inject constructor(
         val entries = service.entries().firstOrNull().orEmpty()
         for (entry in entries) {
             val providerId = entry.session?.providerId ?: continue
-            if (!entry.hasEnded && service.isFrameWaiting(entry.id)) onFrameRequested(entry.id, providerId)
+            if (!entry.hasEnded && service.isFrameWaiting(entry.id).getOrNull() == true) onFrameRequested(entry.id, providerId)
         }
     }
 

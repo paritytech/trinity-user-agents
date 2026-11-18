@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingAmountLimits
@@ -49,12 +50,14 @@ data class FundingFlowState(
     val rows: Map<ProductId, FundingQuoteState>,
     /** The quotes on screen before the same amount was asked again, shown greyed while the new ones arrive. */
     val staleQuotes: Map<ProductId, FundingQuote>,
-    /** The core's list for the latest ask; `null` from a new ask until its first list arrives. */
+    /** The amount of the latest ask, in balance units; `null` while none is. */
+    val askedAmount: U128?,
+    /** The core's list for [askedAmount]; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
-    /** An ask waits for its first list. */
-    val quoting: Boolean,
     /** Why the typed amount cannot go ahead, as the core last answered for it. */
     val amountIssue: FundingAmountIssue?,
+    /** The core could not check the typed amount, which holds it back like an issue would. */
+    val amountCheckFailed: Boolean,
 ) {
     companion object {
         fun initial(
@@ -80,9 +83,10 @@ data class FundingFlowState(
             chosenProviderId = null,
             rows = emptyMap(),
             staleQuotes = emptyMap(),
+            askedAmount = null,
             list = null,
-            quoting = false,
             amountIssue = null,
+            amountCheckFailed = false,
         )
 
         fun textFor(value: BigDecimal): String =
@@ -107,7 +111,7 @@ data class FundingFlowState(
         get() = rows.keys.mapNotNull { id -> candidates.firstOrNull { it.providerId == id } }
 
     val canContinue: Boolean
-        get() = amount.signum() > 0 && amountIssue == null && rail in availableRails
+        get() = amount.signum() > 0 && amountIssue == null && !amountCheckFailed && rail in availableRails
 
     val amountLimits: FundingLimits
         get() = options?.limits.toLimits()
@@ -140,9 +144,9 @@ data class FundingFlowState(
     val isQuoting: Boolean
         get() = selectedQuote == null && (quoting || list?.complete == false)
 
-    /** The amount of the list on screen, in balance units. */
-    val askedAmount: U128?
-        get() = list?.amount
+    /** An ask waits for its first list. */
+    val quoting: Boolean
+        get() = askedAmount != null && list == null
 
     val allAnswered: Boolean
         get() = list?.complete == true && rows.isNotEmpty()
@@ -200,18 +204,29 @@ data class FundingFlowState(
 
     fun withChosenProvider(providerId: ProductId): FundingFlowState = copy(chosenProviderId = providerId)
 
-    fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue)
+    fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue, amountCheckFailed = false)
+
+    fun withAmountCheck(check: Result<FundingAmountIssue?>): FundingFlowState =
+        copy(amountIssue = check.getOrNull(), amountCheckFailed = check.isFailure)
 
     /**
-     * The quotes of the latest ask as the service holds them. Until the ask's first list, the providers that last
-     * quoted the same amount read pending with their quotes greyed.
+     * The service's latest ask, [asked], and its list. Asking the same amount again keeps the quotes on screen greyed
+     * while their providers have not answered again.
      */
-    fun withQuotes(newList: FundingQuoteList?, stale: Map<ProductId, FundingQuote>, asking: Boolean): FundingFlowState = copy(
-        rows = newList?.rows?.associate { it.providerId to it.state } ?: stale.mapValues { FundingQuoteState.Pending },
-        staleQuotes = stale,
-        list = newList,
-        quoting = asking,
-    )
+    fun withQuotes(newList: FundingQuoteList?, asked: U128?): FundingFlowState {
+        if (asked == null) return copy(rows = emptyMap(), staleQuotes = emptyMap(), askedAmount = null, list = null)
+
+        val onScreen = if (asked == askedAmount) quotedProviders.toMap() + staleQuotes else emptyMap()
+        val newRows = newList?.rows?.associate { it.providerId to it.state }
+        val stale = if (newRows == null) onScreen else onScreen.filterKeys { newRows[it]?.isPending == true }
+
+        return copy(
+            rows = newRows ?: stale.mapValues { FundingQuoteState.Pending },
+            staleQuotes = stale,
+            askedAmount = asked,
+            list = newList,
+        )
+    }
 
     /**
      * The rail, asset, network and country on screen, as the core is told of them, with the country's currency from

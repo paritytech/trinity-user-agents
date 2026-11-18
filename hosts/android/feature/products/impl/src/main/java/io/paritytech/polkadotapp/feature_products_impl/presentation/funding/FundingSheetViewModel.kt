@@ -62,6 +62,7 @@ class FundingSheetViewModel @Inject constructor(
         .stateIn(this, SharingStarted.Eagerly, null)
 
     init {
+        service.shown(intent)
         launchUnit { follow() }
         launch { reportSelection() }
     }
@@ -172,7 +173,7 @@ class FundingSheetViewModel @Inject constructor(
         val withOptions = if (options != null && !entry.hasStarted) state.withOptions(options) else state
         val detected = options?.detectedCountry?.takeIf { withOptions.country == null }?.let(FundingCountries::country)
         return (detected?.let(withOptions::withCountry) ?: withOptions)
-            .withQuotes(entry.quotes, entry.staleQuotes, entry.isQuoting)
+            .withQuotes(entry.quotes, entry.askedAmount)
     }
 
     /**

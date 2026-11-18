@@ -41,6 +41,8 @@ class FakeFundingService : FundingService {
 
     override fun entryState(id: String): Flow<FundingEntry> = entry.takeWhile { it != null }.map { requireNotNull(it) }
 
+    override fun shown(id: String) = Unit
+
     override suspend fun resume(): Result<Unit> = Result.success(Unit)
 
     override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> = Result.success(null)
@@ -53,7 +55,7 @@ class FakeFundingService : FundingService {
         calls += "quote $amount"
     }
 
-    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): FundingAmountIssue? = null
+    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?> = Result.success(null)
 
     override suspend fun start(id: String, provider: ProductId?): Result<Unit> =
         startResult.also { calls += "start ${provider?.value}" }
@@ -86,10 +88,10 @@ class FakeFundingService : FundingService {
     /** Every session listed, as [entries] gives them. */
     val listed = MutableStateFlow<List<FundingEntry>>(emptyList())
 
-    override suspend fun openProviderFrame(entryId: String): Boolean =
-        waitingFrames.remove(entryId).also { calls += "openProviderFrame $entryId" }
+    override suspend fun openProviderFrame(entryId: String): Result<Boolean> =
+        Result.success(waitingFrames.remove(entryId)).also { calls += "openProviderFrame $entryId" }
 
-    override suspend fun isFrameWaiting(entryId: String): Boolean = entryId in waitingFrames
+    override suspend fun isFrameWaiting(entryId: String): Result<Boolean> = Result.success(entryId in waitingFrames)
 
     override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) = Unit
 }
@@ -146,9 +148,8 @@ object FundingFixtures {
         progress = progress,
         summary = null,
         options = options,
+        askedAmount = quotes?.amount,
         quotes = quotes,
-        staleQuotes = emptyMap(),
-        isQuoting = false,
         isPresented = isPresented,
     )
 
