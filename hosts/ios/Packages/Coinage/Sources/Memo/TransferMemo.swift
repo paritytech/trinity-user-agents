@@ -23,10 +23,3 @@ public struct TransferMemo: Equatable, ScaleCodable {
         try totalValue.encode(scaleEncoder: scaleEncoder)
     }
 }
-
-public extension TransferMemo {
-    func identifier() throws -> Data {
-        let valueData = totalValue.serialize()
-        return try entries.reduce(valueData) { try $0.blake2b32WithKey($1) }
-    }
-}

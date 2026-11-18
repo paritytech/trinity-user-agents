@@ -7,54 +7,45 @@ import Testing
 
 @testable import polkadot_app
 
-@Suite("W3sPaymentTrackingService: tolerates already-claimed coins, keeps lost-send failure")
+@Suite("W3sPaymentTrackingService: follows the payment's export to the merchant's claim")
 struct W3sPaymentTrackingServiceTests {
-    @Test(".onChain confirmation marks .sent then waits for claim -> .claimed")
-    func onChainConfirmationMarksSentThenClaimed() async throws {
+    @Test("coins on chain mark .sent, the merchant's claim then marks .claimed")
+    func onChainThenClaimed() async throws {
         let store = TrackingHistoryStoreSpy(records: [Self.makeRecord(status: .submitted)])
-        let verifier = SendVerifierStub(sendResult: .success(.onChain), claimError: nil)
-        let service = W3sPaymentTrackingService(
-            historyStore: store,
-            sendVerifier: verifier,
-            blockInfoProvider: BlockInfoProviderStub()
-        )
+        let wallet = MockCoinageService(paymentSnapshots: [
+            [],
+            [Self.coin(.awaitingClaim)],
+            [Self.coin(.claimed(finalized: false))],
+            [Self.coin(.claimed(finalized: true))]
+        ])
+        let service = W3sPaymentTrackingService(historyStore: store, coinageService: wallet)
 
         await service.setup()
-        let updates = await Self.poll(store) { $0.contains(.sent) && $0.contains(.claimed) }
+        let updates = await Self.poll(store) { $0.contains(.claimed) }
         await service.throttle()
 
         #expect(updates == [.sent, .claimed])
-        #expect(await verifier.claimWasAwaited)
+        #expect(try wallet.paymentSubscriptions == [W3sPaymentRecord.exportId(paymentId: "PAY-1")])
     }
 
-    @Test(".alreadyClaimed confirmation jumps straight to .claimed, skips the claim wait")
-    func alreadyClaimedConfirmationSkipsClaimWait() async throws {
+    @Test("coins the merchant claimed before they were seen waiting go straight to .claimed")
+    func alreadyClaimedSkipsSent() async throws {
         let store = TrackingHistoryStoreSpy(records: [Self.makeRecord(status: .submitted)])
-        let verifier = SendVerifierStub(sendResult: .success(.alreadyClaimed), claimError: nil)
-        let service = W3sPaymentTrackingService(
-            historyStore: store,
-            sendVerifier: verifier,
-            blockInfoProvider: BlockInfoProviderStub()
-        )
+        let wallet = MockCoinageService(paymentSnapshots: [[Self.coin(.claimed(finalized: true))]])
+        let service = W3sPaymentTrackingService(historyStore: store, coinageService: wallet)
 
         await service.setup()
         let updates = await Self.poll(store) { $0.contains(.claimed) }
         await service.throttle()
 
         #expect(updates == [.claimed])
-        #expect(await verifier.claimWasAwaited == false, "claim wait must be skipped")
     }
 
-    @Test("Genuine lost send (throws) with expired window marks .failed")
-    func lostSendWithExpiredWindowMarksFailed() async throws {
-        // submittedAtBlock 0, finalized far ahead -> window provably expired.
+    @Test("coins that were never minted mark .failed, and never .sent or .claimed")
+    func neverMintedMarksFailed() async throws {
         let store = TrackingHistoryStoreSpy(records: [Self.makeRecord(status: .submitted)])
-        let verifier = SendVerifierStub(sendResult: .failure(StubError.boom), claimError: nil)
-        let service = W3sPaymentTrackingService(
-            historyStore: store,
-            sendVerifier: verifier,
-            blockInfoProvider: BlockInfoProviderStub(finalized: 1_000)
-        )
+        let wallet = MockCoinageService(paymentSnapshots: [[Self.coin(.detecting)], [Self.coin(.failed)]])
+        let service = W3sPaymentTrackingService(historyStore: store, coinageService: wallet)
 
         await service.setup()
         let updates = await Self.poll(store) { calls in
@@ -66,6 +57,19 @@ struct W3sPaymentTrackingServiceTests {
         #expect(hasFailed)
         #expect(updates.contains(.sent) == false)
         #expect(updates.contains(.claimed) == false)
+    }
+
+    @Test("a settled payment is not followed again")
+    func settledPaymentIsNotFollowed() async throws {
+        let store = TrackingHistoryStoreSpy(records: [Self.makeRecord(status: .claimed)])
+        let wallet = MockCoinageService(paymentSnapshots: [[Self.coin(.awaitingClaim)]])
+        let service = W3sPaymentTrackingService(historyStore: store, coinageService: wallet)
+
+        await service.setup()
+        _ = await Self.poll(store) { !$0.isEmpty }
+        await service.throttle()
+
+        #expect(wallet.paymentSubscriptions.isEmpty)
     }
 }
 
@@ -81,12 +85,16 @@ private extension W3sPaymentTrackingServiceTests {
             merchantPublicKey: Data(repeating: 0xCD, count: 33),
             amountString: "1.00",
             chainAssetId: "CASH",
-            memo: TransferMemo(entries: [Data(repeating: 0x01, count: 32)], totalValue: 1),
+            memo: TransferMemo(entries: [Data(repeating: 0x01, count: 64)], totalValue: 1),
             submittedAtBlock: 0,
             createdAt: now,
             updatedAt: now,
             status: status
         )
+    }
+
+    static func coin(_ status: CoinageTransferStatus) -> CoinagePaymentState {
+        CoinagePaymentState(account: Data(repeating: 0x02, count: 32), value: 1, status: status)
     }
 
     /// Polls the spy until `predicate` holds or a short deadline elapses, then returns the updates.
@@ -102,8 +110,6 @@ private extension W3sPaymentTrackingServiceTests {
         return await store.recordedUpdates()
     }
 }
-
-private enum StubError: Error { case boom }
 
 // MARK: - Test doubles
 
@@ -137,48 +143,4 @@ private actor TrackingHistoryStoreSpy: W3sPaymentHistoryStoring {
     }
 
     func recordedUpdates() -> [W3sPaymentRecord.Status] { updates }
-}
-
-private actor SendVerifierStub: TransferSendVerifying {
-    private let sendResult: Result<SendConfirmation, Error>
-    private let claimError: Error?
-    private(set) var claimWasAwaited = false
-
-    init(sendResult: Result<SendConfirmation, Error>, claimError: Error?) {
-        self.sendResult = sendResult
-        self.claimError = claimError
-    }
-
-    func awaitSendOnChain(memo _: TransferMemo, blockTimeout _: UInt32) async throws {}
-
-    func awaitClaimOnChain(memo _: TransferMemo, blockTimeout _: UInt32) async throws {
-        claimWasAwaited = true
-        if let claimError { throw claimError }
-    }
-
-    func awaitSendOrClaimed(
-        memo _: TransferMemo,
-        anchorBlock _: BlockNumber?,
-        blockTimeout _: UInt32
-    ) async throws -> SendConfirmation {
-        try sendResult.get()
-    }
-}
-
-private struct BlockInfoProviderStub: BlockInfoProviding {
-    var finalized: BlockNumber = 0
-
-    func fetchCurrent() async throws -> BlockNumber { finalized }
-    func fetchCurrentHash() async throws -> BlockHashData { Data() }
-    func fetchFinalized() async throws -> BlockNumber { finalized }
-    func fetchFinalizedHash() async throws -> BlockHashData { Data() }
-    func fetchBlockHash(_: BlockNumber) async throws -> BlockHashData { Data() }
-    func fetchBlockNumber(byHash _: BlockHashData) async throws -> BlockNumber { 0 }
-    func subscribeFinalizedHeads() -> AnyAsyncSequence<Block.Header> {
-        fatalError("Not needed for this test")
-    }
-
-    func subscribeNewHeads() -> AnyAsyncSequence<Block.Header> {
-        fatalError("Not needed for this test")
-    }
 }

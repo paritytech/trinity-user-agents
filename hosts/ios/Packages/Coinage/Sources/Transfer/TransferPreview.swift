@@ -1,18 +1,20 @@
-import Foundation
 import BigInt
+import Foundation
 
-/// Holds a pre-computed coin selection result and the requested amount.
-public struct TransferPreview {
-    public let selectionResult: CoinSelectionResult
-    /// The originally requested transfer amount (all coins + all vouchers).
+/// A payment the wallet can cover, before anything is reserved for it.
+public struct TransferPreview: Equatable, Sendable {
+    /// The requested amount, in planks.
     public let fullAmount: BigUInt
-    /// The scope the plan drew on. ``SpendScope/withConfirmation`` means it spends gaining-privacy
-    /// funds, so the caller must confirm before submitting.
-    public let scope: SpendScope
+    /// The payment spends value still gaining privacy, so the user must confirm it first.
+    public let spendsGainingPrivacy: Bool
 
-    public init(selectionResult: CoinSelectionResult, fullAmount: BigUInt, scope: SpendScope) {
-        self.selectionResult = selectionResult
+    public init(fullAmount: BigUInt, spendsGainingPrivacy: Bool) {
         self.fullAmount = fullAmount
-        self.scope = scope
+        self.spendsGainingPrivacy = spendsGainingPrivacy
     }
+}
+
+public enum TransferPreviewError: Error, Equatable {
+    /// The wallet cannot cover the amount.
+    case insufficientBalance
 }

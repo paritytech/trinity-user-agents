@@ -1,102 +1,69 @@
 import Foundation
+import SubstrateSdk
 
-/// How the current strategy treats a holding — the same three buckets ``CoinageBalance`` splits the
-/// balance into, resolved per holding.
+/// Whether a holding can be spent now; everything else is still gaining privacy or arriving.
 public enum CoinageAvailability: Equatable, Sendable {
     /// Free to use now at no privacy cost.
     case availableNow
-    /// Held back to earn privacy. Some strategies release it behind a confirmation.
-    case gainingPrivacy
-    /// On its way, or past the age the chain still accepts. Not spendable on any terms.
-    case pending
+    /// Held back to earn privacy, or still arriving.
+    case notReady
 }
 
-/// Every holding the user still owns, classified the way the balance classifies it.
-///
-/// Emitted from the same computation as ``CoinageBalance``, so a display built from these entries and
-/// the balance figures shown beside it cannot disagree: summing the entries by ``CoinageAvailability``
-/// reproduces the three buckets exactly.
-///
-/// Coins handed off to a peer are absent — the pre-classifiers admit only free assets.
+/// One coin or recycler entry of the wallet, as the wallet card draws it.
+public struct CoinageHolding: Equatable, Sendable {
+    public enum Kind: String, Equatable, Sendable {
+        case coin
+        case voucher
+    }
+
+    public let kind: Kind
+    /// The installation the asset was allocated under, which together with ``index`` identifies it.
+    public let installation: Data
+    public let index: UInt32
+    /// Value is `unit · 2^exponent`.
+    public let exponent: Int16
+    public let availability: CoinageAvailability
+    /// Payments this holding has been through. A batch-unloaded coin starts at age one, so it has none.
+    public let hops: Int
+    /// A coin the chain marked as one of a batch unload.
+    public let isBatchUnloaded: Bool
+    /// How much of its ring's anonymity the holding hides in, in percent; `nil` when unknown.
+    public let fungibility: UInt8?
+
+    public init(
+        kind: Kind,
+        installation: Data,
+        index: UInt32,
+        exponent: Int16,
+        availability: CoinageAvailability,
+        hops: Int,
+        isBatchUnloaded: Bool,
+        fungibility: UInt8?
+    ) {
+        self.kind = kind
+        self.installation = installation
+        self.index = index
+        self.exponent = exponent
+        self.availability = availability
+        self.hops = hops
+        self.isBatchUnloaded = isBatchUnloaded
+        self.fungibility = fungibility
+    }
+
+    /// Stable across changes, so a row keeps its place and identity on screen.
+    public var id: String {
+        "\(kind.rawValue)-\(installation.toHex())-\(index)"
+    }
+}
+
+/// Every holding the user still owns. Emitted from the same snapshot as ``CoinageBalance``, so a
+/// display built from these rows and the balance shown beside it cannot disagree.
 public struct CoinageHoldings: Equatable, Sendable {
-    public struct CoinHolding: Equatable, Sendable {
-        public let coin: Coin
-        public let availability: CoinageAvailability
+    public let rows: [CoinageHolding]
 
-        public var isAvailableNow: Bool { availability == .availableNow }
-
-        public init(coin: Coin, availability: CoinageAvailability) {
-            self.coin = coin
-            self.availability = availability
-        }
+    public init(rows: [CoinageHolding]) {
+        self.rows = rows
     }
 
-    public struct VoucherHolding: Equatable, Sendable {
-        public let voucher: Voucher
-        public let availability: CoinageAvailability
-
-        /// A voucher is available now exactly when the strategy considers it fine to unload
-        /// immediately.
-        public var isAvailableNow: Bool { availability == .availableNow }
-
-        public init(voucher: Voucher, availability: CoinageAvailability) {
-            self.voucher = voucher
-            self.availability = availability
-        }
-    }
-
-    public let coins: [CoinHolding]
-    public let vouchers: [VoucherHolding]
-
-    public init(coins: [CoinHolding], vouchers: [VoucherHolding]) {
-        self.coins = coins
-        self.vouchers = vouchers
-    }
-
-    public static let empty = CoinageHoldings(coins: [], vouchers: [])
-}
-
-extension CoinageHoldings {
-    /// Classifies pre-bucketed assets. Deliberately mirrors
-    /// ``CoinageBalanceService/calculateBalance(coinBuckets:voucherBuckets:verdicts:canSpendWithConfirmation:context:)``
-    /// case for case, so the two cannot drift: every asset either one counts appears here exactly
-    /// once, in the bucket that one puts its value into.
-    static func make(
-        coinBuckets: CoinBuckets,
-        voucherBuckets: VoucherBuckets,
-        verdicts: RecyclingVerdicts
-    ) -> CoinageHoldings {
-        let mintedCoins = coinBuckets.minted.map { tracked in
-            let availability: CoinageAvailability =
-                switch verdicts[tracked.coin.derivationIndex] {
-                case .allowUse: .availableNow
-                case .toRecycle: .gainingPrivacy
-                // Chain-forced, or not yet evaluated — both count as pending, never spendable.
-                case .mustRecycle,
-                     .none: .pending
-                }
-
-            return CoinHolding(coin: tracked.coin, availability: availability)
-        }
-
-        // Still arriving: no verdict has been formed, so never spendable.
-        let mintingCoins = coinBuckets.minting.map {
-            CoinHolding(coin: $0.coin, availability: .pending)
-        }
-
-        let usableVouchers = voucherBuckets.usable.map {
-            VoucherHolding(voucher: $0.voucher, availability: .availableNow)
-        }
-        let waitingVouchers = voucherBuckets.gainingPrivacy.map {
-            VoucherHolding(voucher: $0.voucher, availability: .gainingPrivacy)
-        }
-        let mintingVouchers = voucherBuckets.minting.map {
-            VoucherHolding(voucher: $0.voucher, availability: .pending)
-        }
-
-        return CoinageHoldings(
-            coins: mintedCoins + mintingCoins,
-            vouchers: usableVouchers + waitingVouchers + mintingVouchers
-        )
-    }
+    public static let empty = CoinageHoldings(rows: [])
 }

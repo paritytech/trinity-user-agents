@@ -1,6 +1,8 @@
 import Foundation
 
-/// Errors surfaced by `IncomingPaymentServicing.accept`. Mirrors the host API `PaymentTopUpErr`.
+public typealias IncomingPaymentId = String
+
+/// Errors of a product top-up. Mirrors the host API `PaymentTopUpErr`.
 public enum IncomingPaymentError: Error, Equatable {
     /// A payment with the same id already exists (idempotency key reuse).
     case alreadyExists

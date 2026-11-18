@@ -23,6 +23,7 @@ enum SettingsKey: String {
     case truApiRuntimeEnabled
     case hostPlacementEnabled
     case coinageRecyclingStrategy
+    case coinageRecoveryAcknowledged
     case tabBarLabelsEnabled
     case debugPocketCards
     case issueReportGitHubUsername

@@ -242,10 +242,4 @@ extension TransferAmountViewController: TransferAmountViewProtocol {
     func didUnlockNavigation() {
         unlockScreenNavigation()
     }
-
-    #if TESTNET_FEATURE
-        func didReceive(strategyDebugInfo: TransferStrategyDebugInfo?) {
-            rootView.bind(strategyDebugInfo: strategyDebugInfo)
-        }
-    #endif
 }

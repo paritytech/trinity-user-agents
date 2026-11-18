@@ -12,11 +12,7 @@ import SubstrateSdk
 protocol CoinageTransferMonitoring: AsyncApplicationServicing {}
 
 final class CoinageTransferMonitor {
-    typealias DenominationContextProvider = @Sendable () async throws -> DenominationBreakdownContext
-
-    private let claimCoinsService: any ClaimCoinsServicing
-    private let transferStatusService: any CoinageTransferStatusServicing
-    private let denominationContext: DenominationContextProvider
+    private let coinageService: any CoinageServicing
     private let transferStateStore: any TransferStateStoring
     private let messageProviderFactory: ChatMessageDataProviderMaking
     private let logger: LoggerProtocol
@@ -30,17 +26,13 @@ final class CoinageTransferMonitor {
     private let taskRegistry = ActiveTaskRegistry()
 
     init(
-        claimCoinsService: any ClaimCoinsServicing,
-        transferStatusService: any CoinageTransferStatusServicing,
-        denominationContext: @escaping DenominationContextProvider,
+        coinageService: any CoinageServicing,
         transferStateStore: any TransferStateStoring,
         storageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared
     ) {
-        self.claimCoinsService = claimCoinsService
-        self.transferStatusService = transferStatusService
-        self.denominationContext = denominationContext
+        self.coinageService = coinageService
         self.transferStateStore = transferStateStore
         self.logger = logger
 
@@ -97,24 +89,21 @@ private extension CoinageTransferMonitor {
         let messageId = message.messageId
         guard await taskRegistry.contains(messageId) == false else { return }
 
-        let memo = content.transferMemo
+        let coinKeys = content.coinKeys
 
-        let task = Task { [claimCoinsService, denominationContext, transferStateStore, taskRegistry, logger] in
+        let task = Task { [coinageService, transferStateStore, taskRegistry, logger] in
             defer { Task { await taskRegistry.remove(forMessageId: messageId) } }
             do {
-                let context = try await denominationContext()
-
                 // Anchored to this device's first attempt so two devices' clocks never decide the window.
                 let claimAnchor = try await transferStateStore.beginIncoming(messageId: messageId)
-                let retryUntil = CoinageConstants.claimRetryWindow.map(claimAnchor.addingTimeInterval) ?? .distantFuture
+                let retryUntil = claimAnchor.addingTimeInterval(CoinageConstants.claimRetryWindow)
 
                 logger.debug("Starting processing incoming coinage message=\(messageId)")
 
-                let states = claimCoinsService.claim(
-                    coinKeys: memo.entries,
-                    groupId: messageId,
-                    retryUntil: retryUntil,
-                    context: context
+                let states = try coinageService.claim(
+                    coinKeys: coinKeys,
+                    operationId: .chatClaim(messageId: messageId),
+                    retryUntil: retryUntil
                 )
                 .map(\.incomingState)
                 .removeDuplicates()
@@ -159,18 +148,15 @@ private extension CoinageTransferMonitor {
         let messageId = message.messageId
         guard await taskRegistry.contains(messageId) == false else { return }
 
-        let memo = content.transferMemo
-        let task = Task { [transferStatusService, denominationContext, transferStateStore, taskRegistry, logger] in
+        let task = Task { [coinageService, transferStateStore, taskRegistry, logger] in
             defer { Task { await taskRegistry.remove(forMessageId: messageId) } }
             do {
-                let context = try await denominationContext()
+                logger.debug("Processing transfer for message: \(messageId) entries=\(content.coinKeys.count)")
 
-                logger.debug("Processing transfer for message: \(messageId) entries=\(memo.entries.count)")
-
-                // Deduplicated by hand: the context is not Sendable, so it cannot ride a `map`.
+                let exportId = try CoinageOperationId.chatSend(messageId: messageId)
                 var lastState: OutgoingTransferState?
-                for try await coinStates in transferStatusService.subscribeStatuses(coinKeys: memo.entries) {
-                    let state = coinStates.outgoingState(context: context)
+                for try await coinStates in coinageService.subscribePaymentStates(exportId: exportId) {
+                    let state = coinStates.outgoingState
                     if state != lastState {
                         lastState = state
                         logger.debug("Status=\(state) message=\(messageId)")
@@ -186,9 +172,45 @@ private extension CoinageTransferMonitor {
     }
 }
 
-private extension Chat.LocalMessage.Content.Transfer {
-    var transferMemo: TransferMemo {
-        TransferMemo(entries: coinKeys, totalValue: totalValue)
+extension CoinageTransferDetection {
+    /// `claimingRest` is plain `claiming`: the claimed-so-far amount is deliberately not persisted.
+    var incomingState: IncomingTransferState {
+        switch self {
+        case .detecting:
+            IncomingTransferState(status: .detecting)
+        case .claiming,
+             .claimingRest:
+            IncomingTransferState(status: .claiming)
+        case let .claimed(amount, _):
+            IncomingTransferState(status: .claimed, actualValue: amount)
+        case let .claimedPartially(claimed):
+            IncomingTransferState(status: .claimed, actualValue: claimed)
+        case .notClaimed:
+            IncomingTransferState(status: .failed)
+        }
+    }
+}
+
+extension [CoinagePaymentState] {
+    /// Any coin still to be taken keeps the message at `sending`/`sent`; once nothing is outstanding,
+    /// the claimed value is final.
+    var outgoingState: OutgoingTransferState {
+        guard !isEmpty else { return OutgoingTransferState(status: .sending) }
+
+        let claimed = filter { if case .claimed = $0.status { true } else { false } }
+        let awaiting = filter { $0.status == .awaitingClaim }
+        let outstanding = filter { $0.status == .awaitingClaim || $0.status == .detecting }
+
+        if !outstanding.isEmpty {
+            return OutgoingTransferState(status: awaiting.isEmpty && claimed.isEmpty ? .sending : .sent)
+        }
+        guard !claimed.isEmpty else { return OutgoingTransferState(status: .failed) }
+
+        return OutgoingTransferState(status: .claimed, actualValue: claimed.reduce(Balance(0)) { $0 + $1.value })
+    }
+
+    var isSettled: Bool {
+        !isEmpty && allSatisfy(\.status.isTerminal)
     }
 }
 

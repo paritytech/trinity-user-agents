@@ -79,15 +79,14 @@ private extension BackupInteractor {
     func subscribeToBalance() {
         balanceTask = Task { [weak presenter, coinageService, logger] in
             do {
-                let balanceService = try await coinageService.coinageBalanceService()
-                let context = balanceService.denominationContext
-                for try await summary in balanceService.summaryStream {
+                let units = try await coinageService.units()
+                for try await summary in coinageService.summaryStream() {
                     let balance = summary.balance
                     await presenter?.didReceive(
                         coinageAmounts: CoinageAmounts(
-                            total: context.decimal(fromPlanks: balance.total),
-                            availableNow: context.decimal(fromPlanks: balance.ready),
-                            gainingPrivacy: context.decimal(fromPlanks: balance.clearing)
+                            total: units.decimal(fromPlanks: balance.total),
+                            availableNow: units.decimal(fromPlanks: balance.ready),
+                            gainingPrivacy: units.decimal(fromPlanks: balance.clearing)
                         )
                     )
                 }

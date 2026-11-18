@@ -10,22 +10,33 @@ import Testing
 
 @testable import polkadot_app
 
-/// Records whether the durability hook was invoked. A reference box because the hook is a
-/// non-`Sendable` closure the submitter calls on its own task.
-private final class HookSpy: @unchecked Sendable {
-    private(set) var didRun = false
+/// The order the submitter did things in. A reference box because the commit closure and the
+/// statement stub are called on the submitter's own task.
+private final class EventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
 
-    func run() {
-        didRun = true
+    var events: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func record(_ event: String) {
+        lock.lock()
+        recorded.append(event)
+        lock.unlock()
     }
 }
 
-@Suite("W3sStatementSubmitter fix: no longer marks failed when the submit path throws")
+private struct CommitRefused: Error {}
+
+@Suite("W3sStatementSubmitter: commits before the keys leave, never marks failed when the submit throws")
 struct W3sStatementSubmitterTests {
     private func makeSubmitter(
         merchantKey: Data,
         historyStore: W3sPaymentHistoryStoreSpy,
-        acceptsStatements: Bool = false
+        statements: StatementStoreSubmittingStub = StatementStoreSubmittingStub()
     ) throws -> W3sStatementSubmitter {
         try W3sStatementSubmitter(
             details: W3sPaymentDetails(
@@ -37,50 +48,52 @@ struct W3sStatementSubmitterTests {
                 chainAssetId: "CASH"
             ),
             wallet: MockWalletManager.mockedWallet(),
-            statementStoreSubmitter: StatementStoreSubmittingStub(accepts: acceptsStatements),
+            statementStoreSubmitter: statements,
             historyStore: historyStore,
             blockInfoProvider: BlockInfoProviderStub(),
             priorityFactory: StatementPriorityFactoryStub(),
-            backgroundExecutor: InlineBackgroundExecutor(),
-            storageFacade: UserDataStorageTestFacade()
+            backgroundExecutor: InlineBackgroundExecutor()
         )
     }
 
-    @Test("the hook never runs when the statement never leaves")
-    func onSavedIsNotRunWhenTheSubmitFails() async throws {
-        // `onSaved` makes the handoff final and schedules the split, and neither is undone by
-        // `abandon()`: it only drops *provisional* marks. Running it before the statement is out would
-        // give the coins away to a recipient that never received the memo carrying their keys.
-        let submitter = try makeSubmitter(merchantKey: Data([0x00]), historyStore: W3sPaymentHistoryStoreSpy())
-        let hook = HookSpy()
-
-        await #expect(throws: Error.self) {
-            try await submitter.sendTransfer(
-                TransferMemo(entries: [], totalValue: 0),
-                to: Data(),
-                messageId: UUID().uuidString
-            ) { _ in hook.run() }
-        }
-
-        #expect(!hook.didRun)
-    }
-
-    @Test("the hook runs once the statement is out")
-    func onSavedRunsAfterASuccessfulSubmit() async throws {
+    @Test("the export is committed before the statement carries the keys away")
+    func commitPrecedesTheStatement() async throws {
+        // A statement out with its export uncommitted would leave the wallet counting coins the
+        // merchant can claim.
+        let log = EventLog()
         let submitter = try makeSubmitter(
             merchantKey: Data(repeating: 0x02, count: 32),
             historyStore: W3sPaymentHistoryStoreSpy(),
-            acceptsStatements: true
+            statements: StatementStoreSubmittingStub(accepts: true, log: log)
         )
-        let hook = HookSpy()
 
         try await submitter.sendTransfer(
             TransferMemo(entries: [], totalValue: 0),
             to: Data(),
             messageId: UUID().uuidString
-        ) { _ in hook.run() }
+        ) { log.record("commit") }
 
-        #expect(hook.didRun)
+        #expect(log.events == ["commit", "statement"])
+    }
+
+    @Test("a refused commit keeps the statement from leaving")
+    func refusedCommitSendsNothing() async throws {
+        let log = EventLog()
+        let submitter = try makeSubmitter(
+            merchantKey: Data(repeating: 0x02, count: 32),
+            historyStore: W3sPaymentHistoryStoreSpy(),
+            statements: StatementStoreSubmittingStub(accepts: true, log: log)
+        )
+
+        await #expect(throws: CommitRefused.self) {
+            try await submitter.sendTransfer(
+                TransferMemo(entries: [], totalValue: 0),
+                to: Data(),
+                messageId: UUID().uuidString
+            ) { throw CommitRefused() }
+        }
+
+        #expect(log.events.isEmpty)
     }
 
     @Test("Invalid merchantKey fails buildEnvelope; record stays pending, never failed")
@@ -106,15 +119,14 @@ struct W3sStatementSubmitterTests {
             historyStore: historyStoreSpy,
             blockInfoProvider: BlockInfoProviderStub(),
             priorityFactory: StatementPriorityFactoryStub(),
-            backgroundExecutor: InlineBackgroundExecutor(),
-            storageFacade: UserDataStorageTestFacade()
+            backgroundExecutor: InlineBackgroundExecutor()
         )
 
         let memo = TransferMemo(entries: [], totalValue: 0)
 
         // Submit path throws (buildEnvelope fails on the invalid key).
         await #expect(throws: Error.self) {
-            try await submitter.sendTransfer(memo, to: Data(), messageId: UUID().uuidString) { _ in }
+            try await submitter.sendTransfer(memo, to: Data(), messageId: UUID().uuidString) {}
         }
 
         // The pending record is saved exactly once before the failure.
@@ -192,11 +204,13 @@ private struct BlockInfoProviderStub: BlockInfoProviding {
 /// Never reached where buildEnvelope fails first; accepts the statement where it does not.
 private struct StatementStoreSubmittingStub: StatementStoreSubmitting {
     var accepts = false
+    var log: EventLog?
 
     func submitStatement(with _: StatementSubmitParametersBuilding) async throws {
         guard accepts else {
             fatalError("Should not be reached when buildEnvelope fails")
         }
+        log?.record("statement")
     }
 }
 

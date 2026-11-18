@@ -130,7 +130,10 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
 }
 
 private extension TrUAPIPocketHandler {
-    func stream(_ key: PocketCardKey, into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation) async {
+    func stream(
+        _ key: PocketCardKey,
+        into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
+    ) async {
         await followExecutions(of: key, into: continuation)
         continuation.finish()
     }

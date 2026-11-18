@@ -48,6 +48,7 @@
             clearAllNotifications()
             deleteCloudBackup()
             deleteCoreDataDatabases()
+            deleteCoreDatabase()
             await clearSDKCaches()
             // Last: applying a config syncs the chain registry, which must not write into stores being deleted.
             await initializer.refetchConfig()
@@ -141,6 +142,15 @@
             } catch CoreDataServiceError.unexpectedDropWhenOpen {
                 try service.close()
                 try service.drop()
+            }
+        }
+
+        /// The Rust core's database, which holds the wallet.
+        func deleteCoreDatabase() {
+            do {
+                try FileManager.default.removeItem(atPath: TrUAPIHostRuntimeProvider.coreDatabaseDirectory())
+            } catch {
+                logger.error("Failed to wipe the core database: \(error)")
             }
         }
 

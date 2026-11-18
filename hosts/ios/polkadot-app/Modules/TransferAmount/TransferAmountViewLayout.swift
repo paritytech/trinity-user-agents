@@ -62,24 +62,6 @@ final class TransferAmountViewLayout: UIView, AdaptiveDesignable {
 
     let feeView = TitleBalanceView()
 
-    #if TESTNET_FEATURE
-        let debugStrategyView: UIView = {
-            let view = UIView()
-            view.backgroundColor = UIColor.black.withAlphaComponent(0.8)
-            view.layer.cornerRadius = 12
-            view.isHidden = true
-            return view
-        }()
-
-        let debugStrategyLabel: UILabel = {
-            let label = UILabel()
-            label.font = .systemFont(ofSize: 12, weight: .medium)
-            label.textColor = .white
-            label.numberOfLines = 0
-            return label
-        }()
-    #endif
-
     var bottomView: UIStackView?
 
     override init(frame: CGRect) {
@@ -176,10 +158,6 @@ final class TransferAmountViewLayout: UIView, AdaptiveDesignable {
             make.centerX.equalToSuperview()
             make.leading.greaterThanOrEqualToSuperview().offset(UIConstants.horizontalInsetWide)
         }
-
-        #if TESTNET_FEATURE
-            setupDebugStrategyView()
-        #endif
     }
 
     var isLoading: Bool {
@@ -246,63 +224,6 @@ enum TransferConfirmState {
     case loading(status: String?)
     case confirm
     case issue(String)
-}
-
-// MARK: - DEBUG
-
-extension TransferAmountViewLayout {
-    #if TESTNET_FEATURE
-        private func setupDebugStrategyView() {
-            addSubview(debugStrategyView)
-            debugStrategyView.addSubview(debugStrategyLabel)
-
-            debugStrategyView.snp.makeConstraints { make in
-                make.leading.trailing.equalToSuperview().inset(UIConstants.horizontalInsetMedium)
-                make.bottom.equalTo(feeView.snp.top).offset(-12)
-            }
-
-            debugStrategyLabel.snp.makeConstraints { make in
-                make.edges.equalToSuperview().inset(12)
-            }
-        }
-
-        func bind(strategyDebugInfo: TransferStrategyDebugInfo?) {
-            guard let info = strategyDebugInfo else {
-                debugStrategyView.isHidden = true
-                return
-            }
-
-            var text = "[DEBUG] Strategy: \(info.strategyType.rawValue)"
-
-            if !info.coinsUsed.isEmpty {
-                text += "\n\nCoins used:"
-                for coin in info.coinsUsed {
-                    text += "\n  idx=\(coin.derivationIndex)  exp=2^\(coin.exponent)"
-                }
-            }
-
-            if let splitInfo = info.splitInfo {
-                text += "\n\nSplit from coin:"
-                text += "\n  idx=\(splitInfo.overflowCoin.derivationIndex)  exp=2^\(splitInfo.overflowCoin.exponent)"
-                if !splitInfo.targetDenominations.isEmpty {
-                    text += "\n\nTarget denominations: \(splitInfo.targetDenominations.map { "2^\($0)" }.joined(with: .commaSpace))"
-                }
-                if !splitInfo.changeDenominations.isEmpty {
-                    text += "\nChange denominations: \(splitInfo.changeDenominations.map { "2^\($0)" }.joined(with: .commaSpace))"
-                }
-            }
-
-            if !info.vouchersToUnload.isEmpty {
-                text += "\n\nVouchers to unload:"
-                for voucher in info.vouchersToUnload {
-                    text += "\n  idx=\(voucher.derivationIndex)  exp=2^\(voucher.exponent)"
-                }
-            }
-
-            debugStrategyLabel.text = text
-            debugStrategyView.isHidden = false
-        }
-    #endif
 }
 
 // MARK: - AccessibilityBound

@@ -16,20 +16,8 @@ let package = Package(
     dependencies: [
         .package(name: "trinity-user-agents", path: "../../../.."),
         .package(
-            url: "https://github.com/novasamatech/Keystore-iOS",
-            from: "1.0.1"
-        ),
-        .package(
             url: "https://github.com/novasamatech/substrate-sdk-ios",
             from: "5.7.0"
-        ),
-        .package(
-            url: "https://github.com/novasamatech/Crypto-iOS",
-            from: "0.3.0"
-        ),
-        .package(
-            url: "https://github.com/novasamatech/extrinsic-service-ios",
-            from: "1.11.0"
         ),
         .package(
             url: "https://github.com/attaswift/BigInt",
@@ -40,10 +28,6 @@ let package = Package(
             from: "0.0.1"
         ),
         .package(
-            url: "https://github.com/novasamatech/Operation-iOS",
-            from: "3.0.0"
-        ),
-        .package(
             url: "https://github.com/apple/swift-async-algorithms",
             from: "1.0.4"
         ),
@@ -51,75 +35,20 @@ let package = Package(
             url: "https://github.com/paritytech/AsyncExtensions",
             exact: "0.5.6"
         ),
-        .package(
-            url: "https://github.com/pointfreeco/swift-clocks",
-            from: "1.0.6"
-        ),
-        .package(path: "../KeyDerivation"),
-        .package(path: "../StructuredConcurrency"),
-        .package(path: "../CommonService"),
-        .package(path: "../OperationExt"),
-        .package(path: "../ChainStore"),
-        .package(path: "../FoundationExt"),
-        .package(path: "../SubstrateSdkExt"),
-        .package(path: "../XcmDefinition"),
-        .package(path: "../Individuality"),
-        .package(path: "../StateMachine"),
-        .package(path: "../SubstrateOperation"),
-        .package(path: "../BackgroundExecution"),
-        .package(path: "../ExtrinsicServiceExt"),
-        .package(path: "../DurableTransactions"),
-        .package(path: "../Revive")
+        .package(path: "../KeyDerivation")
     ],
     targets: [
         .target(
             name: "Coinage",
             dependencies: [
                 .product(name: "TrUAPIHost", package: "trinity-user-agents"),
-                .product(name: "Keystore-iOS", package: "keystore-ios"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
-                .product(name: "SubstrateStorageSubscription", package: "substrate-sdk-ios"),
-                .product(name: "NovaCrypto", package: "crypto-ios"),
-                .product(name: "ExtrinsicService", package: "extrinsic-service-ios"),
                 .product(name: "BigInt", package: "BigInt"),
                 .product(name: "SDKLogger", package: "logger-ios"),
-                .product(name: "Operation-iOS", package: "operation-ios"),
                 .product(name: "AsyncAlgorithms", package: "swift-async-algorithms"),
                 .product(name: "AsyncExtensions", package: "AsyncExtensions"),
-                "KeyDerivation",
-                "StructuredConcurrency",
-                "CommonService",
-                "OperationExt",
-                "ChainStore",
-                "FoundationExt",
-                "SubstrateSdkExt",
-                "XcmDefinition",
-                "Individuality",
-                "StateMachine",
-                "SubstrateOperation",
-                "BackgroundExecution",
-                "ExtrinsicServiceExt",
-                "DurableTransactions",
-                "Revive"
+                "KeyDerivation"
             ]
-        ),
-        .testTarget(
-            name: "CoinageTests",
-            dependencies: [
-                "Coinage",
-                .product(name: "Keystore-iOS", package: "keystore-ios"),
-                "FoundationExt",
-                "BackgroundExecution",
-                "ExtrinsicServiceExt",
-                "DurableTransactions",
-                "Revive",
-                .product(name: "DurableTransactionsTestSupport", package: "DurableTransactions"),
-                .product(name: "StructuredConcurrency", package: "StructuredConcurrency"),
-                .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
-                .product(name: "FoundationExtTestSupport", package: "FoundationExt"),
-                .product(name: "Clocks", package: "swift-clocks")
-            ],
-            path: "Tests"
         )
     ]
 )

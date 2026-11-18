@@ -1,10 +1,13 @@
-import Coinage
 import Foundation
 import Revive
-import SubstrateSdk
 
-/// The `AccountDataStore` contract address from remote config (`account_data_store_config`), or nil
-/// until the payload carries one.
+/// The `AccountDataStore` contract address from remote config (`account_data_store_config`): the
+/// installation registry the core registers this installation in.
+protocol AccountDataStoreConfigProviding: Sendable {
+    /// `nil` until the remote config carries one.
+    var contractAddress: EvmAddress? { get }
+}
+
 final class AccountDataStoreConfigProvider: AccountDataStoreConfigProviding, @unchecked Sendable {
     private let remoteConfig: @Sendable () -> RemoteAppConfig?
 
@@ -12,7 +15,7 @@ final class AccountDataStoreConfigProvider: AccountDataStoreConfigProviding, @un
         self.remoteConfig = remoteConfig
     }
 
-    func contractAddress() async -> EvmAddress? {
+    var contractAddress: EvmAddress? {
         remoteConfig()?.accountDataStoreContract
     }
 }

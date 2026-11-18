@@ -4,8 +4,7 @@ import SubstrateSdk
 /// What the user holds, split by whether they can spend it right now.
 ///
 /// The middle bucket is the interesting one: money the strategy is deliberately holding back, which some
-/// strategies will still release behind a confirmation. ``pending`` never will. Amounts are in planks —
-/// use ``CoinageBalanceServiceProtocol/denominationContext`` to render them as decimals.
+/// strategies will still release behind a confirmation. ``pending`` never will. Amounts are in planks.
 public struct CoinageBalance: Equatable {
     /// Spendable now at no privacy cost: coins the strategy leaves usable plus fully-usable vouchers.
     public let availablePrivate: Balance

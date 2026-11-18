@@ -73,13 +73,6 @@
     },
     {
       "target" : {
-        "containerPath" : "container:Packages\/Coinage",
-        "identifier" : "CoinageTests",
-        "name" : "CoinageTests"
-      }
-    },
-    {
-      "target" : {
         "containerPath" : "container:Packages\/DurableTransactions",
         "identifier" : "DurableTransactionsTests",
         "name" : "DurableTransactionsTests"

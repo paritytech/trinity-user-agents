@@ -8,8 +8,8 @@ ledger row, the submission watch, recovery, reorg handling and the block-body se
 *means* — which resources it locks and how its effect is observed on chain — belongs to the feature that
 registers it, behind one seam: `TxCompletionOracle`.
 
-Coinage (`Packages/Coinage/Sources/CoinageTx/`) is the first domain; installation registration
-(`Packages/Coinage/Sources/Installation/Registration/`, domain `coinage-installation`) is the second.
+Its domain is the chat's notification slot allocation (`Packages/Individuality`, domain
+`statement-store-notification-slot`). The wallet's transactions are the Rust core's (see architecture/coinage.md).
 
 ## Key Components
 
@@ -39,26 +39,13 @@ Coinage (`Packages/Coinage/Sources/CoinageTx/`) is the first domain; installatio
 
 - `DurableTxCoreDataRepository` over `CDDurableTx`
   opens the one write transaction and hands `CoreDataRegistrationScope` to the domain hook.
-- `DurableTxRowObserving` lets a domain react to a status write in the same transaction (coinage
-  touches its coin/voucher rows so snapshot subscribers re-emit).
+- `DurableTxRowObserving` lets a domain react to a status write in the same transaction.
 - `DurableChainToolsProvider` resolves extrinsic tools from the chain registry, with the extrinsic
   format decided by `ExtrinsicVersionProvider` on every request (from the current runtime) and the tools
   cached per (chain, format), so a runtime upgrade mid-process switches formats.
   Chains in `signedChains` (Asset Hub, for installation registration) are treated as signed; all others
   as general transactions. One chain cannot host both kinds until the engine models the format per request.
-- `ServiceCoordinator.createDurableTransactionEngine` builds the engine once; every domain shares it, and the coordinator alone calls `start()` (after coinage setup) and `stop()` (on throttle). No domain starts or stops the engine.
-
-### Coinage's half (`Packages/Coinage/Sources/CoinageTx/`)
-
-- `CoinageTxService` — the unchanged `CoinageTxServicing` facade; registers asset rows inside the
-  engine's hook, maps engine errors to `CoinageTxError`.
-- `CoinageAssetLedgerProtocol` — asset rows keyed by the engine's ids, the four registration
-  invariants, handoff marks. App implementation: `CoinageAssetLedgerCoreData`.
-- `CoinageResourceOracle` — the `TxCompletionOracle`: `CoinageEntryDag` + `CoinageEvidenceCollector` +
-  `CoinageRules` answer completion / non-completion per head.
-- `CoinageStateReader` — coin, voucher and alias reads at a `BlockRef`.
-- `CoinageTxEntry` = engine `DurableTxEntry` + `inputs` / `outputs`. `CoinageTxId`, `CoinageTxStatus`,
-  `CoinageTxGroupId` are typealiases of the engine's types; `Coinage` re-exports `DurableTransactions`.
+- `ServiceCoordinator.createDurableTransactionEngine` builds the engine once; every domain shares it, and the coordinator alone calls `start()` and `stop()` (on throttle). No domain starts or stops the engine.
 
 ## Status and Attempts
 
@@ -182,13 +169,6 @@ queue would deadlock).
 5. Test over `DurableTransactionsTestSupport` fakes; the engine's own suite
    (`Packages/DurableTransactions/Tests`) needs no domain types.
 
-Worked example — `coinage-installation`: the group id is `"{contractHex}/{installationHex}"`, so the
-oracle (`CoinageInstallationRegistrationOracle`, a `MonotoneEffectOracle` on Asset Hub) reads each
-contract's list once per head and answers `true`/`false` per registration; a failed read answers nothing.
-Nothing is locked, so there is no registration hook. The registrar never submits while a group entry is
-live — the oracle credits the same record to every attempt — and retries with backoff once the last
-attempt has settled without a `finalizedSuccess`.
-
 ## Hard Rules
 
 1. **Terminal verdicts rest on finalized facts.** Only the finalized-bounded search, Rule 3 at F, and a
@@ -217,5 +197,3 @@ attempt has settled without a `finalizedSuccess`.
 | Domain seam | `.../Oracle/TxCompletionOracle.swift` | Changing what a domain can tell the engine |
 | Chain reads | `.../Chain/PinnedChainView*.swift` | New generic chain access |
 | App store | `polkadot-app/Common/DurableTransactions/` | CoreData shape of the ledger row, chain tools |
-| Coinage oracle | `Packages/Coinage/Sources/CoinageTx/Engine/CoinageResourceOracle.swift`, `CoinageRules.swift` | Coin / voucher evidence semantics |
-| Coinage ledger | `Packages/Coinage/Sources/CoinageTx/Store/CoinageAssetLedgerProtocol.swift`, `polkadot-app/Modules/Coinage/Model/CoreData/CoinageAssetLedgerCoreData.swift` | Asset rows, invariants, handoffs |

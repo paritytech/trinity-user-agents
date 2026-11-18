@@ -6,23 +6,21 @@ import Testing
 
 /// The monitor, the store and the chat snapshot together: a scripted claim must reach the message as
 /// one emission per distinct state, a terminal row must keep the monitor away for good, and a runtime
-/// failure must leave the row exactly as the durability layer last reported it.
+/// failure must leave the row exactly as the wallet last reported it.
 @Suite("Coinage transfer monitor", .serialized)
 struct CoinageTransferMonitorTests {
-    private let context = DenominationBreakdownContext(unit: 1_000, precision: 3, maxExponent: 10, minExponent: 0)
-
     @Test("an incoming claim reaches the message once per distinct state")
     func incomingClaimReachesMessage() async throws {
         let world = TransferStateTestWorld()
         try await world.setup()
         let message = try await world.saveTransfer(.incoming, totalValue: 10)
-        let claims = MockClaimCoinsService(detections: [
+        let wallet = MockCoinageService(detections: [
             .detecting, .detecting, .claiming, .claimingRest(claimed: 4),
             .claimed(amount: 10, finalized: false), .claimed(amount: 10, finalized: true)
         ])
         let states = world.stateStream(of: message.messageId)
 
-        let monitor = makeMonitor(world: world, claims: claims)
+        let monitor = makeMonitor(world: world, wallet: wallet)
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
@@ -36,8 +34,8 @@ struct CoinageTransferMonitorTests {
             .incoming(.init(status: .claimed, actualValue: 10))
         ])
         #expect(seen.count == distinct.count, "every emission must carry a change")
-        #expect(claims.calls.count == 1)
-        #expect(claims.calls.first?.groupId == message.messageId)
+        #expect(wallet.claimCalls.count == 1)
+        #expect(try wallet.claimCalls.first?.operationId == .chatClaim(messageId: message.messageId))
     }
 
     @Test("a terminal row keeps the message out of the monitor on the next launch")
@@ -49,9 +47,9 @@ struct CoinageTransferMonitorTests {
             messageId: message.messageId,
             state: .init(status: .claimed, actualValue: 10)
         )
-        let claims = MockClaimCoinsService(detections: [.claimed(amount: 10, finalized: true)])
+        let wallet = MockCoinageService(detections: [.claimed(amount: 10, finalized: true)])
 
-        let monitor = makeMonitor(world: world, claims: claims)
+        let monitor = makeMonitor(world: world, wallet: wallet)
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
@@ -60,20 +58,20 @@ struct CoinageTransferMonitorTests {
             #expect(messages.isEmpty)
             break
         }
-        #expect(claims.calls.isEmpty)
+        #expect(wallet.claimCalls.isEmpty)
     }
 
     /// The failure log is the last statement of the monitor's catch, so once it has been written the
     /// task can no longer touch the row: what the row holds then is what it will hold.
-    @Test("a runtime failure leaves the last durability-reported state in place")
+    @Test("a runtime failure leaves the last state the wallet reported in place")
     func runtimeFailureDoesNotWriteStatus() async throws {
         let world = TransferStateTestWorld()
         try await world.setup()
         let message = try await world.saveTransfer(.incoming)
-        let claims = MockClaimCoinsService(detections: [.claiming], failure: MonitorTestError.chainUnavailable)
+        let wallet = MockCoinageService(detections: [.claiming], claimFailure: MonitorTestError.chainUnavailable)
         let logger = MockLogger()
 
-        let monitor = makeMonitor(world: world, claims: claims, logger: logger)
+        let monitor = makeMonitor(world: world, wallet: wallet, logger: logger)
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
@@ -88,20 +86,20 @@ struct CoinageTransferMonitorTests {
         let world = TransferStateTestWorld()
         try await world.setup()
         let message = try await world.saveTransfer(.outgoing, totalValue: 10)
-        let coin = try makeCoin(exponent: 2)
-        let statuses = MockCoinageTransferStatusService(snapshots: [
-            [:],
-            [coin.publicKey: CoinageTransferState(coin: coin, status: .awaitingClaim)],
-            [coin.publicKey: CoinageTransferState(coin: coin, status: .awaitingClaim)],
-            [coin.publicKey: CoinageTransferState(coin: coin, status: .claimed(finalized: true))]
+        let claimedValue: Balance = 4_000
+        let account = Data(repeating: 0x09, count: 32)
+        let wallet = MockCoinageService(paymentSnapshots: [
+            [],
+            [CoinagePaymentState(account: account, value: claimedValue, status: .awaitingClaim)],
+            [CoinagePaymentState(account: account, value: claimedValue, status: .awaitingClaim)],
+            [CoinagePaymentState(account: account, value: claimedValue, status: .claimed(finalized: true))]
         ])
         let states = world.stateStream(of: message.messageId)
 
-        let monitor = makeMonitor(world: world, statuses: statuses)
+        let monitor = makeMonitor(world: world, wallet: wallet)
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
-        let claimedValue = context.valueInPlanks(for: 2)
         let seen = try await states.collect { $0 == .outgoing(.init(status: .claimed, actualValue: claimedValue)) }
         let distinct = seen.enumerated().filter { $0.offset == 0 || seen[$0.offset - 1] != $0.element }.map(\.element)
 
@@ -112,35 +110,22 @@ struct CoinageTransferMonitorTests {
             .outgoing(.init(status: .claimed, actualValue: claimedValue))
         ])
         #expect(seen.count == distinct.count, "every emission must carry a change")
-        #expect(statuses.subscriptions.count == 1)
+        #expect(try wallet.paymentSubscriptions == [.chatSend(messageId: message.messageId)])
     }
 }
 
 private extension CoinageTransferMonitorTests {
     func makeMonitor(
         world: TransferStateTestWorld,
-        claims: MockClaimCoinsService = MockClaimCoinsService(detections: []),
-        statuses: MockCoinageTransferStatusService = MockCoinageTransferStatusService(snapshots: []),
+        wallet: MockCoinageService = MockCoinageService(),
         logger: MockLogger = MockLogger()
     ) -> CoinageTransferMonitor {
         CoinageTransferMonitor(
-            claimCoinsService: claims,
-            transferStatusService: statuses,
-            denominationContext: { [context] in context },
+            coinageService: wallet,
             transferStateStore: world.store,
             storageFacade: world.facade,
             operationQueue: OperationQueue(),
             logger: logger
-        )
-    }
-
-    func makeCoin(exponent: Int16) throws -> Coin {
-        let installation = try CoinageInstallationId(value: Data(repeating: 0x01, count: 32))
-        return Coin(
-            exponent: exponent,
-            derivationIndex: CoinageKeyIndex(installation: installation, item: 0),
-            age: 0,
-            publicKey: Data(repeating: 0x09, count: 32)
         )
     }
 }

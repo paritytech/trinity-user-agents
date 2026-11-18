@@ -1,9 +1,9 @@
 import Foundation
 
-/// Where recovery of previous installations' balance stands. The initial pass runs on launch; a deep
-/// search is the user asking for another look; `completed` is the user having accepted the balance.
-/// A phase that `failed` scanned nothing it can vouch for, so no balance is offered for acceptance;
-/// the next launch scans again.
+/// Where recovery of the wallet's balance stands. The initial phase is the scan of the wallet the app
+/// handed over to the core; a deep search is the user asking for another look; `completed` is the user
+/// having accepted the balance. A phase that `failed` found nothing it can vouch for, so no balance is
+/// offered for acceptance.
 public enum BackupProgress: Hashable, Sendable {
     public enum Phase: Hashable, Sendable {
         case syncing
@@ -39,19 +39,6 @@ public enum BackupProgress: Hashable, Sendable {
              .initial(.failed),
              .deep(.syncing),
              .deep(.failed),
-             .completed: false
-        }
-    }
-
-    public var isFailed: Bool {
-        switch self {
-        case .initial(.failed),
-             .deep(.failed): true
-        case .unknown,
-             .initial(.syncing),
-             .initial(.completed),
-             .deep(.syncing),
-             .deep(.completed),
              .completed: false
         }
     }

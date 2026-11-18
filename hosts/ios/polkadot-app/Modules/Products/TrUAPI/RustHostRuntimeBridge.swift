@@ -20,7 +20,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let workerManager: (any TrUAPIWorkerManaging)?
-    private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
@@ -31,7 +30,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
-        backedUpInstallation: TrUAPIBackedUpInstallation,
         encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol
     ) {
@@ -39,7 +37,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
-        self.backedUpInstallation = backedUpInstallation
         self.encryptedStorage = encryptedStorage
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
@@ -125,10 +122,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
             CoreDurableRecoveryTask.shared.runInForeground()
             CoreDurableRecoveryTask.shared.schedule()
         }
-    }
-
-    func currentInstallation() async throws -> Data {
-        try await backedUpInstallation.installationId()
     }
 
     func encryptedStorageRead(key: Data) async throws -> Data? {

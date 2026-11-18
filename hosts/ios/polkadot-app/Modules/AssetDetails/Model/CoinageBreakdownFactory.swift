@@ -23,7 +23,8 @@ enum CoinageBreakdownFactory {
         /// bucket for ``Standing/knownLevel``. Both read "least fungible first", which now only
         /// separates holdings of the same denomination.
         let severity: Int
-        let derivationIndex: CoinageKeyIndex
+        /// Breaks the last tie, so equal holdings keep their order across refreshes.
+        let position: Position
         /// How worn the holding is drawn as a coin. `0` is untraceable, `1` is fully traceable.
         let wear: CGFloat
         /// Spendable now, as opposed to still clearing. The strip keeps the two in separate runs.
@@ -44,41 +45,23 @@ enum CoinageBreakdownFactory {
     /// existed. With them it put a one-cent coin nobody can trace ahead of the largest coin in the
     /// same partition, and the eye had nothing to hold on to.
     static func rows(from holdings: CoinageHoldings) -> [Row] {
-        let coinRows = holdings.coins.map { holding in
-            let bucket = bucket(for: holding.coin)
+        let rows = holdings.rows.map { holding in
+            let bucket = bucket(for: holding)
 
             return Row(
-                id: "coin-\(holding.coin.derivationIndex)",
-                exponent: holding.coin.exponent,
+                id: holding.id,
+                exponent: holding.exponent,
                 standing: bucket == nil ? .unknownHistory : .knownLevel,
-                severity: bucket ?? holding.coin.hops.count,
-                derivationIndex: holding.coin.derivationIndex,
-                wear: wear(
-                    forScore: holding.coin.recyclerFungibility,
-                    isBatchUnloaded: holding.coin.hops.isEmpty && holding.coin.age == 1
-                ),
+                severity: bucket ?? holding.hops,
+                position: Position(installation: holding.installation, index: holding.index),
+                wear: wear(forScore: holding.fungibility, isBatchUnloaded: holding.isBatchUnloaded),
                 isReady: holding.availability.displayBucket == .ready,
-                hops: holding.coin.hops.count
-            )
-        }
-
-        let voucherRows = holdings.vouchers.map { holding in
-            let bucket = CoinageStatusMetrics.bucket(forScore: holding.voucher.recyclerFungibility)
-
-            return Row(
-                id: "voucher-\(holding.voucher.derivationIndex)",
-                exponent: holding.voucher.exponent,
-                standing: .knownLevel,
-                severity: bucket,
-                derivationIndex: holding.voucher.derivationIndex,
-                wear: wear(forScore: holding.voucher.recyclerFungibility, isBatchUnloaded: false),
-                isReady: holding.availability.displayBucket == .ready,
-                hops: 0
+                hops: holding.hops
             )
         }
 
         // Value is `unit * 2^exponent`, so ordering by exponent is exactly ordering by value.
-        return (coinRows + voucherRows).sorted { lhs, rhs in
+        return rows.sorted { lhs, rhs in
             if lhs.exponent != rhs.exponent {
                 return lhs.exponent > rhs.exponent
             }
@@ -91,7 +74,7 @@ enum CoinageBreakdownFactory {
                 return lhs.severity > rhs.severity
             }
 
-            return lhs.derivationIndex < rhs.derivationIndex
+            return lhs.position < rhs.position
         }
     }
 
@@ -125,31 +108,14 @@ enum CoinageBreakdownFactory {
         from holdings: CoinageHoldings,
         value: (Int16) -> String
     ) -> [String: CoinageCoinTrace] {
-        var traces: [String: CoinageCoinTrace] = [:]
-
-        for holding in holdings.coins {
-            let coin = holding.coin
-
-            traces["coin-\(coin.derivationIndex)"] = CoinageCoinTrace(
-                value: value(coin.exponent),
+        holdings.rows.reduce(into: [:]) { traces, holding in
+            traces[holding.id] = CoinageCoinTrace(
+                value: value(holding.exponent),
                 partition: holding.availability.displayBucket == .ready ? .ready : .clearing,
-                hops: coin.hops.count,
-                quality: quality(forScore: coin.recyclerFungibility)
+                hops: holding.hops,
+                quality: quality(forScore: holding.fungibility)
             )
         }
-
-        for holding in holdings.vouchers {
-            let voucher = holding.voucher
-
-            traces["voucher-\(voucher.derivationIndex)"] = CoinageCoinTrace(
-                value: value(voucher.exponent),
-                partition: holding.availability.displayBucket == .ready ? .ready : .clearing,
-                hops: 0,
-                quality: quality(forScore: voucher.recyclerFungibility)
-            )
-        }
-
-        return traces
     }
 
     /// The grade a score is told as, or `unknown` without a score, which is every coin received
@@ -222,20 +188,33 @@ enum CoinageBreakdownFactory {
         return ordered.map(\.element)
     }
 
-    /// The bucket a coin's bar is drawn at, or `nil` when we have no record of its recycler.
+    /// The bucket a holding's bar is drawn at, or `nil` when we have no record of its recycler.
     ///
     /// A coin that left in a batch is linked to everything that left with it, which the recycler's
-    /// own score knows nothing about, so it is pushed down the ladder. The batch is not recorded,
-    /// but it is identifiable: the chain only hands out age 1 on a batch unload, and a single
-    /// unload leaves age 0.
-    static func bucket(for coin: Coin) -> Int? {
-        guard let fungibility = coin.recyclerFungibility else { return nil }
+    /// own score knows nothing about, so it is pushed down the ladder.
+    static func bucket(for holding: CoinageHolding) -> Int? {
+        guard let fungibility = holding.fungibility else { return nil }
 
         let base = CoinageStatusMetrics.bucket(forScore: fungibility)
 
-        guard coin.hops.isEmpty, coin.age == 1 else { return base }
+        guard holding.isBatchUnloaded else { return base }
 
         return min(base + CoinageStatusMetrics.batchUnloadPenalty, CoinageStatusMetrics.maximumBucket)
+    }
+}
+
+extension CoinageBreakdownFactory {
+    /// Where a holding was allocated: its installation, then its index there.
+    struct Position: Equatable, Comparable {
+        let installation: Data
+        let index: UInt32
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            if lhs.installation != rhs.installation {
+                return lhs.installation.lexicographicallyPrecedes(rhs.installation)
+            }
+            return lhs.index < rhs.index
+        }
     }
 }
 

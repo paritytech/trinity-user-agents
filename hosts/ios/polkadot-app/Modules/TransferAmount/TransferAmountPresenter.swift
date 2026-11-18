@@ -92,10 +92,6 @@ extension TransferAmountPresenter: TransferAmountPresenterProtocol {
         provideInputAmount()
         provideAmountViewModel()
         refreshFee()
-
-        #if TESTNET_FEATURE
-            refreshStrategyPreview()
-        #endif
     }
 
     func changeAmount(_ newValue: Decimal?) {
@@ -105,10 +101,6 @@ extension TransferAmountPresenter: TransferAmountPresenterProtocol {
         provideInputAmount()
 
         refreshFee()
-
-        #if TESTNET_FEATURE
-            refreshStrategyPreview()
-        #endif
     }
 }
 
@@ -119,10 +111,6 @@ extension TransferAmountPresenter: TransferAmountInteractorOutputProtocol {
         provideAmountViewModel()
         provideInputAmount()
         refreshFee()
-
-        #if TESTNET_FEATURE
-            refreshStrategyPreview()
-        #endif
     }
 
     func didReceive(error: TransferAmountInteractorError) {
@@ -394,23 +382,3 @@ private extension TransferAmountPresenter {
         }
     }
 }
-
-// MARK: - DEBUG
-
-#if TESTNET_FEATURE
-    extension TransferAmountPresenter {
-        @MainActor
-        func didReceive(strategyDebugInfo: TransferStrategyDebugInfo?) {
-            view?.didReceive(strategyDebugInfo: strategyDebugInfo)
-        }
-
-        @MainActor
-        func refreshStrategyPreview() {
-            guard let amount = calculateInputAmount(), amount > 0 else {
-                view?.didReceive(strategyDebugInfo: nil)
-                return
-            }
-            interactor.previewStrategy(for: amount)
-        }
-    }
-#endif

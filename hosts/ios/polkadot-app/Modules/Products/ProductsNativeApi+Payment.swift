@@ -19,7 +19,7 @@ extension ProductsNativeApi {
             throw ProductNativeApiError.permissionDenied
         }
 
-        return try await requirePayments().balanceStream()
+        return try requirePayments().balanceStream()
             .map { balance in
                 PaymentBalance(available: balance.total)
             }
@@ -30,12 +30,24 @@ extension ProductsNativeApi {
         let payments = try requirePayments()
 
         try await checkSufficientBalance(amount: amount, payments: payments)
-        guard try await payments.awaitUserConsent(productId: productId, amount: amount, destination: destination) else {
+        guard
+            let confirmed = try await payments.awaitUserConsent(
+                productId: productId,
+                amount: amount,
+                destination: destination
+            )
+        else {
             throw HostPaymentRequestError.rejected
         }
 
         do {
-            try await payments.initiatePayment(productId: productId, id: id, amount: amount, destination: destination)
+            try await payments.initiatePayment(
+                productId: productId,
+                id: id,
+                amount: amount,
+                destination: destination,
+                confirmed: confirmed
+            )
         } catch ExternalPaymentError.alreadyExists {
             throw HostPaymentRequestError.alreadyExists
         }
@@ -62,9 +74,8 @@ extension ProductsNativeApi {
         .eraseToAnyAsyncSequence()
     }
 
-    /// Registers an idempotent top-up bound to `(productId, id)` and returns once initialization has
-    /// concluded. The claim is driven by `IncomingPaymentService`; the product observes progress via
-    /// ``subscribePaymentTopUpStatus(id:)``.
+    /// Starts a top-up bound to `(productId, id)`. The wallet drives it; the product observes progress
+    /// via ``subscribePaymentTopUpStatus(id:)``.
     func paymentTopUp(amount: Balance, source: PaymentTopUpSource, id: PaymentTopUpId) async throws {
         let payments = try requirePayments()
 
@@ -82,14 +93,26 @@ extension ProductsNativeApi {
     func subscribePaymentTopUpStatus(
         id: PaymentTopUpId
     ) async throws -> AnyAsyncSequence<HostPaymentTopUpStatus> {
-        do {
-            return try await requirePayments().topUpStatuses(productId: productId, id: id)
-                .map { HostPaymentTopUpStatus(status: $0) }
-                .eraseToAnyAsyncSequence()
-        } catch {
-            logger.error("Top-up status could not be observed: \(error)")
-            throw HostPaymentTopUpError(error, unknownReason: Self.topUpStatusUnavailable)
+        let statuses = try requirePayments().topUpStatuses(productId: productId, id: id)
+        let logger = logger
+
+        return AsyncThrowingStream<HostPaymentTopUpStatus, Error> { continuation in
+            let task = Task {
+                do {
+                    for try await status in statuses {
+                        continuation.yield(HostPaymentTopUpStatus(status: status))
+                    }
+                    continuation.finish()
+                } catch {
+                    logger.error("Top-up status could not be observed: \(error)")
+                    continuation.finish(
+                        throwing: HostPaymentTopUpError(error, unknownReason: Self.topUpStatusUnavailable)
+                    )
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
+        .eraseToAnyAsyncSequence()
     }
 }
 

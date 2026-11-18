@@ -1,5 +1,4 @@
 import AsyncExtensions
-import Coinage
 import CoreData
 import Foundation
 import Operation_iOS
@@ -8,25 +7,20 @@ import SubstrateSdk
 
 @testable import polkadot_app
 
-/// The live-subscription floor of the app with a chat open: 7 message, 3 chat, 4 contact, 3 coin and
-/// 3 voucher snapshot subscriptions, through the production `subscribeSnapshot` path. Indices are
+/// The live-subscription floor of the app with a chat open: 7 message, 3 chat and 4 contact snapshot
+/// subscriptions, through the production `subscribeSnapshot` path. Indices are
 /// stable regardless of which groups are enabled; index 0 is always the unfiltered message stream.
 final class ProductionFloorSubscriptions {
     enum Group: CaseIterable {
         case messages
         case chats
         case contacts
-        case coins
-        case vouchers
     }
 
     static let unfilteredMessages = 0
-    static let unfilteredCoins = 14
-    static let unfilteredVouchers = 17
 
     let tracker = DeliveryTracker()
     let chatMapperCalls = MapperCallCounter()
-    let assetMapperCalls = MapperCallCounter()
 
     private let facade: BenchmarkStorageFacade
     private let chatIds: [Chat.Id]
@@ -43,8 +37,6 @@ final class ProductionFloorSubscriptions {
         if groups.contains(.messages) { startMessages() }
         if groups.contains(.chats) { startChats() }
         if groups.contains(.contacts) { startContacts() }
-        if groups.contains(.coins) { startCoins() }
-        if groups.contains(.vouchers) { startVouchers() }
     }
 
     func stop() {
@@ -55,7 +47,6 @@ final class ProductionFloorSubscriptions {
     var counters: [String: Int] {
         [
             "chatMapperCalls": chatMapperCalls.value,
-            "assetMapperCalls": assetMapperCalls.value,
             "deliveries": tracker.totalDeliveries()
         ]
     }
@@ -90,20 +81,6 @@ private extension ProductionFloorSubscriptions {
         track(subscribe(ChatContactMapper(), counter: chatMapperCalls, filter: nil), index: 11)
         track(subscribe(ChatContactMapper(), counter: chatMapperCalls, filter: byId), index: 12)
         track(subscribe(ChatContactMapper(), counter: chatMapperCalls, filter: byId), index: 13)
-    }
-
-    func startCoins() {
-        let keys = (0 ..< 10).map { BenchmarkFixtures.key($0).toHex() }
-        let byKeys = NSPredicate(format: "%K IN %@", #keyPath(CDCoin.publicKey), keys)
-        track(subscribe(TrackedCoinMapper(), counter: assetMapperCalls, filter: nil), index: 14)
-        track(subscribe(TrackedCoinMapper(), counter: assetMapperCalls, filter: byKeys), index: 15)
-        track(subscribe(TrackedCoinMapper(), counter: assetMapperCalls, filter: nil), index: 16)
-    }
-
-    func startVouchers() {
-        for index in 17 ..< 20 {
-            track(subscribe(TrackedVoucherMapper(), counter: assetMapperCalls, filter: nil), index: index)
-        }
     }
 
     func subscribe<M: CoreDataMapperProtocol>(
