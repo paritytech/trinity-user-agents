@@ -4,7 +4,8 @@ use super::*;
 use crate::{
 	stack::signed_pointer,
 	test_support::{
-		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
+		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor,
+		reserved_test_descriptor, sign_test_descriptor,
 	},
 };
 
@@ -351,8 +352,12 @@ fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
 }
 
 fn refused_for_its_tld() -> Option<StackRefreshOutcome> {
+	refused_for_pinned("tld")
+}
+
+fn refused_for_pinned(field: &str) -> Option<StackRefreshOutcome> {
 	Some(StackRefreshOutcome::Refused {
-		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),
+		reason: format!("stack descriptor changes {field}, which the bundled copy pins"),
 	})
 }
 
@@ -419,6 +424,119 @@ fn a_stored_copy_on_another_tld_is_ignored() {
 			None,
 			status(&bundled, refused_for_its_tld())
 		)
+	);
+}
+
+/// The record a core holds once it stored `descriptor`.
+fn record_holding(descriptor: &serde_json::Value) -> Vec<u8> {
+	let (link, bytes) = sign_test_descriptor(descriptor);
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	StackReader::new(Refresh::Never)
+		.fetched(&pointer, Served::Document { bytes: &bytes, etag: None }, START)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored")
+}
+
+/// The reserved stack's copy at `sequence` with its dotNS contract at another
+/// address.
+fn redeployed(sequence: u32) -> serde_json::Value {
+	let mut descriptor = reserved_test_descriptor(sequence);
+	descriptor["dotns"]["popController"] = format!("0x{}", hex::encode([0xee; 20])).into();
+	descriptor
+}
+
+/// A key that signs Polkadot's descriptor must not be able to point its
+/// hosts at other dotNS contracts or other chains. The build's copy decides
+/// both, so such a copy is refused on every fetch and never stored, and the
+/// core keeps the copy it holds.
+#[test]
+fn a_reserved_stacks_refresh_that_changes_dotns_or_a_chain_is_refused_and_not_stored() {
+	let mut moved_endpoint = reserved_test_descriptor(2);
+	moved_endpoint["chains"][2]["rpc"] = serde_json::json!(["wss://moved.test.invalid"]);
+	let mut wiped = reserved_test_descriptor(3);
+	wiped["generation"] = "second".into();
+	wiped["chains"][2]["genesisHash"] =
+		format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE)).into();
+	let refused_copies = [(redeployed(3), "dotns"), (wiped, "a chain's genesisHash")];
+
+	assert_eq!(
+		refused_copies.clone().map(|(copy, _)| {
+			let mut source =
+				load_reserving(&reserved_test_descriptor(1), None, ReservedValuesPolicy::ALLOWED);
+			let held = serve(&mut source, &moved_endpoint, START);
+			let refusals = [START + 3600, START + 7200]
+				.map(|now| (serve(&mut source, &copy, now), source.status()));
+			(held.is_some(), refusals)
+		}),
+		refused_copies.map(|(_, field)| {
+			let refused = (None, status(&moved_endpoint, refused_for_pinned(field)));
+			(true, [refused.clone(), refused])
+		})
+	);
+}
+
+/// polkadot-test is forked again from a later Polkadot block: the genesis
+/// hashes stay and the `generation` changes. No pinned field differs, so the
+/// stack follows it the way any stack follows a restart of its chains.
+#[test]
+fn a_reserved_stack_follows_a_new_generation_on_the_same_chains() {
+	let bundled = reserved_test_descriptor(1);
+	let mut reforked = reserved_test_descriptor(2);
+	reforked["generation"] = "second".into();
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+
+	let record = serve(&mut source, &reforked, START).expect("the newer copy is stored");
+	source.record_stored();
+	let restarted = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+
+	assert_eq!(
+		(source.status(), restarted.status()),
+		(
+			StackStatus {
+				restart_required: true,
+				..status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			status(&reforked, None)
+		)
+	);
+}
+
+/// A record may hold a copy that differs from the build's in a pinned field:
+/// one a core stored before it pinned them, or one from before an app update
+/// changed the field. The bundled copy starts the host, and the published
+/// copy the record came from is refused when it is fetched again.
+#[test]
+fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
+	let bundled = reserved_test_descriptor(1);
+	let record = record_holding(&redeployed(2));
+
+	let mut source = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+	let at_start = source.status();
+	let fetched = serve(&mut source, &redeployed(2), START);
+
+	assert_eq!(
+		(at_start, fetched, source.status()),
+		(status(&bundled, None), None, status(&bundled, refused_for_pinned("dotns")))
+	);
+}
+
+/// A stack without reserved values follows its operator: a redeployed
+/// contract reaches its hosts at once, without a new build.
+#[test]
+fn a_stack_without_reserved_values_follows_a_redeployed_contract() {
+	let on_paseo = |mut descriptor: serde_json::Value| {
+		descriptor["tld"] = "paseo".into();
+		descriptor
+	};
+	let redeployed = on_paseo(redeployed(2));
+	let mut source = load(&on_paseo(reserved_test_descriptor(1)), None);
+
+	let record = serve(&mut source, &redeployed, START);
+
+	assert_eq!(
+		(record.is_some(), source.status()),
+		(true, status(&redeployed, Some(StackRefreshOutcome::Current)))
 	);
 }
 

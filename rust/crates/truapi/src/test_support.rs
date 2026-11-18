@@ -444,6 +444,35 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
+/// A stack on the reserved `dot` TLD as published at `sequence`, which starts
+/// only under a build that allows it reserved values. Its chains are those of
+/// [`published_test_descriptor`] and `Collectives`, a role the core never
+/// reads, and it sets every field such a stack pins: the relay's light spec,
+/// two `assets`, `contracts`, `dotns` and `coinage`.
+pub fn reserved_test_descriptor(sequence: u32) -> serde_json::Value {
+	let mut descriptor = test_descriptor("dot", TEST_STACK_PEOPLE, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = "first".into();
+	descriptor["chains"][0]["lightSpec"] = serde_json::json!({
+		"url": "https://stack.test.invalid/relay.json",
+		"sha256": format!("0x{}", hex::encode([0x5a; 32])),
+	});
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.push(test_descriptor_chain("Collectives", [0xc0; 32], Some(1001)));
+	descriptor["assets"] = serde_json::json!([
+		{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
+		{ "role": "fee", "chain": "AssetHub", "pallet": "Assets", "id": 1337 },
+	]);
+	descriptor["contracts"] =
+		serde_json::json!({ "multicall": format!("0x{}", hex::encode([0xc1; 20])) });
+	descriptor["dotns"] =
+		serde_json::json!({ "popController": format!("0x{}", hex::encode([0xd1; 20])) });
+	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor
+}
+
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
 /// verifies it.
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {

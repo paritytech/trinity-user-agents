@@ -198,7 +198,7 @@ impl StackSource {
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
 		let bundled_copy = open(bundled, &pointer).map_err(StackError::Descriptor)?;
-		let pinned = Pinned::new(&bundled_copy.descriptor);
+		let pinned = Pinned::new(&bundled_copy.descriptor, &reserved_values);
 		let open_with = |stored| {
 			Opened::try_new(&pointer, bundled, stored, &reserved_values, &pinned, now_unix_seconds)
 		};

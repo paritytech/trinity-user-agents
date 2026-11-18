@@ -69,7 +69,8 @@ refresh it.
   `stackStatus()`. `restartRequired` means a newer copy
   changes a chain, the network or the generation, and applies once
   the runtime is built again. A copy that names another TLD than the bundled
-  descriptor is refused, and `lastRefresh` says so. `generation` changes when
+  descriptor is refused, and so is one that changes a field a stack allowed
+  reserved values pins. `lastRefresh` says so. `generation` changes when
   the stack restarts its chains: key cached chain data by it.
 
 The core keeps the last copy it verified in core storage, under the

@@ -5,9 +5,11 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy, and a stored or fetched copy that names another TLD than
-//! the bundled one is refused. The [`Stack`] it resolves holds the network,
-//! the dotNS TLD and each chain's genesis hash, and answers `get_chain_info`.
+//! the same policy, and a stored or fetched copy that changes a field the
+//! bundled one pins is refused: the TLD on every stack, and more on a stack
+//! the policy allows reserved values. The [`Stack`] it resolves holds the
+//! network, the dotNS TLD and each chain's genesis hash, and answers
+//! `get_chain_info`.
 
 mod pinned;
 mod records;
@@ -71,11 +73,20 @@ const RESERVED_TLD: &str = "dot";
 /// an extra TLD that no stack can have, one outside
 /// [`DOTNS_TLDS`](crate::platform::DOTNS_TLDS). It refuses the policy before
 /// it reads the stack.
+///
+/// A stack that is allowed reserved values is pinned to its bundled copy. A
+/// copy the core stored or fetched is refused when it gives a chain role
+/// another genesis hash, adds or drops a chain role, or changes `assets`,
+/// `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
+/// `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
+/// build changes one of those, so a key that signs the stack's descriptors
+/// cannot.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
 	/// Whether the stack may name reserved values. Only a Polkadot or
-	/// Polkadot-fork build sets it, and then reserves no extra values.
+	/// Polkadot-fork build sets it, and then reserves no extra values. The
+	/// stack is then pinned to its bundled copy.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]

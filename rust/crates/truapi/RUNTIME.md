@@ -222,6 +222,16 @@ accounts derive under the TLD, so only a new build changes it. A stored
 descriptor the core refuses is ignored, and the core starts from the bundled
 copy.
 
+A stack whose build allows it reserved values is Polkadot or a fork of it, and
+the core pins more of its bundled copy: each chain role's genesis hash and the
+set of roles, `assets`, `contracts`, `dotns`, `coinage`, and the `sha256` of
+the relay's `lightSpec`, which carries the relay's sync checkpoint. A
+descriptor that changes one is refused the same way, so a stolen descriptor
+key can move such a stack's endpoints but not its chains, assets or contracts.
+A new `generation` on the same genesis hashes is not pinned and applies from
+the next start. A fresher relay checkpoint, and a fork made again from a later
+block, need a new build.
+
 A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
