@@ -374,11 +374,11 @@ fn earlier_load_open(view: &Snapshot, record: DurableTxId, from: [u8; 32]) -> bo
 }
 
 /// What the funding account must hold before a load is built: the value it
-/// loads in the external asset's units, and the asset's minimum balance it
-/// keeps, since a load preserves the paying account.
+/// loads in the external asset's units. A load may empty the account, as
+/// the shipped wallet's loads do.
 fn load_cost(tx: &Transaction, params: &ChainParams) -> u128 {
 	let cents: u64 = tx.outputs.iter().map(|(_, exponent)| exponent.value()).sum();
-	u128::from(cents).saturating_mul(params.instance().asset_unit).saturating_add(params.config().external_minimum_balance)
+	u128::from(cents).saturating_mul(params.instance().asset_unit)
 }
 
 /// What the chain shows of an unload's aliases right before it is built.
