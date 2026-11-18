@@ -31,7 +31,7 @@ use crate::platform::{
 };
 use futures::{
 	channel::mpsc,
-	future::{AbortHandle, Abortable, FutureExt},
+	future::{AbortHandle, Abortable},
 	stream::{self, BoxStream, Stream, StreamExt},
 };
 use js_sys::{Array, Function, Reflect, Uint8Array};
@@ -141,7 +141,7 @@ impl WasmPlatform {
 		self.bridge.has_contacts().then(|| self.clone() as Arc<dyn ContactsPlatform>)
 	}
 
-	fn install_on<Role>(
+	async fn install_on<Role>(
 		self: &Arc<Self>,
 		runtime: &HostRuntime<Role>,
 		callbacks: &JsValue,
@@ -158,7 +158,7 @@ impl WasmPlatform {
 		if self.bridge.has_scanner() {
 			runtime.set_scanner_platform(self.clone());
 		}
-		runtime.set_core_db(memory_core_db()?);
+		runtime.set_core_db(memory_core_db().await?);
 		install_worker_controller(runtime.worker_ledger(), callbacks)
 	}
 }
@@ -898,12 +898,9 @@ impl crate::host_logic::worker::WorkerController for WasmWorkerController {
 ///
 /// Nothing in it outlives the instance. Fails when the database cannot be
 /// opened or migrated.
-fn memory_core_db() -> Result<Db, JsValue> {
+async fn memory_core_db() -> Result<Db, JsValue> {
 	let config = DbConfig { location: DbLocation::Memory, migrations: core_migrations };
-	Db::open(config)
-		.now_or_never()
-		.expect("the wasm32 store backend opens without suspending")
-		.map_err(|error| JsValue::from_str(&error.to_string()))
+	Db::open(config).await.map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 /// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
@@ -969,7 +966,7 @@ impl WasmPairingHostRuntime {
 			platform.chat(),
 			platform.contacts(),
 		);
-		platform.install_on(&runtime, &callbacks)?;
+		platform.install_on(&runtime, &callbacks).await?;
 		// Last, so a host is told of a stack only once the runtime exists.
 		if let Some(refresh) = &stack_refresh {
 			start_refresh(refresh, &callbacks, &spawner)?;
@@ -1334,7 +1331,7 @@ impl WasmSigningHostRuntime {
 			platform.chat(),
 			platform.contacts(),
 		);
-		platform.install_on(&runtime, &callbacks)?;
+		platform.install_on(&runtime, &callbacks).await?;
 		// Last, so a host is told of a stack only once the runtime exists.
 		if let Some(refresh) = &stack_refresh {
 			start_refresh(refresh, &callbacks, &spawner)?;
@@ -1657,7 +1654,7 @@ impl WasmProductRuntime {
 			platform.chat(),
 			platform.contacts(),
 		);
-		platform.install_on(&pairing, &callbacks)?;
+		platform.install_on(&pairing, &callbacks).await?;
 		let core = pairing.product_runtime(product, frame_sink);
 		Ok(Self::from_parts(core, channel.dispose))
 	}
