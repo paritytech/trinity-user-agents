@@ -70,7 +70,7 @@ extension FundingEndedSession {
               let asset = record.paidAsset ?? record.asset,
               let decimals = record.paidDecimals ?? quote?.assetDecimals
         else { return nil }
-        return FundingAssetUnit(code: asset, decimals: decimals).format(units)
+        return AssetBalanceDisplayInfo.from(assetCode: asset, decimals: Int16(decimals)).amount(units: units)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.
