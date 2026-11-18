@@ -153,7 +153,10 @@ fn clearing_the_old_session_during_login_keeps_the_new_one_connected() {
 		(host.session_state.current(), states.lock().unwrap().last().cloned()),
 		(
 			Some(next.clone()),
-			Some(AuthState::Connected(Box::new(connected_session_ui_info(&next))))
+			Some(AuthState::Connected(Box::new(connected_session_ui_info(
+				&next,
+				next.sso.as_ref().map(|sso| sso.enc_secret)
+			))))
 		)
 	);
 }

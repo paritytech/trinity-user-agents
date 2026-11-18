@@ -542,6 +542,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
+		device_encryption_key: None,
 	}
 }
 
@@ -820,6 +821,32 @@ fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	assert_eq!(*callbacks.calls.lock().expect("game calls mutex poisoned"), vec![Some(42), None]);
 }
 
+/// A host hands over the device key it announced to contacts before the core
+/// kept one. The core adopts it before the local session activates, so the
+/// first `Connected` already names it and the host reads it back.
+#[test]
+fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let config =
+		HostRuntimeConfig { device_encryption_key: Some([9; 32]), ..native_host_runtime_config() };
+	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+		.expect("host runtime config should be valid");
+
+	let first_connected_key =
+		callbacks.auth_states.lock().expect("auth state mutex poisoned").iter().find_map(
+			|state| match state {
+				AuthState::Connected(info) => Some(info.device_enc_public_key),
+				_ => None,
+			},
+		);
+	let handed_over_public_key =
+		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
+	assert_eq!(
+		(host.device_encryption_key().expect("device key should read"), first_connected_key),
+		(Some([9; 32]), Some(Some(handed_over_public_key)))
+	);
+}
+
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 	let mut config = native_host_runtime_config();
@@ -891,9 +918,10 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 			public_key: [7; 32],
 			identity_account_id: None,
 			chat_public_key: None,
-			device_enc_public_key: None,
+			peer_device_enc_public_key: None,
 			peer_statement_account_id: None,
 			device_statement_account_id: None,
+			device_enc_public_key: None,
 			lite_username: Some("alice".to_string()),
 			full_username: None,
 		},
@@ -908,9 +936,10 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
 				public_key: [7; 32],
 				identity_account_id: None,
 				chat_public_key: None,
-				device_enc_public_key: None,
+				peer_device_enc_public_key: None,
 				peer_statement_account_id: None,
 				device_statement_account_id: None,
+				device_enc_public_key: None,
 				lite_username: Some("alice".to_string()),
 				full_username: None,
 			})),

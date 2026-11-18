@@ -239,7 +239,7 @@ impl WalletAccountHolder {
 				identity_account_id: Some(identity_account_id),
 				identity_chat_private_key: Some(identity_chat_private_key),
 				// A local session has no answering remote device to address.
-				device_enc_public_key: None,
+				peer_device_enc_public_key: None,
 				lite_username,
 				full_username: None,
 			},

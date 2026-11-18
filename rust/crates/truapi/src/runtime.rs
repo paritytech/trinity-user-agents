@@ -363,6 +363,10 @@ pub trait ProductRuntimeAdmin: truapi::api::TrUApi {
 		product_id: &ProductId,
 		timeout: Duration,
 	) -> Result<Option<[u8; 32]>, AuthorityError>;
+
+	/// This device's X25519 encryption secret, as the connection's account
+	/// holder keeps it.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError>;
 }
 
 #[async_trait::async_trait]
@@ -391,6 +395,10 @@ impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
 		timeout: Duration,
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
 		self.accounts.product_subtree_public_key_within(product_id, timeout).await
+	}
+
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.accounts.device_encryption_secret().await
 	}
 }
 
@@ -1127,17 +1135,23 @@ pub(crate) fn forget_chain_failures() {
 	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }
 
-/// Host-UI projection of an active session for `AuthState::Connected`.
-fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
+/// Host-UI projection of an active session for `AuthState::Connected`, with
+/// `device_encryption_secret` as the session's account holder serves it.
+fn connected_session_ui_info(
+	session: &SessionInfo,
+	device_encryption_secret: Option<[u8; 32]>,
+) -> SessionUiInfo {
 	SessionUiInfo {
 		public_key: session.public_key,
 		identity_account_id: session.identity_account_id,
 		chat_public_key: session
 			.identity_chat_private_key
 			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
-		device_enc_public_key: session.device_enc_public_key,
+		peer_device_enc_public_key: session.peer_device_enc_public_key,
 		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
 		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
+		device_enc_public_key: device_encryption_secret
+			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
 		lite_username: session.lite_username.clone(),
 		full_username: session.full_username.clone(),
 	}

@@ -784,14 +784,15 @@ export interface SessionUiInfo {
   /**
    * X25519 public key of the wallet device that answered pairing. Hosts
    * running their own encrypted device-sync channel key it against this.
+   * ``undefined`` on a signing host, which has no paired wallet device.
    */
-  deviceEncPublicKey?: Bytes32;
+  peerDeviceEncPublicKey?: Bytes32;
 
   /**
    * Statement-store account id the paired wallet signs every session-channel
    * statement with. Whether it is scoped to the wallet device or to the
    * wallet identity is the wallet's choice, so hosts must not treat it as a
-   * device discriminator; use `Self::device_enc_public_key` for that.
+   * device discriminator; use `Self::peer_device_enc_public_key` for that.
    */
   peerStatementAccountId?: Bytes32;
 
@@ -802,6 +803,16 @@ export interface SessionUiInfo {
    * login. Secret at `CoreAdmin::get_device_statement_key`.
    */
   deviceStatementAccountId?: Bytes32;
+
+  /**
+   * X25519 public key of this device, which the user's other devices and
+   * contacts encrypt to. A signing host's is its install-wide key; a pairing
+   * host's is the key it advertised next to
+   * `Self::device_statement_account_id`, which the wallet registered and
+   * announces, rotated per login. Secret at
+   * `CoreAdmin::get_device_encryption_key`.
+   */
+  deviceEncPublicKey?: Bytes32;
 
   /**
    * Short username from the dotNS identity record on Asset Hub.
@@ -1488,9 +1499,10 @@ export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
       publicKey: Bytes32,
       identityAccountId: S.Option(Bytes32),
       chatPublicKey: S.Option(Bytes32),
-      deviceEncPublicKey: S.Option(Bytes32),
+      peerDeviceEncPublicKey: S.Option(Bytes32),
       peerStatementAccountId: S.Option(Bytes32),
       deviceStatementAccountId: S.Option(Bytes32),
+      deviceEncPublicKey: S.Option(Bytes32),
       liteUsername: S.Option(S.str),
       fullUsername: S.Option(S.str),
     }) as S.Codec<SessionUiInfo>,
@@ -1862,13 +1874,20 @@ export interface CoreAdmin {
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
 
   /**
-   * Read this device's X25519 encryption secret, for hosts that run device
-   * sync against the peer's `SessionUiInfo::device_enc_public_key`.
+   * Read this device's X25519 encryption secret, for hosts that encrypt
+   * their own chat and device-sync traffic.
    *
-   * Generated and persisted on first read, so the returned key is stable for
-   * the install and matches the public key peers were told to address.
+   * The key behind `SessionUiInfo::device_enc_public_key`: decrypting with
+   * anything else misses what contacts send. The account holder decides
+   * which key that is. A signing host serves its install-wide key,
+   * generated and persisted on first read. A pairing host serves the key
+   * the wallet registered for it at pairing, ``undefined`` before pairing and
+   * rotated per login like `Self::get_device_statement_key`.
+   *
+   * Deliberately not on `SessionUiInfo`, for the reason given on
+   * `Self::get_session_chat_identity_key`.
    */
-  getDeviceEncryptionKey(): Promise<Bytes32>;
+  getDeviceEncryptionKey(): Promise<Bytes32 | undefined>;
 
   /**
    * Read `product_id`'s hard-subtree public key, so a host can name the

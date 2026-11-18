@@ -1294,6 +1294,16 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.activateLocalSession(secret, liteUsername)
     }
 
+    /**
+     * This device's 32-byte X25519 encryption secret, the key behind
+     * `SessionUiInfo.deviceEncPublicKey` that the host's own chat and device
+     * sync encrypt with. Generated and persisted on first read unless
+     * `HostRuntimeConfig.deviceEncryptionKey` handed one over, so it is always
+     * present on this host.
+     */
+    @Throws(HostRejection::class)
+    fun deviceEncryptionKey(): ByteArray? = inner.deviceEncryptionKey()
+
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {
         inner.notifyChainResponse(connectionId, json)

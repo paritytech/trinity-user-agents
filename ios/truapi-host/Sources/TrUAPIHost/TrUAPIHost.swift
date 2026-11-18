@@ -1235,6 +1235,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
+    /// This device's 32-byte X25519 encryption secret, the key behind
+    /// `SessionUiInfo.deviceEncPublicKey` that the host's own chat and device
+    /// sync encrypt with. Generated and persisted on first read unless
+    /// `HostRuntimeConfig.deviceEncryptionKey` handed one over, so it is always
+    /// present on this host.
+    public func deviceEncryptionKey() throws -> Data? {
+        try inner.deviceEncryptionKey()
+    }
+
     /// Bind one peer to the wallet matching the transport's public keys.
     public func openSsoService(
         ownStatementAccountId: Data,

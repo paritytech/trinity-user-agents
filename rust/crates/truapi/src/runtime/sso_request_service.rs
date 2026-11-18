@@ -259,6 +259,12 @@ impl SsoRequestService {
 		self.session_state.current().as_ref().map(authority_session)
 	}
 
+	/// This device's X25519 encryption secret: the key its pairing proposal
+	/// advertised, which the wallet registered. `None` before pairing.
+	pub fn device_encryption_secret(&self) -> Option<[u8; 32]> {
+		Some(self.session_state.current()?.sso?.enc_secret)
+	}
+
 	/// Start the disconnect monitor when a session is already active.
 	#[cfg(test)]
 	pub fn start_remote_monitor_for_current_session(&self) {
@@ -671,7 +677,8 @@ impl SsoRequestService {
 		}
 		channel::start_disconnect_monitor(self, &session);
 		vrf::prefetch(&self.spawner);
-		self.auth_state.connected(&connected_session_ui_info(&session));
+		self.auth_state
+			.connected(&connected_session_ui_info(&session, self.device_encryption_secret()));
 		true
 	}
 
@@ -728,7 +735,8 @@ impl SsoRequestService {
 				return self.current_session();
 			}
 		}
-		self.auth_state.connected(&connected_session_ui_info(&resolved));
+		self.auth_state
+			.connected(&connected_session_ui_info(&resolved, self.device_encryption_secret()));
 		if let Err(err) = self
 			.platform
 			.write_core_storage(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
@@ -756,7 +764,8 @@ impl HostSession for SsoRequestService {
 	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
 		let _ = product;
 		if let Some(session) = self.session_state.current() {
-			self.auth_state.connected(&connected_session_ui_info(&session));
+			self.auth_state
+				.connected(&connected_session_ui_info(&session, self.device_encryption_secret()));
 			return Ok(api::HostRequestLoginResponse::AlreadyConnected);
 		}
 

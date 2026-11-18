@@ -246,7 +246,13 @@ impl HostSession for SigningHost {
 		_product: &ProductContext,
 	) -> Result<latest::HostRequestLoginResponse, CallError<latest::HostRequestLoginError>> {
 		if let Some(session) = self.wallet.session_state().current() {
-			self.auth_state.connected(&connected_session_ui_info(&session));
+			let device_encryption_secret = self
+				.wallet
+				.device_encryption_secret()
+				.await
+				.map_err(|error| CallError::HostFailure { reason: error.to_string() })?;
+			self.auth_state
+				.connected(&connected_session_ui_info(&session, device_encryption_secret));
 			Ok(latest::HostRequestLoginResponse::AlreadyConnected)
 		} else {
 			// Wallet unlock and session activation are platform-owned.

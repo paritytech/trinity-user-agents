@@ -633,6 +633,18 @@ impl RuntimeServices {
 		.await
 	}
 
+	/// Make `secret` this device's X25519 encryption secret, replacing the
+	/// stored one, for a host that announced a key of its own before the core
+	/// kept one. Peers addressing that key stay reachable.
+	pub async fn adopt_device_encryption_secret(&self, secret: [u8; 32]) -> Result<(), String> {
+		let _guard = self.device_encryption_key.lock().await;
+		crate::host_logic::device_key::store_device_encryption_secret(
+			self.platform.as_ref(),
+			secret,
+		)
+		.await
+	}
+
 	/// Allocate the next per-product-runtime id, used to scope chain follow
 	/// operation ids within the shared host runtime.
 	pub fn next_core_instance(&self) -> u64 {
