@@ -4,20 +4,25 @@ use core::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use futures::executor::block_on;
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, Encode};
 use subxt::{Metadata, utils::H256};
 
 use super::{
-	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
+	Asset, ChainConfig, ChainParams, CoinSecret, Exponent, PrivacyPolicy, PurseId, Snapshot,
+	chain::{AliasState, ChainCoin, CoinageChain, Emptying, FreeTokenLimits, RingPlace, RingPosition},
+	plugins::{PersonhoodSource, RegistryWriter, Seed},
 	ledger::{
 		self, AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation,
 		observe, snapshot,
 	},
-	operation::OpKey,
+	operation::{self, OpKey, OpKind},
 	params::{InstanceRecord, validate},
 	registration::{Admission, RegisterError, Rows, coinage_domain, register, registry_domain},
 };
 use crate::{
+	chain::{HashAndNumber, Heads, MortalExtrinsic, StorageWatchError},
+	chain_runtime::RuntimeFailure,
+	runtime::statement_allowance::{PersonhoodSigner, ring::RingParams},
 	durable::{
 		DeferredDurableTx, DurableRegistry, DurableRequest, DurableTxEngine, DurableTxEntry, DurableTxId,
 		PolicyError, PolicyParams, Preparation, RegistrationError, SubmissionPolicy, Unobservable,
@@ -119,6 +124,151 @@ pub fn register_rows(
 /// The time tests classify at, in Unix seconds.
 pub const NOW: u64 = 1_000_000;
 
+/// The recovery phrase entropy the plug-in and observation tests derive
+/// keys from.
+pub const ENTROPY: [u8; 16] = [3; 16];
+
+/// A seed that always gives [`ENTROPY`].
+pub struct FixedSeed;
+
+impl Seed for FixedSeed {
+	fn entropy(&self) -> Option<Vec<u8>> {
+		Some(ENTROPY.to_vec())
+	}
+}
+
+/// No person, so no unload is built and no token checked.
+pub struct NoPerson;
+
+#[async_trait::async_trait]
+impl PersonhoodSource for NoPerson {
+	async fn person(&self) -> Option<(Arc<dyn PersonhoodSigner>, RingParams, u32)> {
+		None
+	}
+}
+
+/// A chain whose coins and ring places a test sets, the same at both heads;
+/// every read fails while `failing` is set.
+#[derive(Default)]
+pub struct FakeChain {
+	/// The coin at each account.
+	pub coins: parking_lot::Mutex<HashMap<[u8; 32], ChainCoin>>,
+	/// The exponent and ring place of each member key in a ring.
+	pub places: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPlace)>>,
+	/// The exponent and position of each member key in no ring: onboarding
+	/// or suspended.
+	pub unplaced: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPosition)>>,
+	/// The state of each alias that has one.
+	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
+	/// The unloaded count of each ring, by exponent and ring; a ring with
+	/// none listed reads as a runtime that keeps no count.
+	pub unloaded: parking_lot::Mutex<HashMap<(i8, u32), u32>>,
+	/// Every read fails.
+	pub failing: core::sync::atomic::AtomicBool,
+	/// What each account holds of the external asset; none for the rest.
+	pub funds: parking_lot::Mutex<HashMap<[u8; 32], u128>>,
+	/// The transaction that emptied each account, and the block it is in.
+	pub emptied: parking_lot::Mutex<HashMap<[u8; 32], Emptying>>,
+	/// The finalized height, when a test moves it from block 10.
+	pub finalized: parking_lot::Mutex<Option<u64>>,
+	/// The free unload tokens of a period, when a test sets them; 20 for
+	/// both collections otherwise.
+	pub free_tokens: parking_lot::Mutex<Option<FreeTokenLimits>>,
+}
+
+impl FakeChain {
+	fn check(&self) -> Result<(), StorageWatchError> {
+		if self.failing.load(core::sync::atomic::Ordering::SeqCst) {
+			let failure = RuntimeFailure::host_failure("fake_chain", "the test fails every read");
+			return Err(StorageWatchError::Chain(failure));
+		}
+		Ok(())
+	}
+}
+
+#[async_trait::async_trait]
+impl CoinageChain for FakeChain {
+	async fn heads(&self) -> Result<Heads, StorageWatchError> {
+		let number = self.finalized.lock().unwrap_or(10);
+		let block = HashAndNumber { hash: H256([1; 32]), number };
+		Ok(Heads { finalized: block, best: block })
+	}
+
+	async fn coins_at(&self, _: H256, accounts: &[[u8; 32]]) -> Result<Vec<Option<ChainCoin>>, StorageWatchError> {
+		self.check()?;
+		let coins = self.coins.lock();
+		Ok(accounts.iter().map(|account| coins.get(account).copied()).collect())
+	}
+
+	async fn members_at(&self, _: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError> {
+		self.check()?;
+		let (places, unplaced) = (self.places.lock(), self.unplaced.lock());
+		Ok(members
+			.iter()
+			.map(|member| {
+				let exponent = places.get(member).map(|(exponent, _)| *exponent);
+				exponent.or_else(|| unplaced.get(member).map(|(exponent, _)| *exponent)).map(|exponent| (0, exponent))
+			})
+			.collect())
+	}
+
+	async fn places_at(&self, _: H256, _: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
+		self.check()?;
+		let (places, unplaced) = (self.places.lock(), self.unplaced.lock());
+		Ok(members
+			.iter()
+			.map(|member| {
+				let included = places.get(member).map(|(_, place)| RingPosition::Included(*place));
+				included.or_else(|| unplaced.get(member).map(|(_, position)| *position))
+			})
+			.collect())
+	}
+
+	async fn aliases_at(&self, _: H256, _: i8, _: u32, aliases: &[[u8; 32]]) -> Result<Vec<Option<AliasState>>, StorageWatchError> {
+		self.check()?;
+		let states = self.aliases.lock();
+		Ok(aliases.iter().map(|alias| states.get(alias).copied()).collect())
+	}
+
+	async fn ring_members_at(&self, _: H256, _: i8, _: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {
+		Ok(Vec::new())
+	}
+
+	async fn unloaded_at(&self, _: H256, exponent: i8, ring: u32) -> Result<Option<u32>, StorageWatchError> {
+		self.check()?;
+		Ok(self.unloaded.lock().get(&(exponent, ring)).copied())
+	}
+
+	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
+		Ok(vec![false; tokens.len()])
+	}
+
+	async fn free_token_limits_at(&self, _: HashAndNumber) -> Result<FreeTokenLimits, StorageWatchError> {
+		self.check()?;
+		Ok(self.free_tokens.lock().unwrap_or(FreeTokenLimits { people: 20, lite_people: 20 }))
+	}
+
+	async fn nonce_at(&self, _: H256, _: [u8; 32]) -> Result<u32, StorageWatchError> {
+		Ok(0)
+	}
+
+	async fn funds_at(&self, _: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		self.check()?;
+		Ok(self.funds.lock().get(&account).copied().unwrap_or(0))
+	}
+
+	async fn emptied_by(
+		&self,
+		account: [u8; 32],
+		since: u64,
+		at: HashAndNumber,
+	) -> Result<Option<Emptying>, StorageWatchError> {
+		self.check()?;
+		let emptied = self.emptied.lock().get(&account).copied();
+		Ok(emptied.filter(|emptying| since < emptying.block && emptying.block <= at.number))
+	}
+}
+
 /// A store with a minted installation, and helpers to hold assets in it.
 pub struct TestWallet {
 	/// The store.
@@ -126,9 +276,18 @@ pub struct TestWallet {
 }
 
 impl TestWallet {
-	/// A wallet with the given policy, whose chain allows 20 free unload
-	/// tokens a period.
+	/// A wallet with the given policy, whose installation's registration
+	/// has landed, so the layer builds its transactions (G3 invariant 4),
+	/// and whose chain allows 20 free unload tokens a period.
 	pub fn new(policy: PrivacyPolicy) -> Self {
+		let wallet = Self::unregistered(policy);
+		wallet.register_installation();
+		wallet
+	}
+
+	/// A wallet with the given policy, whose installation is not
+	/// registered yet.
+	pub fn unregistered(policy: PrivacyPolicy) -> Self {
 		let db = crate::store::open_memory_core_db();
 		block_on(db.write(move |tx| {
 			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.expect("a fresh store");
@@ -136,6 +295,20 @@ impl TestWallet {
 		}))
 		.expect("the installation is minted");
 		Self { db }
+	}
+
+	/// Records the installation's registration as finalized, as G3's start
+	/// leaves it once the append has landed.
+	pub fn register_installation(&self) {
+		let key = OpKey::own(block_on(self.db.write(ledger::next_operation_id)).expect("an operation id"));
+		let begun = key.clone();
+		let arguments = InstallationId([9; 32]).encode();
+		block_on(self.db.write(move |tx| operation::begin(tx, &begun, OpKind::RegisterInstallation, &arguments)))
+			.expect("the store is writable")
+			.expect("a fresh key");
+		let engine = unbuilt_engine(self.db.clone());
+		let records = register_rows(&engine, &key, Admission::Ordinary, vec![Rows::default()]).expect("registered");
+		set_status(&self.db, records[0], "FINALIZED_SUCCESS", None);
 	}
 
 	/// An asset allocated in `purse`, observed as `read` a little before
@@ -208,6 +381,17 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 		Ok(())
 	}))
 	.expect("the status is written");
+}
+
+/// A registry writer that cannot build an append yet, as before the
+/// `//datastore` account can pay for one.
+pub struct NoRegistryWriter;
+
+#[async_trait::async_trait]
+impl RegistryWriter for NoRegistryWriter {
+	async fn append(&self, _: &CoinSecret, _: &[u8]) -> Result<MortalExtrinsic, String> {
+		Err("this test builds no registry append".into())
+	}
 }
 
 /// Stores `allowance` as the free unload tokens of one period, read at
