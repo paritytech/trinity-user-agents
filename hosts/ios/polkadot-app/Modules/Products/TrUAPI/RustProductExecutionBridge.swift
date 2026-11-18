@@ -125,6 +125,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 {
         try await dependencies.notificationScheduler.schedule(
             productId: dependencies.productId,
+            title: request.title,
             request: request.toScheduledNotificationRequest()
         )
     }
