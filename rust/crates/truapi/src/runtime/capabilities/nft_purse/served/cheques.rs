@@ -73,21 +73,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 
-	/// The cheques the calling product created on this host, oldest first.
-	/// The user is not asked, since a product only ever sees its own cheques.
-	pub async fn list_nft_cheques(
-		&self,
-	) -> Result<
-		latest::HostNftPurseListChequesResponse,
-		CallError<latest::HostNftPurseListChequesError>,
-	> {
-		self.require_session()?;
-		let purses = self.connection.nft_purses()?;
-		let creator = self.connection.product_id();
-		let cheques = purses.list_cheques(creator).await.map_err(host_failure)?;
-		Ok(latest::HostNftPurseListChequesResponse { cheques })
-	}
-
 	/// The key products publish for `Static` cheques. Every product gets the
 	/// same key, which identifies the user across products, so it is
 	/// disclosed only with the consent `getUserId` asks for.

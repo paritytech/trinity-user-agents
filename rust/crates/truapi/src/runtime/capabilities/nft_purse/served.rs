@@ -121,7 +121,15 @@ impl<H: AccountHolder> NftPurse for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: HostNftPurseListChequesRequest,
 	) -> Result<HostNftPurseListChequesResponse, CallError<HostNftPurseListChequesError>> {
-		version(request).exec(|_| self.list_nft_cheques()).await
+		version(request)
+			.exec(|_| async move {
+				self.require_session()?;
+				let purses = self.connection.nft_purses()?;
+				let creator = self.connection.product_id();
+				let cheques = purses.list_cheques(creator).await.map_err(host_failure)?;
+				Ok(latest::HostNftPurseListChequesResponse { cheques })
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.refund"))]

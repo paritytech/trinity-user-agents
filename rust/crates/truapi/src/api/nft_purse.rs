@@ -242,26 +242,6 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// List the cheques the calling product created on this host, oldest
-	/// first, each exactly as `createCheque` returned it, so a product that
-	/// lost a cheque can deliver it again or revoke it. A cheque stays listed
-	/// whatever happened to it since. Another product's cheques are never
-	/// listed.
-	///
-	/// ```ts
-	/// const result = await truapi.nftPurse.listCheques({});
-	/// assert(result.isOk(), "listCheques failed:", result);
-	/// console.log("cheques:", result.value.cheques);
-	/// ```
-	#[wire(id = 15)]
-	async fn list_cheques(
-		&self,
-		_cx: &CallContext,
-		_request: HostNftPurseListChequesRequest,
-	) -> Result<HostNftPurseListChequesResponse, CallError<HostNftPurseListChequesError>> {
-		Err(CallError::unavailable())
-	}
-
 	/// Deposit a received cheque into a purse. Returns once the deposit is
 	/// registered under the cheque id.
 	///
@@ -418,5 +398,25 @@ pub trait NftPurse: Send + Sync {
 		CallError<HostNftPurseListenPaymentInboxError>,
 	> {
 		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// List the cheques the calling product created on this host, oldest
+	/// first, each exactly as `createCheque` returned it, so a product that
+	/// lost a cheque can deliver it again or revoke it. A cheque stays listed
+	/// whatever happened to it since. Another product's cheques are never
+	/// listed.
+	///
+	/// ```ts
+	/// const result = await truapi.nftPurse.listCheques({});
+	/// assert(result.isOk(), "listCheques failed:", result);
+	/// console.log("cheques:", result.value.cheques);
+	/// ```
+	#[wire(id = 15)]
+	async fn list_cheques(
+		&self,
+		_cx: &CallContext,
+		_request: HostNftPurseListChequesRequest,
+	) -> Result<HostNftPurseListChequesResponse, CallError<HostNftPurseListChequesError>> {
+		Err(CallError::unavailable())
 	}
 }
