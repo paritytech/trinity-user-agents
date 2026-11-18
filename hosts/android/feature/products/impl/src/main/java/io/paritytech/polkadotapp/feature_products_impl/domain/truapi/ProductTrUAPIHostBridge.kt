@@ -221,6 +221,13 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
                 is RemotePermission.NftPurseRead ->
                     hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
+                RemotePermission.CoinPayment -> hostApiInteractor.requestCoinPaymentDecision(callingProductId)
+                is RemotePermission.CoinPaymentPurse ->
+                    hostApiInteractor.requestCoinPaymentPurseDecision(
+                        callingProductId,
+                        request.purse.coinPaymentPurseOrMain(),
+                        request.action,
+                    )
                 else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
                 .getOrElse { throw it }
@@ -398,9 +405,10 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
 }
 
 /**
- * The request this host's remote-access prompt shows for `this`. Balance access
- * and NFT purse reads have their own prompts (`ProductPermission.BalanceAccess`,
- * `ProductPermission.NftPurseRead`) and never reach here.
+ * The request this host's remote-access prompt shows for `this`. Balance access,
+ * NFT purse reads and coinage have their own prompts (`ProductPermission.BalanceAccess`,
+ * `ProductPermission.NftPurseRead`, `ProductPermission.CoinPayment`,
+ * `ProductPermission.CoinPaymentPurse`) and never reach here.
  */
 private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
@@ -410,6 +418,8 @@ private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = 
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
     RemotePermission.BalanceAccess -> error("balance access has its own prompt")
     is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")
+    RemotePermission.CoinPayment -> error("coinage has its own prompt")
+    is RemotePermission.CoinPaymentPurse -> error("coinage purses have their own prompt")
 }
 
 /** The owning product, or `null` for purses of the user's own account. */

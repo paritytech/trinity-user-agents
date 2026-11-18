@@ -99,7 +99,21 @@ fun UserConfirmationReview.toConfirmation(callingProductId: ProductId?): TrUAPIC
             itemCount = v1.itemCount,
             destination = v1.destination.toDomain(),
         )
+
+    is UserConfirmationReview.CoinPaymentSpend ->
+        TrUAPIConfirmation.CoinPaymentSpend(
+            requesterProductId = v1.callingProductId,
+            fromPurse = v1.fromPurse.coinPaymentPurseOrMain(),
+            amount = v1.amount,
+            takesHeldBackValue = v1.takesHeldBackValue,
+        )
 }
+
+/** The core's id of the main coinage purse, which no other purse can take. */
+private const val MAIN_COIN_PAYMENT_PURSE: UInt = UInt.MAX_VALUE
+
+/** The core's coinage purse id as the app models it: null for the main purse. */
+internal fun UInt.coinPaymentPurseOrMain(): UInt? = takeIf { it != MAIN_COIN_PAYMENT_PURSE }
 
 @OptIn(ExperimentalStdlibApi::class)
 private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrain.Destination = when (this) {

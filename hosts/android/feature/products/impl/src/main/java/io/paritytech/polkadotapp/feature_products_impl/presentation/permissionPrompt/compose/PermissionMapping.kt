@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose
 
+import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -21,6 +22,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Share
 import io.paritytech.polkadotapp.design.components.icon.vectors.WiFi
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
+import uniffi.truapi.CoinPaymentPurseAction
 import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -31,6 +33,8 @@ internal val ProductPermission.icon: ImageVector
         is ProductPermission.BalanceAccess -> NovaIcons.Dollar
         is ProductPermission.UserIdentityAccess -> NovaIcons.PeopleOutline
         is ProductPermission.NftPurseRead -> NovaIcons.Dollar
+        is ProductPermission.CoinPayment -> NovaIcons.Dollar
+        is ProductPermission.CoinPaymentPurse -> NovaIcons.Dollar
         is ProductPermission.RemotePermission.NetworkAccess -> NovaIcons.WiFi
         ProductPermission.RemotePermission.WebRtcAccess -> NovaIcons.CallFilled
         ProductPermission.RemotePermission.ChainSubmitAccess -> NovaIcons.Send
@@ -59,6 +63,8 @@ internal fun ProductPermission.title(productId: ProductId): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_title, productId)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_title, productId)
         is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_title, productId, ownerName())
+        is ProductPermission.CoinPayment -> stringResource(RCommon.string.product_permission_coin_payment_title, productId)
+        is ProductPermission.CoinPaymentPurse -> stringResource(action.titleRes(), productId, purseName())
         is ProductPermission.DeviceCapability -> capability.title(productId)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_title, productId, domain)
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_title, productId)
@@ -93,6 +99,8 @@ internal fun ProductPermission.subtitle(): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_subtitle, manageLater)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_subtitle, manageLater)
         is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_subtitle, manageLater)
+        is ProductPermission.CoinPayment -> stringResource(RCommon.string.product_permission_coin_payment_subtitle, manageLater)
+        is ProductPermission.CoinPaymentPurse -> stringResource(RCommon.string.product_permission_coin_payment_purse_subtitle, manageLater)
         is ProductPermission.DeviceCapability -> capability.subtitle(manageLater)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_subtitle, manageLater)
@@ -134,3 +142,16 @@ internal fun ProductPermission.RemotePermission.shortLabel(): String {
 @Composable
 internal fun ProductPermission.NftPurseRead.ownerName(): String =
     ownerProductId?.value ?: stringResource(RCommon.string.product_permission_nft_purse_read_owner_account)
+
+@StringRes
+private fun CoinPaymentPurseAction.titleRes(): Int = when (this) {
+    CoinPaymentPurseAction.QUERY -> RCommon.string.product_permission_coin_payment_purse_query_title
+    CoinPaymentPurseAction.RECEIVE -> RCommon.string.product_permission_coin_payment_purse_receive_title
+    CoinPaymentPurseAction.SPEND -> RCommon.string.product_permission_coin_payment_purse_spend_title
+}
+
+/** Which coinage purse a purse permission covers, as the user reads it. */
+@Composable
+internal fun ProductPermission.CoinPaymentPurse.purseName(): String =
+    purse?.let { stringResource(RCommon.string.product_permission_coin_payment_purse_name, it.toString()) }
+        ?: stringResource(RCommon.string.product_permission_coin_payment_purse_main)

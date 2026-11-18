@@ -83,6 +83,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import timber.log.Timber
+import uniffi.truapi.CoinPaymentPurseAction
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
@@ -324,6 +325,18 @@ class HostApiInteractor @Inject constructor(
         ownerProductId: ProductId?,
     ): Result<PermissionDecision> = runCatching {
         permissionRequester.prompt(callingProductId, ProductPermission.NftPurseRead(ownerProductId))
+    }
+
+    suspend fun requestCoinPaymentDecision(callingProductId: ProductId): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.CoinPayment)
+    }
+
+    suspend fun requestCoinPaymentPurseDecision(
+        callingProductId: ProductId,
+        purse: UInt?,
+        action: CoinPaymentPurseAction,
+    ): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.CoinPaymentPurse(purse, action))
     }
 
     suspend fun allowWebRtcAccess(callingProductId: ProductId): Result<Boolean> {
