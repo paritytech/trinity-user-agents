@@ -35,7 +35,8 @@ func makeChatBridgeDependencies(
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
         themeManager: MockThemeManager(),
-        logger: Logger.shared
+        logger: Logger.shared,
+        coreEventSink: nil
     )
 }
 

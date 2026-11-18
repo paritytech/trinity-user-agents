@@ -183,6 +183,8 @@ An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `C
 
 `HostBridge` defaults the callback to nothing on both hosts, so a host carries structured traffic once it says it wants it.
 
+Both apps implement it. Each writes the event to the device log at debug and hands a marker the table exports to its log sink at the table's severity, as a Sentry log whose body is the marker, tagged `truapi.core`, with each attribute beside the tag. On Android that sink is `CoreEventSink`, bound to `SentryCoreEventSink`; on iOS it is `HostLogSink`, which takes the attributes. A marker the table keeps local or does not list never reaches the sink.
+
 ## Trade-offs
 
 The cost is that every new marker has to be registered, which the author cannot skip because an unregistered target does not compile. That is deliberate: it is the same friction that stops a marker shipping off-device without anyone saying what it carries.

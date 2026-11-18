@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import os
 import AsyncExtensions
 import BulletinChain
@@ -145,7 +146,8 @@ final class ProductPocketService: @unchecked Sendable {
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
                         themeManager: themeManager,
-                        logger: logger
+                        logger: logger,
+                        coreEventSink: IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN)
                     )
                 },
                 contentLoader: flowState.contentLoader,

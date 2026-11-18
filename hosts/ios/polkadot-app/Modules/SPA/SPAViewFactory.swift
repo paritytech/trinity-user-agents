@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Keystore_iOS
 import Operation_iOS
 import Products
@@ -247,7 +248,8 @@ extension SPAViewFactory {
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
             hostProvider: hostProvider,
             themeManager: ThemeManager.shared,
-            logger: Logger.shared
+            logger: Logger.shared,
+            coreEventSink: IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN)
         )
     }
 }
