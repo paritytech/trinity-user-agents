@@ -49,7 +49,10 @@ use truapi::{
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod legacy_asset_hub;
 mod scripted_chain;
+
+pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
 pub use scripted_chain::{
 	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
@@ -67,6 +70,17 @@ pub fn wait_until(mut condition: impl FnMut() -> bool, message: &str) {
 	while !condition() {
 		assert!(std::time::Instant::now() < deadline, "{message}");
 		std::thread::sleep(Duration::from_millis(5));
+	}
+}
+
+/// The next item of `stream`, failing the test rather than hanging when none
+/// comes within two seconds.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
+	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
+		futures::future::Either::Left((item, _)) => item,
+		futures::future::Either::Right(_) => panic!("nothing came"),
 	}
 }
 
@@ -405,6 +419,28 @@ pub fn test_descriptor_chain(
 		chain["paraId"] = para_id.into();
 	}
 	chain
+}
+
+/// The People chain the test stack is published on.
+pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
+
+/// The People chain the test stack is published on after a wipe. No test
+/// bundles a stack on it, so a copy that names it always changes the chain.
+pub const TEST_STACK_WIPED_PEOPLE: [u8; 32] = [0xa9; 32];
+
+/// The test stack's descriptor as published at `sequence` in `generation`,
+/// with People on `people`, Bulletin on `[0xbb; 32]` and Asset Hub on
+/// `[0xcc; 32]`. A wipe is a higher `sequence`, another `generation` and
+/// another `people`.
+pub fn published_test_descriptor(
+	sequence: u32,
+	generation: &str,
+	people: [u8; 32],
+) -> serde_json::Value {
+	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = generation.into();
+	descriptor
 }
 
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that

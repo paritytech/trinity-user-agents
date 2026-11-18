@@ -8044,10 +8044,14 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 			.err(),
 		));
 	});
-	let reason = "Asset Hub follow stopped before initialization";
+	let reason = r#"Asset Hub connection: legacy_connection: remote_chain_connect: Host { reason: "fixture serves no chain" }"#;
 	let lookup_failed = format!(
 		"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup failed \
 		 {{target=peopl.dot, reason={reason}}}"
+	);
+	let lookup_unopened = format!(
+		"truapi.tracing.warn truapi::dotns: the dotNS lookup could not open at a best Asset Hub \
+		 block; every grant behind it is refused {{reason={reason}}}"
 	);
 	let refusal =
 		manifest_refusal_line("manifest unavailable", &format!("dotNS lookup failed: {reason}"));
@@ -8062,7 +8066,14 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 					v01::HostAccountRingVrfSignError::NotAllowlisted
 				))),
 			)),
-			vec![lookup_failed.clone(), refusal.clone(), lookup_failed, refusal],
+			vec![
+				lookup_unopened.clone(),
+				lookup_failed.clone(),
+				refusal.clone(),
+				lookup_unopened,
+				lookup_failed,
+				refusal
+			],
 		)
 	);
 }
@@ -8405,6 +8416,28 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
 }
 
+/// A product connection that ends leaves the failures reported after it for
+/// the execution's next connection, as it leaves the user's taps.
+#[test]
+fn a_detached_connection_leaves_later_failures_for_the_next_one() {
+	let host = scanner_host_for(ExecutableKind::Worker, None);
+	let failures = &host.connection.renderer_failures;
+	let _first = failures.subscribe::<truapi::latest::GenericError>();
+	let failure = truapi::latest::HostRendererFailureSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+		node: 0,
+		material: None,
+		reason: truapi::latest::MaterialFailure::NotFound,
+	};
+
+	host.connection.detach_renderer();
+	failures.publish(failure.clone().into()).unwrap();
+	let mut second = failures.subscribe::<truapi::latest::GenericError>();
+
+	let delivered = crate::test_support::next(&mut second).expect("a failure").unwrap();
+	assert_eq!(delivered.into_latest(), failure);
+}
+
 #[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is
@@ -8586,8 +8619,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("provider offered");
+		}]);
 }
 
 /// A provider's worker connection, signed in.
@@ -9691,8 +9723,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9767,8 +9798,7 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("providers offered");
+		}]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9822,8 +9852,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9942,8 +9971,7 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("providers offered");
+		}]);
 
 	let rows = shown_when(&services, &intent, |rows| {
 		rows.iter()
@@ -10018,8 +10046,7 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10390,8 +10417,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 	services
-		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")])
-		.expect("providers offered");
+		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10463,8 +10489,7 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
-			])
-			.expect("providers offered");
+			]);
 		let intent = futures::executor::block_on(services.open_funding(
 			None,
 			new_intent(),
@@ -12508,8 +12533,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let second = futures::executor::block_on(before.open_funding(
 		None,
 		new_intent(),
@@ -12929,8 +12953,7 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),

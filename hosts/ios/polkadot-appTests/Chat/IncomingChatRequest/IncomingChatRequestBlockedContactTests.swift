@@ -23,7 +23,7 @@ struct IncomingChatRequestBlockedContactTests {
             requestId: "outgoing",
             contactAccountId: peerAccountId,
             timestamp: 1,
-            status: .outgoing,
+            status: .outgoing(.pending),
             message: nil
         )
         let context = try await makeContext(
@@ -60,7 +60,8 @@ private extension IncomingChatRequestBlockedContactTests {
                 storageFacade: UserDataStorageTestFacade(),
                 logger: MockLogger()
             ),
-            remoteContactResolver: MockRemoteContactResolver(result: .success(nil))
+            remoteContactResolver: MockRemoteContactResolver(result: .success(nil)),
+            chatRemovalCleanup: SpyChatRemovalCleanupService()
         )
 
         await context.update(
