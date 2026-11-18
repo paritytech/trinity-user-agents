@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_statement_store_impl.data
 
 import com.google.gson.Gson
 import io.novasama.substrate_sdk_android.extensions.fromHex
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.wsrpc.SocketService
 import io.novasama.substrate_sdk_android.wsrpc.executeAsync
@@ -80,7 +81,7 @@ class RealStatementStoreService @Inject constructor(
 
     private fun Statement.toRequest(): SubmitStatementRequest {
         val remote = toRemote()
-        val encoded = BinaryScale.encodeToByteArray(remote).toHexString()
+        val encoded = BinaryScale.encodeToByteArray(remote).toHexString(withPrefix = true)
         return SubmitStatementRequest(encoded)
     }
 
