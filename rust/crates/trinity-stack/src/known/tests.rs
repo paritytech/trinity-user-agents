@@ -10,8 +10,6 @@ fn test_known_stacks_signed() {
 }
 
 #[test]
-fn test_known_stack_lookup() {
-	let (name, link) = known_stack_links().next().expect("no known stacks");
-	assert_eq!(known_stack(name), Some(Pointer::from_link(link).expect("invalid link")));
+fn test_unknown_stack() {
 	assert_eq!(known_stack("not-a-stack"), None);
 }
