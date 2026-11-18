@@ -107,8 +107,9 @@ fn parachain_with_a_seeded_relay(parachain_spec: &'static str) -> EmbeddedChainP
 		.build()
 }
 
-/// A blob registered for a relay reaches it even when the relay is never
-/// connected directly, only brought up behind one of its parachains.
+/// A blob registered for a relay goes with the relay source a parachain's
+/// connect hands the light client, so a relay that is never connected
+/// directly, only brought up behind a parachain, still starts warm.
 #[cfg(feature = "smoldot")]
 #[test]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
@@ -116,9 +117,12 @@ fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 
 	let provider = parachain_with_a_seeded_relay(PARACHAIN_SPEC);
 
-	let _connection = futures::executor::block_on(provider.connect(PARACHAIN_GENESIS))
-		.expect("the parachain syncs through its relay");
+	let resolved = provider.resolve_seeded(PARACHAIN_GENESIS).expect("the relay is registered");
 
+	let Some((relay, ChainSource::LightClient { database_content, .. })) = resolved.relay else {
+		panic!("the parachain syncs through a light-client relay");
+	};
+	assert_eq!((relay, database_content.as_deref()), (RELAY_GENESIS, Some("relay-blob")));
 	assert!(!provider.has_database(RELAY_GENESIS), "the relay took its blob");
 }
 
@@ -455,4 +459,226 @@ fn later_registration_wins() {
 		panic!("expected an RpcNode source");
 	};
 	assert_eq!(*url, second);
+}
+
+/// A spec that could not be fetched leaves its chain unknown and the rest of
+/// the stack running, and the chain comes up on the same provider once the
+/// host has the spec.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_chain_without_its_spec_is_unknown_until_the_spec_is_added() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let stack = stack(STACK_ID, "one");
+	stack.add_light_spec(people, PEOPLE_SPEC.as_bytes()).expect("the spec matches");
+	let provider = EmbeddedChainProvider::builder().stack(stack).build();
+
+	let refusals =
+		[relay, people].map(|genesis| futures::executor::block_on(provider.connect(genesis)).err());
+	assert_eq!(
+		refusals,
+		[
+			Some(crate::ProviderError::UnknownGenesis { genesis: relay }),
+			Some(crate::ProviderError::UnknownRelay { relay }),
+		]
+	);
+
+	provider.add_light_spec(relay, RELAY_SPEC.as_bytes()).expect("the spec matches");
+	let _connection = futures::executor::block_on(provider.connect(people))
+		.expect("People syncs through the relay the descriptor names");
+	assert_eq!(provider.relay_count(), 1, "the relay came up behind People");
+	assert_eq!(provider.relay_of(people), Some(relay));
+}
+
+/// A spec arriving after the build is checked like one arriving before it.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_wrong_spec_added_after_the_build_is_refused() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let relay = genesis(RELAY_SPEC);
+	let provider = EmbeddedChainProvider::builder().stack(stack(STACK_ID, "one")).build();
+
+	let error = provider
+		.add_light_spec(relay, PEOPLE_SPEC.as_bytes())
+		.expect_err("People's spec is not the relay's");
+
+	assert_eq!(
+		error,
+		crate::ProviderError::LightSpec {
+			role: "Relay".to_owned(),
+			genesis: relay,
+			source: trinity_stack::Error::SpecDigest,
+		}
+	);
+	assert_eq!(
+		EmbeddedChainProvider::builder()
+			.build()
+			.add_light_spec(relay, RELAY_SPEC.as_bytes()),
+		Err(crate::ProviderError::NoStack),
+		"a provider without a stack has no descriptor to check a spec against"
+	);
+}
+
+/// A stack's provider answers only for its descriptor's chains, so a host
+/// that asked for one stack never syncs a bundled network instead.
+#[cfg(feature = "networks")]
+#[test]
+fn a_stack_provider_does_not_resolve_from_the_catalog() {
+	use crate::test_stack::{STACK_ID, synced_stack};
+
+	let catalog = paseo_next_v2();
+	let provider = EmbeddedChainProvider::builder()
+		.catalog()
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	let Err(error) = futures::executor::block_on(provider.connect(catalog.people)) else {
+		panic!("a chain outside the stack must not connect");
+	};
+	assert_eq!(error, crate::ProviderError::UnknownGenesis { genesis: catalog.people });
+	assert!(provider.relay_of(catalog.people).is_none());
+}
+
+/// A host waits on the relay `relay_of` names, so it must be the one a connect
+/// brings up: none for a chain registered as a remote node, whatever the stack
+/// says of it.
+#[cfg(all(feature = "ws", feature = "smoldot"))]
+#[test]
+fn a_registered_chain_has_only_the_relay_it_was_registered_with() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, synced_stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let url = url::Url::parse("ws://people.invalid").expect("static URL parses");
+
+	let from_stack = EmbeddedChainProvider::builder().stack(synced_stack(STACK_ID, "one")).build();
+	let registered = EmbeddedChainProvider::builder()
+		.chain(people, ChainSource::rpc_node(url))
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	assert_eq!([from_stack.relay_of(people), registered.relay_of(people)], [Some(relay), None]);
+}
+
+/// A registered chain wins as a relay too: a stack's parachain comes up
+/// behind a relay registered on the provider, and a registered parachain
+/// behind the stack's relay.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_relay_registered_or_from_the_stack_serves_a_parachain_from_the_other() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let people_from_stack = stack(STACK_ID, "one");
+	people_from_stack
+		.add_light_spec(people, PEOPLE_SPEC.as_bytes())
+		.expect("the spec matches");
+	let relay_from_stack = stack(STACK_ID, "one");
+	relay_from_stack
+		.add_light_spec(relay, RELAY_SPEC.as_bytes())
+		.expect("the spec matches");
+	let providers = [
+		EmbeddedChainProvider::builder()
+			.chain(relay, ChainSource::light_client(RELAY_SPEC).build())
+			.stack(people_from_stack)
+			.build(),
+		EmbeddedChainProvider::builder()
+			.parachain(people, ChainSource::light_client(PEOPLE_SPEC).build(), relay)
+			.stack(relay_from_stack)
+			.build(),
+	];
+
+	for provider in providers {
+		let _connection = futures::executor::block_on(provider.connect(people))
+			.expect("People syncs through the relay");
+		assert_eq!(provider.relay_count(), 1, "the relay came up behind People");
+	}
+}
+
+/// A parachain is unknown until its relay's spec is added, so no stored blob
+/// is read for a chain `connect` would refuse.
+#[cfg(feature = "smoldot")]
+#[test]
+fn load_database_refuses_a_stack_parachain_without_its_relays_spec() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let stack = stack(STACK_ID, "one");
+	stack.add_light_spec(people, PEOPLE_SPEC.as_bytes()).expect("the spec matches");
+	let provider = EmbeddedChainProvider::builder().stack(stack).build();
+
+	assert_eq!(
+		futures::executor::block_on(provider.load_database(people)),
+		Err(crate::ProviderError::UnknownRelay { relay })
+	);
+}
+
+/// A stack's provider never resolves from the catalog, so it has nothing to
+/// load for a catalog chain either, even when built with `catalog()`.
+#[cfg(feature = "networks")]
+#[test]
+fn load_database_refuses_a_catalog_chain_on_a_stack_provider() {
+	use crate::test_stack::{STACK_ID, synced_stack};
+
+	let catalog = paseo_next_v2();
+	let provider = EmbeddedChainProvider::builder()
+		.catalog()
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	assert_eq!(
+		futures::executor::block_on(provider.load_database(catalog.people)),
+		Err(crate::ProviderError::UnknownGenesis { genesis: catalog.people })
+	);
+}
+
+/// The store keys a blob by genesis hash, which a fork shares with its
+/// source, so a stack's provider neither reads nor writes it rather than
+/// start a fork from its source's state.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_stack_provider_refuses_its_store() {
+	use crate::test_stack::{RELAY_SPEC, STACK_ID, genesis, synced_stack};
+
+	let relay = genesis(RELAY_SPEC);
+	let store = std::sync::Arc::new(MemoryStorageClient::default());
+	store.stored.lock().expect("test store").insert(relay, "source-blob".to_owned());
+	let provider = EmbeddedChainProvider::builder()
+		.stack(synced_stack(STACK_ID, "one"))
+		.storage(store.clone())
+		.build();
+
+	assert_eq!(
+		[
+			futures::executor::block_on(provider.load_database(relay)),
+			futures::executor::block_on(provider.save_database(relay)),
+		],
+		[Err(crate::ProviderError::StackStorage), Err(crate::ProviderError::StackStorage)]
+	);
+	assert_eq!(store.loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+	assert!(!provider.has_storage(), "a host is not told it has a store it cannot use");
+}
+
+/// Only a chain the catalog answered for is logged under a bundled network:
+/// a stack chain with a bundled genesis hash, as a fork's has, is not.
+#[cfg(feature = "networks")]
+#[test]
+fn only_a_chain_resolved_from_the_catalog_names_its_bundled_network() {
+	use crate::test_stack::{ASSET_HUB_SPEC, STACK_ID, genesis, synced_stack};
+
+	let asset_hub = genesis(ASSET_HUB_SPEC);
+	let stack = synced_stack(STACK_ID, "one");
+	stack
+		.add_light_spec(asset_hub, ASSET_HUB_SPEC.as_bytes())
+		.expect("the spec matches");
+	let providers = [
+		EmbeddedChainProvider::builder().catalog().stack(stack).build(),
+		EmbeddedChainProvider::builder().catalog().build(),
+	];
+
+	assert_eq!(
+		providers.map(|provider| provider.resolve(asset_hub).expect("resolves").catalog_service),
+		[None, Some(("paseo-next-v2", "asset-hub"))]
+	);
 }

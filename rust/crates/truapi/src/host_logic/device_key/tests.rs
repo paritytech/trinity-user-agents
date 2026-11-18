@@ -38,3 +38,27 @@ fn a_secret_stored_with_no_stack_id_is_kept() {
 
 	assert_eq!(secret, Ok([7; 32]));
 }
+
+#[test]
+fn a_stored_secret_replaces_the_generated_one() {
+	let storage: Arc<dyn Platform> = Arc::new(StubPlatform::default());
+	futures::executor::block_on(read_or_create_device_encryption_secret(&test_storage(
+		storage.as_ref(),
+	)))
+	.unwrap();
+
+	futures::executor::block_on(store_device_encryption_secret(
+		&test_storage(storage.as_ref()),
+		[7; 32],
+	))
+	.unwrap();
+
+	// A host that announced a key of its own before the core kept one hands
+	// it over; reading back anything else strands the peers addressing it.
+	assert_eq!(
+		futures::executor::block_on(read_or_create_device_encryption_secret(&test_storage(
+			storage.as_ref(),
+		))),
+		Ok([7; 32])
+	);
+}

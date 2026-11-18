@@ -480,11 +480,17 @@ with `no allowance set for account`.
 | ---------------------------------------- | -------------------------------------- |
 | `SessionUiInfo.deviceStatementAccountId` | On every `AuthState.Connected`         |
 | `getDeviceStatementKey()`                | Runtime method, 64-byte sr25519 secret |
+| `SessionUiInfo.deviceEncPublicKey`       | On every `AuthState.Connected`         |
+| `getDeviceEncryptionKey()`               | Runtime method, 32-byte X25519 secret  |
 
 Peers are told to address that same account, so it is also what a host derives
-its own statement topics from. Both are `undefined` without an active session,
-and the account is rotated per login: read it from the current session rather
-than caching it across sign-ins.
+its own statement topics from. The wallet announces the account and the
+encryption public key together as this device, so contacts encrypt to that key:
+decrypt and encrypt with `getDeviceEncryptionKey()`, not a key of the host's
+own. All four are `undefined` without an active session, and both keys are
+rotated per login: read them from the current session rather than caching them
+across sign-ins. The paired wallet device's own encryption key is
+`SessionUiInfo.peerDeviceEncPublicKey`.
 
 ## Worker lifecycle
 

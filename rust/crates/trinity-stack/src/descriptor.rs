@@ -197,6 +197,9 @@ pub struct ForkSource {
 	pub key: Option<String>,
 }
 
+/// The relay chain's `role`.
+const RELAY_ROLE: &str = "Relay";
+
 impl Descriptor {
 	/// Reads a descriptor from a parsed I-JSON document: drops service entries of unknown kinds,
 	/// then checks every format rule on what remains.
@@ -220,6 +223,12 @@ impl Descriptor {
 	/// The chain with this role.
 	pub fn chain(&self, role: &str) -> Option<&Chain> {
 		self.chains.iter().find(|chain| chain.role == role)
+	}
+
+	/// The relay chain, which every other chain is a parachain of. A valid descriptor has exactly
+	/// one.
+	pub fn relay(&self) -> Option<&Chain> {
+		self.chain(RELAY_ROLE)
 	}
 
 	/// The service of this kind, when the stack has one.
@@ -269,8 +278,9 @@ impl Descriptor {
 		Ok(Some(url.into()))
 	}
 
-	/// Checks the RFC's format rules on known fields.
-	fn validate(&self) -> Result<(), Error> {
+	/// Checks the RFC's format rules on known fields, as [`Descriptor::from_json`] does. A
+	/// descriptor built in code has not passed them, so a reader that takes one checks it here.
+	pub fn validate(&self) -> Result<(), Error> {
 		if self.generation.is_empty() {
 			return Err(Error::Empty("generation"));
 		}
@@ -286,11 +296,12 @@ impl Descriptor {
 	fn validate_chains(&self) -> Result<(), Error> {
 		let mut roles = HashSet::new();
 		let mut para_ids = HashSet::new();
+		let mut genesis_hashes = HashSet::new();
 		for chain in &self.chains {
 			if !roles.insert(chain.role.as_str()) {
 				return Err(Error::DuplicateChainRole(chain.role.clone()));
 			}
-			match (chain.role == "Relay", chain.para_id) {
+			match (chain.role == RELAY_ROLE, chain.para_id) {
 				(true, Some(_)) => return Err(Error::ParaId("set on the relay".into())),
 				(false, None) => return Err(Error::ParaId(format!("missing on {}", chain.role))),
 				(false, Some(para_id)) if !para_ids.insert(para_id) => {
@@ -299,6 +310,9 @@ impl Descriptor {
 				_ => {},
 			}
 			format::hex_bytes::<32>("genesisHash", &chain.genesis_hash)?;
+			if !genesis_hashes.insert(chain.genesis_hash.as_str()) {
+				return Err(Error::DuplicateGenesisHash(chain.genesis_hash.clone()));
+			}
 			if chain.rpc.is_empty() {
 				return Err(Error::Empty("rpc"));
 			}
@@ -313,7 +327,7 @@ impl Descriptor {
 				format::hex_bytes::<32>("forkedAt.hash", &block.hash)?;
 			}
 		}
-		let relays = self.chains.iter().filter(|chain| chain.role == "Relay").count();
+		let relays = self.chains.iter().filter(|chain| chain.role == RELAY_ROLE).count();
 		if relays != 1 {
 			return Err(Error::RelayCount(relays));
 		}
