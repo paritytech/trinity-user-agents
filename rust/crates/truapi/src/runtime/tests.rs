@@ -4938,12 +4938,64 @@ fn push_notification_delegates_payload_and_returns_host_id() {
 			.lock()
 			.expect("notification list mutex poisoned")
 			.as_slice(),
-		&[v01::HostPushNotificationRequest {
+		&[latest::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: Some("https://example.invalid/launch".to_string()),
 			scheduled_at: Some(1_776_144_000_000),
 		}]
 	);
+}
+
+/// A title replaces the product id the person sees, so only a trusted product
+/// may set one. Any other product could otherwise pass for the Polkadot app.
+#[test]
+fn push_notification_keeps_a_title_only_from_a_trusted_product() {
+	let delivered_titles = ["dim2.dot", "other.dot"].map(|product| {
+		let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+		let platform = Arc::new(StubPlatform {
+			pushed_notifications: pushed_notifications.clone(),
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new(platform, runtime_config(product), Spawner::for_test());
+		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+			title: Some("Daily Dollar".to_string()),
+			text: "Your scratch card is ready".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		});
+		futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+			.expect("a notification the product may send is scheduled");
+		let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+		pushed.iter().map(|notification| notification.title.clone()).collect::<Vec<_>>()
+	});
+	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None]]);
+}
+
+/// Hosts show the product id only when the title is absent, so a blank title
+/// from a trusted product would otherwise leave the notification unattributed.
+#[test]
+fn push_notification_drops_a_blank_title() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
+	for title in ["", " \t\n"] {
+		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+			title: Some(title.to_string()),
+			text: "Your scratch card is ready".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		});
+		futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+			.expect("a blank title does not fail the notification");
+	}
+	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+	let titles: Vec<Option<String>> =
+		pushed.iter().map(|notification| notification.title.clone()).collect();
+	assert_eq!(titles, [None, None]);
 }
 
 /// A notification the product withdrew must not reach the person.
@@ -4993,7 +5045,8 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 		});
 		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 		let cx = CallContext::default();
-		let notification = v01::HostPushNotificationRequest {
+		let notification = latest::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: None,
 			scheduled_at: None,
@@ -5014,10 +5067,10 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 			);
 		}
 		let first = futures::executor::block_on(
-			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+			host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 		);
 		let second = futures::executor::block_on(
-			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+			host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 		);
 
 		assert_eq!(
@@ -5028,8 +5081,8 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 				platform.device_permission_requests.lock().unwrap().clone(),
 			),
 			(
-				Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
-				Err(CallError::Domain(HostPushNotificationError::V1(
+				Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
+				Err(CallError::Domain(HostPushNotificationError::V2(
 					v01::HostPushNotificationError::Unknown {
 						reason: PERMISSION_DENIED_REASON.to_string(),
 					},
@@ -5091,16 +5144,17 @@ fn push_notification_reuses_allow_always() {
 	});
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	let cx = CallContext::default();
-	let notification = v01::HostPushNotificationRequest {
+	let notification = latest::HostPushNotificationRequest {
+		title: None,
 		text: "Hello".to_string(),
 		deeplink: None,
 		scheduled_at: None,
 	};
 	let first = futures::executor::block_on(
-		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 	);
 	let second = futures::executor::block_on(
-		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 	);
 
 	assert_eq!(
@@ -5111,8 +5165,8 @@ fn push_notification_reuses_allow_always() {
 			platform.device_permission_requests.lock().unwrap().clone(),
 		),
 		(
-			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
-			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
 			vec![notification; 2],
 			vec![v01::HostDevicePermissionRequest::Notifications],
 		)

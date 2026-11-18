@@ -492,7 +492,7 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 		request: HostPushNotificationRequest,
 	) -> Result<HostPushNotificationResponse, CallError<HostPushNotificationError>> {
 		version(request)
-			.exec(|inner| async move {
+			.exec(|mut notification| async move {
 				let status = self
 					.connection
 					.permissions_service()
@@ -511,7 +511,10 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 						reason: format!("notification {reason}"),
 					}));
 				}
-				self.connection.platform.push_notification(inner).await.map_err(|err| {
+				let trusted = self.connection.product.product_id.has_trusted_remote_permissions();
+				notification.title =
+					notification.title.filter(|title| trusted && !title.trim().is_empty());
+				self.connection.platform.push_notification(notification).await.map_err(|err| {
 					CallError::Domain(latest::HostPushNotificationError::Unknown {
 						reason: err.reason,
 					})
