@@ -50,7 +50,7 @@ fn test_built_in_runnable_check() {
 
 /// A built-in's copy runs on either chain backend, so one without a light
 /// spec is not written: every light-client command would fail on it. Any
-/// other stack may run over RPC only, so it is bundled without one.
+/// other stack may run over RPC only, so this check accepts it without one.
 #[test]
 fn test_built_in_runnable_check_on_the_light_client() {
 	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
@@ -74,9 +74,9 @@ fn test_built_in_runnable_check_on_the_light_client() {
 
 /// `stack bundle` refuses a built-in's copy by this check and a light-client
 /// command refuses it by `Stack::new`, each with its own list of the chains
-/// that need a light spec. They agree for every chain of every built-in, so
-/// no copy is written that a light-client command refuses, and none is
-/// refused that would run.
+/// that need a light spec. They give the same answer for a copy that lacks one
+/// chain's light spec, for every chain of every built-in, so this check
+/// refuses such a copy exactly when a light-client command would.
 #[test]
 fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
 	let light_client = test_access(ChainBackend::LightClient);
@@ -99,6 +99,32 @@ fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
 	}
 
 	assert_eq!(refused_by_check, refused_by_light_client);
+}
+
+/// A chain the light client does not run needs no light spec, so this check
+/// and a light-client command both accept a built-in's copy that names none
+/// for it. The chain is added here because the bundled copies may stop
+/// listing one.
+#[test]
+fn test_built_in_runnable_check_accepts_a_chain_the_light_client_does_not_run() {
+	let with_storage_chain = super::super::testing::edit_stack(|descriptor| {
+		let chains = descriptor["chains"].as_array_mut().unwrap();
+		chains.push(serde_json::json!({
+			"role": "Web3Storage",
+			"genesisHash": format!("0x{}", "11".repeat(32)),
+			"paraId": 1600,
+			"rpc": ["wss://storage.example"],
+		}));
+	});
+	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
+
+	let by_check =
+		ensure_built_in_runnable(&paseo, &with_storage_chain).map_err(|error| error.to_string());
+	let by_light_client = Stack::new(with_storage_chain, &test_access(ChainBackend::LightClient))
+		.map(drop)
+		.map_err(|error| error.to_string());
+
+	assert_eq!((by_check, by_light_client), (Ok(()), Ok(())));
 }
 
 /// A light client on a fresh state directory starts from the specs this build
