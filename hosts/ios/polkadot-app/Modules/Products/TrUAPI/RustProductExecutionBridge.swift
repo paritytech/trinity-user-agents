@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import os
 import FoundationExt
 import TrUAPIHost
@@ -34,6 +35,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let hostProvider: ProductHostProviding
         let themeManager: ThemeManagerProtocol
         let logger: LoggerProtocol
+        let coreEventSink: HostLogSink?
     }
 
     let storage: HostStorageBackend
@@ -68,6 +70,14 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     func onCoreLog(marker: String, detail: String) {
         dependencies.logger.logCoreLine(marker: marker, detail: detail)
+    }
+
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
+        dependencies.logger.logCoreEvent(
+            marker: marker,
+            attributes: attributes,
+            sink: dependencies.coreEventSink
+        )
     }
 
     func navigateTo(url: String) async throws {

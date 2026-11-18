@@ -64,6 +64,28 @@ use super::{
 #[cfg(doc)]
 use crate::WorkerTransition;
 
+/// Carries both kinds of core traffic to one host's callbacks.
+///
+/// The callbacks are held weakly, so a line in flight cannot resurrect a host
+/// being torn down, and a host that has gone simply stops receiving.
+struct CallbackSink {
+	callbacks: std::sync::Weak<dyn HostCallbacks>,
+}
+
+impl crate::logging::HostSink for CallbackSink {
+	fn log(&self, marker: &str, detail: &str) {
+		if let Some(callbacks) = self.callbacks.upgrade() {
+			callbacks.on_core_log(marker.to_string(), detail.to_string());
+		}
+	}
+
+	fn event(&self, marker: &str, attributes: Vec<crate::logging::CoreAttribute>) {
+		if let Some(callbacks) = self.callbacks.upgrade() {
+			callbacks.on_core_event(marker.to_string(), attributes);
+		}
+	}
+}
+
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
@@ -108,11 +130,8 @@ impl NativeTrUApiHostRuntime {
 		// regardless of the trace level, which defaults to ERROR and so drops
 		// everything the core would otherwise say about itself. The callbacks are
 		// held weakly so a line in flight cannot resurrect a host being torn down.
-		let log_callbacks = Arc::downgrade(&callbacks);
-		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
-			if let Some(callbacks) = log_callbacks.upgrade() {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
-			}
+		let host_sink = crate::logging::set_host_sink(Arc::new(CallbackSink {
+			callbacks: Arc::downgrade(&callbacks),
 		}));
 		// Raised through tracing rather than called directly, so a host log
 		// carries proof that the layer forwarding to this sink is alive. A host

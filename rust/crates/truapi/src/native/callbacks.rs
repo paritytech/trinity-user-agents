@@ -37,6 +37,20 @@ pub trait HostCallbacks: Send + Sync {
 	/// Lifecycle logger. Marker is a stable slug, detail is free-form.
 	fn on_core_log(&self, marker: String, detail: String);
 
+	/// Structured lifecycle fact. Marker is the same stable slug
+	/// [`Self::on_core_log`] carries, and each attribute is a key the core's
+	/// own source names with a label, a count or a condition under it.
+	///
+	/// Hand these to the host's reporter as attributes, so a marker can be
+	/// grouped and filtered by what it carries. Every marker here is listed in
+	/// the table [`core_markers`] returns, and its class decides what the host
+	/// may do with it, exactly as for a log line.
+	///
+	/// Runs inline on the dispatcher thread: return promptly.
+	///
+	/// [`core_markers`]: super::core_markers
+	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>);
+
 	/// Open a URL in the system browser.
 	async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError>;
 
