@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::{
 	TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor,
-	reserved_test_descriptor, test_descriptor_chain,
+	reserved_test_descriptor, test_chain, test_descriptor_chain, test_light_spec,
 };
 
 fn descriptor(json: &serde_json::Value) -> Descriptor {
@@ -36,24 +36,34 @@ struct PinnedChange {
 }
 
 /// One change or more to each field a stack allowed reserved values pins.
-/// The chains are the Relay, Asset Hub, People, Bulletin and Collectives, in
-/// that order.
-const PINNED_FIELD_CHANGES: [PinnedChange; 14] = [
+const PINNED_FIELD_CHANGES: [PinnedChange; 19] = [
 	PinnedChange { make: |copy| copy["tld"] = "paseo".into(), field: "tld" },
 	PinnedChange {
-		make: |copy| copy["chains"][2]["genesisHash"] = hex_of(0xa9, 32),
-		field: "a chain's genesisHash",
-	},
-	PinnedChange {
-		make: |copy| copy["chains"][4]["genesisHash"] = hex_of(0xa9, 32),
-		field: "a chain's genesisHash",
-	},
-	PinnedChange {
 		make: |copy| chains(copy).push(test_descriptor_chain("Coretime", [0xa9; 32], Some(1005))),
+		field: "the chain roles",
+	},
+	PinnedChange {
+		make: |copy| chains(copy).retain(|chain| chain["role"] != "Collectives"),
+		field: "the chain roles",
+	},
+	PinnedChange {
+		make: |copy| test_chain(copy, "Collectives")["role"] = "Coretime".into(),
+		field: "the chain roles",
+	},
+	PinnedChange {
+		make: |copy| test_chain(copy, "People")["genesisHash"] = hex_of(0xa9, 32),
 		field: "a chain's genesisHash",
 	},
-	PinnedChange { make: |copy| chains(copy).truncate(4), field: "a chain's genesisHash" },
+	PinnedChange {
+		make: |copy| test_chain(copy, "Collectives")["genesisHash"] = hex_of(0xa9, 32),
+		field: "a chain's genesisHash",
+	},
 	PinnedChange { make: |copy| copy["assets"][0]["id"] = 1.into(), field: "assets" },
+	PinnedChange { make: |copy| copy["assets"][0]["chain"] = "People".into(), field: "assets" },
+	PinnedChange {
+		make: |copy| copy["assets"][0]["pallet"] = "ForeignAssets".into(),
+		field: "assets",
+	},
 	PinnedChange {
 		make: |copy| copy["assets"].as_array_mut().expect("assets is an array").reverse(),
 		field: "assets",
@@ -66,12 +76,20 @@ const PINNED_FIELD_CHANGES: [PinnedChange; 14] = [
 	PinnedChange { make: |copy| copy["dotns"]["popController"] = hex_of(0xee, 20), field: "dotns" },
 	PinnedChange { make: |copy| remove(copy, "dotns"), field: "dotns" },
 	PinnedChange { make: |copy| copy["coinage"]["instance"] = 1.into(), field: "coinage" },
+	PinnedChange { make: |copy| copy["coinage"]["chain"] = "AssetHub".into(), field: "coinage" },
 	PinnedChange {
-		make: |copy| copy["chains"][0]["lightSpec"]["sha256"] = hex_of(0xee, 32),
+		make: |copy| test_chain(copy, "Relay")["lightSpec"] = test_light_spec(0xee),
 		field: "the relay's lightSpec.sha256",
 	},
 	PinnedChange {
-		make: |copy| remove(&mut copy["chains"][0], "lightSpec"),
+		make: |copy| remove(test_chain(copy, "Relay"), "lightSpec"),
+		field: "the relay's lightSpec.sha256",
+	},
+	PinnedChange {
+		make: |copy| {
+			test_chain(copy, "Relay")["lightSpec"] = test_light_spec(0xee);
+			test_chain(copy, "Collectives")["lightSpec"] = test_light_spec(0x5a);
+		},
 		field: "the relay's lightSpec.sha256",
 	},
 ];
@@ -85,26 +103,48 @@ fn a_copy_passes_only_on_the_bundled_tld() {
 	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
 	let mut on_another_tld = wiped.clone();
 	on_another_tld["tld"] = "testnet".into();
-	let pinned = Pinned::new(&descriptor(&bundled), &ReservedValuesPolicy::default());
+	let pinned = Pinned::new(descriptor(&bundled));
+	let unreserved = ReservedValuesPolicy::default();
 
 	assert_eq!(
-		[&bundled, &wiped, &on_another_tld].map(|copy| pinned.refuse_change(&descriptor(copy))),
+		[&bundled, &wiped, &on_another_tld]
+			.map(|copy| pinned.refuse_change(&descriptor(copy), &unreserved)),
 		[Ok(()), Ok(()), Err(StackError::PinnedFieldChanged { field: "tld" })]
 	);
 }
 
-/// A key that signs Polkadot's descriptor could otherwise point every host at
-/// other chains, another payment asset or other contracts. The build's copy
-/// decides those, so a copy that changes one is refused and names it.
+/// A key that signs the descriptor of a stack allowed reserved values could
+/// otherwise have every host read that the stack runs on other chains, takes
+/// another payment asset or has other contracts. The build's copy decides
+/// what the descriptor names for those, so a copy that changes one is refused
+/// and names it.
 #[test]
 fn a_stack_allowed_reserved_values_pins_its_chains_assets_and_contracts() {
-	let bundled = descriptor(&reserved_test_descriptor(1));
-	let pinned = Pinned::new(&bundled, &ReservedValuesPolicy::ALLOWED);
+	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
+	let allowed = ReservedValuesPolicy::ALLOWED;
 
 	assert_eq!(
-		PINNED_FIELD_CHANGES.map(|change| pinned.refuse_change(&changed(change.make))),
+		PINNED_FIELD_CHANGES.map(|change| pinned.refuse_change(&changed(change.make), &allowed)),
 		PINNED_FIELD_CHANGES
 			.map(|change| Err(StackError::PinnedFieldChanged { field: change.field }))
+	);
+}
+
+/// A relay light spec carries the checkpoint a light client starts from. A
+/// bundled copy that names none pins that too: a newer copy cannot hand the
+/// light client a checkpoint the build never saw.
+#[test]
+fn a_relay_light_spec_the_bundled_copy_does_not_name_is_refused() {
+	let mut bundled = reserved_test_descriptor(1);
+	remove(test_chain(&mut bundled, "Relay"), "lightSpec");
+	let pinned = Pinned::new(descriptor(&bundled));
+
+	assert_eq!(
+		pinned.refuse_change(
+			&descriptor(&reserved_test_descriptor(2)),
+			&ReservedValuesPolicy::ALLOWED
+		),
+		Err(StackError::PinnedFieldChanged { field: "the relay's lightSpec.sha256" })
 	);
 }
 
@@ -113,11 +153,11 @@ fn a_stack_allowed_reserved_values_pins_its_chains_assets_and_contracts() {
 /// stays.
 #[test]
 fn a_stack_without_reserved_values_pins_only_its_tld() {
-	let bundled = descriptor(&reserved_test_descriptor(1));
-	let pinned = Pinned::new(&bundled, &ReservedValuesPolicy::default());
+	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
+	let unreserved = ReservedValuesPolicy::default();
 
 	assert_eq!(
-		PINNED_FIELD_CHANGES.map(|change| pinned.refuse_change(&changed(change.make))),
+		PINNED_FIELD_CHANGES.map(|change| pinned.refuse_change(&changed(change.make), &unreserved)),
 		PINNED_FIELD_CHANGES.map(|change| match change.field {
 			"tld" => Err(StackError::PinnedFieldChanged { field: "tld" }),
 			_ => Ok(()),
@@ -125,32 +165,29 @@ fn a_stack_without_reserved_values_pins_only_its_tld() {
 	);
 }
 
-/// The operator of a reserved stack still moves endpoints, republishes and
-/// re-forks without a new build: none of that decides which chains, assets or
-/// contracts a host uses.
+/// The operator of a stack allowed reserved values still republishes, moves
+/// endpoints and names a new `generation` without a new build, as long as no
+/// pinned field changes.
 #[test]
 fn a_stack_allowed_reserved_values_follows_every_other_change() {
-	let bundled = descriptor(&reserved_test_descriptor(1));
-	let pinned = Pinned::new(&bundled, &ReservedValuesPolicy::ALLOWED);
-	let unpinned_changes: [fn(&mut serde_json::Value); 7] = [
+	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
+	let allowed = ReservedValuesPolicy::ALLOWED;
+	let unpinned_changes: [fn(&mut serde_json::Value); 8] = [
 		|_unchanged| {},
 		|copy| copy["generation"] = "second".into(),
 		|copy| copy["network"] = "polkadot-test".into(),
 		|copy| copy["validUntil"] = 1_900_000_000.into(),
-		|copy| copy["chains"][2]["rpc"] = serde_json::json!(["wss://moved.test.invalid"]),
+		|copy| test_chain(copy, "People")["rpc"] = serde_json::json!(["wss://moved.test.invalid"]),
 		|copy| {
-			copy["chains"][0]["lightSpec"]["url"] = "https://moved.test.invalid/relay.json".into()
+			test_chain(copy, "Relay")["lightSpec"]["url"] =
+				"https://moved.test.invalid/relay.json".into()
 		},
-		|copy| {
-			copy["chains"][2]["lightSpec"] = serde_json::json!({
-				"url": "https://stack.test.invalid/people.json",
-				"sha256": hex_of(0xee, 32),
-			})
-		},
+		|copy| test_chain(copy, "People")["lightSpec"] = test_light_spec(0xee),
+		|copy| test_chain(copy, "Collectives")["lightSpec"] = test_light_spec(0xee),
 	];
 
 	assert_eq!(
-		unpinned_changes.map(|change| pinned.refuse_change(&changed(change))),
+		unpinned_changes.map(|change| pinned.refuse_change(&changed(change), &allowed)),
 		unpinned_changes.map(|_| Ok(()))
 	);
 }

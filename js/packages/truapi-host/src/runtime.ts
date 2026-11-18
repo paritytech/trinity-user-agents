@@ -72,13 +72,18 @@ export type LogLevel = string;
  * chain role another genesis hash, adds or drops a chain role, or changes
  * `assets`, `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
  * `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
- * build changes one of those.
+ * build changes what the descriptor names for those.
+ *
+ * The pins cover the descriptor, not the chains. The core does not check a
+ * genesis hash against the chain a host reads, so what a host reads over the
+ * descriptor's endpoints is protected only by a light client that starts from
+ * the pinned relay light spec.
  */
 export interface ReservedValuesPolicy {
   /**
-   * Whether the stack may name reserved values. Only a Polkadot or
-   * Polkadot-fork build sets it, and then reserves no extra values. The stack
-   * is then pinned to its bundled descriptor. Defaults to `false`.
+   * Whether the stack may name reserved values. A build that sets it reserves
+   * no extra values, and its stack is pinned to its bundled descriptor.
+   * Defaults to `false`.
    */
   allowed?: boolean;
   /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */

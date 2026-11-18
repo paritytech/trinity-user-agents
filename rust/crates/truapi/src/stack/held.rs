@@ -46,8 +46,7 @@ impl CopyRules {
 		reserved_values: ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let bundled = open(bundled, &pointer).map_err(StackError::Descriptor)?;
-		let pinned = Pinned::new(&bundled.descriptor, &reserved_values);
-		Ok(Self { pointer, reserved_values, pinned })
+		Ok(Self { pointer, reserved_values, pinned: Pinned::new(bundled.descriptor) })
 	}
 
 	/// The stack's pointer.
@@ -62,7 +61,7 @@ impl CopyRules {
 	/// changes a field the bundled copy pins.
 	pub fn hold(&self, verified: Verified) -> Result<HeldCopy, StackError> {
 		let stack = Stack::from_descriptor(&verified.descriptor, &self.reserved_values)?;
-		self.pinned.refuse_change(&verified.descriptor)?;
+		self.pinned.refuse_change(&verified.descriptor, &self.reserved_values)?;
 		Ok(HeldCopy { descriptor: verified.descriptor, stack })
 	}
 

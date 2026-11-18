@@ -444,23 +444,44 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
+/// The `chains` entry of `descriptor` with this role.
+pub fn test_chain<'a>(
+	descriptor: &'a mut serde_json::Value,
+	role: &str,
+) -> &'a mut serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.iter_mut()
+		.find(|chain| chain["role"] == role)
+		.expect("the test descriptor has the role")
+}
+
+/// A `lightSpec` entry whose digest is 32 bytes of `digest`.
+pub fn test_light_spec(digest: u8) -> serde_json::Value {
+	serde_json::json!({
+		"url": "https://stack.test.invalid/spec.json",
+		"sha256": format!("0x{}", hex::encode([digest; 32])),
+	})
+}
+
 /// A stack on the reserved `dot` TLD as published at `sequence`, which starts
-/// only under a build that allows it reserved values. Its chains are those of
-/// [`published_test_descriptor`] and `Collectives`, a role the core never
-/// reads, and it sets every field such a stack pins: the relay's light spec,
-/// two `assets`, `contracts`, `dotns` and `coinage`.
+/// only under a build that allows it reserved values. It sets every field
+/// such a stack pins: the relay's light spec, two `assets`, `contracts`,
+/// `dotns` and `coinage`. Its chains are `Collectives`, a role the core never
+/// reads, listed ahead of the Relay with a light spec of its own, then those
+/// of [`published_test_descriptor`].
 pub fn reserved_test_descriptor(sequence: u32) -> serde_json::Value {
 	let mut descriptor = test_descriptor("dot", TEST_STACK_PEOPLE, [0xbb; 32], [0xcc; 32]);
 	descriptor["sequence"] = sequence.into();
 	descriptor["generation"] = "first".into();
-	descriptor["chains"][0]["lightSpec"] = serde_json::json!({
-		"url": "https://stack.test.invalid/relay.json",
-		"sha256": format!("0x{}", hex::encode([0x5a; 32])),
-	});
+	test_chain(&mut descriptor, "Relay")["lightSpec"] = test_light_spec(0x5a);
+	let mut collectives = test_descriptor_chain("Collectives", [0xc0; 32], Some(1001));
+	collectives["lightSpec"] = test_light_spec(0xc5);
 	descriptor["chains"]
 		.as_array_mut()
 		.expect("chains is an array")
-		.push(test_descriptor_chain("Collectives", [0xc0; 32], Some(1001)));
+		.insert(0, collectives);
 	descriptor["assets"] = serde_json::json!([
 		{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
 		{ "role": "fee", "chain": "AssetHub", "pallet": "Assets", "id": 1337 },
@@ -470,6 +491,14 @@ pub fn reserved_test_descriptor(sequence: u32) -> serde_json::Value {
 	descriptor["dotns"] =
 		serde_json::json!({ "popController": format!("0x{}", hex::encode([0xd1; 20])) });
 	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor
+}
+
+/// [`reserved_test_descriptor`] at `sequence` with its dotNS contract at
+/// another address, a field such a stack pins.
+pub fn redeployed_reserved_test_descriptor(sequence: u32) -> serde_json::Value {
+	let mut descriptor = reserved_test_descriptor(sequence);
+	descriptor["dotns"]["popController"] = format!("0x{}", hex::encode([0xee; 20])).into();
 	descriptor
 }
 

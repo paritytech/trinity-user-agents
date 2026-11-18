@@ -14,8 +14,8 @@ use crate::{
 	stack::{ReplaceCheck, StackRefreshOutcome},
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
-		refused_for_its_tld, sign_test_descriptor, stack_status, stored_test_record,
-		without_bulletin,
+		redeployed_reserved_test_descriptor, refused_for_its_tld, reserved_test_descriptor,
+		sign_test_descriptor, stack_status, stored_test_record, without_bulletin,
 	},
 	time::ManualTimer,
 };
@@ -197,11 +197,22 @@ fn load(
 	timer: Arc<ManualTimer>,
 	clock: Arc<ManualClock>,
 ) -> StackRefresh {
-	let (link, bundled) = sign_test_descriptor(&bundled());
+	load_stack(&bundled(), ReservedValuesPolicy::default(), records, timer, clock)
+}
+
+/// The refresh of a build that bundles `bundled` under `reserved_values`.
+fn load_stack(
+	bundled: &serde_json::Value,
+	reserved_values: ReservedValuesPolicy,
+	records: Arc<MemoryRecords>,
+	timer: Arc<ManualTimer>,
+	clock: Arc<ManualClock>,
+) -> StackRefresh {
+	let (link, bundled) = sign_test_descriptor(bundled);
 	futures::executor::block_on(StackRefresh::load(
 		&link,
 		&bundled,
-		ReservedValuesPolicy::default(),
+		reserved_values,
 		Box::new(records),
 		timer,
 		Box::new(clock),
@@ -214,9 +225,20 @@ fn start(
 	records: Arc<MemoryRecords>,
 	responses: Vec<Result<StackFetchResponse, GenericError>>,
 ) -> Started {
+	start_stack(&bundled(), ReservedValuesPolicy::default(), records, responses)
+}
+
+/// A core of a build that bundles `bundled` under `reserved_values`, whose
+/// host answers fetches with `responses`.
+fn start_stack(
+	bundled: &serde_json::Value,
+	reserved_values: ReservedValuesPolicy,
+	records: Arc<MemoryRecords>,
+	responses: Vec<Result<StackFetchResponse, GenericError>>,
+) -> Started {
 	let timer = Arc::new(ManualTimer::default());
 	let clock = manual_clock();
-	let refresh = load(records, timer.clone(), clock.clone());
+	let refresh = load_stack(bundled, reserved_values, records, timer.clone(), clock.clone());
 	let (told, statuses) = channel();
 	let fetches = Arc::<AtomicUsize>::default();
 	let host = QueuedHost {
@@ -448,6 +470,41 @@ fn an_ignored_record_with_a_higher_sequence_does_not_keep_a_newer_copy_out() {
 		stack_status(&wiped, Some(StackRefreshOutcome::Current)),
 	];
 	assert_eq!(told, [follows_the_wipe.clone(), follows_the_wipe]);
+}
+
+/// On a stack allowed reserved values the core also ignores a record that
+/// changes a field the bundled copy pins. With a higher `sequence` than the
+/// published copy it must not keep that copy out of the store either.
+#[test]
+fn a_record_that_changes_a_reserved_pin_does_not_keep_a_newer_copy_out() {
+	let bundled = reserved_test_descriptor(1);
+	let mut regenerated = reserved_test_descriptor(3);
+	regenerated["generation"] = "second".into();
+	let records = holding(stored_test_record(&redeployed_reserved_test_descriptor(5)));
+	let start = || {
+		let published = vec![published(&regenerated)];
+		start_stack(&bundled, ReservedValuesPolicy::ALLOWED, records.clone(), published)
+	};
+
+	let started = start();
+	let at_start = started.next_status();
+	let after_fetch = started.next_status();
+	let rebuilt = start();
+	let rebuilt_at_start = rebuilt.next_status();
+	rebuilt.refresh.refresh_now();
+
+	assert_eq!(
+		[at_start, after_fetch, rebuilt_at_start, rebuilt.next_status()],
+		[
+			stack_status(&bundled, None),
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			stack_status(&regenerated, None),
+			stack_status(&regenerated, Some(StackRefreshOutcome::Current)),
+		]
+	);
 }
 
 /// A browser host's storage may never answer. Building the runtime must not

@@ -80,14 +80,17 @@ const RESERVED_TLD: &str = "dot";
 /// another genesis hash, adds or drops a chain role, or changes `assets`,
 /// `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
 /// `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
-/// build changes one of those, so a key that signs the stack's descriptors
-/// cannot.
+/// build changes what the descriptor names for those.
+///
+/// The pins cover the descriptor, not the chains. The core does not check a
+/// genesis hash against the chain a host reads, so what a host reads over
+/// the descriptor's endpoints is protected only by a light client that
+/// starts from the pinned relay light spec.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
-	/// Whether the stack may name reserved values. Only a Polkadot or
-	/// Polkadot-fork build sets it, and then reserves no extra values. The
-	/// stack is then pinned to its bundled copy.
+	/// Whether the stack may name reserved values. A build that sets it
+	/// reserves no extra values, and its stack is pinned to its bundled copy.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
@@ -234,7 +237,8 @@ pub enum StackError {
 	/// pins.
 	#[display("stack descriptor changes {field}, which the bundled copy pins")]
 	PinnedFieldChanged {
-		/// The field that differs, as the descriptor spells it.
+		/// What differs: a top-level field by the name the descriptor gives
+		/// it, or a few words for a part of its `chains`.
 		field: &'static str,
 	},
 }

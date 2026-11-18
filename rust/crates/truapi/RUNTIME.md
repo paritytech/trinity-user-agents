@@ -225,15 +225,20 @@ and the next descriptor it takes replaces the stored one, whatever its
 the core could not write its record, since that write stores no new
 descriptor.
 
-A stack whose build allows it reserved values is Polkadot or a fork of it, and
-the core pins more of its bundled copy: each chain role's genesis hash and the
-set of roles, `assets`, `contracts`, `dotns`, `coinage`, and the `sha256` of
-the relay's `lightSpec`, which carries the relay's sync checkpoint. A
-descriptor that changes one is refused the same way, so a stolen descriptor
-key can move such a stack's endpoints but not its chains, assets or contracts.
-A new `generation` on the same genesis hashes is not pinned and applies from
-the next start. A fresher relay checkpoint, and a fork made again from a later
-block, need a new build.
+On a stack whose build allows it reserved values the core pins more of the
+bundled copy: the set of chain roles and each role's genesis hash, `assets`,
+`contracts`, `dotns`, `coinage`, and the `sha256` of the relay's `lightSpec`,
+which carries the relay's sync checkpoint. A descriptor that changes one is
+refused the same way. A fresher relay checkpoint, and a fork made again from a
+later block, change the relay's `lightSpec` and so need a new build.
+
+The pins fix what the descriptor names for those fields, so a stolen
+descriptor key cannot name other chains, assets or contracts for such a stack.
+They do not cover what a host reads from the chains. The descriptor's
+endpoints are not pinned and the core does not check genesis hashes against
+the live chains, so those reads are protected only by a light client that
+starts from the pinned relay light spec. A host that reads over RPC has no
+such protection.
 
 A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,

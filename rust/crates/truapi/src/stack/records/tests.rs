@@ -6,7 +6,8 @@ use super::*;
 use crate::{
 	stack::{ReservedValuesPolicy, signed_pointer},
 	test_support::{
-		TEST_STACK_PEOPLE, on_testnet, published_test_descriptor, sign_test_descriptor,
+		TEST_STACK_PEOPLE, on_testnet, published_test_descriptor,
+		redeployed_reserved_test_descriptor, reserved_test_descriptor, sign_test_descriptor,
 		stored_test_record, without_bulletin,
 	},
 };
@@ -51,10 +52,14 @@ fn record_at(sequence: u32) -> Vec<u8> {
 
 /// The rules of a build that bundles the test stack at `sequence` 1.
 fn bundled_rules() -> CopyRules {
-	let (link, bundled) = sign_test_descriptor(&published_at(1));
+	rules_of(&published_at(1), ReservedValuesPolicy::default())
+}
+
+/// The rules of a build that bundles `bundled` under `reserved_values`.
+fn rules_of(bundled: &serde_json::Value, reserved_values: ReservedValuesPolicy) -> CopyRules {
+	let (link, bundled) = sign_test_descriptor(bundled);
 	let pointer = signed_pointer(&link).expect("test link carries a key");
-	CopyRules::new(pointer, &bundled, ReservedValuesPolicy::default())
-		.expect("bundled copy is valid")
+	CopyRules::new(pointer, &bundled, reserved_values).expect("bundled copy is valid")
 }
 
 /// Two runtimes can refresh at once while a host rebuilds its runtime. The
@@ -100,4 +105,19 @@ fn only_a_record_the_core_would_start_from_keeps_an_older_copy_out() {
 	];
 
 	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true, true, true, true]);
+}
+
+/// On a stack allowed reserved values the core also ignores a record that
+/// changes a field the bundled copy pins, so that record keeps no copy out
+/// either. The check follows the build's policy on what is pinned.
+#[test]
+fn a_record_that_changes_a_reserved_pin_keeps_no_copy_out() {
+	let rules = rules_of(&reserved_test_descriptor(1), ReservedValuesPolicy::ALLOWED);
+	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3)));
+	let existing = [
+		stored_test_record(&reserved_test_descriptor(5)),
+		stored_test_record(&redeployed_reserved_test_descriptor(5)),
+	];
+
+	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true]);
 }
