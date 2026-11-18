@@ -119,6 +119,13 @@ was not enough.
 * Operator overloading only for mathematical or logical meaning.
 * Treat `#[doc(hidden)]` items from other crates as private.
 * No code before `main` (`ctor` and similar).
+* Use `#[non_exhaustive]` on a struct with public fields that must be built
+  through a validating constructor, and on a Rust-only enum whose consumers are
+  expected to ignore variants they do not know. Do not put it on wire types or
+  UniFFI types: versioned envelopes handle wire compatibility, and the Swift
+  and Kotlin bindings stay exhaustive so a new variant breaks their compile.
+  Public enums in `trinity-stack`, the one crate published to crates.io, may
+  use it when a new variant should not be a breaking release.
 
 ## Implementation
 
@@ -147,10 +154,3 @@ comes with a benchmark.
   task asked for them.
 * A new dependency, a new crate, or a new public trait in a library crate is a
   design decision. Call it out in the PR description.
-
-## Open questions
-
-* `#[non_exhaustive]` on public enums and structs that cross a team or
-  language boundary. Some `truapi` platform types already use it; the
-  versioned wire types, codegen and UniFFI bindings have not been checked
-  against it, so it is not a rule yet.
