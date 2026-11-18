@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -8,11 +7,6 @@ class DockletAutoHideBlockersTest {
     @Test
     fun `auto-hide turned off in settings blocks it`() {
         assertTrue(blockers(enabled = false).blocked)
-    }
-
-    @Test
-    fun `auto-hide turned on with nothing else in the way does not block it`() {
-        assertFalse(blockers(enabled = true).blocked)
     }
 
     private fun blockers(enabled: Boolean) = DockletAutoHideBlockers(

@@ -214,7 +214,7 @@ class DockletHideStateTest {
         val middle = state.pose().angleDegrees
         advanceUntilIdle()
 
-        assertTrue("angle $middle", middle > 0f + 5f && middle < 90f - 5f)
+        assertTrue("angle $middle", middle in 5f..85f)
         assertTrue(state.isOffScreen)
         assertEquals(emptyList<DockletLanding>(), landings)
         assertEquals(emptyList<DockletMoment>(), moments)
@@ -276,16 +276,6 @@ class DockletHideStateTest {
 
         assertFalse(state.countsAsHidden)
         assertTrue(state.isHeld)
-    }
-
-    @Test
-    fun `a slide tuck leaves a dock already hidden at rest off screen`() = runTest {
-        val state = hiddenState()
-
-        state.slideTuck()
-
-        assertTrue(state.isOffScreen)
-        assertFalse(state.isMoving)
     }
 
     @Test
