@@ -41,7 +41,6 @@ extension ProductsNativeApi {
 
         return try await notificationScheduler.schedule(
             productId: productId,
-            title: nil,
             request: request
         )
     }

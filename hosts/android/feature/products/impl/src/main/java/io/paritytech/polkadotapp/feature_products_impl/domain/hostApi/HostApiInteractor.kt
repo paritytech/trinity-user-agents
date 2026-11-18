@@ -265,7 +265,7 @@ class HostApiInteractor @Inject constructor(
             return Result.failure(ProductPermissionDeniedException(permission))
         }
 
-        return publishNotificationAuthorized(callingProductId, title = null, text, deeplink, scheduledAt)
+        return publishNotificationAuthorized(callingProductId, text, deeplink, scheduledAt)
     }
 
     suspend fun cancelNotification(callingProductId: ProductId, notificationId: NotificationId): Result<Unit> {
@@ -358,17 +358,16 @@ class HostApiInteractor @Inject constructor(
 
     suspend fun publishNotificationAuthorized(
         callingProductId: ProductId,
-        title: String?,
         text: String,
         deeplink: String?,
         scheduledAt: Instant?
     ): Result<NotificationId> {
         return if (scheduledAt == null) {
             val id = NotificationId.generate(callingProductId)
-            productNotificationPublisher.publishNotification(id.value, callingProductId, title, text, deeplink)
+            productNotificationPublisher.publishNotification(id.value, callingProductId, text, deeplink)
             Result.success(id)
         } else {
-            productNotificationScheduler.schedule(callingProductId, title, text, deeplink, scheduledAt)
+            productNotificationScheduler.schedule(callingProductId, text, deeplink, scheduledAt)
         }
     }
 
