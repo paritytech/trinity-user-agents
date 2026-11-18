@@ -150,10 +150,13 @@ class RpcChainProviderTest {
 
         assertEquals(id to REQUEST, responses.next())
         assertEquals(
-            "chain connection $id skipped $forbidden: cleartext traffic is not permitted to its host",
-            lines.next(),
+            listOf(
+                "chain connection $id dialling $forbidden",
+                "chain connection $id skipped $forbidden: cleartext traffic is not permitted to its host",
+                "chain connection $id dialling $answering",
+            ),
+            listOf(lines.next(), lines.next(), lines.next()),
         )
-        assertEquals("chain connection $id dialling $answering", lines.next())
     }
 
     @Test
