@@ -1130,6 +1130,7 @@
     <string name="funding_row_arrives_bank">1–2 business days</string>
     <string name="funding_row_rate_note">Final Cash depends on the rate on arrival</string>
     <string name="funding_activity_subtitle">%1$s · %2$s</string>
+    <string name="funding_live_line_joined">%1$s · %2$s</string>
     <string name="funding_ended_credited">Credited</string>
     <string name="funding_ended_debited">Debited</string>
     <string name="funding_ended_requested">Requested %1$s</string>
@@ -1243,12 +1244,14 @@
     <string name="funding_fees_you_pay">You\'ll pay</string>
     <string name="funding_fees_you_send">You\'ll send</string>
     <string name="funding_frame_sent_funds">I\'ve sent funds</string>
+    <string name="funding_frame_files_failed">Couldn\'t open your files. Try again.</string>
     <string name="funding_frame_requested">%s wants to show a screen</string>
     <string name="funding_network_minimum">Minimum for this network is %1$s</string>
     <string name="funding_network_title">Select network</string>
     <string name="funding_provider_changed">Provider changed successfully</string>
     <string name="funding_providers_country_unsupported">Not available in your country</string>
     <string name="funding_providers_for">for %1$s</string>
+    <string name="funding_providers_price">≈ %1$s</string>
     <string name="funding_providers_lowest_price">Lowest Price</string>
     <string name="funding_providers_rate_updated_in">Fee rate updated in %1$s</string>
     <string name="funding_providers_title">Change provider</string>

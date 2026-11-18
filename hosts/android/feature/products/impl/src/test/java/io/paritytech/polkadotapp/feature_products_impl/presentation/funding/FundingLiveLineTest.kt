@@ -4,13 +4,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.FundingDetail
 import uniffi.truapi.FundingFact
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingLiveLineTest {
-    private val now = 1_800_000_000_000L
+    private val now = Instant.fromEpochMilliseconds(1_800_000_000_000L)
 
     private fun parts(fact: FundingFact, offsetMs: Long?) =
-        fundingLiveParts(FundingDetail(fact, offsetMs?.let { (now + it).toULong() }), lastHeardAtMs = now - 30_000, nowMs = now)
+        fundingLiveParts(FundingDetail(fact, offsetMs?.let { (now.toEpochMilliseconds() + it).toULong() }), lastHeardAt = now - 30.seconds, now = now)
 
     private fun res(id: Int, vararg args: Any) = FundingLivePart.Res(id, args.toList())
 
@@ -48,9 +50,9 @@ class FundingLiveLineTest {
 
     @Test
     fun `without a fact it says when the provider was last heard`() {
-        assertEquals(listOf(res(RCommon.string.funding_last_heard, seconds(30))), fundingLiveParts(null, now - 30_000, now))
+        assertEquals(listOf(res(RCommon.string.funding_last_heard, seconds(30))), fundingLiveParts(null, now - 30.seconds, now))
         assertEquals(listOf(res(RCommon.string.funding_last_heard, seconds(30))), parts(FundingFact.ExpectedBy, null))
-        assertEquals(listOf(res(RCommon.string.funding_last_heard_now)), fundingLiveParts(null, now - 2_000, now))
+        assertEquals(listOf(res(RCommon.string.funding_last_heard_now)), fundingLiveParts(null, now - 2.seconds, now))
         assertEquals(emptyList<FundingLivePart>(), fundingLiveParts(null, null, now))
     }
 }

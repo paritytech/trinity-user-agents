@@ -3,9 +3,11 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.ProductId
+import kotlin.time.Instant
 
 /** One screen on the funding sheet's stack; [key] tells apart two visits to the same screen. */
 data class FundingScreenEntry(val screen: FundingScreen, val key: Int)
@@ -15,7 +17,7 @@ data class FundingScreenEntry(val screen: FundingScreen, val key: Int)
  * picked so far, and the sheet's stack. Each screen's view model reads only what its screen draws.
  */
 interface FundingSheet {
-    val intent: String
+    val sessionId: FundingSessionId
 
     /** The session as the funding service last reported it; `null` until it has. */
     val entry: StateFlow<FundingEntry?>
@@ -25,7 +27,10 @@ interface FundingSheet {
 
     val brands: StateFlow<Map<ProductId, FundingProviderBrand>>
 
-    fun update(transform: (FundingFlowState) -> FundingFlowState)
+    /** The time now, ticking every second while a screen reads it, for the countdowns and ages on the sheet. */
+    val now: StateFlow<Instant>
+
+    fun update(transform: (FundingPicks) -> FundingPicks)
 
     /** Reports the selection on screen, then asks quotes of its amount. */
     fun requote()

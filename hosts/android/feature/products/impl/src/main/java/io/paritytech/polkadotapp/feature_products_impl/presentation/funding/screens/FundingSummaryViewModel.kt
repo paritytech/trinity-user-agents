@@ -49,7 +49,7 @@ class FundingSummaryViewModel @AssistedInject constructor(
 
         start.value = FundingStartState.Starting
         launchUnit {
-            start.value = service.start(sheet.intent, providerId)
+            start.value = service.start(sheet.sessionId, providerId)
                 .logFailure("Funding provider selection failed")
                 .fold(onSuccess = { FundingStartState.Started }, onFailure = { FundingStartState.StartFailed })
         }

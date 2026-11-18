@@ -161,6 +161,7 @@ fun FundingSheetScreen(sheet: FundingSheetViewModel) {
                         offer = it.offer,
                         withdraw = it.withdraw,
                         isAnswering = it.isAnswering,
+                        now = it.now,
                         onBack = sheet::onBack,
                         onAccept = viewModel::onAccept,
                         onDecline = viewModel::onDecline,

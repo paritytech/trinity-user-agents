@@ -14,6 +14,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequestId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.compose.createFundingPageWebView
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
@@ -22,7 +24,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.fundingPageOrigin
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.CoroutineContext
@@ -113,21 +114,29 @@ class FundingFrames @Inject constructor(
     private val notifier: AppNotifier,
     private val dispatchers: CoroutineDispatchers,
 ) {
-    private val frames = ConcurrentHashMap<String, FundingFrame>()
+    // In the order they were added, so the last one for a session is its newest.
+    private val frames = LinkedHashMap<FundingFrameRequestId, FundingFrame>()
 
-    fun add(request: FundingFrameRequest): FundingFrame =
-        FundingFrame(request, spaHost, appContext, notifier, dispatchers.main).also { frames[request.id] = it }
-
-    fun get(requestId: String): FundingFrame? = frames[requestId]
-
-    /** The newest frame still waiting for session [entryId]. */
-    fun waiting(entryId: String): FundingFrame? = frames.values.lastOrNull { it.request.entryId == entryId }
-
-    fun release(requestId: String) {
-        frames.remove(requestId)?.release()
+    fun add(request: FundingFrameRequest): FundingFrame {
+        val frame = FundingFrame(request, spaHost, appContext, notifier, dispatchers.main)
+        synchronized(frames) { frames[request.id] = frame }
+        return frame
     }
 
-    fun releaseAll(entryId: String) {
-        frames.values.filter { it.request.entryId == entryId }.forEach { release(it.request.id) }
+    fun get(requestId: FundingFrameRequestId): FundingFrame? = synchronized(frames) { frames[requestId] }
+
+    /** The newest frame still waiting for session [sessionId]. */
+    fun waiting(sessionId: FundingSessionId): FundingFrame? =
+        synchronized(frames) { frames.values.lastOrNull { it.request.sessionId == sessionId } }
+
+    fun release(requestId: FundingFrameRequestId) {
+        synchronized(frames) { frames.remove(requestId) }?.release()
+    }
+
+    fun releaseAll(sessionId: FundingSessionId) {
+        val released = synchronized(frames) {
+            frames.values.filter { it.request.sessionId == sessionId }.onEach { frames.remove(it.request.id) }
+        }
+        released.forEach(FundingFrame::release)
     }
 }

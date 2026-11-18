@@ -39,19 +39,20 @@ private val PRESET_HEIGHT = 36.dp
 /** The overlay's first screen: which rail, and how much. */
 @Composable
 fun FundingAmountScreen(
+    modifier: Modifier = Modifier,
     state: FundingAmountUiState,
     onRailSelected: (FundingRail) -> Unit,
     onKey: (FundingKey) -> Unit,
     onPreset: (BigDecimal) -> Unit,
     onContinue: () -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
         FundingHeader(
+            modifier = Modifier.fillMaxWidth(),
             title = stringResource(if (state.isWithdraw) RCommon.string.funding_amount_withdraw_title else RCommon.string.funding_amount_add_title),
             onBack = null,
         ) {

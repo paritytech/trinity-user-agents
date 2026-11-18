@@ -77,7 +77,7 @@ private fun FundingEndedContent(
             .padding(PolkadotTheme.spacings.mediumIncreased),
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
-        FundingHeader(title = "", onBack = onClose)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = "", onBack = onClose)
 
         Column(
             modifier = Modifier
@@ -85,9 +85,9 @@ private fun FundingEndedContent(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
         ) {
-            Headline(ended)
-            FundingTimelineCard(timeline = ended.timeline, band = ended.note?.let { text(it) }, bandWarning = false)
-            Rows(rows = ended.rows, providerName = state.providerName, onCopy = onCopy)
+            Headline(ended, state.now)
+            FundingTimelineCard(modifier = Modifier.fillMaxWidth(), timeline = ended.timeline, band = ended.note?.let { text(it) }, bandWarning = false)
+            Rows(rows = ended.rows, providerName = state.providerName, now = state.now, onCopy = onCopy)
         }
 
         when (ended.action) {
@@ -107,7 +107,7 @@ private fun FundingEndedContent(
 }
 
 @Composable
-private fun Headline(ended: FundingEndedUiState) {
+private fun Headline(ended: FundingEndedUiState, now: Instant) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -128,7 +128,7 @@ private fun Headline(ended: FundingEndedUiState) {
         }
         if (ended.settledAt != null) {
             NovaText(
-                text = dateTime(ended.settledAt),
+                text = dateTime(ended.settledAt, now),
                 style = PolkadotTheme.typography.body.small,
                 color = PolkadotTheme.colors.fg.secondary,
             )
@@ -162,11 +162,11 @@ private fun StatusIcon(icon: FundingEndedIcon) {
 }
 
 @Composable
-private fun Rows(rows: ImmutableList<FundingEndedRow>, providerName: String?, onCopy: (String) -> Unit) {
-    FundingCard {
+private fun Rows(rows: ImmutableList<FundingEndedRow>, providerName: String?, now: Instant, onCopy: (String) -> Unit) {
+    FundingCard(modifier = Modifier.fillMaxWidth()) {
         rows.forEach { row ->
             when (row) {
-                is FundingEndedRow.Settled -> FundingInfoRow(label = stringResource(row.caption)) {
+                is FundingEndedRow.Settled -> FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(row.caption)) {
                     Column(horizontalAlignment = Alignment.End) {
                         Value(row.value)
                         if (row.requested != null) {
@@ -178,12 +178,14 @@ private fun Rows(rows: ImmutableList<FundingEndedRow>, providerName: String?, on
                         }
                     }
                 }
-                is FundingEndedRow.Value -> FundingInfoRow(label = stringResource(row.caption)) { Value(text(row.value)) }
+                is FundingEndedRow.Value -> FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(row.caption)) { Value(text(row.value)) }
                 is FundingEndedRow.Provider -> if (providerName != null) {
-                    FundingInfoRow(label = stringResource(RCommon.string.funding_summary_provider)) { Value(providerName) }
+                    FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(RCommon.string.funding_summary_provider)) { Value(providerName) }
                 }
                 is FundingEndedRow.Copy -> FundingInfoRow(
-                    modifier = Modifier.clickable { onCopy(row.value) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onCopy(row.value) },
                     label = stringResource(row.caption),
                 ) {
                     NovaText(
@@ -200,7 +202,7 @@ private fun Rows(rows: ImmutableList<FundingEndedRow>, providerName: String?, on
                         tint = PolkadotTheme.colors.fg.secondary,
                     )
                 }
-                is FundingEndedRow.Moment -> FundingInfoRow(label = stringResource(row.caption)) { Value(dateTime(row.at)) }
+                is FundingEndedRow.Moment -> FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(row.caption)) { Value(dateTime(row.at, now)) }
             }
         }
     }
@@ -224,5 +226,5 @@ private fun text(text: FundingEndedText): String = when (text) {
 }
 
 @Composable
-private fun dateTime(at: Instant): String =
-    LocalTimeFormatter.current.formatDayAndTime(at.toEpochMilliseconds(), System.currentTimeMillis())
+private fun dateTime(at: Instant, now: Instant): String =
+    LocalTimeFormatter.current.formatDayAndTime(at.toEpochMilliseconds(), now.toEpochMilliseconds())

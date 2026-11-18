@@ -37,7 +37,7 @@ enum class FundingEndedAction {
 }
 
 sealed interface FundingEndedText {
-    data class Res(@param:StringRes val res: Int, val args: List<String>) : FundingEndedText
+    data class Res(@param:StringRes val res: Int, val args: ImmutableList<String>) : FundingEndedText
 
     data class Reason(val reason: FundingFailureReason) : FundingEndedText
 

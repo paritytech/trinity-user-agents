@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.compose
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +27,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowLeft
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
+import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
@@ -132,24 +132,27 @@ private fun FundingProviderFrameScreenInternal(
                 // drawn over it, so the WebView survives to load again.
                 if (state.isContentVisible || isExternalPage) content(Modifier.fillMaxSize())
                 if (state.failed) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(PolkadotTheme.colors.bg.surface.main),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    PolkadotSurface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = PolkadotTheme.colors.bg.surface.main,
                     ) {
-                        DefaultErrorState(
-                            modifier = Modifier.weight(1f),
-                            text = stringResource(RCommon.string.product_resolution_error_unknown),
-                        )
-                        if (isExternalPage) {
-                            PolkadotTextButton(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(PolkadotTheme.spacings.mediumIncreased),
-                                text = stringResource(RCommon.string.common_retry),
-                                onClick = onRetry,
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            DefaultErrorState(
+                                modifier = Modifier.weight(1f),
+                                text = stringResource(RCommon.string.product_resolution_error_unknown),
                             )
+                            if (isExternalPage) {
+                                PolkadotTextButton(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(PolkadotTheme.spacings.mediumIncreased),
+                                    text = stringResource(RCommon.string.common_retry),
+                                    onClick = onRetry,
+                                )
+                            }
                         }
                     }
                 }

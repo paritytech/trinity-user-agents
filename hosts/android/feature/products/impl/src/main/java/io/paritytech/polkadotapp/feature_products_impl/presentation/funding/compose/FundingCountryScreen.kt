@@ -27,17 +27,17 @@ import io.paritytech.polkadotapp.common.R as RCommon
  */
 @Composable
 fun FundingCountryScreen(
+    modifier: Modifier = Modifier,
     state: FundingCountryUiState,
     onBack: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onCountry: (String) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        FundingHeader(title = stringResource(RCommon.string.funding_country_title), onBack = onBack)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = stringResource(RCommon.string.funding_country_title), onBack = onBack)
 
         PolkadotSearchField(
             modifier = Modifier.fillMaxWidth(),

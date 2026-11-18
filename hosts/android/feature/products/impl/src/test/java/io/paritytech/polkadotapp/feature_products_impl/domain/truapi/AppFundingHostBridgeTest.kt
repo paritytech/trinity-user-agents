@@ -5,6 +5,7 @@ import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -25,7 +26,7 @@ class AppFundingHostBridgeTest {
     // The core reads anything but STARTED as the user walking away and discards the session.
     @Test
     fun `the service's answer reaches the core unchanged`() = runBlocking {
-        coEvery { funding.present("intent", CoreFundingDirection.OUT, "1000") } returns FundingPresentOutcome.STARTED
+        coEvery { funding.present(FundingSessionId("intent"), CoreFundingDirection.OUT, "1000") } returns FundingPresentOutcome.STARTED
 
         assertEquals(
             FundingPresentOutcome.STARTED,
@@ -38,7 +39,7 @@ class AppFundingHostBridgeTest {
     fun `a provider frame shows the core's target and answers how it closed`() = runBlocking {
         val target = FundingFrameTarget.Page("https://ramp.example/widget", "https://ramp.dot/return")
         val returned = FundingFrameOutcome.Returned("https://ramp.dot/return?status=done")
-        coEvery { funding.presentFrame(ramp, "intent", target) } returns returned
+        coEvery { funding.presentFrame(ramp, FundingSessionId("intent"), target) } returns returned
 
         assertEquals(returned, bridge.presentProviderFrame(ramp, "intent", target))
     }
@@ -55,20 +56,20 @@ class AppFundingHostBridgeTest {
     fun `a change notice goes to the service that reads it back`() {
         bridge.fundingChanged("intent", FundingChangeKind.SESSION)
 
-        verify { funding.changed("intent", FundingChangeKind.SESSION) }
+        verify { funding.changed(FundingSessionId("intent"), FundingChangeKind.SESSION) }
     }
 
     @Test
     fun `a provider asking for a screen reaches the service`() {
         bridge.providerFrameRequested(ramp, "intent")
 
-        verify { funding.frameRequested(ramp, "intent") }
+        verify { funding.frameRequested(ramp, FundingSessionId("intent")) }
     }
 
     @Test
     fun `a provider closing its frame reaches the service`() {
         bridge.closeProviderFrame(ramp, "intent")
 
-        verify { funding.closeFrames(ramp, "intent") }
+        verify { funding.closeFrames(ramp, FundingSessionId("intent")) }
     }
 }

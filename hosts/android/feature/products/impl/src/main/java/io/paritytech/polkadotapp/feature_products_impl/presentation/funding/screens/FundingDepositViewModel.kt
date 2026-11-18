@@ -25,8 +25,8 @@ class FundingDepositViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
     private val clipboard: ClipboardService,
 ) : BaseViewModel() {
-    val state: StateFlow<FundingDepositUiState?> = combine(sheet.flow.filterNotNull(), sheet.entry) { flow, entry ->
-        flow.toDepositUiState(entry?.progress, FundingSessionFacts.of(entry), isCancelling = false)
+    val state: StateFlow<FundingDepositUiState?> = combine(sheet.flow.filterNotNull(), sheet.entry, sheet.now) { flow, entry, now ->
+        flow.toDepositUiState(entry?.progress, FundingSessionFacts.of(entry), isCancelling = false, now = now)
     }.stateIn(this, WhileOnScreen, null)
 
     fun onCopy(value: String) {

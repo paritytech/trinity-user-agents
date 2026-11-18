@@ -40,8 +40,6 @@ data class FundingFlowState(
     /** What the core offers for the selection on screen; `null` until it has said. */
     val options: FundingOptions?,
     val rail: FundingRail,
-    /** Whether the user picked [rail], so the core's default no longer moves it. */
-    val railChosen: Boolean,
     val amountText: String,
     val country: FundingCountry?,
     val network: String?,
@@ -75,7 +73,6 @@ data class FundingFlowState(
             spendable = spendable,
             options = options,
             rail = options.defaultRail,
-            railChosen = false,
             amountText = amount?.let(::textFor).orEmpty(),
             country = country,
             network = null,
@@ -192,7 +189,7 @@ data class FundingFlowState(
         }
 
     fun withRail(newRail: FundingRail): FundingFlowState =
-        if (newRail == rail) copy(railChosen = true) else copy(rail = newRail, railChosen = true, network = null, asset = null)
+        if (newRail == rail) this else copy(rail = newRail, network = null, asset = null)
 
     fun withAmountText(text: String): FundingFlowState = copy(amountText = text)
 
@@ -240,16 +237,6 @@ data class FundingFlowState(
             country = country?.code,
             currency = country?.currencyCode,
         )
-
-    /** The core's options for the selection on screen; before the user picks a rail, its default rail too. */
-    fun withOptions(newOptions: FundingOptions): FundingFlowState {
-        val updated = copy(options = newOptions)
-        return if (railChosen || newOptions.defaultRail == rail) {
-            updated
-        } else {
-            updated.copy(rail = newOptions.defaultRail, network = null, asset = null)
-        }
-    }
 
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
         minimum = this?.min?.let(cash::decimal),

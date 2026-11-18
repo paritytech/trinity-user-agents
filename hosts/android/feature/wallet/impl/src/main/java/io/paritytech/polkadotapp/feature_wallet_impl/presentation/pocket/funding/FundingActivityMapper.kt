@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
 import kotlinx.collections.immutable.toImmutableList
+import kotlin.time.Instant
 
 /**
  * Builds the CASH card's funding lists, amounts in [asset] as [tokenAmounts] models them; an ended row carries when it
@@ -28,12 +29,13 @@ class FundingActivityMapper(
     private val asset: Chain.Asset,
     private val tokenAmounts: TokenAmountMapper,
 ) {
-    fun map(activity: FundingActivity): FundingActivityUiState = FundingActivityUiState(
+    fun map(activity: FundingActivity, now: Instant): FundingActivityUiState = FundingActivityUiState(
         inFlight = activity.inFlight
             .sortedWith(compareByDescending<FundingActivityItem> { it.isDelayed }.thenByDescending { it.date })
             .map(::row)
             .toImmutableList(),
         completed = activity.history.map(::row).toImmutableList(),
+        now = now,
     )
 
     private val FundingActivityItem.isDelayed: Boolean

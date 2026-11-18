@@ -39,11 +39,11 @@ class FundingFlowStateTest {
     @Test
     fun `the core's default rail holds until the user picks one`() {
         val flow = state(options(defaultRail = FundingRail.CRYPTO))
-        val picked = flow.withRail(FundingRail.CARD)
+        val picked = FundingPicks.NONE.withRail(FundingRail.CARD)
 
         assertEquals(FundingRail.CRYPTO, flow.rail)
-        assertEquals(FundingRail.CRYPTO, state(null).withOptions(options(defaultRail = FundingRail.CRYPTO)).rail)
-        assertEquals(FundingRail.CARD, picked.withOptions(options(defaultRail = FundingRail.CRYPTO)).rail)
+        assertEquals(FundingRail.CRYPTO, FundingPicks.NONE.applyTo(flow).rail)
+        assertEquals(FundingRail.CARD, picked.applyTo(flow).rail)
     }
 
     @Test
@@ -173,7 +173,7 @@ class FundingFlowStateTest {
         val start = state(options(asset = "EUR"), amount = "50")
         val flow = start.withRail(FundingRail.CRYPTO).withNetwork("ethereum")
 
-        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum"), flow)
+        assertEquals(start.copy(rail = FundingRail.CRYPTO, network = "ethereum"), flow)
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 

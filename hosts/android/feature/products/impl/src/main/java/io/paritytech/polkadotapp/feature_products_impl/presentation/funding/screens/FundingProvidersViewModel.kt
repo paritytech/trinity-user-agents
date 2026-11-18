@@ -21,8 +21,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 class FundingProvidersViewModel @AssistedInject constructor(
     @Assisted private val sheet: FundingSheet,
 ) : BaseViewModel() {
-    val state: StateFlow<FundingProvidersUiState?> = combine(sheet.flow.filterNotNull(), sheet.brands) { flow, brands ->
-        flow.toProvidersUiState(brands)
+    val state: StateFlow<FundingProvidersUiState?> = combine(sheet.flow.filterNotNull(), sheet.brands, sheet.now) { flow, brands, now ->
+        flow.toProvidersUiState(brands, now)
     }.stateIn(this, WhileOnScreen, null)
 
     fun onProviderChosen(providerId: ProductId) {

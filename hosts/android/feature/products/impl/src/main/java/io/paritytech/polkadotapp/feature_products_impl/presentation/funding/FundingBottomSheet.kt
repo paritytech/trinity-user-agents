@@ -9,7 +9,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeBottomSh
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.FundingSheetScreen
 
 /**
- * The sheet a funding session is shown in, found by its [INTENT]. Back walks the sheet's own screens; Close leaves it.
+ * The sheet a funding session is shown in, found by its [SESSION_ID]. Back walks the sheet's own screens; Close leaves it.
  * It follows the session through the funding service, and closes itself once the session is gone, as after process
  * death for one that never started.
  */
@@ -32,6 +32,6 @@ class FundingBottomSheet : BaseComposeBottomSheet<FundingSheetViewModel>() {
     override fun Screen() = FundingSheetScreen(viewModel)
 
     companion object {
-        const val INTENT = "fundingIntent"
+        const val SESSION_ID = "fundingSessionId"
     }
 }

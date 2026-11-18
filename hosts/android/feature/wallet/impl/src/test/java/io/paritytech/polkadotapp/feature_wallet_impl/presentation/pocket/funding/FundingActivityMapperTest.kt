@@ -21,16 +21,18 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.math.BigDecimal
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Instant
 
 class FundingActivityMapperTest {
     private val asset = mockk<Chain.Asset> { every { precision } returns 6 }
     private val now = Instant.fromEpochMilliseconds(86_400_000)
     private val mapper = FundingActivityMapper(asset, PlainAmounts)
+
+    private fun FundingActivityMapper.map(activity: FundingActivity) = map(activity, now)
 
     @Test
     fun `a failure reads why and when, under an unsigned amount`() {

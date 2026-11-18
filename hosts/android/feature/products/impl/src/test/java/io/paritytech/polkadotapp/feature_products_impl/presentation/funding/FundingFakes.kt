@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEve
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +27,7 @@ import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.ProductId
 import uniffi.truapi.U128
+import kotlin.time.Instant
 
 /** The funding service as plain state: each session's entries are pushed by the test, and every call is recorded. */
 class FakeFundingService : FundingService {
@@ -39,74 +41,77 @@ class FakeFundingService : FundingService {
 
     override fun entries(): Flow<List<FundingEntry>> = listed
 
-    override fun entryState(id: String): Flow<FundingEntry> = entry.takeWhile { it != null }.map { requireNotNull(it) }
+    override fun entryState(id: FundingSessionId): Flow<FundingEntry> = entry.takeWhile { it != null }.map { requireNotNull(it) }
 
-    override fun shown(id: String) = Unit
+    override fun shown(id: FundingSessionId) = Unit
 
     override suspend fun resume(): Result<Unit> = Result.success(Unit)
 
-    override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> = Result.success(null)
+    override suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?> = Result.success(null)
 
-    override fun select(selection: FundingSelection, id: String) {
+    override fun select(selection: FundingSelection, id: FundingSessionId) {
         calls += "select ${selection.rail} ${selection.asset} ${selection.country}"
     }
 
-    override fun quote(amount: U128?, id: String) {
+    override fun quote(amount: U128?, id: FundingSessionId) {
         calls += "quote $amount"
     }
 
-    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?> = Result.success(null)
+    override suspend fun amountIssue(amount: U128, spendable: U128?, id: FundingSessionId): Result<FundingAmountIssue?> = Result.success(null)
 
-    override suspend fun start(id: String, provider: ProductId?): Result<Unit> =
+    override suspend fun start(id: FundingSessionId, provider: ProductId?): Result<Unit> =
         startResult.also { calls += "start ${provider?.value}" }
 
-    override fun stopStarting(id: String) {
+    override fun stopStarting(id: FundingSessionId) {
         calls += "stopStarting"
     }
 
-    override fun leave(id: String) {
+    override fun leave(id: FundingSessionId) {
         calls += "leave"
     }
 
-    override suspend fun cancel(id: String): Result<CancelOutcome> = cancelResult.also { calls += "cancel" }
+    override suspend fun cancel(id: FundingSessionId): Result<CancelOutcome> = cancelResult.also { calls += "cancel" }
 
-    override suspend fun answerCancelOffer(id: String, terms: CancelTerms?): Result<CancelConfirmation> {
+    override suspend fun answerCancelOffer(id: FundingSessionId, terms: CancelTerms?): Result<CancelConfirmation> {
         answeredTerms = terms
         calls += "answer"
         return answerResult
     }
 
-    override suspend fun acknowledge(id: String) = Unit
+    override suspend fun acknowledge(id: FundingSessionId) = Unit
 
     val eventQueue = MutableSharedFlow<FundingEvent>(extraBufferCapacity = 16)
 
     override val events: Flow<FundingEvent> = eventQueue
 
     /** Sessions whose provider waits for its screen to be opened. */
-    val waitingFrames = mutableSetOf<String>()
+    val waitingFrames = mutableSetOf<FundingSessionId>()
 
     /** Every session listed, as [entries] gives them. */
     val listed = MutableStateFlow<List<FundingEntry>>(emptyList())
 
-    override suspend fun openProviderFrame(entryId: String): Result<Boolean> =
-        Result.success(waitingFrames.remove(entryId)).also { calls += "openProviderFrame $entryId" }
+    override suspend fun openProviderFrame(id: FundingSessionId): Result<Boolean> =
+        Result.success(waitingFrames.remove(id)).also { calls += "openProviderFrame ${id.value}" }
 
-    override suspend fun isFrameWaiting(entryId: String): Result<Boolean> = Result.success(entryId in waitingFrames)
+    override suspend fun isFrameWaiting(id: FundingSessionId): Result<Boolean> = Result.success(id in waitingFrames)
 
     override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) = Unit
 }
 
 /** The sheet as plain state, recording where its screens send it. */
 class FakeFundingSheet(state: FundingFlowState, entry: FundingEntry?) : FundingSheet {
-    override val intent = "intent"
+    override val sessionId = FundingSessionId("intent")
     override val entry = MutableStateFlow(entry)
     override val flow = MutableStateFlow<FundingFlowState?>(state)
     override val brands: StateFlow<Map<ProductId, FundingProviderBrand>> = MutableStateFlow(emptyMap())
+    override val now = MutableStateFlow(Instant.fromEpochMilliseconds(0))
+    val picks = MutableStateFlow(FundingPicks.NONE)
     val actions = mutableListOf<String>()
     val messages = mutableListOf<Int>()
 
-    override fun update(transform: (FundingFlowState) -> FundingFlowState) {
-        flow.value = flow.value?.let(transform)
+    override fun update(transform: (FundingPicks) -> FundingPicks) {
+        picks.value = transform(picks.value)
+        flow.value = flow.value?.let(picks.value::applyTo)
     }
 
     override fun requote() {
@@ -141,7 +146,7 @@ object FundingFixtures {
         isPresented: Boolean = true,
         progress: FundingProgress? = session?.let { FakeFundingCore.progress() },
     ) = FundingEntry.of(
-        id = "intent",
+        id = FundingSessionId("intent"),
         fallbackDirection = FundingDirection.IN,
         fallbackAmount = null,
         session = session,

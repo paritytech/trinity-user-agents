@@ -57,9 +57,9 @@ class RealFundingService @Inject constructor(
     private val changes = MutableSharedFlow<Change>(extraBufferCapacity = CHANGE_BUFFER, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private val lock = Any()
-    private val presentations = mutableMapOf<String, Presentation>()
-    private val frames = mutableMapOf<String, PendingFrame>()
-    private val asks = mutableMapOf<String, QuoteAsk>()
+    private val presentations = mutableMapOf<FundingSessionId, Presentation>()
+    private val frames = mutableMapOf<FundingFrameRequestId, PendingFrame>()
+    private val asks = mutableMapOf<FundingSessionId, QuoteAsk>()
     private val providers = mutableSetOf<ProductId>()
 
     override val events: Flow<FundingEvent> = eventQueue.receiveAsFlow()
@@ -71,7 +71,7 @@ class RealFundingService @Inject constructor(
         .mapNotNull { readEntries() }
         .flowOn(readDispatcher)
 
-    override fun entryState(id: String): Flow<FundingEntry> = changes
+    override fun entryState(id: FundingSessionId): Flow<FundingEntry> = changes
         .onSubscription { emit(Change.Entry(id)) }
         .filter { it == Change.Entry(id) }
         .conflate()
@@ -82,22 +82,22 @@ class RealFundingService @Inject constructor(
         }
         .flowOn(readDispatcher)
 
-    override fun shown(id: String) {
+    override fun shown(id: FundingSessionId) {
         synchronized(lock) { presentations[id]?.shown?.complete(Unit) }
     }
 
     override suspend fun resume(): Result<Unit> = core.start()
 
-    override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> = core.open(direction, amount)
+    override suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?> = core.open(direction, amount).map { it?.let(::FundingSessionId) }
 
-    override fun select(selection: FundingSelection, id: String) {
+    override fun select(selection: FundingSelection, id: FundingSessionId) {
         calls.launch {
-            core.select(id, selection).logFailure("Funding selection failed")
+            core.select(id.value, selection).logFailure("Funding selection failed")
             changed(id)
         }
     }
 
-    override fun quote(amount: U128?, id: String) {
+    override fun quote(amount: U128?, id: FundingSessionId) {
         if (amount == null) {
             synchronized(lock) { asks[id]?.drop() }
             changed(id)
@@ -107,17 +107,17 @@ class RealFundingService @Inject constructor(
         val number = synchronized(lock) { asks.getOrPut(id) { QuoteAsk() }.ask(amount) }
         changed(id)
         calls.launch {
-            val requestId = core.requestQuote(id, amount).logFailure("Funding quote request failed").getOrNull()
+            val requestId = core.requestQuote(id.value, amount).logFailure("Funding quote request failed").getOrNull()
             val startsNow = synchronized(lock) { asks[id]?.take(requestId, number) ?: false }
             takeQuotes(id)
             if (startsNow) startWhenQuoted(id)
         }
     }
 
-    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?> =
-        core.amountIssue(id, amount, spendable).logFailure("Funding amount check failed")
+    override suspend fun amountIssue(amount: U128, spendable: U128?, id: FundingSessionId): Result<FundingAmountIssue?> =
+        core.amountIssue(id.value, amount, spendable).logFailure("Funding amount check failed")
 
-    override suspend fun start(id: String, provider: ProductId?): Result<Unit> {
+    override suspend fun start(id: FundingSessionId, provider: ProductId?): Result<Unit> {
         if (provider == null) {
             synchronized(lock) { asks.getOrPut(id) { QuoteAsk() }.startsWhenQuoted = true }
             calls.run { startWhenQuoted(id) }
@@ -128,51 +128,51 @@ class RealFundingService @Inject constructor(
             asks[id]?.shown?.rows?.firstOrNull { it.providerId == provider }?.state?.quote?.quoteId
         } ?: return Result.failure(FundingStartError.NoQuote())
 
-        return core.selectProvider(id, provider, quoteId).flatMap { selected ->
+        return core.selectProvider(id.value, provider, quoteId).flatMap { selected ->
             when {
                 !isPresenting(id) -> Result.failure(FundingStartError.Left())
                 !selected -> {
                     changed(id)
-                    Result.failure(FundingStartError.NotSelected(core.session(id).getOrNull()?.stage?.failure))
+                    Result.failure(FundingStartError.NotSelected(core.session(id.value).getOrNull()?.stage?.failure))
                 }
                 else -> Result.success(resolve(id, FundingPresentOutcome.STARTED))
             }
         }
     }
 
-    override fun stopStarting(id: String) {
+    override fun stopStarting(id: FundingSessionId) {
         val wasStarting = synchronized(lock) { asks[id]?.stopStarting() ?: false }
-        if (wasStarting) calls.launch { core.cancelAutoStart(id).logFailure("Funding auto-start cancel failed") }
+        if (wasStarting) calls.launch { core.cancelAutoStart(id.value).logFailure("Funding auto-start cancel failed") }
     }
 
-    override fun leave(id: String) {
+    override fun leave(id: FundingSessionId) {
         if (!isPresenting(id)) return
 
         stopStarting(id)
         resolve(id, FundingPresentOutcome.DISMISSED)
     }
 
-    override suspend fun cancel(id: String): Result<CancelOutcome> {
+    override suspend fun cancel(id: FundingSessionId): Result<CancelOutcome> {
         if (isPresenting(id)) {
             leave(id)
             return Result.success(CancelOutcome.ENDED)
         }
-        return core.cancel(id).also { changed(id) }
+        return core.cancel(id.value).also { changed(id) }
     }
 
-    override suspend fun answerCancelOffer(id: String, terms: CancelTerms?): Result<CancelConfirmation> =
-        core.confirmCancel(id, terms).also { changed(id) }
+    override suspend fun answerCancelOffer(id: FundingSessionId, terms: CancelTerms?): Result<CancelConfirmation> =
+        core.confirmCancel(id.value, terms).also { changed(id) }
 
-    override suspend fun acknowledge(id: String) {
-        core.acknowledge(id).logFailure("Funding acknowledgement failed")
+    override suspend fun acknowledge(id: FundingSessionId) {
+        core.acknowledge(id.value).logFailure("Funding acknowledgement failed")
         changes.tryEmit(Change.Entries)
     }
 
-    override suspend fun openProviderFrame(entryId: String): Result<Boolean> =
-        core.openFrame(entryId).logFailure("Funding provider screen could not open")
+    override suspend fun openProviderFrame(sessionId: FundingSessionId): Result<Boolean> =
+        core.openFrame(sessionId.value).logFailure("Funding provider screen could not open")
 
-    override suspend fun isFrameWaiting(entryId: String): Result<Boolean> =
-        core.frameWaiting(entryId).logFailure("Funding provider screen read failed")
+    override suspend fun isFrameWaiting(sessionId: FundingSessionId): Result<Boolean> =
+        core.frameWaiting(sessionId.value).logFailure("Funding provider screen read failed")
 
     override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) {
         val pending = synchronized(lock) { frames.remove(request.id) }
@@ -183,30 +183,35 @@ class RealFundingService @Inject constructor(
      * The core waits on the session's screens. A session whose screens are not [shown] within [SHOWN_TIMEOUT_MS] is
      * taken as dismissed, so a navigation that silently failed does not hold the core forever.
      */
-    suspend fun present(intent: String, direction: FundingDirection, amount: U128?): FundingPresentOutcome {
+    suspend fun present(id: FundingSessionId, direction: FundingDirection, amount: U128?): FundingPresentOutcome {
         val presentation = Presentation(direction, amount)
-        synchronized(lock) { presentations[intent] = presentation }
+        synchronized(lock) { presentations[id] = presentation }
         try {
-            readEntry(intent)?.let { eventQueue.trySend(FundingEvent.PresentationRequested(it)) }
+            readEntry(id)?.let { eventQueue.trySend(FundingEvent.PresentationRequested(it)) }
             if (withTimeoutOrNull(SHOWN_TIMEOUT_MS) { presentation.shown.await() } == null) {
-                Timber.w("Funding %s: its screens did not appear", intent)
-                resolve(intent, FundingPresentOutcome.DISMISSED)
+                Timber.w("Funding %s: its screens did not appear", id)
+                resolve(id, FundingPresentOutcome.DISMISSED)
             }
             return presentation.outcome.await()
         } catch (cancellation: CancellationException) {
-            resolve(intent, FundingPresentOutcome.DISMISSED)
+            resolve(id, FundingPresentOutcome.DISMISSED)
             throw cancellation
         }
     }
 
-    /** Provider [providerId] asks to show a screen for session [intent], which the core holds until the app opens it. */
-    fun frameRequested(providerId: ProductId, intent: String) {
-        eventQueue.trySend(FundingEvent.FrameRequested(intent, providerId))
+    /** Provider [providerId] asks to show a screen for session [id], which the core holds until the app opens it. */
+    fun frameRequested(providerId: ProductId, id: FundingSessionId) {
+        eventQueue.trySend(FundingEvent.FrameRequested(id, providerId))
     }
 
     /** A provider's screen the core presents now, once the app opened it, answered once the app takes it down. */
-    suspend fun presentFrame(providerId: ProductId, intent: String, target: FundingFrameTarget): FundingFrameOutcome {
-        val request = FundingFrameRequest(id = UUID.randomUUID().toString(), entryId = intent, providerId = providerId, target = target)
+    suspend fun presentFrame(providerId: ProductId, id: FundingSessionId, target: FundingFrameTarget): FundingFrameOutcome {
+        val request = FundingFrameRequest(
+            id = FundingFrameRequestId(UUID.randomUUID().toString()),
+            sessionId = id,
+            providerId = providerId,
+            target = target,
+        )
         val frame = PendingFrame(request)
         synchronized(lock) { frames[request.id] = frame }
         try {
@@ -214,34 +219,34 @@ class RealFundingService @Inject constructor(
             return frame.answer.await()
         } catch (cancellation: CancellationException) {
             synchronized(lock) { frames.remove(request.id) }
-            eventQueue.trySend(FundingEvent.FrameClosed(intent))
+            eventQueue.trySend(FundingEvent.FrameClosed(id))
             throw cancellation
         }
     }
 
-    /** The provider is done with its screens for session [intent]: each one still open answers `Closed`. */
-    fun closeFrames(providerId: ProductId, intent: String) {
+    /** The provider is done with its screens for session [id]: each one still open answers `Closed`. */
+    fun closeFrames(providerId: ProductId, id: FundingSessionId) {
         val closed = synchronized(lock) {
             frames.values
-                .filter { it.request.entryId == intent && it.request.providerId == providerId }
+                .filter { it.request.sessionId == id && it.request.providerId == providerId }
                 .onEach { frames.remove(it.request.id) }
         }
         closed.forEach { it.answer.complete(FundingFrameOutcome.Closed) }
-        eventQueue.trySend(FundingEvent.FrameClosed(intent))
+        eventQueue.trySend(FundingEvent.FrameClosed(id))
     }
 
-    /** The core says [kind] changed for session [intent]. Called on the core's thread, so the read happens elsewhere. */
-    fun changed(intent: String?, kind: FundingChangeKind) {
-        if (intent == null) return
+    /** The core says [kind] changed for session [id]. Called on the core's thread, so the read happens elsewhere. */
+    fun changed(id: FundingSessionId?, kind: FundingChangeKind) {
+        if (id == null) return
         calls.launch {
             when (kind) {
                 FundingChangeKind.SESSION -> {
-                    startedWhenQuoted(intent)
-                    changed(intent)
+                    startedWhenQuoted(id)
+                    changed(id)
                     changes.tryEmit(Change.Entries)
                 }
-                FundingChangeKind.OPTIONS -> changed(intent)
-                FundingChangeKind.QUOTES -> takeQuotes(intent)
+                FundingChangeKind.OPTIONS -> changed(id)
+                FundingChangeKind.QUOTES -> takeQuotes(id)
                 FundingChangeKind.PROVIDERS -> Unit
             }
         }
@@ -254,44 +259,44 @@ class RealFundingService @Inject constructor(
         return provides
     }
 
-    private fun changed(id: String) {
+    private fun changed(id: FundingSessionId) {
         changes.tryEmit(Change.Entry(id))
     }
 
-    private fun isPresenting(id: String): Boolean = synchronized(lock) { id in presentations }
+    private fun isPresenting(id: FundingSessionId): Boolean = synchronized(lock) { id in presentations }
 
-    private fun resolve(id: String, outcome: FundingPresentOutcome) {
+    private fun resolve(id: FundingSessionId, outcome: FundingPresentOutcome) {
         val presentation = synchronized(lock) { presentations.remove(id) }
         presentation?.outcome?.complete(outcome)
         changed(id)
     }
 
     /** Asks the core to start the session on the latest ask's best quote. Runs on the call queue. */
-    private suspend fun startWhenQuoted(id: String) {
+    private suspend fun startWhenQuoted(id: FundingSessionId) {
         val requestId = synchronized(lock) { asks[id]?.armedRequest() } ?: return
-        core.startWhenQuoted(id, requestId).logFailure("Funding auto-start failed")
+        core.startWhenQuoted(id.value, requestId).logFailure("Funding auto-start failed")
     }
 
     /** A session the core handed to the best quote it was asked to start on is reported started. */
-    private suspend fun startedWhenQuoted(id: String) {
+    private suspend fun startedWhenQuoted(id: FundingSessionId) {
         val armed = synchronized(lock) { asks[id]?.startsWhenQuoted == true } && isPresenting(id)
-        if (!armed || core.session(id).getOrNull()?.providerId == null) return
+        if (!armed || core.session(id.value).getOrNull()?.providerId == null) return
 
         synchronized(lock) { asks[id]?.startsWhenQuoted = false }
         resolve(id, FundingPresentOutcome.STARTED)
     }
 
-    private suspend fun takeQuotes(id: String) {
-        val list = core.quotes(id).logFailure("Funding quotes read failed").getOrNull()
+    private suspend fun takeQuotes(id: FundingSessionId) {
+        val list = core.quotes(id.value).logFailure("Funding quotes read failed").getOrNull()
         synchronized(lock) { asks[id]?.receive(list) }
         changed(id)
     }
 
-    private suspend fun readEntry(id: String): FundingEntry? {
-        val session = core.session(id).logFailure("Funding session read failed").getOrElse { return null }
-        val summary = if (session?.stage?.isOpen == true) null else core.summary(id).logFailure("Funding summary read failed").getOrNull()
-        val options = if (session?.providerId == null && summary == null) core.options(id).logFailure("Funding options read failed").getOrNull() else null
-        val progress = session?.let { core.progress(id).logFailure("Funding progress read failed").getOrNull() }
+    private suspend fun readEntry(id: FundingSessionId): FundingEntry? {
+        val session = core.session(id.value).logFailure("Funding session read failed").getOrElse { return null }
+        val summary = if (session?.stage?.isOpen == true) null else core.summary(id.value).logFailure("Funding summary read failed").getOrNull()
+        val options = if (session?.providerId == null && summary == null) core.options(id.value).logFailure("Funding options read failed").getOrNull() else null
+        val progress = session?.let { core.progress(id.value).logFailure("Funding progress read failed").getOrNull() }
 
         return synchronized(lock) {
             remember(options?.candidates?.map { it.providerId })
@@ -324,7 +329,7 @@ class RealFundingService @Inject constructor(
         val inBook = book.map { item ->
             val session = item.session
             FundingEntry.of(
-                id = session.intent,
+                id = FundingSessionId(session.intent),
                 fallbackDirection = session.direction,
                 fallbackAmount = session.amount,
                 session = session,
@@ -334,12 +339,12 @@ class RealFundingService @Inject constructor(
                 options = null,
                 askedAmount = null,
                 quotes = null,
-                isPresented = isPresenting(session.intent),
+                isPresented = isPresenting(FundingSessionId(session.intent)),
             )
         }
         val past = history.filter { it.intent !in held }.map { summary ->
             FundingEntry.of(
-                id = summary.intent,
+                id = FundingSessionId(summary.intent),
                 fallbackDirection = summary.direction,
                 fallbackAmount = summary.amount,
                 session = null,
@@ -361,7 +366,7 @@ class RealFundingService @Inject constructor(
     private sealed interface Change {
         data object Entries : Change
 
-        data class Entry(val id: String) : Change
+        data class Entry(val id: FundingSessionId) : Change
     }
 
     private class Presentation(val direction: FundingDirection, val amount: U128?) {

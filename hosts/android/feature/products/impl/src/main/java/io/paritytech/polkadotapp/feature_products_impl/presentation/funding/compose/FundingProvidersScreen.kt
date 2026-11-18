@@ -6,10 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -26,12 +25,9 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingProvidersUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingProviderLogo
-import kotlinx.coroutines.delay
 import uniffi.truapi.ProductId
 import java.util.Locale
 import kotlin.math.max
-import kotlin.time.Clock
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -43,23 +39,22 @@ private const val DIMMED_ALPHA = 0.5f
 private const val WARNING_SECONDS = 20L
 private const val ERROR_SECONDS = 10L
 private const val SECONDS_PER_MINUTE = 60
-private val TICK = 1.seconds
 
 /** Every provider's live quote, the cheapest marked, with how long the prices hold before they are asked again. */
 @Composable
 fun FundingProvidersScreen(
+    modifier: Modifier = Modifier,
     state: FundingProvidersUiState,
     onBack: () -> Unit,
     onProvider: (ProductId) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        FundingHeader(title = stringResource(RCommon.string.funding_providers_title), onBack = onBack)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = stringResource(RCommon.string.funding_providers_title), onBack = onBack)
 
-        Countdown(state.countdown)
+        Countdown(state.countdown, state.now)
 
         Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall)) {
             state.rows.forEach { row -> ProviderRow(row = row, onClick = { onProvider(row.brand.providerId) }) }
@@ -68,7 +63,7 @@ fun FundingProvidersScreen(
 }
 
 @Composable
-private fun Countdown(countdown: FundingCountdown?) {
+private fun Countdown(countdown: FundingCountdown?, now: Instant) {
     when (countdown) {
         FundingCountdown.Pending -> Shimmer(
             modifier = Modifier
@@ -78,21 +73,11 @@ private fun Countdown(countdown: FundingCountdown?) {
 
         FundingCountdown.Refreshing -> CountdownText(seconds = 0)
 
-        is FundingCountdown.Until -> {
-            val seconds by produceState(initialValue = secondsUntil(countdown.at), countdown.at) {
-                while (value > 0) {
-                    delay(TICK)
-                    value = secondsUntil(countdown.at)
-                }
-            }
-            CountdownText(seconds)
-        }
+        is FundingCountdown.Until -> CountdownText(seconds = max(0L, (countdown.at - now).inWholeSeconds))
 
         null -> Unit
     }
 }
-
-private fun secondsUntil(at: Instant): Long = max(0L, (at - Clock.System.now()).inWholeSeconds)
 
 @Composable
 private fun CountdownText(seconds: Long) {
@@ -126,7 +111,7 @@ private fun ProviderRow(row: FundingProviderRow, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.smallIncreased),
         ) {
-            FundingProviderLogo(brand = row.brand, size = LOGO_SIZE)
+            FundingProviderLogo(modifier = Modifier.size(LOGO_SIZE), brand = row.brand)
 
             Column(modifier = Modifier.weight(1f)) {
                 NovaText(
@@ -171,7 +156,7 @@ private fun Price(price: FundingProviderPrice?) {
 
             is FundingProviderPrice.Quoted -> {
                 NovaText(
-                    text = "≈ ${price.price}",
+                    text = stringResource(RCommon.string.funding_providers_price, price.price),
                     style = PolkadotTheme.typography.body.mediumEmphasized,
                     color = PolkadotTheme.colors.fg.primary,
                 )

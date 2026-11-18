@@ -22,12 +22,14 @@ import kotlinx.coroutines.flow.stateIn
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 data class FundingCancelOfferUiState(
     val offer: FundingCancelUiState.Offered,
     val withdraw: Boolean,
     val isAnswering: Boolean,
+    val now: Instant,
 )
 
 /** The provider's terms for cancelling, which the user accepts as shown or declines. */
@@ -39,9 +41,9 @@ class FundingCancelOfferViewModel @AssistedInject constructor(
     private val isAnswering = MutableStateFlow(false)
 
     val state: StateFlow<FundingCancelOfferUiState?> =
-        combine(sheet.flow.filterNotNull(), sheet.entry, isAnswering) { flow, entry, answering ->
-            val deposit = flow.toDepositUiState(entry?.progress, FundingSessionFacts.of(entry), answering)
-            (deposit.cancel as? FundingCancelUiState.Offered)?.let { FundingCancelOfferUiState(it, deposit.withdraw, answering) }
+        combine(sheet.flow.filterNotNull(), sheet.entry, isAnswering, sheet.now) { flow, entry, answering, now ->
+            val deposit = flow.toDepositUiState(entry?.progress, FundingSessionFacts.of(entry), answering, now)
+            (deposit.cancel as? FundingCancelUiState.Offered)?.let { FundingCancelOfferUiState(it, deposit.withdraw, answering, now) }
         }.stateIn(this, WhileOnScreen, null)
 
     fun onAccept() = answer(accept = true)
@@ -56,7 +58,7 @@ class FundingCancelOfferViewModel @AssistedInject constructor(
         val shown = sheet.entry.value?.session?.cancel as? FundingCancel.Offered
         val terms = if (accept) shown?.let { CancelTerms(fee = it.fee, refund = it.refund) } else null
 
-        service.answerCancelOffer(sheet.intent, terms)
+        service.answerCancelOffer(sheet.sessionId, terms)
             .logFailure("Funding cancel answer failed")
             .onSuccess { leave(it.message()) }
             .onFailure { leave(RCommon.string.funding_error_cancel_failed) }

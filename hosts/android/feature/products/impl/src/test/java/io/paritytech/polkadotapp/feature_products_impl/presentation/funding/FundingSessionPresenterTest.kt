@@ -11,7 +11,9 @@ import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashNotice
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.entry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.ramp
@@ -35,7 +37,7 @@ class FundingSessionPresenterTest {
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { brand(ramp) } returns FundingProviderBrand(ramp, "Ramp", null)
     }
-    private val request = FundingFrameRequest("frame-1", "intent", ramp, FundingFrameTarget.App("/kyc"))
+    private val request = FundingFrameRequest(FundingFrameRequestId("frame-1"), INTENT, ramp, FundingFrameTarget.App("/kyc"))
 
     private fun TestScope.presenting(): Pair<FundingSessionPresenter, FundingFrames> {
         val frames = FundingFrames(mockk(), mockk(), notifier, testDispatchers())
@@ -61,16 +63,16 @@ class FundingSessionPresenterTest {
         service.eventQueue.emit(FundingEvent.PresentationRequested(entry()))
         runCurrent()
 
-        coVerify { router.openFundingOverlay("intent") }
+        coVerify { router.openFundingOverlay(INTENT) }
     }
 
     @Test
     fun `a provider's screen opens at once over its session's sheet`() = runTest {
-        coEvery { router.isFundingOverlayShown("intent") } returns true
-        service.waitingFrames += "intent"
+        coEvery { router.isFundingOverlayShown(INTENT) } returns true
+        service.waitingFrames += INTENT
         presenting()
 
-        service.eventQueue.emit(FundingEvent.FrameRequested("intent", ramp))
+        service.eventQueue.emit(FundingEvent.FrameRequested(INTENT, ramp))
         runCurrent()
 
         assertEquals(listOf("openProviderFrame intent"), service.calls)
@@ -84,38 +86,38 @@ class FundingSessionPresenterTest {
         service.eventQueue.emit(FundingEvent.FrameOpened(request))
         runCurrent()
 
-        assertNotNull(frames.get("frame-1"))
-        coVerify { router.openFundingProviderFrame("intent", "frame-1") }
+        assertNotNull(frames.get(FundingFrameRequestId("frame-1")))
+        coVerify { router.openFundingProviderFrame(request) }
     }
 
     @Test
     fun `away from its session, a provider's screen waits for a tap on the notice`() = runTest {
-        coEvery { router.isFundingOverlayShown("intent") } returns false
+        coEvery { router.isFundingOverlayShown(INTENT) } returns false
         val notice = slot<AppNotification>()
         every { notifier.notify(capture(notice)) } returns Unit
         service.entry.emit(entry(session = FundingFixtures.entry().session?.copy(providerId = ramp), isPresented = false))
         presenting()
 
-        service.waitingFrames += "intent"
-        service.eventQueue.emit(FundingEvent.FrameRequested("intent", ramp))
+        service.waitingFrames += INTENT
+        service.eventQueue.emit(FundingEvent.FrameRequested(INTENT, ramp))
         runCurrent()
         assertEquals(emptyList<String>(), service.calls)
         assertEquals("Ramp wants to show a screen", notice.captured.message)
 
         (notice.captured as AppNotification.Tappable).onTap()
         runCurrent()
-        coVerify { router.openFundingOverlay("intent") }
+        coVerify { router.openFundingOverlay(INTENT) }
         assertEquals(listOf("openProviderFrame intent"), service.calls)
     }
 
     @Test
     fun `a screen still waiting when the app's screens come back is told of again`() = runTest {
-        coEvery { router.isFundingOverlayShown("intent") } returns false
+        coEvery { router.isFundingOverlayShown(INTENT) } returns false
         val notice = slot<AppNotification>()
         every { notifier.notify(capture(notice)) } returns Unit
         val inFlight = entry(session = FundingFixtures.entry().session?.copy(providerId = ramp), isPresented = false)
-        service.listed.value = listOf(inFlight, inFlight.copy(id = "other"))
-        service.waitingFrames += "intent"
+        service.listed.value = listOf(inFlight, inFlight.copy(id = FundingSessionId("other")))
+        service.waitingFrames += INTENT
 
         presenting()
 
@@ -131,5 +133,9 @@ class FundingSessionPresenterTest {
         runCurrent()
 
         verify { crashNotice.onCrashing(ramp) }
+    }
+
+    private companion object {
+        val INTENT = FundingSessionId("intent")
     }
 }

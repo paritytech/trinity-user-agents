@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,26 +31,26 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingLiveParts
-import kotlinx.coroutines.delay
 import uniffi.truapi.FundingDetail
+import kotlin.time.Instant
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private val MILESTONE_SIZE = 20.dp
 private val MILESTONE_ICON_SIZE = 12.dp
 private val DOT_SIZE = 8.dp
 private val CURRENT_DOT_SIZE = 10.dp
 private val LINE_HEIGHT = 2.dp
-private const val LAST_HEARD_TICK_MS = 3_000L
 
 /** The milestones card: the dots and their labels, then the band line under them on a darker strip. */
 @Composable
 fun FundingTimelineCard(
+    modifier: Modifier = Modifier,
     timeline: FundingTimelineUi,
     band: String?,
     bandWarning: Boolean,
-    modifier: Modifier = Modifier,
 ) {
     PolkadotSurface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier,
         shape = PolkadotTheme.shapes.large,
         color = PolkadotTheme.colors.bg.surface.nested,
     ) {
@@ -63,10 +61,12 @@ fun FundingTimelineCard(
                 color = PolkadotTheme.colors.bg.surface.container,
             ) {
                 FundingTimelineDots(
-                    modifier = Modifier.padding(
-                        horizontal = PolkadotTheme.spacings.mediumIncreased,
-                        vertical = PolkadotTheme.spacings.medium,
-                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = PolkadotTheme.spacings.mediumIncreased,
+                            vertical = PolkadotTheme.spacings.medium,
+                        ),
                     timeline = timeline,
                 )
             }
@@ -86,13 +86,15 @@ fun FundingTimelineCard(
 }
 
 @Composable
-private fun FundingTimelineDots(timeline: FundingTimelineUi, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.fillMaxWidth()) {
+private fun FundingTimelineDots(modifier: Modifier = Modifier, timeline: FundingTimelineUi) {
+    Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             timeline.dots.forEachIndexed { index, state ->
                 if (index > 0) {
                     Line(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = PolkadotTheme.spacings.extraSmall),
                         color = if (state == FundingDotState.PENDING) PolkadotTheme.colors.fg.tertiary else PolkadotTheme.colors.fg.success,
                     )
                 }
@@ -146,8 +148,8 @@ private fun Dot(state: FundingDotState) {
 }
 
 @Composable
-private fun Line(color: Color, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.padding(horizontal = PolkadotTheme.spacings.extraSmall)) {
+private fun Line(modifier: Modifier = Modifier, color: Color) {
+    Box(modifier = modifier) {
         PolkadotSurface(modifier = Modifier.fillMaxWidth().height(LINE_HEIGHT), color = color) {}
     }
 }
@@ -162,38 +164,35 @@ private fun FundingDotState.color(): Color = when (this) {
 
 /**
  * The line under the band: the provider's latest [detail] for the current step, or "Checked with the
- * provider 12s ago" from [lastHeardAtMs], recounted every few seconds. One line, cut short with "…".
+ * provider 12s ago" from [lastHeardAt], as of [now]. One line, cut short with "…".
  */
 @Composable
-fun FundingLiveLine(detail: FundingDetail?, lastHeardAtMs: Long?, modifier: Modifier = Modifier) {
-    val nowMs by produceState(initialValue = System.currentTimeMillis(), detail, lastHeardAtMs) {
-        while (true) {
-            value = System.currentTimeMillis()
-            delay(LAST_HEARD_TICK_MS)
-        }
+fun FundingLiveLine(modifier: Modifier = Modifier, detail: FundingDetail?, lastHeardAt: Instant?, now: Instant) {
+    val parts = fundingLiveParts(detail, lastHeardAt, now)
+    if (parts.isNotEmpty()) {
+        val resources = LocalContext.current.resources
+        val timeFormatter = LocalTimeFormatter.current
+        NovaText(
+            modifier = modifier,
+            text = parts
+                .map { it.resolve(resources, timeFormatter, now) }
+                .reduce { line, part -> resources.getString(RCommon.string.funding_live_line_joined, line, part) },
+            style = PolkadotTheme.typography.caption.medium,
+            color = PolkadotTheme.colors.fg.tertiary,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
-    val parts = fundingLiveParts(detail, lastHeardAtMs, nowMs)
-    if (parts.isEmpty()) return
-    val resources = LocalContext.current.resources
-    val timeFormatter = LocalTimeFormatter.current
-    NovaText(
-        modifier = modifier.fillMaxWidth(),
-        text = parts.joinToString(" · ") { it.resolve(resources, timeFormatter) },
-        style = PolkadotTheme.typography.caption.medium,
-        color = PolkadotTheme.colors.fg.tertiary,
-        textAlign = TextAlign.Center,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
 }
 
-private fun FundingLivePart.resolve(resources: Resources, timeFormatter: TimeFormatter): String = when (this) {
+private fun FundingLivePart.resolve(resources: Resources, timeFormatter: TimeFormatter, now: Instant): String = when (this) {
     is FundingLivePart.Res ->
-        resources.getString(id, *args.map { (it as? FundingLivePart)?.resolve(resources, timeFormatter) ?: it }.toTypedArray())
+        resources.getString(id, *args.map { (it as? FundingLivePart)?.resolve(resources, timeFormatter, now) ?: it }.toTypedArray())
     is FundingLivePart.Verbatim -> text
     // The day alone with its weekday, else the time today or the day and time, in the device's 12/24-hour setting.
     is FundingLivePart.Moment -> when {
-        dayOnly -> timeFormatter.formatDateWithWeekday(atMs, includeYear = false)
-        else -> timeFormatter.formatDayAndTime(atMs, System.currentTimeMillis())
+        dayOnly -> timeFormatter.formatDateWithWeekday(at.toEpochMilliseconds(), includeYear = false)
+        else -> timeFormatter.formatDayAndTime(at.toEpochMilliseconds(), now.toEpochMilliseconds())
     }
 }

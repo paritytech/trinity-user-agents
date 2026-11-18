@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -40,8 +38,8 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.comp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingLiveLine
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
-import kotlinx.coroutines.delay
 import uniffi.truapi.FundingRail
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val QR_SIZE = 220.dp
@@ -56,19 +54,20 @@ private val COPY_ROW_ICON_SIZE = 20.dp
 /** Where to send the funds, once the provider reports it, and how the session goes. */
 @Composable
 fun FundingDepositScreen(
+    modifier: Modifier = Modifier,
     state: FundingDepositUiState,
     onBack: () -> Unit,
     onCopy: (String) -> Unit,
     onCancel: () -> Unit,
     onReviewOffer: () -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
         FundingHeader(
+            modifier = Modifier.fillMaxWidth(),
             title = if (state.progress != null) "" else stringResource(
                 when (state.rail) {
                     FundingRail.CARD -> RCommon.string.funding_summary_card_title
@@ -79,7 +78,7 @@ fun FundingDepositScreen(
             onBack = onBack,
         )
 
-        state.progress?.let { LiveProgress(figure = state.figure, progress = it) }
+        state.progress?.let { LiveProgress(figure = state.figure, progress = it, now = state.now) }
 
         when (val content = state.content) {
             is FundingDepositContent.Crypto -> CryptoDeposit(content = content, onCopy = onCopy)
@@ -145,14 +144,14 @@ fun FundingDepositScreen(
                         onClick = onCancel,
                     )
                 }
-                if (state.progress == null) WaitingPill(modifier = Modifier.weight(1f))
+                if (state.progress == null) WaitingPill(modifier = Modifier.weight(1f).height(WAITING_HEIGHT))
             }
         }
     }
 }
 
 @Composable
-private fun LiveProgress(figure: String, progress: FundingLiveProgressUi) {
+private fun LiveProgress(figure: String, progress: FundingLiveProgressUi, now: Instant) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -174,11 +173,17 @@ private fun LiveProgress(figure: String, progress: FundingLiveProgressUi) {
         )
         VerticalSpacer { small }
         FundingTimelineCard(
+            modifier = Modifier.fillMaxWidth(),
             timeline = progress.timeline,
             band = progress.band?.let { band -> band.arg?.let { stringResource(band.text, it) } ?: stringResource(band.text) },
             bandWarning = progress.band?.warning == true,
         )
-        FundingLiveLine(detail = progress.detail, lastHeardAtMs = progress.lastHeardAtMs)
+        FundingLiveLine(
+            modifier = Modifier.fillMaxWidth(),
+            detail = progress.detail,
+            lastHeardAt = progress.lastHeardAt,
+            now = now,
+        )
     }
 }
 
@@ -270,7 +275,7 @@ private fun CopyRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
     ) {
-        icon?.let { FundingCryptoIconImage(icon = it, size = COPY_ROW_ICON_SIZE) }
+        icon?.let { FundingCryptoIconImage(modifier = Modifier.size(COPY_ROW_ICON_SIZE), icon = it) }
         NovaText(
             modifier = Modifier.weight(1f),
             text = title,
@@ -293,7 +298,7 @@ private fun CopyRow(
 @Composable
 private fun WaitingPill(modifier: Modifier = Modifier) {
     PolkadotSurface(
-        modifier = modifier.height(WAITING_HEIGHT),
+        modifier = modifier,
         shape = PolkadotTheme.shapes.full,
         color = PolkadotTheme.colors.bg.surface.nested,
         contentAlignment = Alignment.Center,
@@ -358,152 +363,5 @@ private fun PendingLine(text: String) {
     ) {
         NovaCircularProgressIndicator(modifier = Modifier.size(SMALL_INDICATOR_SIZE), strokeWidth = INDICATOR_STROKE)
         NovaText(text = text, style = PolkadotTheme.typography.body.medium, color = PolkadotTheme.colors.fg.secondary)
-    }
-}
-
-/** The provider's terms for cancelling: what it keeps and what comes back, for the user to accept or decline. */
-@Composable
-fun FundingCancelOfferScreen(
-    offer: FundingCancelUiState.Offered,
-    withdraw: Boolean,
-    isAnswering: Boolean,
-    onBack: () -> Unit,
-    onAccept: () -> Unit,
-    onDecline: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
-    ) {
-        FundingHeader(title = "", onBack = onBack)
-        NovaText(
-            text = stringResource(
-                if (withdraw) RCommon.string.funding_cancel_offer_title_withdrawal else RCommon.string.funding_cancel_offer_title,
-            ),
-            style = PolkadotTheme.typography.headline.medium,
-            color = PolkadotTheme.colors.fg.primary,
-        )
-        NovaText(
-            text = stringResource(RCommon.string.funding_cancel_offer_body),
-            style = PolkadotTheme.typography.body.medium,
-            color = PolkadotTheme.colors.fg.primary,
-            textAlign = TextAlign.Center,
-        )
-        Column(modifier = Modifier.fillMaxWidth()) {
-            OfferRow(stringResource(RCommon.string.funding_cancel_offer_fee), offer.fee)
-            OfferRow(stringResource(RCommon.string.funding_cancel_offer_refund), offer.refund)
-        }
-        val secondsLeft = offerSecondsLeft(offer)
-        val lapsed = secondsLeft == 0L
-        secondsLeft?.let { seconds ->
-            NovaText(
-                text = if (lapsed) {
-                    stringResource(RCommon.string.funding_cancel_offer_expired)
-                } else {
-                    stringResource(RCommon.string.funding_cancel_offer_valid_for, "%d:%02d".format(seconds / 60, seconds % 60))
-                },
-                style = PolkadotTheme.typography.body.small,
-                color = PolkadotTheme.colors.fg.secondary,
-            )
-        }
-        PolkadotTextButton(
-            modifier = Modifier.fillMaxWidth(),
-            text = stringResource(RCommon.string.funding_cancel_offer_accept),
-            style = PolkadotButtonStyle.destructive(),
-            loading = isAnswering,
-            enabled = !lapsed,
-            onClick = onAccept,
-        )
-        PolkadotTextButton(
-            modifier = Modifier.fillMaxWidth(),
-            text = stringResource(RCommon.string.funding_cancel_offer_keep),
-            enabled = !isAnswering,
-            onClick = onDecline,
-        )
-    }
-}
-
-/** The seconds left on the offer, ticking down once a second; `null` when it has no deadline. */
-@Composable
-private fun offerSecondsLeft(offer: FundingCancelUiState.Offered): Long? {
-    val expiresAtMs = offer.expiresAtMs ?: return null
-    val left by produceState(initialValue = offer.secondsLeft(System.currentTimeMillis()), expiresAtMs) {
-        while (true) {
-            value = offer.secondsLeft(System.currentTimeMillis())
-            if (value == 0L) break
-            delay(OFFER_TICK_MS)
-        }
-    }
-    return left
-}
-
-private const val OFFER_TICK_MS = 1_000L
-
-@Composable
-private fun OfferRow(title: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = PolkadotTheme.spacings.small),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        NovaText(
-            modifier = Modifier.weight(1f),
-            text = title,
-            style = PolkadotTheme.typography.body.medium,
-            color = PolkadotTheme.colors.fg.secondary,
-        )
-        NovaText(text = value, style = PolkadotTheme.typography.body.mediumEmphasized, color = PolkadotTheme.colors.fg.primary)
-    }
-}
-
-/**
- * Asks before cancelling. A crypto top-up's deposit address stops working; once money has moved, the provider decides
- * whether it can still cancel, and may charge a fee.
- */
-@Composable
-fun FundingCancelConfirmScreen(
-    state: FundingDepositUiState,
-    onBack: () -> Unit,
-    onConfirm: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
-    ) {
-        FundingHeader(title = "", onBack = onBack)
-        NovaText(
-            text = stringResource(if (state.withdraw) RCommon.string.funding_cancel_withdrawal_title else RCommon.string.funding_cancel_title),
-            style = PolkadotTheme.typography.headline.medium,
-            color = PolkadotTheme.colors.fg.primary,
-        )
-        NovaText(
-            text = stringResource(
-                when {
-                    state.content is FundingDepositContent.Crypto -> RCommon.string.funding_cancel_body
-                    state.rail == FundingRail.BANK && !state.moneyMoved -> RCommon.string.funding_cancel_body_bank
-                    else -> RCommon.string.funding_cancel_body_provider
-                },
-            ),
-            style = PolkadotTheme.typography.body.medium,
-            color = PolkadotTheme.colors.fg.primary,
-            textAlign = TextAlign.Center,
-        )
-        PolkadotTextButton(
-            modifier = Modifier.fillMaxWidth(),
-            text = stringResource(RCommon.string.common_cancel),
-            style = PolkadotButtonStyle.destructive(),
-            loading = state.isCancelling,
-            onClick = onConfirm,
-        )
-        PolkadotTextButton(
-            modifier = Modifier.fillMaxWidth(),
-            text = stringResource(RCommon.string.funding_cancel_keep),
-            onClick = onBack,
-        )
     }
 }

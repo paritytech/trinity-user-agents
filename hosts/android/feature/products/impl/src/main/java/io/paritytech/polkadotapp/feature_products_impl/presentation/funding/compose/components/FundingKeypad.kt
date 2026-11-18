@@ -29,8 +29,8 @@ private val DELETE_ICON_SIZE = 20.dp
 /** Digits, a decimal point and delete. The text it edits is the view model's. */
 @Composable
 fun FundingKeypad(
-    onKey: (FundingKey) -> Unit,
     modifier: Modifier = Modifier,
+    onKey: (FundingKey) -> Unit,
 ) {
     Column(
         modifier = modifier,

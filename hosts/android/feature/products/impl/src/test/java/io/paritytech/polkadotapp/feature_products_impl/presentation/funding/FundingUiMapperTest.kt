@@ -38,7 +38,7 @@ class FundingUiMapperTest {
             .asked()
             .received(bothQuoted())
 
-        val providers = state.toProvidersUiState(emptyMap())
+        val providers = state.toProvidersUiState(emptyMap(), Instant.fromEpochMilliseconds(0))
 
         assertEquals(FundingCountdown.Until(Instant.fromEpochMilliseconds(60_000)), providers.countdown)
         assertEquals(listOf(null, FundingProviderBadge.LowestPrice), providers.rows.map { it.badge })
@@ -76,7 +76,7 @@ class FundingUiMapperTest {
             .received(bothQuoted())
 
         val providers = quotedOnce.asked()
-            .toProvidersUiState(emptyMap())
+            .toProvidersUiState(emptyMap(), Instant.fromEpochMilliseconds(0))
 
         assertEquals(FundingCountdown.Refreshing, providers.countdown)
         assertEquals(FundingProviderPrice.Updating(forAmount = "$50 CASH"), providers.rows[0].price)
@@ -175,11 +175,11 @@ class FundingUiMapperTest {
 
     @Test
     fun `a cancel offer counts down to its deadline and stops at zero`() {
-        val offer = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAtMs = 10_000)
+        val offer = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAt = Instant.fromEpochMilliseconds(10_000))
 
-        assertEquals(9L, offer.secondsLeft(nowMs = 1_000))
-        assertEquals(0L, offer.secondsLeft(nowMs = 12_000))
-        val open = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAtMs = null)
-        assertEquals(null, open.secondsLeft(nowMs = 0))
+        assertEquals(9L, offer.secondsLeft(now = Instant.fromEpochMilliseconds(1_000)))
+        assertEquals(0L, offer.secondsLeft(now = Instant.fromEpochMilliseconds(12_000)))
+        val open = FundingCancelUiState.Offered(fee = "$1 CASH", refund = "$99 CASH", expiresAt = null)
+        assertEquals(null, open.secondsLeft(now = Instant.fromEpochMilliseconds(0)))
     }
 }
