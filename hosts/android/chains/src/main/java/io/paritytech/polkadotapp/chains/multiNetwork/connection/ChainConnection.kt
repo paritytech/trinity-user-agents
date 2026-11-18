@@ -6,6 +6,7 @@ import io.novasama.substrate_sdk_android.wsrpc.interceptor.WebSocketResponseInte
 import io.novasama.substrate_sdk_android.wsrpc.networkStateFlow
 import io.novasama.substrate_sdk_android.wsrpc.response.RpcResponse
 import io.novasama.substrate_sdk_android.wsrpc.state.SocketStateMachine.State
+import io.parity.truapi.LightClient
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.autobalance.NodeAutobalancer
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.ProviderWebSocketFactory
@@ -46,14 +47,20 @@ class ChainConnectionFactory @Inject constructor(
     private val nodeAutobalancer: NodeAutobalancer,
     private val socketServiceProvider: Provider<SocketService>,
     private val socketServiceFactory: SocketServiceFactory,
+    private val lightClient: LightClient,
     private val networkStateService: NetworkStateService,
     private val shortLivedConnectionDetector: ShortLivedConnectionDetector,
 ) {
     suspend fun create(chain: Chain): ChainConnection {
-        val socketService = if (FeatureFlags.isEnabled(FeatureOption.CHAIN_CONNECTIONS_THROUGH_PROVIDER)) {
-            socketServiceFactory.create(ProviderWebSocketFactory(chain.genesisHash.value))
-        } else {
-            socketServiceProvider.get()
+        val genesisHash = chain.genesisHash.value
+        val socketService = when {
+            lightClient.serves(genesisHash) ->
+                socketServiceFactory.create(ProviderWebSocketFactory.forLightClient(lightClient, genesisHash))
+
+            FeatureFlags.isEnabled(FeatureOption.CHAIN_CONNECTIONS_THROUGH_PROVIDER) ->
+                socketServiceFactory.create(ProviderWebSocketFactory.forNodes(genesisHash))
+
+            else -> socketServiceProvider.get()
         }
         val connection = ChainConnection(
             socketService = socketService,

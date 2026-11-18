@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import uniffi.truapi_provider.ChainConnection as RpcConnection
+import uniffi.truapi_provider.ChainConnection
 
 /**
  * Resolves a 32-byte chain genesis hash to its JSON-RPC WebSocket endpoints, in
@@ -22,10 +22,11 @@ fun interface ChainEndpointResolver {
 }
 
 /**
- * Serves the core's `chainConnect`, `chainSend` and `chainClose` from remote
- * nodes through truapi-provider, delivering inbound events to the callbacks set
- * via [attach]. Each dial builds a [ChainProvider] for that one node, so no
- * request can reach a node or the light client the resolver did not name.
+ * Serves the core's `chainConnect`, `chainSend` and `chainClose` through
+ * truapi-provider, delivering inbound events to the callbacks set via [attach].
+ * A chain [lightClient] serves goes to it. Every other chain goes to remote
+ * nodes, each dial building a [ChainProvider] for that one node, so no request
+ * can reach a node the resolver did not name.
  *
  * An endpoint that fails before it ever opens is treated as a dead node rather
  * than a dead connection: the next candidate is tried under the same connection
@@ -36,8 +37,9 @@ fun interface ChainEndpointResolver {
  * The provider's sockets bypass the app's network security config, so a `ws://`
  * endpoint is dialled only when [cleartextPermitted] allows its host.
  */
-class RpcChainProvider(
+class CoreChainConnections(
     private val resolver: ChainEndpointResolver,
+    private val lightClient: LightClient? = null,
     private val cleartextPermitted: (host: String) -> Boolean = ::systemPermitsCleartext,
     private val onLog: (message: String) -> Unit = {},
 ) {
@@ -77,14 +79,15 @@ class RpcChainProvider(
      * answers. Null when the genesis is unsupported.
      */
     fun connect(genesisHash: ByteArray): UInt? {
+        val light = lightClient?.takeIf { it.serves(genesisHash) }
         val urls = resolver.urlsFor(genesisHash)
-        if (urls.isEmpty()) {
+        if (light == null && urls.isEmpty()) {
             onLog("chain ${genesisHash.toHexString()} has no host-managed connection; unsupported")
             return null
         }
 
         val id = nextId.getAndIncrement().toUInt()
-        val connection = Connection(id, genesisHash, urls)
+        val connection = Connection(id, genesisHash, urls, light)
         // Registered before dialling so a close that lands mid-dial finds it.
         connections[id] = connection
         dialler.execute(connection::dial)
@@ -133,26 +136,51 @@ class RpcChainProvider(
     }
 
     /**
-     * One logical chain connection, which may try several of [urls] before one
-     * answers. Sends arrive on the core's thread while dials and inbound events
-     * run on others, so all state changes happen under [lock].
+     * One logical chain connection, opened on [light] when it serves the chain,
+     * otherwise on the first of [urls] that answers. Sends arrive on the core's
+     * thread while dials and inbound events run on others, so all state changes
+     * happen under [lock].
      */
     private inner class Connection(
         private val id: UInt,
         private val genesisHash: ByteArray,
         private val urls: List<String>,
+        private val light: LightClient?,
     ) : ChainMessageListener {
         private val lock = Any()
         private var state = State.CONNECTING
-        private var socket: RpcConnection? = null
+        private var socket: ChainConnection? = null
         private val pending = ArrayList<String>()
 
         @Volatile
         private var dialledUrl: String? = null
 
         fun dial() {
+            val opened = if (light != null) openOnLightClient(light) else openOnFirstNode()
+            if (opened == null) {
+                finish()
+                return
+            }
+            if (!adopt(opened)) {
+                opened.disconnect()
+                opened.destroy()
+            }
+        }
+
+        private fun openOnLightClient(light: LightClient): ChainConnection? {
+            dialledUrl = LIGHT_CLIENT
+            onLog("chain connection $id dialling $LIGHT_CLIENT")
+            return try {
+                light.connect(genesisHash, this).also { onLog("chain connection $id open on $LIGHT_CLIENT") }
+            } catch (error: ChainProviderException) {
+                onLog("chain connection $id failed on $LIGHT_CLIENT: ${error.describe()}")
+                null
+            }
+        }
+
+        private fun openOnFirstNode(): ChainConnection? {
             for (url in urls) {
-                if (synchronized(lock) { state == State.FINISHED }) return
+                if (synchronized(lock) { state == State.FINISHED }) return null
                 dialledUrl = url
                 onLog("chain connection $id dialling $url")
                 val opened = try {
@@ -165,16 +193,12 @@ class RpcChainProvider(
                     continue
                 }
                 onLog("chain connection $id open on $url")
-                if (!adopt(opened)) {
-                    opened.disconnect()
-                    opened.destroy()
-                }
-                return
+                return opened
             }
-            finish()
+            return null
         }
 
-        private fun adopt(opened: RpcConnection): Boolean = synchronized(lock) {
+        private fun adopt(opened: ChainConnection): Boolean = synchronized(lock) {
             if (state == State.FINISHED) return false
             state = State.OPEN
             socket = opened
@@ -230,11 +254,13 @@ class RpcChainProvider(
         }
     }
 
-    private class Finished(val socket: RpcConnection?)
+    private class Finished(val socket: ChainConnection?)
 
     private enum class State { CONNECTING, OPEN, FINISHED }
 
     private companion object {
+        const val LIGHT_CLIENT = "the light client"
+
         // ChainProvider.connect blocks until the node answers or fails, and chainConnect is
         // called on the core's dispatcher thread, which must never block.
         val dialler: ExecutorService = Executors.newCachedThreadPool { task ->
