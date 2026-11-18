@@ -305,6 +305,12 @@ const SNAPSHOT_MAX_BYTES: usize = 8_000_000;
 #[cfg(feature = "smoldot")]
 const SNAPSHOT_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(60);
 
+/// How long [`EmbeddedChainProvider::metrics`] waits for the light client.
+/// Metrics are read from counters it already holds, so an answer that takes
+/// longer means the chain is not serving requests at all.
+#[cfg(feature = "smoldot")]
+const METRICS_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(10);
+
 /// How long storage gets to answer before a connect gives up on it and the
 /// chain syncs from the chain-spec checkpoint. A host-supplied store may never
 /// answer, and a stored blob must not be able to wedge a connection that would
@@ -576,6 +582,63 @@ impl EmbeddedChainProvider {
 	/// database to snapshot and answers the request with a JSON-RPC error,
 	/// which surfaces here as an error rather than a wait.
 	pub async fn snapshot(&self, genesis_hash: [u8; 32]) -> Result<String, ProviderError> {
+		let params = format!("[{SNAPSHOT_MAX_BYTES}]");
+		let result = self
+			.light_client_request(
+				genesis_hash,
+				"chainHead_unstable_finalizedDatabase",
+				&params,
+				SNAPSHOT_TIMEOUT,
+				"finalized-database snapshot",
+			)
+			.await?;
+		match result {
+			serde_json::Value::String(blob) => Ok(blob),
+			_ => Err(ProviderError::Transport {
+				reason: "finalized-database snapshot failed: response carried no string result"
+					.to_owned(),
+			}),
+		}
+	}
+
+	/// The light client's metrics for `genesis_hash`, as the JSON smoldot
+	/// answers `sudo_unstable_metrics` with: counters for the chain and for
+	/// the process-wide network (connections, requests and bytes per protocol,
+	/// when the smoldot build has them).
+	///
+	/// smoldot marks the format unstable, so it is passed through unchanged
+	/// rather than decoded here. `None` when this provider is not running the
+	/// chain: reading metrics never starts one.
+	pub async fn metrics(&self, genesis_hash: [u8; 32]) -> Result<Option<String>, ProviderError> {
+		if !self.is_connected(genesis_hash) {
+			return Ok(None);
+		}
+		let result = self
+			.light_client_request(
+				genesis_hash,
+				"sudo_unstable_metrics",
+				"[]",
+				METRICS_TIMEOUT,
+				"metrics",
+			)
+			.await?;
+		Ok(Some(result.to_string()))
+	}
+
+	/// Send one request on a connection of its own and return its `result`.
+	///
+	/// The connection is closed once the answer, an error, the end of the
+	/// stream or `timeout` arrives; `what` names the request in errors. The
+	/// response stream stays open while a light client is still syncing, so
+	/// the deadline is what ends a request nobody answers.
+	async fn light_client_request(
+		&self,
+		genesis_hash: [u8; 32],
+		method: &str,
+		params: &str,
+		timeout: core::time::Duration,
+		what: &str,
+	) -> Result<serde_json::Value, ProviderError> {
 		use futures::{
 			future::{self, Either},
 			stream::StreamExt,
@@ -585,50 +648,38 @@ impl EmbeddedChainProvider {
 
 		let connection = self.connect(genesis_hash).await?;
 		let mut responses = connection.responses();
-		let id = "truapi-provider:finalizedDatabase";
+		let id = format!("truapi-provider:{method}");
 		connection.send(format!(
-			concat!(
-				r#"{{"jsonrpc":"2.0","id":"{}","#,
-				r#""method":"chainHead_unstable_finalizedDatabase","params":[{}]}}"#
-			),
-			id, SNAPSHOT_MAX_BYTES,
+			r#"{{"jsonrpc":"2.0","id":"{id}","method":"{method}","params":{params}}}"#
 		));
-		let deadline = futures_timer::Delay::new(SNAPSHOT_TIMEOUT);
+		let deadline = futures_timer::Delay::new(timeout);
 		futures::pin_mut!(deadline);
 
-		loop {
+		let outcome = loop {
 			match future::select(responses.next(), deadline.as_mut()).await {
-				Either::Left((Some(frame), _)) => match crate::error::frame_for_id(&frame, id) {
-					Some(FrameForId::Result(result)) => {
-						connection.close();
-						return Ok(result);
-					},
+				Either::Left((Some(frame), _)) => match crate::error::frame_for_id(&frame, &id) {
+					Some(FrameForId::Result(result)) => break Ok(result),
 					Some(FrameForId::Failure(reason)) => {
-						connection.close();
-						return Err(ProviderError::Transport {
-							reason: format!("finalized-database snapshot failed: {reason}"),
+						break Err(ProviderError::Transport {
+							reason: format!("{what} failed: {reason}"),
 						});
 					},
 					None => {},
 				},
 				Either::Left((None, _)) => {
-					connection.close();
-					return Err(ProviderError::Transport {
-						reason: "connection ended before the finalized-database snapshot"
-							.to_owned(),
+					break Err(ProviderError::Transport {
+						reason: format!("connection ended before the {what}"),
 					});
 				},
 				Either::Right(((), _)) => {
-					connection.close();
-					return Err(ProviderError::Transport {
-						reason: format!(
-							"no finalized-database snapshot within {}s",
-							SNAPSHOT_TIMEOUT.as_secs()
-						),
+					break Err(ProviderError::Transport {
+						reason: format!("no {what} within {}s", timeout.as_secs()),
 					});
 				},
 			}
-		}
+		};
+		connection.close();
+		outcome
 	}
 }
 

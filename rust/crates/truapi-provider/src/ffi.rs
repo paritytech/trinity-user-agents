@@ -82,6 +82,12 @@ pub enum ChainProviderError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// The light client did not answer a metrics request.
+	#[error("{reason}")]
+	Metrics {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 impl From<uniffi::UnexpectedUniFFICallbackError> for ChainProviderError {
@@ -365,6 +371,20 @@ impl ChainProvider {
 			.map_err(|error| ChainProviderError::Storage {
 				reason: bounded_reason(error.to_string()),
 			})
+	}
+
+	/// The light client's metrics for `genesis_hash`: the JSON smoldot answers
+	/// `sudo_unstable_metrics` with, unchanged (smoldot marks the format
+	/// unstable). `null` when this provider is not running the chain, since
+	/// reading metrics never starts one. Never call it from a listener callback.
+	pub async fn metrics(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Option<String>, ChainProviderError> {
+		self.inner
+			.metrics(genesis_from(genesis_hash)?)
+			.await
+			.map_err(|error| ChainProviderError::Metrics { reason: error.to_string() })
 	}
 
 	/// Snapshot the finalized state for `genesis_hash` and hand it to storage.

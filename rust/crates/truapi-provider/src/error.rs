@@ -145,10 +145,10 @@ pub fn synthetic_error_frame(request: &str, message: &str) -> Option<String> {
 /// Outcome of matching a JSON-RPC response frame against an awaited request id.
 #[cfg(feature = "smoldot")]
 pub enum FrameForId {
-	/// The frame answers `id` with a string `result`.
-	Result(String),
-	/// The frame answers `id` with an `error`, or with a `result` that is not a
-	/// string.
+	/// The frame answers `id` with a `result`.
+	Result(Value),
+	/// The frame answers `id` with an `error`, or with neither a `result` nor
+	/// an `error`.
 	Failure(String),
 }
 
@@ -168,9 +168,9 @@ pub fn frame_for_id(frame: &str, id: &str) -> Option<FrameForId> {
 		let message = error.get("message").and_then(Value::as_str).unwrap_or("unknown error");
 		return Some(FrameForId::Failure(message.to_owned()));
 	}
-	match value.get("result").and_then(Value::as_str) {
-		Some(result) => Some(FrameForId::Result(result.to_owned())),
-		None => Some(FrameForId::Failure("response carried no string result".to_owned())),
+	match value.get("result") {
+		Some(result) => Some(FrameForId::Result(result.clone())),
+		None => Some(FrameForId::Failure("response carried no result".to_owned())),
 	}
 }
 
