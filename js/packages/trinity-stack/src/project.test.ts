@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Fetch, encodeLink } from "./index.js";
+import { type Fetch, decodeLink, encodeLink, knownStacks } from "./index.js";
 import {
   type ProjectOptions,
   add,
@@ -231,5 +231,33 @@ describe("trinity-stack add and update", () => {
     expect(changed).toContain("local.json");
     expect(failures).toHaveLength(1);
     expect(failures[0]).toStartWith("broken: ");
+  });
+
+  test("add with a known stack's name alone fetches that stack and records its link", async () => {
+    served = new Uint8Array(
+      await readFile(
+        new URL("../../../../stacks/previewnet.json", import.meta.url),
+      ),
+    );
+    const requested: string[] = [];
+    const recordingFetch: Fetch = async (input) => {
+      requested.push(String(input));
+      return serve(input);
+    };
+    await add("previewnet", undefined, undefined, {
+      dir,
+      fetch: recordingFetch,
+    });
+    expect(requested).toEqual([decodeLink(knownStacks.previewnet).url]);
+    expect(
+      JSON.parse(await readFile(join(dir, "stacks.json"), "utf8")),
+    ).toEqual({ previewnet: knownStacks.previewnet });
+  });
+
+  test("add without a link fails for a name that is not a known stack, listing the known ones", async () => {
+    await expect(add("local", undefined, undefined, options())).rejects.toThrow(
+      `known stacks: ${Object.keys(knownStacks).join(", ")}`,
+    );
+    expect(await files()).toEqual([]);
   });
 });

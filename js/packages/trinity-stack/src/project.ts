@@ -10,6 +10,7 @@ import {
   decodeLink,
   encodeLink,
   fetchDescriptor,
+  knownStacks,
   parse,
   stackId,
 } from "./index.js";
@@ -42,15 +43,17 @@ const IGNORES = [
 
 /**
  * Adds a stack under `name` from a link, or a URL and its key, then writes its copy as
- * `update` does. A build copy must be signed, so a stack without a key is refused.
+ * `update` does. Without `target`, `name` must be one of `knownStacks` and its link is used. A
+ * build copy must be signed, so a stack without a key is refused.
  */
 export async function add(
   name: string,
-  target: string,
+  target: string | undefined,
   key: string | undefined,
   options: ProjectOptions = {},
 ): Promise<Outcome & { warnings: string[] }> {
   checkName(name);
+  target ??= knownLink(name);
   const linked = new URL(target).searchParams.has("url")
     ? decodeLink(target)
     : { url: target };
@@ -288,6 +291,14 @@ function checkName(name: string) {
     throw new Error(`${name} is not a stack name: use a-z, 0-9 and -`);
   if (name === "stacks")
     throw new Error("stacks is the name of stacks.json; pick another");
+}
+
+/** The link of the known stack `name`; fails, listing the known stacks, for any other name. */
+function knownLink(name: string): string {
+  if (Object.hasOwn(knownStacks, name)) return knownStacks[name];
+  throw new Error(
+    `${name} is not a known stack; known stacks: ${Object.keys(knownStacks).join(", ")}. Pass its link or URL`,
+  );
 }
 
 async function writeStacks(
