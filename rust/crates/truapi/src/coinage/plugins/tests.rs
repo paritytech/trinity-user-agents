@@ -114,12 +114,30 @@ fn a_coin_of_another_value_at_an_output_account_proves_nothing() {
 #[test]
 fn a_token_paid_unload_is_not_retried_after_its_dispatch_failed() {
 	let unload = RecordParams { call: Call::UnloadToCoins, retry: Retry::Until(u64::MAX) };
-	assert!(!retries(unload, VerdictFailureKind::DispatchFailed));
-	assert!(retries(unload, VerdictFailureKind::Expired));
+	assert!(!retries(unload, VerdictFailureKind::DispatchFailed, NOW));
+	assert!(retries(unload, VerdictFailureKind::Expired, NOW));
 	let transfer = RecordParams { call: Call::Transfer, retry: Retry::ExpiryOnly };
-	assert!(retries(transfer, VerdictFailureKind::Expired));
-	assert!(!retries(transfer, VerdictFailureKind::Rejected));
-	assert!(!retries(RecordParams { retry: Retry::Never, ..transfer }, VerdictFailureKind::Expired));
+	assert!(retries(transfer, VerdictFailureKind::Expired, NOW));
+	assert!(!retries(transfer, VerdictFailureKind::Rejected, NOW));
+	assert!(!retries(RecordParams { retry: Retry::Never, ..transfer }, VerdictFailureKind::Expired, NOW));
+}
+
+/// A failure that would repeat on the same inputs must end once the
+/// deadline has passed, or the record is built again without end; an expiry
+/// says nothing about the inputs, so it is built again while they last.
+#[test]
+fn past_its_deadline_a_record_is_built_again_only_after_an_expiry() {
+	let transfer = RecordParams { call: Call::Transfer, retry: Retry::Until(NOW) };
+	let retried = |failure, now| retries(transfer, failure, now);
+	assert_eq!(
+		[
+			retried(VerdictFailureKind::DispatchFailed, NOW),
+			retried(VerdictFailureKind::DispatchFailed, NOW + 1),
+			retried(VerdictFailureKind::Rejected, NOW + 1),
+			retried(VerdictFailureKind::Expired, NOW + 1),
+		],
+		[true, false, false, true]
+	);
 }
 
 #[test]
