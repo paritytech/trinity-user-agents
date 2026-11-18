@@ -375,8 +375,9 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 /// The id of the chat room that `product_id` creates with `room_id_source`.
 ///
 /// A host that shows a product's room before the product runs calls this,
-/// because the product's own `createRoom` resolves the room under this id. The
-/// source gets the screening of `createRoom` first.
+/// because the product's own `createRoom` resolves the room under this id. A
+/// product built against the earlier client gives a `roomId` instead, and its
+/// room keeps that id. The source gets the screening of `createRoom` first.
 #[uniffi::export]
 pub fn chat_room_id(
 	product_id: ProductId,
