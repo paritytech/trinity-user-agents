@@ -2,8 +2,9 @@ use super::SigningHost;
 use crate::{
 	host_logic::session::SessionInfo,
 	runtime::{
+		AccountHolder,
 		authority::AuthorityError,
-		connected_session_ui_info,
+		connected_session_ui_info, device_enc_public_key,
 		identity::{LookupOutcome, lookup_session_identity},
 	},
 };
@@ -35,9 +36,12 @@ impl LocalActivation for SigningHost {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
+		let device_enc_public_key =
+			self.wallet.device_encryption_secret().await?.map(device_enc_public_key);
 		let activation = self.wallet.prepare_activation(secret, lite_username)?;
 		let session = self.accounts.change_activation(|| self.wallet.install(activation));
-		self.auth_state.connected(&connected_session_ui_info(&session));
+		self.auth_state
+			.connected(&connected_session_ui_info(&session, device_enc_public_key));
 
 		let services = self.services.clone();
 		let session_state = self.wallet.session_state();
@@ -56,7 +60,7 @@ impl LocalActivation for SigningHost {
 			let (lite_username, full_username) = identity.into_usernames();
 			let named = SessionInfo { lite_username, full_username, ..session.clone() };
 			if session_state.replace_session_if_current(&session, named.clone()) {
-				auth_state.connected(&connected_session_ui_info(&named));
+				auth_state.connected(&connected_session_ui_info(&named, device_enc_public_key));
 			}
 		});
 		Ok(())

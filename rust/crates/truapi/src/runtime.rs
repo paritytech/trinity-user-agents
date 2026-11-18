@@ -363,6 +363,10 @@ pub trait ProductRuntimeAdmin: truapi::api::TrUApi {
 		product_id: &ProductId,
 		timeout: Duration,
 	) -> Result<Option<[u8; 32]>, AuthorityError>;
+
+	/// This device's X25519 encryption secret, as the connection's account
+	/// holder keeps it.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError>;
 }
 
 #[async_trait::async_trait]
@@ -392,6 +396,10 @@ impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
 	) -> Result<Option<[u8; 32]>, AuthorityError> {
 		self.accounts.product_subtree_public_key_within(product_id, timeout).await
 	}
+
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.accounts.device_encryption_secret().await
+	}
 }
 
 /// Per-connection adapters, permissions, channels and open operation demand.
@@ -418,6 +426,13 @@ pub struct ProductConnection {
 	/// Control of the card face under this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
 	open_operations: Mutex<HashSet<u32>>,
+	/// Cards whose back this connection has drawn. A press on a back reaches
+	/// the product only for these: a product whose SDK predates
+	/// `PocketCardBack` cannot decode one and would lose its whole action
+	/// stream, and one that drew a back has shown it can. A press on a cached
+	/// back before this connection's back render yields its first tree is
+	/// dropped too, as the Pocket RFC lets presses on a cached back go nowhere.
+	drawn_backs: Mutex<HashSet<String>>,
 }
 
 /// How long after a tap a Worker may still open the scanner, as browsers bound
@@ -734,6 +749,23 @@ impl ProductConnection {
 		self.renderer.publish(item)
 	}
 
+	/// Records that this connection's product drew the back of `card_id`, so
+	/// presses on that back may reach it.
+	pub fn mark_back_drawn(&self, card_id: String) {
+		self.drawn_backs.lock().expect("drawn backs mutex poisoned").insert(card_id);
+	}
+
+	/// Whether `item` may reach this connection's product: anything but a
+	/// press on a back it has not drawn.
+	fn delivers(&self, item: &truapi::latest::HostRendererActionSubscribeItem) -> bool {
+		match &item.context {
+			truapi::latest::RenderContext::PocketCardBack { card_id } => {
+				self.drawn_backs.lock().expect("drawn backs mutex poisoned").contains(card_id)
+			},
+			_ => true,
+		}
+	}
+
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
 		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
 			self.session_state.current().is_none()
@@ -787,6 +819,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			game_platform: adapters.game_platform,
 			expanded_card: adapters.expanded_card,
 			open_operations: Mutex::new(HashSet::new()),
+			drawn_backs: Mutex::new(HashSet::new()),
 		});
 		let accounts = ProductAccounts::new(accounts, connection.clone());
 		Self { connection, accounts, host_session }
@@ -1128,20 +1161,31 @@ pub(crate) fn forget_chain_failures() {
 	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }
 
-/// Host-UI projection of an active session for `AuthState::Connected`.
-fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
+/// Host-UI projection of an active session for `AuthState::Connected`, with
+/// the public half of the device encryption key the session's account holder
+/// serves.
+fn connected_session_ui_info(
+	session: &SessionInfo,
+	device_enc_public_key: Option<[u8; 32]>,
+) -> SessionUiInfo {
 	SessionUiInfo {
 		public_key: session.public_key,
 		identity_account_id: session.identity_account_id,
 		chat_public_key: session
 			.identity_chat_private_key
 			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
-		device_enc_public_key: session.device_enc_public_key,
+		peer_device_enc_public_key: session.peer_device_enc_public_key,
 		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
 		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
+		device_enc_public_key,
 		lite_username: session.lite_username.clone(),
 		full_username: session.full_username.clone(),
 	}
+}
+
+/// Public half of a device encryption secret, as `SessionUiInfo` names it.
+fn device_enc_public_key(secret: [u8; 32]) -> [u8; 32] {
+	X25519PrivateKey::from(secret).public_key().0
 }
 
 const MAX_VRF_TRANSCRIPT_ITEMS: usize = 32;
@@ -1555,11 +1599,17 @@ impl<H: AccountHolder> Renderer for ProductRuntimeHost<H> {
 				if self.connection.renderer_access().is_err() {
 					return Subscription::interrupted(CallError::Denied);
 				}
+				let connection = self.connection.clone();
 				Subscription::new(
 					self.connection
 						.renderer
 						.subscribe()
-						.map(|item| item.map(IntoLatest::into_latest)),
+						.map(|item| item.map(IntoLatest::into_latest))
+						.filter(move |item| {
+							core::future::ready(
+								item.as_ref().map_or(true, |item| connection.delivers(item)),
+							)
+						}),
 				)
 			})
 			.await

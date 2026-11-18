@@ -99,6 +99,31 @@ class TabBarVisibilityHolderTest {
         assertEquals(TabBarMode.Main, holder.mode.value)
     }
 
+    @Test
+    fun `a screen arriving while the last one leaves keeps the bar until it pins`() {
+        holder.pin(Main, TabBarPin.Main)
+        holder.arrive(Chat)
+
+        holder.release(Main)
+
+        assertEquals(TabBarMode.Main, holder.mode.value)
+
+        holder.pin(Chat, TabBarPin.Tucked)
+
+        assertEquals(TabBarMode.TuckedOverScreen(Chat), holder.mode.value)
+    }
+
+    @Test
+    fun `a screen that leaves before it resumes stops holding the bar`() {
+        holder.pin(Main, TabBarPin.Main)
+        holder.arrive(Chat)
+        holder.release(Main)
+
+        holder.release(Chat)
+
+        assertEquals(TabBarMode.Absent, holder.mode.value)
+    }
+
     private companion object {
         val Main = Any()
         val ProductA = Any()

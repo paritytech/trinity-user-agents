@@ -19,6 +19,7 @@ use super::ring_vrf::RingResolver;
 use crate::{
 	host_internal::sso_messages::RingVrfError,
 	host_logic::{
+		device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret},
 		entropy::{derive_product_entropy, root_entropy_source},
 		product_account::{
 			ProductAccountError, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
@@ -66,6 +67,11 @@ pub struct WalletAccountHolder {
 	consent: Arc<ProductConsent>,
 	lifecycle: Mutex<WalletState>,
 	session_state: Arc<SessionState>,
+	/// This install's encryption secret once read or adopted. The lock also
+	/// serializes the first read-or-create: concurrent first-time readers would
+	/// otherwise each generate a secret and persist it, leaving peers
+	/// addressing an overwritten key.
+	device_encryption_secret: futures::lock::Mutex<Option<[u8; 32]>>,
 }
 
 #[derive(Default)]
@@ -185,7 +191,34 @@ impl WalletAccountHolder {
 			consent,
 			lifecycle: Mutex::new(WalletState::default()),
 			session_state: SessionState::new(),
+			device_encryption_secret: futures::lock::Mutex::new(None),
 		}
+	}
+
+	/// This install's X25519 encryption secret, which contacts encrypt to and
+	/// pairing answers advertise.
+	///
+	/// Created and persisted on first read unless one was adopted.
+	pub async fn encryption_secret(&self) -> Result<[u8; 32], String> {
+		let mut cached = self.device_encryption_secret.lock().await;
+		if let Some(secret) = *cached {
+			return Ok(secret);
+		}
+		let secret = read_or_create_device_encryption_secret(&self.services.storage()).await?;
+		*cached = Some(secret);
+		Ok(secret)
+	}
+
+	/// Make `secret` this install's X25519 encryption secret, replacing the
+	/// stored one.
+	///
+	/// For a host that announced a key of its own before the core kept one,
+	/// so peers addressing that key stay reachable.
+	pub async fn adopt_encryption_secret(&self, secret: [u8; 32]) -> Result<(), String> {
+		let mut cached = self.device_encryption_secret.lock().await;
+		store_device_encryption_secret(&self.services.storage(), secret).await?;
+		*cached = Some(secret);
+		Ok(())
 	}
 
 	fn with_keys<T, E: From<AuthorityError>>(
@@ -239,7 +272,7 @@ impl WalletAccountHolder {
 				identity_account_id: Some(identity_account_id),
 				identity_chat_private_key: Some(identity_chat_private_key),
 				// A local session has no answering remote device to address.
-				device_enc_public_key: None,
+				peer_device_enc_public_key: None,
 				lite_username,
 				full_username: None,
 			},
