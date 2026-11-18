@@ -44,6 +44,28 @@ let chains = &accepted.stack.descriptor.chains;
 fails or breaks a rule, and reports a new `generation` (drop cached chain data), `stale` (past `validUntil`) and
 `expired` (past `expiresAt`).
 
+## Known stacks
+
+The crate lists the links of the Trinity stacks below, signed by their operators. `known_stack` returns one's pointer by
+name, and `known_stack_links` lists every name and link:
+
+```rust
+let pointer = trinity_stack::known_stack("previewnet").expect("previewnet is a known stack");
+assert_eq!(pointer.url().host_str(), Some("previewnet.substrate.dev"));
+```
+
+| Name | Operator | Descriptor |
+| --- | --- | --- |
+| `paseo-next-v2` | Parity | <https://stack-paseo-next.parity-testnet.parity.io/.well-known/trinity-stack.json> |
+| `pcf-devnet` | Polkadot Community Foundation | <https://stack.api.polkadotcommunity.foundation/.well-known/trinity-stack.json> |
+| `polkadot` | Polkadot Community Foundation | <https://stack.api.pcf.network/.well-known/trinity-stack.json> |
+| `previewnet` | Parity | <https://previewnet.substrate.dev/.well-known/trinity-stack.json> |
+
+To add a stack to the list, open a pull request that adds its name and signed link to
+[`known-stacks.json`](https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/trinity-stack/known-stacks.json)
+and runs `scripts/update-stacks.sh` for the copies in `stacks/`. Users get the stack with the next release of
+`@parity/trinity-stack` and the crate. Only signed stacks are listed.
+
 ## What else is here
 
 - `Document::parse` and `open` read a document as served and apply a pointer's rules: a pointer with a key accepts only
