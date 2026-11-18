@@ -23,6 +23,7 @@ use super::{ReservedValuesPolicy, StackError};
 /// host uses: every chain's genesis hash, `assets`, `contracts`, `dotns`,
 /// `coinage` and the digest of the relay's light spec, the file that
 /// carries the relay's sync checkpoint.
+#[derive(Clone)]
 pub struct Pinned {
 	tld: String,
 	/// What a stack allowed reserved values pins besides its TLD, and `None`
@@ -62,6 +63,7 @@ impl Pinned {
 
 /// The fields a stack allowed reserved values pins besides its TLD, as one
 /// copy of its descriptor has them.
+#[derive(Clone)]
 struct ReservedStackFields {
 	/// Each chain's genesis hash by its role, for every role the descriptor
 	/// names. A role added or left out is a change like another hash is.

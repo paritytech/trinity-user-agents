@@ -1,11 +1,12 @@
-use trinity_stack::{Descriptor, Refresh, Served, StackReader};
+use trinity_stack::Served;
 
 use super::*;
 use crate::{
 	stack::signed_pointer,
 	test_support::{
-		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor,
-		reserved_test_descriptor, sign_test_descriptor,
+		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
+		refused_for_its_tld, refused_for_pinned, reserved_test_descriptor, sign_test_descriptor,
+		stack_status, stored_test_record, without_bulletin,
 	},
 };
 
@@ -13,13 +14,6 @@ const START: i64 = 1_800_000_000;
 
 fn signed(descriptor: &serde_json::Value) -> Vec<u8> {
 	sign_test_descriptor(descriptor).1
-}
-
-/// What [`StackStatus::descriptor`] holds for `descriptor`.
-fn plain(descriptor: &serde_json::Value) -> String {
-	let descriptor: Descriptor =
-		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
-	serde_json::to_string(&descriptor).expect("a descriptor always serialises")
 }
 
 fn load(bundled: &serde_json::Value, stored: Option<&[u8]>) -> StackSource {
@@ -62,20 +56,6 @@ fn fail(source: &mut StackSource, now: i64) -> Option<Vec<u8>> {
 	source.fetched(Err("connection refused".to_string()), now)
 }
 
-fn status(
-	descriptor: &serde_json::Value,
-	last_refresh: Option<StackRefreshOutcome>,
-) -> StackStatus {
-	StackStatus {
-		descriptor: plain(descriptor),
-		generation: descriptor["generation"].as_str().expect("generation is a string").to_string(),
-		stale: false,
-		expired: false,
-		restart_required: false,
-		last_refresh,
-	}
-}
-
 /// A stack never waits on its descriptor's server: the bundled copy is enough
 /// to start, and the first fetch is only asked for.
 #[test]
@@ -85,7 +65,7 @@ fn the_bundled_copy_starts_the_stack_and_a_fetch_is_due() {
 
 	assert_eq!(
 		(source.stack().chains().people, source.status()),
-		(TEST_STACK_PEOPLE, status(&bundled, None))
+		(TEST_STACK_PEOPLE, stack_status(&bundled, None))
 	);
 	let request = source.due_fetch(START).expect("a build copy is due at once");
 	assert_eq!(
@@ -106,7 +86,7 @@ fn a_newer_copy_on_the_same_chains_is_used_at_once() {
 	let record = serve(&mut source, &newer, START);
 
 	assert!(record.is_some(), "the newer copy is stored");
-	assert_eq!(source.status(), status(&newer, Some(StackRefreshOutcome::Current)));
+	assert_eq!(source.status(), stack_status(&newer, Some(StackRefreshOutcome::Current)));
 }
 
 /// After a wipe the chains have new genesis hashes. The core's services were
@@ -127,7 +107,7 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 			TEST_STACK_PEOPLE,
 			StackStatus {
 				restart_required: true,
-				..status(&bundled, Some(StackRefreshOutcome::Current))
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
 			}
 		)
 	);
@@ -137,7 +117,7 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 	let restarted = load(&bundled, Some(&record));
 	assert_eq!(
 		(restarted.stack().chains().people, restarted.status()),
-		(TEST_STACK_WIPED_PEOPLE, status(&wiped, None))
+		(TEST_STACK_WIPED_PEOPLE, stack_status(&wiped, None))
 	);
 }
 
@@ -176,7 +156,7 @@ fn an_unreachable_server_keeps_the_copy_in_use() {
 
 	let record = fail(&mut source, START);
 
-	assert_eq!((record, source.status()), (None, status(&bundled, Some(unreachable()))));
+	assert_eq!((record, source.status()), (None, stack_status(&bundled, Some(unreachable()))));
 }
 
 /// A signed descriptor without a Bulletin chain passes the descriptor rules
@@ -186,11 +166,8 @@ fn an_unreachable_server_keeps_the_copy_in_use() {
 fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
-	let mut without_bulletin = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	without_bulletin["chains"]
-		.as_array_mut()
-		.expect("chains is an array")
-		.retain(|chain| chain["role"] != "Bulletin");
+	let without_bulletin =
+		without_bulletin(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
 
 	let record = serve(&mut source, &without_bulletin, START);
 
@@ -198,7 +175,7 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 		(record, source.status()),
 		(
 			None,
-			status(
+			stack_status(
 				&bundled,
 				Some(StackRefreshOutcome::Refused {
 					reason: "stack has no Bulletin chain".to_string()
@@ -216,8 +193,9 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 	let mut on_extra_tld = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 	on_extra_tld["tld"] = "testnet".into();
 	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
-	let refused =
-		|reason: String| (None, status(&bundled, Some(StackRefreshOutcome::Refused { reason })));
+	let refused = |reason: String| {
+		(None, stack_status(&bundled, Some(StackRefreshOutcome::Refused { reason })))
+	};
 
 	assert_eq!(
 		[&on_extra_tld, &on_extra_genesis].map(|newer| {
@@ -239,42 +217,28 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 #[test]
 fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let (link, _) = sign_test_descriptor(&bundled);
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
-	let mut reader = StackReader::new(Refresh::Never);
-	let record = reader
-		.fetched(
-			&pointer,
-			Served::Document { bytes: &signed(&on_extra_genesis), etag: None },
-			START,
-		)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored");
+	let record = stored_test_record(&published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS));
 
 	let source = load_reserving(&bundled, Some(&record), reserving_extras());
 
-	assert_eq!(source.status(), status(&bundled, None));
+	assert_eq!(source.status(), stack_status(&bundled, None));
 }
 
 /// The reader judges every fetch against the copy it holds. A copy the core
-/// refused must not become that copy, or the operator's corrected descriptor
-/// at the same `sequence` would be turned away as a conflict.
+/// cannot run must not become that copy, or the operator's corrected
+/// descriptor at the same `sequence` would be turned away as a conflict.
 #[test]
-fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
+fn a_copy_the_core_cannot_run_does_not_stand_in_the_way_of_the_corrected_one() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	let mut on_dot = corrected.clone();
-	on_dot["tld"] = "dot".into();
 
-	let refused = serve(&mut source, &on_dot, START);
+	let refused = serve(&mut source, &without_bulletin(corrected.clone()), START);
 	let record = serve(&mut source, &corrected, START + 3600);
 
 	assert_eq!(
 		(refused, record.is_some(), source.status()),
-		(None, true, status(&corrected, Some(StackRefreshOutcome::Current)))
+		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
 	);
 }
 
@@ -318,7 +282,10 @@ fn an_older_copy_is_refused() {
 		(record, source.status()),
 		(
 			None,
-			status(&bundled, Some(StackRefreshOutcome::Refused { reason: "rollback".to_string() }))
+			stack_status(
+				&bundled,
+				Some(StackRefreshOutcome::Refused { reason: "rollback".to_string() })
+			)
 		)
 	);
 }
@@ -328,37 +295,16 @@ fn an_older_copy_is_refused() {
 #[test]
 fn a_stored_copy_the_core_cannot_run_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let (link, _) = sign_test_descriptor(&bundled);
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let mut on_dot = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	on_dot["tld"] = "dot".into();
-	let mut reader = StackReader::new(Refresh::Never);
-	let record = reader
-		.fetched(&pointer, Served::Document { bytes: &signed(&on_dot), etag: None }, START)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored");
+	let record = stored_test_record(&without_bulletin(published_test_descriptor(
+		2,
+		"first",
+		TEST_STACK_PEOPLE,
+	)));
 
 	let mut source = load(&bundled, Some(&record));
 
-	assert_eq!(source.status(), status(&bundled, None));
+	assert_eq!(source.status(), stack_status(&bundled, None));
 	assert!(source.due_fetch(START).is_some(), "the bundled copy is due at once");
-}
-
-/// The published copy `descriptor`, moved to the `testnet` TLD.
-fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
-	descriptor["tld"] = "testnet".into();
-	descriptor
-}
-
-fn refused_for_its_tld() -> Option<StackRefreshOutcome> {
-	refused_for_pinned("tld")
-}
-
-fn refused_for_pinned(field: &str) -> Option<StackRefreshOutcome> {
-	Some(StackRefreshOutcome::Refused {
-		reason: format!("stack descriptor changes {field}, which the bundled copy pins"),
-	})
 }
 
 /// Accounts derive under the TLD, so a descriptor signed with a stolen key
@@ -375,7 +321,7 @@ fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
 		(serve(&mut source, &moved, now), source.status(), source.stack().tld() == "paseo")
 	});
 
-	let refused = (None, status(&held, refused_for_its_tld()), true);
+	let refused = (None, stack_status(&held, refused_for_its_tld()), true);
 	assert_eq!((held_record.is_some(), refusals), (true, [refused.clone(), refused]));
 }
 
@@ -392,26 +338,19 @@ fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
 
 	assert_eq!(
 		(refused, record.is_some(), source.status()),
-		(None, true, status(&corrected, Some(StackRefreshOutcome::Current)))
+		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
 	);
 }
 
-/// A record may hold a copy on another TLD than the build bundles: one a core
-/// stored before it held copies to the bundled TLD, or one from before an app
-/// update moved the stack. The bundled copy starts the host, and the
-/// published copy the record came from is refused when it is fetched again.
+/// A record may hold a copy on another TLD than the build bundles, such as
+/// one written by another build of the app. The bundled copy starts the host,
+/// and the published copy the record came from is refused when it is fetched
+/// again.
 #[test]
 fn a_stored_copy_on_another_tld_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let (link, _) = sign_test_descriptor(&bundled);
-	let pointer = signed_pointer(&link).expect("test link carries a key");
 	let moved = on_testnet(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
-	let mut reader = StackReader::new(Refresh::Never);
-	let record = reader
-		.fetched(&pointer, Served::Document { bytes: &signed(&moved), etag: None }, START)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored");
+	let record = stored_test_record(&moved);
 
 	let mut source = load(&bundled, Some(&record));
 	let at_start = (source.stack().tld().to_string(), source.status());
@@ -420,22 +359,11 @@ fn a_stored_copy_on_another_tld_is_ignored() {
 	assert_eq!(
 		(at_start, fetched, source.status()),
 		(
-			("paseo".to_string(), status(&bundled, None)),
+			("paseo".to_string(), stack_status(&bundled, None)),
 			None,
-			status(&bundled, refused_for_its_tld())
+			stack_status(&bundled, refused_for_its_tld())
 		)
 	);
-}
-
-/// The record a core holds once it stored `descriptor`.
-fn record_holding(descriptor: &serde_json::Value) -> Vec<u8> {
-	let (link, bytes) = sign_test_descriptor(descriptor);
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	StackReader::new(Refresh::Never)
-		.fetched(&pointer, Served::Document { bytes: &bytes, etag: None }, START)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored")
 }
 
 /// The reserved stack's copy at `sequence` with its dotNS contract at another
@@ -470,7 +398,7 @@ fn a_reserved_stacks_refresh_that_changes_dotns_or_a_chain_is_refused_and_not_st
 			(held.is_some(), refusals)
 		}),
 		refused_copies.map(|(_, field)| {
-			let refused = (None, status(&moved_endpoint, refused_for_pinned(field)));
+			let refused = (None, stack_status(&moved_endpoint, refused_for_pinned(field)));
 			(true, [refused.clone(), refused])
 		})
 	);
@@ -495,9 +423,9 @@ fn a_reserved_stack_follows_a_new_generation_on_the_same_chains() {
 		(
 			StackStatus {
 				restart_required: true,
-				..status(&bundled, Some(StackRefreshOutcome::Current))
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
 			},
-			status(&reforked, None)
+			stack_status(&reforked, None)
 		)
 	);
 }
@@ -509,7 +437,7 @@ fn a_reserved_stack_follows_a_new_generation_on_the_same_chains() {
 #[test]
 fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
 	let bundled = reserved_test_descriptor(1);
-	let record = record_holding(&redeployed(2));
+	let record = stored_test_record(&redeployed(2));
 
 	let mut source = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
 	let at_start = source.status();
@@ -517,7 +445,7 @@ fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
 
 	assert_eq!(
 		(at_start, fetched, source.status()),
-		(status(&bundled, None), None, status(&bundled, refused_for_pinned("dotns")))
+		(stack_status(&bundled, None), None, stack_status(&bundled, refused_for_pinned("dotns")))
 	);
 }
 
@@ -536,7 +464,7 @@ fn a_stack_without_reserved_values_follows_a_redeployed_contract() {
 
 	assert_eq!(
 		(record.is_some(), source.status()),
-		(true, status(&redeployed, Some(StackRefreshOutcome::Current)))
+		(true, stack_status(&redeployed, Some(StackRefreshOutcome::Current)))
 	);
 }
 
@@ -592,8 +520,8 @@ fn a_stale_or_expired_copy_is_reported() {
 	assert_eq!(
 		[stale, source.status()],
 		[
-			StackStatus { stale: true, ..status(&newer, Some(StackRefreshOutcome::Current)) },
-			StackStatus { stale: true, expired: true, ..status(&newer, Some(unreachable())) },
+			StackStatus { stale: true, ..stack_status(&newer, Some(StackRefreshOutcome::Current)) },
+			StackStatus { stale: true, expired: true, ..stack_status(&newer, Some(unreachable())) },
 		]
 	);
 }

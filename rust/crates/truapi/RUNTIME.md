@@ -219,8 +219,11 @@ a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
 without a People chain, and one that names another TLD than the bundled copy:
 accounts derive under the TLD, so only a new build changes it. A stored
-descriptor the core refuses is ignored, and the core starts from the bundled
-copy.
+descriptor the core refuses is ignored: the core starts from the bundled copy,
+and the next descriptor it takes replaces the stored one, whatever its
+`sequence`. After a refused or failed fetch `last_refresh` says so even when
+the core could not write its record, since that write stores no new
+descriptor.
 
 A stack whose build allows it reserved values is Polkadot or a fork of it, and
 the core pins more of its bundled copy: each chain role's genesis hash and the

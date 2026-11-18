@@ -13,7 +13,7 @@ and `stackChanged` receives a `StackStatus` at start and on each change. The cor
 hour old, which is at start unless its stored copy was fetched less than an hour ago, and on `refreshStack()`, and
 `stackStatus()` returns the current status. A `WasmProductRuntime` built on its own does not refresh. The core keeps the
 last copy it verified in core storage under the new `StackRecord` key. A newer copy that changes a genesis hash, the
-network or the generation sets `restartRequired` once it is stored, and applies once the runtime is built again.
-`StackStatus.generation` names the generation the core runs, for a host to key cached chain data by. Without
+network, the TLD or the generation sets `restartRequired` once it is stored, and applies once the runtime is built
+again. `StackStatus.generation` names the generation the core runs, for a host to key cached chain data by. Without
 `fetchStackDescriptor` the core stays on the copy it started from. The `/web` worker runtime does not pass these
 callbacks yet.
