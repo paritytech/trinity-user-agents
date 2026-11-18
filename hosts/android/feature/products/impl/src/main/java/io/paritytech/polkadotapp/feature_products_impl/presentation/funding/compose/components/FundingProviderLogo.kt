@@ -18,7 +18,7 @@ fun FundingProviderLogo(
 ) {
     val model = remember(brand) {
         val initial = AvatarUiModel.Name(brand.name, AvatarColorScheme.from(brand.name.encodeToByteArray()))
-        brand.iconUrl?.let { AvatarUiModel.Image(it, placeholder = initial, refresh = false) } ?: initial
+        brand.iconUrl?.let { AvatarUiModel.Image(it, placeholder = initial) } ?: initial
     }
     PolkadotAvatar(model = model, modifier = modifier.size(size))
 }

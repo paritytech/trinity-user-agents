@@ -61,6 +61,8 @@ pub mod platform;
 mod provider;
 #[cfg(feature = "smoldot")]
 mod storage;
+#[cfg(all(test, feature = "smoldot"))]
+mod test_specs;
 #[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
 mod tls;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]

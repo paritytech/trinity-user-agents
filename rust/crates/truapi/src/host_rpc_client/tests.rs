@@ -511,7 +511,12 @@ fn waiting_request(client: &HostRpcClient, sent_at: Instant) {
 	let (tx, _rx) = oneshot::channel();
 	client.inner.pending.lock().unwrap().insert(
 		"truapi:1".to_string(),
-		PendingRequest { method: "chainHead_v1_call".to_string(), tx, sent_at },
+		PendingRequest {
+			method: "chainHead_v1_call".to_string(),
+			tx,
+			sent_at,
+			_slot: client.inner.request_slots.try_acquire_arc(),
+		},
 	);
 }
 
@@ -623,7 +628,12 @@ async fn loopback_client(
 	let spawner = Spawner::with_test_scheduler(|future| {
 		tokio::spawn(future);
 	});
-	HostRpcClient::with_silence_deadline(Arc::from(connection), spawner, silence_deadline)
+	HostRpcClient::with_limits(
+		Arc::from(connection),
+		spawner,
+		silence_deadline,
+		MAX_REQUESTS_IN_FLIGHT,
+	)
 }
 
 /// A server's header for an unmasked text frame of `length` bytes, in the
@@ -710,10 +720,11 @@ fn silence_with_no_request_waiting_never_trips_the_check() {
 #[test]
 fn a_request_on_a_silent_connection_fails_and_closes_it() {
 	let connection = TrackingConnection::new();
-	let client = HostRpcClient::with_silence_deadline(
+	let client = HostRpcClient::with_limits(
 		connection.clone(),
 		Spawner::for_test(),
 		Duration::from_millis(100),
+		MAX_REQUESTS_IN_FLIGHT,
 	);
 	let rpc_client = RpcClient::new(client.clone());
 
@@ -789,4 +800,90 @@ fn a_buffer_stops_growing_at_its_item_cap() {
 		}
 	};
 	assert_eq!(buffered, MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION);
+}
+
+/// A request in flight, polled by hand.
+type RequestFuture<'a> =
+	Pin<Box<dyn core::future::Future<Output = Result<Box<RawValue>, RpcError>> + Send + 'a>>;
+
+/// Polls `future` until `done` holds, or fails after a bound so a regression
+/// cannot hang the suite.
+fn poll_until(
+	future: &mut RequestFuture<'_>,
+	done: impl Fn() -> bool,
+) {
+	let waker = futures::task::noop_waker();
+	let mut cx = Context::from_waker(&waker);
+	let deadline = Instant::now() + Duration::from_secs(10);
+	while !done() {
+		let _ = future.as_mut().poll(&mut cx);
+		assert!(Instant::now() < deadline, "timed out polling");
+		std::thread::sleep(Duration::from_millis(1));
+	}
+}
+
+/// A request past the limit waits rather than reaching the transport, and a
+/// caller that stops waiting after sending keeps its slot until the answer
+/// arrives, since the transport still owes it.
+#[test]
+fn a_request_past_the_limit_waits_for_an_answer_not_for_a_caller_to_give_up() {
+	let connection = TrackingConnection::new();
+	let client =
+		HostRpcClient::with_limits(connection.clone(), Spawner::for_test(), REQUEST_SILENCE_DEADLINE, 2);
+	let request = |method| -> RequestFuture<'_> {
+		Box::pin(client.inner.request(method, None))
+	};
+	let sent = || connection.sent().len();
+	let (mut first, mut second, mut third) = (request("a"), request("b"), request("c"));
+
+	poll_until(&mut first, || sent() == 1);
+	poll_until(&mut second, || sent() == 2);
+	let _ = third.as_mut().now_or_never();
+	drop(first);
+	let _ = third.as_mut().now_or_never();
+	let sent_before_the_answer = sent();
+
+	let answer = json!({ "jsonrpc": "2.0", "id": "truapi:1", "result": null }).to_string();
+	connection.sender.lock().unwrap().as_ref().unwrap().unbounded_send(answer).unwrap();
+	poll_until(&mut third, || sent() == 3);
+
+	assert_eq!(sent_before_the_answer, 2);
+	drop(second);
+}
+
+/// Unpin and stopOperation release what a follow holds, so they go out even
+/// while reads fill every slot.
+#[test]
+fn subscription_upkeep_goes_out_while_every_slot_is_taken() {
+	let connection = TrackingConnection::new();
+	let client =
+		HostRpcClient::with_limits(connection.clone(), Spawner::for_test(), REQUEST_SILENCE_DEADLINE, 1);
+	let mut read: RequestFuture<'_> = Box::pin(client.inner.request("chainHead_v1_storage", None));
+	poll_until(&mut read, || connection.sent().len() == 1);
+
+	let mut unpin: RequestFuture<'_> = Box::pin(client.inner.request("chainHead_v1_unpin", None));
+	poll_until(&mut unpin, || connection.sent().len() == 2);
+	let mut stop: RequestFuture<'_> =
+		Box::pin(client.inner.request("chainHead_v1_stopOperation", None));
+	poll_until(&mut stop, || connection.sent().len() == 3);
+}
+
+/// Closing the connection frees every slot, so a caller waiting for one fails
+/// with the close instead of waiting forever.
+#[test]
+fn closing_the_connection_fails_a_request_waiting_for_a_slot() {
+	let connection = TrackingConnection::new();
+	let client =
+		HostRpcClient::with_limits(connection.clone(), Spawner::for_test(), REQUEST_SILENCE_DEADLINE, 1);
+	let mut first: RequestFuture<'_> =
+		Box::pin(client.inner.request("a", None));
+	let mut second: RequestFuture<'_> =
+		Box::pin(client.inner.request("b", None));
+	poll_until(&mut first, || connection.sent().len() == 1);
+	assert!(second.as_mut().now_or_never().is_none());
+
+	client.inner.close_with_error(client_error("peer went away"));
+
+	assert!(matches!(second.as_mut().now_or_never(), Some(Err(_))));
+	assert_eq!(connection.sent().len(), 1);
 }

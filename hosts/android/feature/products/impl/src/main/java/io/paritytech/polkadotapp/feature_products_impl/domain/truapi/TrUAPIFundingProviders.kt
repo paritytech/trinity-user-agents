@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.parity.truapi.TrUAPIHostRuntime
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -17,12 +16,7 @@ class TrUAPIFundingProviders @Inject constructor(
     /** Follows Remote Config in [scope] for as long as it lives. */
     fun install(runtime: TrUAPIHostRuntime, scope: CoroutineScope) {
         scope.launch {
-            fundingProvidersConfig.publishedNames().collect { names -> offer(runtime, names) }
+            fundingProvidersConfig.publishedNames().collect { names -> runtime.setFundingProviderConfig(names) }
         }
-    }
-
-    private fun offer(runtime: TrUAPIHostRuntime, names: List<String>) {
-        runCatching { runtime.setFundingProviderConfig(names) }
-            .logFailure("TrUAPI refused the funding providers")
     }
 }

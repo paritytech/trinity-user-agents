@@ -165,8 +165,6 @@ enum SPAViewFactory {
 extension SPAViewFactory {
     /// Internal for the pages that only the rust runtime can load by address:
     /// the debug playground and a debug Pocket card's widget URL.
-    /// The shared ``TrUAPIHostRuntime`` is sourced from the process-wide
-    /// provider registered by `ServiceCoordinator`.
     @MainActor
     static func createRustView(
         configuration: SPAConfiguration,
@@ -176,31 +174,7 @@ extension SPAViewFactory {
         let wireframe = SPAWireframe()
         let schemeHandlerProxy = SchemeHandlerProxy()
 
-        guard let runtimeProvider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
-            Logger.shared.error("Rust SPA unavailable: TrUAPI runtime provider missing")
-            return nil
-        }
-
-        let gameReminders: ProductGameReminderScheduling? = RootDependencyLocator.getDependency()
-
-        let runtime: TrUAPIHostRuntime
-        do {
-            runtime = try runtimeProvider.sharedRuntime()
-        } catch {
-            Logger.shared.error("Rust SPA unavailable: \(error)")
-            return nil
-        }
-
-        let rustEnvironment = RustRuntimeEnvironment(
-            runtime: runtime,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            notificationScheduler: ProductNotificationScheduler.shared,
-            gameReminders: gameReminders,
-            ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
-            hostProvider: flowState.hostProvider,
-            themeManager: ThemeManager.shared,
-            logger: Logger.shared
-        )
+        guard let rustEnvironment = makeRustEnvironment(hostProvider: flowState.hostProvider) else { return nil }
 
         let runtimeFactory = SPARustRuntimeFactory(environment: .init(
             rust: rustEnvironment,
@@ -244,6 +218,37 @@ extension SPAViewFactory {
         }
 
         return view
+    }
+}
+
+extension SPAViewFactory {
+    /// The shared ``TrUAPIHostRuntime`` is sourced from the process-wide provider registered by
+    /// `ServiceCoordinator`; nil, logged, when the session has none.
+    @MainActor
+    static func makeRustEnvironment(hostProvider: ProductHostProviding) -> RustRuntimeEnvironment? {
+        guard let runtimeProvider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+            Logger.shared.error("Rust runtime unavailable: TrUAPI runtime provider missing")
+            return nil
+        }
+
+        let runtime: TrUAPIHostRuntime
+        do {
+            runtime = try runtimeProvider.sharedRuntime()
+        } catch {
+            Logger.shared.error("Rust runtime unavailable: \(error)")
+            return nil
+        }
+
+        return RustRuntimeEnvironment(
+            runtime: runtime,
+            chainRegistry: ChainRegistryFacade.sharedRegistry,
+            notificationScheduler: ProductNotificationScheduler.shared,
+            gameReminders: RootDependencyLocator.getDependency(),
+            ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+            hostProvider: hostProvider,
+            themeManager: ThemeManager.shared,
+            logger: Logger.shared
+        )
     }
 }
 
