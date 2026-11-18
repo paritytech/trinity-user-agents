@@ -36,10 +36,9 @@ data class FundingAmountUiState(
     val note: FundingAmountNote?,
     val presets: ImmutableList<FundingPreset>,
     val canContinue: Boolean,
-    val history: FundingHistoryClock = FundingHistoryClock.HIDDEN,
+    val history: FundingHistoryClock,
 )
 
-/** The amount screen's history clock, read from every session the core holds. */
 enum class FundingHistoryClock {
     /** No session has started: the history would be empty. */
     HIDDEN,

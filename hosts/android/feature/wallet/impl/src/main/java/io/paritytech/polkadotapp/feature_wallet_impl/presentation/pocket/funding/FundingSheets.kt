@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 
-/** The funding sheets opened on top of each other, so leaving the history returns to the sheet it came from. */
 class FundingSheets {
     private val stack = MutableStateFlow<PersistentList<FundingSheet>>(persistentListOf())
 

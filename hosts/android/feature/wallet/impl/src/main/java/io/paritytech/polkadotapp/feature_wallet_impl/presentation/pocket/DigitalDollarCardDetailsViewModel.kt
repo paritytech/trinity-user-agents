@@ -118,31 +118,21 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             )
         )
 
-    private val funding = fundingActivityMixinFactory.create(this)
+    private val funding = fundingActivityMixinFactory.create(this) { showPresentationError(it) }
 
     val fundingActivity: StateFlow<FundingActivityUiState> = funding.activity
 
     val fundingSheet: StateFlow<FundingSheet?> = funding.sheet
 
-    /** Top-ups in progress show first, so a second one is a deliberate choice rather than a paid-twice slip. */
-    fun onGetCashClick() {
-        if (fundingActivity.value.toppingUp.isEmpty()) {
-            openTopUp()
-        } else {
-            funding.openSheet(FundingSheet.TOPPING_UP)
-        }
-    }
+    fun onGetCashClick() = funding.onStart(FundingDirection.IN)
 
-    fun onNewTopUpClick() {
-        funding.close()
-        openTopUp()
-    }
+    fun onNewTopUpClick() = funding.onStartNew(FundingDirection.IN)
 
-    fun onHistoryClick() = funding.openSheet(FundingSheet.HISTORY)
+    fun onHistoryClick() = funding.onHistory()
 
-    fun onSheetBack() = funding.back()
+    fun onSheetBack() = funding.onSheetBack()
 
-    fun onSheetDismiss() = funding.close()
+    fun onSheetDismiss() = funding.onSheetDismiss()
 
     fun onSendClick() {
         router.openSendPayment()
@@ -204,8 +194,6 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         interactor.shareCoinageLogs()
             .onFailure { showPresentationError(ShareCoinageLogsFailedPresentationError(it)) }
     }
-
-    private fun openTopUp() = funding.open(FundingDirection.IN) { showPresentationError(GetCashUnavailablePresentationError(it)) }
 
     private fun CoinageHoldingsInfo.toTokensState(asset: Chain.Asset) = CoinageUiState.TokensState(
         totalBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.total)),

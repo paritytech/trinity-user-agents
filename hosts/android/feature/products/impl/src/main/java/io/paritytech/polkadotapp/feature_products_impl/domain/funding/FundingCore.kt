@@ -19,6 +19,8 @@ import uniffi.truapi.U128
 interface FundingCore {
     suspend fun start(): Result<Unit>
 
+    suspend fun available(): Result<Boolean>
+
     suspend fun open(direction: FundingDirection, amount: U128?): Result<String?>
 
     suspend fun session(intent: String): Result<FundingSession?>

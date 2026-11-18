@@ -59,7 +59,7 @@ class FundingAmountViewModel @AssistedInject constructor(
     private val history = service.entries().map(FundingHistoryClock::of).onStart { emit(FundingHistoryClock.HIDDEN) }
 
     val state: StateFlow<FundingAmountUiState?> = combine(checked, history) { checked, history ->
-        checked?.toAmountUiState()?.copy(history = history)
+        checked?.toAmountUiState(history)
     }.stateIn(this, WhileOnScreen, null)
 
     fun onRailSelected(rail: FundingRail) {

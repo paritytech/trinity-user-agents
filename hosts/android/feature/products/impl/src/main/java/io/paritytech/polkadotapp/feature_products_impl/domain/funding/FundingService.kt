@@ -30,6 +30,9 @@ interface FundingService {
     /** The screens of session [id] are up, so the core no longer takes it as dismissed when they do not appear. */
     fun shown(id: FundingSessionId)
 
+    /** Whether any provider is listed, so a session can be opened at all. */
+    suspend fun isAvailable(): Result<Boolean>
+
     /** Starts the core, which resumes the sessions it holds. */
     suspend fun resume(): Result<Unit>
 

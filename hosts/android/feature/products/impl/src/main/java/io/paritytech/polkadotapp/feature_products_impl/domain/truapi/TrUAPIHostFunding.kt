@@ -25,13 +25,14 @@ import javax.inject.Inject
 import kotlin.time.Instant
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
-/** The host's funding entry points over the core, which holds the sessions and their history. */
 class TrUAPIHostFunding @Inject constructor(
     private val service: FundingService,
     private val sessionScreens: FundingSessionScreens,
 ) : HostFunding {
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
         service.open(direction.toCore(), amount?.toU128()).map { it?.value }
+
+    override suspend fun isFundingAvailable(): Result<Boolean> = service.isAvailable()
 
     override fun observeActivity(): Flow<FundingActivity> = service.entries().map(::activityOf)
 

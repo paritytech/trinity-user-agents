@@ -86,6 +86,8 @@ class RealFundingService @Inject constructor(
         synchronized(lock) { presentations[id]?.shown?.complete(Unit) }
     }
 
+    override suspend fun isAvailable(): Result<Boolean> = core.available().logFailure("Funding providers read failed")
+
     override suspend fun resume(): Result<Unit> = core.start()
 
     override suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?> = core.open(direction, amount).map { it?.let(::FundingSessionId) }

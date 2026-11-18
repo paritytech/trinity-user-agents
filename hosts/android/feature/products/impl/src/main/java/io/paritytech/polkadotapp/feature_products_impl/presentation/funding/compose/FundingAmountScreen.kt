@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +47,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 private val PRESET_HEIGHT = 36.dp
 private val BADGE_DOT = 8.dp
 private val BADGE_RING = 2.dp
-private val BADGE_INSET = 3.dp
+private val BADGE_INSET = 4.dp
 
 /** The overlay's first screen: which rail, and how much. */
 @Composable
@@ -104,14 +103,15 @@ private fun HistoryButton(running: Boolean, onClick: () -> Unit) {
     Box(modifier = Modifier.semantics { contentDescription = label }) {
         FundingCircleButton(icon = NovaIcons.Clock, onClick = onClick)
         if (running) {
-            Box(
+            PolkadotSurface(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .offset(x = -BADGE_INSET, y = -BADGE_INSET)
-                    .size(BADGE_DOT + BADGE_RING * 2)
-                    .border(BADGE_RING, PolkadotTheme.colors.bg.surface.container, CircleShape)
-                    .background(PolkadotTheme.colors.fg.error, CircleShape),
-            )
+                    .size(BADGE_DOT + BADGE_RING * 2),
+                shape = CircleShape,
+                color = PolkadotTheme.colors.fg.error,
+                border = BorderStroke(BADGE_RING, PolkadotTheme.colors.bg.surface.container),
+            ) {}
         }
     }
 }

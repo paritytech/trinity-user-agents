@@ -17,9 +17,12 @@ interface HostFunding {
      */
     suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?>
 
+    /** Whether any funding provider is listed; with none, opening funding has nothing to offer. */
+    suspend fun isFundingAvailable(): Result<Boolean>
+
     /**
-     * The sessions in flight and the ended ones the core keeps, as the core lists them. Observing it starts the core;
-     * a build that offers no funding answers none and leaves the core alone.
+     * The sessions in flight and the ended ones the core keeps, as the core lists them. Observing it starts the core in
+     * every build, so opening the CASH card or Send starts it.
      */
     fun observeActivity(): Flow<FundingActivity>
 

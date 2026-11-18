@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingResu
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** Resumes funding left unfinished at launch. */
 class FundingResumeInitializer @Inject constructor(
     private val fundingResume: FundingResume,
 ) : AppInitializer {

@@ -45,6 +45,8 @@ class FakeFundingService : FundingService {
 
     override fun shown(id: FundingSessionId) = Unit
 
+    override suspend fun isAvailable(): Result<Boolean> = Result.success(true)
+
     override suspend fun resume(): Result<Unit> = Result.success(Unit)
 
     override suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?> = Result.success(null)

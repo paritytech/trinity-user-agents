@@ -25,9 +25,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
 import kotlinx.coroutines.flow.SharingStarted
@@ -56,7 +54,7 @@ class SendPaymentViewModel @Inject constructor(
     private val interactor: SendPaymentInteractor,
     fundingActivityMixinFactory: FundingActivityMixin.Factory,
 ) : BaseViewModel(), SendPaymentContract {
-    private val funding = fundingActivityMixinFactory.create(this)
+    private val funding = fundingActivityMixinFactory.create(this) { showPresentationError(it) }
 
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()
@@ -145,25 +143,17 @@ class SendPaymentViewModel @Inject constructor(
         walletRouter.openScanAddressQr()
     }
 
-    /** Withdrawals in progress show first, so a second one is a deliberate choice. */
-    override fun onSendToYourselfClick() {
-        if (state.value.funding.sending.isEmpty()) openWithdrawal() else funding.openSheet(FundingSheet.SENDING)
-    }
+    override fun onSendToYourselfClick() = funding.onStart(FundingDirection.OUT)
 
-    override fun onSendMoneyOutClick() {
-        funding.close()
-        openWithdrawal()
-    }
+    override fun onSendMoneyOutClick() = funding.onStartNew(FundingDirection.OUT)
 
-    override fun onFundingHistoryClick() = funding.openSheet(FundingSheet.HISTORY)
+    override fun onFundingHistoryClick() = funding.onHistory()
 
-    override fun onFundingSheetBack() = funding.back()
+    override fun onFundingSheetBack() = funding.onSheetBack()
 
-    override fun onFundingSheetDismiss() = funding.close()
+    override fun onFundingSheetDismiss() = funding.onSheetDismiss()
 
     override fun onFundingRowClick(id: String) = funding.onRowClick(id)
-
-    private fun openWithdrawal() = funding.open(FundingDirection.OUT) { showPresentationError(WithdrawUnavailablePresentationError(it)) }
 
     override fun onBackClick() {
         walletRouter.back()
