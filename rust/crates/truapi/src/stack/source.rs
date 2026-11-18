@@ -11,7 +11,7 @@ use trinity_stack::{
 	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
 };
 
-use super::{ReplaceCheck, Stack, StackError};
+use super::{ReplaceCheck, Stack, StackError, pinned::Pinned};
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
@@ -93,9 +93,9 @@ pub struct StackStatus {
 	/// The newest copy was past `expiresAt` when the core last looked, at
 	/// start and after each fetch: the stack has shut down.
 	pub expired: bool,
-	/// The core stored a newer copy that changes a chain, the network, the
-	/// TLD or the generation. It runs that copy from its next start, so build
-	/// the runtime again to follow it.
+	/// The core stored a newer copy that changes a chain, the network or the
+	/// generation. It runs that copy from its next start, so build the
+	/// runtime again to follow it.
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
@@ -108,8 +108,15 @@ struct HeldCopy {
 }
 
 impl HeldCopy {
-	fn try_new(verified: Verified, allows_reserved_values: bool) -> Result<Self, StackError> {
+	/// The copy `verified` carries, when the core can run it and it changes
+	/// no field the bundled copy pins.
+	fn try_new(
+		verified: Verified,
+		allows_reserved_values: bool,
+		pinned: &Pinned,
+	) -> Result<Self, StackError> {
 		let stack = Stack::from_descriptor(&verified.descriptor, allows_reserved_values)?;
+		pinned.refuse_change(&verified.descriptor)?;
 		Ok(Self { descriptor: verified.descriptor, stack })
 	}
 
@@ -136,6 +143,7 @@ impl Opened {
 		bundled: &[u8],
 		stored: Option<&[u8]>,
 		allows_reserved_values: bool,
+		pinned: &Pinned,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
 		let mut reader = StackReader::new(Refresh::MaxAge(REFRESH_MAX_AGE_SECS));
@@ -143,7 +151,7 @@ impl Opened {
 		let read = reader.get(pointer, now_unix_seconds);
 		let current = read.current.expect("a reader loaded with a build copy has a copy");
 		Ok(Self {
-			running: HeldCopy::try_new(current.stack, allows_reserved_values)?,
+			running: HeldCopy::try_new(current.stack, allows_reserved_values, pinned)?,
 			reader,
 			first_fetch: read.fetch,
 			stale: current.stale,
@@ -157,6 +165,8 @@ impl Opened {
 pub struct StackSource {
 	pointer: Pointer,
 	allows_reserved_values: bool,
+	/// What the bundled copy pins for every other copy.
+	pinned: Pinned,
 	reader: StackReader,
 	/// The fetch the reader handed out when it was loaded.
 	first_fetch: Option<FetchRequest>,
@@ -176,7 +186,8 @@ impl StackSource {
 	/// and `stored`, the record the last [`Self::fetched`] returned.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
-	/// a stack the core can run. A stored record that fails either is ignored.
+	/// a stack the core can run. A stored record that fails either, or that
+	/// changes a field `bundled` pins, is ignored.
 	pub fn load(
 		pointer: Pointer,
 		bundled: &[u8],
@@ -184,13 +195,22 @@ impl StackSource {
 		allows_reserved_values: bool,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
-		let open = |stored| {
-			Opened::try_new(&pointer, bundled, stored, allows_reserved_values, now_unix_seconds)
+		let bundled_copy = open(bundled, &pointer).map_err(StackError::Descriptor)?;
+		let pinned = Pinned::new(&bundled_copy.descriptor);
+		let open_with = |stored| {
+			Opened::try_new(
+				&pointer,
+				bundled,
+				stored,
+				allows_reserved_values,
+				&pinned,
+				now_unix_seconds,
+			)
 		};
-		let opened = match (open(stored), stored) {
+		let opened = match (open_with(stored), stored) {
 			(Err(error), Some(_)) => {
 				tracing::warn!("starting from the bundled stack descriptor: {error}");
-				open(None)?
+				open_with(None)?
 			},
 			(opened, _) => opened?,
 		};
@@ -198,6 +218,7 @@ impl StackSource {
 		Ok(Self {
 			pointer,
 			allows_reserved_values,
+			pinned,
 			reader,
 			first_fetch,
 			running,
@@ -265,8 +286,9 @@ impl StackSource {
 	/// [`Self::record_stored`]. The record goes back to [`Self::load`] as
 	/// `stored`.
 	///
-	/// A copy the core cannot run is refused like one that breaks a
-	/// descriptor rule: it is not stored, so the core never starts from it.
+	/// A copy the core cannot run, or one that changes a field the bundled
+	/// copy pins, is refused like one that breaks a descriptor rule: it is not
+	/// stored, so the core never starts from it.
 	#[must_use = "the record is the copy the next start reads"]
 	pub fn fetched(
 		&mut self,
@@ -274,7 +296,7 @@ impl StackSource {
 		now_unix_seconds: i64,
 	) -> Option<Vec<u8>> {
 		// The reader judges every later fetch against a copy it takes, so one
-		// the core cannot run never reaches it.
+		// the core refuses never reaches it.
 		let (served, unusable) = match answer {
 			Ok(served) => match self.refusal(served) {
 				Some(reason) => {
@@ -303,18 +325,19 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		});
-		let held = match HeldCopy::try_new(accepted.stack, self.allows_reserved_values) {
-			Ok(held) => held,
-			Err(error) => {
-				self.last_refresh = Some(match outcome {
-					StackRefreshOutcome::Current => {
-						StackRefreshOutcome::Refused { reason: error.to_string() }
-					},
-					outcome => outcome,
-				});
-				return None;
-			},
-		};
+		let held =
+			match HeldCopy::try_new(accepted.stack, self.allows_reserved_values, &self.pinned) {
+				Ok(held) => held,
+				Err(error) => {
+					self.last_refresh = Some(match outcome {
+						StackRefreshOutcome::Current => {
+							StackRefreshOutcome::Refused { reason: error.to_string() }
+						},
+						outcome => outcome,
+					});
+					return None;
+				},
+			};
 		self.last_refresh = Some(outcome);
 		self.stale = accepted.stale;
 		self.expired = accepted.expired;
@@ -349,12 +372,13 @@ impl StackSource {
 		ReplaceCheck::new(self.pointer.clone(), record)
 	}
 
-	/// Why the core cannot run a served document that verifies under the
-	/// pointer. `None` for one it can run, and for one the reader refuses.
+	/// Why the core refuses a served document that verifies under the
+	/// pointer: it cannot run it, or it changes a field the bundled copy pins.
+	/// `None` for one the core takes, and for one the reader refuses.
 	fn refusal(&self, served: Served) -> Option<String> {
 		let Served::Document { bytes, .. } = served else { return None };
 		let verified = open(bytes, &self.pointer).ok()?;
-		Stack::from_descriptor(&verified.descriptor, self.allows_reserved_values)
+		HeldCopy::try_new(verified, self.allows_reserved_values, &self.pinned)
 			.err()
 			.map(|error| error.to_string())
 	}

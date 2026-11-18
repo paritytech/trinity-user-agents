@@ -65,9 +65,10 @@ refresh it.
 - `stackChanged(status)`: the `StackStatus` at start and on each change, also
   for a host without `fetchStackDescriptor`. The same value comes from
   `stackStatus()`. `restartRequired` means a newer copy
-  changes a chain, the network, the TLD or the generation, and applies once
-  the runtime is built again. `generation` changes when the stack restarts its
-  chains: key cached chain data by it.
+  changes a chain, the network or the generation, and applies once
+  the runtime is built again. A copy that names another TLD than the bundled
+  descriptor is refused, and `lastRefresh` says so. `generation` changes when
+  the stack restarts its chains: key cached chain data by it.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key, and starts from it when it is newer than the bundled one.
