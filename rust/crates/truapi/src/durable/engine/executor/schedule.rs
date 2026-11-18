@@ -62,6 +62,15 @@ impl Schedule {
 		}
 	}
 
+	/// Makes `ids` due at once.
+	pub fn make_due(&mut self, ids: &[DurableTxId], now: Duration) {
+		for id in ids {
+			if let Some(due) = self.rows.get_mut(id) {
+				due.at = due.at.min(now);
+			}
+		}
+	}
+
 	/// How long until the next row is due, or `None` while no row waits.
 	pub fn until_next(&self, now: Duration) -> Option<Duration> {
 		self.rows.values().map(|due| due.at.saturating_sub(now)).min()
