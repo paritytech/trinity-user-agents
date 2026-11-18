@@ -28,7 +28,7 @@ use crate::{
 
 const ACCESS_FLUSH_DELAY: core::time::Duration = core::time::Duration::from_secs(1);
 
-/// Native cache state owned by the public profile service.
+/// Cache state owned by the public profile service.
 pub struct Cache {
 	db: OnceLock<Db>,
 	spawner: Spawner,
@@ -56,7 +56,7 @@ impl Cache {
 		}
 	}
 
-	/// Requires native storage before starting a profile lookup.
+	/// Requires the database before starting a profile lookup.
 	pub fn check_storage(&self) -> Result<(), PublicProfileError> {
 		self.db()?;
 		Ok(())
@@ -132,7 +132,7 @@ pub fn store_record(
 }
 
 impl PublicProfilesService {
-	/// Sets the native cache database once.
+	/// Sets the cache database once.
 	///
 	/// Returns whether this call installed it.
 	pub fn install_db(&self, db: Db) -> bool {

@@ -238,8 +238,10 @@ version and path.
 
 The browser core compiles the store and the modules over it. There one
 connection runs in the core's own instance and each call runs in place, and
-only an in-memory database opens. No web host sets a database, so the browser
-core answers as any host without one.
+only an in-memory database opens. The browser core opens one when it is built
+and installs it as its core database, so profile records and funding sessions
+last until the page reloads. It does not start the core services, so NFT purse
+calls answer `Unsupported`.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
 cards in the Pocket and the newest face of each. The host lists the cards it
@@ -282,7 +284,7 @@ It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
 embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
-compile it.
+install one.
 
 ### Durable transactions
 

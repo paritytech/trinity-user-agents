@@ -31,7 +31,7 @@ use observe::{Invalidation, track_changes};
 pub enum DbLocation {
 	/// A file. Its directory must exist.
 	File(PathBuf),
-	/// A private in-memory database, for tests.
+	/// A private in-memory database, for tests and the browser core.
 	Memory,
 }
 

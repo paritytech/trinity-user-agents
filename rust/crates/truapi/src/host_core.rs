@@ -264,8 +264,8 @@ impl PairingHostRuntime {
 
 	/// Resolves public profile metadata without loading image bytes.
 	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	/// Records expire after one hour; `force` skips that cache. Invalid
+	/// usernames and lookup or storage failures return errors.
 	pub async fn resolve_public_profile(
 		&self,
 		username: &str,
@@ -283,6 +283,16 @@ impl PairingHostRuntime {
 		reference: crate::ImageReference,
 	) -> Result<crate::LoadedImage, crate::ImageError> {
 		self.image_loader.load(reference).await
+	}
+
+	/// Install the core-owned database that profile records and funding
+	/// sessions are kept in.
+	///
+	/// Set-once, so that state cannot move to another database under a running
+	/// consumer. Returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_core_db"))]
+	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
+		self.services.install_core_db(db)
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -1242,8 +1252,8 @@ impl SigningHostRuntime {
 
 	/// Resolves public profile metadata without loading image bytes.
 	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	/// Records expire after one hour; `force` skips that cache. Invalid
+	/// usernames and lookup or storage failures return errors.
 	pub async fn resolve_public_profile(
 		&self,
 		username: &str,
@@ -1254,7 +1264,7 @@ impl SigningHostRuntime {
 
 	/// Resolves public profile metadata with optional cached-first delivery.
 	///
-	/// Options control forced lookups and stale stored values; browsers resolve once.
+	/// Options control forced lookups and stale stored values.
 	/// At most two values precede completion or an error. Dropping the stream cancels resolution.
 	pub fn observe_public_profile(
 		&self,

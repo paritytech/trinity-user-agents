@@ -17,9 +17,9 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          its `store` module is the core's SQLite database, on connection
                          threads natively and on one connection run in place on wasm32,
-                         where no host opens it; its `durable` module follows presigned
-                         transactions to a verdict over the core database and builds
-                         scheduled ones through their submission policies, and its
+                         where the browser core opens it in memory; its `durable` module
+                         follows presigned transactions to a verdict over the core database
+                         and builds scheduled ones through their submission policies, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, and the tracker of what they hold on

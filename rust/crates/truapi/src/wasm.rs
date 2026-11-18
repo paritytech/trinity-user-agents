@@ -34,7 +34,7 @@ use crate::platform::{
 };
 use futures::{
 	channel::mpsc,
-	future::{AbortHandle, Abortable},
+	future::{AbortHandle, Abortable, FutureExt},
 	stream::{self, BoxStream, Stream, StreamExt},
 };
 use js_sys::{Array, Function, Reflect, Uint8Array};
@@ -52,6 +52,7 @@ use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
 	host_logic::worker::WorkerTransition,
+	store::{Db, DbConfig, DbLocation, core_migrations},
 };
 
 mod generated_bridge;
@@ -944,6 +945,18 @@ impl crate::host_logic::worker::WorkerController for WasmWorkerController {
 	}
 }
 
+/// Opens the core database of a browser core, in memory.
+///
+/// Nothing in it outlives the instance. Fails when the database cannot be
+/// opened or migrated.
+fn memory_core_db() -> Result<Db, JsValue> {
+	let config = DbConfig { location: DbLocation::Memory, migrations: core_migrations };
+	Db::open(config)
+		.now_or_never()
+		.expect("the wasm32 store backend opens without suspending")
+		.map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
 /// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
 /// Required: a host that omits it would never learn that a worker is wanted.
 fn install_worker_controller(
@@ -1024,6 +1037,7 @@ impl WasmPairingHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		runtime.set_core_db(memory_core_db()?);
 		Ok(Self { runtime: Rc::new(runtime) })
 	}
 
@@ -1382,6 +1396,7 @@ impl WasmSigningHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		runtime.set_core_db(memory_core_db()?);
 		Ok(Self { runtime: Rc::new(runtime) })
 	}
 

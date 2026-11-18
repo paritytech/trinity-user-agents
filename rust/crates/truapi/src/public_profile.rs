@@ -1,6 +1,5 @@
 //! Public profile metadata resolved from dotNS through [`PublicProfilesService`].
 
-#[cfg_attr(target_arch = "wasm32", path = "public_profile/dao/browser.rs")]
 mod dao;
 mod record;
 
@@ -15,7 +14,6 @@ use tracing::{instrument, warn};
 use record::ProfileEntry;
 pub use record::{ProfileAvatar, ProfileRecord};
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::store::DbError;
 
 use crate::{
@@ -70,7 +68,6 @@ pub enum PublicProfileError {
 	#[from(DotnsError)]
 	Dotns(#[source] Box<DotnsError>),
 	/// The core database could not be read or written.
-	#[cfg(not(target_arch = "wasm32"))]
 	#[error("core database unavailable: {0}")]
 	#[from(DbError)]
 	Storage(#[source] DbError),
@@ -148,9 +145,9 @@ impl ProfileRecordLocation {
 	}
 }
 
-/// Resolves public profile records and batches native cache accesses.
+/// Resolves public profile records and batches cache accesses.
 ///
-/// Native hosts persist records in the core database. Browser reads are uncached.
+/// Records are kept in the core database.
 pub struct PublicProfilesService {
 	chain: ChainRuntime,
 	genesis: [u8; 32],
@@ -176,7 +173,7 @@ impl CachedRecord {
 impl PublicProfilesService {
 	/// Uses the host's shared chain and executor.
 	///
-	/// Native hosts must install the core database before resolving profiles.
+	/// The host must install the core database before resolving profiles.
 	pub fn new(chain: ChainRuntime, genesis: [u8; 32], spawner: Spawner) -> Self {
 		Self { chain, genesis, cache: dao::Cache::new(spawner) }
 	}
@@ -186,7 +183,6 @@ impl PublicProfilesService {
 	/// Options can force a lookup and suppress stale stored metadata. A resolved value
 	/// is emitted when no stored value was emitted or when the profile differs.
 	/// Dropping the stream cancels resolution. At most two profiles are emitted.
-	/// Browsers have no record cache and emit one resolved profile.
 	pub fn observe(
 		self: Arc<Self>,
 		username: String,
@@ -230,11 +226,11 @@ impl PublicProfilesService {
 		}))
 	}
 
-	/// Resolves a profile, reusing fresh native metadata when allowed.
+	/// Resolves a profile, reusing fresh stored metadata when allowed.
 	///
 	/// Records are fresh for one hour; `force` bypasses that freshness policy.
-	/// Browsers always resolve through dotNS. Missing or malformed records are empty.
-	/// Lookup and storage failures return errors.
+	/// Missing or malformed records are empty. Lookup and storage failures
+	/// return errors.
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(
 		self: &Arc<Self>,
