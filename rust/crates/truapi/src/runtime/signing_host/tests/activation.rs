@@ -1,4 +1,5 @@
 use super::*;
+use crate::{host_logic::x25519_seal::X25519PrivateKey, platform::AuthState};
 
 /// A product reset concerns that product's grants, not the wallet: account
 /// work already under way survives it, while a lock or a wallet change ends it.
@@ -58,6 +59,50 @@ fn pending_account_access_tracks_wallet_activation() {
 			"{change}",
 		);
 	}
+}
+
+/// A signing host answers pairing proposals with its install-wide key, so the
+/// paired devices address it by that key: the host must project and serve the
+/// same one, with no paired wallet device of its own to name.
+#[test]
+fn a_local_session_projects_the_install_wide_device_key() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_, authority) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+
+	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
+	let auth_states = platform.auth_states.lock().unwrap();
+	let Some(AuthState::Connected(ui_info)) = auth_states.last() else {
+		panic!("activation should end connected: {auth_states:?}");
+	};
+	assert_eq!(
+		(
+			ui_info.device_enc_public_key,
+			ui_info.peer_device_enc_public_key,
+			futures::executor::block_on(authority.accounts().device_encryption_secret()),
+		),
+		(
+			Some(X25519PrivateKey::from(install_secret).public_key().0),
+			None,
+			Ok(Some(install_secret)),
+		)
+	);
+}
+
+/// An active session's `AuthState::Connected` already names the device key,
+/// and contacts encrypt to it, so the key cannot change under that session.
+#[test]
+fn an_active_session_keeps_its_device_key() {
+	let (_, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
+
+	let adoption = futures::executor::block_on(authority.adopt_device_encryption_secret([9; 32]));
+
+	assert_eq!(
+		(adoption.is_err(), futures::executor::block_on(authority.device_encryption_secret())),
+		(true, Ok(install_secret))
+	);
 }
 
 /// Allow once lasts for one unlocked wallet and one installed product: lock,
