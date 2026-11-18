@@ -4,9 +4,14 @@
 //! Each public submodule is one component of that document and names it in
 //! its documentation.
 
+pub mod channel;
 pub mod cheque;
 pub mod clearing;
+pub mod flows;
 pub mod receivable;
 pub mod records;
 pub mod status;
 pub mod topic;
+
+#[cfg(test)]
+pub mod testing;
