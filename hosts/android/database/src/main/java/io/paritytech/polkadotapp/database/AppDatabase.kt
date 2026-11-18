@@ -147,7 +147,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 73,
+    version = 74,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -292,6 +292,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 71, to = 72),
         // Drop the Pocket card and face tables
         AutoMigration(from = 72, to = 73, spec = Migration72To73Spec::class),
+        // Add scheduled_product_notifications.title (the title a trusted product names)
+        AutoMigration(from = 73, to = 74),
     ]
 )
 @TypeConverters(

@@ -66,6 +66,7 @@ class RealScheduledProductNotificationRepository @Inject constructor(
         return ScheduledProductNotificationLocal(
             productId = productId,
             notificationId = notificationId.value,
+            title = title,
             text = text,
             deeplink = deeplink,
             scheduledAtMs = scheduledAt.toEpochMilliseconds(),
@@ -76,6 +77,7 @@ class RealScheduledProductNotificationRepository @Inject constructor(
         return ScheduledProductNotification(
             productId = productId,
             notificationId = NotificationId(notificationId),
+            title = title,
             text = text,
             deeplink = deeplink,
             scheduledAt = Instant.fromEpochMilliseconds(scheduledAtMs),
