@@ -101,6 +101,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
+	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
 	pub face_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
@@ -155,6 +156,7 @@ impl EventCallbacks {
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
+			events: Mutex::new(Vec::new()),
 			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
@@ -198,6 +200,10 @@ impl EventCallbacks {
 impl HostCallbacks for EventCallbacks {
 	fn on_core_log(&self, marker: String, detail: String) {
 		self.logs.lock().expect("logs mutex poisoned").push((marker, detail));
+	}
+
+	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>) {
+		self.events.lock().expect("events mutex poisoned").push((marker, attributes));
 	}
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
@@ -2082,6 +2088,13 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
+
+		fn on_core_event(
+			&self,
+			_marker: String,
+			_attributes: Vec<crate::logging::CoreAttribute>,
+		) {
+		}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
@@ -2271,6 +2284,13 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
+
+		fn on_core_event(
+			&self,
+			_marker: String,
+			_attributes: Vec<crate::logging::CoreAttribute>,
+		) {
+		}
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 
