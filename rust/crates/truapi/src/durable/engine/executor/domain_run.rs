@@ -8,7 +8,7 @@ use std::{
 
 use futures::{
 	FutureExt,
-	channel::mpsc::UnboundedSender,
+	channel::mpsc::{Receiver, UnboundedSender},
 	future::pending,
 	stream::{Stream, StreamExt},
 };
@@ -25,6 +25,7 @@ use crate::{
 		dao,
 		engine::DurableTxEngine,
 		model::{DeferredDurableTx, DomainId, DurableTxId},
+		ownership::Ownership,
 		policy::{Preparation, SubmissionPolicy},
 	},
 	store::{Db, DbError},
@@ -41,6 +42,11 @@ pub struct DomainRun {
 	resolved: ResolvedPolicy,
 	schedule: Schedule,
 	finished: UnboundedSender<DomainId>,
+	ownership: Arc<Ownership>,
+	/// Heard only while `held` is not empty.
+	releases: Receiver<()>,
+	/// Due rows the last round skipped because a watch still owned them.
+	held: Vec<DurableTxId>,
 }
 
 /// What builds a domain's rows: its policy, and the chain it lives on.
@@ -67,6 +73,9 @@ impl DomainRun {
 			resolved,
 			schedule: Schedule::default(),
 			finished,
+			ownership: engine.ownership.clone(),
+			releases: engine.ownership.releases(),
+			held: Vec::new(),
 		})
 	}
 
@@ -115,23 +124,20 @@ impl DomainRun {
 		let due: Vec<_> =
 			waiting.into_iter().filter(|row| self.schedule.is_due(row.id, now)).collect();
 		self.schedule.ask_later(due.iter().map(|row| row.id), now);
-		let Some(engine) = self.engine.upgrade() else {
-			return;
-		};
 		// A row whose previous attempt is still followed waits for that
 		// follower to stop, so a transaction never has two.
-		let batch: Vec<_> =
-			due.into_iter().filter(|row| !engine.ownership.is_owned(row.id)).collect();
-		// The engine is held only while this round decides, never across a
-		// policy call that may not return.
-		drop(engine);
+		let (held, batch): (Vec<_>, Vec<_>) =
+			due.into_iter().partition(|row| self.ownership.is_owned(row.id));
+		self.held = held.into_iter().map(|row| row.id).collect();
 		if !batch.is_empty() {
 			self.prepare_and_apply(batch).await;
 		}
 	}
 
-	/// Sleeps until the next row is due or the domain's rows change. A
-	/// change makes every row the policy did not answer due at once.
+	/// Sleeps until the next row is due, the domain's rows change, or a row
+	/// the last round held back is no longer owned. A change makes every row
+	/// the policy did not answer due at once; a release makes only the held
+	/// rows due.
 	async fn wait_for_due_or_change(
 		&mut self,
 		changes: &mut (impl Stream<Item = Result<Vec<(i64, String)>, DbError>> + Unpin),
@@ -147,10 +153,12 @@ impl DomainRun {
 			}
 		}
 		.fuse();
-		futures::pin_mut!(due, changed);
+		let released = released(&mut self.releases, &self.held, &self.ownership).fuse();
+		futures::pin_mut!(due, changed, released);
 		futures::select! {
 			() = due => {},
 			() = changed => self.schedule.domain_changed(self.timer.now()),
+			() = released => self.schedule.make_due(&self.held, self.timer.now()),
 		}
 	}
 
@@ -193,6 +201,20 @@ impl DomainRun {
 			Preparation::GiveUp => {
 				give_up_submission(&engine, id).await;
 			},
+		}
+	}
+}
+
+/// Returns once a row of `held` is no longer owned, and never while `held`
+/// is empty. A release is a write to memory only, so no change of the
+/// domain's rows reports it.
+async fn released(releases: &mut Receiver<()>, held: &[DurableTxId], ownership: &Ownership) {
+	loop {
+		if held.iter().any(|id| !ownership.is_owned(*id)) {
+			return;
+		}
+		if held.is_empty() || releases.next().await.is_none() {
+			pending::<()>().await
 		}
 	}
 }
