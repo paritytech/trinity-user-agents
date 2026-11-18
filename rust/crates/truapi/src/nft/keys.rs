@@ -113,15 +113,14 @@ impl<Deriver: ItemKeyDeriver> ItemKeyDeriver for Weak<Deriver> {
 impl KeyRange for dyn ItemKeyDeriver + '_ {
 	type PurseId = PurseId;
 	type Key = ItemKey;
-	type Error = AuthorityError;
 
 	fn derive_range(
 		&self,
 		purse: &PurseId,
 		installation: InstallationId,
 		indices: Range<u32>,
-	) -> Result<Vec<ItemKey>, AuthorityError> {
-		self.derive_item_key_range(*purse, installation, indices)
+	) -> anyhow::Result<Vec<ItemKey>> {
+		Ok(self.derive_item_key_range(*purse, installation, indices)?)
 	}
 }
 

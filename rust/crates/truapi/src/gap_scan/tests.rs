@@ -21,14 +21,13 @@ impl IndexKeys {
 impl KeyRange for IndexKeys {
 	type PurseId = u32;
 	type Key = (u32, u32);
-	type Error = String;
 
 	fn derive_range(
 		&self,
 		purse: &u32,
 		_installation: InstallationId,
 		indices: Range<u32>,
-	) -> Result<Vec<(u32, u32)>, String> {
+	) -> anyhow::Result<Vec<(u32, u32)>> {
 		if indices.start == 0 {
 			self.purses_scanned.lock().unwrap().push(*purse);
 		}
@@ -63,14 +62,14 @@ impl ScriptedChain {
 }
 
 #[async_trait::async_trait]
-impl HoldingLookup<(u32, u32)> for ScriptedChain {
+impl HoldingLookup for ScriptedChain {
+	type Key = (u32, u32);
 	type Holding = ();
-	type Error = String;
 
-	async fn read_holdings(&self, keys: &[(u32, u32)]) -> Result<Vec<Option<()>>, String> {
+	async fn read_holdings(&self, keys: &[(u32, u32)]) -> anyhow::Result<Vec<Option<()>>> {
 		self.read.lock().unwrap().extend(keys);
 		if self.failing.is_some_and(|failing| keys.contains(&failing)) {
-			return Err("node unreachable".to_string());
+			anyhow::bail!("node unreachable");
 		}
 		let mut holdings: Vec<Option<()>> =
 			keys.iter().map(|key| self.held.contains(key).then_some(())).collect();

@@ -22,7 +22,6 @@ use super::{HeldItem, ItemKey, ItemKeyDeriver, dao};
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
-	chain::StorageWatchError,
 	gap_scan::{HoldingLookup, PurseScanner, RecoveryError},
 	host_logic::session::SessionState,
 	installation::{InstallationId, InstallationIdProvider},
@@ -34,7 +33,7 @@ use crate::{
 const RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(30), Duration::from_secs(30 * 60));
 
 /// What item keys hold, as [`RecoveryChain::holdings_at`] reads them.
-pub type ItemHoldings = dyn HoldingLookup<ItemKey, Holding = HeldItem, Error = StorageWatchError>;
+pub type ItemHoldings = dyn HoldingLookup<Key = ItemKey, Holding = HeldItem>;
 
 /// The chain reads a recovery run makes, all at one finalized block.
 #[async_trait::async_trait]

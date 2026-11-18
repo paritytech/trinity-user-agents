@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-
 use alloy_primitives::Bytes;
 use parity_scale_codec::Encode;
 
@@ -11,7 +9,6 @@ const OWNER: [u8; 20] = [0x11; 20];
 const GET_CALL: &str = "740204c60000000000000000000000001111111111111111111111111111111111111111";
 
 const CONTRACT: [u8; 20] = [0x58; 20];
-const AT: H256 = H256([0xf1; 32]);
 
 /// Keys whose records are the 32 installation id bytes themselves.
 struct PlainRecords;
@@ -96,56 +93,30 @@ fn malformed_data_fails_the_read() {
 	assert!(matches!(read, Err(RegistryReadError::Malformed(_))));
 }
 
-/// A registry that answers every read with `records` and keeps the owners
-/// and blocks it was asked about.
-#[derive(Default)]
-struct FixedRecords {
-	records: Vec<Vec<u8>>,
-	owners_asked: Mutex<Vec<[u8; 20]>>,
-	blocks_asked: Mutex<Vec<H256>>,
-}
-
-#[async_trait::async_trait]
-impl InstallationRegistryChain for FixedRecords {
-	async fn encrypted_records(
-		&self,
-		owner: [u8; 20],
-		at: H256,
-	) -> Result<Vec<Vec<u8>>, RegistryReadError> {
-		self.owners_asked.lock().unwrap().push(owner);
-		self.blocks_asked.lock().unwrap().push(at);
-		Ok(self.records.clone())
-	}
-}
-
-/// The seed's list is read for the seed's own owner at the block asked for,
-/// and only what decrypts under the seed comes back.
+/// The seed's list is read for the seed's own owner, and only what decrypts
+/// under the seed comes back.
 #[test]
-fn the_seeds_records_are_read_at_the_block_and_decrypted() {
-	let keys: Arc<dyn DataStoreKeys> = Arc::new(PlainRecords);
-	let records = vec![vec![0x5a; 32], vec![1, 2]];
-	let chain = Arc::new(FixedRecords { records, ..FixedRecords::default() });
-	let registry = RegisteredInstallations::new(chain.clone(), Arc::downgrade(&keys));
+fn only_the_seeds_own_records_come_back() {
+	let records: Vec<Bytes> = vec![vec![0x5a; 32].into(), vec![1, 2].into()];
+	let mut node =
+		AnsweringNode::returning(getCoinageInstallationsCall::abi_encode_returns(&records));
 
-	let installations = futures::executor::block_on(registry.read_installations(AT));
+	let installations =
+		futures::executor::block_on(read_seed_installations(&mut node, &CONTRACT, &PlainRecords));
 
 	assert_eq!(installations.unwrap(), HashSet::from([InstallationId([0x5a; 32])]));
-	assert_eq!(*chain.owners_asked.lock().unwrap(), [OWNER]);
-	assert_eq!(*chain.blocks_asked.lock().unwrap(), [AT]);
+	let call = hex::decode(GET_CALL).unwrap();
+	assert!(node.inputs[0].ends_with(&call.encode()));
 }
 
 /// Without the signing host there is no seed to read the list for.
 #[test]
-fn the_read_fails_once_the_keys_are_dropped() {
-	let chain = Arc::new(FixedRecords::default());
-	let registry = RegisteredInstallations::new(chain, Weak::<PlainRecords>::new());
+fn the_keys_are_unavailable_once_dropped() {
+	let dropped: Weak<dyn DataStoreKeys> = Weak::<PlainRecords>::new();
 
-	let installations = futures::executor::block_on(registry.read_installations(AT));
+	let keys = upgrade_data_store_keys(&dropped);
 
-	assert!(matches!(
-		installations,
-		Err(RegistryReadError::Keys(AuthorityError::Unavailable { .. }))
-	));
+	assert!(matches!(keys, Err(AuthorityError::Unavailable { .. })));
 }
 
 /// The contract the apps register against answers the read and returns a
@@ -166,9 +137,11 @@ async fn the_live_registry_answers_at_the_finalized_block() {
 	let genesis = live_asset_hub_genesis();
 	let runtime = live_asset_hub(genesis);
 	let finalized = ChainHeads::finalized_block(&runtime, genesis).await.unwrap();
-	let registry = AccountDataStoreContract::new(ChainAccess::new(runtime, genesis), contract);
+	let keys: Arc<dyn DataStoreKeys> = Arc::new(PlainRecords);
+	let chain = ChainAccess::new(runtime, genesis);
+	let registry = RegisteredInstallations::new(chain, contract, Arc::downgrade(&keys));
 
-	let records = registry.encrypted_records(OWNER, finalized.hash).await;
+	let installations = registry.read_installations(finalized.hash).await;
 
-	assert!(records.is_ok(), "{records:?}");
+	assert!(installations.is_ok(), "{installations:?}");
 }

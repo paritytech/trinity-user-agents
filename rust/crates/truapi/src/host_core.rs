@@ -1207,13 +1207,10 @@ impl SigningHostRuntime {
 		let genesis = self.services.asset_hub_chain_genesis_hash().into();
 		let asset_hub =
 			crate::chain_runtime::ChainAccess::new(self.services.chain.clone(), genesis);
-		let records = crate::installation_registry::AccountDataStoreContract::new(
-			asset_hub.clone(),
-			contract,
-		);
 		let data_store_keys = Arc::downgrade(&self.signing_host);
 		let registry = crate::installation_registry::RegisteredInstallations::new(
-			Arc::new(records),
+			asset_hub.clone(),
+			contract,
 			data_store_keys,
 		);
 		crate::nft::AssetHubRecoveryChain::new(&asset_hub, registry)

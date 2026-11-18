@@ -25,8 +25,6 @@ pub trait KeyRange: Send + Sync {
 	type PurseId;
 	/// The key one index derives.
 	type Key;
-	/// Why a range could not be derived.
-	type Error;
 
 	/// The keys of `purse` allocated by `installation` at `indices`, one per index, in index
 	/// order.
@@ -35,19 +33,21 @@ pub trait KeyRange: Send + Sync {
 		purse: &Self::PurseId,
 		installation: InstallationId,
 		indices: Range<u32>,
-	) -> Result<Vec<Self::Key>, Self::Error>;
+	) -> anyhow::Result<Vec<Self::Key>>;
 }
 
 /// Reads what keys hold on chain.
 #[async_trait::async_trait]
-pub trait HoldingLookup<Key: Sync>: Send + Sync {
+pub trait HoldingLookup: Send + Sync {
+	/// The key a read takes.
+	type Key: Sync;
 	/// What a key holds.
 	type Holding;
-	/// Why a read failed. A failed read is never an empty result.
-	type Error;
 
 	/// What each of `keys` holds, in the same order, with `None` for a key that holds nothing.
-	async fn read_holdings(&self, keys: &[Key]) -> Result<Vec<Option<Self::Holding>>, Self::Error>;
+	/// A failed read is an error, never an empty result.
+	async fn read_holdings(&self, keys: &[Self::Key])
+	-> anyhow::Result<Vec<Option<Self::Holding>>>;
 }
 
 /// How a scan of one index space reads its keys and when it ends.
@@ -70,13 +70,13 @@ pub struct FoundKey<Key, Holding> {
 
 /// Why a scan of one index space stopped before its gap.
 #[derive(Debug, derive_more::Display, derive_more::Error)]
-pub enum GapScanError<DeriveError, LookupError> {
+pub enum GapScanError {
 	/// A batch of keys could not be derived.
-	#[display("deriving keys failed: {_0}")]
-	Derive(#[error(not(source))] DeriveError),
+	#[display("deriving keys failed: {_0:#}")]
+	Derive(#[error(not(source))] anyhow::Error),
 	/// A batch of keys could not be read.
-	#[display("reading holdings failed: {_0}")]
-	Lookup(#[error(not(source))] LookupError),
+	#[display("reading holdings failed: {_0:#}")]
+	Lookup(#[error(not(source))] anyhow::Error),
 	/// A read returned a different number of results than keys it was given.
 	#[display("a read of {keys} keys returned {results} results, expected one per key")]
 	ResultCountMismatch {
@@ -88,15 +88,8 @@ pub enum GapScanError<DeriveError, LookupError> {
 }
 
 /// The keys found in one index space, in index order.
-pub type FoundKeys<Keys, Lookup> = Vec<
-	FoundKey<<Keys as KeyRange>::Key, <Lookup as HoldingLookup<<Keys as KeyRange>::Key>>::Holding>,
->;
-
-/// The error of [`scan_until_gap`] for these keys and this lookup.
-pub type ScanError<Keys, Lookup> = GapScanError<
-	<Keys as KeyRange>::Error,
-	<Lookup as HoldingLookup<<Keys as KeyRange>::Key>>::Error,
->;
+pub type FoundKeys<Keys, Lookup> =
+	Vec<FoundKey<<Keys as KeyRange>::Key, <Lookup as HoldingLookup>::Holding>>;
 
 /// Scans the index space of `purse` under `installation` from index 0 in whole batches and
 /// returns every key that holds something, in index order.
@@ -111,11 +104,10 @@ pub async fn scan_until_gap<Keys, Lookup>(
 	installation: InstallationId,
 	lookup: &Lookup,
 	config: &GapScanConfig,
-) -> Result<FoundKeys<Keys, Lookup>, ScanError<Keys, Lookup>>
+) -> Result<FoundKeys<Keys, Lookup>, GapScanError>
 where
 	Keys: KeyRange + ?Sized,
-	Keys::Key: Sync,
-	Lookup: HoldingLookup<Keys::Key> + ?Sized,
+	Lookup: HoldingLookup<Key = Keys::Key> + ?Sized,
 {
 	let mut found = Vec::new();
 	let mut position = ScanPosition { next_index: 0, empty_run: 0 };
@@ -165,11 +157,10 @@ async fn read_batch<Keys, Lookup>(
 	derived: Vec<Keys::Key>,
 	lookup: &Lookup,
 	indices: Range<u32>,
-) -> Result<FoundKeys<Keys, Lookup>, ScanError<Keys, Lookup>>
+) -> Result<FoundKeys<Keys, Lookup>, GapScanError>
 where
 	Keys: KeyRange + ?Sized,
-	Keys::Key: Sync,
-	Lookup: HoldingLookup<Keys::Key> + ?Sized,
+	Lookup: HoldingLookup<Key = Keys::Key> + ?Sized,
 {
 	let holdings = lookup.read_holdings(&derived).await.map_err(GapScanError::Lookup)?;
 	if holdings.len() != derived.len() {
@@ -285,10 +276,8 @@ where
 	Keys: KeyRange + ?Sized,
 	Keys::PurseId: Eq + Hash + Display + Send + Sync,
 	Keys::Key: Send + Sync,
-	Keys::Error: Display,
-	Lookup: HoldingLookup<Keys::Key> + ?Sized,
+	Lookup: HoldingLookup<Key = Keys::Key> + ?Sized,
 	Lookup::Holding: Send + Sync,
-	Lookup::Error: Display,
 	Store: ScannedPursesStore<Keys::PurseId, Keys::Key, Lookup::Holding>,
 {
 	/// Runs `passes` in order, each over a fresh stream of its ids.

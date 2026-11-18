@@ -10,8 +10,8 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
 	nft::{
-		ItemSlot, NftLedger, NftLedgerDeps, PurseId, PurseTag, item_key_range_from_entropy,
-		item_keys_from_entropy,
+		ItemSlot, NftLedger, NftLedgerDeps, PurseId, PurseRecord, PurseTag,
+		item_key_range_from_entropy, item_keys_from_entropy,
 		keys::ItemIndex,
 		test_ledger,
 		testing::{FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, test_ledger_deps},
@@ -98,14 +98,11 @@ impl RecoveryChain for TestChain {
 struct TestHoldings(HashSet<ItemKey>);
 
 #[async_trait::async_trait]
-impl HoldingLookup<ItemKey> for TestHoldings {
+impl HoldingLookup for TestHoldings {
+	type Key = ItemKey;
 	type Holding = HeldItem;
-	type Error = StorageWatchError;
 
-	async fn read_holdings(
-		&self,
-		keys: &[ItemKey],
-	) -> Result<Vec<Option<HeldItem>>, StorageWatchError> {
+	async fn read_holdings(&self, keys: &[ItemKey]) -> anyhow::Result<Vec<Option<HeldItem>>> {
 		let held = HeldItem { collection: 1, item: 2, instance: 3 };
 		Ok(keys.iter().map(|key| self.0.contains(key).then_some(held)).collect())
 	}
@@ -165,9 +162,8 @@ impl Harness {
 		block_on(self.deps.db.read(move |conn| dao::purse_of(conn, &key))).unwrap()
 	}
 
-	fn purse(&self, id: u32) -> Option<(String, Vec<u8>)> {
-		let purse = block_on(self.deps.db.read(move |conn| dao::purse(conn, PurseId(id))));
-		purse.unwrap().map(|purse| (purse.name, purse.tag.0))
+	fn purse(&self, id: u32) -> Option<PurseRecord> {
+		block_on(self.deps.db.read(move |conn| dao::purse(conn, PurseId(id)))).unwrap()
 	}
 }
 
@@ -182,11 +178,11 @@ fn recovery_records_what_earlier_purses_held_and_recreates_their_purses() {
 
 	harness.recover().unwrap();
 
-	assert_eq!(
-		[in_main, in_purse_3].map(|key| harness.purse_of(key)),
-		[Some(PurseId::MAIN), Some(PurseId(3))]
-	);
-	assert_eq!(harness.purse(3), Some(("Recovered purse 3".to_string(), Vec::new())));
+	assert_eq!(harness.purse_of(in_main), Some(PurseId::MAIN));
+	assert_eq!(harness.purse_of(in_purse_3), Some(PurseId(3)));
+	let recreated = harness.purse(3).unwrap();
+	assert_eq!(recreated.name, "Recovered purse 3");
+	assert_eq!(recreated.tag.0, Vec::<u8>::new());
 }
 
 /// The walk over purse ids stops after ten empty purses in a row, and the
@@ -258,7 +254,9 @@ fn recovery_keeps_existing_purses_and_never_scans_the_current_installation() {
 
 	harness.recover().unwrap();
 
-	assert_eq!(harness.purse(0), Some(("tickets".to_string(), b"tickets.dot".to_vec())));
+	let kept = harness.purse(0).unwrap();
+	assert_eq!(kept.name, "tickets");
+	assert_eq!(kept.tag.0, b"tickets.dot");
 	assert_eq!(harness.purse_of(current), None);
 }
 

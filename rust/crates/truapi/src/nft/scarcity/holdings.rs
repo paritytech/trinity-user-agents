@@ -6,7 +6,6 @@ use subxt::utils::H256;
 
 use super::chain::ScarcityChain;
 use crate::{
-	chain::StorageWatchError,
 	gap_scan::HoldingLookup,
 	nft::{HeldItem, ItemKey},
 };
@@ -25,14 +24,11 @@ impl ScarcityHoldings {
 }
 
 #[async_trait::async_trait]
-impl HoldingLookup<ItemKey> for ScarcityHoldings {
+impl HoldingLookup for ScarcityHoldings {
+	type Key = ItemKey;
 	type Holding = HeldItem;
-	type Error = StorageWatchError;
 
-	async fn read_holdings(
-		&self,
-		keys: &[ItemKey],
-	) -> Result<Vec<Option<HeldItem>>, StorageWatchError> {
+	async fn read_holdings(&self, keys: &[ItemKey]) -> anyhow::Result<Vec<Option<HeldItem>>> {
 		let nfts = self.chain.nfts_at(self.at, keys).await?;
 		Ok(nfts.into_iter().map(|nft| nft.map(HeldItem::from)).collect())
 	}

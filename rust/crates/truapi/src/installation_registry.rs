@@ -2,10 +2,9 @@
 //! contract on Asset Hub.
 //!
 //! The apps register each installation, encrypted under a key only the seed
-//! can derive, before handing it out. [`AccountDataStoreContract`] reads the
-//! encrypted records an owner keeps, and [`RegisteredInstallations`] reads
-//! the seed's records through it and decrypts them through
-//! [`DataStoreKeys`], which keeps the seed in the signing host.
+//! can derive, before handing it out. [`RegisteredInstallations`] reads the
+//! seed's encrypted records and decrypts them through [`DataStoreKeys`],
+//! which keeps the seed in the signing host.
 
 use std::{
 	collections::HashSet,
@@ -58,46 +57,58 @@ pub enum RegistryReadError {
 	Malformed(alloy_sol_types::Error),
 }
 
-/// Reads the encrypted installation records an owner keeps in the registry.
-#[async_trait::async_trait]
-pub trait InstallationRegistryChain: Send + Sync {
-	/// The records `owner` keeps as of the block `at`, in the order the
-	/// contract lists them. Fails when the read fails or returns malformed
-	/// data.
-	async fn encrypted_records(
-		&self,
-		owner: [u8; 20],
-		at: H256,
-	) -> Result<Vec<Vec<u8>>, RegistryReadError>;
-}
-
-/// The `AccountDataStore` contract on one chain.
-pub struct AccountDataStoreContract {
+/// The installations the session's seed registered in the `AccountDataStore`
+/// contract on one chain.
+pub struct RegisteredInstallations {
 	chain: ChainAccess,
 	contract: [u8; 20],
+	keys: Weak<dyn DataStoreKeys>,
 }
 
-impl AccountDataStoreContract {
-	/// The contract at `contract` on `chain`.
-	pub fn new(chain: ChainAccess, contract: [u8; 20]) -> Self {
-		Self { chain, contract }
+impl RegisteredInstallations {
+	/// The seed's installations in the contract at `contract` on `chain`,
+	/// decrypted with `keys` while they are alive.
+	pub fn new(chain: ChainAccess, contract: [u8; 20], keys: Weak<dyn DataStoreKeys>) -> Self {
+		Self { chain, contract, keys }
 	}
-}
 
-#[async_trait::async_trait]
-impl InstallationRegistryChain for AccountDataStoreContract {
-	async fn encrypted_records(
+	/// Every installation registered for the session's seed as of the block
+	/// `at`. Records the seed cannot decrypt are skipped. Fails without a
+	/// session, or when the read fails or returns malformed data.
+	pub async fn read_installations(
 		&self,
-		owner: [u8; 20],
 		at: H256,
-	) -> Result<Vec<Vec<u8>>, RegistryReadError> {
+	) -> Result<HashSet<InstallationId>, RegistryReadError> {
+		let keys = upgrade_data_store_keys(&self.keys)?;
 		let connection = self.chain.legacy_connection().await?;
 		let mut node = RpcClientAtBlock::new(connection.raw_rpc_client, at);
-		read_encrypted_records(&mut node, &self.contract, owner).await
+		read_seed_installations(&mut node, &self.contract, &*keys).await
 	}
 }
 
-/// The records `owner` keeps in `contract`, read through `runtime`.
+/// The keys `keys` points at. Fails once they are dropped.
+fn upgrade_data_store_keys(
+	keys: &Weak<dyn DataStoreKeys>,
+) -> Result<Arc<dyn DataStoreKeys>, AuthorityError> {
+	keys.upgrade().ok_or_else(|| AuthorityError::Unavailable {
+		reason: "the data store keys were dropped".to_string(),
+	})
+}
+
+/// The installations in the records the seed of `keys` keeps in `contract`,
+/// read through `runtime`, that decrypt under that seed.
+async fn read_seed_installations(
+	runtime: &mut impl RuntimeApiCaller,
+	contract: &[u8; 20],
+	keys: &dyn DataStoreKeys,
+) -> Result<HashSet<InstallationId>, RegistryReadError> {
+	let owner = keys.data_store_owner()?;
+	let records = read_encrypted_records(runtime, contract, owner).await?;
+	Ok(keys.decrypt_installation_records(&records)?)
+}
+
+/// The records `owner` keeps in `contract`, read through `runtime`, in the
+/// order the contract lists them.
 async fn read_encrypted_records(
 	runtime: &mut impl RuntimeApiCaller,
 	contract: &[u8; 20],
@@ -108,36 +119,6 @@ async fn read_encrypted_records(
 	let records = getCoinageInstallationsCall::abi_decode_returns_validate(&output)
 		.map_err(RegistryReadError::Malformed)?;
 	Ok(records.into_iter().map(Vec::from).collect())
-}
-
-/// The installations the session's seed registered.
-pub struct RegisteredInstallations {
-	chain: Arc<dyn InstallationRegistryChain>,
-	keys: Weak<dyn DataStoreKeys>,
-}
-
-impl RegisteredInstallations {
-	/// The seed's installations in the registry `chain` reads, decrypted with
-	/// `keys` while they are alive.
-	pub fn new(chain: Arc<dyn InstallationRegistryChain>, keys: Weak<dyn DataStoreKeys>) -> Self {
-		Self { chain, keys }
-	}
-
-	/// Every installation registered for the session's seed as of the block
-	/// `at`. Records the seed cannot decrypt are skipped. Fails without a
-	/// session, or when the read fails or returns malformed data.
-	pub async fn read_installations(
-		&self,
-		at: H256,
-	) -> Result<HashSet<InstallationId>, RegistryReadError> {
-		let Some(keys) = self.keys.upgrade() else {
-			let reason = "the data store keys were dropped".to_string();
-			return Err(AuthorityError::Unavailable { reason }.into());
-		};
-		let owner = keys.data_store_owner()?;
-		let records = self.chain.encrypted_records(owner, at).await?;
-		Ok(keys.decrypt_installation_records(&records)?)
-	}
 }
 
 #[cfg(test)]

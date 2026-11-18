@@ -6008,6 +6008,7 @@ version = "0.31.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "anyhow",
  "async-lock",
  "async-sqlite",
  "async-trait",
