@@ -195,9 +195,9 @@ The benefit is that the number of places the rule is written stays at one as hos
 
 ## Funding events
 
-Funding's flow facts leave the core as exported markers, on the log path every other core marker takes. The core logs them; a host forwards them with its core log lines, so they reach Sentry Logs only from builds that are not released, through the gates the hosts already have. Nothing about them crosses the host boundary but the log line, and no host code is written for them. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
+Funding's flow facts leave the core as core events under exported markers. The core emits them; each app's `onCoreEvent` sink hands them to Sentry Logs as the marker with its attributes, so they arrive from builds that are not released, through the gates the hosts already have. No host code is written for them beyond that sink. The apps log only their own UI events, named `host.funding.*`, through their own recorders.
 
-**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. Each entry's doc comment lists the keys its detail carries and the closed set each takes, as for every other marker.
+**The markers.** Each fact is a `truapi.funding.*` entry in the `markers!` table, `Export(Info)`, except `truapi.funding.ended_unexpectedly`, which is `Export(Error)` so a fault can be alerted on apart from the rest. The table gates the event path as it does the log path, so an entry missing or local would reach no host. Each entry's doc comment lists the attributes it carries and the closed set each takes.
 
 | Marker | Logged when |
 |---|---|
@@ -214,17 +214,19 @@ Funding's flow facts leave the core as exported markers, on the log path every o
 | `cancel_confirmed` | the user answers a cancel offer |
 | `frame_requested`, `frame_opened`, `frame_closed` | a provider's screen is asked for, opened, and closed, or dropped before the user opened it |
 
-Each is logged once, on a change a commit stored or on the call that made it, never on loading sessions after a restart.
+Each is emitted once, on a change a commit stored or on the call that made it, never on loading sessions after a restart.
 
-**The detail.** A line reads `funding.ref=<ref> key=value ...`: a random per-session reference, the session's tags (direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when they are plain identifiers, amount bucket), the fact's own tags, the session's age in milliseconds, then the fact's counts and durations. The facts are built in `runtime/funding_telemetry.rs` from closed enums and fixed buckets, never a string a provider, a product or a manifest wrote. The layer refuses a `truapi.*` target the table does not list and bounds the detail like any other.
+**The attributes.** A fact is a `CoreEvent` carrying its own attributes, then `funding.ref`, a random per-session label, the session's labels (direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when they are plain identifiers, amount bucket) and the session's `age_ms`. Labels are text, conditions such as `money_moved` are flags, and counts and durations are counts, left off when unknown rather than sent as zero. The facts are built in `runtime/funding_telemetry.rs` on `CoreEvent`'s own builder; its one addition, `tag`, takes a label only from a closed enum or fixed bucket, so a string a provider, a product or a manifest wrote cannot become one. The runtime-built labels (provider, product, asset, network) pass the gate described under core events or collapse to `other`, `third_party` or `none`.
 
 ```
-truapi.funding.overlay_opened: funding.ref=V1StGXR8_Z5jdHi6 direction=in opener=host product=none rail=none provider=none asset=none network=none amount_bucket=50-100 amount_preset=true age_ms=0
+[truapi] INFO truapi.funding.overlay_opened amount_preset=true funding.ref=V1StGXR8_Z5jdHi6 direction=in opener=host product=none rail=none provider=none asset=none network=none amount_bucket=50-100 age_ms=0
 ```
 
-**Privacy.** No line carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. The reference is drawn at random per session and kept in memory only, so it joins a session's lines without leading back to the session; a session resumed after a restart draws a new one. Funding's own warnings leave as `truapi.tracing.warn` and name no session either.
+That is the core's own console line; a host receives the same as typed attributes.
 
-**Production.** The hosts' log forwarding sends nothing from release builds, and there is no consent screen behind it. Funding telemetry from production needs consent and a policy decision first.
+**Privacy.** No fact carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. The reference is drawn at random per session and kept in memory only, so it joins a session's facts without leading back to the session; a session resumed after a restart draws a new one. Funding's own warnings leave as `truapi.tracing.warn` and name no session either.
+
+**Production.** The hosts' Sentry logs send nothing from release builds, and there is no consent screen behind it. Funding telemetry from production needs consent and a policy decision first.
 
 ## Open questions
 

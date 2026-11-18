@@ -1,5 +1,9 @@
-use super::*;
-use crate::{host_logic::funding::test_choice, platform::FundingAmountIssue};
+use super::{read::*, *};
+use crate::{
+	host_logic::funding::test_choice,
+	logging::{CORE_EVENT_MAX_ATTRIBUTES, CoreAttribute, CoreAttributeValue},
+	platform::FundingAmountIssue,
+};
 
 const NOW: u64 = 10_000_000;
 
@@ -12,7 +16,7 @@ fn top_up() -> FundingSession {
 }
 
 /// Facts of every shape, built the way the core builds them.
-fn facts() -> Vec<FundingFact> {
+fn facts() -> Vec<CoreEvent> {
 	let mut telemetry = Telemetry::default();
 	let mut delivered = top_up();
 	delivered.stage = FundingStage::Delivered { credited: 1, settled_at_ms: NOW };
@@ -30,7 +34,7 @@ fn facts() -> Vec<FundingFact> {
 	};
 	let settled = QuotesSettled { list, superseded: false, first_quote_ms: Some(3), settle_ms: 9 };
 	vec![
-		FundingFact::new(markers::FUNDING_OVERLAY_OPENED).flag("amount_preset", true),
+		CoreEvent::new(markers::FUNDING_OVERLAY_OPENED).flag("amount_preset", true),
 		telemetry.quotes_superseded("fs_secret", settled),
 		telemetry.changed(Some(&top_up()), &delivered, NOW).pop().expect("ended"),
 		telemetry.changed(Some(&top_up()), &failed, NOW).pop().expect("ended"),
@@ -38,31 +42,46 @@ fn facts() -> Vec<FundingFact> {
 	]
 }
 
-// Facts log as `funding.ref`, the session's tags, the fact's own tags, its
-// age, then its measures, and no line carries the intent, an exact amount, a
-// limit, an id or a provider's text, whatever the session holds.
+// A fact goes out with its own attributes, then `funding.ref`, the session's
+// labels and its age, and none carries the intent, an exact amount, a limit,
+// an id or a provider's text, whatever the session holds.
 #[test]
-fn a_line_carries_closed_values_only() {
+fn a_fact_carries_closed_values_only() {
 	let mut held = session(truapi::latest::FundingDirection::In, Some(123_456_789));
 	held.owner_product_id = Some(ProductId::for_test("someones-shop.dot"));
 	held.provider_id = Some(ProductId::for_test("ramp.dot"));
 	held.choice = Some(test_choice());
 	let common = Common::of(Some(&held), None, |_| false, NOW);
-	let events: Vec<FundingEvent> = facts().iter().map(|fact| fact.event(&common, "ref")).collect();
+	let events: Vec<CoreEvent> = facts().into_iter().map(|fact| common.attach(fact, "ref")).collect();
 	for event in &events {
-		let line = format!("{}: {}", event.marker.target, event.detail);
+		let line = line(event);
 		for secret in ["fs_secret", "123456789", "someones-shop", "ramp.dot", "q-test", "https"] {
-			assert!(!line.contains(secret), "a line carries {secret}: {line}");
+			assert!(!line.contains(secret), "a fact carries {secret}: {line}");
 		}
+		assert!(event.attributes().len() < CORE_EVENT_MAX_ATTRIBUTES, "{line}");
 	}
+	let attribute = |key: &str, value: Option<CoreAttributeValue>| CoreAttribute {
+		key: key.to_string(),
+		value: value.expect("a value"),
+	};
 	assert_eq!(
-		events[0].detail,
-		"funding.ref=ref direction=in opener=product product=third_party rail=crypto \
-		 provider=other asset=usdt network=polkadot amount_bucket=100-250 \
-		 amount_preset=true age_ms=5000"
+		events[0].attributes(),
+		[
+			attribute("amount_preset", flag(true)),
+			attribute("funding.ref", text("ref")),
+			attribute("direction", text("in")),
+			attribute("opener", text("product")),
+			attribute("product", text("third_party")),
+			attribute("rail", text("crypto")),
+			attribute("provider", text("other")),
+			attribute("asset", text("usdt")),
+			attribute("network", text("polkadot")),
+			attribute("amount_bucket", text("100-250")),
+			attribute("age_ms", count(5_000)),
+		]
 	);
 	assert_eq!(
-		events.iter().map(|event| event.marker).collect::<Vec<_>>(),
+		events.iter().map(CoreEvent::marker).collect::<Vec<_>>(),
 		[
 			markers::FUNDING_OVERLAY_OPENED,
 			markers::FUNDING_QUOTES_SETTLED,
@@ -72,21 +91,45 @@ fn a_line_carries_closed_values_only() {
 		]
 	);
 	assert_eq!(
-		(events[1].value("issue"), events[3].value("reason")),
-		(Some("below_minimum"), Some("provider_other"))
+		(
+			value(&events[1], "issue"),
+			value(&events[1], "superseded"),
+			value(&events[1], "first_quote_ms"),
+			value(&events[3], "reason"),
+			value(&events[3], "money_moved"),
+		),
+		(text("below_minimum"), flag(false), count(3), text("provider_other"), flag(false))
 	);
 }
 
-// Each fact logs under its own marker, at the severity of the marker's
-// class, and reaches the host's sink as that marker with its detail.
+// A measure nobody knows is left off rather than sent as zero.
 #[test]
-fn a_fact_reaches_the_host_sink_as_its_marker() {
-	let event = FundingEvent {
-		marker: markers::FUNDING_ENDED_UNEXPECTEDLY,
-		detail: "funding.ref=ref outcome=failed".to_string(),
-	};
-	let lines = crate::logging::testing::host_sink_lines(|| event.log());
-	assert_eq!(lines, ["truapi.funding.ended_unexpectedly funding.ref=ref outcome=failed"]);
+fn an_unknown_measure_is_left_off() {
+	let took = Telemetry::default().provider_took(&top_up(), false, NOW).expect("first");
+	assert_eq!((value(&took, "outcome"), value(&took, "take_ms")), (text("not_taken"), None));
+}
+
+// The table gates both ways out of the core, so a funding marker the table
+// does not export would reach no host: each one a fact goes out under is
+// exported, an unexpected ending at error so it can be alerted on.
+#[test]
+fn every_funding_marker_is_exported() {
+	use crate::markers::{MarkerClass, Severity};
+	let funding: Vec<_> =
+		markers::MARKERS.iter().filter(|marker| marker.target.starts_with("truapi.funding.")).collect();
+	assert_eq!(funding.len(), 15);
+	for marker in funding {
+		let severity = match marker.class {
+			MarkerClass::Export { severity } => severity,
+			MarkerClass::Local => panic!("{} stays on the device", marker.target),
+		};
+		let expected = if *marker == markers::FUNDING_ENDED_UNEXPECTEDLY {
+			Severity::Error
+		} else {
+			Severity::Info
+		};
+		assert_eq!(severity, expected, "{}", marker.target);
+	}
 }
 
 #[test]
@@ -124,11 +167,11 @@ fn endings_say_whether_they_were_expected() {
 		let mut ended = top_up();
 		ended.fail(reason, NOW);
 		let fact = Telemetry::default().changed(Some(&top_up()), &ended, NOW).pop().expect("ended");
-		let event = fact.event(&Common::of(None, None, |_| false, NOW), "ref");
-		let [outcome, reason] = ["outcome", "reason"].map(|key| event.value(key).map(String::from));
-		(outcome, reason, event.marker == markers::FUNDING_ENDED)
+		let event = Common::of(None, None, |_| false, NOW).attach(fact, "ref");
+		let [outcome, reason] = ["outcome", "reason"].map(|key| value(&event, key));
+		(outcome, reason, event.marker() == markers::FUNDING_ENDED)
 	};
-	let some = |value: &str| Some(value.to_string());
+	let some = text;
 	assert_eq!(
 		[
 			ended(FundingFailure::Declined),
@@ -161,7 +204,7 @@ fn a_session_ends_once() {
 	let open = top_up();
 	let mut ended = open.clone();
 	ended.fail(FundingFailure::Declined, NOW);
-	let ends = |facts: Vec<FundingFact>| {
+	let ends = |facts: Vec<CoreEvent>| {
 		facts.iter().filter(|fact| fact.marker() == markers::FUNDING_ENDED).count()
 	};
 	assert_eq!(ends(telemetry.changed(Some(&open), &ended, NOW)), 1);

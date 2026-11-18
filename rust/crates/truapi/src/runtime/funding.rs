@@ -73,7 +73,7 @@ use truapi::latest::{
 
 use super::{
 	funding_quotes::WorkerHold,
-	funding_telemetry::{Common, FrameClose, FrameTarget, FundingFact, Telemetry},
+	funding_telemetry::{Common, FrameClose, FrameTarget, FundingAttributes as _, Telemetry},
 	services::RuntimeServices,
 };
 use crate::{
@@ -85,6 +85,7 @@ use crate::{
 		},
 		funding_providers::FundingSelection,
 	},
+	logging::CoreEvent,
 	markers,
 	platform::{
 		ExecutableKind, FundingPlatform, FundingPresentOutcome, FundingPresentation,
@@ -437,10 +438,10 @@ pub struct FundingRegistry {
 	/// What funding telemetry keeps across facts. Taken after `held` when
 	/// both are, never before.
 	telemetry: Mutex<Telemetry>,
-	/// Every funding fact this registry logged, so a test reads its own
-	/// rather than the process-wide log.
+	/// Every funding fact this registry emitted, so a test reads its own
+	/// rather than whatever the process-wide sink holds.
 	#[cfg(test)]
-	logged: Mutex<Vec<super::funding_telemetry::FundingEvent>>,
+	emitted: Mutex<Vec<CoreEvent>>,
 }
 
 /// A session's provider frames, each with its number and the provider
@@ -840,7 +841,7 @@ impl FundingRegistry {
 			provider.clone(),
 			sender,
 		));
-		let requested = FundingFact::new(markers::FUNDING_FRAME_REQUESTED)
+		let requested = CoreEvent::new(markers::FUNDING_FRAME_REQUESTED)
 			.tag("target", target)
 			.flag("replaced", replaced.is_some());
 		if let Some((_, _, replaced)) = replaced {
@@ -1119,7 +1120,7 @@ impl FundingRegistry {
 			if outcome == CancelOutcome::Requested {
 				self.telemetry().cancel_asked(intent, now_ms);
 			}
-			let asked = FundingFact::new(markers::FUNDING_CANCEL_REQUESTED)
+			let asked = CoreEvent::new(markers::FUNDING_CANCEL_REQUESTED)
 				.tag("result", outcome)
 				.tag("status_at", before.status(now_ms))
 				.flag("money_moved", before.money_moved());
@@ -1158,7 +1159,7 @@ impl FundingRegistry {
 			.await?;
 		if self.get(intent).is_some() {
 			let confirmed =
-				FundingFact::new(markers::FUNDING_CANCEL_CONFIRMED).tag("result", &confirmation);
+				CoreEvent::new(markers::FUNDING_CANCEL_CONFIRMED).tag("result", &confirmation);
 			self.report_facts(intent, None, None, vec![confirmed]);
 		}
 		if let Some((provider, call)) = call {
@@ -1954,22 +1955,22 @@ impl FundingRegistry {
 		lock(&self.telemetry)
 	}
 
-	/// Every funding fact this registry logged, in order.
+	/// Every funding fact this registry emitted, in order.
 	#[cfg(test)]
-	pub(crate) fn logged_facts(&self) -> Vec<super::funding_telemetry::FundingEvent> {
-		lock(&self.logged).clone()
+	pub(crate) fn emitted_facts(&self) -> Vec<CoreEvent> {
+		lock(&self.emitted).clone()
 	}
 
-	/// Log `facts` about session `intent` as their markers, tagged from
-	/// `session`, or from the session the registry holds when `None`, with
-	/// the route `route` asks when given. Called with no lock held, as the
-	/// host's log sink may call back in.
+	/// Emit `facts` about session `intent`, labelled from `session`, or from
+	/// the session the registry holds when `None`, with the route `route`
+	/// asks when given. Called with no lock held, as the host's sink may call
+	/// back in.
 	pub(crate) fn report_facts(
 		&self,
 		intent: &str,
 		session: Option<&FundingSession>,
 		route: Option<&FundingQuoteAsk>,
-		facts: Vec<FundingFact>,
+		facts: Vec<CoreEvent>,
 	) {
 		if facts.is_empty() {
 			return;
@@ -1991,10 +1992,10 @@ impl FundingRegistry {
 		);
 		let session_ref = self.telemetry().session_ref(intent);
 		for fact in facts {
-			let event = fact.event(&common, &session_ref);
-			event.log();
+			let event = common.attach(fact, &session_ref);
 			#[cfg(test)]
-			lock(&self.logged).push(event);
+			lock(&self.emitted).push(event.clone());
+			event.emit();
 		}
 	}
 
@@ -2056,9 +2057,9 @@ impl FrameTicket<'_> {
 		if let Ok(FrameGate::Present) = gate {
 			let now_ms = current_unix_millis();
 			self.opened_ms = Some(now_ms);
-			let opened = FundingFact::new(markers::FUNDING_FRAME_OPENED)
+			let opened = CoreEvent::new(markers::FUNDING_FRAME_OPENED)
 				.tag("target", self.target)
-				.measure("wait_ms", now_ms.saturating_sub(self.requested_ms));
+				.count("wait_ms", now_ms.saturating_sub(self.requested_ms));
 			self.registry.report_facts(&self.intent, None, None, vec![opened]);
 		}
 		match gate {
@@ -2086,10 +2087,10 @@ impl Drop for FrameTicket<'_> {
 			(Some(_), None) => FrameClose::ClosedByCore,
 		};
 		let open_ms = self.opened_ms.map(|opened| current_unix_millis().saturating_sub(opened));
-		let closed = FundingFact::new(markers::FUNDING_FRAME_CLOSED)
+		let closed = CoreEvent::new(markers::FUNDING_FRAME_CLOSED)
 			.tag("target", self.target)
 			.tag("outcome", outcome)
-			.measure("open_ms", open_ms);
+			.count_if_known("open_ms", open_ms);
 		self.registry.report_facts(&self.intent, None, None, vec![closed]);
 		let dropped_waiting = {
 			let mut frames = self.registry.lock_frames();
@@ -2732,7 +2733,7 @@ impl RuntimeServices {
 		if !presented {
 			return Err(OpenFundingError::AlreadyExists);
 		}
-		let opened = FundingFact::new(markers::FUNDING_OVERLAY_OPENED)
+		let opened = CoreEvent::new(markers::FUNDING_OVERLAY_OPENED)
 			.flag("amount_preset", amount.is_some());
 		registry.report_facts(&session.intent, Some(&session), None, vec![opened]);
 		// The overlay runs on its own task, so nobody has to wait on it: the
@@ -2777,7 +2778,7 @@ impl RuntimeServices {
 			Ok(FundingPresentOutcome::Dismissed) => OverlayOutcome::Dismissed,
 			Err(_) => OverlayOutcome::Failed,
 		};
-		let closed = FundingFact::new(markers::FUNDING_OVERLAY_CLOSED)
+		let closed = CoreEvent::new(markers::FUNDING_OVERLAY_CLOSED)
 			.tag("outcome", outcome)
 			.tag("furthest", furthest);
 		registry.report_facts(intent, None, None, vec![closed]);

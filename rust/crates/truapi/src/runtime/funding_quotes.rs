@@ -38,7 +38,7 @@ use truapi::latest::{
 
 use super::{
 	funding::lock,
-	funding_telemetry::{self, FundingFact, QuotesSettled, Region},
+	funding_telemetry::{self, FundingAttributes as _, QuotesSettled, Region},
 	services::RuntimeServices,
 };
 use crate::{
@@ -47,6 +47,7 @@ use crate::{
 		funding_providers::{FundingSelection, LearnedLimit, LearnedSupport},
 		funding_view,
 	},
+	logging::CoreEvent,
 	platform::{
 		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
 	},
@@ -807,7 +808,7 @@ pub(crate) fn chosen_fact(
 	shown: Option<&FundingQuoteList>,
 	provider_id: &ProductId,
 	choice: &FundingChoice,
-) -> FundingFact {
+) -> CoreEvent {
 	let quoted: Vec<(&ProductId, &FundingQuote)> = shown
 		.iter()
 		.flat_map(|list| &list.rows)
@@ -823,12 +824,12 @@ pub(crate) fn chosen_fact(
 		.count();
 	let quote = &choice.quote;
 	let fees = quote.provider_fee.saturating_add(quote.network_fee);
-	FundingFact::new(crate::markers::FUNDING_PROVIDER_CHOSEN)
+	CoreEvent::new(crate::markers::FUNDING_PROVIDER_CHOSEN)
 		.flag("best", shown.and_then(|list| list.best.as_ref()) == Some(provider_id))
 		.tag("fee_bucket", funding_telemetry::fee_bucket(fees, quote.send_amount))
 		.tag("eta_bucket", funding_telemetry::eta_bucket(quote.eta_secs))
-		.measure("rank", better as u64 + 1)
-		.measure("quote_count", quoted.len() as u64)
+		.count("rank", better as u64 + 1)
+		.count("quote_count", quoted.len() as u64)
 }
 
 /// `amount` in an asset with `decimals`, at 18 decimals, so amounts quoted at

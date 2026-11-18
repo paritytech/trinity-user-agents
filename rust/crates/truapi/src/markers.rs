@@ -119,23 +119,24 @@ markers! {
 
 	// ------------------------------------------------------- funding facts
 	//
-	// One line per fact of a funding session, built in
-	// `runtime/funding_telemetry.rs`. Each detail reads
-	// `funding.ref=<ref> key=value ...`: a random reference drawn per session
-	// and kept in memory only, then tags, then measures. Every value comes
-	// from a closed set or is a count or milliseconds; never an intent, a
-	// quote, transaction or reference id, an address, an exact amount, fee or
-	// limit, a provider's own text, or a URL.
+	// One `CoreEvent` per fact of a funding session, built in
+	// `runtime/funding_telemetry.rs`. Each carries its own attributes, then
+	// `funding.ref`, a random label drawn per session and kept in memory
+	// only, the session's labels and its `age_ms`. Every value is a label
+	// from a closed set, a condition, or a count or milliseconds; never an
+	// intent, a quote, transaction or reference id, an address, an exact
+	// amount, fee or limit, a provider's own text, or a URL. Below, a key
+	// with no values listed is a condition, and one ending in `_ms` or naming
+	// a number is a count, left off when unknown.
 	//
-	// Every detail first carries the session's tags: `direction` (`in`,
-	// `out`), `opener` (`host`, `product`), `product` (a first-party
-	// product's dotNS label, `third_party`, `none`), `rail` (`card`, `bank`,
-	// `crypto`, `none`), `provider` (a provider the host lists, `other`,
-	// `none`), `asset` and `network` (a short plain identifier a provider
-	// route declares, `other`, `none`), `amount_bucket` (CASH: `<10`,
-	// `10-50`, `50-100`, `100-250`, `250-500`, `500-1k`, `1k-5k`, `5k+`,
-	// `unset`), then `age_ms` after the fact's own tags. A session the core
-	// no longer holds carries `session=unknown` instead.
+	// The session's labels: `direction` (`in`, `out`), `opener` (`host`,
+	// `product`), `product` (a first-party product's dotNS label,
+	// `third_party`, `none`), `rail` (`card`, `bank`, `crypto`, `none`),
+	// `provider` (a provider the host lists, `other`, `none`), `asset` and
+	// `network` (a short plain identifier a provider route declares, `other`,
+	// `none`), `amount_bucket` (CASH: `<10`, `10-50`, `50-100`, `100-250`,
+	// `250-500`, `500-1k`, `1k-5k`, `5k+`, `unset`). A session the core no
+	// longer holds carries `session` as `unknown` instead, and no age.
 
 	/// The overlay opened on a new session. `amount_preset`: `true` when the
 	/// opener named the amount.

@@ -12761,23 +12761,20 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 	"q-test".to_string()
 }
 
-/// The facts logged under `marker`.
+/// The facts emitted under `marker`.
 fn events_named<'a>(
-	events: &'a [crate::runtime::funding_telemetry::FundingEvent],
+	events: &'a [crate::logging::CoreEvent],
 	marker: &str,
-) -> Vec<&'a crate::runtime::funding_telemetry::FundingEvent> {
-	events.iter().filter(|event| event.marker.target == marker).collect()
+) -> Vec<&'a crate::logging::CoreEvent> {
+	events.iter().filter(|event| event.marker().target == marker).collect()
 }
 
-/// Assert no logged line names `secrets`.
-fn assert_events_carry_none_of(
-	events: &[crate::runtime::funding_telemetry::FundingEvent],
-	secrets: &[&str],
-) {
+/// Assert no emitted fact carries `secrets`.
+fn assert_events_carry_none_of(events: &[crate::logging::CoreEvent], secrets: &[&str]) {
 	for event in events {
-		let line = format!("{}: {}", event.marker.target, event.detail);
+		let line = crate::runtime::funding_telemetry::read::line(event);
 		for secret in secrets {
-			assert!(!line.contains(secret), "a line carries {secret}: {line}");
+			assert!(!line.contains(secret), "a fact carries {secret}: {line}");
 		}
 	}
 }
@@ -12799,20 +12796,21 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	))
 	.expect("opened")
 	.intent;
-	let opened = services.funding().logged_facts();
+	use crate::runtime::funding_telemetry::read::{count, flag, text, value};
+	let opened = services.funding().emitted_facts();
 	assert_eq!(
-		opened.iter().map(|event| event.marker.target).collect::<Vec<_>>(),
+		opened.iter().map(|event| event.marker().target).collect::<Vec<_>>(),
 		["truapi.funding.overlay_opened", "truapi.funding.overlay_closed"]
 	);
 	assert_eq!(
 		(
-			opened[0].value("amount_preset"),
-			opened[0].value("amount_bucket"),
-			opened[0].value("opener"),
-			opened[1].value("outcome"),
-			opened[1].value("furthest"),
+			value(&opened[0], "amount_preset"),
+			value(&opened[0], "amount_bucket"),
+			value(&opened[0], "opener"),
+			value(&opened[1], "outcome"),
+			value(&opened[1], "furthest"),
 		),
-		(Some("true"), Some("50-100"), Some("host"), Some("started"), Some("amount"))
+		(flag(true), text("50-100"), text("host"), text("started"), text("amount"))
 	);
 
 	let quote_id = offer_test_quote(&services, &intent, "ramp.dot");
@@ -12859,9 +12857,9 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 		.expect("settled")
 	);
 
-	let events = services.funding().logged_facts();
+	let events = services.funding().emitted_facts();
 	assert_eq!(
-		events[2..].iter().map(|event| event.marker.target).collect::<Vec<_>>(),
+		events[2..].iter().map(|event| event.marker().target).collect::<Vec<_>>(),
 		[
 			"truapi.funding.provider_chosen",
 			"truapi.funding.step_reached",
@@ -12873,26 +12871,26 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	let chosen = events_named(&events, "truapi.funding.provider_chosen")[0];
 	assert_eq!(
 		(
-			chosen.value("best"),
-			chosen.value("provider"),
-			chosen.value("rail"),
-			chosen.value("asset"),
-			chosen.value("rank"),
-			chosen.value("quote_count"),
+			value(chosen, "best"),
+			value(chosen, "provider"),
+			value(chosen, "rail"),
+			value(chosen, "asset"),
+			value(chosen, "rank"),
+			value(chosen, "quote_count"),
 		),
-		(Some("false"), Some("ramp.dot"), Some("card"), Some("eur"), Some("1"), Some("1"))
+		(flag(false), text("ramp.dot"), text("card"), text("eur"), count(1), count(1))
 	);
 	let steps: Vec<_> = events_named(&events, "truapi.funding.step_reached")
 		.into_iter()
-		.map(|event| event.value("step"))
+		.map(|event| value(event, "step"))
 		.collect();
-	assert_eq!(steps, [Some("received"), Some("added")]);
+	assert_eq!(steps, [text("received"), text("added")]);
 	let cancel = events_named(&events, "truapi.funding.cancel_requested")[0];
 	assert_eq!(
-		(cancel.value("money_moved"), cancel.value("result")),
+		(value(cancel, "money_moved"), value(cancel, "result")),
 		(
-			Some("true"),
-			Some(if cancelled == crate::host_logic::funding::CancelOutcome::Requested {
+			flag(true),
+			text(if cancelled == crate::host_logic::funding::CancelOutcome::Requested {
 				"requested"
 			} else {
 				"too_late"
@@ -12901,13 +12899,18 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	);
 	let ended = events_named(&events, "truapi.funding.ended")[0];
 	assert_eq!(
-		(ended.value("outcome"), ended.value("reason"), ended.value("money_moved"), ended.marker,),
-		(Some("topped_up"), Some("none"), Some("true"), crate::markers::FUNDING_ENDED)
+		(
+			value(ended, "outcome"),
+			value(ended, "reason"),
+			value(ended, "money_moved"),
+			ended.marker(),
+		),
+		(text("topped_up"), text("none"), flag(true), crate::markers::FUNDING_ENDED)
 	);
 	assert!(
 		events
 			.iter()
-			.all(|event| event.value("funding.ref") == events[0].value("funding.ref"))
+			.all(|event| value(event, "funding.ref") == value(&events[0], "funding.ref"))
 	);
 	assert_events_carry_none_of(
 		&events,
@@ -12935,26 +12938,27 @@ fn a_settled_quote_request_reports_its_counts_once() {
 	answered_quotes(&services, &intent, card_ask(Some("DE")), Duration::from_secs(5));
 	wait_until(
 		|| {
-			!events_named(&services.funding().logged_facts(), "truapi.funding.quotes_settled")
+			!events_named(&services.funding().emitted_facts(), "truapi.funding.quotes_settled")
 				.is_empty()
 		},
 		"quotes settled",
 	);
 
-	let events = services.funding().logged_facts();
+	use crate::runtime::funding_telemetry::read::{count, flag, text, value};
+	let events = services.funding().emitted_facts();
 	let settled = events_named(&events, "truapi.funding.quotes_settled");
 	assert_eq!(settled.len(), 1);
 	assert_eq!(
 		(
-			settled[0].value("region"),
-			settled[0].value("superseded"),
-			settled[0].value("issue"),
-			settled[0].value("asked"),
-			settled[0].value("quoted"),
-			settled[0].value("pending"),
-			settled[0].value("first_quote_ms").is_some(),
+			value(settled[0], "region"),
+			value(settled[0], "superseded"),
+			value(settled[0], "issue"),
+			value(settled[0], "asked"),
+			value(settled[0], "quoted"),
+			value(settled[0], "pending"),
+			value(settled[0], "first_quote_ms").is_some(),
 		),
-		(Some("eu"), Some("false"), Some("none"), Some("1"), Some("1"), Some("0"), true)
+		(text("eu"), flag(false), text("none"), count(1), count(1), count(0), true)
 	);
 	assert_events_carry_none_of(&events, &[&intent, "q1", "\"DE\""]);
 }
@@ -12977,17 +12981,18 @@ fn an_expired_session_reports_an_expected_ending() {
 	futures::executor::block_on(services.funding().commit(far_future, |_| ((), Vec::new())))
 		.expect("swept");
 
-	let events = services.funding().logged_facts();
+	use crate::runtime::funding_telemetry::read::{text, value};
+	let events = services.funding().emitted_facts();
 	let ended = events_named(&events, "truapi.funding.ended");
 	assert_eq!(ended.len(), 1);
 	assert_eq!(
 		(
-			ended[0].value("outcome"),
-			ended[0].value("direction"),
-			ended[0].value("amount_bucket"),
-			ended[0].marker,
+			value(ended[0], "outcome"),
+			value(ended[0], "direction"),
+			value(ended[0], "amount_bucket"),
+			ended[0].marker(),
 		),
-		(Some("expired"), Some("out"), Some("unset"), crate::markers::FUNDING_ENDED)
+		(text("expired"), text("out"), text("unset"), crate::markers::FUNDING_ENDED)
 	);
 	assert_events_carry_none_of(&events, &[&intent]);
 }
@@ -12997,7 +13002,10 @@ fn an_expired_session_reports_an_expected_ending() {
 // as dropped unopened.
 #[test]
 fn provider_frames_report_their_lifecycle() {
-	use crate::runtime::funding_telemetry::{FrameClose, FrameTarget};
+	use crate::runtime::funding_telemetry::{
+		FrameClose, FrameTarget,
+		read::{flag, text, value},
+	};
 	let services = funding_services();
 	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(host.clone()));
@@ -13022,28 +13030,26 @@ fn provider_frames_report_their_lifecycle() {
 
 	let frames: Vec<_> = services
 		.funding()
-		.logged_facts()
+		.emitted_facts()
 		.into_iter()
-		.filter(|event| event.marker.target.starts_with("truapi.funding.frame_"))
+		.filter(|event| event.marker().target.starts_with("truapi.funding.frame_"))
 		.map(|event| {
 			(
-				event.marker.target.to_string(),
-				event.value("target").map(str::to_string),
-				event.value("outcome").or(event.value("replaced")).map(str::to_string),
+				event.marker().target.to_string(),
+				value(&event, "target"),
+				value(&event, "outcome").or(value(&event, "replaced")),
 			)
 		})
 		.collect();
-	let row = |name: &str, target: &str, value: Option<&str>| {
-		(format!("truapi.funding.{name}"), Some(target.to_string()), value.map(str::to_string))
-	};
+	let row = |name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
 	assert_eq!(
 		frames,
 		[
-			row("frame_requested", "page", Some("false")),
-			row("frame_requested", "app", Some("true")),
-			row("frame_closed", "page", Some("dropped_unopened")),
+			row("frame_requested", "page", flag(false)),
+			row("frame_requested", "app", flag(true)),
+			row("frame_closed", "page", text("dropped_unopened")),
 			row("frame_opened", "app", None),
-			row("frame_closed", "app", Some("returned")),
+			row("frame_closed", "app", text("returned")),
 		]
 	);
 }

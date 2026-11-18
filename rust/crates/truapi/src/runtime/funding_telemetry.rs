@@ -1,17 +1,17 @@
-//! Funding facts for telemetry, logged as exported `truapi.funding.*`
-//! markers.
+//! Funding facts for telemetry, emitted as [`CoreEvent`]s under exported
+//! `truapi.funding.*` markers.
 //!
-//! A [`FundingFact`] names its marker and carries closed values only: enum
-//! names, fixed buckets, and counts or durations. Logged, it becomes a detail
-//! of `funding.ref=<ref> key=value ...` under that marker, with the tags
-//! every session carries first. What each marker's detail holds is
+//! A fact is a [`CoreEvent`] carrying closed values only: labels from enum
+//! names and fixed buckets, conditions, and counts or durations. Before it
+//! goes out it gains the `funding.ref` label, the labels every session
+//! carries and the session's `age_ms`. What each marker carries is
 //! documented on its entry in [`crate::markers`].
 //!
-//! The `funding.ref` is drawn at random the first time a session logs
+//! The `funding.ref` is drawn at random the first time a session emits
 //! anything and forgotten once it ended, so nothing joins it to the intent.
 //! [`Telemetry`] keeps it, with the little else the facts need beyond the
-//! sessions themselves, and what was logged already, so a fact a retry
-//! repeats is logged once.
+//! sessions themselves, and what was emitted already, so a fact a retry
+//! repeats is emitted once.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -23,14 +23,15 @@ use crate::{
 	host_logic::funding::{
 		FundingCancel, FundingSession, FundingStage, FundingStatus, FundingStep,
 	},
-	markers::{self, Marker, MarkerClass, Severity},
+	logging::CoreEvent,
+	markers,
 	platform::{FundingQuoteList, FundingQuoteState, FundingQuoteUnavailable, ProductId},
 };
 
 /// Balance units in one CASH.
 const CASH_UNIT: u128 = 1_000_000;
-/// How many sessions that log nothing more keep what telemetry holds for
-/// them, so a fact logged just after a session ended still carries its
+/// How many sessions that emit nothing more keep what telemetry holds for
+/// them, so a fact emitted just after a session ended still carries its
 /// `funding.ref`.
 const RETIRED_KEPT: usize = 16;
 /// Longest asset or network identifier tagged as it is, so a value a
@@ -184,117 +185,30 @@ enum EndOutcome {
 	PaidOutAfterCancel,
 }
 
-/// One fact to log: its marker, then its own tags and measures in order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FundingFact {
-	marker: Marker,
-	tags: Vec<(&'static str, &'static str)>,
-	measures: Vec<(&'static str, u64)>,
+/// What a funding fact adds to [`CoreEvent`]'s own builder.
+pub trait FundingAttributes: Sized {
+	/// With label `key` set to `value`, taken from a closed set, so a fact
+	/// cannot carry a string it was handed.
+	fn tag(self, key: &'static str, value: impl Into<&'static str>) -> Self;
+
+	/// With count `key` set to `value`, when known.
+	fn count_if_known(self, key: &'static str, value: Option<u64>) -> Self;
 }
 
-impl FundingFact {
-	/// A fact logged under `marker`, with nothing on it yet.
-	pub fn new(marker: Marker) -> Self {
-		Self { marker, tags: Vec::new(), measures: Vec::new() }
+impl FundingAttributes for CoreEvent {
+	fn tag(self, key: &'static str, value: impl Into<&'static str>) -> Self {
+		self.text(key, value.into())
 	}
 
-	/// The marker it is logged under.
-	pub fn marker(&self) -> Marker {
-		self.marker
-	}
-
-	/// With tag `key` set to the closed value `value`.
-	pub fn tag(mut self, key: &'static str, value: impl Into<&'static str>) -> Self {
-		self.tags.push((key, value.into()));
-		self
-	}
-
-	/// With measure `key` set to `value`, when known.
-	pub fn measure(mut self, key: &'static str, value: impl Into<Option<u64>>) -> Self {
-		self.measures.extend(value.into().map(|value| (key, value)));
-		self
-	}
-
-	/// With tag `key` set to `true` or `false`.
-	pub fn flag(self, key: &'static str, value: bool) -> Self {
-		self.tag(key, if value { "true" } else { "false" })
-	}
-
-	/// The fact as the core logs it: `funding.ref=<ref>`, the `common`
-	/// tags, the fact's own tags, the session's age, then its own measures.
-	pub fn event(&self, common: &Common, session_ref: &str) -> FundingEvent {
-		let tags = common.tags.iter().map(|(key, value)| format!("{key}={value}"));
-		let own = self.tags.iter().map(|(key, value)| format!("{key}={value}"));
-		let age = common.age_ms.map(|age_ms| format!("age_ms={age_ms}"));
-		let measures = self.measures.iter().map(|(key, value)| format!("{key}={value}"));
-		let detail = core::iter::once(format!("funding.ref={session_ref}"))
-			.chain(tags)
-			.chain(own)
-			.chain(age)
-			.chain(measures)
-			.collect::<Vec<_>>()
-			.join(" ");
-		FundingEvent { marker: self.marker, detail }
-	}
-}
-
-/// A funding fact as the core logs it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FundingEvent {
-	/// The marker it is logged under.
-	pub marker: Marker,
-	/// Its detail, `funding.ref=<ref> key=value ...`.
-	pub detail: String,
-}
-
-impl FundingEvent {
-	/// The value of `key` in the detail.
-	#[cfg(test)]
-	pub fn value(&self, key: &str) -> Option<&str> {
-		self.detail
-			.split(' ')
-			.find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
-	}
-
-	/// Log the event under its marker, at the severity of the marker's
-	/// class. A `tracing` target is fixed per call site, so each marker has
-	/// its own.
-	pub fn log(&self) {
-		let detail = &self.detail;
-		macro_rules! under {
-			($($marker:ident),+ $(,)?) => {$(
-				if self.marker == markers::$marker {
-					match markers::$marker.class {
-						MarkerClass::Export { severity: Severity::Error } => {
-							tracing::error!(target: markers::$marker.target, "{detail}")
-						},
-						_ => tracing::info!(target: markers::$marker.target, "{detail}"),
-					}
-					return;
-				}
-			)+};
+	fn count_if_known(self, key: &'static str, value: Option<u64>) -> Self {
+		match value {
+			Some(value) => self.count(key, value),
+			None => self,
 		}
-		under!(
-			FUNDING_OVERLAY_OPENED,
-			FUNDING_OVERLAY_CLOSED,
-			FUNDING_QUOTES_SETTLED,
-			FUNDING_PROVIDER_CHOSEN,
-			FUNDING_PROVIDER_TOOK,
-			FUNDING_STEP_REACHED,
-			FUNDING_STATUS_FLAG,
-			FUNDING_ENDED,
-			FUNDING_ENDED_UNEXPECTEDLY,
-			FUNDING_CANCEL_REQUESTED,
-			FUNDING_CANCEL_ANSWERED,
-			FUNDING_CANCEL_CONFIRMED,
-			FUNDING_FRAME_REQUESTED,
-			FUNDING_FRAME_OPENED,
-			FUNDING_FRAME_CLOSED,
-		);
 	}
 }
 
-/// The tags and the age every fact of one session carries.
+/// The labels and the age every fact of one session carries.
 #[derive(Debug, Clone)]
 pub struct Common {
 	tags: Vec<(&'static str, String)>,
@@ -302,9 +216,9 @@ pub struct Common {
 }
 
 impl Common {
-	/// The common tags of `session`, its route taken from `route` when
+	/// The common labels of `session`, its route taken from `route` when
 	/// given. `listed` says whether the host lists a provider. A session the
-	/// core no longer holds tags nothing but its absence.
+	/// core no longer holds carries nothing but its absence.
 	pub fn of(
 		session: Option<&FundingSession>,
 		route: Option<&FundingQuoteAsk>,
@@ -339,6 +253,14 @@ impl Common {
 		];
 		Self { tags, age_ms: Some(now_ms.saturating_sub(session.opened_at_ms)) }
 	}
+
+	/// `fact` as it goes out: with `funding.ref` set to `session_ref`, these
+	/// labels and the session's age after its own attributes.
+	pub fn attach(&self, fact: CoreEvent, session_ref: &str) -> CoreEvent {
+		let fact = fact.text("funding.ref", session_ref);
+		let fact = self.tags.iter().fold(fact, |fact, (key, value)| fact.text(key, value.as_str()));
+		fact.count_if_known("age_ms", self.age_ms)
+	}
 }
 
 /// What telemetry keeps per session, beyond the session itself.
@@ -350,13 +272,13 @@ struct Tracked {
 	quoted: bool,
 	/// The region the quotes were last asked for.
 	region: Region,
-	/// Warning states logged already.
+	/// Warning states emitted already.
 	flags: Vec<Flag>,
-	/// Whether the worker taking the session was logged, and how.
+	/// Whether the worker taking the session was emitted, and how.
 	took: Option<bool>,
 	/// When the user last asked to cancel.
 	cancel_asked_ms: Option<u64>,
-	/// Whether the worker not answering that cancel was logged.
+	/// Whether the worker not answering that cancel was emitted.
 	cancel_unanswered: bool,
 }
 
@@ -364,7 +286,7 @@ struct Tracked {
 #[derive(Debug, Default)]
 pub struct Telemetry {
 	sessions: HashMap<String, Tracked>,
-	/// Sessions that log nothing more, oldest first, whose entries go once
+	/// Sessions that emit nothing more, oldest first, whose entries go once
 	/// [`RETIRED_KEPT`] newer ones follow.
 	retired: VecDeque<String>,
 }
@@ -382,7 +304,7 @@ impl Telemetry {
 		self.sessions.entry(intent.to_string()).or_default()
 	}
 
-	/// Retire session `intent`, which logs nothing more: what is kept for it
+	/// Retire session `intent`, which emits nothing more: what is kept for it
 	/// goes once [`RETIRED_KEPT`] other sessions retired after it.
 	pub fn forget(&mut self, intent: &str) {
 		if self.retired.iter().any(|retired| retired == intent) {
@@ -412,14 +334,14 @@ impl Telemetry {
 		&mut self,
 		intent: &str,
 		settled: Option<QuotesSettled>,
-	) -> Option<FundingFact> {
+	) -> Option<CoreEvent> {
 		let tracked = self.tracked(intent);
 		tracked.quoted = true;
 		settled.map(|settled| settled.fact(tracked.region))
 	}
 
 	/// The round a newer request replaced before it settled, as a fact.
-	pub fn quotes_superseded(&mut self, intent: &str, settled: QuotesSettled) -> FundingFact {
+	pub fn quotes_superseded(&mut self, intent: &str, settled: QuotesSettled) -> CoreEvent {
 		settled.fact(self.tracked(intent).region)
 	}
 
@@ -430,9 +352,9 @@ impl Telemetry {
 		tracked.cancel_unanswered = false;
 	}
 
-	/// The worker did not answer session `intent`'s cancel: logged the first
+	/// The worker did not answer session `intent`'s cancel: emitted the first
 	/// time for each cancel.
-	pub fn cancel_unanswered(&mut self, intent: &str, now_ms: u64) -> Option<FundingFact> {
+	pub fn cancel_unanswered(&mut self, intent: &str, now_ms: u64) -> Option<CoreEvent> {
 		let tracked = self.tracked(intent);
 		if core::mem::replace(&mut tracked.cancel_unanswered, true) {
 			return None;
@@ -440,34 +362,34 @@ impl Telemetry {
 		Some(cancel_answered(CancelAnswer::NoAnswer, "none", tracked.cancel_asked_ms, now_ms))
 	}
 
-	/// The worker took `session`, or did not: logged once each way, and not
+	/// The worker took `session`, or did not: emitted once each way, and not
 	/// at all once taken.
 	pub fn provider_took(
 		&mut self,
 		session: &FundingSession,
 		taken: bool,
 		now_ms: u64,
-	) -> Option<FundingFact> {
+	) -> Option<CoreEvent> {
 		let tracked = self.tracked(&session.intent);
 		if tracked.took == Some(true) || tracked.took == Some(taken) {
 			return None;
 		}
 		tracked.took = Some(taken);
 		Some(
-			FundingFact::new(markers::FUNDING_PROVIDER_TOOK)
+			CoreEvent::new(markers::FUNDING_PROVIDER_TOOK)
 				.tag("outcome", if taken { "taken" } else { "not_taken" })
-				.measure("take_ms", session.assigned_at_ms.map(|at| now_ms.saturating_sub(at))),
+				.count_if_known("take_ms", session.assigned_at_ms.map(|at| now_ms.saturating_sub(at))),
 		)
 	}
 
-	/// `session` showed `flag`: logged the first time.
-	pub fn flagged(&mut self, session: &FundingSession, flag: Flag) -> Option<FundingFact> {
+	/// `session` showed `flag`: emitted the first time.
+	pub fn flagged(&mut self, session: &FundingSession, flag: Flag) -> Option<CoreEvent> {
 		let flags = &mut self.tracked(&session.intent).flags;
 		if flags.contains(&flag) {
 			return None;
 		}
 		flags.push(flag);
-		Some(FundingFact::new(markers::FUNDING_STATUS_FLAG).tag("flag", flag))
+		Some(CoreEvent::new(markers::FUNDING_STATUS_FLAG).tag("flag", flag))
 	}
 
 	/// What changed from `before` to `after`, a session a commit stored at
@@ -478,7 +400,7 @@ impl Telemetry {
 		before: Option<&FundingSession>,
 		after: &FundingSession,
 		now_ms: u64,
-	) -> Vec<FundingFact> {
+	) -> Vec<CoreEvent> {
 		let mut facts = Vec::new();
 		let reached_before = before.map(FundingSession::steps_reached).unwrap_or_default();
 		let mut prev_ms = after.opened_at_ms;
@@ -492,9 +414,9 @@ impl Telemetry {
 				.any(|known| known.step == step.step && known.reached_at_ms.is_some())
 			{
 				facts.push(
-					FundingFact::new(markers::FUNDING_STEP_REACHED)
+					CoreEvent::new(markers::FUNDING_STEP_REACHED)
 						.tag("step", step.step)
-						.measure("since_prev_ms", at_ms.saturating_sub(prev_ms)),
+						.count("since_prev_ms", at_ms.saturating_sub(prev_ms)),
 				);
 			}
 			prev_ms = at_ms;
@@ -529,7 +451,7 @@ impl Telemetry {
 	}
 }
 
-/// How a quote round's rows came out, for the `quotes_settled` it logs.
+/// How a quote round's rows came out, for the `quotes_settled` it emits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuotesSettled {
 	/// The rows when it settled.
@@ -543,7 +465,7 @@ pub struct QuotesSettled {
 }
 
 impl QuotesSettled {
-	fn fact(&self, region: Region) -> FundingFact {
+	fn fact(&self, region: Region) -> CoreEvent {
 		let mut counts = [0u64; 8];
 		for row in &self.list.rows {
 			let index = match &row.state {
@@ -564,21 +486,21 @@ impl QuotesSettled {
 		}
 		let issue = self.list.issue.as_ref().map_or("none", Into::into);
 		let [pending, quoted, timed_out, country, min, max, unavailable, other] = counts;
-		FundingFact::new(markers::FUNDING_QUOTES_SETTLED)
+		CoreEvent::new(markers::FUNDING_QUOTES_SETTLED)
 			.tag("region", region)
 			.tag("issue", issue)
 			.flag("superseded", self.superseded)
-			.measure("asked", self.list.rows.len() as u64)
-			.measure("quoted", quoted)
-			.measure("refused_country", country)
-			.measure("refused_min", min)
-			.measure("refused_max", max)
-			.measure("refused_unavailable", unavailable)
-			.measure("refused_other", other)
-			.measure("timed_out", timed_out)
-			.measure("pending", pending)
-			.measure("first_quote_ms", self.first_quote_ms)
-			.measure("settle_ms", self.settle_ms)
+			.count("asked", self.list.rows.len() as u64)
+			.count("quoted", quoted)
+			.count("refused_country", country)
+			.count("refused_min", min)
+			.count("refused_max", max)
+			.count("refused_unavailable", unavailable)
+			.count("refused_other", other)
+			.count("timed_out", timed_out)
+			.count("pending", pending)
+			.count_if_known("first_quote_ms", self.first_quote_ms)
+			.count("settle_ms", self.settle_ms)
 	}
 }
 
@@ -587,16 +509,16 @@ fn cancel_answered(
 	fee: &'static str,
 	asked_ms: Option<u64>,
 	now_ms: u64,
-) -> FundingFact {
-	FundingFact::new(markers::FUNDING_CANCEL_ANSWERED)
+) -> CoreEvent {
+	CoreEvent::new(markers::FUNDING_CANCEL_ANSWERED)
 		.tag("answer", answer)
 		.tag("fee_bucket", fee)
-		.measure("answer_ms", asked_ms.map(|asked| now_ms.saturating_sub(asked)))
+		.count_if_known("answer_ms", asked_ms.map(|asked| now_ms.saturating_sub(asked)))
 }
 
 /// How `session`, which its provider is done with, ended at `now_ms`: under
 /// `ended`, or `ended_unexpectedly` when the ending is a fault.
-fn ended(session: &FundingSession, region: Region, now_ms: u64) -> FundingFact {
+fn ended(session: &FundingSession, region: Region, now_ms: u64) -> CoreEvent {
 	let money_moved = session.money_moved();
 	let (outcome, reason, expected) = match session.status(now_ms) {
 		FundingStatus::ToppedUp => (EndOutcome::ToppedUp, "none", true),
@@ -622,12 +544,12 @@ fn ended(session: &FundingSession, region: Region, now_ms: u64) -> FundingFact {
 		.into_iter()
 		.find(|reached| reached.step == FundingStep::Received)
 		.and_then(|reached| reached.reached_at_ms);
-	FundingFact::new(marker)
+	CoreEvent::new(marker)
 		.tag("outcome", outcome)
 		.tag("reason", reason)
 		.flag("money_moved", money_moved)
 		.tag("region", region)
-		.measure("to_received_ms", received.map(|at| at.saturating_sub(session.opened_at_ms)))
+		.count_if_known("to_received_ms", received.map(|at| at.saturating_sub(session.opened_at_ms)))
 }
 
 /// Whether a session that failed with `failure` ended the way the user, the
@@ -730,6 +652,42 @@ fn plain_tag(value: Option<&str>) -> String {
 			value.to_ascii_lowercase()
 		},
 		Some(_) => "other".to_string(),
+	}
+}
+
+/// Reading a fact's attributes back, for tests.
+#[cfg(test)]
+pub(crate) mod read {
+	use crate::logging::{CoreAttribute, CoreAttributeValue, CoreEvent};
+
+	/// What `fact` carries under `key`.
+	pub fn value(fact: &CoreEvent, key: &str) -> Option<CoreAttributeValue> {
+		fact.attributes()
+			.iter()
+			.find(|attribute| attribute.key == key)
+			.map(|CoreAttribute { value, .. }| value.clone())
+	}
+
+	/// A label attribute's value.
+	pub fn text(value: &str) -> Option<CoreAttributeValue> {
+		Some(CoreAttributeValue::Text { value: value.to_string() })
+	}
+
+	/// A count attribute's value.
+	pub fn count(value: u64) -> Option<CoreAttributeValue> {
+		Some(CoreAttributeValue::Count { value })
+	}
+
+	/// A condition attribute's value.
+	pub fn flag(value: bool) -> Option<CoreAttributeValue> {
+		Some(CoreAttributeValue::Flag { value })
+	}
+
+	/// `fact` as one line, its marker then each attribute, to search for
+	/// what it must not carry.
+	pub fn line(fact: &CoreEvent) -> String {
+		let attributes = fact.attributes().iter().map(|CoreAttribute { key, value }| format!("{key}={value}"));
+		core::iter::once(fact.marker().target.to_string()).chain(attributes).collect::<Vec<_>>().join(" ")
 	}
 }
 
