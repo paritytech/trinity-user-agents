@@ -28,8 +28,9 @@ pub enum TokenState {
 pub struct Supply {
 	/// The period.
 	pub period: u32,
-	/// The tokens of a period.
-	pub allowance: u32,
+	/// The tokens of a period, as F1 last read them for the user's
+	/// collection; none before the first read.
+	pub allowance: Option<u32>,
 	/// The free tokens below which recycling the policy asks for stops
 	/// (invariant 2).
 	pub reserve: u32,
@@ -42,7 +43,7 @@ pub struct Supply {
 impl Supply {
 	/// The slots that are not applied and not held, lowest first.
 	pub fn free(&self) -> impl Iterator<Item = u32> + '_ {
-		(0..self.allowance).filter(|slot| {
+		(0..self.allowance.unwrap_or(0)).filter(|slot| {
 			let index = *slot as usize;
 			self.states[index] == TokenState::NotApplied && !self.held[index]
 		})
@@ -81,9 +82,10 @@ pub fn token_state(token: TokenId, view: &Snapshot) -> TokenState {
 /// The supply of the period that contains `now`.
 pub fn supply(now: u64, view: &Snapshot, params: &ChainParams) -> Supply {
 	let period = period_of(now, params);
-	let allowance = params.config().unload_allowance;
-	let reserve = allowance * u32::from(params.config().reserve_share) / 100;
-	let tokens: Vec<TokenId> = (0..allowance).map(|slot| TokenId { period, slot }).collect();
+	let allowance = view.unload_allowance();
+	let slots = allowance.unwrap_or(0);
+	let reserve = slots * u32::from(params.config().reserve_share) / 100;
+	let tokens: Vec<TokenId> = (0..slots).map(|slot| TokenId { period, slot }).collect();
 	let states = tokens.iter().map(|token| token_state(*token, view)).collect();
 	let held = tokens
 		.iter()
@@ -106,9 +108,10 @@ pub fn resolve(needed: u32, supply: &Supply) -> Option<Vec<TokenId>> {
 }
 
 /// Whether the free tokens are no more than the reserve, which stops the
-/// recycling the policy asks for (invariant 2).
+/// recycling the policy asks for (invariant 2). An allowance not yet read
+/// is not evidence of an exhausted one, so it is not running low.
 pub fn running_low(supply: &Supply) -> bool {
-	supply.free().count() <= supply.reserve as usize
+	supply.allowance.is_some() && supply.free().count() <= supply.reserve as usize
 }
 
 #[cfg(test)]
