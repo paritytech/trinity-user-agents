@@ -70,7 +70,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	let runtime = activated_signing_runtime(platform.clone());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let access = || {
-		futures::executor::block_on(runtime.signing_host.accounts().consent().account_access(
+		futures::executor::block_on(runtime.role.accounts().consent().account_access(
 			&requester,
 			&target,
 			platform.as_ref(),
@@ -105,7 +105,7 @@ fn install_session_after_boot(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"the boot reconcile did not report the empty session store",
 	);
-	runtime.pairing_host.session().session_state().set_session(session);
+	runtime.role.session().session_state().set_session(session);
 }
 
 fn assert_send<T: Send>(_: T) {}
@@ -370,7 +370,7 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 	let session = crate::test_support::sso_session_info();
 	install_session_after_boot(&runtime, &platform, session.clone());
-	runtime.pairing_host.accounts().cache_product_subtree_for_test(
+	runtime.role.accounts().cache_product_subtree_for_test(
 		&session,
 		&crate::platform::ProductId::for_test("myapp.dot"),
 		[9; 32],
@@ -2106,8 +2106,8 @@ fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	let host = ProductRuntimeHost::from_services(
 		runtime.services.clone(),
 		ConnectionAdapters::from_services(&runtime.services),
-		runtime.signing_host.accounts().clone(),
-		runtime.signing_host.clone(),
+		runtime.role.accounts().clone(),
+		runtime.role.clone(),
 		ProductContext::new(ProductId::for_test("unknown.dot")),
 	);
 	// Nothing is cached for `wallet.dot`, so resolution reaches dotNS.

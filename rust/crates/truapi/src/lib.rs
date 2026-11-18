@@ -917,7 +917,7 @@ cfg_select! {
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
-			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
+			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
 			PairingHostRuntime, ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
 			SigningHostRuntime,
 		};

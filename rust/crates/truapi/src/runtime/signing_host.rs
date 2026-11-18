@@ -49,7 +49,7 @@ pub struct SigningHost {
 	auth_state: AuthStateMachine,
 	/// Product account policy and the grants kept for this wallet activation.
 	accounts: Arc<HostAccounts<WalletAccountHolder>>,
-	sso_responder: Arc<SsoResponderService>,
+	sso_responder: SsoResponderService,
 	#[cfg(not(target_arch = "wasm32"))]
 	renewal_loop_started: std::sync::atomic::AtomicBool,
 }
@@ -136,8 +136,8 @@ impl SigningHost {
 	}
 
 	/// Incoming SSO for this host's wallet, answered by its runtime.
-	pub fn sso_responder(&self) -> Arc<SsoResponderService> {
-		self.sso_responder.clone()
+	pub fn sso_responder(&self) -> &SsoResponderService {
+		&self.sso_responder
 	}
 
 	/// Clear one product's grants and Allow once answers.

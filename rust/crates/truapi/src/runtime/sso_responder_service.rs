@@ -343,14 +343,14 @@ impl SsoResponderService {
 		services: Arc<RuntimeServices>,
 		wallet: Arc<WalletAccountHolder>,
 		consent: Arc<ProductConsent>,
-	) -> Arc<Self> {
-		Arc::new(Self {
+	) -> Self {
+		Self {
 			services,
 			wallet,
 			consent,
 			replay_locks: SsoReplayLocks::default(),
 			unpublished_answers: UnpublishedAnswers::default(),
-		})
+		}
 	}
 
 	fn account_holder_service(&self, session: AuthoritySession) -> SsoAccountHolderService {

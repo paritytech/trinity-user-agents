@@ -25,6 +25,7 @@ mod funding_providers;
 mod funding_quotes;
 mod host_accounts;
 mod host_grants;
+mod host_role;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -73,6 +74,7 @@ pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAll
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
+pub use host_role::HostRole;
 pub use host_session::HostSession;
 pub use remote_account_holder::RemoteAccountHolder;
 
@@ -93,7 +95,6 @@ pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
