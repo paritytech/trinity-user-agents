@@ -6,10 +6,10 @@ use crate::{
 		PrivacyPolicy,
 		ledger::{BlockRef, Facts, mint_installation, observe, snapshot},
 		operation::OpKey,
-		params::validate,
 		registration::{Admission, Rows},
 		testing::{
-			chain_config, chain_params, instance_record, people_metadata, register_rows, set_status, unbuilt_engine,
+			observe_allowance,
+			chain_params, register_rows, set_status, unbuilt_engine,
 		},
 	},
 	installation::InstallationId,
@@ -23,6 +23,7 @@ fn ledger() -> Db {
 	let db = open_memory_core_db();
 	block_on(db.write(|tx| {
 		mint_installation(tx, InstallationId([9; 32]), &PrivacyPolicy::fastest(), None, 0)?.unwrap();
+		observe_allowance(tx, 20)?;
 		Ok(())
 	}))
 	.unwrap();
@@ -91,9 +92,8 @@ fn a_period_the_chain_shows_fully_consumed_leaves_no_free_token() {
 #[test]
 fn an_empty_allowance_offers_no_token() {
 	let db = ledger();
-	let config = crate::coinage::ChainConfig { unload_allowance: 0, ..chain_config() };
-	let params = validate(&people_metadata(), Some(&instance_record()), Some(16), config).expect("an empty allowance is valid");
-	let supply = supply(NOW, &view(&db), &params);
+	block_on(db.write(|tx| observe_allowance(tx, 0))).unwrap();
+	let supply = supply(NOW, &view(&db), &chain_params());
 	assert_eq!(supply.free().count(), 0);
 	assert_eq!(resolve(1, &supply), None);
 }
@@ -114,7 +114,7 @@ fn resolution_takes_free_slots_lowest_first_and_refuses_a_short_plan() {
 	let applied = present(&db, 2, 2);
 	set_status(&db, applied, "FINALIZED_SUCCESS", None);
 	let supply = supply(NOW, &view(&db), &chain_params());
-	assert_eq!((supply.period, supply.allowance, supply.reserve), (3, 20, 4));
+	assert_eq!((supply.period, supply.allowance, supply.reserve), (3, Some(20), 4));
 	assert_eq!(resolve(3, &supply), Some(vec![token(1), token(3), token(4)]));
 	assert_eq!(resolve(0, &supply), Some(Vec::new()));
 	assert_eq!(resolve(19, &supply), None, "only 18 of 20 slots are free");
@@ -135,4 +135,19 @@ fn the_supply_runs_low_at_the_reserve() {
 	let record = present(&db, 99, 15);
 	set_status(&db, record, "FINALIZED_SUCCESS", None);
 	assert!(running_low(&supply(NOW, &view(&db), &chain_params())), "four free tokens are the reserve");
+}
+
+/// Before the chain is read, the layer cannot know which tokens exist, so it
+/// spends none; and an unknown allowance is not evidence of an exhausted one,
+/// so recycling is not held back for it.
+#[test]
+fn an_allowance_not_yet_read_gives_no_token_and_is_not_running_low() {
+	let db = open_memory_core_db();
+	block_on(db.write(|tx| {
+		mint_installation(tx, InstallationId([9; 32]), &PrivacyPolicy::fastest(), None, 0)?.unwrap();
+		Ok(())
+	}))
+	.unwrap();
+	let unknown = supply(NOW, &view(&db), &chain_params());
+	assert_eq!((unknown.allowance, resolve(1, &unknown), running_low(&unknown)), (None, None, false));
 }
