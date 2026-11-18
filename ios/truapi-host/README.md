@@ -454,6 +454,12 @@ Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission
 
 `runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
 
+## Device encryption key
+
+The core keeps this device's X25519 encryption key. Chat and device sync encrypt with `deviceEncryptionKey()`, and `SessionUiInfo.deviceEncPublicKey` carries its public key on every `AuthState.connected`. The core generates the key on first read.
+
+A host that announced a key of its own before the core kept one passes it as `HostRuntimeConfig.deviceEncryptionKey`. The core adopts it before the local session activates, so contacts addressing that key stay reachable, and the host can delete its own copy once the runtime is built.
+
 ## Statement-store allowance renewal
 
 Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing. They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances active until cleanup catches up, 48 hours on `paseo-next-v2`. The runtime owns the ledger and the registration; the app owns only the schedule.

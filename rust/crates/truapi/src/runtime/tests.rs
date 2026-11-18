@@ -93,6 +93,7 @@ use truapi::{
 
 use super::{
 	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	sso_request_service::SsoRequestService,
 	*,
 };
 use crate::{
@@ -7521,7 +7522,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
+		vec![AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&stored)))]
 	);
 }
 

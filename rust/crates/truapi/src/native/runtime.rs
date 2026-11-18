@@ -205,6 +205,11 @@ impl NativeTrUApiHostRuntime {
 			"a freshly built runtime installs its encrypted storage once"
 		);
 		runtime.start_core_services();
+		if let Some(secret) = runtime_config.device_encryption_key {
+			futures::executor::block_on(runtime.adopt_device_encryption_key(secret)).map_err(
+				|err| NativeRuntimeConfigError::DeviceEncryptionKeyAdoption { reason: err.reason },
+			)?;
+		}
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
 				secret,
@@ -879,6 +884,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.statement_renewal_owner_key().map_err(HostRejection::from)
 	}
 
+	/// Read this device's X25519 encryption secret, the key behind
+	/// `SessionUiInfo.deviceEncPublicKey` that the host's own chat and device
+	/// sync encrypt with.
+	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
+		Ok(futures::executor::block_on(self.runtime.device_encryption_key())?)
+	}
+
 	/// Stop renewing one fixed statement account, returning whether the ledger
 	/// held it.
 	///
@@ -1277,12 +1289,6 @@ impl NativeProductExecution {
 	/// when no session is active.
 	pub fn session_chat_identity_key(&self) -> Result<Option<Bytes32>, HostRejection> {
 		Ok(futures::executor::block_on(self.admin().get_session_chat_identity_key())?)
-	}
-
-	/// Read this device's X25519 encryption secret, for device sync against a
-	/// peer's `deviceEncPublicKey`. Generated and persisted on first read.
-	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
-		Ok(futures::executor::block_on(self.admin().get_device_encryption_key())?)
 	}
 
 	/// Resolve a product's hard-subtree public key for hosts naming the account
