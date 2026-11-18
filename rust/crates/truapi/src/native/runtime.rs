@@ -68,8 +68,8 @@ use crate::WorkerTransition;
 ///
 /// The callbacks are held weakly, so a line in flight cannot resurrect a host
 /// being torn down, and a host that has gone simply stops receiving.
-pub(super) struct CallbackSink {
-	pub(super) callbacks: std::sync::Weak<dyn HostCallbacks>,
+struct CallbackSink {
+	callbacks: std::sync::Weak<dyn HostCallbacks>,
 }
 
 impl crate::logging::HostSink for CallbackSink {
