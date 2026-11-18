@@ -3,9 +3,11 @@
 
 use std::collections::HashSet;
 
+use futures::channel::mpsc;
 use parking_lot::Mutex;
 
 use super::model::DurableTxId;
+use crate::wake::WakeSignal;
 
 /// The transactions submission watches currently own.
 ///
@@ -16,6 +18,7 @@ use super::model::DurableTxId;
 #[derive(Default)]
 pub struct Ownership {
 	owned: Mutex<HashSet<DurableTxId>>,
+	releases: WakeSignal,
 }
 
 impl Ownership {
@@ -27,6 +30,12 @@ impl Ownership {
 	/// Ends ownership of `id`.
 	pub fn release(&self, id: DurableTxId) {
 		self.owned.lock().remove(&id);
+		self.releases.wake();
+	}
+
+	/// A wake after every release from now on.
+	pub fn releases(&self) -> mpsc::Receiver<()> {
+		self.releases.subscribe()
 	}
 
 	/// Whether a watch owns `id`.
