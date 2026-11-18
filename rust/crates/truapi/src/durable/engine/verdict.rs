@@ -17,15 +17,13 @@ use crate::{
 
 /// Writes `verdict` only while `observed` is still the row's status and
 /// attempt. Returns whether it wrote. A failure the row's policy accepts to
-/// retry is written as [`DurableTxStatus::PendingSubmission`] instead. When
-/// the policy cannot be read the write fails, because neither answer is
-/// known to be right.
+/// retry is written as [`DurableTxStatus::PendingSubmission`] instead.
 pub async fn write_verdict(
 	engine: &DurableTxEngine,
 	observed: &DurableTxEntry,
 	verdict: Verdict,
 ) -> Result<bool, DbError> {
-	let status = status_to_write(engine, observed, verdict.status).await?;
+	let status = status_to_write(engine, observed, verdict.status);
 	let observed = observed.clone();
 	let scanned_to = verdict.scanned_to;
 	engine
@@ -36,23 +34,21 @@ pub async fn write_verdict(
 
 /// [`DurableTxStatus::PendingSubmission`] when `status` is a failure the
 /// row's policy retries, otherwise `status` itself.
-async fn status_to_write(
+fn status_to_write(
 	engine: &DurableTxEngine,
 	observed: &DurableTxEntry,
 	status: VerdictStatus,
-) -> Result<DurableTxStatus, DbError> {
+) -> DurableTxStatus {
 	let VerdictStatus::Failure(failure) = status else {
-		return Ok(status.into());
+		return status.into();
 	};
-	let id = observed.id;
-	let plan = engine.db.read(move |conn| dao::submission_plan(conn, id)).await?;
-	let Some(plan) = plan else {
-		return Ok(status.into());
+	let Some(plan) = &observed.plan else {
+		return status.into();
 	};
-	if policy_retries(engine, observed, &plan, failure) {
-		return Ok(DurableTxStatus::PendingSubmission);
+	if policy_retries(engine, observed, plan, failure) {
+		return DurableTxStatus::PendingSubmission;
 	}
-	Ok(status.into())
+	status.into()
 }
 
 /// Asks the policy of `observed`'s domain whether it is built again. A

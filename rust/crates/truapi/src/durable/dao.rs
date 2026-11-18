@@ -107,19 +107,6 @@ pub fn abandon_submission(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool,
 	Ok(changed == 1)
 }
 
-const SUBMISSION_PLAN: &str = "SELECT policy_params FROM durable_tx
-    WHERE id = :id AND policy_params IS NOT NULL";
-
-/// The plan that rebuilds the row with `id`, when it has one.
-pub fn submission_plan(
-	conn: &Connection,
-	id: DurableTxId,
-) -> Result<Option<SubmissionPlan>, DbError> {
-	let mut stmt = conn.prepare_cached(SUBMISSION_PLAN)?;
-	let mut rows = stmt.query(named_params! { ":id": id.0 })?;
-	Ok(rows.next()?.map(SubmissionPlan::from_row).transpose()?)
-}
-
 const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
     FROM durable_tx WHERE status = 'PENDING_SUBMISSION' ORDER BY id";
 
