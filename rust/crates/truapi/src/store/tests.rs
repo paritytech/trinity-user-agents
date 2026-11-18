@@ -11,11 +11,11 @@ fn migrations() -> Migrations<'static> {
 }
 
 fn file_config(dir: &tempfile::TempDir) -> DbConfig {
-	DbConfig { location: DbLocation::File(dir.path().join("core.sqlite3")), migrations, readers: 2 }
+	DbConfig { location: DbLocation::File(dir.path().join("core.sqlite3")), migrations }
 }
 
 fn memory_config() -> DbConfig {
-	DbConfig { location: DbLocation::Memory, migrations, readers: 2 }
+	DbConfig { location: DbLocation::Memory, migrations }
 }
 
 fn insert(db: &Db, note: &'static str) -> Result<(), DbError> {

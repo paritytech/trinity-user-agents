@@ -46,7 +46,7 @@ impl Backend {
 				let readers = PoolBuilder::new()
 					.path(path)
 					.flags(OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-					.num_conns(config.readers)
+					.num_conns(READERS)
 					.open()
 					.await
 					.map_err(|error| DbError::Open(error.to_string()))?;
@@ -105,5 +105,8 @@ impl From<async_sqlite::Error> for DbError {
 		}
 	}
 }
+
+/// Read-only connections opened beside the writer of a file database.
+const READERS: usize = 2;
 
 const BUSY_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);

@@ -43,24 +43,14 @@ pub struct DbConfig {
 	/// Builds the schema migrations, applied in order on the writer before
 	/// `open` returns.
 	pub migrations: fn() -> Migrations<'static>,
-	/// Number of read-only connections. A [`DbLocation::Memory`] database
-	/// reads through the writer instead, as every database does on `wasm32`.
-	pub readers: usize,
 }
 
 /// File name of the core database inside the host-configured directory.
 pub const CORE_DB_FILE: &str = "core.sqlite3";
 
-/// Read-only connections opened for the core database.
-const CORE_DB_READERS: usize = 2;
-
 /// The core database configuration for a host-provided directory.
 pub fn core_db_config(directory: &Path) -> DbConfig {
-	DbConfig {
-		location: DbLocation::File(directory.join(CORE_DB_FILE)),
-		migrations: core_migrations,
-		readers: CORE_DB_READERS,
-	}
+	DbConfig { location: DbLocation::File(directory.join(CORE_DB_FILE)), migrations: core_migrations }
 }
 
 /// A core database in a fresh temporary directory, so reads go through the
@@ -76,7 +66,7 @@ pub fn open_temporary_core_db() -> (tempfile::TempDir, Db) {
 /// A core database in memory, private to the caller.
 #[cfg(test)]
 pub fn open_memory_core_db() -> Db {
-	let config = DbConfig { location: DbLocation::Memory, migrations: core_migrations, readers: 1 };
+	let config = DbConfig { location: DbLocation::Memory, migrations: core_migrations };
 	futures::executor::block_on(Db::open(config)).expect("core database opens")
 }
 

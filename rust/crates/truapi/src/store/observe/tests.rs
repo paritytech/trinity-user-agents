@@ -23,7 +23,6 @@ fn open(dir: &tempfile::TempDir) -> Db {
 	block_on(Db::open(DbConfig {
 		location: DbLocation::File(dir.path().join("core.sqlite3")),
 		migrations,
-		readers: 2,
 	}))
 	.unwrap()
 }
@@ -384,7 +383,6 @@ fn no_core_table_is_without_rowid() {
 	let db = block_on(Db::open(DbConfig {
 		location: DbLocation::Memory,
 		migrations: core_migrations,
-		readers: 1,
 	}))
 	.unwrap();
 

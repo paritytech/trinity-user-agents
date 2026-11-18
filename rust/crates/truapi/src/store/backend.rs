@@ -5,12 +5,12 @@
 //! a connection, and `close` releases the connections, after which every call
 //! fails with `DbError::Closed`.
 
-#[cfg(target_arch = "wasm32")]
-mod inline;
 #[cfg(not(target_arch = "wasm32"))]
-mod threaded;
+mod native;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
 
-#[cfg(target_arch = "wasm32")]
-pub use inline::Backend;
 #[cfg(not(target_arch = "wasm32"))]
-pub use threaded::Backend;
+pub use native::Backend;
+#[cfg(target_arch = "wasm32")]
+pub use wasm::Backend;
