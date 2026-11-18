@@ -10,7 +10,9 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
-                         its `chain` module builds the core's own extrinsics through
+                         its `stack` module resolves the Trinity stack the host runs, the
+                         core's only chain configuration, from the descriptor its build
+                         bundles, its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
@@ -24,7 +26,12 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
-                         from Bulletin by CID and checks them
+                         from Bulletin by CID and checks them; its `materials` module keeps
+                         the materials renderer trees name in the same database, read from
+                         Bulletin by its `bulletin_lookup` module, checked against Shaderlab's
+                         material format and the tree limits, built into the shaders apps
+                         compile (GLSL ES, and Metal through naga), and resolved per tree for
+                         the apps to draw
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
@@ -89,10 +96,13 @@ ios/truapi-host/           TrUAPIHost Swift package over the truapi UniFFI core;
                            ios/truapi-host/scripts/rebuild.sh
 playground/                Next.js interactive playground; deploys to the truapi-playground dotNS label
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
+stacks/                    the link and signed descriptor of each Trinity stack a host build
+                           bundles; `scripts/update-stacks.sh` refreshes each descriptor from
+                           its link
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
@@ -108,6 +118,9 @@ scripts/refresh-host-import.sh
 scripts/host-papp-fixtures.ts
                            print host-papp's encoding of the SSO messages the core
                            pins, from a triangle-js-sdks checkout
+scripts/shaderlab-shader-fixtures.ts
+                           print the shaders Shaderlab's compile step writes for the
+                           core's material shader tests, from a shaderlab-spa checkout
 scripts/truapi-host-installer.sh
                            one-liner installer for the prebuilt truapi-host CLI
 scripts/build-cli-runner.ts
@@ -117,6 +130,7 @@ scripts/cli-runner-package.test.ts
 .github/consumers.json     maps each released package to the repos notified by a bump issue
 nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc JSON; CI, the
                            scripts and the Makefile all read it
+rust-toolchain.toml        pins every other cargo command in the repo to stable
 .github/registry-drift-exceptions.json
                            documents intentionally unpublished npm package versions
 ```
@@ -126,8 +140,11 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
 - `truapi` holds the canonical protocol definitions and, behind its default
   `runtime` feature, the host runtime. The protocol half builds without the
   runtime (`--no-default-features`), which is what codegen links and reads, so
-  protocol modules never depend on runtime modules. Syscall traits live in the
-  `platform` module, host-side runtime types in the runtime modules. The whole
+  protocol modules never depend on runtime modules. The feature gates only the
+  runtime block in `lib.rs`. Protocol types, their derives and their methods
+  do not depend on it (UniFFI derives are native-only); what they need lives on
+  the protocol side too. Syscall traits live in the `platform` module,
+  host-side runtime types in the runtime modules. The whole
   crate is one UniFFI namespace, `truapi`, so native bindings use protocol types
   directly. The published binaries keep their `truapi_server` names
   (`truapi_server.xcframework`, `dist/wasm/*/truapi_server*`).
@@ -172,7 +189,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   Archives are uploaded to the
   `@parity/truapi@<version>` release, followed by the `truapi-host-cli-stable`
   pointer that `scripts/truapi-host-installer.sh` and the CLI's own updater
-  read. Release asset URLs must percent-encode the tag
+  read, and then the `truapi-host-cli-v<version>` tag that workflows pin
+  `.github/actions/install-truapi-host` to; that action installs the CLI
+  version of the commit it is checked out at, so the tag installs its own
+  release. Release asset URLs must percent-encode the tag
   (`%40parity%2Ftruapi%40<version>`). `make cli-dist CLI_TARGET=<triple>`
   reproduces one archive locally, and `make e2e-cli-update` installs and
   self-updates it against a loopback release server.
@@ -316,10 +336,11 @@ Two ways to lose work that involve no pushing at all:
 - Follow the Conventions section of `docs/design/host-telemetry.md` for anything
   that sends telemetry from a host. Read it before adding an event, a log line
   or a metric, and before touching a sender. It covers which Sentry product a
-  signal belongs in, which field a query can select on, why every captured event
-  sets a fingerprint, and what the core's marker table decides. Its `Adding a
-  signal` subsection shows what a host event looks like on each host, how a
-  core log line is registered and raised, and how to check one in Sentry.
+  signal belongs in and how its level decides that, which field a captured
+  event is queried on, why every captured event sets a fingerprint, and what
+  the core's marker table decides. Its `Adding a signal` subsection shows what
+  a host event looks like on each host, how a core log line is registered and
+  raised, and how to check one in Sentry.
 
 ## Scope of a change
 

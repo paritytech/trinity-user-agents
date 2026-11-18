@@ -1685,7 +1685,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_PAYMENT_INBOX, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenPaymentInboxRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -1705,6 +1705,25 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::NFT_PURSE_LIST_CHEQUES, move |request_id: String, request: versioned::nft_purse::HostNftPurseListChequesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseListChequesResponse, truapi::CallError<versioned::nft_purse::HostNftPurseListChequesError>> =
+                    match host.list_cheques(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseListChequesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -2067,7 +2086,7 @@ where
 {
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::RENDERER_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererActionSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -2083,6 +2102,35 @@ where
                     move |item: Result<versioned::renderer::HostRendererActionSubscribeItem, truapi::CallError<versioned::renderer::HostRendererActionSubscribeError>>| {
                         item.map(|item| {
                             <versioned::renderer::HostRendererActionSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host;
+        dispatcher.on_subscription(wire_table::RENDERER_FAILURE_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererFailureSubscribeRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::renderer::HostRendererFailureSubscribeError> = truapi::CallError::Denied;
+                    return Err(subscription_interrupt(error));
+                }
+                let stream = host.failure_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::renderer::HostRendererFailureSubscribeItem, truapi::CallError<versioned::renderer::HostRendererFailureSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::renderer::HostRendererFailureSubscribeItem as truapi::versioned::FromLatest>::from_latest(
                                 truapi::versioned::IntoLatest::into_latest(item),
                                 target_version,
                             )

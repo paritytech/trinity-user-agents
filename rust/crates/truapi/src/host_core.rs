@@ -25,26 +25,24 @@ use crate::platform::{
 	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
-	FutureExt, StreamExt,
+	StreamExt,
 	future::{AbortHandle, Abortable, BoxFuture},
-	pin_mut,
 };
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::{CallContext, CancellationReason, latest, v01};
+use truapi::{latest, v01, versioned::FromLatest};
 
 use crate::{
 	Spawner,
 	frame::ProtocolMessage,
-	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
 	runtime::{
-		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, ResumePairingError,
-		RuntimeServices, SigningHostRole, SigningHostSsoService, SsoResponderService,
-		sso_service::Dispatch,
+		AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		DevicePairingObserver, FundingProviderLink, HostAccounts, HostSession, LocalActivation,
+		PairedSsoPeer, PairingHostRole, ProductConnection, ProductRuntimeAdmin, ProductRuntimeHost,
+		ResponderExit, ResumePairingError, RuntimeServices, SigningHostRole,
+		SsoAccountHolderService, SsoResponderService,
 	},
 	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
@@ -196,7 +194,10 @@ impl PairingHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.pairing_host.set_submit_preimages_locally(local);
+		self.pairing_host
+			.accounts()
+			.resource_controls()
+			.set_submit_preimages_locally(local);
 	}
 
 	/// Build a long-lived pairing-host runtime around a platform implementation.
@@ -242,9 +243,7 @@ impl PairingHostRuntime {
 		let services = RuntimeServices::with_chat_platform(
 			platform,
 			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.stack.clone(),
 			spawner.clone(),
 			chat_platform,
 		);
@@ -261,20 +260,6 @@ impl PairingHostRuntime {
 			services,
 			pairing_host,
 		}
-	}
-
-	/// Resolves public profile metadata without loading image bytes.
-	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		crate::public_profile::PublicProfiles::new(self.services.clone())
-			.resolve(username, force)
-			.await
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.
@@ -399,7 +384,7 @@ impl PairingHostRuntime {
 	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
-			self.pairing_host.clone(),
+			self.pairing_host.accounts().clone(),
 			self.pairing_host.session().clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
@@ -412,7 +397,7 @@ impl PairingHostRuntime {
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
-			self.pairing_host.clone(),
+			self.pairing_host.accounts().clone(),
 			self.pairing_host.session().clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
@@ -449,7 +434,11 @@ impl PairingHostRuntime {
 		&self,
 		ring: &v01::RingLocation,
 	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.pairing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
+		self.pairing_host
+			.accounts()
+			.ring_vrf_providers(ring)
+			.await
+			.map_err(ring_vrf_admin_error)
 	}
 
 	/// Current provider selected for an internal well-known-ring feature.
@@ -458,6 +447,7 @@ impl PairingHostRuntime {
 		ring: &v01::RingLocation,
 	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
 		self.pairing_host
+			.accounts()
 			.selected_ring_vrf_provider(ring)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -470,6 +460,7 @@ impl PairingHostRuntime {
 		handle: v01::ProductAccountId,
 	) -> Result<(), v01::GenericError> {
 		self.pairing_host
+			.accounts()
 			.select_ring_vrf_provider(ring, handle)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -517,7 +508,11 @@ impl PairingHostRuntime {
 		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
+		self.pairing_host
+			.accounts()
+			.product_subtree_public_key_within(product_id, subtree_timeout(timeout_ms))
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Clear the canonical paired session and all capability caches/storage
@@ -618,15 +613,9 @@ impl PairingHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		let account_access =
-			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await?;
-		if account_access {
-			self.pairing_host.consent().forget_allowed_once_for(product_id);
-		}
-		Ok(())
+			.await
 	}
 }
 
@@ -682,7 +671,10 @@ impl SigningHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.signing_host.set_submit_preimages_locally(local);
+		self.signing_host
+			.accounts()
+			.resource_controls()
+			.set_submit_preimages_locally(local);
 	}
 
 	/// The product's hard-subtree public key, derived from the active session
@@ -765,35 +757,26 @@ impl SigningHostRuntime {
 		let platform: Arc<dyn Platform> = platform;
 		let services = RuntimeServices::with_chat_platform(
 			platform,
-			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.host.host_info,
+			config.stack,
 			spawner,
 			chat_platform,
 		);
 		if let Some(contacts_platform) = contacts_platform {
 			services.install_contacts_platform(contacts_platform);
 		}
-		if services.asset_hub_chain_genesis_hash().is_none() {
-			// Said once at startup because the refusals themselves are
-			// indistinguishable from an ungranted read. Only as visible as the
-			// host's log level, which defaults to `ERROR`.
-			warn!(
-				"no Asset Hub configured: no product manifest will resolve, so \
-                 every cross-product grant not already cached is refused"
-			);
+		if config.materials_enabled {
+			services.enable_materials();
 		}
-		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
-		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
+		let signing_host = SigningHostRole::new(services.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
 				services.clone(),
 				Arc::new(crate::time::RealTimer),
 			),
 			services,
+			sso_responder: signing_host.sso_responder(),
 			signing_host,
-			sso_responder,
 		}
 	}
 
@@ -874,6 +857,18 @@ impl SigningHostRuntime {
 		self.services.funding().get(intent)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for. Answers
+	/// whether one was waiting.
+	pub fn open_provider_frame(&self, intent: &str) -> bool {
+		self.services.funding().open_frame(intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened.
+	pub fn funding_frame_waiting(&self, intent: &str) -> bool {
+		self.services.funding().frame_waiting(intent)
+	}
+
 	/// Funding session `intent`'s progress now, while the core holds it in
 	/// full.
 	pub fn funding_progress(
@@ -908,19 +903,20 @@ impl SigningHostRuntime {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones it does not.
+	/// Offer the funding providers the remote configuration names, each
+	/// without a TLD (`fundtest-provider`, not `fundtest-provider.paseo`):
+	/// the core reads it on the network it is connected to.
 	///
-	/// Names that are not product ids are skipped and logged. A call listing
+	/// Names that are not product ids, or that name a TLD, are skipped and
+	/// logged. A call listing
 	/// what the last one listed changes nothing, so the host calls it on
 	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
+	) {
+		self.services.set_funding_provider_config(published_names);
 	}
 
 	/// Record that the host told the user how ended session `intent` went.
@@ -952,10 +948,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_providers(
 		&self,
 		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), v01::GenericError> {
-		self.services
-			.set_funding_providers(providers)
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	) {
+		self.services.set_funding_providers(providers);
 	}
 
 	/// Quotes of `amount` for funding session `intent` on the rail, asset,
@@ -1119,7 +1113,7 @@ impl SigningHostRuntime {
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		self.services.install_core_db(db)
+		self.services.install_core_db(db).is_some()
 	}
 
 	/// Install the provider of the installation id NFT purse item keys are
@@ -1143,8 +1137,9 @@ impl SigningHostRuntime {
 		self.services.install_encrypted_storage(storage)
 	}
 
-	/// Starts what runs over the core database: the durable transaction
-	/// engine, then NFT purses with the tracker of their holdings. Call it
+	/// Starts what runs over the core database: the fetch of the materials
+	/// saved Pocket faces draw, the durable transaction engine, then NFT
+	/// purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
 	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
 	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
@@ -1154,9 +1149,12 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
 		let Ok(db) = self.services.core_db() else {
-			tracing::warn!("no core database set, durable transactions and NFT purses are off");
+			tracing::warn!(
+				"no core database set, materials, durable transactions and NFT purses are off"
+			);
 			return;
 		};
+		start_materials(&self.services, db.clone());
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
@@ -1236,18 +1234,16 @@ impl SigningHostRuntime {
 		self.services.core_db()?.status().await
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
+	/// Resolves public profile metadata with optional cached-first delivery.
 	///
-	/// Native records expire after one hour; `force` skips that cache. Browsers always
-	/// read the chain. Invalid usernames and lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
+	/// Options control forced lookups and stale stored values; browsers resolve once.
+	/// At most two values precede completion or an error. Dropping the stream cancels resolution.
+	pub fn observe_public_profile(
 		&self,
 		username: &str,
-		force: bool,
-	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		crate::public_profile::PublicProfiles::new(self.services.clone())
-			.resolve(username, force)
-			.await
+		options: crate::PublicProfileResolutionOptions,
+	) -> crate::Subscription<crate::PublicProfile, crate::PublicProfileError> {
+		self.services.public_profiles.clone().observe(username.to_owned(), options)
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.
@@ -1256,6 +1252,43 @@ impl SigningHostRuntime {
 		reference: crate::ImageReference,
 	) -> Result<crate::LoadedImage, crate::ImageError> {
 		self.image_loader.load(reference).await
+	}
+
+	/// Keeps `text` on the device as a material and returns its ID, for
+	/// resolutions started afterwards to draw without Bulletin. Keep before
+	/// anything resolves the material: a resolution that is already waiting on
+	/// Bulletin for it keeps waiting, and does not get the kept text. Refused
+	/// with its reason when the core cannot read it, and as unsupported when the
+	/// host draws no materials or before the core services start over a core
+	/// database.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn keep_material(&self, text: Vec<u8>) -> Result<[u8; 32], crate::KeepMaterialError> {
+		use crate::KeepMaterialError::Refused;
+		let materials = self
+			.services
+			.materials()
+			.filter(|_| self.services.materials_enabled())
+			.ok_or(Refused(truapi::latest::MaterialFailure::Unsupported))?;
+		let id = crate::host_internal::bulletin::preimage_key(&text);
+		materials.keep(id, text).await.map_err(Refused)??;
+		Ok(id)
+	}
+
+	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		self.services
+			.resolve_materials(tree, context, language, float_filterable, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -1267,7 +1300,7 @@ impl SigningHostRuntime {
 	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
-			self.signing_host.clone(),
+			self.signing_host.accounts().clone(),
 			self.signing_host.clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
@@ -1286,7 +1319,7 @@ impl SigningHostRuntime {
 	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
-			self.signing_host.clone(),
+			self.signing_host.accounts().clone(),
 			self.signing_host.clone(),
 			product,
 			adapters,
@@ -1299,7 +1332,7 @@ impl SigningHostRuntime {
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
-			self.signing_host.clone(),
+			self.signing_host.accounts().clone(),
 			self.signing_host.clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
@@ -1316,7 +1349,7 @@ impl SigningHostRuntime {
 	) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
-			self.signing_host.clone(),
+			self.signing_host.accounts().clone(),
 			self.signing_host.clone(),
 			product,
 			adapters,
@@ -1394,15 +1427,9 @@ impl SigningHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		let account_access =
-			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await?;
-		if account_access {
-			self.signing_host.consent().forget_allowed_once_for(product_id);
-		}
-		Ok(())
+			.await
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1410,7 +1437,11 @@ impl SigningHostRuntime {
 		&self,
 		ring: &v01::RingLocation,
 	) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-		self.signing_host.ring_vrf_providers(ring).await.map_err(ring_vrf_admin_error)
+		self.signing_host
+			.accounts()
+			.ring_vrf_providers(ring)
+			.await
+			.map_err(ring_vrf_admin_error)
 	}
 
 	/// Current provider selected for an internal well-known-ring feature.
@@ -1419,6 +1450,7 @@ impl SigningHostRuntime {
 		ring: &v01::RingLocation,
 	) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
 		self.signing_host
+			.accounts()
 			.selected_ring_vrf_provider(ring)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -1431,6 +1463,7 @@ impl SigningHostRuntime {
 		handle: v01::ProductAccountId,
 	) -> Result<(), v01::GenericError> {
 		self.signing_host
+			.accounts()
 			.select_ring_vrf_provider(ring, handle)
 			.await
 			.map_err(ring_vrf_admin_error)
@@ -1536,20 +1569,35 @@ impl SigningHostRuntime {
 		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
-	/// Answer one SSO request using this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
-		let service = SigningHostSsoService::new(self.signing_host.clone());
-		match service.answer(message).await {
-			Dispatch::Response(answer) => {
-				SsoRequestOutcome::Response { message: answer.message.encode() }
-			},
-			Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-			Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-				SsoRequestOutcome::Ignored
-			},
-		}
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_sso_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		self.sso_responder
+			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
+}
+
+/// Installs the materials on the device over `db` and, when the host draws
+/// them, fetches what saved Pocket faces draw and `db` lacks. Does nothing
+/// when materials are already installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
+	let materials = materials(services, db);
+	if services.install_materials(materials.clone()) && services.materials_enabled() {
+		services.spawner.spawn(materials.fetch_saved());
+	}
+}
+
+/// The materials on the device over `db`, fetched over the core's own
+/// Bulletin connection.
+#[cfg(not(target_arch = "wasm32"))]
+fn materials(services: &Arc<RuntimeServices>, db: crate::store::Db) -> crate::materials::Materials {
+	let timer: Arc<dyn crate::time::Timer> = Arc::new(crate::time::RealTimer);
+	let bulletin = crate::BulletinLookup::new(Arc::new(Arc::downgrade(services)), timer.clone());
+	crate::materials::Materials::new(db, Arc::new(bulletin), timer, services.spawner.clone())
 }
 
 /// Installs the durable transaction engine over `db`, reports its pending
@@ -1609,10 +1657,6 @@ fn durable_registry(
 	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
 
 	let registry = crate::durable::DurableRegistry::new();
-	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
-		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
-		return registry;
-	};
 	let Some(encrypted) = services.encrypted_storage() else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
@@ -1621,7 +1665,7 @@ fn durable_registry(
 	let deps = ScarcityTransfersDeps {
 		storage: chain.clone(),
 		heads: chain,
-		genesis: genesis.into(),
+		genesis: services.asset_hub_chain_genesis_hash().into(),
 		signer,
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
@@ -1630,19 +1674,15 @@ fn durable_registry(
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the
-/// Scarcity pallet. Without an Asset Hub genesis there is nothing to track.
+/// Scarcity pallet.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
 	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
 
-	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
-		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
-		return;
-	};
 	let tracker = HoldingTracker::start(HoldingTrackerDeps {
 		ledger,
 		storage: Arc::new(services.chain.clone()),
-		genesis: genesis.into(),
+		genesis: services.asset_hub_chain_genesis_hash().into(),
 		spawner: services.spawner.clone(),
 	});
 	services.install_holding_tracker(tracker);
@@ -1768,9 +1808,11 @@ pub struct ConnectionAdapters {
 	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
 	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+	pub renderer_failures:
+		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
@@ -1784,6 +1826,7 @@ impl ConnectionAdapters {
 			permission_grants: Arc::default(),
 			chat: Arc::new(ActionChannel::chat()),
 			renderer: Arc::new(ActionChannel::renderer()),
+			renderer_failures: Arc::new(ActionChannel::renderer_failures()),
 			pocket_platform: services.pocket_platform(),
 			expanded_card: None,
 			game_platform: services.game_platform(),
@@ -1807,23 +1850,22 @@ fn ring_vrf_admin_error(
 /// Host UI should use this when it needs to inspect or update core-owned state
 /// without owning a product frame endpoint.
 pub struct HostAdmin {
-	authority: Arc<dyn ProductAuthority>,
 	host_session: Arc<dyn HostSession>,
-	product_runtime: Arc<ProductRuntimeHost>,
+	product_runtime: Arc<dyn ProductRuntimeAdmin>,
 }
 
 impl HostAdmin {
 	/// Product runtime managed by this admin handle.
 	#[cfg(any(test, not(target_arch = "wasm32")))]
-	pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost> {
+	pub fn product_runtime(&self) -> &Arc<dyn ProductRuntimeAdmin> {
 		&self.product_runtime
 	}
 
 	/// Build an admin handle for one product connection.
 	#[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
-	pub fn new(
+	pub fn new<H: AccountHolder>(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 		adapters: ConnectionAdapters,
@@ -1831,11 +1873,11 @@ impl HostAdmin {
 		let product_runtime = Arc::new(ProductRuntimeHost::from_services(
 			services,
 			adapters,
-			authority.clone(),
+			accounts,
 			host_session.clone(),
 			product,
 		));
-		Self { authority, host_session, product_runtime }
+		Self { host_session, product_runtime }
 	}
 
 	/// Core-owned logout/disconnect.
@@ -1944,53 +1986,18 @@ impl CoreAdmin for HostAdmin {
 		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.authority.as_ref(), product_id, timeout_ms).await
+		self.product_runtime
+			.product_subtree_public_key(product_id, subtree_timeout(timeout_ms))
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 }
 
-/// Shared body of the two entry points that resolve a product subtree: the
-/// `CoreAdmin` method native hosts call and the pairing-host runtime method the
-/// wasm bridge wraps.
-///
-/// The identifier is normalized because the product path normalizes before it
-/// populates the cache, so an unnormalized lookup would miss a key the core is
-/// already holding.
-///
-/// The deadline is enforced by dropping the call rather than awaiting it after
-/// cancelling. Only the SSO response wait observes the cancellation token; the
-/// statement-store setup before it does not, so a call parked there ignores a
-/// cancel and would outlive any deadline that waited for it to finish.
-async fn product_subtree_public_key(
-	authority: &(impl ProductAuthority + ?Sized),
-	product_id: &ProductId,
-	timeout_ms: Option<u32>,
-) -> Result<Option<[u8; 32]>, v01::GenericError> {
-	let Some(session) = authority.current_session() else {
-		return Ok(None);
-	};
-	let timeout = timeout_ms
+/// How long a subtree lookup waits, `timeout_ms` or the default authority timeout.
+fn subtree_timeout(timeout_ms: Option<u32>) -> Duration {
+	timeout_ms
 		.map(|timeout_ms| Duration::from_millis(u64::from(timeout_ms)))
-		.unwrap_or(DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT);
-	let mut cx = CallContext::default();
-	cx.set_timeout(timeout);
-
-	let call = authority.product_subtree_public_key(&cx, &session, product_id).fuse();
-	let deadline = futures_timer::Delay::new(timeout).fuse();
-	pin_mut!(call, deadline);
-	futures::select! {
-		result = call => result.map(Some).map_err(|error| v01::GenericError {
-			reason: error.to_string(),
-		}),
-		() = deadline => {
-			let reason = CancellationReason::TimedOut { timeout };
-			// Best effort for anything already watching the token. The call is
-			// dropped on return either way, which is what actually ends it.
-			cx.cancel().cancel_with_reason(reason.clone());
-			Err(v01::GenericError {
-				reason: format!("Product subtree request {reason}"),
-			})
-		}
-	}
+		.unwrap_or(DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT)
 }
 
 /// Target-neutral host runtime wrapper.
@@ -2021,6 +2028,10 @@ pub struct ProductRuntimeControl {
 	disposed: Arc<AtomicBool>,
 }
 
+/// A context v0.1 can express goes out as V1 so a v0.1 product decodes it, and
+/// only a footer context, which a product docks through a v0.2 call, goes out as V2.
+const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
+
 impl ProductRuntimeControl {
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
@@ -2044,11 +2055,33 @@ impl ProductRuntimeControl {
 	/// subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.connection()?.publish_renderer_action(
-			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
-		)
+		self.connection()?.publish_renderer_action(item.into())
+	}
+
+	/// The resolved materials of `tree`, a body this connection's product
+	/// rendered in `context`, its shaders in `language`, filtering 32-bit float
+	/// images themselves unless `float_filterable`. A node that falls back is
+	/// logged and reported to the product through `Renderer::failure_subscribe`,
+	/// once.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<crate::MaterialsResolution, ProductRuntimeError> {
+		let services = self.connection()?.services();
+		let connection = self.connection.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
+		});
+		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement
@@ -2060,14 +2093,17 @@ impl ProductRuntimeControl {
 	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 	) -> Result<
 		truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = self.connection.hold_worker();
-		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
+		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
+			request,
+			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
+		);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
 			&self.host_subscriptions,
@@ -2082,9 +2118,10 @@ impl ProductRuntimeControl {
 			(stream, Some(reference)),
 			|(mut stream, reference)| async move {
 				match stream.next().await? {
-					Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-						Some((Ok(node), (stream, reference)))
-					},
+					Ok(
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
+					) => Some((Ok(node), (stream, reference))),
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
 						(stream, None),
@@ -2271,9 +2308,9 @@ impl ProductRuntime {
 
 	/// Build a product runtime with connection-scoped adapters.
 	#[instrument(skip_all, fields(runtime.method = "product_runtime.new"))]
-	pub fn new(
+	pub fn new<H: AccountHolder>(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 		adapters: ConnectionAdapters,
@@ -2282,7 +2319,19 @@ impl ProductRuntime {
 		let session_state = host_session.session_state();
 		let worker =
 			(product.execution_kind == ExecutableKind::Worker).then(|| product.product_id.clone());
-		let admin = HostAdmin::new(services.clone(), authority, host_session, product, adapters);
+		let product_runtime = Arc::new(ProductRuntimeHost::from_services(
+			services.clone(),
+			adapters,
+			accounts,
+			host_session.clone(),
+			product,
+		));
+		let core = TrUApiCore::from_product_runtime(
+			product_runtime.clone(),
+			services.spawner.clone(),
+			session_state,
+		);
+		let admin = HostAdmin { host_session, product_runtime };
 		let disposed = Arc::new(AtomicBool::new(false));
 		let transport = Arc::new(SinkTransport {
 			sink,
@@ -2300,11 +2349,7 @@ impl ProductRuntime {
 			(product_id, link)
 		});
 		Self {
-			core: TrUApiCore::from_product_runtime(
-				admin.product_runtime.clone(),
-				services.spawner.clone(),
-				session_state,
-			),
+			core,
 			admin,
 			transport,
 			host_subscriptions,

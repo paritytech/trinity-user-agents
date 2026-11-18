@@ -28,7 +28,7 @@ use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
 	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
 	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
-	ScannerPlatform,
+	ScannerPlatform, Stack, StackRefresh,
 };
 use futures::{
 	channel::mpsc,
@@ -53,8 +53,10 @@ use crate::{
 };
 
 mod generated_bridge;
+mod stack;
 
 use generated_bridge::JsBridge;
+use stack::{stack_from_js, stack_status_to_js, start_refresh};
 
 /// Per-core JS channel: outgoing frames and teardown for one product core.
 struct CoreChannel {
@@ -141,6 +143,7 @@ impl ChainProvider for WasmPlatform {
 		let chain_connect = SendWrapper::new(chain_connect);
 		SendWrapper::new(async move {
 			let (response_tx, response_rx) = mpsc::unbounded::<String>();
+			let responses_close = response_tx.clone();
 			let on_response = Closure::wrap(Box::new(move |json: JsValue| {
 				// The host must hand back JSON-RPC frames as strings. Drop (and
 				// log) non-string values rather than forwarding an empty frame
@@ -177,6 +180,7 @@ impl ChainProvider for WasmPlatform {
 				close_fn: SendWrapper::new(close_fn),
 				closed: AtomicBool::new(false),
 				_on_response: SendWrapper::new(on_response),
+				responses_close,
 				response_rx: std::sync::Mutex::new(Some(response_rx)),
 			}) as Box<dyn JsonRpcConnection>)
 		})
@@ -274,6 +278,9 @@ struct JsCallbackJsonRpcConnection {
 	/// Closure must outlive the connection so JS keeps a live ref to the
 	/// response sink. Dropped together with the rest of the struct.
 	_on_response: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+	/// Sender half of the responses channel, kept to end the stream when a
+	/// send fails.
+	responses_close: mpsc::UnboundedSender<String>,
 	response_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<String>>>,
 }
 
@@ -282,6 +289,10 @@ impl JsonRpcConnection for JsCallbackJsonRpcConnection {
 		let arg = JsValue::from_str(&request);
 		if let Err(err) = self.send_fn.call1(&JsValue::NULL, &arg) {
 			web_sys::console::error_1(&err);
+			// The request is lost, so end the response stream and let the
+			// client fail what it is still waiting on.
+			self.responses_close.close_channel();
+			self.close();
 		}
 	}
 
@@ -481,22 +492,29 @@ fn missing_callback(name: &str) -> Function {
 		.unchecked_into()
 }
 
-fn runtime_config_from_js(value: &JsValue) -> Result<(PairingHostConfig, ProductContext), JsValue> {
-	let host_config = pairing_host_config_from_js(value)?;
+fn runtime_config_from_js(
+	value: &JsValue,
+	stack: Stack,
+) -> Result<(PairingHostConfig, ProductContext), JsValue> {
+	let host_config = pairing_host_config_from_js(value, stack)?;
 	let product = product_context_from_js(value)?;
 	Ok((host_config, product))
 }
 
-fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsValue> {
+/// Refuses a missing host config before anything reads it.
+fn require_host_config(value: &JsValue) -> Result<(), JsValue> {
 	if value.is_null() || value.is_undefined() {
 		return Err(JsValue::from_str("hostConfig is required"));
 	}
+	Ok(())
+}
 
+fn pairing_host_config_from_js(
+	value: &JsValue,
+	stack: Stack,
+) -> Result<PairingHostConfig, JsValue> {
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
-	let people = get_required_object(value, "people", "runtimeConfig.people")?;
-	let bulletin = get_required_object(value, "bulletin", "runtimeConfig.bulletin")?;
-	let asset_hub = get_required_object(value, "assetHub", "runtimeConfig.assetHub")?;
 	let pairing = get_required_object(value, "pairing", "runtimeConfig.pairing")?;
 
 	PairingHostConfig::new(
@@ -522,9 +540,7 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
-		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
+		stack,
 		get_required_string_at(&pairing, "deeplinkScheme", "runtimeConfig.pairing.deeplinkScheme")?,
 	)
 	.map_err(runtime_config_validation_to_js)
@@ -548,19 +564,12 @@ fn host_platform_from_js(value: Option<String>) -> Result<HostPlatform, JsValue>
 }
 
 #[cfg(feature = "wasm-signing-host")]
-fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsValue> {
-	if value.is_null() || value.is_undefined() {
-		return Err(JsValue::from_str("hostConfig is required"));
-	}
-
+fn signing_host_config_from_js(
+	value: &JsValue,
+	stack: Stack,
+) -> Result<SigningHostConfig, JsValue> {
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
-	let people = get_required_object(value, "people", "runtimeConfig.people")?;
-	let bulletin = get_required_object(value, "bulletin", "runtimeConfig.bulletin")?;
-	let asset_hub = get_required_object(value, "assetHub", "runtimeConfig.assetHub")?;
-	let network_suffix =
-		get_required_string_at(value, "networkSuffix", "runtimeConfig.networkSuffix")?;
-
 	SigningHostConfig::new(
 		HostInfo {
 			name: get_required_string_at(&host, "name", "runtimeConfig.host.name")?,
@@ -584,10 +593,7 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
-		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
-		network_suffix,
+		stack,
 	)
 	.map_err(runtime_config_validation_to_js)
 }
@@ -620,10 +626,6 @@ fn runtime_config_field_to_js(field: &str) -> &str {
 	match field {
 		"host_info.name" => "host.name",
 		"pairing_deeplink_scheme" => "pairing.deeplinkScheme",
-		"people_chain_genesis_hash" => "people.genesisHash",
-		"bulletin_chain_genesis_hash" => "bulletin.genesisHash",
-		"asset_hub_chain_genesis_hash" => "assetHub.genesisHash",
-		"network_suffix" => "networkSuffix",
 		other => other,
 	}
 }
@@ -659,11 +661,6 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		}) => JsValue::from_str(&format!(
 			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
 		)),
-		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
-			JsValue::from_str(&format!(
-				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
-			))
-		},
 	}
 }
 
@@ -708,11 +705,23 @@ fn get_optional_string_at(
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
 }
 
+fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Option<bool>, JsValue> {
+	let property = Reflect::get(value, &JsValue::from_str(name))?;
+	if property.is_null() || property.is_undefined() {
+		return Ok(None);
+	}
+	property
+		.as_bool()
+		.map(Some)
+		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+}
+
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
 	get_optional_string_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn get_optional_bytes32_at(
 	value: &JsValue,
 	name: &str,
@@ -736,11 +745,13 @@ fn get_optional_bytes32_at(
 	})
 }
 
+#[cfg(feature = "test-host")]
 fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u8; 32], JsValue> {
 	get_optional_bytes32_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {
@@ -912,6 +923,8 @@ fn install_worker_controller(
 #[wasm_bindgen]
 pub struct WasmPairingHostRuntime {
 	runtime: Rc<PairingHostRuntime>,
+	/// The refresh of the stack's descriptor, or `None` for a test stack.
+	stack_refresh: Option<StackRefresh>,
 }
 
 #[wasm_bindgen]
@@ -929,14 +942,16 @@ impl WasmPairingHostRuntime {
 		self.runtime.set_submit_preimages_locally(local);
 	}
 
-	/// Build a shared runtime from host-level platform callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
+	/// Build a shared runtime from host-level platform callbacks and host
+	/// config. Resolves once the core has read its stack record from the
+	/// host's core storage, or after a few seconds without it.
+	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmPairingHostRuntime, JsValue> {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&host_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let WasmPlatformAdapters {
 			platform,
@@ -948,11 +963,12 @@ impl WasmPairingHostRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let host_config = pairing_host_config_from_js(&host_config)?;
+		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
+		let host_config = pairing_host_config_from_js(&host_config, stack)?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
 			host_config,
-			spawner,
+			spawner.clone(),
 			chat_platform,
 			contacts_platform,
 		);
@@ -969,7 +985,30 @@ impl WasmPairingHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
-		Ok(Self { runtime: Rc::new(runtime) })
+		// Last, so a host is told of a stack only once the runtime exists.
+		if let Some(refresh) = &stack_refresh {
+			start_refresh(refresh, &callbacks, &spawner)?;
+		}
+		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+	}
+
+	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
+	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
+	/// callback receives. `undefined` for a test stack.
+	#[wasm_bindgen(js_name = stackStatus)]
+	pub fn stack_status(&self) -> JsValue {
+		stack_status_to_js(self.stack_refresh.as_ref())
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old. Returns at once. A status the fetch changes arrives through
+	/// `stackChanged`, and `stackStatus()` reads it at any time. Does nothing
+	/// for a test stack or without a `fetchStackDescriptor` callback.
+	#[wasm_bindgen(js_name = refreshStack)]
+	pub fn refresh_stack(&self) {
+		if let Some(refresh) = &self.stack_refresh {
+			refresh.refresh_now();
+		}
 	}
 
 	/// Build one product-scoped runtime from this pairing host runtime.
@@ -1224,6 +1263,8 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 #[wasm_bindgen]
 pub struct WasmSigningHostRuntime {
 	runtime: Rc<SigningHostRuntime>,
+	/// The refresh of the stack's descriptor, or `None` for a test stack.
+	stack_refresh: Option<StackRefresh>,
 }
 
 #[cfg(feature = "wasm-signing-host")]
@@ -1288,13 +1329,15 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Build a shared signing runtime from host callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
+	/// Resolves once the core has read its stack record from the host's core
+	/// storage, or after a few seconds without it.
+	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmSigningHostRuntime, JsValue> {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&host_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let WasmPlatformAdapters {
 			platform,
@@ -1306,11 +1349,12 @@ impl WasmSigningHostRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let host_config = signing_host_config_from_js(&host_config)?;
+		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
+		let host_config = signing_host_config_from_js(&host_config, stack)?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
 			host_config,
-			spawner,
+			spawner.clone(),
 			chat_platform,
 			contacts_platform,
 		);
@@ -1327,7 +1371,30 @@ impl WasmSigningHostRuntime {
 			runtime.set_scanner_platform(scanner_platform);
 		}
 		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
-		Ok(Self { runtime: Rc::new(runtime) })
+		// Last, so a host is told of a stack only once the runtime exists.
+		if let Some(refresh) = &stack_refresh {
+			start_refresh(refresh, &callbacks, &spawner)?;
+		}
+		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+	}
+
+	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
+	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
+	/// callback receives. `undefined` for a test stack.
+	#[wasm_bindgen(js_name = stackStatus)]
+	pub fn stack_status(&self) -> JsValue {
+		stack_status_to_js(self.stack_refresh.as_ref())
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old. Returns at once. A status the fetch changes arrives through
+	/// `stackChanged`, and `stackStatus()` reads it at any time. Does nothing
+	/// for a test stack or without a `fetchStackDescriptor` callback.
+	#[wasm_bindgen(js_name = refreshStack)]
+	pub fn refresh_stack(&self) {
+		if let Some(refresh) = &self.stack_refresh {
+			refresh.refresh_now();
+		}
 	}
 
 	/// Build one product-scoped runtime from this signing host.
@@ -1596,15 +1663,22 @@ impl WasmProductRuntime {
 	/// Build the core from a JS callbacks object. The object must define
 	/// every host capability the [`crate::platform::Platform`] trait set
 	/// requires (camelCase property names; see the source for the full
-	/// list).
-	#[wasm_bindgen(constructor)]
-	pub fn new(callbacks: JsValue, runtime_config: JsValue) -> Result<WasmProductRuntime, JsValue> {
+	/// list). Resolves once the core has read its stack record from the host's
+	/// core storage, or after a few seconds without it. A product runtime
+	/// built on its own starts from that record but does not refresh the
+	/// descriptor: it has no `stackStatus` or `refreshStack`, and a host
+	/// runtime is what keeps the stack current.
+	pub async fn create(
+		callbacks: JsValue,
+		runtime_config: JsValue,
+	) -> Result<WasmProductRuntime, JsValue> {
 		// Surface Rust panics to the browser console. A panic mid-dispatch
 		// aborts the call as a wasm trap; the host should treat a thrown error
 		// from `receiveFrame` as a fatal-instance signal and rebuild the
 		// core rather than continue using it.
 		console_error_panic_hook::set_once();
 		crate::logging::init();
+		require_host_config(&runtime_config)?;
 		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
 		let channel = CoreChannel::from_js(&callbacks)?;
 		let frame_sink =
@@ -1619,7 +1693,8 @@ impl WasmProductRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let (host_config, product) = runtime_config_from_js(&runtime_config)?;
+		let (stack, _no_refresh) = stack_from_js(&runtime_config, platform.clone()).await?;
+		let (host_config, product) = runtime_config_from_js(&runtime_config, stack)?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.
 		let pairing =
@@ -1759,7 +1834,7 @@ impl WasmProductRuntime {
 		on_complete: Function,
 		on_error: Function,
 	) -> Result<WasmRendererSubscription, JsValue> {
-		let request = v01::ProductRendererRenderRequest::decode(&mut request.as_slice())
+		let request = truapi::latest::ProductRendererRenderRequest::decode(&mut request.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("render request did not decode: {err}")))?;
 		let mut stream = self
 			.inner
@@ -1815,7 +1890,7 @@ impl WasmProductRuntime {
 	/// `HostRendererActionSubscribeItem`.
 	#[wasm_bindgen(js_name = publishRendererAction)]
 	pub fn publish_renderer_action(&self, item: Vec<u8>) -> Result<(), JsValue> {
-		let item = v01::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
+		let item = truapi::latest::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("renderer action did not decode: {err}")))?;
 		self.inner
 			.core

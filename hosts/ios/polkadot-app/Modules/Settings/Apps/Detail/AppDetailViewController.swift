@@ -38,7 +38,7 @@ extension AppDetailViewController: AppDetailViewProtocol {
         rootView.viewModel.avatar = avatar
     }
 
-    func didReceive(icon: any ImageViewModelProtocol) {
+    func didReceive(icon: AnyImageViewModel) {
         rootView.viewModel.icon = icon
     }
 }

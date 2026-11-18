@@ -12,10 +12,10 @@ use crate::{
 	nft::{HandoffError, ItemKey, ItemRefusal, PurseId, StartImportError, StartOperationError},
 	nft_purse::{CreateReceiveKeyError, DepositRefusal, NftPurses},
 	platform::{NftPurseDrainDestination, ProductId},
-	runtime::ProductRuntimeHost,
+	runtime::{AccountHolder, ProductRuntimeHost},
 };
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// A receive key into the purse the product named. Any product may receive
 	/// into any purse, so nothing is asked.
 	pub async fn create_nft_receive_key(
@@ -66,7 +66,10 @@ impl ProductRuntimeHost {
 			.map_err(create_cheque_failure)?;
 		let denied = latest::HostNftPurseCreateChequeError::Denied;
 		self.confirm_drain(cx, drain, denied).await?;
-		let cheque = prepared.create().await.map_err(create_cheque_failure)?;
+		let cheque = prepared
+			.create(crate::current_unix_millis())
+			.await
+			.map_err(create_cheque_failure)?;
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 

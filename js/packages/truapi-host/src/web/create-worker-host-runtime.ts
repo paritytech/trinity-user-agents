@@ -1314,6 +1314,10 @@ export function createWebWorkerPairingHostRuntime(
         resolve(runtime);
       } else if (msg.kind === "fatalError") {
         failInit(new Error(`worker init reported error: ${msg.error}`));
+      } else {
+        // Building the runtime reads core storage through the host, so the
+        // worker's requests are answered before it is ready.
+        onMessage(ev);
       }
     };
 

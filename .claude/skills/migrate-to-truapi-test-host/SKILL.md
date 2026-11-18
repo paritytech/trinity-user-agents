@@ -220,7 +220,7 @@ Two account options change shape:
   `resourceAllocation` are type errors. `initialState.productStorage` is the
   `productStorage` option (0.30 and later), `theme` and `locale` are
   `mock: { theme, languageTag }`, `features` is `mock: { featureSupported }`,
-  `supportedChains` is `mock: { supportedChains }`, and `grantedPermissions`
+  `supportedChains` is `networks`, and `grantedPermissions`
   is a `grantPermission` call each.
   `behaviors.permission` is `setPermissionBehavior`, and
   `behaviors.userConfirmation: "reject-all"` is

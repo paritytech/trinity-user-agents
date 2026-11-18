@@ -13,6 +13,28 @@ extension Chat {
         case v1(RequestContentV1)
         // swiftlint:disable:next identifier_name
         case v2(RequestContentV2)
+        case cancel(RequestContentCancel)
+
+        var isCancel: Bool {
+            switch self {
+            case .cancel:
+                true
+            case .v1,
+                 .v2:
+                false
+            }
+        }
+
+        var identityProof: IdentityProof? {
+            switch self {
+            case .v1:
+                nil
+            case let .v2(content):
+                content.identityProof
+            case let .cancel(content):
+                content.identityProof
+            }
+        }
 
         func ensureV1() -> RequestContentV1 {
             switch self {
@@ -23,23 +45,21 @@ extension Chat {
                     pushToken: content.pushToken,
                     welcomeMessage: content.welcomeMessage
                 )
+            case .cancel:
+                RequestContentV1(pushToken: nil, welcomeMessage: nil)
             }
         }
 
-        /// Extracts the peer's identity account ID from a V2 chat request.
+        /// Extracts the peer's identity account ID from any content that carries an identity proof (v2 or cancel).
         func extractIdentityAccountId() -> Data? {
-            switch self {
-            case .v1:
-                nil
-            case let .v2(content):
-                content.identityProof.identityAccountId
-            }
+            identityProof?.identityAccountId
         }
 
         /// Extracts the sender's device as a PeerDevice from a V2 chat request.
         func extractSenderDevice(statementAccountId: Data) -> Chat.PeerDevice? {
             switch self {
-            case .v1:
+            case .v1,
+                 .cancel:
                 nil
             case let .v2(content):
                 Chat.PeerDevice(
@@ -65,6 +85,10 @@ extension Chat {
         let deviceEncPubKey: Data
         let pushToken: Chat.RemoteTokenContent?
         let welcomeMessage: ChatRemoteMessageContent.RichText?
+    }
+
+    struct RequestContentCancel: Equatable {
+        let identityProof: IdentityProof
     }
 }
 
@@ -92,6 +116,8 @@ extension Chat.VersionedRequestContent: ScaleCodable {
             self = try .v1(Chat.RequestContentV1(scaleDecoder: scaleDecoder))
         case 1:
             self = try .v2(Chat.RequestContentV2(scaleDecoder: scaleDecoder))
+        case 2:
+            self = try .cancel(Chat.RequestContentCancel(scaleDecoder: scaleDecoder))
         default:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -104,6 +130,9 @@ extension Chat.VersionedRequestContent: ScaleCodable {
             try content.encode(scaleEncoder: scaleEncoder)
         case let .v2(content):
             try UInt8(1).encode(scaleEncoder: scaleEncoder)
+            try content.encode(scaleEncoder: scaleEncoder)
+        case let .cancel(content):
+            try UInt8(2).encode(scaleEncoder: scaleEncoder)
             try content.encode(scaleEncoder: scaleEncoder)
         }
     }
@@ -121,6 +150,16 @@ extension Chat.RequestContentV1: ScaleCodable {
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try ScaleOption(value: pushToken).encode(scaleEncoder: scaleEncoder)
         try ScaleOption(value: welcomeMessage).encode(scaleEncoder: scaleEncoder)
+    }
+}
+
+extension Chat.RequestContentCancel: ScaleCodable {
+    init(scaleDecoder: any ScaleDecoding) throws {
+        identityProof = try Chat.IdentityProof(scaleDecoder: scaleDecoder)
+    }
+
+    func encode(scaleEncoder: any ScaleEncoding) throws {
+        try identityProof.encode(scaleEncoder: scaleEncoder)
     }
 }
 

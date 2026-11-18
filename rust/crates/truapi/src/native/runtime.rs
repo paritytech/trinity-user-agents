@@ -11,30 +11,32 @@ use crate::{
 	markers,
 	platform::{
 		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		ProductContext, ProductId,
+		ProductContext, ProductId, SigningHostConfig, StackRefresh, StackStatus,
 	},
+	time::{RealTimer, SystemClock},
 };
+use futures::StreamExt;
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
+use truapi::{Bytes32, latest, v01, versioned::IntoLatest};
 
 use super::{
+	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
+	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfileResolutionOptions,
 	ResponderExit, SigningHostRuntime, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
-		sso_messages::{
-			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
-		},
+		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
-	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
+	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
 
@@ -44,10 +46,10 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
-		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
+		BundledStack, HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
 		ProductExecutionConfig,
 	},
 	errors::{HostRejection, NativeCoreDatabaseError},
@@ -56,7 +58,7 @@ use super::{
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -80,6 +82,8 @@ pub struct NativeTrUApiHostRuntime {
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 	/// The Pocket collection, shared with every product execution.
 	pocket: PocketCards,
+	/// The stack the runtime runs and the refresh of its descriptor.
+	stack_refresh: StackRefresh,
 	/// The core database directory, which holds the funding resume marker.
 	database_directory: std::path::PathBuf,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
@@ -135,6 +139,20 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
+		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let stack_refresh = futures::executor::block_on(StackRefresh::load(
+			pointer,
+			descriptor,
+			*allows_reserved_values,
+			Box::new(core_db.clone()),
+			Arc::new(RealTimer),
+			Box::new(SystemClock),
+		))?;
+		let signing = SigningHostConfig {
+			host: runtime_config.host,
+			stack: stack_refresh.stack(),
+			materials_enabled: runtime_config.materials_enabled,
+		};
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -142,11 +160,7 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(
-			platform.clone(),
-			runtime_config.signing,
-			spawner.clone(),
-		));
+		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -193,6 +207,7 @@ impl NativeTrUApiHostRuntime {
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
 			pocket,
+			stack_refresh,
 			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
 		}))
@@ -240,6 +255,7 @@ impl NativeTrUApiHostRuntime {
 			closed: AtomicBool::new(false),
 			chat_connection: Arc::new(crate::runtime::ActionChannel::chat()),
 			renderer_connection: Arc::new(crate::runtime::ActionChannel::renderer()),
+			renderer_failures: Arc::new(crate::runtime::ActionChannel::renderer_failures()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
 			product_control: Arc::new(Mutex::new(None)),
@@ -383,6 +399,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_amount_issue(&intent, amount, spendable)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for, after
+	/// `provider_frame_requested`. Answers whether one was waiting.
+	pub fn open_provider_frame(&self, intent: String) -> bool {
+		self.runtime.open_provider_frame(&intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened, so the host can show the notice again after redrawing.
+	pub fn funding_frame_waiting(&self, intent: String) -> bool {
+		self.runtime.funding_frame_waiting(&intent)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)
@@ -394,14 +422,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_entries()
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
+	/// Offer the funding providers the remote configuration names; see
+	/// [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
+	) {
+		self.runtime.set_funding_provider_config(published_names);
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
@@ -610,6 +637,37 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
 		self.runtime
 			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
+	}
+
+	/// Install the host's HTTP client for the stack's descriptor and its
+	/// stack status observer, and start refreshing the descriptor in the
+	/// background. Reports the current status to `callbacks` first.
+	///
+	/// Set-once: answers whether this call installed them. A runtime without
+	/// them stays on the copy it started from.
+	///
+	/// The refresh holds `callbacks` until this runtime drops. Hold the
+	/// runtime weakly from them: a strong reference keeps it, and its
+	/// refresh, running after the host builds a new one.
+	pub fn set_stack_callbacks(&self, callbacks: Arc<dyn NativeStackCallbacks>) -> bool {
+		self.stack_refresh
+			.start(Box::new(StackCallbackHost { stack: callbacks }), &self.spawner)
+	}
+
+	/// The stack the runtime runs: its verified descriptor, whether it is
+	/// stale or has shut down, and whether a newer copy waits for the next
+	/// start.
+	pub fn stack_status(&self) -> StackStatus {
+		self.stack_refresh.status()
+	}
+
+	/// Fetch the stack's descriptor now instead of when the copy is an hour
+	/// old, as when the app returns to the foreground or a chain answers with
+	/// another genesis hash. Returns at once; the result arrives through
+	/// [`NativeStackCallbacks::stack_changed`]. Nothing is fetched until
+	/// [`Self::set_stack_callbacks`] installed the callbacks.
+	pub fn refresh_stack(&self) {
+		self.stack_refresh.refresh_now();
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact
@@ -889,22 +947,55 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.core_database_status().await.map_err(Into::into)
 	}
 
-	/// Resolves public profile metadata without loading image bytes.
+	/// Observes public profile metadata until resolution completes or fails.
 	///
-	/// Records expire after one hour; `force` skips the cache. Invalid usernames and
-	/// lookup or storage failures return errors.
-	pub async fn resolve_public_profile(
+	/// Options control forced lookups and stale stored values. Failures follow any
+	/// emitted value. Cancelling the subscription aborts resolution.
+	pub fn observe_public_profile(
 		&self,
 		username: String,
-		force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		self.runtime.resolve_public_profile(&username, force).await
+		options: PublicProfileResolutionOptions,
+		observer: Arc<dyn NativePublicProfileObserver>,
+	) -> Arc<NativeSubscription> {
+		let mut stream = self.runtime.observe_public_profile(&username, options);
+		self.spawner.spawn_observation(async move {
+			while let Some(item) = stream.next().await {
+				match item {
+					Ok(profile) => observer.on_profile(profile),
+					Err(error) => return observer.on_error(error),
+				}
+			}
+			observer.on_complete();
+		})
 	}
 
 	/// The image `reference` names, read from Bulletin over the core's own connection and
 	/// checked against its CID and the image policy. Dropping the future stops the load.
 	pub async fn load_image(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		self.runtime.load_image(reference).await
+	}
+
+	/// Follow the resolved materials of `tree` in `context`, a saved face or a preview:
+	/// `observer` gets it now and after each change, until cancelled. A node
+	/// that falls back is logged. Unless `float_filterable`, the shaders filter
+	/// 32-bit float images themselves.
+	pub fn resolve_materials(
+		&self,
+		tree: truapi::latest::RendererNode,
+		context: truapi::latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		let failures = Box::new(|_| {});
+		resolve_materials(
+			&self.runtime,
+			tree,
+			context,
+			float_filterable,
+			observer.into(),
+			failures,
+			&self.spawner,
+		)
 	}
 
 	/// Follow the Pocket collection: `observer` gets every card now and
@@ -955,27 +1046,16 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.run_durable_recovery().await
 	}
 
-	/// Answer one decrypted SSO remote message from a wallet-managed
-	/// statement-store session.
-	///
-	/// `message` is one SCALE-encoded `RemoteMessage` exactly as decrypted from
-	/// the session statement. The bytes are deliberately opaque at this
-	/// boundary: the wallet forwards wire encodings verbatim and never
-	/// constructs them. Session control and transport stay with the wallet —
-	/// `Disconnected` is reported, never handled here. Confirmation-gated
-	/// requests await `confirm_user_action`, so this can take arbitrarily long.
-	///
-	/// A `Cancel` withdraws the request it names and returns at once. It
-	/// reaches a running request only if the wallet passes it on as it
-	/// arrives; queued behind that request it arrives too late to stop it.
-	/// The withdrawn request, and the `Cancel` itself, answer `Ignored`.
-	pub async fn handle_sso_request(
+	/// Bind externally owned SSO transport to its current wallet activation.
+	pub fn open_sso_service(
 		&self,
-		message: Vec<u8>,
-	) -> Result<SsoRequestOutcome, HostRejection> {
-		let message =
-			decode_remote_message(&message).map_err(|reason| HostRejection::Rejected { reason })?;
-		Ok(self.runtime.answer_sso_request(message).await)
+		own_statement_account_id: Bytes32,
+		own_encryption_public_key: Bytes32,
+	) -> Result<Arc<SsoAccountHolderService>, HostRejection> {
+		self.runtime
+			.open_sso_service(own_statement_account_id, own_encryption_public_key)
+			.map(Arc::new)
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
 	}
 
 	/// Build the SCALE-encoded `Disconnected` message a wallet posts over a
@@ -1034,6 +1114,13 @@ pub struct NativeProductExecution {
 	renderer_connection: Arc<
 		crate::runtime::ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>,
 	>,
+	/// The `Materials` nodes that fell back in this execution's bodies, shared
+	/// with every product connection it opens.
+	renderer_failures: Arc<
+		crate::runtime::ActionChannel<
+			truapi::versioned::renderer::HostRendererFailureSubscribeItem,
+		>,
+	>,
 	closed: AtomicBool,
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
@@ -1049,6 +1136,7 @@ impl NativeProductExecution {
 			permission_grants: self.permission_grants.clone(),
 			chat: self.chat_connection.clone(),
 			renderer: self.renderer_connection.clone(),
+			renderer_failures: self.renderer_failures.clone(),
 			pocket_platform: Some(Arc::new(self.pocket.clone())),
 			expanded_card: Some(self.expanded_card.clone()),
 			game_platform: self.game.clone(),
@@ -1255,7 +1343,7 @@ impl NativeProductExecution {
 	/// card's newest face is also kept, so the card has it offline.
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
@@ -1283,11 +1371,42 @@ impl NativeProductExecution {
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
 
+	/// Follow the resolved materials of `tree`, a body this execution's product rendered in
+	/// `context`: `observer` gets it now and after each change, until
+	/// cancelled. A node that falls back is logged and reported to the product
+	/// through `Renderer::failure_subscribe`. Unless `float_filterable`, the
+	/// shaders filter 32-bit float images themselves.
+	pub fn resolve_materials(
+		&self,
+		tree: latest::RendererNode,
+		context: latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		let channel = self.renderer_failures.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			let item = failure.report(reported.clone());
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = channel.publish(item.into());
+		});
+		resolve_materials(
+			&self.runtime,
+			tree,
+			context,
+			float_filterable,
+			observer.into(),
+			failures,
+			&self.spawner,
+		)
+	}
+
 	/// Publish one action triggered inside a product-rendered body, buffering
 	/// it until the product connection subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		self.renderer_connection.publish(item.into())
@@ -1306,6 +1425,7 @@ impl NativeProductExecution {
 		self.permission_grants.clear();
 		self.chat_connection.close();
 		self.renderer_connection.close();
+		self.renderer_failures.close();
 	}
 }
 

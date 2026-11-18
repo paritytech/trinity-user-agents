@@ -66,11 +66,9 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
-    /// Show or hide the face above this execution's expanded card. Answers
-    /// `.notPresented` when the product is not under its card and `.userMoving`
-    /// while the user drags it, and returns without waiting for the animation.
-    /// Defaults to `.unsupported`, so an app without cards says so instead of
-    /// pretending it moved one.
+    /// Uncover (`true`) or cover (`false`) the face under this execution's page. Answers
+    /// `.notPresented` when the product is not under its card and `.userMoving` while the user
+    /// moves the card. Defaults to `.unsupported`, so an app without cards says so.
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
@@ -150,10 +148,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Answer a feature-support query. Invoked on the dispatcher thread; must
     /// return promptly.
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool
-
-    /// Enumerate the chains this host serves: its environment plus one entry
-    /// per chain role. Invoked on the dispatcher thread; must return promptly.
-    func supportedChains() throws -> HostChainSet
 
     /// The chains this host builds as V5 general transactions, each with its
     /// transaction extension pipeline; every other chain is built as V4. The
@@ -434,7 +428,6 @@ public extension HostBridge {
             languageTag: Locale.current.language.languageCode?.identifier ?? "en"
         )
     }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
@@ -859,12 +852,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func supportedChains() throws -> HostChainSet {
-        try withHostRejection {
-            try bridge.supportedChains()
-        }
-    }
-
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         try await withHostRejection {
             try await bridge.transactionExtensionVersions()
@@ -1179,9 +1166,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
-    /// Profile metadata without image bytes. `force` bypasses the core's one-hour cache.
-    public func resolvePublicProfile(username: String, force: Bool) async throws -> PublicProfile {
-        try await inner.resolvePublicProfile(username: username, force: force)
+    /// Profile metadata according to the requested freshness and stale-value policy.
+    /// At most two values are emitted. Cancellation stops the core observation.
+    public func resolvePublicProfile(
+        username: String,
+        options: PublicProfileResolutionOptions
+    ) -> AsyncThrowingStream<PublicProfile, Error> {
+        observedStream(PublicProfileStreamObserver.init(continuation:)) { observer in
+            inner.observePublicProfile(username: username, options: options, observer: observer)
+        }
     }
 
     /// The image `reference` names, read from Bulletin by the core and checked against its
@@ -1196,6 +1189,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     public func pocketCards() -> AsyncThrowingStream<[PocketEntry], Error> {
         observedStream(PocketCardsStreamObserver.init(continuation:)) { observer in
             inner.observePocketCards(observer: observer)
+        }
+    }
+
+    /// The materials of `tree`, a saved face or a preview, in `context`: for each
+    /// `Materials` node, whether it loads, draws its layers or draws plain.
+    /// Unless `floatFilterable`, the shaders filter 32-bit float images
+    /// themselves. To resolve a new tree for the same body, start its resolution
+    /// before cancelling the old one.
+    public func resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialsResolution {
+        MaterialsResolution { observer in
+            inner.resolveMaterials(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
         }
     }
 
@@ -1231,16 +1235,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Answer one decrypted SSO remote message from the wallet-managed
-    /// statement-store session. `message` is one SCALE-encoded
-    /// `RemoteMessage` exactly as decrypted. `.response` carries the
-    /// SCALE-encoded reply to post back over the same session;
-    /// `.disconnected` means the peer ended the session (perform native
-    /// teardown); `.ignored` means the message was not a request.
-    /// Confirmation-gated requests await `confirmUserAction`, so this can
-    /// take arbitrarily long — call from a `Task`, never the main thread.
-    public func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
-        try await inner.handleSsoRequest(message: message)
+    /// Bind one peer to the wallet matching the transport's public keys.
+    public func openSsoService(
+        ownStatementAccountId: Data,
+        ownEncryptionPublicKey: Data
+    ) throws -> SsoAccountHolderService {
+        try inner.openSsoService(
+            ownStatementAccountId: ownStatementAccountId,
+            ownEncryptionPublicKey: ownEncryptionPublicKey
+        )
     }
 
     /// Build the SCALE-encoded `Disconnected` message to post over a
@@ -1413,6 +1416,15 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         try inner.publishRendererAction(item: item)
     }
 
+    /// The materials of `tree`, a body this execution's product rendered in
+    /// `context`, as ``TrUAPIHostRuntime/resolveMaterials(tree:context:floatFilterable:)``.
+    /// A node that falls back is also reported to the product.
+    public func resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialsResolution {
+        MaterialsResolution { observer in
+            inner.resolveMaterials(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
+        }
+    }
+
     public func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus {
@@ -1532,6 +1544,26 @@ private func observedStream<Element, Observer>(
     return stream
 }
 
+private final class PublicProfileStreamObserver: NativePublicProfileObserver {
+    private let continuation: AsyncThrowingStream<PublicProfile, Error>.Continuation
+
+    init(continuation: AsyncThrowingStream<PublicProfile, Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onProfile(profile: PublicProfile) {
+        continuation.yield(profile)
+    }
+
+    func onComplete() {
+        continuation.finish()
+    }
+
+    func onError(error: PublicProfileError) {
+        continuation.finish(throwing: error)
+    }
+}
+
 private final class RendererStreamObserver: NativeRendererObserver, @unchecked Sendable {
     private let continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
 
@@ -1551,6 +1583,54 @@ private final class RendererStreamObserver: NativeRendererObserver, @unchecked S
     /// partial. Finishing with an error keeps that distinct from a clean end.
     func onError(reason: String) {
         continuation.finish(throwing: RendererStreamError(reason: reason))
+    }
+}
+
+/// The resolved materials of one tree, now and after each change, and the
+/// reports the app makes against them. Cancel it, or let it go, to stop.
+public final class MaterialsResolution: @unchecked Sendable {
+    /// Each update replaces the last, so only the newest is kept. The tree is
+    /// followed until this stream ends or is dropped.
+    public let resolved: AsyncStream<ResolvedMaterials>
+    private let handle: NativeMaterialsResolution
+    private let continuation: AsyncStream<ResolvedMaterials>.Continuation
+
+    fileprivate init(_ subscribe: (NativeMaterialsObserver) -> NativeMaterialsResolution) {
+        let (resolved, continuation) = AsyncStream.makeStream(
+            of: ResolvedMaterials.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+        let handle = subscribe(MaterialsStreamObserver(continuation: continuation))
+        continuation.onTermination = { @Sendable _ in
+            handle.cancel()
+        }
+        self.resolved = resolved
+        self.handle = handle
+        self.continuation = continuation
+    }
+
+    /// Draws node `node` plain for the rest of this resolution: its shader did not
+    /// compile (`.unsupported`), or an image argument could not be used
+    /// (`checkMaterialImage`'s reason, or `.notFound`).
+    public func report(node: UInt32, material: Bytes32?, reason: MaterialFailure) {
+        handle.report(node: node, material: material, reason: reason)
+    }
+
+    /// Stops following the tree and ends `resolved`.
+    public func cancel() {
+        continuation.finish()
+    }
+}
+
+private final class MaterialsStreamObserver: NativeMaterialsObserver, @unchecked Sendable {
+    private let continuation: AsyncStream<ResolvedMaterials>.Continuation
+
+    init(continuation: AsyncStream<ResolvedMaterials>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onResolved(materials: ResolvedMaterials) {
+        continuation.yield(materials)
     }
 }
 

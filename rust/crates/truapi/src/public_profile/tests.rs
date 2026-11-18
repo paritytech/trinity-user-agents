@@ -1,6 +1,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use cache::{avatar_record, cached_profiles};
+
+#[cfg(not(target_arch = "wasm32"))]
+use futures::StreamExt;
+
 use alloy_primitives::Address;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -17,7 +23,9 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{Spawner, platform::HostInfo, test_support::StubPlatform};
+use crate::{
+	Spawner, platform::HostInfo, runtime::services::RuntimeServices, test_support::StubPlatform,
+};
 
 struct ProfileContracts {
 	deployed: bool,
@@ -111,7 +119,12 @@ async fn a_default_reverse_resolver_does_not_hide_the_public_profile() {
 		ProfileRecord { entries: vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![7, 8])] };
 	let mut transport = ProfileContracts::new(Ok(STANDARD.encode(record.encode())));
 
-	assert_eq!(PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(), record);
+	assert_eq!(
+		PublicProfilesService::read_record_from(&mut transport, "alice.01")
+			.await
+			.unwrap(),
+		record
+	);
 }
 
 #[tokio::test]
@@ -155,7 +168,9 @@ async fn an_absent_gateway_or_record_has_an_empty_profile() {
 			ProfileContracts { deployed, ..ProfileContracts::new(Ok(String::new())) };
 
 		assert_eq!(
-			PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(),
+			PublicProfilesService::read_record_from(&mut transport, "alice.01")
+				.await
+				.unwrap(),
 			ProfileRecord::default()
 		);
 	}
@@ -213,7 +228,9 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 	let mut transport = ProfileContracts::new(Err(EvmContractError::Reverted {
 		detail: "profile unavailable".into(),
 	}));
-	let error = PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap_err();
+	let error = PublicProfilesService::read_record_from(&mut transport, "alice.01")
+		.await
+		.unwrap_err();
 	let source = core::error::Error::source(&error).expect("dotNS error is retained");
 
 	assert!(matches!(
@@ -226,8 +243,11 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn a_profile_failure_retains_the_database_error_source() {
-	let profiles = PublicProfiles::new(profile_services());
-	let error = profiles.resolve("alice.01", false).await.unwrap_err();
+	let mut profiles = profile_services().public_profiles.clone().observe(
+		"alice.01".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+	);
+	let error = profiles.next().await.unwrap().unwrap_err();
 	let source = core::error::Error::source(&error).expect("database error is retained");
 
 	assert!(matches!(source.downcast_ref::<DbError>(), Some(DbError::NotConfigured)));
@@ -262,34 +282,9 @@ fn services_with_platform(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[1; 32],
-		[2; 32],
-		[3; 32],
+		crate::test_support::test_stack("paseo", [1; 32], [2; 32], [3; 32]),
 		Spawner::for_test(),
 	)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn a_cached_record_survives_an_offline_chain_until_forced() {
-	let (_directory, db) = crate::store::open_temporary_core_db();
-	let record = PublicProfile { avatar: None };
-	let now = current_unix_secs();
-	db.write(move |tx| {
-		dao::store_record(tx, "alice01", &ProfileRecord::default(), now, now + RECORD_TTL_SECS)
-	})
-	.await
-	.unwrap();
-	let services = profile_services();
-	assert!(services.install_core_db(db));
-	let profiles = PublicProfiles::new(services);
-
-	let cached = profiles.resolve("alice01", false).await;
-	let forced = profiles.resolve("alice01", true).await;
-	assert_eq!(
-		(cached.unwrap(), matches!(forced, Err(PublicProfileError::Dotns(_)))),
-		(record, true)
-	);
 }
 
 #[test]
@@ -299,86 +294,4 @@ fn a_lite_username_resolves_part_by_part() {
 
 	assert_eq!(username_node(tld, "alice.01"), expected);
 	assert_eq!(username_node(tld, "alicebc"), namehash_under(&tld_node(tld), "alicebc"));
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn cached_metadata_never_loads_bulletin() {
-	for entries in [
-		vec![subxt::utils::WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
-			cid: [9; 32].into(),
-			format: crate::ImageFormat::Png,
-		}))],
-		vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![0, 1])],
-		vec![],
-	] {
-		let platform = Arc::new(StubPlatform::default());
-		let services = services_with_platform(platform.clone());
-		let (_directory, db) = crate::store::open_temporary_core_db();
-		let now = current_unix_secs();
-		let record = ProfileRecord { entries };
-		let expected = PublicProfile { avatar: record.avatar() };
-		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now, now + RECORD_TTL_SECS))
-			.await
-			.unwrap();
-		assert!(services.install_core_db(db));
-
-		let profile = PublicProfiles::new(services).resolve("alice.01", false).await.unwrap();
-
-		assert_eq!((profile, platform.chain_connects.lock().unwrap().clone()), (expected, vec![]));
-	}
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors() {
-	for (expires_in, force) in [(0, false), (RECORD_TTL_SECS, true)] {
-		let platform =
-			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
-		let services = services_with_platform(platform.clone());
-		let (_directory, db) = crate::store::open_temporary_core_db();
-		let now = current_unix_secs();
-		let record = ProfileRecord {
-			entries: vec![subxt::utils::WrapperKeepOpaque::from_value(ProfileEntry::Avatar(
-				ProfileAvatar { cid: [9; 32].into(), format: crate::ImageFormat::Png },
-			))],
-		};
-		let stored = record.clone();
-		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now, now + expires_in))
-			.await
-			.unwrap();
-		assert!(services.install_core_db(db.clone()));
-
-		let result = PublicProfiles::new(services).resolve("alice.01", force).await;
-		let stored: Vec<u8> = db
-			.read(|conn| {
-				Ok(conn.query_row(
-					"SELECT public_record FROM public_profiles WHERE username = 'alice.01'",
-					[],
-					|row| row.get(0),
-				)?)
-			})
-			.await
-			.unwrap();
-
-		assert_eq!(
-			(
-				matches!(result, Err(PublicProfileError::Dotns(_))),
-				platform.chain_connects.lock().unwrap().clone(),
-				stored
-			),
-			(true, vec![[3; 32]], record.encode())
-		);
-	}
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn an_invalid_username_does_not_need_storage_or_a_chain() {
-	let profiles = PublicProfiles::new(profile_services());
-
-	assert!(matches!(
-		profiles.resolve("alice.1", false).await,
-		Err(PublicProfileError::InvalidUsername)
-	));
 }

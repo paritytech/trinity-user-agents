@@ -112,6 +112,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return chainRegistry.getConnection(for: chain.chainId) != nil
+        case .materials:
+            return false
         }
     }
 
@@ -139,10 +141,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func encryptedStorageDelete(key: Data) async throws {
         try encryptedStorage.delete(key: key)
-    }
-
-    func supportedChains() throws -> HostChainSet {
-        TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }
 
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {

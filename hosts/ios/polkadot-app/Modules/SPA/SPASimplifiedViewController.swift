@@ -70,6 +70,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
+        setContentScrollView(rootView.webView.scrollView, for: .top)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -238,7 +239,6 @@ private extension SPASimplifiedViewController {
 // MARK: - SPAViewProtocol
 
 extension SPASimplifiedViewController: SPAViewProtocol {
-    var pageScrollView: UIScrollView { rootView.webView.scrollView }
     var pageWebView: WKWebView { rootView.webView }
 
     func navigate(to url: URL) {

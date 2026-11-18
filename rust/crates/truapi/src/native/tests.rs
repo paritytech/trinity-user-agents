@@ -1,14 +1,15 @@
 use super::*;
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, atomic::Ordering},
+	sync::{Arc, Mutex, atomic::Ordering, mpsc},
 };
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
+	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -16,8 +17,12 @@ use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
 use crate::{
-	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	PairedSsoPeer, PairingProposal,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
+	markers::{
+		MARKERS, MarkerClass, NATIVE_PUSH_NOTIFICATION, Severity, TRACING_ERROR, TRACING_WARN,
+	},
 };
 
 use super::{
@@ -104,7 +109,7 @@ pub struct EventCallbacks {
 	pub chat_bot_rejection: Mutex<Option<String>>,
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
-	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -116,6 +121,7 @@ pub struct EventCallbacks {
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 	pub chain_connects: Mutex<Vec<Vec<u8>>>,
 	pub chain_sends: Mutex<Vec<(u32, String)>>,
+	pub chain_send_rejection: Mutex<Option<String>>,
 	pub chain_closes: Mutex<Vec<u32>>,
 	/// Worker demand transitions, in arrival order.
 	pub worker_demand: Mutex<Vec<(ProductId, WorkerTransition)>>,
@@ -170,6 +176,7 @@ impl EventCallbacks {
 			on_chain_connect: Mutex::new(None),
 			chain_connects: Mutex::new(Vec::new()),
 			chain_sends: Mutex::new(Vec::new()),
+			chain_send_rejection: Mutex::new(None),
 			chain_closes: Mutex::new(Vec::new()),
 			worker_demand: Mutex::new(Vec::new()),
 			paired_devices: Mutex::new(Vec::new()),
@@ -307,6 +314,9 @@ impl HostCallbacks for EventCallbacks {
 		Ok(*self.chain_id.lock().expect("chain id mutex poisoned"))
 	}
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection> {
+		if let Some(reason) = self.chain_send_rejection.lock().unwrap().clone() {
+			return Err(HostRejection::Rejected { reason });
+		}
 		self.chain_sends
 			.lock()
 			.expect("chain sends mutex poisoned")
@@ -361,9 +371,6 @@ impl HostCallbacks for EventCallbacks {
 		_request: v01::HostFeatureSupportedRequest,
 	) -> Result<bool, HostRejection> {
 		Ok(false)
-	}
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-		Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 	}
 
 	async fn transaction_extension_versions(
@@ -456,7 +463,7 @@ impl NativeChatCallbacks for EventCallbacks {
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection> {
 		self.chat_room_footers
 			.lock()
@@ -525,17 +532,23 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		host_version: None,
 		platform_type: None,
 		platform_version: None,
-		people_chain_genesis_hash: vec![0xa2; 32],
-		bulletin_chain_genesis_hash: vec![0xbb; 32],
-		asset_hub_chain_genesis_hash: vec![0xcc; 32],
-		network_suffix: "paseo".to_string(),
+		stack: native_bundled_stack(&crate::test_support::test_descriptor(
+			"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+		)),
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
 		pinned_pocket_cards: Vec::new(),
+		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
 	}
+}
+
+/// `descriptor` signed, as a native host bundles it.
+fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
+	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
+	crate::native::BundledStack { pointer, descriptor, allows_reserved_values: false }
 }
 
 pub fn native_execution_config(
@@ -1682,16 +1695,16 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
 		&product,
-		v01::HostChatSetRoomFooterRequest {
+		truapi::latest::HostChatSetRoomFooterRequest {
 			room_id: "support".to_string(),
-			footer: v01::ChatRoomFooter::Empty,
+			footer: truapi::latest::ChatRoomFooter::Empty,
 		},
 	))
 	.unwrap();
 
 	assert_eq!(
 		*callbacks.chat_room_footers.lock().expect("room footers mutex poisoned"),
-		[("support".to_string(), v01::ChatRoomFooter::Empty)]
+		[("support".to_string(), truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -1787,86 +1800,221 @@ fn native_chain_provider_forwards_send_response_and_close() {
 	);
 }
 
+/// A request the host refuses to send is never answered, so the connection
+/// ends its response stream and the client fails what it waits on.
+#[test]
+fn native_chain_provider_closes_when_the_host_refuses_a_send() {
+	let (callbacks, _events, platform) = event_platform();
+	*callbacks.chain_id.lock().unwrap() = Some(42);
+	let connection = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
+	let mut responses = connection.responses();
+	*callbacks.chain_send_rejection.lock().unwrap() = Some("socket gone".to_string());
+
+	connection.send(r#"{"jsonrpc":"2.0","id":1}"#.to_string());
+
+	assert_eq!(futures::FutureExt::now_or_never(responses.next()), Some(None));
+	assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
+}
+
 #[test]
 fn runtime_config_reports_the_platform_the_library_was_built_for() {
 	let resolved = NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config())
 		.expect("config is valid");
 
-	assert_eq!(resolved.signing.host.host_info.platform, native_host_platform());
+	assert_eq!(resolved.host.host_info.platform, native_host_platform());
 }
 
-#[test]
-fn runtime_config_rejects_wrong_size_genesis_hash() {
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		people_chain_genesis_hash: vec![0; 31],
-		..native_host_runtime_config()
-	})
-	.unwrap_err();
-
-	assert_eq!(
-		err,
-		NativeRuntimeConfigError::Invalid {
-			reason: "people_chain_genesis_hash must be exactly 32 bytes, got 31".to_string(),
-		}
-	);
+/// A host HTTP client that serves one published descriptor, and passes on
+/// each status the core reports.
+struct PublishedStack {
+	document: Vec<u8>,
+	statuses: mpsc::Sender<StackStatus>,
 }
 
-#[test]
-fn each_configured_genesis_hash_reaches_its_own_field() {
-	// Three adjacent `Vec<u8>` feeding a positional constructor:
-	// transposing any two compiles and, without this, passes.
-	let resolved = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		people_chain_genesis_hash: vec![0xa1; 32],
-		bulletin_chain_genesis_hash: vec![0xb2; 32],
-		asset_hub_chain_genesis_hash: vec![0xc3; 32],
-		..native_host_runtime_config()
-	})
-	.expect("config is valid");
+#[async_trait::async_trait]
+impl NativeStackCallbacks for PublishedStack {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection> {
+		Ok(StackFetchResponse::Document { bytes: self.document.clone(), etag: None })
+	}
 
-	assert_eq!(
-		(
-			resolved.signing.people_chain_genesis_hash,
-			resolved.signing.bulletin_chain_genesis_hash,
-			resolved.signing.asset_hub_chain_genesis_hash,
-		),
-		([0xa1; 32], [0xb2; 32], [0xc3; 32]),
-	);
-}
-
-#[test]
-fn a_wrong_size_asset_hub_genesis_hash_is_rejected_as_its_own_field() {
-	// An empty vec must be an error, never a silent all-zero "no Asset
-	// Hub".
-	for len in [0usize, 31, 33] {
-		let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-			asset_hub_chain_genesis_hash: vec![0; len],
-			..native_host_runtime_config()
-		})
-		.unwrap_err();
-
-		assert_eq!(
-			err,
-			NativeRuntimeConfigError::Invalid {
-				reason: format!("asset_hub_chain_genesis_hash must be exactly 32 bytes, got {len}"),
-			}
-		);
+	fn stack_changed(&self, status: StackStatus) {
+		let _ = self.statuses.send(status);
 	}
 }
 
+/// A wiped stack has to reach an installed app without a release: the
+/// running core fetches the new descriptor and keeps it in its database, and
+/// the next runtime the host builds starts from it instead of the bundle.
 #[test]
-fn runtime_config_rejects_a_network_suffix_that_is_not_a_bare_tld() {
-	// The suffix ends every reserved derivation (`peopl.<suffix>`), so a
-	// shell passing the dotted form would silently derive a stranger.
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		network_suffix: ".paseo".to_string(),
+fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
+	let config = HostRuntimeConfig {
+		local_session_secret: None,
+		local_session_lite_username: None,
 		..native_host_runtime_config()
+	};
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let sequence = |status: &StackStatus| {
+		serde_json::from_str::<serde_json::Value>(&status.descriptor)
+			.expect("the status carries descriptor JSON")["sequence"]
+			.clone()
+	};
+
+	let first = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config.clone(),
+	)
+	.expect("host runtime config should be valid");
+	assert!(
+		first.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let at_start = next_status();
+	let after_fetch = next_status();
+	drop(first);
+	let rebuilt =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+
+	let rebuilt_status = rebuilt.stack_status();
+	assert_eq!(
+		(
+			sequence(&at_start),
+			sequence(&after_fetch),
+			after_fetch.restart_required,
+			sequence(&rebuilt_status),
+			rebuilt_status.generation.as_str(),
+		),
+		(1.into(), 1.into(), true, 2.into(), "second")
+	);
+}
+
+/// A record the database refuses must not send the host into a restart: the
+/// next runtime would read the old copy and be told to restart again. The
+/// status says why the copy waits instead.
+#[test]
+fn a_record_the_database_refuses_asks_for_no_restart() {
+	let config = native_host_runtime_config();
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let runtime = build_runtime(config.clone()).expect("host runtime config should be valid");
+	rusqlite::Connection::open(
+		std::path::Path::new(&config.database_directory).join(crate::store::CORE_DB_FILE),
+	)
+	.and_then(|db| {
+		db.execute_batch(
+			"CREATE TRIGGER disk_full BEFORE INSERT ON stack_record
+			 BEGIN SELECT RAISE(FAIL, 'disk full'); END;",
+		)
 	})
-	.unwrap_err();
+	.expect("the test can make the database refuse a record");
+
+	assert!(
+		runtime.set_stack_callbacks(Arc::new(published)),
+		"a fresh runtime has no stack callbacks yet, so this install is the first"
+	);
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let _at_start = next_status();
+	let after_fetch = next_status();
+
+	assert_eq!(
+		(
+			after_fetch.restart_required,
+			matches!(
+				&after_fetch.last_refresh,
+				Some(StackRefreshOutcome::NotStored { reason }) if reason.contains("disk full")
+			),
+		),
+		(false, true),
+		"{:?}",
+		after_fetch.last_refresh
+	);
+}
+
+/// A runtime the app builds from `config`, or why it was refused. No local
+/// session, so building it touches only the stack and the database.
+fn build_runtime(
+	config: HostRuntimeConfig,
+) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
+	NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		HostRuntimeConfig {
+			local_session_secret: None,
+			local_session_lite_username: None,
+			..config
+		},
+	)
+}
+
+#[test]
+fn runtime_config_refuses_a_stack_pointer_without_a_key() {
+	// A copy the host fetches later is checked against the pointer's key, so
+	// only a signed stack may start.
+	let mut stack = native_host_runtime_config().stack;
+	stack.pointer = crate::test_support::test_stack_link(None);
+	let err = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() }).err();
+
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
-			reason: r#"network_suffix must be a supported dotNS TLD, got ".paseo""#.to_string(),
-		}
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: crate::platform::StackError::Unsigned.to_string()
+		})
+	);
+}
+
+#[test]
+fn runtime_config_passes_the_reserved_values_flag_through() {
+	// A testnet build must not run a stack on `dot`; a Polkadot build may.
+	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let refused =
+		build_runtime(HostRuntimeConfig { stack: stack.clone(), ..native_host_runtime_config() });
+	stack.allows_reserved_values = true;
+	let allowed = build_runtime(HostRuntimeConfig { stack, ..native_host_runtime_config() });
+	let tld = |runtime: Arc<NativeTrUApiHostRuntime>| {
+		serde_json::from_str::<serde_json::Value>(&runtime.stack_status().descriptor)
+			.expect("the status carries descriptor JSON")["tld"]
+			.clone()
+	};
+
+	assert_eq!(
+		(refused.err(), allowed.map(tld).ok()),
+		(
+			Some(NativeRuntimeConfigError::Invalid {
+				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
+					.to_string(),
+			}),
+			Some("dot".into()),
+		),
 	);
 }
 
@@ -1890,14 +2038,14 @@ fn runtime_config_rejects_relative_host_icon() {
 		host_icon: Some("/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: "host_info.icon must be an absolute HTTPS URL: relative URL without a base"
 				.to_string(),
-		}
+		})
 	);
 }
 
@@ -1907,13 +2055,13 @@ fn runtime_config_rejects_non_https_host_icon() {
 		host_icon: Some("http://localhost:3000/dotli.png".to_string()),
 		..native_host_runtime_config()
 	})
-	.unwrap_err();
+	.err();
 
 	assert_eq!(
 		err,
-		NativeRuntimeConfigError::Invalid {
+		Some(NativeRuntimeConfigError::Invalid {
 			reason: r#"host_info.icon must use https scheme, got "http""#.to_string(),
-		}
+		})
 	);
 }
 
@@ -2044,9 +2192,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 			_request: v01::HostFeatureSupportedRequest,
 		) -> Result<bool, HostRejection> {
 			Ok(false)
-		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 		}
 
 		async fn transaction_extension_versions(
@@ -2238,9 +2383,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			_request: v01::HostFeatureSupportedRequest,
 		) -> Result<bool, HostRejection> {
 			Ok(true)
-		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 		}
 
 		async fn transaction_extension_versions(
@@ -2707,10 +2849,116 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 }
 
 #[test]
-fn handle_sso_request_rejects_undecodable_bytes() {
-	let runtime = native_host_runtime_no_session();
-	let result = futures::executor::block_on(runtime.handle_sso_request(vec![0xFF, 0xFF, 0xFF]));
-	assert!(result.is_err(), "garbage bytes must be a decode error");
+fn native_sso_binding_verifies_transport_and_retains_its_activation() {
+	use crate::{
+		host_internal::sso_messages::{
+			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
+		},
+		host_logic::{
+			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
+			sso::pairing::derive_x25519_keypair_from_entropy,
+		},
+	};
+	use parity_scale_codec::Encode;
+
+	let entropy = [7; 32];
+	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
+	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	assert!(
+		native_host_runtime_no_session()
+			.open_sso_service(statement, encryption)
+			.is_err()
+	);
+	for replacement in [vec![8; 32], entropy.to_vec()] {
+		let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				runtime.open_sso_service([0; 32], encryption).is_err(),
+				runtime.open_sso_service(statement, [0; 32]).is_err(),
+			),
+			(true, true),
+		);
+		let service = runtime.open_sso_service(statement, encryption).unwrap();
+		let request = RemoteMessage::request(
+			"subtree".to_string(),
+			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
+		)
+		.encode();
+		let response = |payload| SsoRequestOutcome::Response {
+			message: RemoteMessage {
+				message_id: "subtree:response".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: "subtree".to_string(),
+					payload,
+				})),
+			}
+			.encode(),
+		};
+		let public_key = derive_product_subtree_keypair(
+			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
+				.unwrap(),
+			&ProductId::for_test("browse.dot"),
+		)
+		.unwrap()
+		.public
+		.to_bytes();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		let other_peer = runtime.open_sso_service(statement, encryption).unwrap();
+		let cancel = RemoteMessage {
+			message_id: "cancel".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(
+				crate::host_internal::sso_messages::Withdrawal {
+					message_id: "subtree".to_string(),
+				},
+			)),
+		}
+		.encode();
+		assert_eq!(service.handle_sso_control(cancel).unwrap(), Some(SsoRequestOutcome::Ignored));
+		assert_eq!(
+			futures::executor::block_on(other_peer.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		assert_eq!(service.handle_sso_control(request.clone()).unwrap(), None);
+		assert!(futures::executor::block_on(service.handle_sso_request(vec![0xff; 3])).is_err());
+		assert!(service.handle_sso_control(vec![0xff; 3]).is_err());
+		let response_variant = RemoteMessage {
+			message_id: "response".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+				responding_to: "subtree".to_string(),
+				payload: Ok(public_key),
+			})),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(response_variant)).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		let disconnected = RemoteMessage {
+			message_id: "disconnect".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(disconnected)).unwrap(),
+			SsoRequestOutcome::Disconnected
+		);
+		runtime.activate_local_session(replacement, None).unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request)).unwrap(),
+			response(Err("signing host session is not active".to_string()))
+		);
+	}
 }
 
 #[test]
@@ -3023,9 +3271,97 @@ fn nested_boxes(depth: usize) -> String {
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize)).is_ok());
 	assert!(matches!(
 		parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `children` wrapped in a `Materials` node with one layer, in the shape the
+/// generated client writes: the ID as hex, numbers as their bit patterns.
+fn materials_around(material_hex: &str, children: &str) -> String {
+	format!(
+		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}},{{"tag":"SamplerVec4","value":{{"tag":"Source","value":{{"tag":"Archive","value":"mask.png"}}}}}}]}}]}},"children":[{children}]}}}}"#
+	)
+}
+
+#[test]
+fn reads_a_materials_node_as_the_client_writes_it() {
+	let json = materials_around(&"07".repeat(32), r#"{"tag":"Nil"}"#);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("a materials face reads"),
+		latest::RendererNode::Materials {
+			props: latest::MaterialsProps {
+				layers: vec![latest::MaterialInstance {
+					material: [7; 32],
+					args: vec![
+						latest::Parameter::Float(1.5f32.to_bits()),
+						latest::Parameter::Vec2([1, 2]),
+						latest::Parameter::SamplerFloat(latest::ImageRef::Noise),
+						latest::Parameter::SamplerVec4(latest::ImageRef::Source(
+							latest::ImageSource::Archive("mask.png".to_string()),
+						)),
+					],
+				}],
+			},
+			children: vec![latest::RendererNode::Nil],
+		}
+	);
+}
+
+#[test]
+fn refuses_a_material_id_that_is_not_32_bytes() {
+	let json = materials_around(&"07".repeat(31), r#"{"tag":"Nil"}"#);
+
+	assert!(matches!(parse_renderer_node_json(json), Err(NativeRendererError::Malformed { .. })));
+}
+
+/// A `Materials` node holds children like any container, so it cannot hide a
+/// tree deeper than the core carries.
+#[test]
+fn counts_depth_through_a_materials_node() {
+	let one_too_deep = nested_boxes(MAX_FACE_DEPTH as usize);
+
+	assert!(matches!(
+		parse_renderer_node_json(materials_around(&"07".repeat(32), &one_too_deep)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `boxes` boxes around a `Materials` node with one layer.
+fn materials_under_boxes(boxes: usize) -> String {
+	let open = r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#.repeat(boxes);
+	format!("{open}{}{}", materials_around(&"07".repeat(32), ""), "]}}".repeat(boxes))
+}
+
+/// Whatever face the reader accepts reads back after it is kept, layers
+/// included, so a host never draws a face it cannot keep.
+#[test]
+fn the_deepest_face_with_materials_reads_back_once_kept() {
+	let layer_levels = 2;
+	let deepest =
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels))
+			.expect("the deepest materials face reads");
+
+	let (_dir, db) = crate::store::open_temporary_core_db();
+	let cards = futures::executor::block_on(crate::pocket_cards::PocketCards::open(db, Vec::new()))
+		.unwrap();
+	let product = ProductId::for_test("loyalty.dot");
+	futures::executor::block_on(cards.add(
+		product.clone(),
+		"stamps".into(),
+		"Stamps".into(),
+		deepest.clone(),
+	))
+	.unwrap();
+	assert_eq!(
+		futures::executor::block_on(cards.face(product, "stamps".into())).unwrap(),
+		Some(deepest)
+	);
+	assert!(matches!(
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels + 1)),
 		Err(NativeRendererError::TooDeep { .. })
 	));
 }
@@ -3136,6 +3472,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
+
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}
@@ -3222,11 +3560,7 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(
-			names.iter().map(|name| name.to_string()).collect(),
-			vec![],
-		)
-		.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect());
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
@@ -3236,10 +3570,10 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	assert_eq!(
 		(
 			host.funding_available(),
-			configure(&["ramp.dot"]),
-			configure(&["ramp.dot"]),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
 			configure(&[]),
-			configure(&["ramp.dot"])
+			configure(&["ramp"])
 		),
 		(false, (1, true), (1, true), (2, false), (3, true))
 	);
@@ -3278,4 +3612,32 @@ mod bridge_lines {
 		assert_eq!(logs.len(), 1);
 		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
 	}
+}
+
+#[test]
+fn the_exported_map_holds_every_entry_and_nothing_else() {
+	let exported = core_markers();
+	assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
+	for marker in MARKERS {
+		assert_eq!(
+			exported.get(marker.target),
+			Some(&marker.class),
+			"{} did not survive the crossing",
+			marker.target
+		);
+	}
+}
+
+#[test]
+fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
+	let exported = core_markers();
+	assert_eq!(
+		exported.get(TRACING_ERROR.target),
+		Some(&MarkerClass::Export { severity: Severity::Error })
+	);
+	assert_eq!(
+		exported.get(TRACING_WARN.target),
+		Some(&MarkerClass::Export { severity: Severity::Warn })
+	);
+	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }

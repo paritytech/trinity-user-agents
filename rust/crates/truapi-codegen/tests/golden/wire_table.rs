@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "19c2de0f605a644a";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "6ae994f32ac8b8ee";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -524,6 +524,12 @@ pub const RENDERER_ACTION_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `renderer_failure_subscribe`.
+pub const RENDERER_FAILURE_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 17,
+    method_id: 2,
+};
+
 /// Wire discriminants for `pocket_list_subscribe`.
 pub const POCKET_LIST_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 18,
@@ -726,6 +732,12 @@ pub const NFT_PURSE_STATIC_RECEIVE_KEY: MethodIds = MethodIds {
 pub const NFT_PURSE_LISTEN_PAYMENT_INBOX: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 14,
+};
+
+/// Wire discriminants for `nft_purse_list_cheques`.
+pub const NFT_PURSE_LIST_CHEQUES: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 15,
 };
 
 /// The full wire table. Trait ids and per-trait method ordering are
@@ -1053,6 +1065,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(RENDERER_ACTION_SUBSCRIBE),
     },
     WireEntry {
+        method: "renderer_failure_subscribe",
+        kind: WireKind::Subscription(RENDERER_FAILURE_SUBSCRIBE),
+    },
+    WireEntry {
         method: "pocket_list_subscribe",
         kind: WireKind::Subscription(POCKET_LIST_SUBSCRIBE),
     },
@@ -1187,5 +1203,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_listen_payment_inbox",
         kind: WireKind::Subscription(NFT_PURSE_LISTEN_PAYMENT_INBOX),
+    },
+    WireEntry {
+        method: "nft_purse_list_cheques",
+        kind: WireKind::Request(NFT_PURSE_LIST_CHEQUES),
     },
 ];
