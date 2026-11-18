@@ -29,11 +29,11 @@ final class PocketCardTurn {
     @ObservationIgnored private var isHoming = false
     @ObservationIgnored private var settle: Settle?
     private let frames: any PocketCardTurnFrames
-    private let reduceMotion: () -> Bool
+    private let reduceMotion: @MainActor () -> Bool
 
     init(
         frames: (any PocketCardTurnFrames)? = nil,
-        reduceMotion: @escaping () -> Bool = { UIAccessibility.isReduceMotionEnabled }
+        reduceMotion: @escaping @MainActor () -> Bool = { UIAccessibility.isReduceMotionEnabled }
     ) {
         self.frames = frames ?? DisplayLinkFrames()
         self.reduceMotion = reduceMotion

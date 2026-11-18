@@ -4,7 +4,7 @@ import TrUAPIHost
 
 /// Reads a file out of a product executable's content archive, fetching the
 /// archive first when the host does not already hold it.
-protocol PocketArchiveReading {
+protocol PocketArchiveReading: Sendable {
     /// Reads at most `maxBytes`, refusing anything longer rather than holding
     /// it: what the file weighs is the product's choice, and this is read
     /// before the user has approved anything.
@@ -31,7 +31,7 @@ enum PocketPreviewError: Error, CustomStringConvertible {
 /// read is the product's choice. The bound goes to whoever does the reading
 /// rather than being applied to what came back: a face refused once it is
 /// already held whole is a face the product chose the size of.
-struct PocketPreviewLoader {
+struct PocketPreviewLoader: Sendable {
     static let maxBytes = 256 * 1_024
 
     private let archive: any PocketArchiveReading
