@@ -29,8 +29,6 @@ pub struct ChainConfig {
 	pub ring_page_size: u32,
 	/// How long a period's free tokens stay accepted after the period ends.
 	pub token_grace: Duration,
-	/// The free unload tokens of one period.
-	pub unload_allowance: u32,
 	/// The external asset's minimum balance (F3 invariant 5).
 	pub external_minimum_balance: u128,
 	/// The time between two blocks, to compare windows with times.
@@ -59,7 +57,6 @@ impl ChainConfig {
 			ring_lifetime: Duration::from_secs(90 * 24 * 3600),
 			ring_page_size: 255,
 			token_grace: Duration::from_secs(3600),
-			unload_allowance: 20,
 			external_minimum_balance: 1,
 			block_time: Duration::from_secs(6),
 			rescue_margin: Duration::from_secs(7 * 24 * 3600),
@@ -195,6 +192,9 @@ pub fn validate(
 		if pallet.call_variant_by_name(call).is_none() {
 			return Err(UnsupportedRuntime::new(format!("no call {}::{call}", chain::PALLET)));
 		}
+	}
+	if pallet.view_function_by_name(chain::FREE_TOKEN_INFO).is_none() {
+		return Err(UnsupportedRuntime::new(format!("no view function {}::{}", chain::PALLET, chain::FREE_TOKEN_INFO)));
 	}
 	check_origins(runtime, config.extension_version)?;
 
