@@ -10,7 +10,7 @@
 //! *permission* named `ChainSubmit` — a policy question the platform answers
 //! locally, not an RPC — so the only host calls on the path are ones the mock
 //! already implements. This drives a real `signing_sign_raw` product frame
-//! through the dispatcher into a `SigningHostRuntime` whose entire platform is
+//! through the dispatcher into a `HostRuntime<SigningHost>` whose entire platform is
 //! the mock, and verifies the returned sr25519 signature against a key derived
 //! independently from the activation entropy. Nothing is stubbed between the
 //! seed and the signature.
@@ -26,7 +26,7 @@ use parity_scale_codec::{Decode, Encode};
 use schnorrkel::Signature;
 
 use truapi::{
-	FrameSink, SigningHostRuntime,
+	FrameSink, HostRuntime, SigningHost,
 	frame::{
 		MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START,
 		Payload, ProtocolMessage, request_ids, subscription_ids,
@@ -126,7 +126,8 @@ fn account() -> v01::ProductAccountId {
 #[test]
 fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	let platform = Arc::new(MockPlatform::new());
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("a signing host activates a local session from raw entropy");
 
@@ -206,7 +207,8 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	// fail it. Asserting that signing sent nothing is what distinguishes
 	// "signing is local" from "signing got lucky".
 	let platform = Arc::new(MockPlatform::new());
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("local activation succeeds");
 	// Activation looks the session's username up on Asset Hub in the
@@ -258,7 +260,8 @@ fn a_declined_confirmation_withholds_the_signature() {
 		confirm_user_actions: false,
 		..MockConfig::default()
 	}));
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("local activation succeeds");
 
@@ -321,7 +324,8 @@ fn a_seeded_preimage_is_reachable_through_the_core() {
 	let platform = Arc::new(MockPlatform::new());
 	let key = platform.insert_preimage(PREIMAGE.to_vec());
 
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink.clone());
