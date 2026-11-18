@@ -6,7 +6,7 @@ use crate::{
 		Exponent,
 		ledger::{AssetKind, BlockRef, Facts, allocate, mark_disclosed, mint_installation, observe, snapshot},
 		registration::{Admission, Rows},
-		testing::{chain_params, register_rows, set_status, unbuilt_engine},
+		testing::{chain_params, observe_allowance, register_rows, set_status, unbuilt_engine},
 	},
 	durable::DurableTxId,
 	installation::InstallationId,
@@ -26,6 +26,7 @@ impl Wallet {
 		let db = open_memory_core_db();
 		block_on(db.write(move |tx| {
 			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.unwrap();
+			observe_allowance(tx, 20)?;
 			Ok(())
 		}))
 		.unwrap();

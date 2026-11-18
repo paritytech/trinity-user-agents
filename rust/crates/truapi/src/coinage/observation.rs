@@ -17,7 +17,12 @@ use super::{
 	plugins::{PersonhoodSource, Seed},
 	tokens::period_of,
 };
-use crate::{chain::HashAndNumber, durable::DurableTxStatus, runtime::load_vrf, store::Db};
+use crate::{
+	chain::HashAndNumber,
+	durable::DurableTxStatus,
+	runtime::{load_vrf, statement_allowance::collection::PersonhoodCollection},
+	store::Db,
+};
 
 /// What observation reads and writes.
 pub struct ObserverDeps {
@@ -133,8 +138,22 @@ pub async fn on_block(deps: &ObserverDeps, block: HashAndNumber, now: u64, param
 	}
 
 	if let Some((signer, ring, _)) = deps.personhood.person().await {
+		let allowance = match deps.chain.free_token_limits_at(block).await {
+			Ok(limits) => {
+				let allowance = match ring.collection {
+					PersonhoodCollection::People => limits.people,
+					PersonhoodCollection::LitePeople => limits.lite_people,
+				};
+				reads.push((Subject::UnloadAllowance, Read::UnloadAllowance(allowance)));
+				allowance
+			},
+			Err(_) => {
+				reads.push((Subject::UnloadAllowance, Read::Failed));
+				view.unload_allowance().unwrap_or(0)
+			},
+		};
 		let period = period_of(now, params);
-		let tokens: Vec<(TokenId, [u8; 32])> = (0..params.config().unload_allowance)
+		let tokens: Vec<(TokenId, [u8; 32])> = (0..allowance)
 			.filter_map(|slot| {
 				let token = TokenId { period, slot };
 				signer.alias(ring.collection, &free_token_context(token)).ok().map(|alias| (token, alias))
