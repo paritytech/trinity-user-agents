@@ -55,11 +55,16 @@ struct MemoryRecords {
 	disk_full: AtomicBool,
 	/// Whether a write never finishes.
 	stuck: AtomicBool,
+	/// Whether a read never finishes.
+	read_stuck: AtomicBool,
 }
 
 #[async_trait::async_trait]
 impl StackRecords for Arc<MemoryRecords> {
 	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
+		if self.read_stuck.load(Ordering::SeqCst) {
+			return futures::future::pending().await;
+		}
 		Ok(self.records.lock().expect("records mutex poisoned").get(stack_id).cloned())
 	}
 
@@ -251,6 +256,34 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 	);
 }
 
+/// A browser host's storage may never answer. Building the runtime must not
+/// wait on it for ever: the core starts from the bundled copy.
+#[test]
+fn a_record_read_that_never_finishes_starts_from_the_bundled_copy() {
+	let records = Arc::<MemoryRecords>::default();
+	records.read_stuck.store(true, Ordering::SeqCst);
+	let timer = Arc::new(ManualTimer::default());
+	let (link, bundled) =
+		sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
+	let mut load = Box::pin(StackRefresh::load(
+		&link,
+		&bundled,
+		false,
+		Box::new(records),
+		timer.clone(),
+		Box::new(manual_clock()),
+	));
+
+	assert!(load.as_mut().now_or_never().is_none(), "the load waits on the read");
+	timer.advance(RECORD_READ_TIMEOUT);
+	let refresh = load
+		.now_or_never()
+		.expect("the load finishes once the wait is over")
+		.expect("the bundled copy is valid");
+
+	assert_eq!(refresh.stack().chains().people, TEST_STACK_PEOPLE);
+}
+
 /// A browser core stores the record through the host, whose promise may
 /// never settle. The loop must not wait on it forever, or no later fetch could
 /// start and a wipe would never reach the host.
@@ -268,7 +301,10 @@ fn a_store_that_never_finishes_does_not_hold_the_loop() {
 
 	assert_eq!(
 		(after_fetch.last_refresh, after_fetch.restart_required),
-		(Some(StackRefreshOutcome::NotStored { reason: "not stored within 30s".to_string() }), false)
+		(
+			Some(StackRefreshOutcome::NotStored { reason: "not stored within 30s".to_string() }),
+			false
+		)
 	);
 }
 
