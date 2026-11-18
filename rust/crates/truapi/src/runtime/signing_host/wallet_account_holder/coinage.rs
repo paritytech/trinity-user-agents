@@ -82,6 +82,14 @@ impl WalletAccountHolder {
 		Ok(self.services.statement_store.submit(&statement, "coinage cheque").await?)
 	}
 
+	/// The keypair of one of the installed wallet's product accounts, which
+	/// pays a top-up from that account.
+	pub fn coinage_product_keypair(
+		&self,
+		account: &truapi::latest::ProductAccountId,
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.with_installed_keys(|keys| keys.product_keypair(account))
+	}
 
 	/// The statements under `topic`: those retained at once, then each new one.
 	pub async fn coinage_watch(&self, topic: [u8; 32]) -> Result<StatementBatches, StatementWatchError> {

@@ -223,6 +223,9 @@ pub struct RuntimeServices {
 	/// Coinage payments over the started layer.
 	#[cfg(not(target_arch = "wasm32"))]
 	coinage_payments: OnceLock<Payments>,
+	/// The coinage layers as the RFC-6 engine, preferred over the host's.
+	#[cfg(not(target_arch = "wasm32"))]
+	coinage_engine: OnceLock<Arc<crate::runtime::CoinageEngine>>,
 	/// The outcome of the coinage layer's start, once it was started.
 	#[cfg(not(target_arch = "wasm32"))]
 	coinage_start: OnceLock<CoinageStart>,
@@ -361,6 +364,8 @@ impl RuntimeServices {
 			#[cfg(not(target_arch = "wasm32"))]
 			coinage_payments: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
+			coinage_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
 			coinage_start: OnceLock::new(),
 			stack,
 			worker_ledger: WorkerLedger::default(),
@@ -440,6 +445,10 @@ impl RuntimeServices {
 
 	/// The host's top-up engine, when one is installed.
 	pub fn top_up_platform(&self) -> Option<Arc<dyn TopUpPlatform>> {
+		#[cfg(not(target_arch = "wasm32"))]
+		if let Some(engine) = self.coinage_engine.get() {
+			return Some(engine.clone());
+		}
 		self.top_up_platform.get().cloned()
 	}
 
@@ -454,6 +463,10 @@ impl RuntimeServices {
 
 	/// The host's payment engine, when one is installed.
 	pub fn payment_platform(&self) -> Option<Arc<dyn PaymentPlatform>> {
+		#[cfg(not(target_arch = "wasm32"))]
+		if let Some(engine) = self.coinage_engine.get() {
+			return Some(engine.clone());
+		}
 		self.payment_platform.get().cloned()
 	}
 
@@ -465,6 +478,10 @@ impl RuntimeServices {
 
 	/// The host's balance view, when one is installed.
 	pub fn balance_platform(&self) -> Option<Arc<dyn BalancePlatform>> {
+		#[cfg(not(target_arch = "wasm32"))]
+		if let Some(engine) = self.coinage_engine.get() {
+			return Some(engine.clone());
+		}
 		self.balance_platform.get().cloned()
 	}
 
@@ -590,6 +607,16 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_coinage_payments(&self, payments: Payments) -> bool {
 		self.coinage_payments.set(payments).is_ok()
+	}
+
+	/// Install the coinage layers as the RFC-6 engine. Returns whether this
+	/// call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_coinage_engine(&self, engine: Arc<crate::runtime::CoinageEngine>) -> bool {
+		let installed = self.coinage_engine.set(engine).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// Install the outcome of the coinage layer's start, which
