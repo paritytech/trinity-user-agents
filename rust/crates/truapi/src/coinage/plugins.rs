@@ -172,7 +172,7 @@ struct RegistryPolicy(Arc<CoinageDeps>);
 #[async_trait::async_trait]
 impl SubmissionPolicy for RegistryPolicy {
 	fn can_retry(&self, _: &DurableTxEntry, params: &PolicyParams, failure: VerdictFailureKind) -> bool {
-		RecordParams::from_params(params).is_some_and(|params| retries(params, failure))
+		RecordParams::from_params(params).is_some_and(|params| retries(params, failure, (self.0.clock)()))
 	}
 
 	async fn prepare(&self, batch: &[DeferredDurableTx]) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
@@ -199,10 +199,13 @@ impl SubmissionPolicy for RegistryPolicy {
 }
 
 /// Whether a record whose parameters are `params` is built again after
-/// `failure` (invariant 3): never after a dispatch failure of a token-paid
-/// unload, whose token that attempt spent; otherwise as its retry policy
-/// says, an `Until` deadline being enforced by `prepare`.
-fn retries(params: RecordParams, failure: VerdictFailureKind) -> bool {
+/// `failure` at `now`, in Unix seconds (invariant 3): never after a
+/// dispatch failure of a token-paid unload, whose token that attempt spent;
+/// otherwise as its retry policy says. Under `Until`, an expiry is retried
+/// at any time, while its inputs last, and any other failure only until
+/// the deadline, since one that repeats on the same inputs would otherwise
+/// be built again without end.
+fn retries(params: RecordParams, failure: VerdictFailureKind, now: u64) -> bool {
 	let token_spent = matches!(params.call, Call::UnloadToCoins | Call::UnloadToExternal(_)) &&
 		failure == VerdictFailureKind::DispatchFailed;
 	if token_spent {
@@ -211,14 +214,14 @@ fn retries(params: RecordParams, failure: VerdictFailureKind) -> bool {
 	match params.retry {
 		Retry::Never => false,
 		Retry::ExpiryOnly => failure == VerdictFailureKind::Expired,
-		Retry::Until(_) => true,
+		Retry::Until(deadline) => failure == VerdictFailureKind::Expired || now <= deadline,
 	}
 }
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for CoinagePolicy {
 	fn can_retry(&self, _: &DurableTxEntry, params: &PolicyParams, failure: VerdictFailureKind) -> bool {
-		RecordParams::from_params(params).is_some_and(|params| retries(params, failure))
+		RecordParams::from_params(params).is_some_and(|params| retries(params, failure, (self.0.clock)()))
 	}
 
 	async fn prepare(&self, batch: &[DeferredDurableTx]) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
