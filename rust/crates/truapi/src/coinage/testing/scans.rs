@@ -11,7 +11,7 @@ use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
 	chain_runtime::RuntimeFailure,
 	coinage::{
-		chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPosition},
+		chain::{AliasState, ChainCoin, CoinageChain, Emptying, FreeTokenLimits, RingPosition},
 		namespace::{RegistryKey, datastore_key},
 		reconstruction::InstallationRegistry,
 	},
@@ -98,6 +98,10 @@ impl CoinageChain for RecordingChain {
 
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
 		self.chain.tokens_consumed_at(at, tokens).await
+	}
+
+	async fn free_token_limits_at(&self, at: HashAndNumber) -> Result<FreeTokenLimits, StorageWatchError> {
+		self.chain.free_token_limits_at(at).await
 	}
 
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError> {

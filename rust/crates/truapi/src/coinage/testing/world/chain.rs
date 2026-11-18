@@ -24,7 +24,7 @@ use crate::{
 		StorageWatchError, TxSubmitter, TxValidator, WatchEvent,
 	},
 	chain_runtime::RuntimeFailure,
-	coinage::chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPosition},
+	coinage::chain::{AliasState, ChainCoin, CoinageChain, Emptying, FreeTokenLimits, RingPosition},
 };
 
 /// The coinage state at one block.
@@ -407,6 +407,10 @@ impl CoinageChain for WorldChain {
 
 	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
 		Ok(vec![false; tokens.len()])
+	}
+
+	async fn free_token_limits_at(&self, _: HashAndNumber) -> Result<FreeTokenLimits, StorageWatchError> {
+		Ok(FreeTokenLimits { people: 20, lite_people: 20 })
 	}
 
 	async fn nonce_at(&self, _: H256, _: [u8; 32]) -> Result<u32, StorageWatchError> {

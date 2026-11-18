@@ -53,6 +53,10 @@ pub const UNLOAD_INTO_EXTERNAL: &str = "unload_recycler_into_external_asset";
 pub const UNLOAD_INTO_EXTERNAL_AND_LOADED: &str =
 	"unload_recycler_into_external_asset_and_loaded_coins";
 
+/// The view function that gives the free unload tokens a person of each
+/// collection may spend in one period (D1).
+pub const FREE_TOKEN_INFO: &str = "get_free_unload_token_info";
+
 /// Every call the layer submits on the coinage pallet.
 pub const CALLS: [&str; 7] = [
 	SPLIT,
@@ -165,6 +169,17 @@ pub enum RingPosition {
 	Suspended,
 }
 
+/// The free unload tokens a person of each collection may spend in one
+/// period, as [`FREE_TOKEN_INFO`] returns them: the allowance at the
+/// current unload fee, capped by the pallet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FreeTokenLimits {
+	/// For a member of the People collection.
+	pub people: u32,
+	/// For a member of the LitePeople collection.
+	pub lite_people: u32,
+}
+
 /// The coinage pallet's storage, and the members pallet's recycler rings,
 /// read at one block. Every read is batched over its keys, and a missing
 /// value reads as none.
@@ -203,6 +218,8 @@ pub trait CoinageChain: Send + Sync {
 	/// Whether each free token identity, a period and the person's alias in
 	/// it, is recorded as consumed.
 	async fn tokens_consumed_at(&self, at: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError>;
+	/// The free unload tokens of one period, by collection.
+	async fn free_token_limits_at(&self, at: HashAndNumber) -> Result<FreeTokenLimits, StorageWatchError>;
 	/// An account's next nonce.
 	async fn nonce_at(&self, at: H256, account: [u8; 32]) -> Result<u32, StorageWatchError>;
 	/// What an account holds of the instance's external asset, in the
@@ -425,6 +442,17 @@ impl CoinageChain for CoinageStorage {
 		let Some(asset) = instance.as_ref().and_then(|record| record.at("asset_id")).cloned() else { return Ok(0) };
 		let held = self.values(at, "Assets", "Account", &[(asset, AccountId32(account))]).await?;
 		Ok(held.into_iter().flatten().next().as_ref().and_then(|held| number(held, "balance")).unwrap_or(0))
+	}
+
+	async fn free_token_limits_at(&self, at: HashAndNumber) -> Result<FreeTokenLimits, StorageWatchError> {
+		let client = self.storage.client_at(self.genesis, at).await?;
+		let call = subxt::view_functions::dynamic::<(), (u32, u32)>(PALLET, FREE_TOKEN_INFO, ());
+		let (people, lite_people) = client
+			.view_functions()
+			.call(call)
+			.await
+			.map_err(|error| RuntimeFailure::host_failure("coinage_free_token_limits", error.to_string()))?;
+		Ok(FreeTokenLimits { people, lite_people })
 	}
 
 	async fn emptied_by(
