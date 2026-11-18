@@ -189,8 +189,10 @@ pub struct HostRuntime<Role> {
 
 impl<Role> HostRuntime<Role> {
 	fn from_role(services: Arc<RuntimeServices>, role: Arc<Role>) -> Self {
-		let image_loader =
-			crate::image_loader::ImageLoader::new(services.clone(), Arc::new(crate::time::RealTimer));
+		let image_loader = crate::image_loader::ImageLoader::new(
+			services.clone(),
+			Arc::new(crate::time::RealTimer),
+		);
 		Self { services, role, image_loader }
 	}
 
@@ -551,11 +553,15 @@ impl HostRuntime<PairingHost> {
 		Some(self.role.session().session_state().current()?.sso?.ss_secret)
 	}
 
-	/// Read this device's X25519 encryption secret, for hosts running device
-	/// sync. Generated and persisted on first read.
+	/// Read this device's X25519 encryption secret, the key the phone
+	/// registered at pairing, or `None` before pairing.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
-	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services.device_encryption_secret().await.map_err(Into::into)
+	pub async fn device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
+		self.role
+			.accounts()
+			.device_encryption_secret()
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
@@ -607,11 +613,7 @@ impl HostRuntime<PairingHost> {
 	/// connected-session installation have completed.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-		self.role
-			.session()
-			.activate_external_session(blob)
-			.await
-			.map_err(Into::into)
+		self.role.session().activate_external_session(blob).await.map_err(Into::into)
 	}
 
 	/// Await restoration of the persisted auth-session blob.
@@ -676,6 +678,26 @@ impl HostRuntime<SigningHost> {
 		self.role
 			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// Read this install's X25519 encryption secret, the key behind
+	/// `SessionUiInfo::device_enc_public_key` on a signing host. Generated and
+	/// persisted on first read unless the host adopted one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
+	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+		self.role.device_encryption_secret().await.map_err(Into::into)
+	}
+
+	/// Make `secret` this device's X25519 encryption secret, for a host that
+	/// announced a key of its own before the core kept one.
+	///
+	/// Refused while a wallet session is active.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.adopt_device_encryption_key"))]
+	pub async fn adopt_device_encryption_key(
+		&self,
+		secret: [u8; 32],
+	) -> Result<(), v01::GenericError> {
+		self.role.adopt_device_encryption_secret(secret).await.map_err(Into::into)
 	}
 
 	/// End funding session `intent` with `stage` as though its funds had
@@ -858,10 +880,7 @@ impl HostRuntime<SigningHost> {
 	/// what the last one listed changes nothing, so the host calls it on
 	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
-	pub fn set_funding_provider_config(
-		&self,
-		published_names: Vec<String>,
-	) {
+	pub fn set_funding_provider_config(&self, published_names: Vec<String>) {
 		self.services.set_funding_provider_config(published_names);
 	}
 
@@ -1236,7 +1255,8 @@ impl HostRuntime<SigningHost> {
 		&self,
 		deeplink: &str,
 	) -> Result<crate::runtime::AnnouncedPairing, v01::GenericError> {
-		self.role.sso_responder()
+		self.role
+			.sso_responder()
 			.notify_pairing_allowance_allocation(deeplink)
 			.await
 			.map_err(Into::into)
@@ -1256,7 +1276,8 @@ impl HostRuntime<SigningHost> {
 		announced: &crate::runtime::AnnouncedPairing,
 		reason: String,
 	) -> Result<(), v01::GenericError> {
-		self.role.sso_responder()
+		self.role
+			.sso_responder()
 			.notify_pairing_failed(announced, reason)
 			.await
 			.map_err(Into::into)
@@ -1298,7 +1319,8 @@ impl HostRuntime<SigningHost> {
 		own_statement_account_id: [u8; 32],
 		own_encryption_public_key: [u8; 32],
 	) -> Result<SsoAccountHolderService, AuthorityError> {
-		self.role.sso_responder()
+		self.role
+			.sso_responder()
 			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
@@ -1433,10 +1455,7 @@ impl HostRuntime<SigningHost> {
 		&self,
 		targets: Vec<crate::runtime::StatementRenewalTarget>,
 	) -> Result<(), v01::GenericError> {
-		self.role
-			.track_statement_renewal_targets(targets)
-			.await
-			.map_err(Into::into)
+		self.role.track_statement_renewal_targets(targets).await.map_err(Into::into)
 	}
 
 	/// Every statement account the renewal ledger currently tracks.
@@ -1695,13 +1714,11 @@ impl CoreAdmin for HostAdmin {
 			.map(|sso| sso.ss_secret.to_vec()))
 	}
 
-	async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+	async fn get_device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.product_runtime
-			.connection()
-			.services()
 			.device_encryption_secret()
 			.await
-			.map_err(Into::into)
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	async fn get_product_subtree_public_key(
@@ -1823,6 +1840,12 @@ impl ProductRuntimeControl {
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = self.connection.hold_worker();
+		let back = match &request.context {
+			truapi::latest::RenderContext::PocketCardBack { card_id } => {
+				Some((self.connection.clone(), card_id.clone()))
+			},
+			_ => None,
+		};
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
 			request,
 			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
@@ -1838,16 +1861,22 @@ impl ProductRuntimeControl {
 		// and is not polled past, so it releases there rather than waiting for
 		// the caller to drop the handle.
 		let stream = futures::stream::unfold(
-			(stream, Some(reference)),
-			|(mut stream, reference)| async move {
+			(stream, Some(reference), back),
+			|(mut stream, reference, mut back)| async move {
 				match stream.next().await? {
 					Ok(
-						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
-						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
-					) => Some((Ok(node), (stream, reference))),
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(mut node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(mut node),
+					) => {
+						node.clear_refused_inline_images();
+						if let Some((connection, card_id)) = back.take() {
+							connection.mark_back_drawn(card_id);
+						}
+						Some((Ok(node), (stream, reference, back)))
+					},
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None),
+						(stream, None, None),
 					)),
 				}
 			},

@@ -154,9 +154,9 @@ fn responder_advertises_and_signs_with_the_local_peopl_identity() {
 
 #[test]
 fn advertised_device_key_is_independent_of_the_identity() {
-	let (services, _signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
+	let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
 
-	let secret = futures::executor::block_on(services.device_encryption_secret()).unwrap();
+	let secret = futures::executor::block_on(signing_host.device_encryption_secret()).unwrap();
 	let advertised = X25519PrivateKey::from(secret).public_key().0;
 
 	// The regression this guards: advertising the SSO channel key as the

@@ -394,8 +394,7 @@ impl SsoResponderService {
 	) -> Result<EstablishedPairing, String> {
 		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let wallet_session = self.wallet_session()?;
-		let device_enc_secret =
-			X25519PrivateKey::from(self.services.device_encryption_secret().await?);
+		let device_enc_secret = X25519PrivateKey::from(self.wallet.encryption_secret().await?);
 		let device_enc_pub_key = device_enc_secret.public_key().0;
 		let (session, statement) = self
 			.wallet

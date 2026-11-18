@@ -1096,11 +1096,11 @@ impl WasmPairingHostRuntime {
 		self.runtime.device_statement_key().map(|key| key.to_vec())
 	}
 
-	/// Read this device's X25519 encryption secret, generating and persisting
-	/// it on first read.
+	/// Read this device's X25519 encryption secret, the one behind
+	/// `deviceEncPublicKey`, or `undefined` before pairing.
 	#[wasm_bindgen(js_name = deviceEncryptionKey)]
-	pub async fn device_encryption_key(&self) -> Result<Vec<u8>, JsValue> {
-		Ok(self.runtime.device_encryption_key().await?.to_vec())
+	pub async fn device_encryption_key(&self) -> Result<Option<Vec<u8>>, JsValue> {
+		Ok(self.runtime.device_encryption_key().await?.map(|key| key.to_vec()))
 	}
 
 	/// Resolve a product's hard-subtree public key from the cache, the
