@@ -1267,6 +1267,26 @@ impl SigningHostRuntime {
 		self.image_loader.load(reference).await
 	}
 
+	/// Keeps `text` on the device as a material and returns its ID, for
+	/// resolutions started afterwards to draw without Bulletin. Keep before
+	/// anything resolves the material: a resolution that is already waiting on
+	/// Bulletin for it keeps waiting, and does not get the kept text. Refused
+	/// with its reason when the core cannot read it, and as unsupported when the
+	/// host draws no materials or before the core services start over a core
+	/// database.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn keep_material(&self, text: Vec<u8>) -> Result<[u8; 32], crate::KeepMaterialError> {
+		use crate::KeepMaterialError::Refused;
+		let materials = self
+			.services
+			.materials()
+			.filter(|_| self.services.materials_enabled())
+			.ok_or(Refused(truapi::latest::MaterialFailure::Unsupported))?;
+		let id = crate::host_internal::bulletin::preimage_key(&text);
+		materials.keep(id, text).await.map_err(Refused)??;
+		Ok(id)
+	}
+
 	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
 	/// 32-bit float images themselves unless `float_filterable`. Each node that
 	/// falls back reaches `failures` once. Until the core services start over
@@ -1280,13 +1300,8 @@ impl SigningHostRuntime {
 		float_filterable: bool,
 		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
 	) -> crate::MaterialsResolution {
-		let Some(materials) = self.services.materials() else {
-			tracing::warn!("no core database, so every material node draws plain");
-			return crate::MaterialsResolution::plain(tree, context, failures);
-		};
-		let enabled = self.services.materials_enabled();
-		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
-		materials.resolve(tree, context, settings, failures)
+		self.services
+			.resolve_materials(tree, context, language, float_filterable, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -2068,6 +2083,30 @@ impl ProductRuntimeControl {
 		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
 		self.connection()?.publish_renderer_action(item.into())
+	}
+
+	/// The resolved materials of `tree`, a body this connection's product
+	/// rendered in `context`, its shaders in `language`, filtering 32-bit float
+	/// images themselves unless `float_filterable`. A node that falls back is
+	/// logged and reported to the product through `Renderer::failure_subscribe`,
+	/// once.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<crate::MaterialsResolution, ProductRuntimeError> {
+		let services = self.connection()?.services();
+		let connection = self.connection.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::NodeFallback| {
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
+		});
+		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement

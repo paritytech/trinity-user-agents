@@ -18,7 +18,7 @@ use truapi::latest::{
 
 use crate::{CallError, ProductId, dotns_name::is_dns_label};
 
-pub use records::{ReplaceCheck, StackRecords};
+pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
 pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
 
