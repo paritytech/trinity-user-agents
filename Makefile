@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test wasm-store-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-cli-backends e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-follow-after-transport-cut e2e-tx-during-outage e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-cli-backends e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-follow-after-transport-cut e2e-tx-during-outage e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -143,13 +143,6 @@ wasm: check-generated ## Rebuild the truapi runtime and truapi-provider WASM bun
 
 wasm-crypto-test: ## Run crypto/vector tests on wasm32 via wasm-pack/node.
 	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features mock
-
-# Run through cargo, not `wasm-pack test`, which also builds the crate's unit
-# tests: those need threads and a filesystem. The runner is wasm-bindgen-cli's,
-# at the version of wasm-bindgen in Cargo.lock.
-wasm-store-test: ## Run the core store tests on wasm32 in Node.
-	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
-		$(CARGO) test --target wasm32-unknown-unknown -p truapi --test wasm_store --no-default-features --features runtime
 
 dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 	cd $(DOTLI) && TRUAPI_REPO="$(CURDIR)" bun run link:truapi

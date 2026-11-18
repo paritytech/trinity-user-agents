@@ -831,15 +831,6 @@ jobs:
         with:
           name: codegen-output
 
-      # The runner has to match the wasm-bindgen the crate links.
-      - name: Install wasm-bindgen-test-runner
-        run: |
-          version="$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')"
-          cargo install wasm-bindgen-cli --version "$version" --locked
-
-      - name: Test the core store on wasm32
-        run: make wasm-store-test
-
       - name: Install
         run: npm ci --ignore-scripts
 

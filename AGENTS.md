@@ -222,9 +222,7 @@ rust-toolchain.toml        pins every other cargo command in the repo to stable
   `sqlite-wasm-rs`), so it needs a clang that targets wasm32 and `llvm-ar`. CI
   installs both with `.github/actions/wasm-c-toolchain`. Where the default
   clang cannot target wasm32, set `CC_wasm32_unknown_unknown` and
-  `AR_wasm32_unknown_unknown`. `make wasm-store-test` runs the store on wasm32
-  in Node and needs `wasm-bindgen-test-runner` from `wasm-bindgen-cli`, at the
-  `wasm-bindgen` version in `Cargo.lock`.
+  `AR_wasm32_unknown_unknown`.
 - The UniFFI bindings and the container bundle are gitignored build outputs.
   After changing UniFFI-exposed types or native bindings, run
   `./ios/truapi-host/scripts/rebuild.sh` to refresh them locally; when only the
