@@ -19,8 +19,9 @@ pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 use super::allowances::current_unix_secs;
 use super::{
 	AccountHolder, HostAccounts, HostSession, RuntimeServices, authority::AuthorityError,
-	connected_session_ui_info, host_grants::HostGrantStore, product_consent::ProductConsent,
-	ring_vrf_registry::RingVrfRegistryStore, sso_responder_service::SsoResponderService,
+	connected_session_ui_info, device_enc_public_key, host_grants::HostGrantStore,
+	product_consent::ProductConsent, ring_vrf_registry::RingVrfRegistryStore,
+	sso_responder_service::SsoResponderService,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::statement_allowance;
@@ -140,6 +141,27 @@ impl SigningHost {
 		self.sso_responder.clone()
 	}
 
+	/// This install's X25519 encryption secret, the key behind
+	/// `SessionUiInfo::device_enc_public_key`.
+	///
+	/// Generated and persisted on first read unless the host adopted one.
+	pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
+		self.wallet.encryption_secret().await
+	}
+
+	/// Make `secret` this install's X25519 encryption secret, for a host that
+	/// announced a key of its own before the core kept one.
+	///
+	/// Refused while a wallet session is active, because its
+	/// `AuthState::Connected` already names the stored key.
+	pub async fn adopt_device_encryption_secret(&self, secret: [u8; 32]) -> Result<(), String> {
+		if self.wallet.session_state().current().is_some() {
+			return Err("the device encryption key cannot change while a wallet session is active"
+				.to_string());
+		}
+		self.wallet.adopt_encryption_secret(secret).await
+	}
+
 	/// Clear one product's grants and Allow once answers.
 	///
 	/// The wallet session and other products' grants are kept.
@@ -246,13 +268,14 @@ impl HostSession for SigningHost {
 		_product: &ProductContext,
 	) -> Result<latest::HostRequestLoginResponse, CallError<latest::HostRequestLoginError>> {
 		if let Some(session) = self.wallet.session_state().current() {
-			let device_encryption_secret = self
+			let device_enc_public_key = self
 				.wallet
 				.device_encryption_secret()
 				.await
-				.map_err(|error| CallError::HostFailure { reason: error.to_string() })?;
+				.map_err(|error| CallError::HostFailure { reason: error.to_string() })?
+				.map(device_enc_public_key);
 			self.auth_state
-				.connected(&connected_session_ui_info(&session, device_encryption_secret));
+				.connected(&connected_session_ui_info(&session, device_enc_public_key));
 			Ok(latest::HostRequestLoginResponse::AlreadyConnected)
 		} else {
 			// Wallet unlock and session activation are platform-owned.

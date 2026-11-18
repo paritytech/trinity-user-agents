@@ -292,8 +292,7 @@ impl AccountHolder for WalletAccountHolder {
 	/// The install-wide secret this host answers pairing proposals with,
 	/// generated and persisted on first read.
 	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
-		self.services
-			.device_encryption_secret()
+		self.encryption_secret()
 			.await
 			.map(Some)
 			.map_err(|reason| AuthorityError::Unknown { reason })

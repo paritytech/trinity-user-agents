@@ -1136,10 +1136,11 @@ pub(crate) fn forget_chain_failures() {
 }
 
 /// Host-UI projection of an active session for `AuthState::Connected`, with
-/// `device_encryption_secret` as the session's account holder serves it.
+/// the public half of the device encryption key the session's account holder
+/// serves.
 fn connected_session_ui_info(
 	session: &SessionInfo,
-	device_encryption_secret: Option<[u8; 32]>,
+	device_enc_public_key: Option<[u8; 32]>,
 ) -> SessionUiInfo {
 	SessionUiInfo {
 		public_key: session.public_key,
@@ -1150,11 +1151,15 @@ fn connected_session_ui_info(
 		peer_device_enc_public_key: session.peer_device_enc_public_key,
 		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
 		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
-		device_enc_public_key: device_encryption_secret
-			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
+		device_enc_public_key,
 		lite_username: session.lite_username.clone(),
 		full_username: session.full_username.clone(),
 	}
+}
+
+/// Public half of a device encryption secret, as `SessionUiInfo` names it.
+fn device_enc_public_key(secret: [u8; 32]) -> [u8; 32] {
+	X25519PrivateKey::from(secret).public_key().0
 }
 
 const MAX_VRF_TRANSCRIPT_ITEMS: usize = 32;

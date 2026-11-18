@@ -9,7 +9,7 @@ use super::{
 	HostSession,
 	auth_state::AuthStateMachine,
 	authority::{AuthoritySession, authority_session},
-	connected_session_ui_info,
+	connected_session_ui_info, device_enc_public_key,
 	host_grants::GrantBarrier,
 	identity::resolve_session_identity_with_chain,
 	services::{DotnsReads, RuntimeServices},
@@ -268,7 +268,10 @@ impl SsoRequestService {
 	/// `AuthState::Connected` projection of a paired `session`, naming this
 	/// device by the key its pairing proposal advertised.
 	pub fn session_ui_info(session: &SessionInfo) -> SessionUiInfo {
-		connected_session_ui_info(session, pairing_encryption_secret(session))
+		connected_session_ui_info(
+			session,
+			pairing_encryption_secret(session).map(device_enc_public_key),
+		)
 	}
 
 	/// Start the disconnect monitor when a session is already active.

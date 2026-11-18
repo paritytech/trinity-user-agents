@@ -67,10 +67,10 @@ fn pending_account_access_tracks_wallet_activation() {
 #[test]
 fn a_local_session_projects_the_install_wide_device_key() {
 	let platform = Arc::new(StubPlatform::default());
-	let (services, authority) = signing_runtime_with_platform(platform.clone());
+	let (_, authority) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 
-	let install_secret = futures::executor::block_on(services.device_encryption_secret()).unwrap();
+	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
 	let auth_states = platform.auth_states.lock().unwrap();
 	let Some(AuthState::Connected(ui_info)) = auth_states.last() else {
 		panic!("activation should end connected: {auth_states:?}");
@@ -86,6 +86,22 @@ fn a_local_session_projects_the_install_wide_device_key() {
 			None,
 			Ok(Some(install_secret)),
 		)
+	);
+}
+
+/// An active session's `AuthState::Connected` already names the device key,
+/// and contacts encrypt to it, so the key cannot change under that session.
+#[test]
+fn an_active_session_keeps_its_device_key() {
+	let (_, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
+
+	let adoption = futures::executor::block_on(authority.adopt_device_encryption_secret([9; 32]));
+
+	assert_eq!(
+		(adoption.is_err(), futures::executor::block_on(authority.device_encryption_secret())),
+		(true, Ok(install_secret))
 	);
 }
 

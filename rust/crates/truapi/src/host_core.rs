@@ -700,20 +700,22 @@ impl SigningHostRuntime {
 	/// persisted on first read unless the host adopted one.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
 	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services.device_encryption_secret().await.map_err(Into::into)
+		self.signing_host.device_encryption_secret().await.map_err(Into::into)
 	}
 
 	/// Make `secret` this device's X25519 encryption secret, for a host that
 	/// announced a key of its own before the core kept one.
 	///
-	/// Call it before activating the wallet: a session projects the key the
-	/// device had when it was activated.
+	/// Refused while a wallet session is active.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.adopt_device_encryption_key"))]
 	pub async fn adopt_device_encryption_key(
 		&self,
 		secret: [u8; 32],
 	) -> Result<(), v01::GenericError> {
-		self.services.adopt_device_encryption_secret(secret).await.map_err(Into::into)
+		self.signing_host
+			.adopt_device_encryption_secret(secret)
+			.await
+			.map_err(Into::into)
 	}
 
 	/// End funding session `intent` with `stage` as though its funds had
