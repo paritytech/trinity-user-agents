@@ -8550,13 +8550,13 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let db = crate::store::open_memory_core_db();
 	// The host's engine outlives the app, so it still knows the top-up after
 	// the restart.
-	let engine = Arc::new(RecordingTopUpPlatform::default());
+	let engine = Arc::new(RecordingTopUpEngine::default());
 	let start = |db: &crate::store::Db| {
 		let services = funding_services_on(db, Spawner::for_test());
 		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 			crate::platform::FundingPresentOutcome::Started,
 		)));
-		assert!(services.install_top_up_platform(engine.clone()));
+		assert!(services.install_top_up_engine(engine.clone()));
 		services.resume_funding();
 		services
 	};
@@ -8752,8 +8752,8 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	let engine = Arc::new(RecordingTopUpPlatform::default());
-	assert!(services.install_top_up_platform(engine.clone()));
+	let engine = Arc::new(RecordingTopUpEngine::default());
+	assert!(services.install_top_up_engine(engine.clone()));
 	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -10397,7 +10397,7 @@ fn a_provider_credits_only_what_it_started_for_the_session() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	assert!(services.install_top_up_engine(Arc::new(RecordingTopUpEngine::default())));
 	let earlier = served_session(&services, 600);
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &earlier, 600).expect("top-up accepted");
@@ -10427,7 +10427,7 @@ fn a_transfer_that_arrives_after_a_cancel_is_still_delivered() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	assert!(services.install_top_up_engine(Arc::new(RecordingTopUpEngine::default())));
 	let intent = served_session(&services, 500);
 	let worker = provider_worker(&services, "ramp.dot");
 	for _ in 0..2 {
@@ -10461,7 +10461,7 @@ fn a_settled_top_up_started_again_settles_nothing() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	assert!(services.install_top_up_engine(Arc::new(RecordingTopUpEngine::default())));
 	let earlier = served_session(&services, 1);
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &earlier, 1).expect("top-up accepted");
@@ -10497,12 +10497,12 @@ fn a_settled_top_up_started_again_settles_nothing() {
 /// A top-up engine that does not know a top-up on the first read, as one
 /// still catching up would, and reports it claimed after.
 #[derive(Default)]
-struct LateTopUpPlatform {
+struct LateTopUpEngine {
 	reads: std::sync::atomic::AtomicUsize,
 }
 
 #[async_trait::async_trait]
-impl crate::platform::TopUpPlatform for LateTopUpPlatform {
+impl crate::runtime::TopUpEngine for LateTopUpEngine {
 	async fn top_up(
 		&self,
 		_product: &ProductContext,
@@ -10541,7 +10541,7 @@ fn a_top_up_unknown_at_first_still_settles_once_claimed() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(LateTopUpPlatform::default())));
+	assert!(services.install_top_up_engine(Arc::new(LateTopUpEngine::default())));
 	let intent = served_session(&services, 500);
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
@@ -10817,13 +10817,13 @@ fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_t
 }
 
 #[derive(Default)]
-struct RecordingTopUpPlatform {
+struct RecordingTopUpEngine {
 	started: Mutex<Vec<(String, truapi::latest::HostPaymentTopUpRequest)>>,
 	followed: Mutex<Vec<(String, [u8; 32])>>,
 }
 
 #[async_trait::async_trait]
-impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
+impl crate::runtime::TopUpEngine for RecordingTopUpEngine {
 	async fn top_up(
 		&self,
 		product: &ProductContext,
@@ -10925,8 +10925,8 @@ fn product_account_source() -> v01::PaymentTopUpSource {
 #[test]
 fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingTopUpPlatform::default());
-	assert!(services.install_top_up_platform(engine.clone()));
+	let engine = Arc::new(RecordingTopUpEngine::default());
+	assert!(services.install_top_up_engine(engine.clone()));
 
 	top_up(&payment_host(&services, "wallet.dot", true), 1_000, product_account_source())
 		.expect("top-up accepted");
@@ -10955,8 +10955,8 @@ fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
 #[test]
 fn a_top_up_from_an_unusable_source_is_refused_before_the_host_sees_it() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingTopUpPlatform::default());
-	assert!(services.install_top_up_platform(engine.clone()));
+	let engine = Arc::new(RecordingTopUpEngine::default());
+	assert!(services.install_top_up_engine(engine.clone()));
 	let host = payment_host(&services, "wallet.dot", true);
 	let sources = [
 		v01::PaymentTopUpSource::Coins { sr25519_secret_keys: Vec::new() },
@@ -10980,8 +10980,8 @@ fn a_top_up_from_an_unusable_source_is_refused_before_the_host_sees_it() {
 #[test]
 fn top_up_status_is_forwarded_from_the_host_engine() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingTopUpPlatform::default());
-	assert!(services.install_top_up_platform(engine.clone()));
+	let engine = Arc::new(RecordingTopUpEngine::default());
+	assert!(services.install_top_up_engine(engine.clone()));
 	let host = payment_host(&services, "wallet.dot", true);
 	top_up(&host, 1_000, product_account_source()).expect("top-up accepted");
 	let host_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
@@ -11016,7 +11016,7 @@ fn top_up_status_is_forwarded_from_the_host_engine() {
 #[test]
 fn a_top_up_needs_a_session() {
 	let services = payment_services();
-	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	assert!(services.install_top_up_engine(Arc::new(RecordingTopUpEngine::default())));
 
 	assert_eq!(
 		top_up(&payment_host(&services, "wallet.dot", false), 1_000, product_account_source()),
@@ -11025,13 +11025,13 @@ fn a_top_up_needs_a_session() {
 }
 
 #[derive(Default)]
-struct RecordingPaymentPlatform {
+struct RecordingPaymentEngine {
 	requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
 	followed: Mutex<Vec<(String, [u8; 32])>>,
 }
 
 #[async_trait::async_trait]
-impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
+impl crate::runtime::PaymentEngine for RecordingPaymentEngine {
 	async fn request_payment(
 		&self,
 		product: &ProductContext,
@@ -11115,8 +11115,8 @@ fn follow_payment(
 #[test]
 fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingPaymentPlatform::default());
-	assert!(services.install_payment_platform(engine.clone()));
+	let engine = Arc::new(RecordingPaymentEngine::default());
+	assert!(services.install_payment_engine(engine.clone()));
 	let host = payment_host(&services, "wallet.dot", true);
 
 	let requested = request_payment(&host);
@@ -11155,8 +11155,8 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 #[test]
 fn two_products_naming_one_id_reach_the_host_under_different_ids() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingPaymentPlatform::default());
-	assert!(services.install_payment_platform(engine.clone()));
+	let engine = Arc::new(RecordingPaymentEngine::default());
+	assert!(services.install_payment_engine(engine.clone()));
 	follow_payment(&payment_host(&services, "wallet.dot", true));
 	follow_payment(&payment_host(&services, "shop.dot", true));
 
@@ -11169,8 +11169,8 @@ fn two_products_naming_one_id_reach_the_host_under_different_ids() {
 #[test]
 fn no_product_pays_or_follows_payments_without_a_session() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingPaymentPlatform::default());
-	assert!(services.install_payment_platform(engine.clone()));
+	let engine = Arc::new(RecordingPaymentEngine::default());
+	assert!(services.install_payment_engine(engine.clone()));
 	let signed_out = payment_host(&services, "wallet.dot", false);
 
 	assert_eq!(
@@ -11187,11 +11187,11 @@ fn no_product_pays_or_follows_payments_without_a_session() {
 /// A balance view sharing one balance with every product but `private.dot`,
 /// and the products it was asked for.
 #[derive(Default)]
-struct RecordingBalancePlatform {
+struct RecordingBalanceView {
 	asked: Mutex<Vec<(String, Option<u32>)>>,
 }
 
-impl crate::platform::BalancePlatform for RecordingBalancePlatform {
+impl crate::runtime::BalanceView for RecordingBalanceView {
 	fn subscribe_balance(
 		&self,
 		product: &crate::platform::ProductContext,
@@ -11243,8 +11243,8 @@ fn first_balance(
 fn the_balance_comes_from_the_host_for_each_product() {
 	let services = payment_services();
 	let unsupported = first_balance(&payment_host(&services, "wallet.dot", true));
-	let platform = Arc::new(RecordingBalancePlatform::default());
-	assert!(services.install_balance_platform(platform.clone()));
+	let platform = Arc::new(RecordingBalanceView::default());
+	assert!(services.install_balance_view(platform.clone()));
 	let shared = first_balance(&payment_host(&services, "wallet.dot", true));
 	let refused = first_balance(&payment_host(&services, "private.dot", true));
 	let no_session = first_balance(&payment_host(&services, "wallet.dot", false));
@@ -11271,7 +11271,7 @@ fn the_balance_comes_from_the_host_for_each_product() {
 }
 
 // A product sees the balance only once the user lets it: a refusal answers
-// PermissionDenied, and the host's balance view is never asked.
+// PermissionDenied, and the balance view is never asked.
 #[test]
 fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
 	let platform = Arc::new(crate::test_support::StubPlatform {
@@ -11279,8 +11279,8 @@ fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
 		..Default::default()
 	});
 	let services = payment_services_over(platform.clone());
-	let balance = Arc::new(RecordingBalancePlatform::default());
-	assert!(services.install_balance_platform(balance.clone()));
+	let balance = Arc::new(RecordingBalanceView::default());
+	assert!(services.install_balance_view(balance.clone()));
 
 	let refused = first_balance(&payment_host(&services, "wallet.dot", true));
 
@@ -11307,7 +11307,7 @@ fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
 }
 
 /// A balance view whose pushes the test drives.
-struct PushedBalancePlatform(
+struct PushedBalanceView(
 	Mutex<
 		Option<
 			futures::channel::mpsc::UnboundedReceiver<
@@ -11317,7 +11317,7 @@ struct PushedBalancePlatform(
 	>,
 );
 
-impl crate::platform::BalancePlatform for PushedBalancePlatform {
+impl crate::runtime::BalanceView for PushedBalanceView {
 	fn subscribe_balance(
 		&self,
 		_product: &crate::platform::ProductContext,
@@ -11345,7 +11345,7 @@ fn a_revoked_balance_access_ends_the_balance_stream() {
 	let (push, pushes) = futures::channel::mpsc::unbounded();
 	assert!(
 		services
-			.install_balance_platform(Arc::new(PushedBalancePlatform(Mutex::new(Some(pushes)))))
+			.install_balance_view(Arc::new(PushedBalanceView(Mutex::new(Some(pushes)))))
 	);
 	let host = payment_host(&services, "wallet.dot", true);
 	let balance_access = || {
@@ -11403,10 +11403,10 @@ fn a_revoked_balance_access_ends_the_balance_stream() {
 }
 
 /// A payment engine whose user never has enough.
-struct ShortPaymentPlatform;
+struct ShortPaymentEngine;
 
 #[async_trait::async_trait]
-impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
+impl crate::runtime::PaymentEngine for ShortPaymentEngine {
 	async fn request_payment(
 		&self,
 		_product: &ProductContext,
@@ -11437,7 +11437,7 @@ impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
 fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
 	let platform = Arc::new(crate::test_support::StubPlatform::default());
 	let services = payment_services_over(platform.clone());
-	assert!(services.install_payment_platform(Arc::new(ShortPaymentPlatform)));
+	assert!(services.install_payment_engine(Arc::new(ShortPaymentEngine)));
 	let host = payment_host(&services, "wallet.dot", true);
 
 	let without_access = request_payment(&host);
@@ -11474,8 +11474,8 @@ fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
 #[test]
 fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingTopUpPlatform::default());
-	assert!(services.install_top_up_platform(engine.clone()));
+	let engine = Arc::new(RecordingTopUpEngine::default());
+	assert!(services.install_top_up_engine(engine.clone()));
 
 	let refused = top_up(&payment_host(&services, "wallet.dot", true), 0, product_account_source());
 
@@ -11494,8 +11494,8 @@ fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
 #[test]
 fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	let services = payment_services();
-	let engine = Arc::new(RecordingPaymentPlatform::default());
-	assert!(services.install_payment_platform(engine.clone()));
+	let engine = Arc::new(RecordingPaymentEngine::default());
+	assert!(services.install_payment_engine(engine.clone()));
 	let host = payment_host(&services, "wallet.dot", true);
 
 	let refused = futures::executor::block_on(truapi::api::Payment::request(
@@ -11646,10 +11646,10 @@ fn footer_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem 
 /// A host engine that refuses every top-up, as one does when the user
 /// declines it or its source is busy.
 /// A top-up engine that answers every top-up with its error.
-struct RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError);
+struct RefusingTopUpEngine(truapi::latest::HostPaymentTopUpError);
 
 #[async_trait::async_trait]
-impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
+impl crate::runtime::TopUpEngine for RefusingTopUpEngine {
 	async fn top_up(
 		&self,
 		_product: &ProductContext,
@@ -11683,7 +11683,7 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform(
+	assert!(services.install_top_up_engine(Arc::new(RefusingTopUpEngine(
 		truapi::latest::HostPaymentTopUpError::SourceBusy
 	))));
 	let intent = served_session(&services, 500);
@@ -11721,7 +11721,7 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 #[test]
 fn a_top_up_the_engine_is_unsure_of_keeps_its_record() {
 	let (services, intent, worker) = served_with_engine(
-		Arc::new(RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError::Unknown {
+		Arc::new(RefusingTopUpEngine(truapi::latest::HostPaymentTopUpError::Unknown {
 			reason: "engine timed out".to_string(),
 		})),
 		500,
@@ -11754,14 +11754,14 @@ fn ramp_top_up_id() -> [u8; 32] {
 /// A session open for `ramp.dot` on a host with a funding surface and
 /// `engine` as its top-up engine.
 fn served_with_engine(
-	engine: Arc<dyn crate::platform::TopUpPlatform>,
+	engine: Arc<dyn crate::runtime::TopUpEngine>,
 	amount: u128,
 ) -> (Arc<RuntimeServices>, String, ProductRuntimeHost<RemoteAccountHolder>) {
 	let services = funding_services();
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(engine));
+	assert!(services.install_top_up_engine(engine));
 	let intent = served_session(&services, amount);
 	let worker = provider_worker(&services, "ramp.dot");
 	(services, intent, worker)
@@ -11790,7 +11790,7 @@ fn eventually(seconds: u64, done: impl Fn() -> bool) -> bool {
 // and no report can name funds the host never took.
 #[test]
 fn a_repeat_under_a_recorded_id_must_ask_the_same() {
-	let engine = Arc::new(RecordingTopUpPlatform::default());
+	let engine = Arc::new(RecordingTopUpEngine::default());
 	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
 	futures::executor::block_on(services.funding().record_start(
 		crate::unix_time::current_unix_millis(),
@@ -11830,7 +11830,7 @@ fn a_repeat_under_a_recorded_id_must_ask_the_same() {
 // as 1000.
 #[test]
 fn funds_the_host_already_holds_are_never_recorded_for_a_session() {
-	let engine = Arc::new(RecordingTopUpPlatform::default());
+	let engine = Arc::new(RecordingTopUpEngine::default());
 	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
 	top_up(&worker, 1, product_account_source()).expect("plain top-up");
 
@@ -11847,13 +11847,13 @@ fn funds_the_host_already_holds_are_never_recorded_for_a_session() {
 /// `open`, then each as claimed for good. Before that it does not know them,
 /// as when the core checks an id is free.
 #[derive(Default)]
-struct GatedTopUpPlatform {
+struct GatedTopUpEngine {
 	open: Arc<AtomicBool>,
 	started: Mutex<Vec<[u8; 32]>>,
 }
 
 #[async_trait::async_trait]
-impl crate::platform::TopUpPlatform for GatedTopUpPlatform {
+impl crate::runtime::TopUpEngine for GatedTopUpEngine {
 	async fn top_up(
 		&self,
 		_product: &ProductContext,
@@ -11894,13 +11894,13 @@ impl crate::platform::TopUpPlatform for GatedTopUpPlatform {
 // progress with nothing left to end it.
 #[test]
 fn a_settlement_whose_write_failed_is_written_again() {
-	let engine = Arc::new(GatedTopUpPlatform::default());
+	let engine = Arc::new(GatedTopUpEngine::default());
 	let db = crate::store::open_memory_core_db();
 	let services = funding_services_on(&db, Spawner::for_test());
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(engine.clone()));
+	assert!(services.install_top_up_engine(engine.clone()));
 	let intent = served_session(&services, 500);
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
@@ -11925,10 +11925,10 @@ fn a_settlement_whose_write_failed_is_written_again() {
 }
 
 /// A top-up engine that reports every top-up claimed for good.
-struct ClaimedTopUpPlatform;
+struct ClaimedTopUpEngine;
 
 #[async_trait::async_trait]
-impl crate::platform::TopUpPlatform for ClaimedTopUpPlatform {
+impl crate::runtime::TopUpEngine for ClaimedTopUpEngine {
 	async fn top_up(
 		&self,
 		_product: &ProductContext,
@@ -11964,7 +11964,7 @@ fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(before.install_top_up_platform(Arc::new(GatedTopUpPlatform::default())));
+	assert!(before.install_top_up_engine(Arc::new(GatedTopUpEngine::default())));
 	let intent = served_session(&before, 500);
 	let worker = provider_worker(&before, "ramp.dot");
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
@@ -11979,7 +11979,7 @@ fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
 	let resumed = eventually(5, || after.funding().get(&intent).is_some());
 	std::thread::sleep(Duration::from_millis(200));
 	let without_engine = after.funding().get(&intent).map(|session| session.is_terminal());
-	assert!(after.install_top_up_platform(Arc::new(ClaimedTopUpPlatform)));
+	assert!(after.install_top_up_engine(Arc::new(ClaimedTopUpEngine)));
 
 	assert_eq!(
 		(resumed, without_engine, wait_for_stage(&after, &intent)),

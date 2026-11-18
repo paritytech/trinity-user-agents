@@ -1,7 +1,7 @@
 use std::{
 	collections::HashMap,
 	sync::{
-		Arc, Mutex, OnceLock, Weak,
+		Arc, Mutex, Weak,
 		atomic::{AtomicBool, Ordering},
 	},
 };
@@ -43,9 +43,8 @@ use crate::{
 use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeFundingCallbacks,
+		NativeGameCallbacks, NativeScannerCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -55,9 +54,8 @@ use super::{
 	events::NativeEventBus,
 	executor::shared_native_executor,
 	platform::{
-		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
-		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, FundingCallbackPlatform,
+		GameCallbackPlatform, ScannerCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -72,13 +70,6 @@ pub struct NativeTrUApiHostRuntime {
 	ws_bridge: Arc<SharedWsBridge>,
 	/// The one Worker execution per product; opening another replaces it.
 	worker_executions: Mutex<HashMap<ProductId, Weak<NativeProductExecution>>>,
-	/// The host's top-up engine, once installed, which later statuses are
-	/// pushed through.
-	top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
-	/// The payment engine statuses are pushed to, once installed.
-	payments: OnceLock<Arc<PaymentCallbackPlatform>>,
-	/// The balance view changes are pushed to, once installed.
-	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 	/// The Pocket collection, shared with every product execution.
 	pocket: PocketCards,
 	/// The core database directory, which holds the funding resume marker.
@@ -193,9 +184,6 @@ impl NativeTrUApiHostRuntime {
 				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			}))),
 			worker_executions: Mutex::new(HashMap::new()),
-			top_up: OnceLock::new(),
-			payments: OnceLock::new(),
-			balance: OnceLock::new(),
 			pocket,
 			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
@@ -468,75 +456,6 @@ impl NativeTrUApiHostRuntime {
 		terms: Option<crate::host_logic::funding::CancelTerms>,
 	) -> Result<crate::host_logic::funding::CancelConfirmation, HostRejection> {
 		Ok(self.runtime.confirm_funding_cancel(&intent, terms).await?)
-	}
-
-	/// Install the host's top-up engine. Set-once; answers whether this call
-	/// installed it. Push what each followed top-up reports with
-	/// [`Self::notify_top_up_status`].
-	pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
-		let platform = Arc::new(TopUpCallbackPlatform::new(callbacks, self.spawner.clone()));
-		self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
-	}
-
-	/// Push a status the engine reported for `product_id`'s top-up `id`,
-	/// which the core asked to follow through `follow_top_up`. `MyApp.dot`
-	/// names the same top-up as `myapp.dot`.
-	///
-	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
-	/// and Kotlin.
-	pub fn notify_top_up_status(
-		&self,
-		product_id: ProductId,
-		id: crate::Bytes32,
-		status: v01::HostPaymentTopUpStatusSubscribeItem,
-	) -> Result<(), HostRejection> {
-		if let Some(platform) = self.top_up.get() {
-			platform.notify_status(product_id, id, status);
-		}
-		Ok(())
-	}
-
-	/// Install the host's payment engine. Set-once; answers whether this
-	/// call installed it. Push what each followed payment reports with
-	/// [`Self::notify_payment_status`].
-	pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
-		let platform = Arc::new(PaymentCallbackPlatform::new(callbacks, self.spawner.clone()));
-		self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
-	}
-
-	/// Push a status the engine reported for `product_id`'s payment `id`,
-	/// which the core asked to follow through `follow_payment`. `MyApp.dot`
-	/// names the same payment as `myapp.dot`.
-	///
-	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
-	/// and Kotlin.
-	pub fn notify_payment_status(
-		&self,
-		product_id: ProductId,
-		id: crate::Bytes32,
-		status: v01::HostPaymentStatusSubscribeItem,
-	) -> Result<(), HostRejection> {
-		if let Some(platform) = self.payments.get() {
-			platform.notify_status(product_id, id, status);
-		}
-		Ok(())
-	}
-
-	/// Install the host's balance view. Set-once; answers whether this call
-	/// installed it. Push each balance with [`Self::notify_balance`].
-	pub fn set_balance_callbacks(&self, callbacks: Arc<dyn NativeBalanceCallbacks>) -> bool {
-		let platform = Arc::new(BalanceCallbackPlatform::new(callbacks, self.spawner.clone()));
-		self.runtime.set_balance_platform(platform.clone()) && self.balance.set(platform).is_ok()
-	}
-
-	/// Push the user's spendable balance, a decimal string of CASH units,
-	/// while the core follows it through `follow_balance`. The balance is the
-	/// user's, so one call reaches every product following it that still
-	/// holds balance access.
-	pub fn notify_balance(&self, available: u128) {
-		if let Some(platform) = self.balance.get() {
-			platform.notify_balance(available);
-		}
 	}
 
 	/// Ask every funding provider to price `amount` for session `intent`, on

@@ -373,11 +373,11 @@ export type ChainStatus = "Idle" | "Connected" | "Disconnected";
  */
 const NOT_MODELLED_REASONS: Record<string, string> = {
   payment:
-    "payments are served only by native and Rust hosts, since the browser " +
-    "host-callback bridge cannot carry the payment platforms yet",
+    "the core serves payments from its coinage layers, which run only where " +
+    "the runtime holds the seed",
   coinPayment:
-    "the protocol declares coin payments but no host implements them; " +
-    "see docs/rfcs/0006-payments.md",
+    "the core serves coin payments from its coinage layers, which run only " +
+    "where the runtime holds the seed",
   statements:
     "the core owns the statement store and submits it over the people chain, " +
     "so there is no host seam for the mock to record or inject through",
@@ -654,12 +654,11 @@ export interface MockHost {
    */
   statements: never;
   /**
-   * Payments, which only native and Rust hosts serve: the browser bridge
-   * cannot carry the payment platforms yet. Every access throws; see
-   * {@link notModeled}.
+   * Payments, which the core serves from its coinage layers only where the
+   * runtime holds the seed. Every access throws; see {@link notModeled}.
    */
   payment: never;
-  /** Coin payments, unimplemented in the same way as {@link MockHost.payment}. */
+  /** Coin payments, which the core serves as it does {@link MockHost.payment}. */
   coinPayment: never;
   /** Notification ids the core asked the host to cancel, in order. */
   cancelledNotifications(): number[];

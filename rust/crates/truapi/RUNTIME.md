@@ -256,6 +256,10 @@ built, to `HostCallbacks::durable_work_changed`; the host then runs a
 background task awaiting `run_durable_recovery()`, which returns once nothing
 is live.
 
+### Payments
+
+The core serves RFC-6 payments, top-ups and balances, and RFC-17 coin payments, from its own coinage layers ([`docs/design/coinage/`](../../../docs/design/coinage/)). No host supplies a payment engine. The layers run only where the runtime holds the seed and the host turned coinage on (`enable_coinage`; natively, `HostRuntimeConfig.coinage`). There, a call made while the layers start waits for the start. Everywhere else, including a paired host and the browser, every RFC-6 and RFC-17 call answers `Unsupported`.
+
 ### The two roles
 
 - **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>`, which keeps the paired session's grants, and owns logout. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). It reports session changes to the grant store `HostAccounts` keeps its grants in through `PairedSessionOwner`, holding back grant writes until each change and the cleanup it leaves are done. The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
@@ -693,38 +697,6 @@ for raw bytes signed inside the `<Bytes>` watermark.
   answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
   money moved.
-- `BalancePlatform`: stream what a payment request can spend right now, the
-  current value first and then each change. Installed with
-  `set_balance_platform`; native hosts use `set_balance_callbacks` with
-  `notify_balance`. The core requires a session and the product's
-  `BalanceAccess` remote permission, asking for it on the first subscription
-  and answering `PermissionDenied` when the user refuses. The balance is the
-  user's, per purse: one `notify_balance` reaches every product following the
-  purse, and the core checks each product's permission again before passing a
-  balance on, so a revoked grant ends that product's stream with
-  `PermissionDenied`. A host `InsufficientBalance` reaches a product without
-  that permission as `Rejected`. Without a balance view, `balanceSubscribe`
-  answers `Unsupported`.
-- `PaymentPlatform`: pay from the user's balance to an account once the user
-  approves, and stream each payment's status by its caller-chosen id.
-  Installed with `set_payment_platform`; native hosts use
-  `set_payment_callbacks`: the core asks the host to `follow_payment` an id
-  and the host pushes each engine status with `notify_payment_status`. The
-  core keeps the latest status per id, shows the pending one when the engine
-  has not answered within 250 ms, keeps the last 512 final statuses, and
-  ends a stream whose engine stopped early with the abandoned status. The
-  core requires a session and hands the host each id hashed with the product,
-  and offers only the main purse. Without it,
-  `request` and `statusSubscribe` answer `Unsupported`.
-- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
-  stream each top-up's status. Installed with `set_top_up_platform`; native
-  hosts use `set_top_up_callbacks`, following ids through `follow_top_up` and
-  `notify_top_up_status` by the same rules as payments. The core
-  requires a session, checks the source keys, passes a `ProductAccount`
-  source through for the host to derive, and hands the host each id hashed
-  with the product. The host owns claiming, retries, partial claims and
-  persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
-  `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
@@ -753,14 +725,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
 `PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
-lists instead: a host supplies each only when it can serve it. Four traits are in
+lists instead: a host supplies each only when it can serve it. One trait is in
 neither. `ExpandedCardHost` travels per connection rather than with the
-platform. `BalancePlatform`, `PaymentPlatform` and `TopUpPlatform` are installed
-on their own, with `set_balance_platform`, `set_payment_platform` and
-`set_top_up_platform` or their native `set_*_callbacks`, so only a Rust or
-native host can serve them: the host-callback bridge cannot yet carry their
-typed errors or their two-argument status streams, so a browser host, and the
-CLI today, answer them `Unsupported`. Codegen reads `OptionalPlatform` to emit each listed capability
+platform. Codegen reads `OptionalPlatform` to emit each listed capability
 as an optional group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and

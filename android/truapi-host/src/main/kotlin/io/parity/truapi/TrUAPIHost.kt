@@ -103,20 +103,9 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
-import uniffi.truapi.HostPaymentException
-import uniffi.truapi.HostPaymentRequest
-import uniffi.truapi.HostPaymentStatusSubscribeException
-import uniffi.truapi.HostPaymentStatusSubscribeItem
-import uniffi.truapi.HostPaymentTopUpException
-import uniffi.truapi.HostPaymentTopUpRequest
-import uniffi.truapi.HostPaymentTopUpStatusSubscribeException
-import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.NativeBalanceCallbacks
-import uniffi.truapi.NativePaymentCallbacks
 import uniffi.truapi.NativeScannerCallbacks
-import uniffi.truapi.NativeTopUpCallbacks
 import uniffi.truapi.ExecutableKind
 
 /** Package metadata. */
@@ -810,134 +799,6 @@ private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGa
 }
 
 /**
- * Native top-up engine, which claims a source's funds into the user's balance.
- * Install with [TrUAPIHostRuntime.setTopUp], once. A runtime without one
- * answers top-ups with `Unsupported`.
- *
- * The core has already checked the session, the source keys and the amount,
- * and hashed the product into every id it passes, so ids never collide across
- * products. The core asks to follow a top-up with [followTopUp]; push what
- * the engine reports with [TrUAPIHostRuntime.notifyTopUpStatus].
- */
-interface TopUpHostBridge {
-    /**
-     * Start top-up [request] for [productId], returning once the host has
-     * accepted it. Its amount is a decimal string of CASH units.
-     */
-    @Throws(HostPaymentTopUpException::class)
-    suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest)
-
-    /**
-     * Follow [productId]'s top-up [id] on the engine, pushing each status it
-     * reports with [TrUAPIHostRuntime.notifyTopUpStatus], and return when the
-     * engine's stream ends. Throw `TopUpNotFound` when the engine holds no such
-     * top-up. The core cancels the call once it has a final status.
-     */
-    @Throws(HostPaymentTopUpStatusSubscribeException::class)
-    suspend fun followTopUp(productId: ProductId, id: ByteArray)
-}
-
-/**
- * Native payment engine, which pays from the user's balance to an account.
- * Install with [TrUAPIHostRuntime.setPayments], once. A runtime without one
- * answers payment requests with `Unsupported`.
- *
- * The core hashes the product into every id it passes. Answer
- * `InsufficientBalance` whenever the balance is short: the core turns it into
- * `Rejected` for a product without balance access. The core asks to follow a
- * payment with [followPayment]; push what the engine reports with
- * [TrUAPIHostRuntime.notifyPaymentStatus].
- */
-interface PaymentHostBridge {
-    /**
-     * Ask the user to approve payment [request] for [productId], returning once
-     * they have decided and the host took it on. Its amount is a decimal string
-     * of CASH units.
-     */
-    @Throws(HostPaymentException::class)
-    suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest)
-
-    /**
-     * Follow [productId]'s payment [id] on the engine, pushing each status it
-     * reports with [TrUAPIHostRuntime.notifyPaymentStatus], and return when the
-     * engine's stream ends. Throw `PaymentNotFound` when the engine holds no
-     * such payment. The core cancels the call once it has a final status.
-     */
-    @Throws(HostPaymentStatusSubscribeException::class)
-    suspend fun followPayment(productId: ProductId, id: ByteArray)
-}
-
-/**
- * Native balance view, which shares what a payment can spend with a product.
- * Install with [TrUAPIHostRuntime.setBalance], once. The core owns balance
- * access, so do not prompt for it here.
- */
-interface BalanceHostBridge {
-    /**
-     * Follow the user's spendable balance, pushing the current one and each
-     * change with [TrUAPIHostRuntime.notifyBalance], and return when the
-     * stream ends. The core cancels the call once no product follows the
-     * balance, and calls again when one does.
-     */
-    @Throws(HostRejection::class)
-    suspend fun followBalance()
-}
-
-private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : NativeTopUpCallbacks {
-    override suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest) =
-        try {
-            bridge.topUp(productId, request)
-        } catch (error: HostPaymentTopUpException) {
-            throw error
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            throw HostPaymentTopUpException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
-        }
-
-    override suspend fun followTopUp(productId: ProductId, id: ByteArray) =
-        try {
-            bridge.followTopUp(productId, id)
-        } catch (error: HostPaymentTopUpStatusSubscribeException) {
-            throw error
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            throw HostPaymentTopUpStatusSubscribeException.Unknown(hostRejectionReason(error))
-                .apply { initCause(error) }
-        }
-}
-
-private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : NativePaymentCallbacks {
-    override suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest) =
-        try {
-            bridge.requestPayment(productId, request)
-        } catch (error: HostPaymentException) {
-            throw error
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            throw HostPaymentException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
-        }
-
-    override suspend fun followPayment(productId: ProductId, id: ByteArray) =
-        try {
-            bridge.followPayment(productId, id)
-        } catch (error: HostPaymentStatusSubscribeException) {
-            throw error
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            throw HostPaymentStatusSubscribeException.Unknown(hostRejectionReason(error))
-                .apply { initCause(error) }
-        }
-}
-
-private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
-    override suspend fun followBalance() = withHostRejection { bridge.followBalance() }
-}
-
-/**
  * Bootstrap helper for the native localhost WebSocket bridge that a product
  * execution starts.
  */
@@ -1007,59 +868,6 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun notifyContactsChanged() {
         inner.notifyContactsChanged()
-    }
-
-    // Co-own the payment adapters for as long as the runtime holds them.
-    private var topUpRetainer: NativeTopUpCallbacks? = null
-    private var paymentRetainer: NativePaymentCallbacks? = null
-    private var balanceRetainer: NativeBalanceCallbacks? = null
-
-    /**
-     * Install the host's top-up engine. Set-once; returns whether this call
-     * installed it. Call it before opening any product execution.
-     */
-    fun setTopUp(topUp: TopUpHostBridge): Boolean {
-        val adapter = TopUpCallbackAdapter(topUp)
-        topUpRetainer = adapter
-        return inner.setTopUpCallbacks(adapter)
-    }
-
-    /** Report a later status of [productId]'s top-up [id] to the products following it. */
-    fun notifyTopUpStatus(productId: ProductId, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
-        inner.notifyTopUpStatus(productId, id, status)
-    }
-
-    /**
-     * Install the host's payment engine. Set-once; returns whether this call
-     * installed it. Call it before opening any product execution.
-     */
-    fun setPayments(payments: PaymentHostBridge): Boolean {
-        val adapter = PaymentCallbackAdapter(payments)
-        paymentRetainer = adapter
-        return inner.setPaymentCallbacks(adapter)
-    }
-
-    /** Report a later status of [productId]'s payment [id] to the products following it. */
-    fun notifyPaymentStatus(productId: ProductId, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
-        inner.notifyPaymentStatus(productId, id, status)
-    }
-
-    /**
-     * Install the host's balance view. Set-once; returns whether this call
-     * installed it. Call it before opening any product execution.
-     */
-    fun setBalance(balance: BalanceHostBridge): Boolean {
-        val adapter = BalanceCallbackAdapter(balance)
-        balanceRetainer = adapter
-        return inner.setBalanceCallbacks(adapter)
-    }
-
-    /**
-     * Push the user's spendable balance, a decimal string of CASH units, while
-     * the core follows it through [BalanceHostBridge.followBalance].
-     */
-    fun notifyBalance(available: String) {
-        inner.notifyBalance(available)
     }
 
     /**

@@ -81,10 +81,11 @@ use crate::{
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
-		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
+		ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PermissionStatusHost, Platform, PocketPlatform,
+		ScannerPlatform, Stack,
 	},
 	runtime::{
+		BalanceView, PaymentEngine, TopUpEngine,
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
 		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
@@ -154,13 +155,13 @@ pub struct RuntimeServices {
 	funding_providers: crate::runtime::funding_providers::FundingProviders,
 	/// Recent funding quote answers and the quotes each session was offered.
 	funding_quotes: crate::runtime::funding_quotes::FundingQuotes,
-	/// Host top-up engine, installed once at startup by a host that claims
-	/// funds into the balance. Unset leaves every top-up `Unsupported`.
-	top_up_platform: OnceLock<Arc<dyn TopUpPlatform>>,
-	/// The host's payment engine, once installed.
-	payment_platform: OnceLock<Arc<dyn PaymentPlatform>>,
-	/// The host's balance view, once installed.
-	balance_platform: OnceLock<Arc<dyn BalancePlatform>>,
+	/// The RFC-6 top-up engine, which the coinage layers install once they
+	/// start. Unset leaves every top-up `Unsupported`.
+	top_up_engine: OnceLock<Arc<dyn TopUpEngine>>,
+	/// The RFC-6 payment engine, installed with the top-up engine.
+	payment_engine: OnceLock<Arc<dyn PaymentEngine>>,
+	/// The RFC-6 balance view, installed with the top-up engine.
+	balance_view: OnceLock<Arc<dyn BalanceView>>,
 	/// Host contacts adapter, installed once at startup by a host with a
 	/// contact picker. Unset leaves every product contacts call `Unsupported`.
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
@@ -223,9 +224,6 @@ pub struct RuntimeServices {
 	/// Coinage payments over the started layer.
 	#[cfg(not(target_arch = "wasm32"))]
 	coinage_payments: OnceLock<Payments>,
-	/// The coinage layers as the RFC-6 engine, preferred over the host's.
-	#[cfg(not(target_arch = "wasm32"))]
-	coinage_engine: OnceLock<Arc<crate::runtime::CoinageEngine>>,
 	/// The outcome of the coinage layer's start, once it was started.
 	#[cfg(not(target_arch = "wasm32"))]
 	coinage_start: OnceLock<CoinageStart>,
@@ -330,9 +328,9 @@ impl RuntimeServices {
 			funding: Arc::new(crate::runtime::funding::FundingRegistry::new(services.clone())),
 			funding_providers: Default::default(),
 			funding_quotes: Default::default(),
-			top_up_platform: OnceLock::new(),
-			payment_platform: OnceLock::new(),
-			balance_platform: OnceLock::new(),
+			top_up_engine: OnceLock::new(),
+			payment_engine: OnceLock::new(),
+			balance_view: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
@@ -363,8 +361,6 @@ impl RuntimeServices {
 			coinage_running: Running::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			coinage_payments: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
-			coinage_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			coinage_start: OnceLock::new(),
 			stack,
@@ -434,55 +430,43 @@ impl RuntimeServices {
 		&self.funding_quotes
 	}
 
-	/// Install the host's top-up engine. Set-once; returns whether this call
-	/// installed it.
-	pub fn install_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		let installed = self.top_up_platform.set(platform).is_ok();
+	/// Install the RFC-6 top-up engine, which the coinage layers are once
+	/// they start. Set-once; returns whether this call installed it.
+	pub fn install_top_up_engine(&self, platform: Arc<dyn TopUpEngine>) -> bool {
+		let installed = self.top_up_engine.set(platform).is_ok();
 		// Funding sessions waiting on the engine can be followed now.
 		self.funding.wake();
 		installed
 	}
 
-	/// The host's top-up engine, when one is installed.
-	pub fn top_up_platform(&self) -> Option<Arc<dyn TopUpPlatform>> {
-		#[cfg(not(target_arch = "wasm32"))]
-		if let Some(engine) = self.coinage_engine.get() {
-			return Some(engine.clone());
-		}
-		self.top_up_platform.get().cloned()
+	/// The RFC-6 top-up engine, once the coinage layers have started.
+	pub fn top_up_engine(&self) -> Option<Arc<dyn TopUpEngine>> {
+		self.top_up_engine.get().cloned()
 	}
 
-	/// Install the host's payment engine. Set-once; returns whether this
-	/// call installed it.
-	pub fn install_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		let installed = self.payment_platform.set(platform).is_ok();
+	/// Install the RFC-6 payment engine, which the coinage layers are once
+	/// they start. Set-once; returns whether this call installed it.
+	pub fn install_payment_engine(&self, platform: Arc<dyn PaymentEngine>) -> bool {
+		let installed = self.payment_engine.set(platform).is_ok();
 		// Funding sessions waiting on the engine can be followed now.
 		self.funding.wake();
 		installed
 	}
 
-	/// The host's payment engine, when one is installed.
-	pub fn payment_platform(&self) -> Option<Arc<dyn PaymentPlatform>> {
-		#[cfg(not(target_arch = "wasm32"))]
-		if let Some(engine) = self.coinage_engine.get() {
-			return Some(engine.clone());
-		}
-		self.payment_platform.get().cloned()
+	/// The RFC-6 payment engine, once the coinage layers have started.
+	pub fn payment_engine(&self) -> Option<Arc<dyn PaymentEngine>> {
+		self.payment_engine.get().cloned()
 	}
 
-	/// Install the host's balance view. Set-once; returns whether this call
-	/// installed it.
-	pub fn install_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
-		self.balance_platform.set(platform).is_ok()
+	/// Install the RFC-6 balance view, which the coinage layers are once
+	/// they start. Set-once; returns whether this call installed it.
+	pub fn install_balance_view(&self, platform: Arc<dyn BalanceView>) -> bool {
+		self.balance_view.set(platform).is_ok()
 	}
 
-	/// The host's balance view, when one is installed.
-	pub fn balance_platform(&self) -> Option<Arc<dyn BalancePlatform>> {
-		#[cfg(not(target_arch = "wasm32"))]
-		if let Some(engine) = self.coinage_engine.get() {
-			return Some(engine.clone());
-		}
-		self.balance_platform.get().cloned()
+	/// The RFC-6 balance view, once the coinage layers have started.
+	pub fn balance_view(&self) -> Option<Arc<dyn BalanceView>> {
+		self.balance_view.get().cloned()
 	}
 
 	/// The host's Pocket adapter, when one is installed.
@@ -607,16 +591,6 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_coinage_payments(&self, payments: Payments) -> bool {
 		self.coinage_payments.set(payments).is_ok()
-	}
-
-	/// Install the coinage layers as the RFC-6 engine. Returns whether this
-	/// call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn install_coinage_engine(&self, engine: Arc<crate::runtime::CoinageEngine>) -> bool {
-		let installed = self.coinage_engine.set(engine).is_ok();
-		// Funding sessions waiting on the engine can be followed now.
-		self.funding.wake();
-		installed
 	}
 
 	/// Install the outcome of the coinage layer's start, which

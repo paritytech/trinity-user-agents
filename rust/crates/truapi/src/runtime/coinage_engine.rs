@@ -2,7 +2,7 @@
 //! balance engine.
 //!
 //! The engine implements the interfaces the core has always asked a host
-//! for, [`TopUpPlatform`], [`PaymentPlatform`] and [`BalancePlatform`], so
+//! for, [`TopUpEngine`], [`PaymentEngine`] and [`BalanceView`], so
 //! RFC-6 calls and the funding sessions that follow them by id work over
 //! the coinage layers unchanged. The id each call receives already has the
 //! product hashed in, and names the operation in the product's own layer-1
@@ -36,9 +36,9 @@ use crate::{
 	},
 	host_internal::permissions::PermissionsService,
 	platform::{
-		BalancePlatform, CoinPaymentSpendReview, PaymentPlatform, PermissionAuthorizationStatus, Platform,
-		ProductContext, TopUpPlatform, UserConfirmationReview,
+		CoinPaymentSpendReview, PermissionAuthorizationStatus, Platform, ProductContext, UserConfirmationReview,
 	},
+	runtime::{BalanceView, PaymentEngine, TopUpEngine},
 	stream_extensions::StreamExtensions,
 };
 
@@ -177,7 +177,7 @@ fn now() -> u64 {
 }
 
 #[async_trait::async_trait]
-impl TopUpPlatform for CoinageEngine {
+impl TopUpEngine for CoinageEngine {
 	async fn top_up(&self, product: &ProductContext, request: HostPaymentTopUpRequest) -> Result<(), HostPaymentTopUpError> {
 		let unknown = |reason: String| HostPaymentTopUpError::Unknown { reason };
 		let cents = self.cents(request.amount);
@@ -280,7 +280,7 @@ impl TopUpPlatform for CoinageEngine {
 }
 
 #[async_trait::async_trait]
-impl PaymentPlatform for CoinageEngine {
+impl PaymentEngine for CoinageEngine {
 	async fn request_payment(&self, product: &ProductContext, request: HostPaymentRequest) -> Result<(), HostPaymentError> {
 		let unknown = |reason: String| HostPaymentError::Unknown { reason };
 		let cents = self.cents(request.amount);
@@ -348,7 +348,7 @@ impl PaymentPlatform for CoinageEngine {
 	}
 }
 
-impl BalancePlatform for CoinageEngine {
+impl BalanceView for CoinageEngine {
 	fn subscribe_balance(
 		&self,
 		product: &ProductContext,

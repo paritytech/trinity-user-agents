@@ -31,6 +31,7 @@ mod host_session;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
+mod payment_engine;
 mod payment_id;
 mod product_accounts;
 mod product_consent;
@@ -89,6 +90,7 @@ use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
+pub use payment_engine::{BalanceView, PaymentEngine, TopUpEngine};
 pub use services::RuntimeServices;
 #[cfg(not(target_arch = "wasm32"))]
 pub use services::{CoinageOptions, CoinageUnavailable};

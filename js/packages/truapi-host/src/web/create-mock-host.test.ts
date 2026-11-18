@@ -526,10 +526,10 @@ describe("createMockHost control surface", () => {
     // deliberate limit.
     expect(
       () => (host.payment as unknown as { setBalance: unknown }).setBalance,
-    ).toThrow(/bridge cannot carry the payment platforms/);
+    ).toThrow(/serves payments from its coinage layers/);
     expect(
       () => (host.coinPayment as unknown as { transfer: unknown }).transfer,
-    ).toThrow(/no host implements them/);
+    ).toThrow(/serves coin payments from its coinage layers/);
     expect(
       () =>
         (host.statements as unknown as { getSubmitted: unknown }).getSubmitted,
