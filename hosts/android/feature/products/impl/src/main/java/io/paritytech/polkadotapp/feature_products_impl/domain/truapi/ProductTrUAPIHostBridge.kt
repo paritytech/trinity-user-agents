@@ -16,6 +16,7 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
+import io.paritytech.polkadotapp.common.data.telemetry.CoreEventSink
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
@@ -41,6 +42,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.CoreAttribute
+import uniffi.truapi.CoreAttributeValue
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
@@ -87,6 +90,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val coreEventSink: CoreEventSink,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -139,6 +143,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun onCoreLog(marker: String, detail: String) {
             logCoreLine(marker, detail)
+        }
+
+        override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+            logCoreEvent(coreEventSink, marker, attributes)
         }
 
         /**
@@ -430,6 +438,22 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
 internal fun logCoreLine(marker: String, detail: String) {
     val priority = CORE_MARKER_PRIORITIES[marker] ?: Log.DEBUG
     Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
+}
+
+// Keeps one core event on the device as a debug line, and hands a marker the table exports to `sink` at
+// the priority it carries. The debug line stays below what `SentryLogTree` forwards, so an exported
+// event reaches Sentry once, with its attributes.
+internal fun logCoreEvent(sink: CoreEventSink, marker: String, attributes: List<CoreAttribute>) {
+    val fields = attributes.joinToString(" ") { "${it.key}=${it.value.reported()}" }
+    Timber.tag("truapi.core").d("%s: %s", marker, fields)
+    val priority = CORE_MARKER_PRIORITIES[marker] ?: return
+    sink.log(priority, marker, attributes.associate { it.key to it.value.reported() })
+}
+
+private fun CoreAttributeValue.reported(): Any = when (this) {
+    is CoreAttributeValue.Text -> value
+    is CoreAttributeValue.Count -> minOf(value, Long.MAX_VALUE.toULong()).toLong()
+    is CoreAttributeValue.Flag -> value
 }
 
 // The priority each core marker is logged at, read once from the core's own table. A marker the

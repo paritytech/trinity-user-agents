@@ -132,6 +132,7 @@ class TrUAPIHostRuntimeProviderTest {
         installations = mockk(),
         extensionVersions = mockk(),
         pinnedPocketCards = pinnedPocketCards,
+        coreEventSink = { _, _, _ -> },
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )
