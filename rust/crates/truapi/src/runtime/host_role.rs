@@ -10,9 +10,6 @@ pub trait HostRole {
 	/// Holder used for product account requests.
 	type Holder: AccountHolder;
 
-	/// Runtime name recorded in host method spans.
-	fn trace_method(method: &str) -> String;
-
 	/// Account policy and grants for this host.
 	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>>;
 
@@ -22,10 +19,6 @@ pub trait HostRole {
 
 impl HostRole for PairingHostRole {
 	type Holder = RemoteAccountHolder;
-
-	fn trace_method(method: &str) -> String {
-		format!("pairing_host_runtime.{method}")
-	}
 
 	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>> {
 		self.accounts()
@@ -38,10 +31,6 @@ impl HostRole for PairingHostRole {
 
 impl HostRole for SigningHostRole {
 	type Holder = WalletAccountHolder;
-
-	fn trace_method(method: &str) -> String {
-		format!("signing_host_runtime.{method}")
-	}
 
 	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>> {
 		self.accounts()

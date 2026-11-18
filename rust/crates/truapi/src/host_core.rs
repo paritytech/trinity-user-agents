@@ -228,7 +228,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Set-once, so the capability cannot be swapped under a running product.
 	/// Returns whether this call installed it. Call it before serving any
 	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_permission_status_host")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_permission_status_host"))]
 	pub fn set_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
 		self.services.install_permission_status_host(host)
 	}
@@ -238,7 +238,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Set-once, so the collection cannot change hands under a running
 	/// product. Returns whether this call installed it. Call it before serving
 	/// any product runtime.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_pocket_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_pocket_platform"))]
 	pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
 		self.services.install_pocket_platform(platform)
 	}
@@ -247,7 +247,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	///
 	/// Set-once. Returns whether this call installed it. Call it before
 	/// serving any product runtime.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_funding_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_funding_platform"))]
 	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
 		self.services.install_funding_platform(platform)
 	}
@@ -255,7 +255,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Open a funding session on the host's own behalf, as the Balance card's
 	/// Add and Withdraw do, and show the overlay. Returns the session id, or
 	/// `None` when the user dismissed the overlay without starting.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("open_funding")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.open_funding"))]
 	pub async fn open_funding(
 		&self,
 		direction: v01::FundingDirection,
@@ -270,14 +270,14 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Set-once, so reminders cannot change hands under a running product.
 	/// Returns whether this call installed it. Call it before serving any
 	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_game_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_game_platform"))]
 	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
 		self.services.install_game_platform(platform)
 	}
 
 	/// Install the host's [`TopUpPlatform`], which claims funds into the
 	/// balance. Set-once. Returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_top_up_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_top_up_platform"))]
 	pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
 		self.services.install_top_up_platform(platform)
 	}
@@ -285,7 +285,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Install the host's [`PaymentPlatform`], which pays from the user's
 	/// balance once the user approves. Set-once; returns whether this call
 	/// installed it.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_payment_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_payment_platform"))]
 	pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
 		self.services.install_payment_platform(platform)
 	}
@@ -293,14 +293,14 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Install the host's [`BalancePlatform`], which shares the user's
 	/// balance with products. Set-once; returns whether this call installed
 	/// it.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_balance_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_balance_platform"))]
 	pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
 		self.services.install_balance_platform(platform)
 	}
 
 	/// Install the host's [`ScannerPlatform`] before serving any product
 	/// runtime. Set-once: returns whether this call installed it.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_scanner_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_scanner_platform"))]
 	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
 		self.services.install_scanner_platform(platform)
 	}
@@ -311,7 +311,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Set-once, so the picker cannot change hands under a running product.
 	/// Returns whether this call installed it. Call it before serving any
 	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_contacts_platform")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_contacts_platform"))]
 	pub fn set_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
 		self.services.install_contacts_platform(platform)
 	}
@@ -319,13 +319,13 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Tell the core the host's contacts changed, so no handle resolves from
 	/// what it cached before. Call it whenever a contact is removed or blocked;
 	/// the next transaction naming a contact reads the list again.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("notify_contacts_changed")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
 		self.services.contact_handles.clear();
 	}
 
 	/// Build a product-facing runtime from this host.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("product_runtime")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.product_runtime"))]
 	pub fn product_runtime(
 		&self,
 		product: ProductContext,
@@ -342,7 +342,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	}
 
 	/// Build a product-scoped administration handle from this host.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("product_admin")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.product_admin"))]
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
@@ -354,7 +354,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	}
 
 	/// Disconnect the active account-authority session.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("disconnect_session")))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.role.host_session().disconnect().await;
 	}
@@ -414,7 +414,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// A device capability also resolves the host application's OS gate, so an
 	/// OS refusal reads as `Denied` whatever is stored. Remote,
 	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("permission_authorization_status"), product_id = %product_id))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
 		product_id: &ProductId,
@@ -430,7 +430,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// A device capability also resolves the host application's OS gate, so an
 	/// OS refusal reads as `Denied` whatever is stored. Remote,
 	/// identity-disclosure and account-access decisions have no OS gate.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("permission_authorization_statuses"), product_id = %product_id))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.permission_authorization_statuses", product_id = %product_id))]
 	pub async fn permission_authorization_statuses(
 		&self,
 		product_id: &ProductId,
@@ -442,7 +442,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	}
 
 	/// Update a stored permission authorization status for a product.
-	#[instrument(skip_all, fields(runtime.method = Role::trace_method("set_permission_authorization_status"), product_id = %product_id))]
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_permission_authorization_status", product_id = %product_id))]
 	pub async fn set_permission_authorization_status(
 		&self,
 		product_id: &ProductId,
