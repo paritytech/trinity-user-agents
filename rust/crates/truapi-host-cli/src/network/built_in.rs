@@ -1,7 +1,7 @@
 //! The built-in networks: each stack's bundled descriptor, its refresh from
 //! the published copy, and the notice when that copy is in use.
 
-use std::{collections::HashMap, path::PathBuf, sync::LazyLock, time::Duration};
+use std::{collections::HashMap, sync::LazyLock, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::ValueEnum;
@@ -10,7 +10,9 @@ use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 use super::{Network, Stack};
 use crate::{
 	chain::ChainAccess,
-	stack_descriptor::{FetchError, describe_pin_change, fetch, reads_same, unix_now},
+	stack_descriptor::{
+		FetchError, describe_pin_change, fetch, light_client_chains, reads_same, unix_now,
+	},
 };
 
 /// How long a command waits for a built-in stack's published descriptor
@@ -79,13 +81,16 @@ pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> R
 	if !is_built_in {
 		return Ok(());
 	}
-	// The light client is only built here, never connected, so it reads no
-	// spec directory.
-	let light_client = ChainAccess::LightClient { spec_directory: PathBuf::new() };
-	for chain_access in [ChainAccess::Rpc, light_client] {
-		if let Err(error) = Stack::new(descriptor.clone(), &chain_access) {
-			bail!("{} is a built-in network's stack the CLI cannot run: {error}", pointer.url());
-		}
+	let url = pointer.url();
+	if let Err(error) = Stack::new(descriptor.clone(), &ChainAccess::Rpc) {
+		bail!("{url} is a built-in network's stack the CLI cannot run: {error}");
+	}
+	if let Some(chain) = light_client_chains(descriptor).find(|chain| chain.light_spec.is_none()) {
+		bail!(
+			"{url} is a built-in network's stack the CLI cannot run on the light client: its \
+			 descriptor names no lightSpec for {}",
+			chain.role
+		);
 	}
 	Ok(())
 }

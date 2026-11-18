@@ -52,12 +52,14 @@ fn test_built_in_runnable_check() {
 /// spec is not written: every light-client command would fail on it.
 #[test]
 fn test_built_in_runnable_check_on_the_light_client() {
-	let without_people_spec = super::super::testing::edit_chain("People", |chain| {
-		chain.as_object_mut().unwrap().remove("lightSpec");
-	});
 	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
-	let error = ensure_built_in_runnable(&paseo, &without_people_spec).unwrap_err();
-	assert!(error.to_string().contains("no lightSpec for People"), "{error}");
+	for role in ["Relay", "People", "AssetHub", "Bulletin"] {
+		let without_spec = super::super::testing::edit_chain(role, |chain| {
+			chain.as_object_mut().unwrap().remove("lightSpec");
+		});
+		let error = ensure_built_in_runnable(&paseo, &without_spec).unwrap_err();
+		assert!(error.to_string().contains(&format!("no lightSpec for {role}")), "{error}");
+	}
 }
 
 /// A light client on a fresh state directory starts from the specs this build
