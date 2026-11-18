@@ -184,7 +184,7 @@ fn a_load_whose_funding_is_gone_is_given_up() {
 fn a_failed_load_is_built_again_until_its_deadline_whatever_the_failure() {
 	let load = RecordParams { call: Call::Load([1; 32]), retry: Retry::Until(NOW + 3600) };
 	let failures = [VerdictFailureKind::Rejected, VerdictFailureKind::Expired, VerdictFailureKind::DispatchFailed];
-	assert_eq!(failures.map(|failure| retries(load, failure)), [true; 3]);
+	assert_eq!(failures.map(|failure| retries(load, failure, NOW)), [true; 3]);
 }
 
 #[test]

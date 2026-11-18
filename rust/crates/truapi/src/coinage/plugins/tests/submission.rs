@@ -408,7 +408,7 @@ fn a_record_whose_params_do_not_decode_is_given_up_without_holding_up_the_others
 fn a_record_built_once_is_never_retried() {
 	let kinds = [VerdictFailureKind::Expired, VerdictFailureKind::DispatchFailed, VerdictFailureKind::Rejected];
 	let params = RecordParams { call: Call::Transfer, retry: Retry::Never };
-	assert_eq!(kinds.map(|kind| retries(params, kind)), [false; 3]);
+	assert_eq!(kinds.map(|kind| retries(params, kind, NOW)), [false; 3]);
 }
 
 #[test]
