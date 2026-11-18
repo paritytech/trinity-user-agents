@@ -31,6 +31,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.ProductRoomFooterCardRenderer
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web.ProductRoomFooterWebRenderer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -206,6 +207,21 @@ class ProductChatExtensionTest {
             listOf(card, ChatExtensionInputSlot.TextInput),
             listOf(slotWithCard.dockedCard(), extension.observeInputSlot(room).first()),
         )
+    }
+
+    @Test
+    fun `a web footer takes the place of the input as a page of the product`() = runTest {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+
+        val web = ProductRoomFooter.Web("slide-footer.html?label=Go", 104)
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), web)
+        val renderer = (extension.observeInputSlot(room).first() as? ChatExtensionInputSlot.Card)?.renderer
+
+        assertEquals(web, (renderer as? ProductRoomFooterWebRenderer)?.footer)
     }
 
     @Test

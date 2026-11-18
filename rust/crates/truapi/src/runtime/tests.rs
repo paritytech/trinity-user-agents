@@ -1879,6 +1879,85 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 }
 
 #[test]
+fn a_web_page_docks_in_the_footer_and_a_foreign_one_is_refused() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.accounts().clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	let web = v02::ChatRoomFooter::Web(v02::ChatRoomWebFooter {
+		path: "slide-footer.html?label=Slide%20to%20register&action=jollity.register".to_string(),
+		height: 104,
+	});
+
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "room".to_string(),
+			name: "Room".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+			room_id: "room".to_string(),
+			footer: web.clone(),
+		}),
+	))
+	.expect("set_room_footer docks the page");
+
+	let foreign = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+			room_id: "room".to_string(),
+			footer: v02::ChatRoomFooter::Web(v02::ChatRoomWebFooter {
+				path: "https://evil.invalid/page.html".to_string(),
+				height: 104,
+			}),
+		}),
+	));
+	assert!(
+		matches!(
+			foreign,
+			Err(CallError::Domain(HostChatSetRoomFooterError::V2(
+				v01::HostChatSetRoomFooterError::Unknown { .. }
+			)))
+		),
+		"a page off the product origin is refused: {foreign:?}"
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("room".to_string(), web)]
+	);
+}
+
+#[test]
 fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(

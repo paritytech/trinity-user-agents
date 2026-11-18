@@ -918,3 +918,77 @@ fn review_discriminants_do_not_move() {
 
 	assert_eq!(discriminants, [9, 11]);
 }
+
+fn web_footer(path: &str) -> ChatRoomWebFooter {
+	ChatRoomWebFooter { path: path.to_string(), height: 104 }
+}
+
+#[test]
+fn a_web_footer_keeps_a_relative_page_with_its_query() {
+	for kept in [
+		"slide-footer.html",
+		"footer/slide.html?label=Slide%20to%20register&action=jollity.register",
+		"slide-footer.html#idle",
+		"./slide-footer.html",
+	] {
+		assert_eq!(validate_chat_web_footer(web_footer(kept)), Ok(web_footer(kept)), "{kept} must be kept");
+	}
+	assert_eq!(
+		validate_chat_web_footer(web_footer("  slide-footer.html  ")),
+		Ok(web_footer("slide-footer.html"))
+	);
+}
+
+#[test]
+fn a_web_footer_cannot_leave_the_product_origin() {
+	for foreign in [
+		"https://evil.invalid/page.html",
+		"javascript:alert(1)",
+		"polkadot://other.dot/page.html",
+		"//evil.invalid/page.html",
+		"/slide-footer.html",
+		"data:text/html,<script>1</script>",
+		"a\\b.html",
+		"?only=a-query",
+	] {
+		assert_eq!(
+			validate_chat_web_footer(web_footer(foreign)),
+			Err(ChatFieldError::RejectedScheme { field: "path" }),
+			"{foreign} must be rejected"
+		);
+	}
+	for climbing in ["../other/page.html", "footer/../../page.html", "%2E%2E/page.html"] {
+		assert_eq!(
+			validate_chat_web_footer(web_footer(climbing)),
+			Err(ChatFieldError::PathComponent { field: "path" }),
+			"{climbing} must be rejected"
+		);
+	}
+	// A colon after the first slash is part of a file or query, not a scheme.
+	assert!(validate_chat_web_footer(web_footer("pages/a:b.html?t=12:00")).is_ok());
+}
+
+#[test]
+fn a_web_footer_is_screened_and_bounded() {
+	assert_eq!(validate_chat_web_footer(web_footer("  ")), Err(ChatFieldError::Empty { field: "path" }));
+	for unsafe_path in ["slide footer.html", "slide\u{202e}lmth.html", "slide.html\n"] {
+		let trimmed_away = unsafe_path.trim() != unsafe_path;
+		if trimmed_away {
+			continue;
+		}
+		assert_eq!(
+			validate_chat_web_footer(web_footer(unsafe_path)),
+			Err(ChatFieldError::UnsafeCharacter { field: "path" }),
+			"{unsafe_path:?} must be rejected"
+		);
+	}
+	let long = format!("{}.html", "a".repeat(CHAT_WEB_FOOTER_PATH_MAX_BYTES));
+	assert_eq!(
+		validate_chat_web_footer(web_footer(&long)),
+		Err(ChatFieldError::TooLong { field: "path", limit: CHAT_WEB_FOOTER_PATH_MAX_BYTES })
+	);
+	assert_eq!(
+		validate_chat_web_footer(ChatRoomWebFooter { path: "slide-footer.html".into(), height: 0 }),
+		Err(ChatFieldError::Empty { field: "height" })
+	);
+}

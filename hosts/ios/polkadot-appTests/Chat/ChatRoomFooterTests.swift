@@ -44,6 +44,43 @@ struct ChatRoomFooterTests {
         #expect(room(footer: footer, roomId: nil).peerMetadata(using: registry).input == .empty)
     }
 
+    @Test func aRoomWithAWebFooterHoldsTheProductPageInItsInputSlot() {
+        let registry = SingleBotRegistry(bot: bot)
+
+        let input = room(footer: .web(path: "slide-footer.html?label=Go", height: 104)).peerMetadata(using: registry)
+            .input
+
+        #expect(input == .productWeb(path: "slide-footer.html?label=Go", height: 104))
+    }
+
+    /// Like a card, a page belongs to the room it was docked in.
+    @Test func aWebFooterWithoutARoomShowsNoInput() {
+        let registry = SingleBotRegistry(bot: bot)
+
+        let footer = Chat.RoomFooter.web(path: "slide-footer.html", height: 104)
+
+        #expect(room(footer: footer, roomId: nil).peerMetadata(using: registry).input == .empty)
+    }
+
+    @Test(arguments: [
+        Chat.RoomFooter.textInput,
+        .empty,
+        .card(messageType: "register", payload: Data([1, 2])),
+        .web(path: "slide-footer.html?label=Slide%20to%20register&action=jollity.register", height: 104)
+    ])
+    func everyFooterSurvivesItsStoredForm(footer: Chat.RoomFooter) throws {
+        #expect(try Chat.RoomFooter(storedValue: footer.storedValue) == footer)
+    }
+
+    @Test func aDockedPageIsStoredOnTheRoom() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: "room", name: nil, icon: nil)
+
+        try await context.setRoomFooter(for: bot, roomId: "room", footer: .web(path: "slide-footer.html", height: 104))
+
+        #expect(try await storedRoom()?.roomFooter == .web(path: "slide-footer.html", height: 104))
+    }
+
     /// A room the product never set a footer on keeps the text input.
     @Test(arguments: [nil, Chat.RoomFooter.textInput])
     func anyOtherRoomShowsTheBotInput(footer: Chat.RoomFooter?) {

@@ -53,6 +53,8 @@ private class StoredFooter(
     val kind: StoredKind,
     val messageType: String? = null,
     val payloadHex: String? = null,
+    val path: String? = null,
+    val height: Int? = null,
 )
 
 private enum class StoredKind {
@@ -61,12 +63,16 @@ private enum class StoredKind {
 
     @SerializedName("Card")
     CARD,
+
+    @SerializedName("Web")
+    WEB,
 }
 
 private fun ProductRoomFooter.toStored(room: ProductChatIdParameter): StoredFooter? = when (this) {
     ProductRoomFooter.TextInput -> null
     ProductRoomFooter.Empty -> StoredFooter(room.value, StoredKind.EMPTY)
     is ProductRoomFooter.Card -> StoredFooter(room.value, StoredKind.CARD, messageType, payload.value.toHexString())
+    is ProductRoomFooter.Web -> StoredFooter(room.value, StoredKind.WEB, path = path, height = height)
 }
 
 private fun StoredFooter.toDomain(): ProductRoomFooter = when (kind) {
@@ -74,5 +80,9 @@ private fun StoredFooter.toDomain(): ProductRoomFooter = when (kind) {
     StoredKind.CARD -> ProductRoomFooter.Card(
         messageType = requireNotNull(messageType) { "room footer card held without its message type" },
         payload = DataByteArray(requireNotNull(payloadHex) { "room footer card held without its payload" }.fromHex()),
+    )
+    StoredKind.WEB -> ProductRoomFooter.Web(
+        path = requireNotNull(path) { "web room footer held without its path" },
+        height = requireNotNull(height) { "web room footer held without its height" },
     )
 }

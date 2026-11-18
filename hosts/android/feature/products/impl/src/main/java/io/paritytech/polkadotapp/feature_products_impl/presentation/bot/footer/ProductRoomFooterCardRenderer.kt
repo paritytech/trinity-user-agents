@@ -24,6 +24,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.LocalChatInputSlotReady
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
@@ -39,6 +40,9 @@ class ProductRoomFooterCardRenderer(
     private val worker: ProductWorker,
     private val imageResolver: JsImageResolver,
 ) : CustomChatInputSlotRenderer {
+    // The card is ready once the product has drawn it, or failed to: the spinner is not shown in place of a footer.
+    override val reportsReady: Boolean = true
+
     @Composable
     override fun drawInputSlot() {
         val viewModel: ProductRoomFooterCardViewModel = hiltViewModel(
@@ -49,6 +53,9 @@ class ProductRoomFooterCardRenderer(
         )
         LaunchedEffect(card) { viewModel.show(card) }
         val state by viewModel.state.collectAsState()
+        val onReady = LocalChatInputSlotReady.current
+        val isDrawn = state !is LoadingState.Loading
+        LaunchedEffect(isDrawn) { if (isDrawn) onReady() }
 
         val background = PolkadotTheme.colors.bg.surface.main
         Box(

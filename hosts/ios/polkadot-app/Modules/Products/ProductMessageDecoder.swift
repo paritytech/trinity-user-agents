@@ -9,6 +9,7 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
     let resolveImage: WidgetImageResolver
 
     private let runtime: ChatRuntimeProtocol
+    private let webFooterContent: ProductRoomFooterWebContent?
     private let tokenResolver: any WidgetDesignTokenResolving
     private let description: String?
     private let logger: LoggerProtocol
@@ -18,12 +19,14 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
 
     init(
         runtime: ChatRuntimeProtocol,
+        webFooterContent: ProductRoomFooterWebContent? = nil,
         tokenResolver: any WidgetDesignTokenResolving,
         description: String?,
         resolveImage: WidgetImageResolver,
         logger: LoggerProtocol
     ) {
         self.runtime = runtime
+        self.webFooterContent = webFooterContent
         self.tokenResolver = tokenResolver
         self.description = description
         self.resolveImage = resolveImage
@@ -109,6 +112,53 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
                 }
             },
             resolveImage: resolveImage
+        )
+    }
+
+    /// The input slot that shows the page of the product's own web content docked in the footer of `roomId`.
+    ///
+    /// A press the page reports reaches the product as a press in the room footer with an empty
+    /// message type, the way a button on a docked card does.
+    func makeRoomFooterWeb(
+        roomId: String,
+        path: String,
+        height: UInt32
+    ) -> (any ChatInputViewConfigurationProtocol)? {
+        // The room docks a page now, so the card it held stops rendering.
+        roomFooterCards.removeValue(forKey: roomId)?.viewModel.renderTask?.cancel()
+        let footer = Chat.RoomFooter.web(path: path, height: height)
+        guard let handler = runtime as? TrUAPIChatHandler,
+              let content = webFooterContent,
+              let url = ProductRoomFooterWebPage.url(path: path, productId: content.productId) else {
+            if refusedRoomFooters[roomId] != footer {
+                refusedRoomFooters[roomId] = footer
+                logger.warning("[truapi.product] A web footer is docked at \(path), but this host cannot show it")
+            }
+            return nil
+        }
+
+        let logger = logger
+        return ProductRoomFooterWebConfiguration(
+            roomId: roomId,
+            path: path,
+            height: height,
+            makeView: {
+                ProductRoomFooterWebView(
+                    pageURL: url,
+                    productId: content.productId,
+                    height: height,
+                    schemeHandler: content.makeSchemeHandler(),
+                    onAction: { actionId, payload in
+                        await handler.dispatchRoomFooterEvent(
+                            roomId: roomId,
+                            messageType: "",
+                            actionId: actionId,
+                            payload: payload
+                        )
+                    },
+                    logger: logger
+                )
+            }
         )
     }
 

@@ -105,7 +105,7 @@ use crate::platform::{
 	PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductId,
 	ProductStorageKey, SessionUiInfo, UserConfirmationReview, normalize_chat_identifier,
 	validate_chat_custom_message, validate_chat_icon, validate_chat_message_content,
-	validate_chat_name,
+	validate_chat_name, validate_chat_web_footer,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1490,12 +1490,16 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				};
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(|error| failure(error.to_string()))?;
-				if let latest::ChatRoomFooter::Card(card) = request.footer {
-					request.footer = latest::ChatRoomFooter::Card(
+				request.footer = match request.footer {
+					latest::ChatRoomFooter::Card(card) => latest::ChatRoomFooter::Card(
 						validate_chat_custom_message(card)
 							.map_err(|error| failure(error.to_string()))?,
-					);
-				}
+					),
+					latest::ChatRoomFooter::Web(web) => latest::ChatRoomFooter::Web(
+						validate_chat_web_footer(web).map_err(|error| failure(error.to_string()))?,
+					),
+					footer => footer,
+				};
 
 				// Checked here rather than by each host, so every host answers a room
 				// the product never created the same way.

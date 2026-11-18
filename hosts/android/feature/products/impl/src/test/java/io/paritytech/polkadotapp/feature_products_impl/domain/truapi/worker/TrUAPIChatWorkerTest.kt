@@ -422,6 +422,53 @@ class TrUAPIChatWorkerTest {
         assertEquals(listOf(RenderContext.ChatRoomFooter(roomId.value, "register") to "join"), actions.map { it.context to it.actionId })
     }
 
+    /** A web footer press must reach the product as a footer press with no message type, like the Card's. */
+    @Test
+    fun `a web footer press publishes a footer renderer action with an empty message type`() = runTest {
+        val actions = mutableListOf<HostRendererActionSubscribeItem>()
+        val execution = mockk<TrUAPIProductExecution> {
+            every { publishRendererAction(capture(actions)) } just Runs
+        }
+        val workers = mockk<TrUAPIWorkerSupervisor> {
+            every { currentExecution(productId) } returns execution
+            every { executionState(productId) } returns emptyFlow()
+        }
+        val worker = worker(workers = workers)
+
+        val withoutPayload = worker.dispatchRoomFooterPageAction(roomId, "jollity.register", null)
+        val withPayload = worker.dispatchRoomFooterPageAction(roomId, "pick", "{\"n\":1}")
+
+        assertEquals(listOf(true, true), listOf(withoutPayload, withPayload))
+        assertEquals(
+            listOf(RenderContext.ChatRoomFooter(roomId.value, "") to "jollity.register", RenderContext.ChatRoomFooter(roomId.value, "") to "pick"),
+            actions.map { it.context to it.actionId },
+        )
+        assertEquals(listOf("", "{\"n\":1}"), actions.map { it.payload.toString(Charsets.UTF_8) })
+    }
+
+    @Test
+    fun `a web footer press that cannot reach the product answers false`() = runTest {
+        val failing = mockk<TrUAPIProductExecution> {
+            every { publishRendererAction(any()) } throws IllegalStateException("closed")
+        }
+        val stopped = mockk<TrUAPIWorkerSupervisor> {
+            every { currentExecution(productId) } returns null
+            every { executionState(productId) } returns emptyFlow()
+        }
+        val broken = mockk<TrUAPIWorkerSupervisor> {
+            every { currentExecution(productId) } returns failing
+            every { executionState(productId) } returns emptyFlow()
+        }
+
+        assertEquals(
+            listOf(false, false),
+            listOf(
+                worker(workers = stopped).dispatchRoomFooterPageAction(roomId, "jollity.register", null),
+                worker(workers = broken).dispatchRoomFooterPageAction(roomId, "jollity.register", null),
+            ),
+        )
+    }
+
     @Test
     fun `onUserMessage publishes a chat action with peer native`() = runTest {
         val execution: TrUAPIProductExecution = mock()

@@ -27,6 +27,7 @@ class ProductRoomFooterStorageTest {
         val footers = mapOf(
             ProductChatIdParameter("jollity") to ProductRoomFooter.Card("register", byteArrayOf(1, 2, -1).toDataByteArray()),
             ProductChatIdParameter("lobby") to ProductRoomFooter.Empty,
+            ProductChatIdParameter("register") to ProductRoomFooter.Web("slide-footer.html?label=Slide%20to%20register", 104),
         )
 
         storage.write(product, footers)

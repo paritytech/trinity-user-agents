@@ -33,4 +33,13 @@ interface ProductWorker : JsEventDispatcher {
     fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
         Timber.w("This runtime cannot take the $actionId press on the $messageType card docked in ${roomId.value}")
     }
+
+    /**
+     * A press the page of the web footer in [roomId] reported. It reaches the product as a footer press with no message
+     * type. Answers whether it reached the product.
+     */
+    fun dispatchRoomFooterPageAction(roomId: ProductChatIdParameter, actionId: String, payload: String?): Boolean {
+        Timber.w("This runtime cannot take the $actionId press from the web footer in ${roomId.value}")
+        return false
+    }
 }

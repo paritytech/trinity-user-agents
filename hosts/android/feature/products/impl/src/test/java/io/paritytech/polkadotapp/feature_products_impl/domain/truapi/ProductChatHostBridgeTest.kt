@@ -23,6 +23,7 @@ import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.ChatRoomWebFooter
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
 
@@ -170,6 +171,25 @@ class ProductChatHostBridgeTest {
             ),
             api.footers,
         )
+    }
+
+    @Test
+    fun `setRoomFooter maps a web footer onto the room with its path and height`() = runTest {
+        val api = FakeChatMessaging()
+
+        bridge(api).setRoomFooter(ROOM, ChatRoomFooter.Web(ChatRoomWebFooter("slide-footer.html?label=Go", 104u)))
+
+        assertEquals(listOf(ProductChatIdParameter(ROOM) to ProductRoomFooter.Web("slide-footer.html?label=Go", 104)), api.footers)
+    }
+
+    /** The core bounds no height above zero; the host caps it later, so an enormous one must not wrap negative. */
+    @Test
+    fun `a web footer height beyond Int range stays positive`() = runTest {
+        val api = FakeChatMessaging()
+
+        bridge(api).setRoomFooter(ROOM, ChatRoomFooter.Web(ChatRoomWebFooter("f.html", UInt.MAX_VALUE)))
+
+        assertEquals(listOf(ProductChatIdParameter(ROOM) to ProductRoomFooter.Web("f.html", Int.MAX_VALUE)), api.footers)
     }
 
     private fun bridge(api: FakeChatMessaging) = ProductChatHostBridge(productId, api)

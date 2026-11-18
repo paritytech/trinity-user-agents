@@ -82,6 +82,29 @@ class ProductRoomFooterCardViewModelTest {
         assertEquals(listOf(0, LoadingState.Loaded(JsWidget.Spacer())), listOf(registerRender.subscriptionCount.value, viewModel.state.value))
     }
 
+    /** A card replacing another must not blank the footer while it is drawn: the card before stays until then. */
+    @Test
+    fun `the card before stays shown until the next one is drawn`() = runTest(testDispatcher) {
+        val confirmRender = MutableSharedFlow<Result<JsWidget>>()
+        val registerWidget = JsWidget.Text("Register")
+        val worker = mockk<ProductWorker> {
+            every { renderRoomFooter(any(), "register", any()) } returns flowOf(Result.success(registerWidget))
+            every { renderRoomFooter(any(), "confirm", any()) } returns confirmRender
+        }
+        val viewModel = ProductRoomFooterCardViewModel(ROOM, worker)
+        viewModel.show(register)
+        advanceUntilIdle()
+
+        viewModel.show(confirm)
+        advanceUntilIdle()
+        val whileDrawing = viewModel.state.value
+        val confirmWidget = JsWidget.Text("Registered")
+        confirmRender.emit(Result.success(confirmWidget))
+        advanceUntilIdle()
+
+        assertEquals(listOf(LoadingState.Loaded(registerWidget), LoadingState.Loaded(confirmWidget)), listOf(whileDrawing, viewModel.state.value))
+    }
+
     /** The screen shows the same card again on every return to the chat, and that must not draw it again. */
     @Test
     fun `showing the same card again keeps its render`() = runTest(testDispatcher) {

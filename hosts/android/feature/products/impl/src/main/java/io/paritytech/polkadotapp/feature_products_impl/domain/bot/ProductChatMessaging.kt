@@ -32,4 +32,7 @@ sealed interface ProductRoomFooter {
 
     /** A body the product draws itself, docked under the messages and never shown as a message. */
     data class Card(val messageType: String, val payload: DataByteArray) : ProductRoomFooter
+
+    /** A page of the product's own web content at [path], shown in a webview [height] logical points tall before the host caps it. */
+    data class Web(val path: String, val height: Int) : ProductRoomFooter
 }

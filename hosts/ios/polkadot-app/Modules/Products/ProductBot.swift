@@ -17,6 +17,7 @@ final class ProductBot: ChatExtensionBot {
     let product: Product
     private let description: String?
     private let runtime: ChatRuntimeProtocol
+    private let webFooterContent: ProductRoomFooterWebContent?
     private let resolveImage: WidgetImageResolver
     private let logger: LoggerProtocol
 
@@ -24,6 +25,7 @@ final class ProductBot: ChatExtensionBot {
 
     lazy var messageDecoder = ProductMessageDecoder(
         runtime: runtime,
+        webFooterContent: webFooterContent,
         tokenResolver: WidgetDesignTokenResolver(),
         description: description,
         resolveImage: resolveImage,
@@ -34,12 +36,14 @@ final class ProductBot: ChatExtensionBot {
         product: Product,
         description: String?,
         runtime: ChatRuntimeProtocol,
+        webFooterContent: ProductRoomFooterWebContent? = nil,
         resolveImage: WidgetImageResolver,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
         self.description = description
         self.runtime = runtime
+        self.webFooterContent = webFooterContent
         self.resolveImage = resolveImage
         self.logger = logger
     }

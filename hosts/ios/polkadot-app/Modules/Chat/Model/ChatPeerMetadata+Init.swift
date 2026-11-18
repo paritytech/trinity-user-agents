@@ -62,6 +62,8 @@ extension Chat.LocalModel {
             .empty
         case let .card(messageType, payload):
             roomId == nil ? .empty : .productCard(messageType: messageType, payload: payload)
+        case let .web(path, height):
+            roomId == nil ? .empty : .productWeb(path: path, height: height)
         }
     }
 }

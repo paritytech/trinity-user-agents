@@ -42,7 +42,7 @@ pub use crate::{
 use truapi::{
 	latest::{
 		AllocatableResource, ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection, FundingQuote,
+		ChatMessageContent, ChatRoomWebFooter, ChatReaction, ChatRichText, CodeFormat, FundingDirection, FundingQuote,
 		FundingQuoteRefusal, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
 		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
 		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
@@ -352,6 +352,47 @@ pub fn validate_chat_custom_message(
 		message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
 		payload: custom.payload,
 	})
+}
+
+/// Largest accepted length for the path of a web room footer, in bytes.
+pub const CHAT_WEB_FOOTER_PATH_MAX_BYTES: usize = 2048;
+
+/// Validate the page a product names for the footer of its room.
+///
+/// The path must stay inside the product's own web root: it is relative, has
+/// no scheme or host, no backslash and no `..` segment, so a host that joins
+/// it onto the product's origin cannot be sent anywhere else. The query and
+/// fragment are the page's own and are not inspected beyond the byte budget
+/// and the character screen. A zero height leaves nothing to show.
+pub fn validate_chat_web_footer(
+	footer: ChatRoomWebFooter,
+) -> Result<ChatRoomWebFooter, ChatFieldError> {
+	const FIELD: &str = "path";
+	let path = footer.path.trim();
+	if path.is_empty() {
+		return Err(ChatFieldError::Empty { field: FIELD });
+	}
+	if path.len() > CHAT_WEB_FOOTER_PATH_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field: FIELD, limit: CHAT_WEB_FOOTER_PATH_MAX_BYTES });
+	}
+	if path.chars().any(|character| is_display_unsafe(character) || character.is_whitespace()) {
+		return Err(ChatFieldError::UnsafeCharacter { field: FIELD });
+	}
+	let location = path.split(['?', '#']).next().unwrap_or_default();
+	if location.is_empty() || location.starts_with('/') || location.contains('\\') {
+		return Err(ChatFieldError::RejectedScheme { field: FIELD });
+	}
+	// A colon before the first slash reads as a scheme (`https:`, `javascript:`).
+	if location.split('/').next().is_some_and(|first| first.contains(':')) {
+		return Err(ChatFieldError::RejectedScheme { field: FIELD });
+	}
+	if location.split('/').any(|segment| segment == ".." || segment.eq_ignore_ascii_case("%2e%2e")) {
+		return Err(ChatFieldError::PathComponent { field: FIELD });
+	}
+	if footer.height == 0 {
+		return Err(ChatFieldError::Empty { field: "height" });
+	}
+	Ok(ChatRoomWebFooter { path: path.to_owned(), height: footer.height })
 }
 
 /// Validate a product-supplied file name.

@@ -83,3 +83,20 @@ fn register_bot_response_status_matches_reference_host_wire() {
 
 	assert_eq!(HostChatRegisterBotResponse::decode(&mut new.encode().as_slice()).unwrap(), new);
 }
+
+/// Appended after `Card`, so the indices products already send keep their meaning.
+#[test]
+fn a_web_footer_is_variant_three_and_round_trips() {
+	let web = v02::ChatRoomFooter::Web(v02::ChatRoomWebFooter {
+		path: "f.html?a=1".to_string(),
+		height: 104,
+	});
+	let bytes = web.encode();
+
+	assert_eq!(v02::ChatRoomFooter::TextInput.encode(), [0]);
+	assert_eq!(v02::ChatRoomFooter::Empty.encode(), [1]);
+	assert_eq!(bytes[0], 3);
+	// Compact length 10, the path, then the height as a little-endian u32.
+	assert_eq!(&bytes[1..], [&[40][..], b"f.html?a=1", &104u32.to_le_bytes()].concat());
+	assert_eq!(v02::ChatRoomFooter::decode(&mut &bytes[..]).ok(), Some(web));
+}

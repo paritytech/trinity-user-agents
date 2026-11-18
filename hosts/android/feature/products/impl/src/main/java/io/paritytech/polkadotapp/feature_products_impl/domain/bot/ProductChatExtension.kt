@@ -35,6 +35,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolvePro
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.ProductRoomFooterCardRenderer
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web.ProductRoomFooterWebRenderer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -106,6 +107,9 @@ class ProductChatExtension(
                 ProductRoomFooter.Empty -> ChatExtensionInputSlot.Hidden
                 is ProductRoomFooter.Card -> ChatExtensionInputSlot.Card(
                     ProductRoomFooterCardRenderer(room, footer, runningWorker, messageRenderer.imageResolver)
+                )
+                is ProductRoomFooter.Web -> ChatExtensionInputSlot.Card(
+                    ProductRoomFooterWebRenderer(room, product.id, footer, runningWorker)
                 )
             }
         }.distinctUntilChanged()
