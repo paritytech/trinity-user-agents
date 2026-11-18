@@ -96,8 +96,8 @@ extension FundingFlowState {
 
     /// The asset `quote`'s provider-side figures are counted in, with the
     /// decimals the quote carries.
-    func quoteUnit(_ quote: FundingQuote) -> FundingAssetUnit {
-        FundingAssetUnit(code: session?.choice?.asset ?? askedAsset ?? "", decimals: quote.assetDecimals)
+    func quoteUnit(_ quote: FundingQuote) -> AssetBalanceDisplayInfo {
+        .from(assetCode: session?.choice?.asset ?? askedAsset ?? "", decimals: Int16(quote.assetDecimals))
     }
 
     /// The asset an ask names: the chosen token for crypto, and for card or

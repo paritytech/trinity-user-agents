@@ -255,7 +255,13 @@ export type CoreStorageKey =
    * A product's App executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "AppManifest"; value: { productLabel: string } };
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -328,7 +334,7 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export type ExpandedCardFaceOutcome =
   | "Applied"
@@ -1103,6 +1109,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
     }),
 );
 
@@ -1168,7 +1178,7 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * What the host did with a request to show or hide the expanded card face.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
@@ -1918,7 +1928,7 @@ export interface CoreStorage {
 }
 
 /**
- * Host control of the card face drawn above an opened card's Widget.
+ * Host control of the card face drawn under an opened card's Widget.
  *
  * Carried per connection on `ConnectionAdapters`, because the host owns one
  * drawer per product execution. A connection without one tells products
@@ -1926,7 +1936,7 @@ export interface CoreStorage {
  */
 export interface ExpandedCardHost {
   /**
-   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   * Uncover (`true`) or cover (`false`) the face under the calling Widget.
    */
   setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
 }

@@ -1,4 +1,5 @@
 import DesignSystem
+import FoundationExt
 import PolkadotUI
 import SwiftUI
 import TrUAPIHost
@@ -103,7 +104,7 @@ private extension FundingProgressView {
     }
 
     var quotedSendAmount: String? {
-        model.chosenQuote.flatMap { model.state.quoteUnit($0).format($0.sendAmount) }
+        model.chosenQuote.flatMap { model.state.quoteUnit($0).amount(units: $0.sendAmount) }
     }
 }
 
@@ -194,7 +195,7 @@ private extension FundingProgressView {
             case (.out, _):
                 feesRow(
                     String(localized: .Funding.summaryWithdrawCaption),
-                    model.chosenQuote.flatMap { model.state.quoteUnit($0).format($0.receiveAmount) }
+                    model.chosenQuote.flatMap { model.state.quoteUnit($0).amount(units: $0.receiveAmount) }
                 )
                 arrivesRow
             }
@@ -212,7 +213,10 @@ private extension FundingProgressView {
     var bankRows: some View {
         if case let .bank(amount, currency, decimals, beneficiary, account, bankCode, reference, _)? =
             model.progress?.deposit {
-            feesRow(bankAmountTitle, FundingAssetUnit(code: currency, decimals: decimals).format(amount))
+            feesRow(
+                bankAmountTitle,
+                AssetBalanceDisplayInfo.from(assetCode: currency, decimals: Int16(decimals)).amount(units: amount)
+            )
             beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
             account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
             bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }
@@ -237,7 +241,10 @@ private extension FundingProgressView {
                     title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
                     action: presenter.showDeposit
                 ) {
-                    FundingAssetUnit(code: asset, decimals: decimals).format(amount).map { value($0) }
+                    AssetBalanceDisplayInfo
+                        .from(assetCode: asset, decimals: Int16(decimals))
+                        .amount(units: amount)
+                        .map { value($0) }
                 }
             } else {
                 pending(.Funding.depositPreparing)

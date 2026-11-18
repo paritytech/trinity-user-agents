@@ -473,13 +473,13 @@ pub mod latest {
 	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
 	/// Pocket card removal failure.
 	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
-	/// Request to show or hide the face above the calling Widget.
+	/// Request to cover or uncover the face under the calling Widget.
 	pub type HostExpandedCardSetFaceShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
-	/// Face visibility change failure.
+	/// Face cover change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
-	/// Request to turn the card above the calling Widget to one side.
+	/// Request to turn the card under the calling Widget to one side.
 	pub type HostExpandedCardSetBackShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
 	/// Card turn failure.
@@ -903,9 +903,18 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		mod pocket_cards;
 
+		#[cfg(not(target_arch = "wasm32"))]
+		mod bulletin_lookup;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		mod materials;
+
 		pub use spawner::Spawner;
 
 		pub use truapi_core::TrUApiCore;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
 			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
@@ -926,9 +935,15 @@ cfg_select! {
 		pub use host_rpc_client::HostRpcClient;
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
+		pub use materials::{
+			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
+			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform,
+			UniformKind, UniformRole,
+		};
+		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
-			NativePublicProfileObserver, NativeRendererObserver, NativeSubscription,
-			WsBridgeEndpoint, WsBridgeStartError,
+			NativeMaterialsObserver, NativeMaterialsResolution, NativePublicProfileObserver,
+			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native_debug::{DebugSinkError, WsDebugSink};

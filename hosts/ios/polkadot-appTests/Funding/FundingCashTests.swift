@@ -30,16 +30,16 @@ struct FundingCashTests {
     }
 
     @Test
-    func leadsWithThePeggedCurrencysSign() throws {
-        let euro = try #require(Currency.supported.first { $0.code == "EUR" })
-        let cash = FundingCash(symbol: "EURC", precision: 6, fiat: euro)
-
-        #expect(cash.label(50) == "\u{20AC}50 EURC")
-    }
-
-    @Test
     func signsByDirection() {
         #expect(cash.signed(50, direction: .in) == "+$50 CASH")
         #expect(cash.signed(50, direction: .out) == "-$50 CASH")
+    }
+
+    @Test
+    func setsACurrencyAsAPriceAndAnyOtherAssetWithItsCode() {
+        #expect(AssetBalanceDisplayInfo.from(assetCode: "eur", decimals: 2).amount(units: "2510") == "\u{20AC}25.10")
+        #expect(AssetBalanceDisplayInfo.from(assetCode: "EUR", decimals: 2).amount(units: "2500") == "\u{20AC}25")
+        #expect(AssetBalanceDisplayInfo.from(assetCode: "USDT", decimals: 6).amount(units: "51800000") == "51.8 USDT")
+        #expect(AssetBalanceDisplayInfo.from(assetCode: "USDT", decimals: 6).amount(units: "x") == nil)
     }
 }

@@ -60,15 +60,17 @@ private extension FundingDepositView {
                 cryptoDeposit(
                     address: address,
                     network: network,
-                    amount: FundingAssetUnit(code: asset, decimals: decimals).format(amount),
+                    amount: AssetBalanceDisplayInfo.from(assetCode: asset, decimals: Int16(decimals))
+                        .amount(units: amount),
                     exact: exact,
                     uri: uri
                 )
             case let .bank(amount, currency, decimals, beneficiary, account, bankCode, reference, _):
                 VStack(spacing: DSSpacings.small) {
-                    FundingAssetUnit(code: currency, decimals: decimals).format(amount).map {
-                        copyRow(String(localized: .Funding.depositExactAmount), $0)
-                    }
+                    AssetBalanceDisplayInfo
+                        .from(assetCode: currency, decimals: Int16(decimals))
+                        .amount(units: amount)
+                        .map { copyRow(String(localized: .Funding.depositExactAmount), $0) }
                     beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
                     account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
                     bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }

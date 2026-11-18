@@ -4,14 +4,12 @@ import Products
 import Testing
 @testable import polkadot_app
 
-/// Pressing a card opens the product's app, so the archive the app is served
-/// from is fetched ahead of the press. Only for host-placed cards: they
+/// Pressing a card opens the product's widget, or its app when there is none,
+/// so that archive is fetched ahead of the press. Only for host-placed cards: they
 /// are few and fixed, where a Pocket full of added cards would turn one visit
 /// to the tab into a fetch per product.
 @MainActor
 struct PocketPrewarmerTests {
-    /// A pressed card opens the app, so warming the widget archive fetches
-    /// something the press never loads and leaves the press slow anyway.
     @Test
     func warmsTheArchiveAPressedCardOpens() async {
         let archives = RecordingArchives()
@@ -19,7 +17,7 @@ struct PocketPrewarmerTests {
 
         await prewarmer.warm([humanity])
 
-        #expect(archives.warmed == ["app.peopl.testnet"])
+        #expect(archives.warmed == ["widget.peopl.testnet"])
     }
 
     /// The bound that makes this safe: a user may hold many added cards, and
@@ -44,7 +42,7 @@ struct PocketPrewarmerTests {
         await prewarmer.warm([humanity, humanity])
         await prewarmer.warm([humanity])
 
-        #expect(archives.warmed == ["app.peopl.testnet"])
+        #expect(archives.warmed == ["widget.peopl.testnet"])
     }
 
     /// A warm that failed left nothing on disk, so the next visit tries again
@@ -58,7 +56,7 @@ struct PocketPrewarmerTests {
         archives.failing = false
         await prewarmer.warm([humanity])
 
-        #expect(archives.warmed == ["app.peopl.testnet", "app.peopl.testnet"])
+        #expect(archives.warmed == ["widget.peopl.testnet", "widget.peopl.testnet"])
     }
 }
 

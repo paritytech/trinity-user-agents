@@ -169,6 +169,8 @@ private extension Chat.LocalMessage.Content {
             // ICE candidates are pure peer-to-peer signaling and have no
             // meaningful local representation: not persisted, not tracked.
             false
+        case .seen:
+            false
         }
     }
 }

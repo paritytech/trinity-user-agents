@@ -29,6 +29,16 @@ pub enum ChainSource {
 	},
 }
 
+/// What a connect to one chain needs: the chain's own source and, for a
+/// light-client parachain, its relay's genesis hash and source.
+pub struct ResolvedChain {
+	/// The chain's own source.
+	pub source: ChainSource,
+	/// The relay the chain syncs through.
+	#[cfg(feature = "smoldot")]
+	pub relay: Option<([u8; 32], ChainSource)>,
+}
+
 impl ChainSource {
 	/// Remote JSON-RPC node backend.
 	#[cfg(feature = "ws")]

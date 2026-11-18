@@ -110,12 +110,6 @@ extension FundingStatus {
     }
 }
 
-extension Date {
-    init(milliseconds: UInt64) {
-        self.init(timeIntervalSince1970: milliseconds.millisecondsToSeconds())
-    }
-}
-
 extension FundingActivityItem {
     /// The sessions in flight, newest first, and the ended ones, most
     /// recently ended first.

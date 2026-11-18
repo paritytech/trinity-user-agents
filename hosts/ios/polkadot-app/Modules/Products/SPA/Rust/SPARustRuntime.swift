@@ -78,8 +78,6 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await serveDotNsContent(onPhase: onPhase)
             case let .directURL(url):
                 url
-            case let .bundled(directory):
-                try await configuration.page.applied(to: serveFiles(at: directory))
             #if DEBUG
                 case let .devServer(url, _):
                     url
