@@ -73,7 +73,7 @@ fn hand_off(imported: &Imported, key: ItemKey) {
 	hold(imported, key);
 	let tag = HandoffTag(b"next cheque".to_vec());
 	let request = HandoffRequest { from: PURSE, keys: [key].into(), tag };
-	block_on(imported.ledger.hand_off(request, |_| Ok::<_, ()>(()))).unwrap();
+	block_on(imported.ledger.hand_off(request, |_| Ok::<_, ()>(()), |_, _| Ok(()))).unwrap();
 }
 
 /// Starts moving `key` out to a foreign key, under an operation of its own.

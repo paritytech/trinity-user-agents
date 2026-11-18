@@ -396,8 +396,12 @@ and the core database records only the public key, its purse and its creator.
 `createCheque` hands items to a receive key or a static X25519 key: it seals
 the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
 key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
-under the cheque id, so they are spent from then on. A second cheque with the
-same id from the same product answers `OperationExists`.
+under the cheque id, so they are spent from then on. In the same write, the
+core database keeps the cheque as returned, with its source purse, destination
+and creation time, in `nft_cheque`. A second cheque with the same id from the
+same product answers `OperationExists`, and `listCheques` returns every cheque
+the calling product created since the core started keeping them, oldest first,
+so a product that lost one can deliver the same bytes again or revoke it.
 
 `deposit` opens a received cheque and registers one move per item into fresh
 keys of the purse the product names, under the cheque id, and returns;
