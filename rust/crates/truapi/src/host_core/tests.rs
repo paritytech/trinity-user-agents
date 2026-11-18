@@ -1640,6 +1640,11 @@ fn the_device_pairing_observer_is_installed_once() {
 /// A signing host runtime over a stub platform, with no core database.
 #[cfg(not(target_arch = "wasm32"))]
 fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
+	let genesis = ([0; 32], [0xbb; 32], [0xcc; 32]);
+	signing_runtime_on(crate::test_support::test_stack("paseo", genesis.0, genesis.1, genesis.2))
+}
+
+fn signing_runtime_on(stack: crate::platform::Stack) -> (SigningHostRuntime, Arc<StubPlatform>) {
 	use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 	let host = HostInfo {
@@ -1648,13 +1653,8 @@ fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
 		version: None,
 		platform: truapi::latest::HostPlatform::Unknown,
 	};
-	let genesis = ([0; 32], [0xbb; 32], [0xcc; 32]);
-	let config = SigningHostConfig::new(
-		host,
-		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", genesis.0, genesis.1, genesis.2),
-	)
-	.expect("signing host config is valid");
+	let config = SigningHostConfig::new(host, PlatformInfo::default(), stack)
+		.expect("signing host config is valid");
 	let platform = Arc::new(StubPlatform::default());
 	(SigningHostRuntime::new(platform.clone(), config, Spawner::for_test()), platform)
 }
@@ -1757,6 +1757,72 @@ fn the_durable_engine_starts_without_an_installation_provider() {
 	assert!(runtime.services.durable_engine().is_some());
 }
 
+/// The coinage layer registers its transactions in its own domains, so the
+/// engine serves them exactly when the host turned the layer on and the stack
+/// runs coinage.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_durable_engine_serves_the_coinage_domains_once_the_host_turns_coinage_on() {
+	use crate::{
+		coinage::registration::coinage_domain,
+		durable::{DurableRequest, RegistrationError},
+	};
+
+	let register = |runtime: &SigningHostRuntime| {
+		let engine = runtime.services.durable_engine().expect("the engine runs");
+		let request = DurableRequest::<()>::deferred_in(coinage_domain(), None, |_| Ok(Vec::new()));
+		futures::executor::block_on(engine.execute_with(request, |_, _| Ok(())))
+	};
+	let started = |stack, enabled: bool| {
+		let (runtime, _platform) = signing_runtime_on(stack);
+		runtime.set_core_db(crate::store::open_memory_core_db());
+		if enabled {
+			assert!(runtime.enable_coinage(Default::default()));
+		}
+		runtime.start_core_services();
+		runtime
+	};
+
+	let off = started(coinage_stack(), false);
+	assert!(matches!(register(&off), Err(RegistrationError::UnknownDomain(_))));
+	let without_coinage = started(crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], [0xcc; 32]), true);
+	assert!(matches!(register(&without_coinage), Err(RegistrationError::UnknownDomain(_))));
+	let on = started(coinage_stack(), true);
+	assert!(register(&on).is_ok());
+}
+
+/// A native host shows a reason, not a spinner, when coinage does not run:
+/// turned off, or a stack without coinage.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_coinage_layer_says_why_it_does_not_run() {
+	use crate::runtime::CoinageUnavailable;
+
+	let reason = |stack, enabled: bool| {
+		let (runtime, _platform) = signing_runtime_on(stack);
+		runtime.set_core_db(crate::store::open_memory_core_db());
+		if enabled {
+			assert!(runtime.enable_coinage(Default::default()));
+		}
+		runtime.start_core_services();
+		futures::executor::block_on(runtime.coinage_layer()).err()
+	};
+	assert_eq!(
+		[reason(coinage_stack(), false), reason(crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], [0xcc; 32]), true)],
+		[Some(CoinageUnavailable::Off), Some(CoinageUnavailable::Off)]
+	);
+}
+
+/// A stack whose People chain runs coinage instance 0.
+#[cfg(not(target_arch = "wasm32"))]
+fn coinage_stack() -> crate::platform::Stack {
+	let mut descriptor =
+		crate::test_support::test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor["contracts"] = serde_json::json!({ "accountDataStore": "0x58c9963308c7735cf72ab633e8a9d892f5ab9e05" });
+	let (pointer, bytes) = crate::test_support::sign_test_descriptor(&descriptor);
+	crate::platform::Stack::bundled(&pointer, &bytes, false).expect("the stack is valid")
+}
 #[test]
 fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer() {
 	let platform = Arc::new(StubPlatform {

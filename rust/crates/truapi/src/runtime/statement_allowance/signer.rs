@@ -29,17 +29,16 @@ pub trait PersonhoodSigner: Send + Sync {
 	) -> Result<Vec<u8>, StatementAllowanceError>;
 }
 
-/// Personhood keys the caller holds directly, with no wallet session to check.
-pub struct FixedPersonhoodSigner<'a> {
-	candidates: &'a [CollectionCandidate],
+/// Personhood keys the caller holds directly, with no wallet session to check:
+/// borrowed for one operation, or owned by a signer that outlives it.
+pub struct FixedPersonhoodSigner<Keys> {
+	candidates: Keys,
 	vrf: Vrf,
 }
 
-impl<'a> FixedPersonhoodSigner<'a> {
+impl<Keys: AsRef<[CollectionCandidate]>> FixedPersonhoodSigner<Keys> {
 	/// Load the prover before using the supplied fixed keys.
-	pub async fn new(
-		candidates: &'a [CollectionCandidate],
-	) -> Result<Self, StatementAllowanceError> {
+	pub async fn new(candidates: Keys) -> Result<Self, StatementAllowanceError> {
 		Ok(Self { candidates, vrf: vrf::load().await.map_err(vrf_error)? })
 	}
 
@@ -48,6 +47,7 @@ impl<'a> FixedPersonhoodSigner<'a> {
 		collection: PersonhoodCollection,
 	) -> Result<&[u8; 32], StatementAllowanceError> {
 		self.candidates
+			.as_ref()
 			.iter()
 			.find(|candidate| candidate.collection == collection)
 			.map(|candidate| &candidate.entropy)
@@ -55,7 +55,7 @@ impl<'a> FixedPersonhoodSigner<'a> {
 	}
 }
 
-impl PersonhoodSigner for FixedPersonhoodSigner<'_> {
+impl<Keys: AsRef<[CollectionCandidate]> + Send + Sync> PersonhoodSigner for FixedPersonhoodSigner<Keys> {
 	fn member(
 		&self,
 		collection: PersonhoodCollection,

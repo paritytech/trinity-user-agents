@@ -128,8 +128,8 @@ impl LitePerson {
 	}
 
 	/// Proves the person's ring membership.
-	async fn ring_signer(&self) -> alloc::FixedPersonhoodSigner<'_> {
-		alloc::FixedPersonhoodSigner::new(&self.candidates).await.unwrap()
+	async fn ring_signer(&self) -> alloc::FixedPersonhoodSigner<&[alloc::CollectionCandidate]> {
+		alloc::FixedPersonhoodSigner::new(self.candidates.as_slice()).await.unwrap()
 	}
 }
 

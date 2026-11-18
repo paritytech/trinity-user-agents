@@ -294,6 +294,78 @@ impl crate::nft::ItemSecrets for SigningHost {
 	}
 }
 
+/// The installed wallet's recovery phrase, which derives every coinage key.
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::coinage::plugins::Seed for SigningHost {
+	fn entropy(&self) -> Option<Vec<u8>> {
+		self.wallet.coinage_entropy().ok()
+	}
+}
+
+/// The installed wallet's person, whose free tokens pay coinage unloads.
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl crate::coinage::plugins::PersonhoodSource for SigningHost {
+	async fn person(
+		&self,
+	) -> Option<(
+		Arc<dyn crate::runtime::statement_allowance::PersonhoodSigner>,
+		crate::runtime::statement_allowance::ring::RingParams,
+		u32,
+	)> {
+		self.wallet.coinage_person().await
+	}
+}
+
+/// The statement store as coinage payments use it: posts signed with the
+/// statement-store key of the product a cheque belongs to, through the
+/// installed wallet.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct CoinageChannel(pub std::sync::Weak<SigningHost>);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl crate::coinage::payments::channel::Transport for CoinageChannel {
+	async fn post(
+		&self,
+		product: &str,
+		topic: crate::coinage::payments::topic::Topic,
+		data: Vec<u8>,
+		expires_at: u64,
+	) -> Result<(), crate::coinage::payments::channel::PostError> {
+		use crate::coinage::payments::channel::PostError;
+		let host = self.0.upgrade().ok_or(PostError::Unreachable)?;
+		let product = product.parse::<crate::platform::ProductId>().map_err(|_| PostError::Unreachable)?;
+		host.wallet.coinage_post(&product, topic.0, data, expires_at).await.map_err(|_| PostError::Unreachable)
+	}
+
+	fn subscribe(&self, topic: crate::coinage::payments::topic::Topic) -> futures::stream::BoxStream<'static, Vec<u8>> {
+		use futures::StreamExt;
+		let host = self.0.clone();
+		futures::stream::once(async move {
+			let Some(host) = host.upgrade() else { return futures::stream::empty().boxed() };
+			match host.wallet.coinage_watch(topic.0).await {
+				Ok(batches) => batches
+					.take_while(|batch| core::future::ready(batch.is_ok()))
+					.flat_map(|batch| futures::stream::iter(batch.unwrap_or_default()))
+					.boxed(),
+				Err(_) => futures::stream::empty().boxed(),
+			}
+		})
+		.flatten()
+		.boxed()
+	}
+
+	async fn fetch(&self, topic: crate::coinage::payments::topic::Topic) -> Vec<Vec<u8>> {
+		use futures::StreamExt;
+		let Some(host) = self.0.upgrade() else { return Vec::new() };
+		match host.wallet.coinage_watch(topic.0).await {
+			Ok(mut batches) => batches.next().await.and_then(Result::ok).unwrap_or_default(),
+			Err(_) => Vec::new(),
+		}
+	}
+}
+
 /// The user's chat key, until the team settles which key products publish
 /// for `Static` cheques.
 #[cfg(not(target_arch = "wasm32"))]
