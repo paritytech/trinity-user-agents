@@ -444,11 +444,11 @@ impl RuntimeServices {
 	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns `None` if a database was already installed.
-	pub(crate) fn install_core_db(&self, db: Db) -> Option<()> {
-		self.core_db.set(db.clone()).ok()?;
-		self.public_profiles.install_db(db.clone())?;
-		self.funding.install_db(db).then_some(())
+	/// consumer. Returns whether this call installed it.
+	pub(crate) fn install_core_db(&self, db: Db) -> bool {
+		self.core_db.set(db.clone()).is_ok() &&
+			self.public_profiles.install_db(db.clone()) &&
+			self.funding.install_db(db)
 	}
 
 	/// The core database.

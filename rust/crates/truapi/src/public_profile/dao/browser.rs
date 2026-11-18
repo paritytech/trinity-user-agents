@@ -22,8 +22,8 @@ impl Cache {
 
 impl PublicProfilesService {
 	/// Browser profile records are not persisted, so the database is unused.
-	pub fn install_db(&self, _db: Db) -> Option<()> {
-		Some(())
+	pub fn install_db(&self, _db: Db) -> bool {
+		true
 	}
 
 	/// Browser metadata is always resolved through dotNS.

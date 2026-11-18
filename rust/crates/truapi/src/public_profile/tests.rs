@@ -293,7 +293,7 @@ async fn a_cached_record_survives_an_offline_chain_until_forced() {
 	.await
 	.unwrap();
 	let services = profile_services();
-	assert!(services.install_core_db(db).is_some());
+	assert!(services.install_core_db(db));
 	let profiles = services.public_profiles.clone();
 
 	let cached = profiles.resolve("alice01", false).await;
@@ -333,7 +333,7 @@ async fn cached_metadata_never_loads_bulletin() {
 		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now + RECORD_TTL_SECS))
 			.await
 			.unwrap();
-		assert!(services.install_core_db(db).is_some());
+		assert!(services.install_core_db(db));
 
 		let profile = services.public_profiles.resolve("alice.01", false).await.unwrap();
 
@@ -359,7 +359,7 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now + expires_in))
 			.await
 			.unwrap();
-		assert!(services.install_core_db(db.clone()).is_some());
+		assert!(services.install_core_db(db.clone()));
 
 		let result = services.public_profiles.resolve("alice.01", force).await;
 		let stored: Vec<u8> = db

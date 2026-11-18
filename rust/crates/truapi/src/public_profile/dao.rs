@@ -134,9 +134,9 @@ pub fn store_record(
 impl PublicProfilesService {
 	/// Sets the native cache database once.
 	///
-	/// Returns `None` if a database was already installed.
-	pub fn install_db(&self, db: Db) -> Option<()> {
-		self.cache.db.set(db).ok()
+	/// Returns whether this call installed it.
+	pub fn install_db(&self, db: Db) -> bool {
+		self.cache.db.set(db).is_ok()
 	}
 
 	/// Reads cached metadata and records its use without waiting for the writer.

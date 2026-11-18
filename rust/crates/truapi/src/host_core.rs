@@ -1126,7 +1126,7 @@ impl SigningHostRuntime {
 	/// until [`Self::start_core_services`].
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		self.services.install_core_db(db).is_some()
+		self.services.install_core_db(db)
 	}
 
 	/// Install the provider of the installation id NFT purse item keys are
