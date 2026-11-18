@@ -431,6 +431,10 @@ fn a_verdict_can_send_a_submitted_row_back_to_its_policy() {
 	);
 }
 
+fn plan_of(conn: &Connection, id: DurableTxId) -> Result<Option<SubmissionPlan>, DbError> {
+	Ok(entry(conn, id)?.and_then(|entry| entry.plan))
+}
+
 /// A row has a plan exactly when it stores params, so a plan whose params
 /// are empty must still read back as a plan.
 #[test]
@@ -441,12 +445,27 @@ fn a_row_keeps_the_plan_it_was_registered_with() {
 		insert_retryable(&db, &domain(), extrinsic(3, 100, 64), test_plan(vec![]));
 	let without = register(&db, None, 2);
 
-	assert_eq!(read(&db, move |conn| submission_plan(conn, with_plan)), Some(test_plan(vec![3])));
+	assert_eq!(read(&db, move |conn| plan_of(conn, with_plan)), Some(test_plan(vec![3])));
 	assert_eq!(
-		read(&db, move |conn| submission_plan(conn, with_empty_plan)),
+		read(&db, move |conn| plan_of(conn, with_empty_plan)),
 		Some(test_plan(vec![]))
 	);
-	assert_eq!(read(&db, move |conn| submission_plan(conn, without)), None);
+	assert_eq!(read(&db, move |conn| plan_of(conn, without)), None);
+}
+
+/// Whether such a row may be retried is unknown, so no verdict may be
+/// derived from it: reading it fails instead of reading it without a plan.
+#[test]
+fn a_row_whose_plan_cannot_be_read_cannot_be_read_as_an_entry() {
+	let (_dir, db) = open_db();
+	let id = insert_rebuildable(&db, 3);
+	block_on(db.write(move |tx| {
+		tx.execute("UPDATE durable_tx SET policy_params = 5 WHERE id = ?1", [id.0])?;
+		Ok(())
+	}))
+	.unwrap();
+
+	assert!(block_on(db.read(move |conn| entry(conn, id))).is_err());
 }
 
 /// A domain's worker builds all of its waiting rows, whatever their group,
