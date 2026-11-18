@@ -24,7 +24,7 @@ use crate::{
 		session::{SessionInfo, SessionState, encode_persisted_session},
 		session_store::SessionStoreChangeNotifier,
 	},
-	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext},
+	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo},
 	session_usernames::SessionUsernames,
 };
 use channel::SsoDisconnectMonitor;
@@ -262,7 +262,13 @@ impl SsoRequestService {
 	/// This device's X25519 encryption secret: the key its pairing proposal
 	/// advertised, which the wallet registered. `None` before pairing.
 	pub fn device_encryption_secret(&self) -> Option<[u8; 32]> {
-		Some(self.session_state.current()?.sso?.enc_secret)
+		pairing_encryption_secret(&self.session_state.current()?)
+	}
+
+	/// `AuthState::Connected` projection of a paired `session`, naming this
+	/// device by the key its pairing proposal advertised.
+	pub fn session_ui_info(session: &SessionInfo) -> SessionUiInfo {
+		connected_session_ui_info(session, pairing_encryption_secret(session))
 	}
 
 	/// Start the disconnect monitor when a session is already active.
@@ -677,8 +683,7 @@ impl SsoRequestService {
 		}
 		channel::start_disconnect_monitor(self, &session);
 		vrf::prefetch(&self.spawner);
-		self.auth_state
-			.connected(&connected_session_ui_info(&session, self.device_encryption_secret()));
+		self.auth_state.connected(&Self::session_ui_info(&session));
 		true
 	}
 
@@ -735,8 +740,7 @@ impl SsoRequestService {
 				return self.current_session();
 			}
 		}
-		self.auth_state
-			.connected(&connected_session_ui_info(&resolved, self.device_encryption_secret()));
+		self.auth_state.connected(&Self::session_ui_info(&resolved));
 		if let Err(err) = self
 			.platform
 			.write_core_storage(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
@@ -764,8 +768,7 @@ impl HostSession for SsoRequestService {
 	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
 		let _ = product;
 		if let Some(session) = self.session_state.current() {
-			self.auth_state
-				.connected(&connected_session_ui_info(&session, self.device_encryption_secret()));
+			self.auth_state.connected(&Self::session_ui_info(&session));
 			return Ok(api::HostRequestLoginResponse::AlreadyConnected);
 		}
 
@@ -836,6 +839,11 @@ impl HostSession for SsoRequestService {
 			.primary_username()
 			.map(str::to_string)
 	}
+}
+
+/// The secret a paired session's pairing proposal advertised for this device.
+fn pairing_encryption_secret(session: &SessionInfo) -> Option<[u8; 32]> {
+	Some(session.sso.as_ref()?.enc_secret)
 }
 
 fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {

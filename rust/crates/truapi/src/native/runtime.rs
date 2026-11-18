@@ -866,11 +866,9 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Read this device's X25519 encryption secret, the key behind
-	/// `SessionUiInfo.deviceEncPublicKey`, which the host's own chat and
-	/// device sync encrypt with. Generated and persisted on first read unless
-	/// [`HostRuntimeConfig::device_encryption_key`] handed one over, so it is
-	/// always present here.
-	pub fn device_encryption_key(&self) -> Result<Option<Bytes32>, HostRejection> {
+	/// `SessionUiInfo.deviceEncPublicKey` that the host's own chat and device
+	/// sync encrypt with.
+	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
 		Ok(futures::executor::block_on(self.runtime.device_encryption_key())?)
 	}
 
@@ -1271,13 +1269,6 @@ impl NativeProductExecution {
 	/// when no session is active.
 	pub fn session_chat_identity_key(&self) -> Result<Option<Bytes32>, HostRejection> {
 		Ok(futures::executor::block_on(self.admin().get_session_chat_identity_key())?)
-	}
-
-	/// Read this device's X25519 encryption secret, the key behind
-	/// `SessionUiInfo.deviceEncPublicKey`. A signing host generates and
-	/// persists it on first read, so it is always present here.
-	pub fn device_encryption_key(&self) -> Result<Option<Bytes32>, HostRejection> {
-		Ok(futures::executor::block_on(self.admin().get_device_encryption_key())?)
 	}
 
 	/// Resolve a product's hard-subtree public key for hosts naming the account

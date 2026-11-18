@@ -843,7 +843,7 @@ fn a_handed_over_device_key_is_adopted_before_the_session_activates() {
 		crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0;
 	assert_eq!(
 		(host.device_encryption_key().expect("device key should read"), first_connected_key),
-		(Some([9; 32]), Some(Some(handed_over_public_key)))
+		([9; 32], Some(Some(handed_over_public_key)))
 	);
 }
 

@@ -33,7 +33,8 @@ class TrUAPIOurDeviceKeypairProvider @Inject constructor(
     override suspend fun publicKey(): X25519PublicKey = get().publicKey
 
     private suspend fun load(): X25519KeyPair = runtimeProvider.get().runtime()
-        .mapCatching { runtime -> checkNotNull(runtime.deviceEncryptionKey()) { "The TrUAPI core holds no device key" } }
-        .map { secret -> keyGenerator.createKeyPair(X25519PrivateKey.fromDerivedBytes(secret)) }
+        .mapCatching { runtime ->
+            keyGenerator.createKeyPair(X25519PrivateKey.fromDerivedBytes(runtime.deviceEncryptionKey()))
+        }
         .getOrThrow()
 }

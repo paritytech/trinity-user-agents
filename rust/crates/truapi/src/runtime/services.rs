@@ -184,10 +184,11 @@ pub struct RuntimeServices {
 	statement_cache: Mutex<StatementCache>,
 	/// Task spawner for background runtime work.
 	pub spawner: Spawner,
-	/// Serializes the read-or-create of the persisted device encryption key.
-	/// Concurrent first-time readers would otherwise each generate a secret and
-	/// persist it, leaving peers addressing an overwritten key.
-	device_encryption_key: futures::lock::Mutex<()>,
+	/// This device's encryption secret once read or adopted. The lock also
+	/// serializes the first read-or-create: concurrent first-time readers would
+	/// otherwise each generate a secret and persist it, leaving peers
+	/// addressing an overwritten key.
+	device_encryption_key: futures::lock::Mutex<Option<[u8; 32]>>,
 	next_core_instance: AtomicU64,
 }
 
@@ -299,7 +300,7 @@ impl RuntimeServices {
 			local_preimages: Mutex::new(std::collections::HashMap::new()),
 			statement_cache: Mutex::new(StatementCache::default()),
 			spawner,
-			device_encryption_key: futures::lock::Mutex::new(()),
+			device_encryption_key: futures::lock::Mutex::new(None),
 			next_core_instance: AtomicU64::new(1),
 		})
 	}
@@ -626,23 +627,30 @@ impl RuntimeServices {
 	/// guard with the read, so no caller can race another into generating a
 	/// second secret and overwriting the one peers were told to address.
 	pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
-		let _guard = self.device_encryption_key.lock().await;
-		crate::host_logic::device_key::read_or_create_device_encryption_secret(
+		let mut cached = self.device_encryption_key.lock().await;
+		if let Some(secret) = *cached {
+			return Ok(secret);
+		}
+		let secret = crate::host_logic::device_key::read_or_create_device_encryption_secret(
 			self.platform.as_ref(),
 		)
-		.await
+		.await?;
+		*cached = Some(secret);
+		Ok(secret)
 	}
 
 	/// Make `secret` this device's X25519 encryption secret, replacing the
 	/// stored one, for a host that announced a key of its own before the core
 	/// kept one. Peers addressing that key stay reachable.
 	pub async fn adopt_device_encryption_secret(&self, secret: [u8; 32]) -> Result<(), String> {
-		let _guard = self.device_encryption_key.lock().await;
+		let mut cached = self.device_encryption_key.lock().await;
 		crate::host_logic::device_key::store_device_encryption_secret(
 			self.platform.as_ref(),
 			secret,
 		)
-		.await
+		.await?;
+		*cached = Some(secret);
+		Ok(())
 	}
 
 	/// Allocate the next per-product-runtime id, used to scope chain follow

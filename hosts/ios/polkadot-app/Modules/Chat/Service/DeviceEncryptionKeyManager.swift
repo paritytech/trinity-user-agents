@@ -11,7 +11,6 @@ protocol DeviceEncryptionKeyManaging {
 
 enum DeviceEncryptionKeyError: Error {
     case runtimeProviderMissing
-    case keyMissing
 }
 
 /// This device's X25519 encryption key, kept by the TrUAPI core so chat and device sync encrypt
@@ -60,9 +59,7 @@ final class DeviceEncryptionKeyManager: DeviceEncryptionKeyManaging {
         guard let runtimeProvider = runtimeProvider() else {
             throw DeviceEncryptionKeyError.runtimeProviderMissing
         }
-        guard let key = try runtimeProvider.sharedRuntime().deviceEncryptionKey() else {
-            throw DeviceEncryptionKeyError.keyMissing
-        }
+        let key = try runtimeProvider.sharedRuntime().deviceEncryptionKey()
         return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: key)
     }
 

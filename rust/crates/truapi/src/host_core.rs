@@ -695,16 +695,12 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Read this device's X25519 encryption secret, the key behind
-	/// `SessionUiInfo::device_enc_public_key`. Generated and persisted on
-	/// first read unless the host adopted one.
+	/// Read this install's X25519 encryption secret, the key behind
+	/// `SessionUiInfo::device_enc_public_key` on a signing host. Generated and
+	/// persisted on first read unless the host adopted one.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
-	pub async fn device_encryption_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		self.signing_host
-			.accounts()
-			.device_encryption_secret()
-			.await
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+		self.services.device_encryption_secret().await.map_err(Into::into)
 	}
 
 	/// Make `secret` this device's X25519 encryption secret, for a host that

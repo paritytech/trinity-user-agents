@@ -3,7 +3,7 @@ use crate::{
 	host_rpc_client::HostRpcClient,
 	platform::{AuthState, ChainProvider, CoreStorageKey},
 	runtime::{
-		ProductRuntimeHost, connected_session_ui_info, sso_request_service::SsoRequestService,
+		ProductRuntimeHost, sso_request_service::SsoRequestService,
 	},
 	test_support::{
 		StubPlatform, core_storage_test_key, pairing_device_from_deeplink, peer_statement_keypair,
@@ -330,8 +330,7 @@ fn request_login_accepts_valid_pairing_statement_and_persists_session() {
 	assert_eq!(session.peer_device_enc_public_key, Some(wallet_device_encryption_public_key()));
 
 	// Public values project to host UI; the chat secret deliberately does not.
-	let ui_info =
-		connected_session_ui_info(&session, session.sso.as_ref().map(|sso| sso.enc_secret));
+	let ui_info = SsoRequestService::session_ui_info(&session);
 	assert_eq!(
 		ui_info.chat_public_key,
 		Some(X25519PublicKey::from(&X25519SecretKey::from([0x77; 32])).to_bytes()),
@@ -353,10 +352,7 @@ fn request_login_accepts_valid_pairing_statement_and_persists_session() {
 	assert_eq!(auth_states[1], AuthState::Authenticating);
 	assert_eq!(
 		auth_states[2],
-		AuthState::Connected(Box::new(connected_session_ui_info(
-			&session,
-			session.sso.as_ref().map(|sso| sso.enc_secret)
-		)))
+		AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&session)))
 	);
 	drop(auth_states);
 
