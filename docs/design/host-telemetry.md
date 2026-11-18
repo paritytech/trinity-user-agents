@@ -172,9 +172,11 @@ CoreEvent::new(markers::CORE_STARTED)
     .emit();
 ```
 
-Keys are `&'static str` on the builder, so a key is written in the core's own source and nothing at a call site can build one from runtime text. A value is a label the core chose from a fixed set, a count, or a condition. A string a provider, a product or a manifest wrote is none of those, for the same reason it does not belong in a detail line.
+Keys are `&'static str` on the builder, so a key is written in the core's own source and nothing at a call site can build one from runtime text. A value is a label, a count, or a condition. A label may be a runtime identifier such as a provider, an asset or a dotNS name, which is why the type cannot be `&'static str` too, so the rule for those is the gate rather than the signature: the caller admits a short plain value and collapses anything else to a fallback, the way an unlisted provider is `other` and an untrusted product is `third_party`. Free text a provider, a product or a manifest wrote goes through that gate or it does not go, for the same reason it does not belong in a detail line.
 
 One marker table gates both paths. `admits_host_marker` is the single predicate the tracing layer's filter and `CoreEvent::emit` ask, so a marker nobody declared reaches a host on neither, and the class the table carries decides what a host may do with an event exactly as it does for a line.
+
+`CoreEvent::emit` writes to the core's own console before it consults the sink, under the live level and at the level the marker's class carries, so a marker reads the same on a build that installs no sink. The browser host and the CLI reach a marker only that way. It also holds the reentrancy flag across the sink call and honours it on the way in, so a host whose two callbacks share one lock cannot be re-entered from inside either.
 
 An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `CORE_EVENT_MAX_ATTRIBUTES`. The second bound is about cardinality rather than size: a host indexes these, so an event that grew a key per iteration would cost its marker whatever a host can group by, not just its own line.
 

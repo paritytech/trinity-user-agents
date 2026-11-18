@@ -79,9 +79,9 @@ impl crate::logging::HostSink for CallbackSink {
 		}
 	}
 
-	fn event(&self, marker: &str, attributes: &[crate::logging::CoreAttribute]) {
+	fn event(&self, marker: &str, attributes: Vec<crate::logging::CoreAttribute>) {
 		if let Some(callbacks) = self.callbacks.upgrade() {
-			callbacks.on_core_event(marker.to_string(), attributes.to_vec());
+			callbacks.on_core_event(marker.to_string(), attributes);
 		}
 	}
 }

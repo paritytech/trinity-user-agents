@@ -196,7 +196,9 @@ interface HostBridge {
      * Structured lifecycle fact. Marker is the same stable slug [onCoreLog]
      * carries, and each attribute is a key the core names with a label, a
      * count or a condition under it. Hand these to the reporter as attributes,
-     * so a marker can be grouped and filtered by what it carries.
+     * so a marker can be grouped and filtered by what it carries. Every
+     * marker here is listed in the table `coreMarkers()` returns, and its class
+     * decides what the host may do with it, exactly as for a log line.
      */
     fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {}
 

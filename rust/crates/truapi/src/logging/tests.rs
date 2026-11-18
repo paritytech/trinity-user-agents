@@ -384,8 +384,8 @@ impl HostSink for RecordingSink {
 		self.logs.lock().unwrap().push((marker.to_string(), detail.to_string()));
 	}
 
-	fn event(&self, marker: &str, attributes: &[CoreAttribute]) {
-		self.events.lock().unwrap().push((marker.to_string(), attributes.to_vec()));
+	fn event(&self, marker: &str, attributes: Vec<CoreAttribute>) {
+		self.events.lock().unwrap().push((marker.to_string(), attributes));
 	}
 }
 
@@ -480,9 +480,58 @@ fn a_text_attribute_is_bounded() {
 	*HOST_SINK.write().unwrap() = None;
 }
 
-/// A host that installed a sink before this path existed keeps its log
-/// traffic, and events it never asked for go nowhere rather than anywhere
-/// surprising.
+/// A sink is held off its own channels while it runs, so a host that emits
+/// from inside a callback cannot drive itself back in on the same thread.
+struct ReentrantSink {
+	depth: Mutex<u32>,
+	deepest: Mutex<u32>,
+}
+
+impl HostSink for ReentrantSink {
+	fn log(&self, _marker: &str, _detail: &str) {
+		self.enter();
+	}
+
+	fn event(&self, _marker: &str, _attributes: Vec<CoreAttribute>) {
+		self.enter();
+	}
+}
+
+impl ReentrantSink {
+	/// Records how deep the sink is and emits again from in there, which is
+	/// what a host does when its reporter logs.
+	fn enter(&self) {
+		let depth = {
+			let mut depth = self.depth.lock().unwrap();
+			*depth += 1;
+			*depth
+		};
+		let mut deepest = self.deepest.lock().unwrap();
+		*deepest = (*deepest).max(depth);
+		drop(deepest);
+		if depth < 8 {
+			CoreEvent::new(markers::CORE_STARTED).count("depth", u64::from(depth)).emit();
+			tracing::info!(target: "truapi.core.started", "a line from inside the sink");
+		}
+		*self.depth.lock().unwrap() -= 1;
+	}
+}
+
+#[test]
+fn the_event_path_holds_a_sink_off_itself() {
+	let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	init();
+	set_level(DEFAULT_LEVEL);
+	let sink = Arc::new(ReentrantSink { depth: Mutex::new(0), deepest: Mutex::new(0) });
+	let _registration = set_host_sink(sink.clone());
+
+	CoreEvent::new(markers::CORE_STARTED).text("outcome", "sent").emit();
+
+	assert_eq!(*sink.deepest.lock().unwrap(), 1, "the sink was re-entered on its own thread");
+}
+
+/// A sink that implements only the log method keeps its lines, and events it
+/// never asked for go nowhere rather than anywhere surprising.
 #[test]
 fn a_log_only_sink_keeps_its_lines_and_drops_events() {
 	let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());

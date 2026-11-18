@@ -76,9 +76,10 @@ pub struct CoreAttribute {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum CoreAttributeValue {
-	/// A label the core chooses from a fixed set, such as an outcome or a
-	/// failure's kind. Never a string a provider, a product or a manifest
-	/// wrote.
+	/// A label, either one the core chooses from a fixed set or a runtime
+	/// identifier that has passed a gate admitting a short plain value and
+	/// collapsing anything else to a fallback. Free text a provider, a product
+	/// or a manifest wrote does not reach a host this way.
 	Text {
 		/// The label.
 		value: String,
@@ -95,6 +96,16 @@ pub enum CoreAttributeValue {
 	},
 }
 
+impl fmt::Display for CoreAttributeValue {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Text { value } => f.write_str(value),
+			Self::Count { value } => write!(f, "{value}"),
+			Self::Flag { value } => write!(f, "{value}"),
+		}
+	}
+}
+
 /// The sink a host installs, which both kinds of core traffic reach.
 ///
 /// A host that keeps only a console implements [`Self::log`] and leaves
@@ -107,7 +118,7 @@ pub trait HostSink: Send + Sync {
 	/// A marker and the attributes it carries, each already bounded. Dropping
 	/// them is the default, so a sink carries structured traffic only once it
 	/// asks to.
-	fn event(&self, marker: &str, attributes: &[CoreAttribute]) {
+	fn event(&self, marker: &str, attributes: Vec<CoreAttribute>) {
 		let _ = (marker, attributes);
 	}
 }
@@ -426,10 +437,19 @@ impl CoreEvent {
 		self
 	}
 
-	/// Hand this event to the sink a host installed. A marker the table does
-	/// not list is dropped, as it is on the tracing path.
+	/// Write this event to the core's own console and hand it to the sink a
+	/// host installed. A marker the table does not list is dropped, as it is on
+	/// the tracing path.
 	pub fn emit(self) {
-		if !admits_host_marker(self.marker.target) {
+		let Self { marker, attributes } = self;
+		if !admits_host_marker(marker.target) {
+			return;
+		}
+		// Written before the sink is consulted, so a build with no sink to
+		// install still says what it is doing: the browser host and the CLI
+		// reach a marker only this way.
+		console(&marker, &attributes);
+		if IN_HOST_SINK.with(Cell::get) {
 			return;
 		}
 		// Cloned out so a sink that logs again cannot deadlock on the lock.
@@ -437,8 +457,35 @@ impl CoreEvent {
 		let Some(sink) = sink else {
 			return;
 		};
-		sink.event(self.marker.target, &self.attributes);
+		IN_HOST_SINK.with(|inside| inside.set(true));
+		let _reentry = HostSinkReentry;
+		sink.event(marker.target, attributes);
 	}
+}
+
+/// Write `marker` and its attributes to the core's own console, under the live
+/// level, in the shape the tracing path writes a line.
+///
+/// A marker's class carries the level here, because an event is raised without
+/// one.
+fn console(marker: &markers::Marker, attributes: &[CoreAttribute]) {
+	let level = match marker.class {
+		markers::MarkerClass::Export { severity: markers::Severity::Error } => Level::ERROR,
+		markers::MarkerClass::Export { severity: markers::Severity::Warn } => Level::WARN,
+		_ => Level::INFO,
+	};
+	let live = RELOAD_HANDLE
+		.get()
+		.and_then(reload::Handle::clone_current)
+		.and_then(LevelFilter::into_level);
+	if !live.is_some_and(|live| level <= live) {
+		return;
+	}
+	let mut line = format!("[truapi] {level} {}", marker.target);
+	for CoreAttribute { key, value } in attributes {
+		let _ = write!(line, " {key}={value}");
+	}
+	emit(level, &line);
 }
 
 /// Whether any host still has a sink installed.

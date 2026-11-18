@@ -2677,16 +2677,16 @@ fn the_runtime_sink_forwards_an_event_to_the_host() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let held: Arc<dyn HostCallbacks> = callbacks.clone();
 	let sink = super::runtime::CallbackSink { callbacks: Arc::downgrade(&held) };
-	let attributes = [CoreAttribute {
+	let attributes = vec![CoreAttribute {
 		key: "outcome".to_string(),
 		value: CoreAttributeValue::Text { value: "sent".to_string() },
 	}];
 
-	sink.event(crate::markers::CORE_STARTED.target, &attributes);
+	sink.event(crate::markers::CORE_STARTED.target, attributes.clone());
 
 	assert_eq!(
 		*callbacks.events.lock().expect("events mutex poisoned"),
-		vec![(crate::markers::CORE_STARTED.target.to_string(), attributes.to_vec())],
+		vec![(crate::markers::CORE_STARTED.target.to_string(), attributes)],
 	);
 }
 
@@ -2699,10 +2699,14 @@ fn the_runtime_sink_drops_an_event_for_a_host_that_has_gone() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let held: Arc<dyn HostCallbacks> = callbacks.clone();
 	let sink = super::runtime::CallbackSink { callbacks: Arc::downgrade(&held) };
+	let watch = Arc::downgrade(&held);
 	drop(held);
 	drop(callbacks);
+	assert!(watch.upgrade().is_none(), "the host outlived both of the test's handles");
 
-	sink.event(crate::markers::CORE_STARTED.target, &[]);
+	sink.event(crate::markers::CORE_STARTED.target, Vec::new());
+
+	assert!(watch.upgrade().is_none(), "the sink resurrected a host that had gone");
 }
 
 #[test]
