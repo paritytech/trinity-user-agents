@@ -107,20 +107,20 @@ fn test_built_in_runnable_check_refuses_what_the_light_client_refuses() {
 /// listing one.
 #[test]
 fn test_built_in_runnable_check_accepts_a_chain_the_light_client_does_not_run() {
-	let with_storage_chain = super::super::testing::edit_stack(|descriptor| {
+	let with_unrouted_chain = super::super::testing::edit_stack(|descriptor| {
 		let chains = descriptor["chains"].as_array_mut().unwrap();
 		chains.push(serde_json::json!({
-			"role": "Web3Storage",
+			"role": "Unrouted",
 			"genesisHash": format!("0x{}", "11".repeat(32)),
-			"paraId": 1600,
-			"rpc": ["wss://storage.example"],
+			"paraId": u32::MAX,
+			"rpc": ["wss://unrouted.example"],
 		}));
 	});
 	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
 
 	let by_check =
-		ensure_built_in_runnable(&paseo, &with_storage_chain).map_err(|error| error.to_string());
-	let by_light_client = Stack::new(with_storage_chain, &test_access(ChainBackend::LightClient))
+		ensure_built_in_runnable(&paseo, &with_unrouted_chain).map_err(|error| error.to_string());
+	let by_light_client = Stack::new(with_unrouted_chain, &test_access(ChainBackend::LightClient))
 		.map(drop)
 		.map_err(|error| error.to_string());
 
