@@ -28,8 +28,8 @@ use super::{
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfileResolutionOptions,
-	ResponderExit, SigningHostRuntime, Spawner,
+	HostRuntime, ImageError, ImageReference, LoadedImage, PairedSsoPeer,
+	PublicProfileResolutionOptions, ResponderExit, SigningHost, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -67,7 +67,7 @@ use crate::WorkerTransition;
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
@@ -160,7 +160,8 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
+		let runtime =
+			Arc::new(HostRuntime::<SigningHost>::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -352,7 +353,7 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Funding session `intent` as the core holds it in full; see
-	/// [`SigningHostRuntime::funding_session`].
+	/// [`HostRuntime::funding_session`].
 	pub fn funding_session(
 		&self,
 		intent: String,
@@ -423,11 +424,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Offer the funding providers the remote configuration names; see
-	/// [`SigningHostRuntime::set_funding_provider_config`].
-	pub fn set_funding_provider_config(
-		&self,
-		published_names: Vec<String>,
-	) {
+	/// [`HostRuntime::set_funding_provider_config`].
+	pub fn set_funding_provider_config(&self, published_names: Vec<String>) {
 		self.runtime.set_funding_provider_config(published_names);
 	}
 
@@ -1085,7 +1083,7 @@ impl NativeTrUApiHostRuntime {
 /// One native executable connection opened from a process-owned host runtime.
 #[derive(uniffi::Object)]
 pub struct NativeProductExecution {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	product: ProductContext,
 	platform: Arc<dyn crate::platform::Platform>,
 	chat: Option<Arc<dyn crate::platform::ChatPlatform>>,

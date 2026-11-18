@@ -25,7 +25,6 @@ mod funding_providers;
 mod funding_quotes;
 mod host_accounts;
 mod host_grants;
-mod host_role;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -74,7 +73,6 @@ pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAll
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
-pub use host_role::HostRole;
 pub use host_session::HostSession;
 pub use remote_account_holder::RemoteAccountHolder;
 
@@ -84,13 +82,11 @@ type ContactsPicker =
 	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
-#[cfg(test)]
-use pairing_host::PairingHost;
-pub use pairing_host::PairingHost as PairingHostRole;
+pub use pairing_host::PairingHost;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
@@ -332,6 +328,18 @@ async fn until_cancelled<T>(
 
 fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) -> AuthorityError {
 	AuthorityError::Cancelled(AuthorityCancelError::new(cx.request_id(), reason))
+}
+
+/// The accounts and session that a host shares with its product connections.
+pub trait HostRole {
+	/// Holder used for product account requests.
+	type Holder: AccountHolder;
+
+	/// Account policy and grants for this host.
+	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>>;
+
+	/// Session used for product login, identity and disconnection.
+	fn host_session(self: &Arc<Self>) -> Arc<dyn HostSession>;
 }
 
 /// Product adapter for the generated TrUAPI dispatcher.

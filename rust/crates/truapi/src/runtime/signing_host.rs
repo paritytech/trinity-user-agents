@@ -18,7 +18,7 @@ pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 #[cfg(not(target_arch = "wasm32"))]
 use super::allowances::current_unix_secs;
 use super::{
-	AccountHolder, HostAccounts, HostSession, RuntimeServices, authority::AuthorityError,
+	AccountHolder, HostAccounts, HostRole, HostSession, RuntimeServices, authority::AuthorityError,
 	connected_session_ui_info, host_grants::HostGrantStore, product_consent::ProductConsent,
 	ring_vrf_registry::RingVrfRegistryStore, sso_responder_service::SsoResponderService,
 };
@@ -42,7 +42,10 @@ use crate::platform::Platform;
 use crate::platform::{ProductContext, ProductId};
 use truapi::{CallError, latest};
 
-/// Native host lifecycle and retained grants over a shared wallet.
+/// A host that holds the wallet locally and answers incoming SSO requests.
+///
+/// Construct its [`HostRuntime`](crate::HostRuntime) with
+/// `HostRuntime::<SigningHost>::new`.
 pub struct SigningHost {
 	services: Arc<RuntimeServices>,
 	wallet: Arc<WalletAccountHolder>,
@@ -52,6 +55,18 @@ pub struct SigningHost {
 	sso_responder: SsoResponderService,
 	#[cfg(not(target_arch = "wasm32"))]
 	renewal_loop_started: std::sync::atomic::AtomicBool,
+}
+
+impl HostRole for SigningHost {
+	type Holder = WalletAccountHolder;
+
+	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>> {
+		&self.accounts
+	}
+
+	fn host_session(self: &Arc<Self>) -> Arc<dyn HostSession> {
+		self.clone()
+	}
 }
 
 impl SigningHost {
@@ -97,11 +112,6 @@ impl SigningHost {
 			#[cfg(not(target_arch = "wasm32"))]
 			renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
 		})
-	}
-
-	/// Product account policy and grants shared by this host's connections.
-	pub fn accounts(&self) -> &Arc<HostAccounts<WalletAccountHolder>> {
-		&self.accounts
 	}
 
 	/// Answer resource allocation as granted without performing it in test hosts.

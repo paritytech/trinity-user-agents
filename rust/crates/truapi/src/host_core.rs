@@ -39,9 +39,9 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	runtime::{
 		AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-		DevicePairingObserver, FundingProviderLink, HostAccounts, HostRole, HostSession, LocalActivation,
-		PairedSsoPeer, PairingHostRole, ProductConnection, ProductRuntimeAdmin, ProductRuntimeHost,
-		ResponderExit, ResumePairingError, RuntimeServices, SigningHostRole,
+		DevicePairingObserver, FundingProviderLink, HostAccounts, HostRole, HostSession,
+		LocalActivation, PairedSsoPeer, PairingHost, ProductConnection, ProductRuntimeAdmin,
+		ProductRuntimeHost, ResponderExit, ResumePairingError, RuntimeServices, SigningHost,
 		SsoAccountHolderService,
 	},
 	subscription::HostInitiatedSubscriptionManager,
@@ -179,36 +179,19 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 
 /// Services shared by every product connection on a host.
 ///
-/// Construct a [`PairingHostRuntime`] for a paired wallet or a [`SigningHostRuntime`]
-/// for a local wallet. The role supplies the accounts and session for each connection.
+/// Use [`PairingHost`] for a paired wallet or [`SigningHost`] for a local wallet.
+/// The role supplies the accounts and session for each connection.
 pub struct HostRuntime<Role> {
 	services: Arc<RuntimeServices>,
 	role: Arc<Role>,
 	image_loader: crate::image_loader::ImageLoader,
 }
 
-/// A seedless pairing host: the user's keys live in an external wallet reached
-/// over the SSO pairing channel.
-///
-/// [`HostRuntime`] provides its product connections and shared host services.
-pub type PairingHostRuntime = HostRuntime<PairingHostRole>;
-
-impl<Role: HostRole> HostRuntime<Role> {
+impl<Role> HostRuntime<Role> {
 	fn from_role(services: Arc<RuntimeServices>, role: Arc<Role>) -> Self {
 		let image_loader =
 			crate::image_loader::ImageLoader::new(services.clone(), Arc::new(crate::time::RealTimer));
 		Self { services, role, image_loader }
-	}
-
-	/// Keep preimage submissions in the core instead of the Bulletin chain.
-	///
-	/// For test hosts only, with the `test-host` feature enabled.
-	#[cfg(feature = "test-host")]
-	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.role
-			.accounts()
-			.resource_controls()
-			.set_submit_preimages_locally(local);
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.
@@ -324,6 +307,29 @@ impl<Role: HostRole> HostRuntime<Role> {
 		self.services.contact_handles.clear();
 	}
 
+	/// Reference counts per product worker, shared by every connection of
+	/// this host.
+	pub fn worker_ledger(&self) -> &WorkerLedger {
+		&self.services.worker_ledger
+	}
+
+	/// Report that the product's worker stopped without being asked to:
+	/// it is started again while something holds it, with a growing wait
+	/// when it keeps crashing.
+	pub fn worker_exited(&self, product_id: &ProductId) {
+		self.services.worker_exited(product_id);
+	}
+}
+
+impl<Role: HostRole> HostRuntime<Role> {
+	/// Keep preimage submissions in the core instead of the Bulletin chain.
+	///
+	/// For test hosts only, with the `test-host` feature enabled.
+	#[cfg(feature = "test-host")]
+	pub fn set_submit_preimages_locally(&self, local: bool) {
+		self.role.accounts().resource_controls().set_submit_preimages_locally(local);
+	}
+
 	/// Build a product-facing runtime from this host.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.product_runtime"))]
 	pub fn product_runtime(
@@ -396,19 +402,6 @@ impl<Role: HostRole> HostRuntime<Role> {
 			.map_err(ring_vrf_admin_error)
 	}
 
-	/// Reference counts per product worker, shared by every connection of
-	/// this host.
-	pub fn worker_ledger(&self) -> &WorkerLedger {
-		&self.services.worker_ledger
-	}
-
-	/// Report that the product's worker stopped without being asked to:
-	/// it is started again while something holds it, with a growing wait
-	/// when it keeps crashing.
-	pub fn worker_exited(&self, product_id: &ProductId) {
-		self.services.worker_exited(product_id);
-	}
-
 	/// Read a stored permission authorization status for a product without prompting.
 	///
 	/// A device capability also resolves the host application's OS gate, so an
@@ -455,7 +448,7 @@ impl<Role: HostRole> HostRuntime<Role> {
 	}
 }
 
-impl PairingHostRuntime {
+impl HostRuntime<PairingHost> {
 	/// Build a long-lived pairing-host runtime around a platform implementation.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
 	pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -506,7 +499,7 @@ impl PairingHostRuntime {
 		if let Some(contacts_platform) = contacts_platform {
 			services.install_contacts_platform(contacts_platform);
 		}
-		let pairing_host = PairingHostRole::new(services.clone(), config);
+		let pairing_host = PairingHost::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
 		Self::from_role(services, pairing_host)
 	}
@@ -638,26 +631,17 @@ fn pairing_login_error_reason(
 	}
 }
 
-impl PairingHostAdmin for PairingHostRuntime {
+impl PairingHostAdmin for HostRuntime<PairingHost> {
 	fn cancel_pairing(&self) {
-		PairingHostRuntime::cancel_pairing(self);
+		Self::cancel_pairing(self);
 	}
 
 	fn notify_session_store_changed(&self) {
-		PairingHostRuntime::notify_session_store_changed(self);
+		Self::notify_session_store_changed(self);
 	}
 }
 
-/// A wallet-local signing host: the user's keys are held on this device.
-///
-/// [`HostRuntime`] provides its product connections and shared host services.
-///
-/// Raw-bytes and extrinsic-payload signing, v4 transaction construction, and
-/// product entropy are implemented; native signing hosts can also serve
-/// ring-VRF aliases and on-chain resource allocation.
-pub type SigningHostRuntime = HostRuntime<SigningHostRole>;
-
-impl SigningHostRuntime {
+impl HostRuntime<SigningHost> {
 	/// Answer resource allocation as granted without performing it.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
@@ -757,7 +741,7 @@ impl SigningHostRuntime {
 		if config.materials_enabled {
 			services.enable_materials();
 		}
-		let signing_host = SigningHostRole::new(services.clone());
+		let signing_host = SigningHost::new(services.clone());
 		Self::from_role(services, signing_host)
 	}
 
@@ -1443,7 +1427,7 @@ fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl SigningHostRuntime {
+impl HostRuntime<SigningHost> {
 	/// Record statement-store accounts the host must keep renewed across
 	/// allowance periods.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.track_statement_renewal_targets"))]
@@ -2037,7 +2021,7 @@ impl ProductRuntime {
 	where
 		P: Platform + 'static,
 	{
-		let pairing = PairingHostRuntime::with_platforms(
+		let pairing = HostRuntime::<PairingHost>::with_platforms(
 			platform,
 			host_config,
 			spawner,

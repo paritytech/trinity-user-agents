@@ -133,7 +133,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 pub fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
 	asset_hub_chain_genesis_hash: [u8; 32],
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	let config = crate::platform::SigningHostConfig::new(
 		crate::platform::HostInfo {
 			name: "Polkadot Mobile".to_string(),
@@ -151,13 +151,14 @@ pub fn signing_runtime_on_asset_hub(
 		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone());
+	let signing_host = SigningHost::new(services.clone());
 	(services, signing_host)
 }
 
 /// A signing host whose wallet is active under [`ENTROPY`].
-pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host
@@ -165,7 +166,7 @@ pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> 
 
 pub fn product_runtime_for(
 	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
+	authority: Arc<SigningHost>,
 	product_id: &str,
 ) -> ProductRuntimeHost<signing_host::WalletAccountHolder> {
 	ProductRuntimeHost::from_services(

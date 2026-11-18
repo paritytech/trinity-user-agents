@@ -45,9 +45,9 @@ use truapi::{
 use wasm_bindgen::{JsCast, prelude::*};
 
 #[cfg(feature = "wasm-signing-host")]
-use crate::SigningHostRuntime;
+use crate::SigningHost;
 use crate::{
-	ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
+	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
 	host_logic::worker::WorkerTransition,
 };
@@ -922,7 +922,7 @@ fn install_worker_controller(
 /// cores.
 #[wasm_bindgen]
 pub struct WasmPairingHostRuntime {
-	runtime: Rc<PairingHostRuntime>,
+	runtime: Rc<HostRuntime<PairingHost>>,
 	/// The refresh of the stack's descriptor, or `None` for a test stack.
 	stack_refresh: Option<StackRefresh>,
 }
@@ -965,7 +965,7 @@ impl WasmPairingHostRuntime {
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
 		let host_config = pairing_host_config_from_js(&host_config, stack)?;
-		let runtime = PairingHostRuntime::with_platforms(
+		let runtime = HostRuntime::<PairingHost>::with_platforms(
 			platform,
 			host_config,
 			spawner.clone(),
@@ -1262,7 +1262,7 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 /// JS-callable handle to a wallet-local signing-host runtime.
 #[wasm_bindgen]
 pub struct WasmSigningHostRuntime {
-	runtime: Rc<SigningHostRuntime>,
+	runtime: Rc<HostRuntime<SigningHost>>,
 	/// The refresh of the stack's descriptor, or `None` for a test stack.
 	stack_refresh: Option<StackRefresh>,
 }
@@ -1351,7 +1351,7 @@ impl WasmSigningHostRuntime {
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
 		let host_config = signing_host_config_from_js(&host_config, stack)?;
-		let runtime = SigningHostRuntime::with_platforms(
+		let runtime = HostRuntime::<SigningHost>::with_platforms(
 			platform,
 			host_config,
 			spawner.clone(),
@@ -1697,8 +1697,12 @@ impl WasmProductRuntime {
 		let (host_config, product) = runtime_config_from_js(&runtime_config, stack)?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.
-		let pairing =
-			PairingHostRuntime::with_chat_platform(platform, host_config, spawner, chat_platform);
+		let pairing = HostRuntime::<PairingHost>::with_chat_platform(
+			platform,
+			host_config,
+			spawner,
+			chat_platform,
+		);
 		if let Some(status_host) = status_host {
 			pairing.set_permission_status_host(status_host);
 		}

@@ -133,7 +133,7 @@ pub enum ResponderExit {
 	SubscriptionEnded,
 }
 
-/// Why [`crate::SigningHostRuntime::resume_pairing`] stopped serving.
+/// Why [`crate::HostRuntime::resume_pairing`] stopped serving.
 ///
 /// Either way the peer is still paired.
 #[derive(Debug, derive_more::Display, derive_more::Error)]
