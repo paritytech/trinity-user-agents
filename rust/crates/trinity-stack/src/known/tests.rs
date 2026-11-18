@@ -2,7 +2,7 @@ use super::*;
 
 /// A known stack without a key would let whoever serves its URL change what it describes.
 #[test]
-fn test_known_stacks_signed() {
+fn test_known_stack_keys() {
 	let unsigned: Vec<_> = known_stack_links()
 		.filter(|(name, _)| known_stack(name).expect("unknown name").key().is_none())
 		.collect();

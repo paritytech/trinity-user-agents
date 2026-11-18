@@ -20,7 +20,7 @@ fn find_stack_files(extension: &str) -> BTreeMap<String, PathBuf> {
 
 /// A host build bundles `stacks/<name>.link`, so it must carry the link the crate lists.
 #[test]
-fn test_stack_links_match_known_stacks() {
+fn test_stack_links() {
 	let links: BTreeMap<String, String> = find_stack_files("link")
 		.into_iter()
 		.map(|(name, path)| (name, fs::read_to_string(path).expect("stack link is unreadable")))
@@ -33,7 +33,7 @@ fn test_stack_links_match_known_stacks() {
 
 /// A host build opens `stacks/<name>.json` under its known stack's key, so each copy must verify.
 #[test]
-fn test_stack_copies_verify() {
+fn test_stack_copy_signatures() {
 	let copies = find_stack_files("json");
 	let names: Vec<_> = copies.keys().map(String::as_str).collect();
 	let known: Vec<_> = known_stack_links().map(|(name, _)| name).collect();

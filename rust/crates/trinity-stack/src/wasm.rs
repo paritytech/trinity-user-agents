@@ -111,7 +111,7 @@ pub fn known_stacks() -> js_sys::Object {
 	let links = js_sys::Object::new();
 	for (name, link) in crate::known_stack_links() {
 		js_sys::Reflect::set(&links, &name.into(), &link.into())
-			.expect("setting a property on a fresh Object cannot fail");
+			.expect("failed to set a known stack on the Object");
 	}
 	links
 }
