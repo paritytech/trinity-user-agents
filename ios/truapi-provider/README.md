@@ -44,11 +44,14 @@ Release tags follow the repo-wide `@parity/ios-provider@<version>` naming, which
 
 No Rust toolchain is needed: the xcframework carries the compiled crate, and the chain specs are compiled into it, so the app ships no spec files of its own and never refreshes them. Picking up a spec refresh means taking a newer release.
 
+`wss://` nodes are verified against root certificates compiled into the xcframework (Mozilla's list, from `webpki-roots`), not the system trust store, so the check is the same on every platform. Profile-installed and private certificate authorities are not trusted, and the list changes only with a newer release. The provider opens its own sockets, so App Transport Security does not apply to them and does not stop a `ws://` node. Check a URL before registering it.
+
 ## Public surface
 
 Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ffi.rs):
 
 - `ChainProvider` — construct **one per process** and share it. Every connection runs on the single embedded light client, so they share sync, peers, and warm state while keeping their own request queue and response stream. `connect(genesisHash:listener:)` resolves the network from the bundled catalog (relay wiring and statement-store placement included), so the 32-byte genesis hash is the only argument. At most 32 connections are held at once: past that, `connect(genesisHash:listener:)` throws `.connect(reason:)` rather than adding another chain, and `disconnect()` hands the slot back. That ceiling is a backstop against connections you never close, not a budget to spend; the catalog resolves eight chains, so one reused connection per chain stays well under it.
+- `ChainProvider.withRpcNodes(nodes:)` — build a provider that serves each `RpcNode(genesisHash:url:)` from that remote JSON-RPC node (`ws://` or `wss://`) instead of the light client, and refuses any other chain rather than starting the light client for it. You connect with the same `connect(genesisHash:listener:)`, so a host can move a chain between a node and the light client without touching its JSON-RPC handling. It never starts the light client, so it is cheap to build: a host that rotates between nodes builds one per node. It does not count towards the 32-connection ceiling. There is no reconnection: a dropped socket, or one silent for 50 seconds (the provider pings every 20), closes the connection with `.streamEnded`, and the host connects again and replays its subscriptions. A malformed URL throws `.connect(reason:)` and a hash that is not 32 bytes `.badGenesis` when building; a chain it was not given, or a node that does not answer the handshake, throws `.connect(reason:)` from `connect(genesisHash:listener:)`. Call `connect(genesisHash:listener:)` on it from a thread of your own: from a thread that runs tokio tasks, such as the one the TrUAPI core calls `chainConnect` on, it throws `.connect(reason:)` instead of blocking.
 - `ChainMessageListener` — the host implements it; `onMessage(message:)` receives each JSON-RPC response and notification, `onClosed(reason:)` fires once the pump stops and names why. Both may throw: a listener that throws stops the pump for that connection rather than being called again for every response, and an error it does not declare is reported as `.listener(reason:)` instead of aborting the process.
 - `ChainConnection` — `send(request:)` queues a request, `disconnect()` tears the connection down.
 - `ChainCloseReason` — `.streamEnded` when the response stream ended, which includes your own `disconnect()` coming back to you, and `.listenerFailed(reason:)` when your listener rejected a message and the connection was closed for it. It says why the pump stopped, not whether you should reconnect; carry an `@unknown default`, since variants may be added. That is source compatibility only: adding a variant does not change the `on_closed` checksum, so bindings older than the binary pass the integrity check and then fail to decode the reason, which surfaces as `onClosed` never firing. Regenerate bindings and binary together. `reason` on `.listenerFailed` is bounded to 256 Unicode scalar values, so it can measure more than 256 in Swift's `Character` count and up to 1024 bytes. Reconnect from a *serial* queue off the pump thread: `connect(genesisHash:listener:)` refuses to run inside a listener callback and throws `.connect(reason:)` if you try. Do not re-queue work with `send(request:)` from `onClosed(reason:)`: the connection is already closed by then, and `send` on a closed connection is dropped silently, with no error and no response frame.
@@ -63,15 +66,16 @@ Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ff
 
 ```text
 host app
-  ChainProvider().connect(genesisHash:listener:)
-           |
-           v
-libtruapi_provider (embedded smoldot + bundled chain-spec catalog)
+  ChainProvider().connect(genesisHash:listener:)    ChainProvider.withRpcNodes(nodes:).connect(genesisHash:listener:)
+           |                                                  |
+           v                                                  v
+libtruapi_provider (embedded smoldot + bundled chain-spec catalog, WebSocket client)
   → one light client per process, one added chain per connection
+  → one WebSocket per RPC connection, on one runtime thread the crate owns
   → responses pumped on a Rust-owned thread into ChainMessageListener
 ```
 
-A connection is a raw JSON-RPC string pipe. The provider does no decoding: what smoldot answers is what the listener receives.
+A connection is a raw JSON-RPC string pipe. The provider does no decoding: what smoldot or the node answers is what the listener receives.
 
 ## Example
 
@@ -119,7 +123,7 @@ connection.disconnect()
 
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
 
-- **static libraries** — `cargo build -p truapi-provider --no-default-features --features uniffi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The `ws` backend is off, so the build carries the light client only.
+- **static libraries** — `cargo build -p truapi-provider --no-default-features --features uniffi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The `uniffi` feature enables the `ws` backend, so the build carries the light client and the WebSocket client behind `withRpcNodes`.
 - **bindings** — the workspace `uniffi-bindgen-cli` reads the built `libtruapi_provider.a` and emits `truapi_provider.swift` plus `truapi_providerFFI.h`/`.modulemap`. The script copies them into `Sources/`, renaming the emitted `truapi_providerFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up.
 - **xcframework** — `xcodebuild -create-xcframework` bundles the slices with those same headers, and the result is copied into `Binaries/`.
 
