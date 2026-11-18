@@ -9,6 +9,8 @@ use truapi::{
 	},
 };
 
+mod use_cases;
+
 use super::*;
 use crate::coinage::{
 	PrivacyPolicy, PurseId,
@@ -33,6 +35,14 @@ impl crate::runtime::ProductFunding for NoProductAccounts {
 
 /// A product host over a running coinage layer, with the wallet behind it.
 async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntimeHost<RemoteAccountHolder>) {
+	let (wallet, host, _) = coinage_host_with_layer(platform).await;
+	(wallet, host)
+}
+
+/// [`coinage_host`], with the layer it serves.
+async fn coinage_host_with_layer(
+	platform: Arc<StubPlatform>,
+) -> (TestWallet, ProductRuntimeHost<RemoteAccountHolder>, crate::coinage::layer::Layer) {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
 	let (layer, ..) = started_layer(wallet.db.clone()).await;
 	let services = payment_services_over(platform);
@@ -47,9 +57,9 @@ async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntim
 	assert!(services.install_coinage_engine(Arc::new(engine)));
 	let (started, start) = futures::channel::oneshot::channel();
 	assert!(services.install_coinage_start(futures::FutureExt::shared(start)));
-	started.send(Ok(layer)).ok();
+	started.send(Ok(layer.clone())).ok();
 	let host = payment_host(&services, PRODUCT, true);
-	(wallet, host)
+	(wallet, host, layer)
 }
 
 /// A call made while the coinage layer starts waits for the start instead of
@@ -231,4 +241,50 @@ async fn an_rfc6_payment_runs_once_under_its_id() {
 	assert!(first.is_ok(), "the payment starts: {first:?}");
 	let again = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(8 * UNIT, 1)).await;
 	assert!(matches!(again, Err(CallError::Domain(_))), "a reused id is refused");
+}
+
+fn payment_status_request(id: u8) -> truapi::versioned::payment::HostPaymentStatusSubscribeRequest {
+	truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(v01::HostPaymentStatusSubscribeRequest { id: [id; 32] })
+}
+
+#[tokio::test]
+async fn an_rfc6_payment_status_ends_with_its_first_terminal_item() {
+	let platform = Arc::new(StubPlatform { coin_payment_spend_confirmed: true, ..Default::default() });
+	let (wallet, host, layer) = coinage_host_with_layer(platform).await;
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, coin_read(3));
+	let started = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(8 * UNIT, 1)).await;
+	assert!(started.is_ok(), "the payment starts: {started:?}");
+	let records: Vec<_> = wallet.view().registrations().records().map(|facts| facts.record).collect();
+	for record in records {
+		crate::coinage::testing::set_status(&wallet.db, record, "FAILURE", Some("DISPATCH_FAILED"));
+	}
+	layer.run_due(NOW).await.unwrap();
+	let statuses = truapi::api::Payment::status_subscribe(&host, &CallContext::default(), payment_status_request(1)).await;
+	let items: Vec<_> = tokio::time::timeout(core::time::Duration::from_secs(5), statuses.collect::<Vec<_>>())
+		.await
+		.expect("the stream ends after its terminal item");
+	let failed = |item: &Result<truapi::versioned::payment::HostPaymentStatusSubscribeItem, _>| {
+		matches!(
+			item,
+			Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+				v01::HostPaymentStatusSubscribeItem::Failed { .. }
+			))
+		)
+	};
+	assert_eq!(items.len(), 1, "nothing follows the terminal item: {items:?}");
+	assert!(failed(&items[0]), "its only phase failed on chain: {items:?}");
+}
+
+#[tokio::test]
+async fn an_unknown_rfc6_payment_is_not_found() {
+	let (_wallet, host) = coinage_host(Arc::new(StubPlatform::default())).await;
+	let mut statuses =
+		truapi::api::Payment::status_subscribe(&host, &CallContext::default(), payment_status_request(9)).await;
+	let first = statuses.next().await.expect("an answer");
+	assert!(matches!(
+		first,
+		Err(CallError::Domain(truapi::versioned::payment::HostPaymentStatusSubscribeError::V1(
+			v01::HostPaymentStatusSubscribeError::PaymentNotFound
+		)))
+	));
 }

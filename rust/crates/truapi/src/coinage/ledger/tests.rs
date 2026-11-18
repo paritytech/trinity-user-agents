@@ -168,6 +168,46 @@ fn a_committed_mark_is_never_released() {
 }
 
 #[test]
+fn a_mark_is_kept_per_asset() {
+	let db = ledger();
+	let coins = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0), exponent(1)]))).unwrap();
+	let marked = coins[0];
+	block_on(db.write(move |tx| mark_disclosed(tx, &[marked]))).unwrap().unwrap();
+	let snapshot = view(&db);
+	assert_eq!((snapshot.mark(&coins[0]), snapshot.mark(&coins[1])), (Some(Mark::Uncommitted), None));
+}
+
+#[test]
+fn an_asset_the_ledger_never_held_has_no_record() {
+	let db = ledger();
+	let unknown = Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index: 99 };
+	assert_eq!(view(&db).asset(&unknown), None);
+}
+
+/// Adoption records what an earlier instance allocated; the current
+/// installation's counter starts from its own allocations alone.
+#[test]
+fn allocation_counts_per_installation_and_adoption_never_advances_it() {
+	let db = ledger();
+	let earlier = InstallationId([1; 32]);
+	let found = AssetRecord { asset: Asset::Coin { purse: PurseId::MAIN, installation: earlier, index: 40 }, exponent: exponent(0) };
+	block_on(db.write(move |tx| adopt(tx, &[found]))).unwrap();
+	let allocated = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0)]))).unwrap();
+	assert_eq!(allocated, [Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index: 0 }]);
+}
+
+#[test]
+fn an_allocation_never_overwrites_an_asset_already_held() {
+	let db = ledger();
+	let held = Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index: 0 };
+	let found = AssetRecord { asset: held, exponent: exponent(5) };
+	block_on(db.write(move |tx| adopt(tx, &[found]))).unwrap();
+	let refused = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0)])));
+	assert!(refused.is_err(), "index 0 is taken");
+	assert_eq!(view(&db).asset(&held), Some(&found));
+}
+
+#[test]
 fn earlier_installations_count_toward_the_main_purse() {
 	let db = ledger();
 	let earlier = InstallationId([1; 32]);
@@ -233,6 +273,53 @@ fn peer_secrets_are_kept_until_forgotten() {
 	assert_eq!(block_on(db.read(|conn| super::secret(conn, &[1; 32]))).unwrap(), Some(super::super::CoinSecret([5; 64])));
 	block_on(db.write(|tx| forget_secrets(tx, &[[1; 32]]))).unwrap();
 	assert_eq!(block_on(db.read(|conn| super::secret(conn, &[1; 32]))).unwrap(), None);
+}
+
+fn found_on_chain(index: u32) -> AssetRecord {
+	AssetRecord { asset: Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index }, exponent: exponent(5) }
+}
+
+#[test]
+fn an_allocation_whose_index_is_taken_fails_instead_of_overwriting_the_row() {
+	let db = ledger();
+	let taken = found_on_chain(0);
+	block_on(db.write(move |tx| adopt(tx, &[taken]))).unwrap();
+	let outputs = [exponent(2)];
+	assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &outputs))).is_err());
+	let assets: Vec<AssetRecord> = view(&db).assets(PurseId::MAIN).copied().collect();
+	assert_eq!(assets, [taken], "the record found on chain keeps its exponent");
+}
+
+#[test]
+fn a_batch_whose_indices_are_taken_fails_instead_of_overwriting_the_rows() {
+	let db = ledger();
+	let taken = found_on_chain(1);
+	block_on(db.write(move |tx| adopt(tx, &[taken]))).unwrap();
+	let outputs = [exponent(2), exponent(3)];
+	assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &outputs))).is_err());
+	let assets: Vec<AssetRecord> = view(&db).assets(PurseId::MAIN).copied().collect();
+	assert_eq!(assets, [taken], "the batch's free first index is rolled back with the rest");
+}
+
+#[test]
+fn an_allocation_without_a_current_installation_fails() {
+	let db = open_memory_core_db();
+	for kind in [AssetKind::Coin, AssetKind::Entry] {
+		let outputs = [exponent(2)];
+		assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, kind, &outputs))).is_err(), "{kind:?}");
+	}
+}
+
+/// A released export frees its coin: the mark is gone, so the coin can be
+/// disclosed again.
+#[test]
+fn a_released_mark_can_be_marked_again() {
+	let db = ledger();
+	let coin = block_on(db.write(|tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &[exponent(0)]))).unwrap()[0];
+	block_on(db.write(move |tx| mark_disclosed(tx, &[coin]))).unwrap().unwrap();
+	block_on(db.write(move |tx| release_disclosed(tx, &[coin]))).unwrap();
+	assert_eq!(block_on(db.write(move |tx| mark_disclosed(tx, &[coin]))).unwrap(), Ok(()));
+	assert_eq!(view(&db).mark(&coin), Some(Mark::Uncommitted));
 }
 
 /// The allowance follows the unload fee, so a failed read must keep the last

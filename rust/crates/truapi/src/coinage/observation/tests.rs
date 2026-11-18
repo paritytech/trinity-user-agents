@@ -52,6 +52,30 @@ fn a_coin_of_another_instance_reads_as_an_empty_account() {
 	assert_eq!(observation.value, Some(Read::Coin { now: None, emptied_by: None }));
 }
 
+/// An empty account alone cannot tell a payee's claim from a coin not yet
+/// landed (invariant 1), so the facts of an exported coin whose account is
+/// empty name the transaction that emptied it, and the export is seen as
+/// claimed.
+#[test]
+fn an_exported_coin_whose_account_was_emptied_is_seen_claimed() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let coin = wallet.coin(3);
+	block_on(wallet.db.write(move |tx| {
+		crate::coinage::ledger::mark_disclosed(tx, &[coin])?.expect("an unheld coin");
+		crate::coinage::ledger::commit_disclosed(tx, &[coin])
+	}))
+	.unwrap();
+	let chain = Arc::new(FakeChain::default());
+	let claim = crate::coinage::chain::Emptying { transaction: [7; 32], block: 5 };
+	chain.emptied.lock().insert(account(0), claim);
+	block_on(on_block(&deps(&wallet, chain), block(20), NOW, &chain_params())).unwrap();
+	let view = wallet.view();
+	let observation = view.observation(&Subject::Asset(coin)).cloned().unwrap();
+	assert!(matches!(observation.value, Some(Read::Coin { now: None, emptied_by: Some(_) })), "{observation:?}");
+	let export = crate::coinage::classification::classify(&coin, &view, NOW, &chain_params()).export;
+	assert!(matches!(export, Some(crate::coinage::classification::ExportStatus::Claimed { .. })), "{export:?}");
+}
+
 #[test]
 fn a_failed_read_never_reaches_the_ledger_as_absent() {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
@@ -80,6 +104,28 @@ fn an_entry_is_observed_in_its_ring_with_its_expiry() {
 	assert!(on_chain.closed);
 	assert_eq!(on_chain.expires_at, Some(NOW + 90 * 24 * 3600));
 }
+
+/// A claim waits on the peer's coin, so F1 reads the account of every coin
+/// a record imports.
+#[test]
+fn a_peer_coin_a_record_imports_is_observed() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let output = wallet.coin(3);
+	let peer = Asset::PeerCoin([8; 32]);
+	let engine = crate::coinage::testing::unbuilt_engine(wallet.db.clone());
+	let rows = crate::coinage::registration::Rows { inputs: vec![peer], outputs: vec![output], tokens: Vec::new() };
+	let operation = crate::coinage::operation::OpKey::own([1; 32]);
+	let admission = crate::coinage::registration::Admission::Import;
+	crate::coinage::testing::register_rows(&engine, &operation, admission, vec![rows]).unwrap();
+	let chain = Arc::new(FakeChain::default());
+	chain.coins.lock().insert([8; 32], ChainCoin { instance: 0, value: 3, age: 1, locked_until: None });
+	block_on(on_block(&deps(&wallet, chain), block(22), NOW, &chain_params())).unwrap();
+	let observation = wallet.view().observation(&Subject::Asset(peer)).cloned().unwrap();
+	let expected = CoinOnChain { exponent: Exponent::new(3).unwrap(), age: 1, locked_until: None };
+	assert_eq!(observation.value, Some(Read::Coin { now: Some(expected), emptied_by: None }));
+}
+
+mod use_cases;
 
 /// A person of one collection, whose every alias is the same.
 struct Person(PersonhoodCollection);

@@ -166,3 +166,5 @@ fn no_completion_exists_before_the_status_is_terminal() {
 	assert_eq!(completion(&wallet.view(), &key(1), NOW, &chain_params(), &ENTROPY), None);
 	assert_eq!(open_operations(&wallet.view(), NOW, &chain_params()), vec![key(1)]);
 }
+
+mod use_cases;

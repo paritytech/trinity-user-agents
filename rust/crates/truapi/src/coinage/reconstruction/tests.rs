@@ -4,9 +4,14 @@ use super::*;
 use crate::coinage::{
 	CoinSecret, PrivacyPolicy,
 	chain::{ChainCoin, RingPlace},
-	classification::{Selectability, classify},
+	classification::{HeldBack, Selectability, classify},
+	ledger::{BlockRef, Facts, Subject},
 	namespace::datastore_key,
-	testing::{ENTROPY, FakeChain, FixedSeed, NOW, TestWallet, chain_params},
+	policy::{MemberThreshold, ReadyRule},
+	testing::{
+		ENTROPY, FakeChain, FixedSeed, NOW, TestWallet, chain_params, entry_read,
+		scans::{FINALIZED, ListedRegistry, RecordingChain},
+	},
 };
 
 const EARLIER: InstallationId = InstallationId([4; 32]);
@@ -62,6 +67,115 @@ fn a_failed_registry_read_still_scans_the_installations_already_known() {
 	let config = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
 	assert_eq!(block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap(), 0);
 	assert!(wallet.view().installations().iter().all(|(_, progress)| progress.first_scan_done));
+}
+
+const GAP_OF_TWO: ScanConfig = ScanConfig { batch: 4, gap: 2, deep_batches: 4, purse_gap: 1 };
+
+/// The account of the coin at `index` of the main purse under `EARLIER`.
+fn earlier_coin(index: u32) -> [u8; 32] {
+	coin_key(&ENTROPY, PurseId::MAIN, EARLIER, index).unwrap().1
+}
+
+/// A wallet whose registry lists `EARLIER`, which holds a coin at each of
+/// `indices` of the main purse, read through a recording chain.
+fn wallet_with_earlier_coins(indices: &[u32]) -> (TestWallet, Arc<RecordingChain>, ReconstructionDeps) {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let chain = Arc::new(RecordingChain::default());
+	for index in indices {
+		let coin = ChainCoin { instance: 0, value: 5, age: 1, locked_until: None };
+		chain.chain.coins.lock().insert(earlier_coin(*index), coin);
+	}
+	let deps = ReconstructionDeps {
+		store: wallet.db.clone(),
+		seed: Arc::new(FixedSeed),
+		chain: chain.clone(),
+		registry: Arc::new(ListedRegistry(vec![EARLIER])),
+	};
+	(wallet, chain, deps)
+}
+
+fn earlier_coins_held(wallet: &TestWallet) -> Vec<u32> {
+	wallet
+		.view()
+		.assets(PurseId::MAIN)
+		.filter_map(|record| match record.asset {
+			Asset::Coin { installation: EARLIER, index, .. } => Some(index),
+			_ => None,
+		})
+		.collect()
+}
+
+#[test]
+fn a_scan_stops_after_consecutive_empty_batches_not_after_as_many_in_total() {
+	let (wallet, _, deps) = wallet_with_earlier_coins(&[0, 8, 16]);
+	block_on(reconstruct(&deps, Purses::MainOnly, false, &GAP_OF_TWO, &chain_params())).unwrap();
+	assert_eq!(earlier_coins_held(&wallet), [0, 8, 16], "each hit starts the count of empty batches again");
+}
+
+#[test]
+fn coins_are_recovered_from_the_finalized_head() {
+	let (wallet, chain, deps) = wallet_with_earlier_coins(&[3]);
+	block_on(reconstruct(&deps, Purses::MainOnly, false, &GAP_OF_TWO, &chain_params())).unwrap();
+	assert_eq!(earlier_coins_held(&wallet), [3]);
+	assert!(chain.coin_reads.lock().iter().all(|(at, _)| *at == FINALIZED.hash), "never the best head");
+}
+
+#[test]
+fn a_scan_that_cannot_read_the_heads_recovers_nothing() {
+	let (wallet, chain, deps) = wallet_with_earlier_coins(&[3]);
+	chain.heads_failing.store(true, core::sync::atomic::Ordering::SeqCst);
+	let failed = block_on(reconstruct(&deps, Purses::MainOnly, false, &GAP_OF_TWO, &chain_params()));
+	assert!(matches!(failed, Err(ReconstructError::Unavailable)));
+	assert_eq!(earlier_coins_held(&wallet), [0u32; 0]);
+	let progress: Vec<_> = wallet.view().installations().to_vec();
+	assert_eq!(progress, [(InstallationId([9; 32]), ScanProgress::default()), (EARLIER, ScanProgress::default())]);
+}
+
+#[test]
+fn an_interrupted_scan_resumes_where_it_stopped() {
+	let (wallet, chain, deps) = wallet_with_earlier_coins(&[0, 4]);
+	*chain.coin_reads_left.lock() = Some(4);
+	let interrupted = block_on(reconstruct(&deps, Purses::MainOnly, false, &GAP_OF_TWO, &chain_params()));
+	assert!(matches!(interrupted, Err(ReconstructError::Unavailable)), "the third read of `EARLIER` fails");
+	assert_eq!(earlier_coins_held(&wallet), [0, 4], "what the batches before the failure found is kept");
+
+	*chain.coin_reads_left.lock() = None;
+	chain.coin_reads.lock().clear();
+	block_on(reconstruct(&deps, Purses::MainOnly, false, &GAP_OF_TWO, &chain_params())).unwrap();
+	let earlier: Vec<[u8; 32]> = (0..32).map(earlier_coin).collect();
+	let indices_read: Vec<usize> = chain
+		.accounts_read()
+		.iter()
+		.filter_map(|account| earlier.iter().position(|candidate| candidate == account))
+		.collect();
+	assert_eq!(indices_read, (8..16).collect::<Vec<_>>(), "the scan of `EARLIER` resumes at index 8");
+	assert!(wallet.view().installations().iter().all(|(_, progress)| progress.first_scan_done));
+}
+
+#[test]
+fn a_reconstructed_entry_waits_out_its_dwell_from_its_first_observation() {
+	let dwell = ReadyRule { members: MemberThreshold::Count(1), dwell: core::time::Duration::from_secs(600) };
+	let wallet = TestWallet::new(PrivacyPolicy { ready_when: vec![dwell], ..PrivacyPolicy::fastest() });
+	let entry = Asset::Entry { purse: PurseId::MAIN, installation: EARLIER, index: 5 };
+	let found = ledger::AssetRecord { asset: entry, exponent: Exponent::new(2).unwrap() };
+	block_on(wallet.db.write(move |tx| ledger::adopt(tx, &[found]))).unwrap();
+	let observe_at = |number: u32, now: u64| {
+		let facts = Facts { at: BlockRef { number, hash: [number as u8; 32] }, reads: vec![(Subject::Asset(entry), entry_read(0))] };
+		block_on(wallet.db.write(move |tx| ledger::observe(tx, &facts, now, 255))).unwrap();
+	};
+	observe_at(1, NOW);
+	observe_at(2, NOW + 60);
+	let view = wallet.view();
+	assert_eq!(view.observation(&Subject::Asset(entry)).and_then(|observation| observation.included_at), Some(NOW));
+	let at = |now| classify(&entry, &view, now, &chain_params()).selectability;
+	assert_eq!((at(NOW + 599), at(NOW + 600)), (Selectability::HeldBack(HeldBack::Dwell), Selectability::Now));
+}
+
+#[test]
+fn a_tampered_record_does_not_open() {
+	let mut sealed = key().seal(EARLIER);
+	sealed[20] ^= 1;
+	assert_eq!(key().open(&sealed), None);
 }
 
 /// An unload names only the alias, so an entry the wallet already unloaded is

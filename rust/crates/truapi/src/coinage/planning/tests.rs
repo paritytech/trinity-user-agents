@@ -2,7 +2,7 @@ use super::*;
 use crate::coinage::{
 	PrivacyPolicy,
 	selection::{Forms, SelectRequest, Want, select},
-	testing::{NOW, TestWallet, chain_params},
+	testing::{NOW, TestWallet, chain_params, planning::params_with_unload_cap},
 };
 
 fn spend_of(wallet: &TestWallet, amount: u64, to: Destination, forms: Forms) -> PlanInput {
@@ -83,6 +83,32 @@ fn each_unload_group_presents_its_own_token_and_conserves_value() {
 }
 
 #[test]
+fn an_offboard_reloads_its_surplus_as_entries_of_the_source_purse() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let eight = wallet.entry(3, 0);
+	wallet.entry(1, 1);
+	let input = spend_of(&wallet, 6, Destination::External([7; 32]), Forms::EntriesOnly);
+	let plan = plan(&input, &[TokenId { period: 1, slot: 0 }], &wallet.view(), &chain_params());
+	let change = Output { kind: AssetKind::Entry, purse: PurseId::MAIN, exponent: Exponent::new(1).unwrap(), delivered: false };
+	assert_eq!(plan.transactions.len(), 1);
+	assert_eq!((plan.transactions[0].inputs.clone(), plan.transactions[0].outputs.clone()), (vec![eight], vec![change]));
+}
+
+#[test]
+fn an_offboard_with_no_surplus_mints_nothing() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(3, 0);
+	wallet.entry(3, 0);
+	wallet.entry(2, 1);
+	let input = spend_of(&wallet, 20, Destination::External([7; 32]), Forms::EntriesOnly);
+	let tokens = [TokenId { period: 1, slot: 0 }, TokenId { period: 1, slot: 1 }];
+	let plan = plan(&input, &tokens, &wallet.view(), &chain_params());
+	let inputs_per_ring: Vec<usize> = plan.transactions.iter().map(|planned| planned.inputs.len()).collect();
+	assert_eq!(inputs_per_ring, [1, 2], "one transaction per ring, each with its ring's entries");
+	assert!(plan.transactions.iter().all(|planned| planned.outputs.is_empty()));
+}
+
+#[test]
 fn a_load_is_cut_at_the_per_load_cap() {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
 	let input = PlanInput::Load { from: [3; 32], amount: (1 << 12) - 1, into: PurseId::MAIN };
@@ -101,4 +127,61 @@ fn a_recycle_turns_each_coin_into_an_entry_of_its_value() {
 	let planned = &plan.transactions[0];
 	assert_eq!((planned.call, planned.inputs.clone()), (Call::Recycle, vec![coin]));
 	assert_eq!(planned.outputs, [Output { kind: AssetKind::Entry, purse: PurseId(2), exponent: Exponent::new(6).unwrap(), delivered: true }]);
+}
+
+/// The plan of a payment of `amount` from entries to another purse.
+fn unload_plan(wallet: &TestWallet, amount: u64, params: &ChainParams) -> Plan {
+	let request = SelectRequest {
+		purse: PurseId::MAIN,
+		want: Want::Amount(amount),
+		forms: Forms::EntriesOnly,
+		entries_first: false,
+		held_back: false,
+	};
+	let selection = select(&wallet.view(), request, NOW, params).expect("covered");
+	plan(&PlanInput::Spend { selection, to: Destination::Purse(PurseId(4)) }, &[], &wallet.view(), params)
+}
+
+/// The delivered and the change exponents of each unload, in plan order.
+fn unload_outputs(wallet: &TestWallet, amount: u64, params: &ChainParams) -> Vec<(Vec<u8>, Vec<u8>)> {
+	let plan = unload_plan(wallet, amount, params);
+	let raw = |planned: &Planned, delivered: bool| -> Vec<u8> {
+		planned.outputs.iter().filter(|output| output.delivered == delivered).map(|output| output.exponent.get()).collect()
+	};
+	plan.transactions.iter().map(|planned| (raw(planned, true), raw(planned, false))).collect()
+}
+
+#[test]
+fn a_payment_larger_than_any_unload_group_is_split_across_groups() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(5, 0);
+	wallet.entry(5, 1);
+	assert_eq!(unload_outputs(&wallet, 64, &chain_params()), [(vec![5], vec![]), (vec![5], vec![])]);
+}
+
+#[test]
+fn a_single_unload_group_delivers_the_fewest_coins_of_the_payment() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(6, 0);
+	assert_eq!(unload_outputs(&wallet, 48, &chain_params()), [(vec![5, 4], vec![4])]);
+}
+
+#[test]
+fn a_payment_spills_into_a_second_group_whose_rest_is_change() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(5, 0);
+	wallet.entry(5, 1);
+	assert_eq!(unload_outputs(&wallet, 40, &chain_params()), [(vec![5], vec![]), (vec![3], vec![4, 3])]);
+}
+
+#[test]
+fn entries_of_one_ring_beyond_the_unload_cap_are_unloaded_in_several_groups() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	for _ in 0..3 {
+		wallet.entry(5, 0);
+	}
+	let params = params_with_unload_cap(2);
+	let sizes: Vec<usize> = unload_plan(&wallet, 96, &params).transactions.iter().map(|planned| planned.inputs.len()).collect();
+	assert_eq!(sizes, [2, 1]);
+	assert_eq!(unload_outputs(&wallet, 96, &params), [(vec![6], vec![]), (vec![5], vec![])]);
 }

@@ -64,3 +64,5 @@ fn each_initiator_reads_its_own_setting() {
 	assert_eq!(policy.held_back_for(Initiator::User), HeldBackSpend::AfterConfirmation);
 	assert_eq!(policy.held_back_for(Initiator::Product), HeldBackSpend::Always);
 }
+
+mod use_cases;

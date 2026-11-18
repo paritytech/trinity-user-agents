@@ -561,3 +561,6 @@ impl RuntimeSource for PeopleRuntime {
 		Some(self.storage.client_at(self.genesis, at).await.ok()?.spec_version())
 	}
 }
+
+#[cfg(test)]
+mod tests;

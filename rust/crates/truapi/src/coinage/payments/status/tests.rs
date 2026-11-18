@@ -83,3 +83,18 @@ fn a_refusal_never_reveals_more_than_rfc_17_names() {
 		reference: empty()
 	});
 }
+
+#[test]
+fn a_payment_still_being_worked_on_is_processing() {
+	for status in [Status::Waiting, Status::Preparing, Status::Submitted, Status::Settling] {
+		assert_eq!(payment_status(item(status, 4, 4), 8, 10_000), HostPaymentStatusSubscribeItem::Processing, "{status:?}");
+	}
+}
+
+#[test]
+fn a_partially_completed_payment_reports_what_reached_the_destination() {
+	let partial = HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 4 * 10_000 };
+	assert_eq!(payment_status(item(Status::PartiallyDone, 4, 0), 8, 10_000), partial);
+}
+
+mod use_cases;

@@ -1,3 +1,13 @@
+mod assets;
+mod evidence;
+mod fuzz;
+mod reorgs;
+mod rules;
+mod submission;
+mod system;
+mod vouchers;
+mod watches;
+
 use std::collections::HashMap;
 
 use futures::executor::block_on;
@@ -279,6 +289,16 @@ fn an_unload_is_given_up_once_an_alias_is_unloaded_and_waits_while_one_is_locked
 	assert!(matches!(check(), Some(AliasCheck::Consumed)));
 }
 
+#[test]
+fn the_installation_registry_domain_lives_on_asset_hub() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let registry = with_coinage(DurableRegistry::new(), deps(&wallet, Arc::new(FakeChain::default()), Running::new()));
+	assert_eq!(
+		(registry.chain(&registry_domain()), registry.chain(&coinage_domain())),
+		(Some(H256([0xcd; 32])), Some(H256([0xab; 32])))
+	);
+}
+
 /// An onboarding entry was never in a ring, so no unload can have consumed
 /// it; a suspended one holds no ring index to read its alias under, and may
 /// have been unloaded before it left its ring (invariant 2).
@@ -299,3 +319,5 @@ fn only_an_onboarding_entry_proves_its_alias_is_not_unloaded() {
 	};
 	assert_eq!([judged_at(RingPosition::Onboarding), judged_at(RingPosition::Suspended)], [(false, true), (false, false)]);
 }
+
+mod use_cases;

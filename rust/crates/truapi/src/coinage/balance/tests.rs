@@ -8,8 +8,14 @@ use crate::{
 		ledger::{AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, allocate, create_purse, mint_installation, observe, snapshot},
 		operation::OpKey,
 		registration::{Admission, Rows},
-		testing::{chain_params, observe_allowance, register_rows, set_status, unbuilt_engine},
+		testing::{
+			observe_allowance,
+			TestWallet, chain_params, register_rows, set_status,
+			unbuilt_engine,
+			planning::{allocated, in_ring},
+		},
 	},
+	durable::DurableTxId,
 	installation::InstallationId,
 	store::{Db, open_memory_core_db},
 };
@@ -96,6 +102,85 @@ fn the_main_purse_takes_tokens_before_product_purses() {
 	assert_eq!(balance_with_allowance(&db, PurseId::MAIN, 1).spendable, 2);
 	assert_eq!(balance_with_allowance(&db, product, 1), Balance { spendable: 0, held_back: 0, arriving: 64 });
 }
+
+/// Registers the record that mints `assets` and gives it `status`.
+fn minted_by(db: &Db, id: u8, assets: Vec<Asset>, status: &'static str, failure: Option<&'static str>) -> DurableTxId {
+	let operation = OpKey { scope: b"mint".to_vec(), id: [id; 32] };
+	let rows = Rows { outputs: assets, ..Rows::default() };
+	let record = register_rows(&unbuilt_engine(db.clone()), &operation, Admission::Ordinary, vec![rows]).unwrap()[0];
+	set_status(db, record, status, failure);
+	record
+}
+
+fn main_balance(db: &Db) -> Balance {
+	balance(&block_on(db.read(snapshot)).unwrap(), PurseId::MAIN, NOW, &chain_params())
+}
+
+const NOTHING: Balance = Balance { spendable: 0, held_back: 0, arriving: 0 };
+
+#[test]
+fn a_coin_absent_from_chain_is_arriving_until_its_mint_fails() {
+	let db = wallet();
+	let coin = allocated(&db, PurseId::MAIN, AssetKind::Coin, 2);
+	let record = minted_by(&db, 1, vec![coin], "PENDING", None);
+	assert_eq!(main_balance(&db), Balance { arriving: 4, ..NOTHING });
+	set_status(&db, record, "FAILURE", Some("EXPIRED"));
+	assert_eq!(main_balance(&db), NOTHING);
+}
+
+#[test]
+fn a_coin_whose_mint_finalized_before_it_was_read_is_still_arriving() {
+	let db = wallet();
+	let coin = allocated(&db, PurseId::MAIN, AssetKind::Coin, 2);
+	minted_by(&db, 1, vec![coin], "FINALIZED_SUCCESS", None);
+	assert_eq!(main_balance(&db), Balance { arriving: 4, ..NOTHING });
+}
+
+#[test]
+fn a_coin_counts_in_the_total_for_every_mint_status_but_failure() {
+	for (id, status) in [(1, "PENDING_SUBMISSION"), (2, "PENDING"), (3, "PENDING_SUCCESS"), (4, "FINALIZED_SUCCESS")] {
+		let db = wallet();
+		let present = holding(&db, PurseId::MAIN, AssetKind::Coin, 2, coin(2, 0, None));
+		let absent = allocated(&db, PurseId::MAIN, AssetKind::Coin, 1);
+		minted_by(&db, id, vec![present, absent], status, None);
+		let total = main_balance(&db);
+		assert_eq!(total.spendable + total.held_back + total.arriving, 6, "{status}");
+	}
+}
+
+#[test]
+fn a_coin_whose_mint_failed_is_in_no_bucket() {
+	let db = wallet();
+	let read_before_the_failure = holding(&db, PurseId::MAIN, AssetKind::Coin, 2, coin(2, 0, None));
+	minted_by(&db, 1, vec![read_before_the_failure], "FAILURE", Some("REJECTED"));
+	assert_eq!(main_balance(&db), NOTHING);
+}
+
+#[test]
+fn an_entry_whose_mint_finalized_before_its_place_was_read_is_still_arriving() {
+	let db = wallet();
+	let entry = allocated(&db, PurseId::MAIN, AssetKind::Entry, 2);
+	minted_by(&db, 1, vec![entry], "FINALIZED_SUCCESS", None);
+	assert_eq!(main_balance(&db), Balance { arriving: 4, ..NOTHING });
+}
+
+#[test]
+fn an_entry_whose_mint_failed_is_in_no_bucket() {
+	let db = wallet();
+	let entry = allocated(&db, PurseId::MAIN, AssetKind::Entry, 2);
+	minted_by(&db, 1, vec![entry], "FAILURE", Some("EXPIRED"));
+	assert_eq!(main_balance(&db), NOTHING);
+}
+
+#[test]
+fn entries_still_gaining_privacy_are_counted_apart_from_spendable_ones() {
+	let wallet = TestWallet::new(PrivacyPolicy::balanced());
+	wallet.hold(PurseId::MAIN, AssetKind::Entry, 3, in_ring(0, 767));
+	wallet.hold(PurseId::MAIN, AssetKind::Entry, 2, in_ring(1, 20));
+	assert_eq!(main_balance(&wallet.db), Balance { spendable: 8, held_back: 4, arriving: 0 });
+}
+
+mod use_cases;
 
 /// The score both shipped wallets draw for a ring.
 #[test]

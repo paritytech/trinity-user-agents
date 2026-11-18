@@ -133,4 +133,41 @@ fn a_free_token_context_is_the_prefix_the_period_and_the_counter() {
 	assert_eq!(context[28..], [7, 0, 0, 0]);
 }
 
+/// An import is signed with the peer coin's secret the ledger kept, and
+/// without it nothing is built.
+#[test]
+fn an_import_is_signed_with_the_peer_secret_and_needs_it() {
+	let (secret, account) = coin_key(&[5; 16], PurseId::MAIN, INSTALLATION, 0).unwrap();
+	let tx = Transaction {
+		call: Call::Transfer,
+		inputs: vec![(Asset::PeerCoin(account), exponent(2))],
+		outputs: vec![(coin(1), exponent(2))],
+		token: None,
+	};
+	let service = extrinsic_service_serving(PEOPLE_METADATA_BYTES, 0);
+	let vrf = block_on(load_vrf()).unwrap();
+	let build = Build { service: &service, genesis: GENESIS, birth: HashAndNumber { hash: H256([4; 32]), number: 4 }, period: 64 };
+	let with = |imported| {
+		let keys = Keys { entropy: &ENTROPY, vrf: &vrf, imported, funding: None, person: None };
+		block_on(assemble(&build, &tx, &Context::default(), &keys, &chain_params()))
+	};
+	let extrinsic = with(Some(&secret)).unwrap().unwrap();
+	let (_, call, args, origin) = decoded(&extrinsic);
+	let (_, destination) = coin_key(&ENTROPY, PurseId::MAIN, INSTALLATION, 1).unwrap();
+	assert_eq!((call.as_str(), args, origin), ("transfer", destination.to_vec(), vec![1, 0]));
+	assert_eq!(signer_of(&extrinsic), account, "the peer's key signs");
+	assert!(matches!(with(None), Err(AssemblyError::Missing(_))));
+}
+
+/// The account `VerifyMultiSignature` names as the signer, its last field.
+fn signer_of(extrinsic: &MortalExtrinsic) -> [u8; 32] {
+	let metadata = people_metadata();
+	let bytes = extrinsic.extrinsic.bytes();
+	let decoded = decode_extrinsic(&mut &bytes[..], &metadata, metadata.types()).unwrap();
+	let extensions = decoded.transaction_extension_payload().unwrap();
+	let verify = extensions.iter().find(|extension| extension.name() == "VerifyMultiSignature").unwrap();
+	let field = &bytes[verify.range()];
+	field[field.len() - 32..].try_into().unwrap()
+}
+
 mod app_vectors;

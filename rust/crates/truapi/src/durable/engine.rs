@@ -145,4 +145,18 @@ impl DurableTxEngine {
 }
 
 #[cfg(test)]
+impl DurableTxEngine {
+	/// Whether a submission watch owns `id`, for tests outside the engine.
+	pub fn is_watched(&self, id: DurableTxId) -> bool {
+		self.ownership.is_owned(id)
+	}
+
+	/// Every request the engine makes for the host to run recovery, for
+	/// tests outside the engine.
+	pub fn recovery_requests(&self) -> futures::channel::mpsc::Receiver<()> {
+		self.host_wakes.subscribe()
+	}
+}
+
+#[cfg(test)]
 mod tests;

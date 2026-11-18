@@ -7,7 +7,10 @@ use crate::{
 		ledger::{BlockRef, Facts, mint_installation, observe, snapshot},
 		operation::OpKey,
 		registration::{Admission, Rows},
-		testing::{chain_params, observe_allowance, register_rows, set_status, unbuilt_engine},
+		testing::{
+			observe_allowance,
+			chain_params, register_rows, set_status, unbuilt_engine,
+		},
 	},
 	installation::InstallationId,
 	store::{Db, open_memory_core_db},
@@ -68,6 +71,39 @@ fn a_token_the_chain_shows_consumed_is_applied() {
 		reads: vec![(Subject::Token(token(2)), Read::Token { consumed: true })],
 	};
 	block_on(db.write(move |tx| observe(tx, &facts, NOW, 255))).unwrap();
+	assert_eq!(token_state(token(2), &view(&db)), TokenState::Applied);
+}
+
+fn observe_tokens(db: &Db, block: u32, reads: Vec<(Subject, Read)>) {
+	let facts = Facts { at: BlockRef { number: block, hash: [block as u8; 32] }, reads };
+	block_on(db.write(move |tx| observe(tx, &facts, NOW, 255))).unwrap();
+}
+
+#[test]
+fn a_period_the_chain_shows_fully_consumed_leaves_no_free_token() {
+	let db = ledger();
+	let consumed = (0..20).map(|slot| (Subject::Token(token(slot)), Read::Token { consumed: true })).collect();
+	observe_tokens(&db, 1, consumed);
+	let supply = supply(NOW, &view(&db), &chain_params());
+	assert_eq!(supply.free().count(), 0);
+	assert_eq!(resolve(1, &supply), None);
+}
+
+#[test]
+fn an_empty_allowance_offers_no_token() {
+	let db = ledger();
+	block_on(db.write(|tx| observe_allowance(tx, 0))).unwrap();
+	let supply = supply(NOW, &view(&db), &chain_params());
+	assert_eq!(supply.free().count(), 0);
+	assert_eq!(resolve(1, &supply), None);
+}
+
+/// A failed read is no evidence that a consumed token became free again.
+#[test]
+fn a_failed_token_read_keeps_what_was_last_observed() {
+	let db = ledger();
+	observe_tokens(&db, 1, vec![(Subject::Token(token(2)), Read::Token { consumed: true })]);
+	observe_tokens(&db, 2, vec![(Subject::Token(token(2)), Read::Failed)]);
 	assert_eq!(token_state(token(2), &view(&db)), TokenState::Applied);
 }
 
