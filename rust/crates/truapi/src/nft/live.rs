@@ -472,7 +472,7 @@ impl LiveRun<'_> {
 		let prepared = self.purses.prepare_cheque(&sender(), from, to, items).await;
 		prepared
 			.expect("the cheque is not refused")
-			.create()
+			.create(0)
 			.await
 			.expect("the cheque is made")
 	}
