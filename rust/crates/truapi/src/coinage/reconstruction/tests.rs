@@ -69,7 +69,7 @@ fn a_failed_registry_read_still_scans_the_installations_already_known() {
 	assert!(wallet.view().installations().iter().all(|(_, progress)| progress.first_scan_done));
 }
 
-const GAP_OF_TWO: ScanConfig = ScanConfig { batch: 4, gap: 2, deep_gap: 4, purse_gap: 1 };
+const GAP_OF_TWO: ScanConfig = ScanConfig { batch: 4, gap: 2, deep_batches: 4, purse_gap: 1 };
 
 /// The account of the coin at `index` of the main purse under `EARLIER`.
 fn earlier_coin(index: u32) -> [u8; 32] {
