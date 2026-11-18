@@ -8,7 +8,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use futures::stream;
-use tracing::{instrument, warn};
+use tracing::warn;
 
 #[cfg(test)]
 use record::ProfileEntry;
@@ -224,29 +224,6 @@ impl PublicProfilesService {
 				}
 			}
 		}))
-	}
-
-	/// Resolves a profile, reusing fresh stored metadata when allowed.
-	///
-	/// Records are fresh for one hour; `force` bypasses that freshness policy.
-	/// Missing or malformed records are empty. Lookup and storage failures
-	/// return errors.
-	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
-	pub async fn resolve(
-		self: &Arc<Self>,
-		username: &str,
-		force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		validate_username(username)?;
-		if !force {
-			let now = current_unix_secs();
-			if let Some(cached) =
-				self.stored_record(username).await?.filter(|cached| cached.is_fresh(now))
-			{
-				return Ok(PublicProfile { avatar: cached.record.avatar() });
-			}
-		}
-		self.refresh_profile(username).await
 	}
 
 	async fn refresh_profile(

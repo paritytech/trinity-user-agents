@@ -17,7 +17,7 @@ use crate::{
 	generated::dispatcher,
 	host_logic::session::SessionState,
 	runtime::{
-		AccountHolder, HostAccounts, HostSession, PairingHostRole, ProductRuntimeHost,
+		AccountHolder, HostAccounts, HostRole, HostSession, PairingHost, ProductRuntimeHost,
 		RuntimeServices,
 	},
 	transport::Transport,
@@ -63,7 +63,7 @@ impl TrUApiCore {
 			host_config.stack.clone(),
 			spawner.clone(),
 		);
-		let pairing_host = PairingHostRole::new(services.clone(), host_config);
+		let pairing_host = PairingHost::new(services.clone(), host_config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
 		let session = pairing_host.session().clone();
 		Self::from_runtime_parts(services, pairing_host.accounts().clone(), session, product)

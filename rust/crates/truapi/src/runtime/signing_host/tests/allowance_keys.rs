@@ -61,7 +61,7 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 
 /// Bounded so a regression waiting on an unanswered chain read fails instead
 /// of hanging.
-fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
+fn allowance_key(signing_host: &SigningHost) -> StatementStoreAllowanceKey {
 	futures::executor::block_on(async {
 		let session = signing_host.accounts().current_session().expect("a session is active");
 		let cx = CallContext::default();

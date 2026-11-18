@@ -14,7 +14,7 @@ protocol API into a working host. It owns:
 - the auto-generated dispatcher/wire-table tables shipped under
   [`crate::generated`]
 - the host embedding surface: one long-lived role handle
-  (`PairingHostRuntime` or `SigningHostRuntime`) per host application, exposing
+  (`HostRuntime<PairingHost>` or `HostRuntime<SigningHost>`) per host application, exposing
   shared [`RuntimeServices`] plus one [`ProductRuntime`] per product connection
 
 ## Architecture
@@ -157,8 +157,8 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
-The embedder builds a role handle, `PairingHostRuntime::new(...)` or
-`SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
+The embedder builds a role handle, `HostRuntime::<PairingHost>::new(...)` or
+`HostRuntime::<SigningHost>::new(...)`, then calls `product_runtime(product, sink)` for
 each product connection. Role-specific operations live only on the matching handle:
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
@@ -196,12 +196,16 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start.
+whichever has the higher `sequence`. It never waits on the network to start,
+and waits a few seconds at most for the stored copy before it starts from the
+bundled one.
 
 The core has no HTTP client. A native host installs `NativeStackCallbacks` with
 `set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,
-and the core keeps the last descriptor it verified in its database. Without the
-callbacks the core stays on the descriptor it started from.
+and the core keeps the last descriptor it verified in its database. A browser
+host passes the `fetchStackDescriptor` and `stackChanged` raw callbacks, and the
+core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
+Without the callbacks the core stays on the descriptor it started from.
 
 The core fetches once the callbacks are installed, unless the last fetch was
 under an hour ago, then once an hour and whenever the host calls
@@ -228,7 +232,7 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+it on iOS and Android, and `HostRuntime::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
 `EncryptedStorage` that keeps NFT receive key and deposited item secrets with
@@ -283,7 +287,7 @@ Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
-embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+embedder calls `HostRuntime::<SigningHost>::set_encrypted_storage`. Web hosts do not
 install one.
 
 ### Durable transactions
@@ -381,7 +385,7 @@ a withdrawn request posts no response. See the
 
 When a device finishes pairing, the signing host reports it to the embedder's
 [`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
-once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
+once through `HostRuntime::<SigningHost>::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and
 `disconnect_paired_host` take.

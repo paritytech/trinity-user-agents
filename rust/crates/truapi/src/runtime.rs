@@ -82,18 +82,15 @@ type ContactsPicker =
 	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
-#[cfg(test)]
-use pairing_host::PairingHost;
-pub use pairing_host::PairingHost as PairingHostRole;
+pub use pairing_host::PairingHost;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -331,6 +328,18 @@ async fn until_cancelled<T>(
 
 fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) -> AuthorityError {
 	AuthorityError::Cancelled(AuthorityCancelError::new(cx.request_id(), reason))
+}
+
+/// The accounts and session that a host shares with its product connections.
+pub trait HostRole {
+	/// Holder used for product account requests.
+	type Holder: AccountHolder;
+
+	/// Account policy and grants for this host.
+	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>>;
+
+	/// Session used for product login, identity and disconnection.
+	fn host_session(self: &Arc<Self>) -> Arc<dyn HostSession>;
 }
 
 /// Product adapter for the generated TrUAPI dispatcher.
@@ -713,6 +722,15 @@ impl ProductConnection {
 	pub fn detach_renderer(&self) {
 		self.renderer.detach();
 		self.renderer_failures.detach();
+	}
+
+	/// Buffer one report of a `Materials` node that fell back for this
+	/// connection's product.
+	pub fn publish_renderer_failure(
+		&self,
+		item: HostRendererFailureSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.renderer_failures.publish(item)
 	}
 
 	/// Buffer one renderer action for this connection's product.
