@@ -156,5 +156,5 @@ codegen-units = 16
 incremental = true
 
 [patch.crates-io]
-smoldot = { git = "https://github.com/paritytech/smoldot", rev = "d21e83c1a8547a4235c331c7f129d20ddb8823be" }
-smoldot-light = { git = "https://github.com/paritytech/smoldot", rev = "d21e83c1a8547a4235c331c7f129d20ddb8823be" }
+smoldot = { git = "https://github.com/paritytech/smoldot", rev = "35bb2efdacb57b7036390302298d1eaa43b21558" }
+smoldot-light = { git = "https://github.com/paritytech/smoldot", rev = "35bb2efdacb57b7036390302298d1eaa43b21558" }

@@ -5079,7 +5079,7 @@ dependencies = [
 [[package]]
 name = "smoldot"
 version = "6.0.0"
-source = "git+https://github.com/paritytech/smoldot?rev=d21e83c1a8547a4235c331c7f129d20ddb8823be#d21e83c1a8547a4235c331c7f129d20ddb8823be"
+source = "git+https://github.com/paritytech/smoldot?rev=35bb2efdacb57b7036390302298d1eaa43b21558#35bb2efdacb57b7036390302298d1eaa43b21558"
 dependencies = [
  "ark-bls12-381 0.6.0",
  "ark-ec 0.6.0",
@@ -5168,7 +5168,7 @@ dependencies = [
 [[package]]
 name = "smoldot-light"
 version = "4.0.0"
-source = "git+https://github.com/paritytech/smoldot?rev=d21e83c1a8547a4235c331c7f129d20ddb8823be#d21e83c1a8547a4235c331c7f129d20ddb8823be"
+source = "git+https://github.com/paritytech/smoldot?rev=35bb2efdacb57b7036390302298d1eaa43b21558#35bb2efdacb57b7036390302298d1eaa43b21558"
 dependencies = [
  "async-channel",
  "async-lock",
