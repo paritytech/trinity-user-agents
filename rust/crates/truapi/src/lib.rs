@@ -89,12 +89,12 @@ pub mod latest {
 		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
 		HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource, MaterialFailure,
 		MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque,
-		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem,
-		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
-		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
-		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseChequeRecord,
+		NftPurseClearedItem, NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey,
+		NftPurseInfoPage, NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel,
+		NftPursePurse, NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter,
+		PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
 		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
 		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
 		RemoteStatementStoreSubscribeRequest, RendererNode, ResourceAllocationError, RingLocation,
@@ -421,6 +421,15 @@ pub mod latest {
 	/// NFT cheque revoke failure.
 	pub type HostNftPurseRevokeChequeError =
 		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeError>;
+	/// Request to list the NFT cheques a product created.
+	pub type HostNftPurseListChequesRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListChequesRequest>;
+	/// The NFT cheques a product created.
+	pub type HostNftPurseListChequesResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseListChequesResponse>;
+	/// NFT cheque listing failure.
+	pub type HostNftPurseListChequesError =
+		LatestOf<versioned::nft_purse::HostNftPurseListChequesError>;
 	/// NFT cheque refund request.
 	pub type HostNftPurseRefundRequest = LatestOf<versioned::nft_purse::HostNftPurseRefundRequest>;
 	/// NFT cheque refund response.
