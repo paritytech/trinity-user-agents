@@ -7,8 +7,7 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.productSources
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.TestScope
 import org.junit.Test
@@ -28,15 +27,14 @@ class RuntimeSelectingSpaHostTest {
 
         override fun setTrUAPIRuntimeEnabled(enabled: Boolean) = Unit
     }
-    private val bundledProducts = bundledProducts(mapOf("bundled-products/provider.dot/app/index.html" to "<html></html>"))
-    private val host = RuntimeSelectingSpaHost(native, truapi, runtimeSettings, productSources(bundledProducts))
+    private val host = RuntimeSelectingSpaHost(native, truapi, runtimeSettings, productSources())
 
-    // Only TrUAPI serves a product the app ships, so it opens there with the TrUAPI runtime switched off.
+    // Only TrUAPI gives a dev server page its product id, so it opens there with the TrUAPI runtime switched off.
     @Test
-    fun `a bundled product opens on TrUAPI whatever the toggle`() {
-        with(scope) { with(messageDisplay) { host.createSession("https://provider.dot/card", underCard = false) } }
+    fun `a dev server page opens on TrUAPI whatever the toggle`() {
+        with(scope) { with(messageDisplay) { host.createSession(DEV_SERVER_URL, underCard = false) } }
 
-        verify { with(scope) { with(messageDisplay) { truapi.createSession("https://provider.dot/card", false, any()) } } }
+        verify { with(scope) { with(messageDisplay) { truapi.createSession(DEV_SERVER_URL, false, any()) } } }
         verify(exactly = 0) { with(scope) { with(messageDisplay) { native.createSession(any(), any()) } } }
     }
 
@@ -46,5 +44,9 @@ class RuntimeSelectingSpaHostTest {
 
         verify { with(scope) { with(messageDisplay) { native.createSession("https://coinflip.dot", any()) } } }
         verify(exactly = 0) { with(scope) { with(messageDisplay) { truapi.createSession(any(), any(), any()) } } }
+    }
+
+    private companion object {
+        const val DEV_SERVER_URL = "http://192.168.1.59:3000/app?product_id=humanity.dot"
     }
 }

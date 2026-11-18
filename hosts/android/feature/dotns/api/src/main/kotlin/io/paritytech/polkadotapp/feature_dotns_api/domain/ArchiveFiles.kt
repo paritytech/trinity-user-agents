@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_dotns_api.domain
 import uniffi.truapi.BundleReader
 import java.io.InputStream
 
-/** Files an archive is served from: a published archive on disk, or the products the app ships. */
+/** The files of an archive, read by the core's archive rules and streamed to the WebView. */
 interface ArchiveFiles : BundleReader {
     fun open(path: String): InputStream?
 }

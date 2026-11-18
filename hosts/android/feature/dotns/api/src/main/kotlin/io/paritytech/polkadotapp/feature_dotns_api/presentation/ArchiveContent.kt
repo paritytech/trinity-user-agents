@@ -10,10 +10,6 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 
-/**
- * Answers WebView requests from an archive by the core's rules ([archiveFile]), the same for a published archive and a
- * product the app ships. [mainDocumentResponseHeaders] go on main-frame documents only.
- */
 class ArchiveContent(
     private val files: ArchiveFiles,
     private val mainDocumentResponseHeaders: Map<String, String>,
@@ -45,7 +41,6 @@ class ArchiveContent(
     }
 }
 
-/** Published archives unpacked on disk, by absolute path. */
 object DiskArchiveFiles : ArchiveFiles {
     override fun list(dir: String): List<String> = File(dir).list()?.toList().orEmpty()
 

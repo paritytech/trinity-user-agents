@@ -22,7 +22,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductSource
 
 class ChatWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
@@ -32,7 +31,6 @@ class ChatWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: DotNsServingHostResolver,
-    productContents: ProductContents,
     @Assisted private val config: ChatWebViewConfig,
     @Assisted private val scope: CoroutineScope,
 ) : WebViewProvider(dispatchers) {
@@ -47,8 +45,6 @@ class ChatWebViewProvider @AssistedInject constructor(
     override val callingProductIdProvider = FixedProductId(productId)
 
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, workerScript.baseUrl)
-
-    private val ownContent = productContents.worker(config.source)
 
     // Serves the worker's archive by host, so the entry module's relative imports resolve too.
     private val dotNsContentClient = DotNsWebViewClient(
@@ -89,7 +85,6 @@ class ChatWebViewProvider @AssistedInject constructor(
 
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest?): WebResourceResponse? {
                     return permissionClient.shouldInterceptRequest(view, request)
-                        ?: request?.let { ownContent?.intercept(it) }
                         ?: request?.let { dotNsContentClient.shouldInterceptRequest(view, it) }
                 }
             }
@@ -125,6 +120,4 @@ class ChatWebViewProvider @AssistedInject constructor(
 data class ChatWebViewConfig(
     val productId: ProductId,
     val workerScript: WorkerScript,
-    /** Where the worker runs from, as `ProductScriptResolver.resolveWorker` decided it. */
-    val source: ProductSource?,
 )
