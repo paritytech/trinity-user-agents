@@ -215,7 +215,7 @@ labels:
     color: "0366d6"
     description: "Pull requests that update a dependency file"
     target: prs
-    addedBy: dependabot, update-chain-specs, update-stacks
+    addedBy: dependabot, update-chain-specs
   # The playground opens diagnosis issues with this label in a pre-filled URL,
   # so renaming it breaks every deployed copy of the playground.
   - name: "diagnosis-report"

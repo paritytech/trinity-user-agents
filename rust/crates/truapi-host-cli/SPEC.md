@@ -1804,7 +1804,7 @@ light-client` on a built-in whose descriptor in use has genesis hashes other tha
 this build's light-client chain specs fails at start, since the stack restarted
 after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
 no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
-shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
+shipped copies, and the daily chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 `tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
 on.
