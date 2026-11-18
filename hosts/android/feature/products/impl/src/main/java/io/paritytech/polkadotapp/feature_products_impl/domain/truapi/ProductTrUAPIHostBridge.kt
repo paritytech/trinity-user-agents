@@ -11,9 +11,9 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import io.parity.truapi.RpcChainProvider
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
-import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
@@ -23,7 +23,6 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
-import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductTheme
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
@@ -38,9 +37,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
@@ -52,7 +51,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -79,7 +77,6 @@ import uniffi.truapi.ThemeVariant as NativeThemeVariant
  */
 class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
-    @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
@@ -104,12 +101,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     // where a suspending registry lookup is not allowed.
     private val cachedChains = AtomicReference(EMPTY_CHAINS)
 
-    private val chainProvider = WebSocketChainProvider(
+    private val chainProvider = RpcChainProvider(
         // Pure lookup against the snapshot resolved on attach(). The core calls
         // this inline on its dispatcher thread, where blocking on the registry
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
-        client = chainHttpClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
