@@ -169,3 +169,5 @@ fn signer_of(extrinsic: &MortalExtrinsic) -> [u8; 32] {
 	let field = &bytes[verify.range()];
 	field[field.len() - 32..].try_into().unwrap()
 }
+
+mod app_vectors;
