@@ -110,7 +110,7 @@ private struct TurnedLayer: ViewModifier {
     func body(content: Content) -> some View {
         content
             .rotation3DEffect(
-                .degrees(PocketCardTurn.layerRotation(side, at: turn.angle)),
+                .degrees(turn.layerRotation(side)),
                 axis: (x: 0, y: 1, z: 0),
                 perspective: 0.42
             )

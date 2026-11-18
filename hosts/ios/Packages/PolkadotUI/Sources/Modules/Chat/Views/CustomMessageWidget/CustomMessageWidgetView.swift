@@ -123,7 +123,7 @@ private struct NodeImageView: View {
                 picture = .loading
                 let image =
                     if case let .inline(bytes) = props.source {
-                        await Task.detached { CustomMessageWidgetNode.ImageSource.decodeInline(bytes) }.value
+                        await Task.detached { UIImage(downsampling: bytes) }.value
                     } else {
                         await resolveImage?(props.source)
                     }
@@ -179,11 +179,11 @@ private struct NodeImageView: View {
     }
 }
 
-extension CustomMessageWidgetNode.ImageSource {
+extension UIImage {
     /// A product's bytes can declare a picture of any size in a few hundred
     /// bytes, so they are read at most 1024 pixels on the longer side rather
     /// than decoded whole.
-    static func decodeInline(_ bytes: Data) -> UIImage? {
+    convenience init?(downsampling bytes: Data) {
         let options = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -197,7 +197,7 @@ extension CustomMessageWidgetNode.ImageSource {
             let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options)
         else { return nil }
 
-        return UIImage(cgImage: image)
+        self.init(cgImage: image)
     }
 }
 

@@ -12,12 +12,12 @@ struct InlineWidgetImageTests {
             context.fill(CGRect(x: 0, y: 0, width: 4_000, height: 400))
         }
 
-        let image = try #require(CustomMessageWidgetNode.ImageSource.decodeInline(wide))
+        let image = try #require(UIImage(downsampling: wide))
 
         #expect(image.size.width * image.scale == 1_024)
     }
 
     @Test func drawsNothingForBytesThatAreNotAPicture() {
-        #expect(CustomMessageWidgetNode.ImageSource.decodeInline(Data("not a picture".utf8)) == nil)
+        #expect(UIImage(downsampling: Data("not a picture".utf8)) == nil)
     }
 }

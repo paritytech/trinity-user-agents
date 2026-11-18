@@ -1,4 +1,3 @@
-import CoreGraphics
 import Testing
 import enum TrUAPIHost.ExpandedCardFaceOutcome
 import enum TrUAPIHost.ExpandedCardTurnOutcome
@@ -21,6 +20,22 @@ struct PocketCardTurnTests {
         let turn = turn()
         turn.beginDrag()
         turn.drag(by: points, width: cardWidth)
+        return turn
+    }
+
+    /// Held at `angle` by the user, reached by swiping over one face at a time as a user does.
+    private func held(at angle: Double) -> PocketCardTurn {
+        let turn = turn(reduceMotion: true)
+        var remaining = angle
+        while abs(remaining) > 180 {
+            let flip = remaining > 0 ? 180.0 : -180.0
+            turn.beginDrag()
+            turn.drag(by: flip / 180 * cardWidth, width: cardWidth)
+            turn.release(velocity: 0, width: cardWidth)
+            remaining -= flip
+        }
+        turn.beginDrag()
+        turn.drag(by: remaining / 180 * cardWidth, width: cardWidth)
         return turn
     }
 
@@ -190,19 +205,13 @@ struct PocketCardTurnTests {
     // the viewer.
     @Test(arguments: [0.0, 45, 90, 135, -135, 180, -180, 270, 540, -630])
     func drawsTheSideUpFacingTheViewer(angle: Double) {
-        let rotations = [PocketCardSide.front, .back].map { PocketCardTurn.layerRotation($0, at: angle) }
-        let shown = PocketCardTurn.layerRotation(PocketCardTurn.shownSide(at: angle), at: angle)
+        let turn = held(at: angle)
+        let rotations = [PocketCardSide.front, .back].map { turn.layerRotation($0) }
+        let shown = turn.layerRotation(turn.shownSide)
 
+        #expect(turn.angle == angle)
         #expect(rotations.allSatisfy { (-180 ..< 180).contains($0) })
         #expect(abs(shown) <= 90)
-    }
-
-    // Only a sideways pan turns the card: a vertical one scrolls the page or pulls the card down to close it.
-    @Test
-    func turnsOnlyOnASidewaysPan() {
-        let pans = [CGPoint(x: 300, y: 100), CGPoint(x: -300, y: 100), CGPoint(x: 100, y: 300), CGPoint(x: 0, y: 0)]
-
-        #expect(pans.map(PocketCardTurn.isTurnPan(velocity:)) == [true, true, false, false])
     }
 }
 

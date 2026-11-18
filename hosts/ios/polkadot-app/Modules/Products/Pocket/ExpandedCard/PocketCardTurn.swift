@@ -55,6 +55,13 @@ final class PocketCardTurn {
     /// How far sideways a layer `depth` points behind the card's middle is drawn at this angle.
     func depthOffset(_ depth: Double) -> Double { -depth * sine }
 
+    /// The rotation `side` is drawn at, kept within ±180° so the side up is never drawn mirrored.
+    func layerRotation(_ side: PocketCardSide) -> Double {
+        let turned = side == .front ? angle : angle + Self.halfTurn
+        let wrapped = (turned + Self.halfTurn).truncatingRemainder(dividingBy: Self.fullTurn)
+        return (wrapped < 0 ? wrapped + Self.fullTurn : wrapped) - Self.halfTurn
+    }
+
     func backChanged(available: Bool) {
         hasBack = available
         guard !available else { return }
@@ -128,23 +135,6 @@ final class PocketCardTurn {
     }
 }
 
-extension PocketCardTurn {
-    static func isTurnPan(velocity: CGPoint) -> Bool {
-        abs(velocity.x) > abs(velocity.y)
-    }
-
-    static func shownSide(at angle: Double) -> PocketCardSide {
-        cos(angle * .pi / 180) >= 0 ? .front : .back
-    }
-
-    /// The rotation `side` is drawn at, kept within ±180° so the side up is never drawn mirrored.
-    static func layerRotation(_ side: PocketCardSide, at angle: Double) -> Double {
-        let turned = side == .front ? angle : angle + halfTurn
-        let wrapped = (turned + halfTurn).truncatingRemainder(dividingBy: fullTurn)
-        return (wrapped < 0 ? wrapped + fullTurn : wrapped) - halfTurn
-    }
-}
-
 private extension PocketCardTurn {
     static let halfTurn = 180.0
     static let fullTurn = 360.0
@@ -172,6 +162,10 @@ private extension PocketCardTurn {
     }
 
     var sine: Double { sin(angle * .pi / 180) }
+
+    static func shownSide(at angle: Double) -> PocketCardSide {
+        cos(angle * .pi / 180) >= 0 ? .front : .back
+    }
 
     /// Ties round up, as Android's do, so both hosts turn home the same way.
     static func nearest(_ degrees: Double, step: Double) -> Double {
@@ -227,7 +221,7 @@ private extension PocketCardTurn {
 
 /// Steps a turn once per screen refresh.
 @MainActor
-final class DisplayLinkFrames: NSObject, PocketCardTurnFrames {
+private final class DisplayLinkFrames: NSObject, PocketCardTurnFrames {
     private var link: CADisplayLink?
     private var step: ((Double) -> Bool)?
     private var previousTimestamp: CFTimeInterval?

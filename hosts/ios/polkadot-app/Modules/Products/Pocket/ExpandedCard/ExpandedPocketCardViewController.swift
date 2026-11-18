@@ -182,7 +182,7 @@ extension ExpandedPocketCardViewController: ProductPageShowing {}
 /// left to the pull-down.
 extension ExpandedPocketCardViewController: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
-        turn.canTurn && transitionCoordinator == nil && PocketCardTurn.isTurnPan(velocity: turnPan.velocity(in: view))
+        turn.canTurn && transitionCoordinator == nil && turnPan.isSideways(in: view)
     }
 
     func gestureRecognizer(_: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer) -> Bool {
@@ -316,5 +316,13 @@ private extension ExpandedPocketCardViewController {
 
         origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
         origin.setOpenItem(nil)
+    }
+}
+
+private extension UIPanGestureRecognizer {
+    /// Only a sideways pan turns the card: a vertical one scrolls the page or pulls the card down to close it.
+    func isSideways(in view: UIView) -> Bool {
+        let panVelocity = velocity(in: view)
+        return abs(panVelocity.x) > abs(panVelocity.y)
     }
 }
