@@ -65,6 +65,7 @@ import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.DbStatus
+import uniffi.truapi.CoreAttribute
 import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
@@ -190,6 +191,16 @@ private val defaultOperationIds = AtomicInteger(0)
 interface HostBridge {
     /** Lifecycle logger. Marker is a stable slug, detail is free-form. */
     fun onCoreLog(marker: String, detail: String) {}
+
+    /**
+     * Structured lifecycle fact. Marker is the same stable slug [onCoreLog]
+     * carries, and each attribute is a key the core names with a label, a
+     * count or a condition under it. Hand these to the reporter as attributes,
+     * so a marker can be grouped and filtered by what it carries. Every
+     * marker here is listed in the table `coreMarkers()` returns, and its class
+     * decides what the host may do with it, exactly as for a log line.
+     */
+    fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {}
 
     /**
      * Open a URL in the system browser, suspending for any approval on the main thread.
@@ -546,6 +557,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     // `panic = "abort"`. Neither may let a host exception reach the FFI.
     override fun onCoreLog(marker: String, detail: String) {
         runCatching { bridge.onCoreLog(marker, detail) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+        runCatching { bridge.onCoreEvent(marker, attributes) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
