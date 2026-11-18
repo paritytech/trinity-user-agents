@@ -5,8 +5,11 @@ import Products
 import UserNotifications
 
 protocol ProductNotificationScheduling {
+    /// Shows `title` when given and the product id otherwise. Only the core
+    /// decides a product may name its title, so callers pass one from the core.
     func schedule(
         productId: ProductId,
+        title: String?,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32
 
@@ -38,6 +41,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 
     func schedule(
         productId: ProductId,
+        title: String?,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32 {
         try await reconcileStaleEntries()
@@ -54,21 +58,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
             notificationId: notificationId
         )
 
-        let content = UNMutableNotificationContent()
-        content.title = productId.rawValue
-        content.body = request.text
-        content.sound = .default
-
-        var userInfo: [String: Any] = [
-            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue
-        ]
-
-        if let deeplink = request.deeplink {
-            userInfo[PushNotificationKeys.deeplink] = deeplink
-        }
-
-        content.userInfo = userInfo
-
+        let content = Self.makeContent(productId: productId, title: title, request: request)
         let trigger = makeTrigger(scheduledAtMs: request.scheduledAtMs)
 
         let notificationRequest = UNNotificationRequest(
@@ -83,6 +73,28 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         logger.debug("Scheduled push notification for \(productId)")
 
         return notificationId
+    }
+
+    static func makeContent(
+        productId: ProductId,
+        title: String?,
+        request: ScheduledNotificationRequest
+    ) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = title ?? productId.rawValue
+        content.body = request.text
+        content.sound = .default
+
+        var userInfo: [String: Any] = [
+            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue
+        ]
+
+        if let deeplink = request.deeplink {
+            userInfo[PushNotificationKeys.deeplink] = deeplink
+        }
+
+        content.userInfo = userInfo
+        return content
     }
 
     func cancel(productId: ProductId, notificationId: UInt32) async throws {
