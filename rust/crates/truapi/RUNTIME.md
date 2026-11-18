@@ -196,12 +196,16 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start.
+whichever has the higher `sequence`. It never waits on the network to start,
+and waits a few seconds at most for the stored copy before it starts from the
+bundled one.
 
 The core has no HTTP client. A native host installs `NativeStackCallbacks` with
 `set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,
-and the core keeps the last descriptor it verified in its database. Without the
-callbacks the core stays on the descriptor it started from.
+and the core keeps the last descriptor it verified in its database. A browser
+host passes the `fetchStackDescriptor` and `stackChanged` raw callbacks, and the
+core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
+Without the callbacks the core stays on the descriptor it started from.
 
 The core fetches once the callbacks are installed, unless the last fetch was
 under an hour ago, then once an hour and whenever the host calls
@@ -237,13 +241,17 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each. The host lists the cards it
+cards in the Pocket and the newest face of each side. The host lists the cards it
 pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
 approves with `add_pocket_card`, and follows the collection with
 `observe_pocket_cards`. A card no longer pinned stays only if the user added
 it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, at most every two seconds and once more
-when the render stops, so a card has a face offline and at cold start.
+`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+render, at most every two seconds and once more when the render stops, so a
+card has both sides offline and at cold start. `pocket_card_face` reads a side.
+A product connection's renderer actions leave out a press on a back that
+connection has not drawn: a product whose SDK predates `PocketCardBack` cannot
+decode one and would lose its whole action stream.
 
 It also keeps materials (`materials` module), the text behind each material
 ID a renderer tree names. The core reads a material it lacks from Bulletin
@@ -780,7 +788,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
   `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
-  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  Widget, and turn that card to its back or front. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`

@@ -194,13 +194,13 @@ TrUAPIProductExecution.startWsBridge()
   → Rust dispatcher
 ```
 
-The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The updated SDK adopts the injected `window.__HOST_API_CLIENT__` client and keeps it across socket replacement. Calls and subscriptions the host may have started fail without replay. Calls not yet sent go out on the replacement socket. Older SDKs use a small `window.__HOST_API_PORT__` adapter and require a page reload after a disconnect.
+The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The container publishes `window.__HOST_API_TRANSPORT__`, a frame channel over that connection. The product's SDK builds its own client over it, so frames are encoded by the `@parity/truapi` the product ships, and keeps that client across socket replacement. Calls and subscriptions the host may have started fail without replay. Calls not yet sent go out on the replacement socket. SDKs that predate the injected transport encode their frames over a small `window.__HOST_API_PORT__` adapter. It survives socket replacement too, and ends what the lost socket carried with a `HostFailure` error.
 
 Android intercepts HTTP requests natively, including scripts and images, and calls `execution.authorizeRemotePermission` on the same Rust permission service used by the SDK. This shares grants and consumes “Allow once” only once. Approval covers the initial URL and any redirects it follows; redirect destinations are intentionally not checked separately. The container uses `nativeHttp: true` to avoid checking fetch and XHR again in JavaScript. Both product pages and hidden worker WebViews use this path.
 
 The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or storage. New products should use the SDK's container detection.
 
-The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
+The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
 
 ## Permissions split
 

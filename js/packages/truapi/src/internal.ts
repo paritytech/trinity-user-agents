@@ -1,9 +1,6 @@
 import { Err, Ok, ResultAsync } from "neverthrow";
 
-export {
-  createHostConnection,
-  type HostConnection,
-} from "./host-connection.js";
+export { createWebSocketProviderFactory } from "./transport.js";
 
 export {
   createInternalClient,

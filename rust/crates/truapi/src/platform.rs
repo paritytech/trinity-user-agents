@@ -33,8 +33,9 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse, StackHost,
-		ReplaceCheck, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
+		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
+		StackStatus,
 	},
 };
 
@@ -1213,6 +1214,14 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// The last descriptor a browser core verified for a stack, so its next
+	/// start does not go back to the bundled copy. A native core keeps this
+	/// record in its own database instead.
+	#[codec(index = 17)]
+	StackRecord {
+		/// The stack's `stack_id`, the key in its link.
+		stack_id: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1331,6 +1340,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
@@ -2381,10 +2391,26 @@ pub enum ExpandedCardFaceOutcome {
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the card, so the request had no effect.
+	/// The user is moving or turning the card, so the request had no effect.
 	UserMoving,
 	/// The host draws no card face.
 	Unsupported,
+}
+
+/// What the host did with a request to turn the expanded card.
+#[derive(Debug, Clone, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardTurnOutcome {
+	/// The requested side is now up, including when it already was.
+	Applied,
+	/// The Widget is not shown under its card right now.
+	NotPresented,
+	/// The user is moving or turning the card, so the request had no effect.
+	UserMoving,
+	/// The host cannot turn cards at all.
+	Unsupported,
+	/// The card has no back to show right now.
+	NoBack,
 }
 
 /// Host control of the card face drawn under an opened card's Widget.
@@ -2399,6 +2425,13 @@ pub trait ExpandedCardHost: Send + Sync {
 		&self,
 		shown: bool,
 	) -> Result<ExpandedCardFaceOutcome, GenericError>;
+
+	/// Turn the card above the calling Widget so its back (`true`) or its
+	/// front (`false`) is up.
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
 /// Host store for a product's pending operations, which the host uses to keep

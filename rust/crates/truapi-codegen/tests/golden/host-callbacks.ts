@@ -255,7 +255,13 @@ export type CoreStorageKey =
    * A product's App executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "AppManifest"; value: { productLabel: string } };
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -335,6 +341,16 @@ export type ExpandedCardFaceOutcome =
   | "NotPresented"
   | "UserMoving"
   | "Unsupported";
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export type ExpandedCardTurnOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported"
+  | "NoBack";
 
 /**
  * The chains a host builds as V5 general transactions. A chain not listed is
@@ -1103,6 +1119,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
     }),
 );
 
@@ -1173,6 +1193,14 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
     S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export const ExpandedCardTurnOutcome: S.Codec<ExpandedCardTurnOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardTurnOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported", "NoBack"),
 );
 
 /**
@@ -1933,6 +1961,12 @@ export interface ExpandedCardHost {
    * Uncover (`true`) or cover (`false`) the face under the calling Widget.
    */
   setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+
+  /**
+   * Turn the card above the calling Widget so its back (`true`) or its
+   * front (`false`) is up.
+   */
+  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardTurnOutcome>;
 }
 
 /**

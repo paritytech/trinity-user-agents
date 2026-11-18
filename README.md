@@ -158,7 +158,8 @@ js/packages/
                           reading with a store and publishing; `/reader` keeps stacks
                           current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
-                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
+                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js;
+                           owns the host connection whose frame channel products encode over
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
                            published to GitHub Packages as io.parity:truapi-host-android
                            (AAR with per-ABI cdylibs; see android/truapi-host/README.md)
@@ -264,8 +265,19 @@ Statement submissions and allowance operations reuse the core's People-chain RPC
 client. Statement subscriptions each open their own connection.
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
-embedded smoldot light client plus a bundled chain-spec catalog, addressed by
-genesis hash, so the host ships no chain specs and never refreshes them. The light
+embedded smoldot light client addressed by genesis hash. A provider built for a
+Trinity stack runs the chains of the stack's descriptor: the provider lists
+where each chain's `lightSpec` is published, the host fetches it and hands the
+bytes over, and the provider checks them
+against the descriptor's `sha256` and the chain's genesis hash, wires each
+parachain to the relay and runs the statement-store protocol where the
+descriptor sets `statementStore`. A chain is unknown until the host adds its
+spec, and a parachain also until the relay's is added; the chains that have
+what they need run meanwhile. A stack's provider refuses a warm-start store,
+which keys a chain's state by genesis hash, and a fork shares those with its
+source. The crate also bundles
+a chain-spec catalog for `paseo-next-v2` and `previewnet`, which a stack's
+provider never consults. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
 The limit covers only light-client connections; connections to a remote node are
@@ -381,8 +393,12 @@ and the core database records only the public key, its purse and its creator.
 `createCheque` hands items to a receive key or a static X25519 key: it seals
 the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
 key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
-under the cheque id, so they are spent from then on. A second cheque with the
-same id from the same product answers `OperationExists`.
+under the cheque id, so they are spent from then on. In the same write, the
+core database keeps the cheque as returned, with its source purse, destination
+and creation time, in `nft_cheque`. A second cheque with the same id from the
+same product answers `OperationExists`, and `listCheques` returns every cheque
+the calling product created since the core started keeping them, oldest first,
+so a product that lost one can deliver the same bytes again or revoke it.
 
 `deposit` opens a received cheque and registers one move per item into fresh
 keys of the purse the product names, under the cheque id, and returns;
@@ -657,11 +673,13 @@ reaches it through a development-only `<script>` tag:
 ```
 
 The host serves that script itself, with no imports or environment variables
-needed. It installs the shared client and browser container before product code
-runs. Keep the tag before application scripts, without `async` or `defer`.
-SDK calls and permission checks share one connection. Updated SDKs reuse the
-injected client across reconnects; older SDKs can still start through the
-MessagePort adapter but require a page reload after a disconnect.
+needed. It installs the shared host transport and browser container before
+product code runs. Keep the tag before application scripts, without `async` or
+`defer`. SDK calls and permission checks share one connection. Each product
+encodes its frames with its own `@parity/truapi`. Updated SDKs keep their
+client across reconnects. SDKs that predate the injected transport use the
+MessagePort adapter, which survives a reconnect too: what the lost connection
+carried ends with a `HostFailure` error.
 A visible page retries a failed reconnect after 250 ms, 1 s and 4 s; after that, the next API
 call or return to a visible page tries again.
 On iOS the host rebinds its localhost listener on the same port each time the app

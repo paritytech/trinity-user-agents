@@ -82,10 +82,9 @@ export async function createMockClient(
     new URL("../../dist/wasm/testing/truapi_server.js", import.meta.url).href;
   const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
     default: () => Promise<unknown>;
-    WasmSigningHostRuntime: new (
-      callbacks: unknown,
-      config: unknown,
-    ) => SigningRuntime;
+    WasmSigningHostRuntime: {
+      create(callbacks: unknown, config: unknown): Promise<SigningRuntime>;
+    };
   };
   await glue.default();
 
@@ -96,7 +95,7 @@ export async function createMockClient(
   const { productId, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
-  const runtime = new glue.WasmSigningHostRuntime(
+  const runtime = await glue.WasmSigningHostRuntime.create(
     {
       // Supplied outside the generated adapter, as the worker runtime does.
       ...createWasmRawCallbacks(host.callbacks),
