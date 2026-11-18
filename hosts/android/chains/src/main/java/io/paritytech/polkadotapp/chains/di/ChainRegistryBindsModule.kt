@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.remote.ChainFetcher
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.remote.RemoteConfigChainFetcher
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionRefCounter
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.RealChainConnectionRefCounter
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.LightClientMetricsLogger
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.LightClientStateSaver
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import javax.inject.Singleton
@@ -26,4 +27,8 @@ internal interface ChainRegistryBindsModule {
     @Binds
     @IntoSet
     fun bindLightClientStateSaver(impl: LightClientStateSaver): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindLightClientMetricsLogger(impl: LightClientMetricsLogger): AppInitializer
 }

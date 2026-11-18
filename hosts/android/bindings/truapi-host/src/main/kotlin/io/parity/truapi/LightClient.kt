@@ -67,6 +67,21 @@ class LightClient(
         }
     }
 
+    /**
+     * smoldot's metrics for each chain connected so far that is still running, by hex genesis hash:
+     * the JSON it answers `sudo_unstable_metrics` with, unchanged. A chain that stopped, or does not
+     * answer, is left out.
+     */
+    suspend fun metrics(): Map<String, String> = buildMap {
+        started.forEach { genesis ->
+            try {
+                provider.metrics(genesis.hexToByteArray())?.let { put(genesis, it) }
+            } catch (unanswered: ChainProviderException) {
+                // Metrics are for diagnosis; a chain that does not answer is simply not reported.
+            }
+        }
+    }
+
     private companion object {
         // smoldot adds a chain on the calling thread and overflows the 1 MiB stack a JVM thread gets
         // by default, which kills the process. Adding chains here gives them a main thread's stack.
