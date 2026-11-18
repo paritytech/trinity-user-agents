@@ -9,7 +9,7 @@ use subxt::{Metadata, utils::H256};
 
 use super::{
 	Asset, ChainConfig, ChainParams, CoinSecret, Exponent, PrivacyPolicy, PurseId, Snapshot,
-	chain::{AliasState, ChainCoin, CoinageChain, Emptying, RingPlace, RingPosition},
+	chain::{AliasState, ChainCoin, CoinageChain, Emptying, FreeTokenLimits, RingPlace, RingPosition},
 	layer::{Interfaces, Layer, Randomness, RuntimeFacts, RuntimeSource, start},
 	plugins::{PersonhoodSource, RegistryWriter, Running, Seed},
 	reconstruction::ScanConfig,
@@ -33,7 +33,7 @@ use crate::{
 		VerdictFailureKind,
 	},
 	installation::InstallationId,
-	store::Db,
+	store::{Db, DbError},
 };
 
 /// Metadata of the Paseo Next People chain, which runs the coinage pallet.
@@ -56,7 +56,6 @@ pub fn chain_config() -> ChainConfig {
 		ring_lifetime: Duration::from_secs(90 * 24 * 3600),
 		ring_page_size: 255,
 		token_grace: Duration::from_secs(3600),
-		unload_allowance: 20,
 		external_minimum_balance: 1,
 		block_time: Duration::from_secs(6),
 		rescue_margin: Duration::from_secs(7 * 24 * 3600),
@@ -178,6 +177,9 @@ pub struct FakeChain {
 	pub emptied: parking_lot::Mutex<HashMap<[u8; 32], Emptying>>,
 	/// The finalized height, when a test moves it from block 10.
 	pub finalized: parking_lot::Mutex<Option<u64>>,
+	/// The free unload tokens of a period, when a test sets them; 20 for
+	/// both collections otherwise.
+	pub free_tokens: parking_lot::Mutex<Option<FreeTokenLimits>>,
 }
 
 impl FakeChain {
@@ -251,6 +253,11 @@ impl CoinageChain for FakeChain {
 		Ok(vec![false; tokens.len()])
 	}
 
+	async fn free_token_limits_at(&self, _: HashAndNumber) -> Result<FreeTokenLimits, StorageWatchError> {
+		self.check()?;
+		Ok(self.free_tokens.lock().unwrap_or(FreeTokenLimits { people: 20, lite_people: 20 }))
+	}
+
 	async fn nonce_at(&self, _: H256, _: [u8; 32]) -> Result<u32, StorageWatchError> {
 		Ok(0)
 	}
@@ -280,7 +287,8 @@ pub struct TestWallet {
 
 impl TestWallet {
 	/// A wallet with the given policy, whose installation's registration
-	/// has landed, so the layer builds its transactions (G3 invariant 4).
+	/// has landed, so the layer builds its transactions (G3 invariant 4),
+	/// and whose chain allows 20 free unload tokens a period.
 	pub fn new(policy: PrivacyPolicy) -> Self {
 		let wallet = Self::unregistered(policy);
 		wallet.register_installation();
@@ -293,7 +301,7 @@ impl TestWallet {
 		let db = crate::store::open_memory_core_db();
 		block_on(db.write(move |tx| {
 			mint_installation(tx, InstallationId([9; 32]), &policy, None, 0)?.expect("a fresh store");
-			Ok(())
+			observe_allowance(tx, 20)
 		}))
 		.expect("the installation is minted");
 		Self { db }
@@ -461,4 +469,14 @@ pub async fn started_layer(store: Db) -> (Layer, Running, Arc<TestRuntime>) {
 		.await
 		.expect("the layer starts");
 	(layer, running, runtime)
+}
+
+/// Stores `allowance` as the free unload tokens of one period, read at
+/// block 1, as a wallet whose chain has been observed holds it.
+pub fn observe_allowance(tx: &rusqlite::Transaction<'_>, allowance: u32) -> Result<(), DbError> {
+	let facts = Facts {
+		at: BlockRef { number: 1, hash: [1; 32] },
+		reads: vec![(Subject::UnloadAllowance, Read::UnloadAllowance(allowance))],
+	};
+	ledger::observe(tx, &facts, 0, 255)
 }
