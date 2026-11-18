@@ -42,7 +42,6 @@ pub fn chain_config() -> ChainConfig {
 		ring_lifetime: Duration::from_secs(90 * 24 * 3600),
 		ring_page_size: 255,
 		token_grace: Duration::from_secs(3600),
-		unload_allowance: 20,
 		external_minimum_balance: 1,
 		block_time: Duration::from_secs(6),
 		rescue_margin: Duration::from_secs(7 * 24 * 3600),
