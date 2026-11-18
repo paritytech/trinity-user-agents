@@ -3,8 +3,7 @@ name: Refresh Chain Specs
 # Refresh the smoldot chain specs bundled in truapi-provider and the stack descriptors bundled in
 # truapi-host (how the CLI uses them: rust/crates/truapi-host-cli/SPEC.md §14.1). Both change in
 # one PR, because a stack's restart from genesis changes its descriptor, its light-client spec and
-# the provider's `genesis_hex` together. Runs daily so a restart or a moved endpoint shows up as a
-# PR within a day.
+# the provider's `genesis_hex` together.
 on:
   schedule:
     # Daily at 01:00 UTC.
@@ -37,7 +36,7 @@ jobs:
       - name: Refresh chain specs
         run: bash scripts/update-chain-specs.sh
         env:
-          # The scheduled refresh keeps its own bootnodes. A dispatch decides.
+          # A scheduled refresh leaves the bootnodes unchanged. A dispatch uses its input.
           SKIP_BOOTNODE_CHECK: ${{ github.event_name == 'schedule' && 'true' || inputs.skip_bootnode_check }}
 
       # The released truapi-host bundles the stacks, so a change to what `stack bundle`

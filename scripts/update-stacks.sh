@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Write stacks/<name>.link and refresh stacks/<name>.json, the copies host builds bundle, for each
-# known stack in rust/crates/trinity-stack/known-stacks.json.
+# known stack in rust/crates/trinity-stack/known-stacks.json, and delete the copies of any stack
+# that file does not list.
 # Fails when any stack was not refreshed; how the CLI uses the copies is in
 # rust/crates/truapi-host-cli/SPEC.md §14.1.
 # Usage: TRUAPI_HOST=<truapi-host binary, default `truapi-host` on PATH> bash scripts/update-stacks.sh
