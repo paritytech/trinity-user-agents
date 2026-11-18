@@ -1028,6 +1028,17 @@ fn refresh_cases() -> Vec<Value> {
 				get(NOW + 1, Some(42), Value::Null),
 			],
 		),
+		case(
+			"a-request-time-ahead-of-the-clock-is-due",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW + 86_400, Some(42), fetch(None)),
+				fetched(None, None, NOW + 86_400, outcome("unreachable", 42, false)),
+				get(NOW, Some(42), fetch(None)),
+				get(NOW + 1, Some(42), Value::Null),
+			],
+		),
 		json!({
 			"name": "an-unsigned-store-never-moves-back-past-its-build-copy",
 			"pointer": { "url": URL, "key": null },

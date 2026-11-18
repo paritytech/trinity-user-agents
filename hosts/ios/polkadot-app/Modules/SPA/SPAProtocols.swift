@@ -7,10 +7,6 @@ import WebKit
 
 @MainActor
 protocol SPAViewProtocol: ControllerBackedProtocol {
-    /// The page's own scroll view, which a screen around it can hang a header
-    /// in so the header rides the page rather than pinning above it.
-    var pageScrollView: UIScrollView { get }
-
     /// The web view the page loads in, which a screen watches to know the load has finished.
     var pageWebView: WKWebView { get }
 

@@ -33,6 +33,7 @@ use crate::{
 use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
+	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
@@ -46,9 +47,8 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
-/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
-/// until it settles, so callers asking for the same thing while one runs wait
-/// for its answer, and a burst of them holds one follow slot, not one each.
+/// dotNS reads running now. Callers asking for the same thing while one runs
+/// wait for its answer, so a burst of them reads Asset Hub once, not once each.
 #[derive(Clone)]
 pub struct DotnsReads {
 	/// Root manifest reads, by product label.
@@ -134,6 +134,11 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
+	/// The materials on the device, over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	materials: OnceLock<Materials>,
+	/// Whether the host draws materials, from its configuration.
+	materials_enabled: AtomicBool,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -269,6 +274,9 @@ impl RuntimeServices {
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			materials: OnceLock::new(),
+			materials_enabled: AtomicBool::new(false),
 			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -479,6 +487,65 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the materials on the device. Set-once, like the database they
+	/// are kept in. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_materials(&self, materials: Materials) -> bool {
+		self.materials.set(materials).is_ok()
+	}
+
+	/// The materials on the device, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn materials(&self) -> Option<Materials> {
+		self.materials.get().cloned()
+	}
+
+	/// Let the host draw materials, as its configuration asks.
+	pub fn enable_materials(&self) {
+		self.materials_enabled.store(true, Ordering::Relaxed);
+	}
+
+	/// Whether the host draws materials at all.
+	pub fn materials_enabled(&self) -> bool {
+		self.materials_enabled.load(Ordering::Relaxed)
+	}
+
+	/// Whether the host draws materials of format `version` requiring
+	/// `features`.
+	pub fn draws_materials(&self, version: u32, features: &[String]) -> bool {
+		#[cfg(not(target_arch = "wasm32"))]
+		{
+			crate::materials::draws(self.materials_enabled(), version, features)
+		}
+		#[cfg(target_arch = "wasm32")]
+		{
+			let _ = (version, features);
+			false
+		}
+	}
+
+	/// The resolved materials of `tree` in `context`, its shaders in
+	/// `language`, filtering 32-bit float images themselves unless
+	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the materials
+	/// are installed over a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &latest::RendererNode,
+		context: &latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		let Some(materials) = self.materials() else {
+			tracing::warn!("no core database, so every material node draws plain");
+			return crate::MaterialsResolution::plain(tree, context, failures);
+		};
+		let enabled = self.materials_enabled();
+		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
+		materials.resolve(tree, context, settings, failures)
 	}
 
 	/// Install the NFT ledger. Set-once, like the database it runs on.
