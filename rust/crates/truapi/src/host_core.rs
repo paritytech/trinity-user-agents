@@ -505,17 +505,14 @@ impl HostRuntime<PairingHost> {
 	where
 		P: Platform + 'static,
 	{
-		let platform: Arc<dyn Platform> = platform;
-		let services = RuntimeServices::with_chat_platform(
+		let services = RuntimeServices::with_platforms(
 			platform,
 			config.host.host_info.clone(),
 			config.stack.clone(),
 			spawner.clone(),
 			chat_platform,
+			contacts_platform,
 		);
-		if let Some(contacts_platform) = contacts_platform {
-			services.install_contacts_platform(contacts_platform);
-		}
 		let pairing_host = PairingHost::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
 		Self::from_role(services, pairing_host)
@@ -744,17 +741,14 @@ impl HostRuntime<SigningHost> {
 	where
 		P: Platform + 'static,
 	{
-		let platform: Arc<dyn Platform> = platform;
-		let services = RuntimeServices::with_chat_platform(
+		let services = RuntimeServices::with_platforms(
 			platform,
 			config.host.host_info,
 			config.stack,
 			spawner,
 			chat_platform,
+			contacts_platform,
 		);
-		if let Some(contacts_platform) = contacts_platform {
-			services.install_contacts_platform(contacts_platform);
-		}
 		if config.materials_enabled {
 			services.enable_materials();
 		}

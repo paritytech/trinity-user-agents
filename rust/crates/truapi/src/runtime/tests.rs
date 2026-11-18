@@ -872,12 +872,11 @@ fn contacts_host(
 	connected: bool,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		platform as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(contacts) = contacts {
 		services.install_contacts_platform(contacts);
@@ -942,12 +941,11 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	// default is truthful: a product learns the picker will never work here,
 	// rather than a dismissal it would keep retrying.
 	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -1264,14 +1262,14 @@ fn host_with_contacts(
 	contacts: Arc<dyn crate::platform::ContactsPlatform>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::with_platforms(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
 		None,
+		Some(contacts),
 	);
-	services.install_contacts_platform(contacts);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
 	let host = ProductRuntimeHost::from_services(
@@ -8072,12 +8070,11 @@ fn scanner_host_for(
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
 	product.execution_kind = kind;
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(scanner) = scanner {
 		services.install_scanner_platform(scanner);

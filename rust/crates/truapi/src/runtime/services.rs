@@ -220,16 +220,17 @@ impl RuntimeServices {
 		stack: Stack,
 		spawner: Spawner,
 	) -> Arc<Self> {
-		Self::with_chat_platform(platform, host_info, stack, spawner, None)
+		Self::with_platforms(platform, host_info, stack, spawner, None, None)
 	}
 
-	/// Same as [`Self::new`], with the host's chat adapter installed.
-	pub fn with_chat_platform(
+	/// Same as [`Self::new`], with the host's optional chat and contacts adapters.
+	pub fn with_platforms(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
 		stack: Stack,
 		spawner: Spawner,
 		chat_platform: Option<Arc<dyn ChatPlatform>>,
+		contacts_platform: Option<Arc<dyn ContactsPlatform>>,
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
@@ -260,7 +261,7 @@ impl RuntimeServices {
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
-			contacts_platform: OnceLock::new(),
+			contacts_platform: contacts_platform.map(OnceLock::from).unwrap_or_default(),
 			contact_handles: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
 			public_profiles,

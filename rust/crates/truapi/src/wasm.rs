@@ -48,7 +48,7 @@ use crate::SigningHost;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
-	host_logic::worker::WorkerTransition,
+	host_logic::worker::WorkerTransition, runtime::HostRole,
 };
 
 mod generated_bridge;
@@ -833,6 +833,44 @@ fn permission_authorization_status_from_js(
 	}
 }
 
+async fn permission_authorization_status<Role: HostRole>(
+	runtime: &HostRuntime<Role>,
+	product_id: &str,
+	payload: &[u8],
+) -> Result<JsValue, JsValue> {
+	let request = decode_permission_authorization_request(payload)?;
+	let status = runtime
+		.permission_authorization_status(&product_id_from_js(product_id)?, request)
+		.await?;
+	Ok(permission_authorization_status_to_js(status))
+}
+
+async fn permission_authorization_statuses<Role: HostRole>(
+	runtime: &HostRuntime<Role>,
+	product_id: &str,
+	payloads: &Array,
+) -> Result<Array, JsValue> {
+	let requests = decode_permission_authorization_requests(payloads)?;
+	let statuses = runtime
+		.permission_authorization_statuses(&product_id_from_js(product_id)?, requests)
+		.await?;
+	Ok(statuses.into_iter().map(permission_authorization_status_to_js).collect())
+}
+
+async fn set_permission_authorization_status<Role: HostRole>(
+	runtime: &HostRuntime<Role>,
+	product_id: &str,
+	payload: &[u8],
+	status: &str,
+) -> Result<(), JsValue> {
+	let request = decode_permission_authorization_request(payload)?;
+	let status = permission_authorization_status_from_js(status)?;
+	runtime
+		.set_permission_authorization_status(&product_id_from_js(product_id)?, request, status)
+		.await
+		.map_err(Into::into)
+}
+
 impl From<GenericError> for JsValue {
 	fn from(error: GenericError) -> Self {
 		JsValue::from_str(&error.reason)
@@ -908,6 +946,34 @@ fn install_worker_controller(
 		"a freshly built runtime installs its worker controller once"
 	);
 	Ok(())
+}
+
+fn acquire_worker<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
+	if let Some(product_id) = worker_reference_id(product_id) {
+		runtime.worker_ledger().acquire(&product_id);
+	}
+}
+
+fn release_worker<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
+	if let Some(product_id) = worker_reference_id(product_id) {
+		runtime.worker_ledger().release(&product_id);
+	}
+}
+
+fn worker_reference_id(product_id: &str) -> Option<ProductId> {
+	product_id
+		.parse()
+		.inspect_err(
+			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
+		)
+		.ok()
+}
+
+fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
+	match product_id.parse::<ProductId>() {
+		Ok(product_id) => runtime.worker_exited(&product_id),
+		Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+	}
 }
 
 /// JS-callable handle to a long-lived pairing-host runtime shared by product
@@ -1092,12 +1158,7 @@ impl WasmPairingHostRuntime {
 		raw_product_id: String,
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.runtime
-			.permission_authorization_status(&product_id_from_js(&raw_product_id)?, request)
-			.await?;
-		Ok(permission_authorization_status_to_js(status))
+		permission_authorization_status(&self.runtime, &raw_product_id, &payload).await
 	}
 
 	/// Read permission authorization statuses for a product.
@@ -1111,16 +1172,7 @@ impl WasmPairingHostRuntime {
 		raw_product_id: String,
 		payloads: Array,
 	) -> Result<Array, JsValue> {
-		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&raw_product_id)?, requests)
-			.await?;
-		let values = Array::new();
-		for status in statuses {
-			values.push(&permission_authorization_status_to_js(status));
-		}
-		Ok(values)
+		permission_authorization_statuses(&self.runtime, &raw_product_id, &payloads).await
 	}
 
 	/// Update a stored permission authorization status for a product.
@@ -1131,16 +1183,7 @@ impl WasmPairingHostRuntime {
 		payload: Vec<u8>,
 		status: String,
 	) -> Result<(), JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = permission_authorization_status_from_js(&status)?;
-		self.runtime
-			.set_permission_authorization_status(
-				&product_id_from_js(&raw_product_id)?,
-				request,
-				status,
-			)
-			.await?;
-		Ok(())
+		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
 	/// Clear one product's durable and in-memory capability state.
@@ -1162,12 +1205,7 @@ impl WasmPairingHostRuntime {
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		acquire_worker(&self.runtime, &raw_product_id);
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1176,10 +1214,7 @@ impl WasmPairingHostRuntime {
 	/// id is logged and dropped.
 	#[wasm_bindgen(js_name = workerExited)]
 	pub fn worker_exited(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_exited(&product_id),
-			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
-		}
+		worker_exited(&self.runtime, &product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
@@ -1187,12 +1222,7 @@ impl WasmPairingHostRuntime {
 	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		release_worker(&self.runtime, &raw_product_id);
 	}
 }
 
@@ -1410,12 +1440,7 @@ impl WasmSigningHostRuntime {
 		raw_product_id: String,
 		payload: Vec<u8>,
 	) -> Result<JsValue, JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = self
-			.runtime
-			.permission_authorization_status(&product_id_from_js(&raw_product_id)?, request)
-			.await?;
-		Ok(permission_authorization_status_to_js(status))
+		permission_authorization_status(&self.runtime, &raw_product_id, &payload).await
 	}
 
 	/// Read permission authorization statuses for a product.
@@ -1429,16 +1454,7 @@ impl WasmSigningHostRuntime {
 		raw_product_id: String,
 		payloads: Array,
 	) -> Result<Array, JsValue> {
-		let requests = decode_permission_authorization_requests(&payloads)?;
-		let statuses = self
-			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&raw_product_id)?, requests)
-			.await?;
-		let values = Array::new();
-		for status in statuses {
-			values.push(&permission_authorization_status_to_js(status));
-		}
-		Ok(values)
+		permission_authorization_statuses(&self.runtime, &raw_product_id, &payloads).await
 	}
 
 	/// Update a stored permission authorization status for a product.
@@ -1449,16 +1465,7 @@ impl WasmSigningHostRuntime {
 		payload: Vec<u8>,
 		status: String,
 	) -> Result<(), JsValue> {
-		let request = decode_permission_authorization_request(&payload)?;
-		let status = permission_authorization_status_from_js(&status)?;
-		self.runtime
-			.set_permission_authorization_status(
-				&product_id_from_js(&raw_product_id)?,
-				request,
-				status,
-			)
-			.await
-			.map_err(Into::into)
+		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
@@ -1467,12 +1474,7 @@ impl WasmSigningHostRuntime {
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		acquire_worker(&self.runtime, &raw_product_id);
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1481,10 +1483,7 @@ impl WasmSigningHostRuntime {
 	/// id is logged and dropped.
 	#[wasm_bindgen(js_name = workerExited)]
 	pub fn worker_exited(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_exited(&product_id),
-			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
-		}
+		worker_exited(&self.runtime, &product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
@@ -1492,12 +1491,7 @@ impl WasmSigningHostRuntime {
 	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, raw_product_id: String) {
-		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		release_worker(&self.runtime, &raw_product_id);
 	}
 }
 
