@@ -13,7 +13,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fram
 
 /**
  * The provider product's page, over the whole screen, hosted on the SPA host as any product page is. It shows the
- * [FundingFrame] of its [REQUEST], which keeps the page while this screen comes and goes. Brought back after process
+ * [FundingFrame] of its [REQUEST_ID], which keeps the page while this screen comes and goes. Brought back after process
  * death no frame waits under it, so it closes at once; the core asks for the screen again once the provider's worker is
  * back. One answered while another screen sat on it closes once it is back on top.
  */
@@ -49,7 +49,7 @@ class FundingProviderFrameBottomSheet : BaseComposeBottomSheet<FundingProviderFr
     }
 
     companion object {
-        const val INTENT = "fundingFrameIntent"
-        const val REQUEST = "fundingFrameRequest"
+        const val SESSION_ID = "fundingFrameSessionId"
+        const val REQUEST_ID = "fundingFrameRequestId"
     }
 }

@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.flow.first
@@ -38,7 +39,7 @@ class TrUAPIHostFundingTest {
 
     @Test
     fun `opening passes the direction and amount to the core`() = runBlocking {
-        val service = mockk<FundingService> { coEvery { open(CoreFundingDirection.OUT, "250") } returns Result.success("intent") }
+        val service = mockk<FundingService> { coEvery { open(CoreFundingDirection.OUT, "250") } returns Result.success(FundingSessionId("intent")) }
 
         assertEquals(Result.success("intent"), TrUAPIHostFunding(service, mockk()).openFunding(FundingDirection.OUT, Balance(BigInteger("250"))))
     }
@@ -89,8 +90,8 @@ class TrUAPIHostFundingTest {
         funding.acknowledgeShown(emptyList())
 
         coVerify(exactly = 2) { service.acknowledge(any()) }
-        coVerify { service.acknowledge("a") }
-        coVerify { service.acknowledge("b") }
+        coVerify { service.acknowledge(FundingSessionId("a")) }
+        coVerify { service.acknowledge(FundingSessionId("b")) }
     }
 
     private fun entry(intent: String, openedAtMs: ULong, status: FundingStatus) = FundingBookEntry(

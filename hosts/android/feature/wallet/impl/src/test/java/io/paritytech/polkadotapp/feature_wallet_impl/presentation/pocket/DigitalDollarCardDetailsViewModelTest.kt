@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
+import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
@@ -201,6 +202,6 @@ class DigitalDollarCardDetailsViewModelTest {
         interactor = interactor,
         router = mockk(),
         tokenAmountMapper = mockk(relaxed = true),
-        fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true)),
+        fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L }),
     )
 }

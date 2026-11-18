@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
@@ -38,13 +37,13 @@ import io.paritytech.polkadotapp.common.R as RCommon
 /** A screen title with an optional back button on the left and actions on the right. */
 @Composable
 fun FundingHeader(
+    modifier: Modifier = Modifier,
     title: String,
     onBack: (() -> Unit)?,
-    modifier: Modifier = Modifier,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (onBack != null) {
@@ -70,9 +69,9 @@ fun FundingHeader(
 
 @Composable
 fun FundingCircleButton(
+    modifier: Modifier = Modifier,
     icon: ImageVector,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     PolkadotIconButton(
         modifier = modifier,
@@ -86,13 +85,13 @@ fun FundingCircleButton(
 /** A row of a summary card: a label on the left, a value and an optional chevron on the right. */
 @Composable
 fun FundingInfoRow(
-    label: String,
     modifier: Modifier = Modifier,
+    label: String,
     onClick: (() -> Unit)? = null,
     value: @Composable RowScope.() -> Unit,
 ) {
     PolkadotSurface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier,
         color = PolkadotTheme.colors.bg.surface.container,
         enabled = onClick != null,
         onClick = onClick,
@@ -132,7 +131,7 @@ fun FundingCard(
     content: @Composable () -> Unit,
 ) {
     PolkadotSurface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier,
         shape = PolkadotTheme.shapes.large,
         color = PolkadotTheme.colors.bg.surface.main,
     ) {
@@ -145,25 +144,24 @@ fun FundingCard(
 /** A crypto network's or token's round logo, or its first letter when it has none. */
 @Composable
 fun FundingCryptoIconImage(
-    icon: FundingCryptoIcon,
     modifier: Modifier = Modifier,
-    size: Dp = CRYPTO_ICON_SIZE,
+    icon: FundingCryptoIcon,
 ) {
     when (icon) {
         is FundingCryptoIcon.Vector -> Image(
-            modifier = modifier.size(size),
+            modifier = modifier,
             imageVector = icon.image,
             contentDescription = null,
         )
 
         is FundingCryptoIcon.Drawable -> Image(
-            modifier = modifier.size(size),
+            modifier = modifier,
             painter = painterResource(icon.id),
             contentDescription = null,
         )
 
         is FundingCryptoIcon.Monogram -> PolkadotSurface(
-            modifier = modifier.size(size),
+            modifier = modifier,
             shape = PolkadotTheme.shapes.full,
             color = PolkadotTheme.colors.bg.surface.nested,
             contentAlignment = Alignment.Center,
@@ -180,7 +178,7 @@ fun FundingCryptoIconImage(
 private val CIRCLE_BUTTON_SIZE = 40.dp
 private val CHEVRON_SIZE = 16.dp
 private val CARD_DIVIDER = 2.dp
-private val CRYPTO_ICON_SIZE = 40.dp
+val FUNDING_CRYPTO_ICON_SIZE = 40.dp
 
 /** What stands in the way, in the user's words. */
 @Composable

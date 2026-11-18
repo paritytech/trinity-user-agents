@@ -8,10 +8,12 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.entry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.ramp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens.FundingDepositViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -50,11 +52,12 @@ class FundingSheetViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     private fun sheet() = FundingSheetViewModel(
-        SavedStateHandle(mapOf(FundingBottomSheet.INTENT to "intent")),
+        SavedStateHandle(mapOf(FundingBottomSheet.SESSION_ID to "intent")),
         service,
         interactor,
         router,
         testCashFormat(),
+        FakeTimeProvider { 0L },
     )
 
     @Test
@@ -89,7 +92,7 @@ class FundingSheetViewModelTest {
         advanceUntilIdle()
 
         assertTrue(sheet.isClosed)
-        coVerify { router.closeFundingOverlay("intent") }
+        coVerify { router.closeFundingOverlay(FundingSessionId("intent")) }
     }
 
     @Test
@@ -209,7 +212,7 @@ class FundingSheetViewModelTest {
         ViewModelStore().apply { put("sheet", sheet) }.clear()
 
         assertEquals(2, service.calls.count { it == "leave" })
-        coVerify { router.closeFundingOverlay("intent") }
+        coVerify { router.closeFundingOverlay(FundingSessionId("intent")) }
     }
 
     private fun TestScope.depositOn(sheet: FundingSheetViewModel) =

@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEve
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashNotice
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingFrames
@@ -58,18 +59,18 @@ class FundingSessionPresenter @Inject constructor(
      * A session the core still holds reopens where it stands, with the provider's screen over it while one is open or
      * waits to be; one it has ended opens its detail from the history.
      */
-    override suspend fun show(intent: String) {
-        val entry = service.entryState(intent).firstOrNull()
+    override suspend fun show(sessionId: FundingSessionId) {
+        val entry = service.entryState(sessionId).firstOrNull()
         if (entry == null || entry.hasEnded) {
-            router.openFundingEnded(intent)
+            router.openFundingEnded(sessionId)
             return
         }
 
-        if (!router.isFundingOverlayShown(intent)) router.openFundingOverlay(intent)
-        val presented = frames.waiting(intent)
+        if (!router.isFundingOverlayShown(sessionId)) router.openFundingOverlay(sessionId)
+        val presented = frames.waiting(sessionId)
         when {
-            presented == null -> service.openProviderFrame(intent)
-            !presented.isShown -> router.openFundingProviderFrame(intent, presented.request.id)
+            presented == null -> service.openProviderFrame(sessionId)
+            !presented.isShown -> router.openFundingProviderFrame(presented.request)
         }
     }
 
@@ -81,9 +82,9 @@ class FundingSessionPresenter @Inject constructor(
     private suspend fun on(event: FundingEvent) {
         when (event) {
             is FundingEvent.PresentationRequested -> router.openFundingOverlay(event.entry.id)
-            is FundingEvent.FrameRequested -> onFrameRequested(event.entryId, event.providerId)
+            is FundingEvent.FrameRequested -> onFrameRequested(event.sessionId, event.providerId)
             is FundingEvent.FrameOpened -> onFrameOpened(event.request)
-            is FundingEvent.FrameClosed -> onFrameClosed(event.entryId)
+            is FundingEvent.FrameClosed -> onFrameClosed(event.sessionId)
             is FundingEvent.ProviderNotWorking -> workerCrashNotice.onCrashing(event.productId)
         }
     }
@@ -92,21 +93,21 @@ class FundingSessionPresenter @Inject constructor(
      * A provider's screen opens at once while its session's sheet is on top; anywhere else the user is told, and opens
      * it with a tap. The core holds it until then.
      */
-    private suspend fun onFrameRequested(entryId: String, providerId: ProductId) {
-        if (router.isFundingOverlayShown(entryId)) {
-            service.openProviderFrame(entryId)
+    private suspend fun onFrameRequested(sessionId: FundingSessionId, providerId: ProductId) {
+        if (router.isFundingOverlayShown(sessionId)) {
+            service.openProviderFrame(sessionId)
             return
         }
 
         val provider = interactor.brand(providerId).name
         val text = contextManager.applicationContext.getString(RCommon.string.funding_frame_requested, provider)
-        appNotifier.notify(AppNotification.Tappable(text) { scope.launch { show(entryId) } })
+        appNotifier.notify(AppNotification.Tappable(text) { scope.launch { show(sessionId) } })
     }
 
     /** The core presents the screen the app opened. */
     private suspend fun onFrameOpened(request: FundingFrameRequest) {
         frames.add(request)
-        router.openFundingProviderFrame(request.entryId, request.id)
+        router.openFundingProviderFrame(request)
     }
 
     /** The core still holds a provider's screen for a session in flight, asked for before the notice was lost. */
@@ -119,10 +120,10 @@ class FundingSessionPresenter @Inject constructor(
     }
 
     /** The provider is done with its screens: one on screen gives way to the session it was shown for. */
-    private suspend fun onFrameClosed(entryId: String) {
-        val shown = frames.waiting(entryId)?.isShown == true
-        frames.releaseAll(entryId)
-        router.closeFundingProviderFrame(entryId)
-        if (shown) show(entryId)
+    private suspend fun onFrameClosed(sessionId: FundingSessionId) {
+        val shown = frames.waiting(sessionId)?.isShown == true
+        frames.releaseAll(sessionId)
+        router.closeFundingProviderFrame(sessionId)
+        if (shown) show(sessionId)
     }
 }

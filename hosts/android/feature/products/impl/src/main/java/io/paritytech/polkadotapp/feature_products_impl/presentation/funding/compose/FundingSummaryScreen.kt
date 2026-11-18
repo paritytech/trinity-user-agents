@@ -43,19 +43,19 @@ private val CHEVRON_SIZE = 12.dp
 /** What the chosen provider will charge and pay, before the session is handed to it. */
 @Composable
 fun FundingSummaryScreen(
+    modifier: Modifier = Modifier,
     state: FundingSummaryUiState,
     onBack: () -> Unit,
     onFees: () -> Unit,
     onCountry: () -> Unit,
     onProviders: () -> Unit,
     onContinue: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
-        FundingHeader(title = stringResource(state.titleRes()), onBack = onBack)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = stringResource(state.titleRes()), onBack = onBack)
 
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -66,16 +66,16 @@ fun FundingSummaryScreen(
             FeesLink(state = state, onFees = onFees)
         }
 
-        FundingCard {
+        FundingCard(modifier = Modifier.fillMaxWidth()) {
             if (state.showCountry) {
-                FundingInfoRow(label = stringResource(RCommon.string.funding_summary_country), onClick = onCountry) {
+                FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(RCommon.string.funding_summary_country), onClick = onCountry) {
                     ValueText(state.country?.let { "${it.flag} ${it.name}" } ?: stringResource(RCommon.string.funding_summary_country_choose))
                 }
             }
 
-            FundingInfoRow(label = stringResource(RCommon.string.funding_summary_provider), onClick = onProviders) {
+            FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(RCommon.string.funding_summary_provider), onClick = onProviders) {
                 if (state.provider != null) {
-                    FundingProviderLogo(brand = state.provider, size = ROW_LOGO_SIZE)
+                    FundingProviderLogo(modifier = Modifier.size(ROW_LOGO_SIZE), brand = state.provider)
                     ValueText(state.provider.name)
                 } else {
                     ValueSkeleton()
@@ -83,12 +83,13 @@ fun FundingSummaryScreen(
             }
 
             FundingInfoRow(
+                modifier = Modifier.fillMaxWidth(),
                 label = stringResource(if (state.isWithdraw) RCommon.string.funding_summary_you_receive else RCommon.string.funding_summary_min_payout),
             ) {
                 if (state.payout != null) ValueText(state.payout) else ValueSkeleton()
             }
 
-            FundingInfoRow(label = stringResource(RCommon.string.funding_summary_arrives)) {
+            FundingInfoRow(modifier = Modifier.fillMaxWidth(), label = stringResource(RCommon.string.funding_summary_arrives)) {
                 when {
                     state.eta != null -> ValueText(etaText(state.eta))
                     state.isQuoting -> ValueSkeleton()

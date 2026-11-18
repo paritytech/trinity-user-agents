@@ -179,6 +179,7 @@ data class FundingCountryUiState(
 data class FundingProvidersUiState(
     val countdown: FundingCountdown?,
     val rows: ImmutableList<FundingProviderRow>,
+    val now: Instant,
 )
 
 /** How long the prices on screen hold before the core asks every provider again. */
@@ -257,6 +258,7 @@ data class FundingDepositUiState(
     /** Once the session started: its milestones, what is happening now, and when the provider last reported. */
     val progress: FundingLiveProgressUi?,
     val content: FundingDepositContent,
+    val now: Instant,
 ) {
     val canCancel: Boolean
         get() = started && !failed && cancelAvailability != FundingCancelAvailability.UNAVAILABLE
@@ -269,7 +271,7 @@ data class FundingDepositUiState(
 data class FundingLiveProgressUi(
     val timeline: FundingTimelineUi,
     val band: FundingBandUi?,
-    val lastHeardAtMs: Long?,
+    val lastHeardAt: Instant?,
     /** The provider's latest fact for the current step, for the line under the band. */
     val detail: FundingDetail?,
 )
@@ -289,16 +291,13 @@ sealed interface FundingCancelUiState {
     /** The provider will not cancel; the session carries on. */
     data class Refused(val reason: String) : FundingCancelUiState
 
-    /** The provider can cancel, keeping [fee] and returning [refund], both as "$1,000.25 CASH". */
-
-    /** The provider's terms; past [expiresAtMs] the offer has lapsed and can't be accepted. */
-    data class Offered(val fee: String, val refund: String, val expiresAtMs: Long?) : FundingCancelUiState {
+    /**
+     * The provider can cancel, keeping [fee] and returning [refund], both as "$1,000.25 CASH". Past [expiresAt] the
+     * offer has lapsed and can't be accepted.
+     */
+    data class Offered(val fee: String, val refund: String, val expiresAt: Instant?) : FundingCancelUiState {
         /** Whole seconds the offer stays open, or `null` when the provider set no deadline. */
-        fun secondsLeft(nowMs: Long): Long? = expiresAtMs?.let { ((it - nowMs) / MILLIS_PER_SECOND).coerceAtLeast(0) }
-
-        private companion object {
-            const val MILLIS_PER_SECOND = 1_000L
-        }
+        fun secondsLeft(now: Instant): Long? = expiresAt?.let { (it - now).inWholeSeconds.coerceAtLeast(0) }
     }
 
     /** The user accepted and the provider is refunding them. */

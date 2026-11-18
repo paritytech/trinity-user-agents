@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatCash
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatCashName
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import java.math.BigDecimal
@@ -14,10 +16,12 @@ class FundingCashFormat @Inject constructor(
 ) {
     fun figure(value: BigDecimal): String = formatter.formatFiatSigned(mapper.digitalDollar(value), abbreviate = false)
 
-    fun label(value: BigDecimal): String =
-        formatter.formatFiatSigned(mapper.digitalDollar(value), withSymbol = true, abbreviate = false)
+    fun label(value: BigDecimal): String = formatter.formatCash(mapper.digitalDollar(value))
 
     fun symbol(): String = formatter.formatToSymbol(mapper.digitalDollar(BigDecimal.ZERO))
+
+    /** "$CASH", where the amount is not known. */
+    fun name(): String = formatter.formatCashName(mapper.digitalDollar(BigDecimal.ZERO))
 
     /** Rounded up, so a fee never reads as less than it is. */
     fun cost(value: BigDecimal): String = label(value.setScale(CENTS, RoundingMode.UP))

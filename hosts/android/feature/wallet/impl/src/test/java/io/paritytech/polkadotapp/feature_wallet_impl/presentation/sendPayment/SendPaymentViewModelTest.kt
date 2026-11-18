@@ -31,6 +31,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.User
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
+import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.RealSendPaymentInteractor
 import io.paritytech.polkadotapp.test_shared.any
@@ -315,6 +316,6 @@ class SendPaymentViewModelTest {
         previousPaymentsAddressConverterFactory = previousPaymentsAddressConverterFactory,
         contactsAddressConverterFactory = contactsAddressConverterFactory,
         interactor = interactor,
-        fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true)),
+        fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true), FakeTimeProvider { 0L }),
     )
 }

@@ -2,29 +2,38 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPhase
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.ProductId
+import java.math.BigDecimal
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
@@ -38,13 +47,11 @@ class FundingSheetViewModel @Inject constructor(
     private val interactor: FundingFlowInteractor,
     private val router: ProductsRouter,
     private val cashFormat: FundingCashFormat,
+    timeProvider: TimeProvider,
 ) : BaseViewModel(), FundingSheet {
-    override val intent: String = savedStateHandle.get<String>(FundingBottomSheet.INTENT).orEmpty()
+    override val sessionId = FundingSessionId(savedStateHandle.get<String>(FundingBottomSheet.SESSION_ID).orEmpty())
 
-    private val entryState = MutableStateFlow<FundingEntry?>(null)
-    private val draft = MutableStateFlow<FundingFlowState?>(null)
-    private val brandsState = MutableStateFlow<Map<ProductId, FundingProviderBrand>>(emptyMap())
-    private val brandsLoading = mutableSetOf<ProductId>()
+    private val picks = MutableStateFlow(FundingPicks.NONE)
     private val stack = MutableStateFlow<List<FundingScreenEntry>>(emptyList())
     private var visits = 0
 
@@ -53,29 +60,54 @@ class FundingSheetViewModel @Inject constructor(
     var isClosed: Boolean = false
         private set
 
-    override val entry: StateFlow<FundingEntry?> = entryState.asStateFlow()
-    override val flow: StateFlow<FundingFlowState?> = draft.asStateFlow()
-    override val brands: StateFlow<Map<ProductId, FundingProviderBrand>> = brandsState.asStateFlow()
+    // Until the session ended; one gone before it ended takes the sheet down.
+    override val entry: StateFlow<FundingEntry?> = flow {
+        var last: FundingEntry? = null
+        service.entryState(sessionId).collect { next ->
+            onEntry(previous = last, entry = next)
+            last = next
+            emit(next)
+        }
+        if (last?.hasEnded != true) takeDown()
+    }.stateIn(this, SharingStarted.Eagerly, null)
+
+    private val wallet: StateFlow<FundingWallet?> = flow {
+        val cash = interactor.cash()
+        emit(FundingWallet(cash, interactor.spendable(cash)))
+    }.stateIn(this, SharingStarted.Eagerly, null)
+
+    override val flow: StateFlow<FundingFlowState?> = combine(entry, picks, wallet, ::Triple)
+        .scan(null as FundingFlowState?) { previous, (entry, picks, wallet) -> stateOf(entry, picks, wallet, previous) }
+        .stateIn(this, SharingStarted.Eagerly, null)
+
+    override val brands: StateFlow<Map<ProductId, FundingProviderBrand>> = entry.filterNotNull()
+        .map { it.options?.candidates.orEmpty().map { candidate -> candidate.providerId } + listOfNotNull(it.session?.providerId) }
+        .distinctUntilChanged()
+        .scan(emptyMap<ProductId, FundingProviderBrand>()) { known, ids ->
+            known + ids.filterNot(known::containsKey).associateWith { interactor.brand(it) }
+        }
+        .stateIn(this, SharingStarted.Eagerly, emptyMap())
+
+    override val now: StateFlow<Instant> = timeProvider.ticking(1.seconds).stateIn(this, WhileOnScreen, timeProvider.now())
 
     /** The screen on top; `null` until the session first arrives. */
     val screen: StateFlow<FundingScreenEntry?> = stack.map { it.lastOrNull() }
         .stateIn(this, SharingStarted.Eagerly, null)
 
     init {
-        service.shown(intent)
-        launchUnit { follow() }
-        launch { reportSelection() }
+        service.shown(sessionId)
+        reportSelection()
     }
 
-    override fun update(transform: (FundingFlowState) -> FundingFlowState) {
-        draft.update { it?.let(transform) }
+    override fun update(transform: (FundingPicks) -> FundingPicks) {
+        picks.update(transform)
     }
 
     override fun requote() {
-        val current = draft.value ?: return
+        val current = stateOf(entry.value, picks.value, wallet.value, flow.value) ?: return
         val amount = current.askAmount ?: return
-        service.select(current.selection, intent)
-        service.quote(amount, intent)
+        service.select(current.selection, sessionId)
+        service.quote(amount, sessionId)
     }
 
     override fun push(screen: FundingScreen) {
@@ -88,7 +120,7 @@ class FundingSheetViewModel @Inject constructor(
 
     /** Back walks the sheet's own screens; from its first screen, or a started session's deposit, it leaves. */
     fun onBack() {
-        val leavesStartedDeposit = entryState.value?.hasStarted == true && top() == FundingScreen.DEPOSIT
+        val leavesStartedDeposit = entry.value?.hasStarted == true && top() == FundingScreen.DEPOSIT
         if (stack.value.size <= 1 || leavesStartedDeposit) close() else pop()
     }
 
@@ -97,7 +129,7 @@ class FundingSheetViewModel @Inject constructor(
     }
 
     override fun close() {
-        service.leave(intent)
+        service.leave(sessionId)
         takeDown()
     }
 
@@ -105,29 +137,16 @@ class FundingSheetViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        service.leave(intent)
-    }
-
-    /** Follows the session until it ended; one gone before it ended takes the sheet down. */
-    private suspend fun follow() {
-        service.entryState(intent).collect(::onEntry)
-        if (entryState.value?.hasEnded != true) takeDown()
+        service.leave(sessionId)
     }
 
     private fun takeDown() {
         isClosed = true
-        launchUnit { router.closeFundingOverlay(intent) }
+        launchUnit { router.closeFundingOverlay(sessionId) }
     }
 
-    private suspend fun onEntry(entry: FundingEntry) {
-        val previous = entryState.value
-        if (draft.value == null) draft.value = initial(entry)
-        entryState.value = entry
-
-        draft.update { state ->
-            state?.let { withFacts(it, entry) }
-        }
-        loadBrands(entry.options?.candidates.orEmpty().map { it.providerId } + listOfNotNull(entry.session?.providerId))
+    private fun onEntry(previous: FundingEntry?, entry: FundingEntry) {
+        if (previous == null) push(if (entry.hasStarted) FundingScreen.DEPOSIT else FundingScreen.AMOUNT)
         followCancel(previous?.session?.cancel, entry.session?.cancel)
 
         if (previous != null && previous.phase == FundingPhase.SELECTING && entry.phase == FundingPhase.RUNNING) {
@@ -141,39 +160,30 @@ class FundingSheetViewModel @Inject constructor(
     }
 
     /**
-     * The sheet as it opens: on the amount for a new session, on its deposit screen for one the user comes back to,
-     * with where to send only if the provider reported it.
+     * The session as the core holds it with the user's picks over it. The options stop changing once the session
+     * started; a session the user comes back to shows the rail, asset and provider it was started with.
      */
-    private suspend fun initial(entry: FundingEntry): FundingFlowState {
-        val cash = interactor.cash()
-        val detected = entry.options?.detectedCountry?.let(FundingCountries::country)
-        val state = FundingFlowState.initial(
+    private fun stateOf(entry: FundingEntry?, picks: FundingPicks, wallet: FundingWallet?, previous: FundingFlowState?): FundingFlowState? {
+        if (entry == null || wallet == null) return null
+
+        val options = entry.options?.takeUnless { entry.hasStarted } ?: previous?.options ?: entry.options
+        val detected = options?.detectedCountry?.let(FundingCountries::country) ?: previous?.country
+        val base = FundingFlowState.initial(
             direction = entry.direction,
-            cash = cash,
+            cash = wallet.cash,
             format = cashFormat,
-            spendable = interactor.spendable(cash),
-            options = entry.options,
-            amount = entry.amount?.let(cash::decimal),
+            spendable = wallet.spendable,
+            options = options,
+            amount = entry.amount?.let(wallet.cash::decimal),
             country = detected,
         )
-        val choice = entry.session?.choice
-        if (!entry.hasStarted) {
-            push(FundingScreen.AMOUNT)
-            return state
-        }
+        val choice = entry.session?.choice?.takeIf { entry.hasStarted }
+        val resumed = choice?.let { base.withRail(it.rail).withAsset(it.asset) } ?: base
+        val chosen = entry.session?.providerId?.takeIf { entry.hasStarted }?.let(resumed::withChosenProvider) ?: resumed
+        val picked = picks.applyTo(chosen)
 
-        push(FundingScreen.DEPOSIT)
-        val resumed = if (choice != null) state.withRail(choice.rail).withAsset(choice.asset) else state
-        return entry.session?.providerId?.let(resumed::withChosenProvider) ?: resumed
-    }
-
-    /** The core's options and quotes; a country it detected after the sheet opened is the payment country until the user picks one. */
-    private fun withFacts(state: FundingFlowState, entry: FundingEntry): FundingFlowState {
-        val options = entry.options
-        val withOptions = if (options != null && !entry.hasStarted) state.withOptions(options) else state
-        val detected = options?.detectedCountry?.takeIf { withOptions.country == null }?.let(FundingCountries::country)
-        return (detected?.let(withOptions::withCountry) ?: withOptions)
-            .withQuotes(entry.quotes, entry.askedAmount)
+        val shown = previous?.let { picked.copy(rows = it.rows, staleQuotes = it.staleQuotes, askedAmount = it.askedAmount, list = it.list) }
+        return (shown ?: picked).withQuotes(entry.quotes, entry.askedAmount)
     }
 
     /**
@@ -203,20 +213,15 @@ class FundingSheetViewModel @Inject constructor(
      * Tells the core the rail, asset, network and country on screen whenever one changes; what they lead to comes back
      * as options. The core ignores this once the session is no longer set up.
      */
-    private suspend fun reportSelection() {
-        draft.filterNotNull().map { it.selection }.distinctUntilChanged().collect { selection ->
-            if (entryState.value?.hasStarted != true) service.select(selection, intent)
-        }
-    }
-
-    private fun loadBrands(providerIds: List<ProductId>) {
-        providerIds.filter(brandsLoading::add).forEach { providerId ->
-            launchUnit {
-                val brand = interactor.brand(providerId)
-                brandsState.update { it + (providerId to brand) }
-            }
-        }
+    private fun reportSelection() {
+        flow.filterNotNull()
+            .map { it.selection }
+            .distinctUntilChanged()
+            .onEach { selection -> if (entry.value?.hasStarted != true) service.select(selection, sessionId) }
+            .launchIn(this)
     }
 
     private fun top(): FundingScreen? = stack.value.lastOrNull()?.screen
+
+    private data class FundingWallet(val cash: FundingCash, val spendable: BigDecimal?)
 }

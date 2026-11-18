@@ -29,6 +29,7 @@ import java.math.BigInteger
 import java.math.RoundingMode
 import kotlin.math.ceil
 import kotlin.math.max
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESETS = listOf(BigDecimal("10"), BigDecimal("50"), BigDecimal("100"))
@@ -210,6 +211,7 @@ private fun FundingCountry.toUi(refused: Boolean, minimum: String?, selected: Bo
 /** Counts down to the core's next refresh of the prices on screen; while it runs, the countdown holds at zero. */
 fun FundingFlowState.toProvidersUiState(
     brands: Map<ProductId, FundingProviderBrand>,
+    now: Instant,
 ): FundingProvidersUiState {
     val selected = selectedProviderId
     val severalQuoted = quotedProviders.size > 1
@@ -235,6 +237,7 @@ fun FundingFlowState.toProvidersUiState(
                 price = providerPrice(state, staleQuotes[id]),
             )
         }.toImmutableList(),
+        now = now,
     )
 }
 
@@ -295,6 +298,7 @@ fun FundingFlowState.toDepositUiState(
     progress: FundingProgress?,
     session: FundingSessionFacts,
     isCancelling: Boolean,
+    now: Instant,
 ): FundingDepositUiState {
     val content = when (val deposit = progress?.deposit) {
         // Only the app's own network reports an address; a provider serving another one takes the payment in its own
@@ -340,11 +344,12 @@ fun FundingFlowState.toDepositUiState(
             FundingLiveProgressUi(
                 timeline = FundingTimeline.live(live.steps, live.band, direction, failed = session.failure != null),
                 band = bandLine(live.band, (live.deposit as? FundingDeposit.Crypto)?.asset ?: asset),
-                lastHeardAtMs = live.lastHeardAtMs?.toLong(),
+                lastHeardAt = live.lastHeardAtMs?.let { Instant.fromEpochMilliseconds(it.toLong()) },
                 detail = live.detail,
             )
         },
         content = session.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
+        now = now,
     )
 }
 
@@ -400,7 +405,7 @@ private fun FundingCancel.toUi(cash: FundingCash, format: FundingCashFormat): Fu
     is FundingCancel.Offered -> FundingCancelUiState.Offered(
         fee = format.cost(cash.decimal(fee)),
         refund = format.label(cash.decimal(refund)),
-        expiresAtMs = expiresAt?.toLong(),
+        expiresAt = expiresAt?.let { Instant.fromEpochMilliseconds(it.toLong()) },
     )
     is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
     FundingCancel.Declined, is FundingCancel.Overtaken -> null

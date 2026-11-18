@@ -25,15 +25,15 @@ private val DIVIDER_HEIGHT = 1.dp
 /** How the chosen quote's charge breaks down. */
 @Composable
 fun FundingFeesScreen(
+    modifier: Modifier = Modifier,
     state: FundingFeesUiState?,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
-        FundingHeader(title = stringResource(RCommon.string.funding_fees_title), onBack = onBack)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = stringResource(RCommon.string.funding_fees_title), onBack = onBack)
 
         if (state != null) {
             Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {

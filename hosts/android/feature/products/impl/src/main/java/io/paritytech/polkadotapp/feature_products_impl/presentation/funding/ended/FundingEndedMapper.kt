@@ -129,7 +129,7 @@ class FundingEndedMapper(
     }
 
     private fun withdrawNote(summary: FundingSessionSummary, reason: FundingFailureReason): FundingEndedText {
-        val amount = summary.ended.cashAmount?.let(::label) ?: "$${format.symbol()}"
+        val amount = summary.ended.cashAmount?.let(::label) ?: format.name()
         return when (reason) {
             FundingFailureReason.Refunded -> res(RCommon.string.funding_ended_withdraw_refunded, amount)
             FundingFailureReason.Cancelled, FundingFailureReason.Expired, is FundingFailureReason.Other ->
@@ -184,7 +184,7 @@ class FundingEndedMapper(
 
     private fun label(units: U128): String = format.label(cash.decimal(units))
 
-    private fun res(res: Int, vararg args: String) = FundingEndedText.Res(res, args.toList())
+    private fun res(res: Int, vararg args: String) = FundingEndedText.Res(res, args.toList().toImmutableList())
 }
 
 /** Whether the balance moved: credited in, or debited out. */

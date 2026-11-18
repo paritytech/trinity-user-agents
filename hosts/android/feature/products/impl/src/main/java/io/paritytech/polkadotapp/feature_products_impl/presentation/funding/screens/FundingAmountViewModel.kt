@@ -47,7 +47,7 @@ class FundingAmountViewModel @AssistedInject constructor(
         .map { Triple(it.units, it.options, it.list) to it }
         .distinctUntilChanged { old, new -> old.first == new.first }
         .mapLatest { (key, flow) ->
-            key.first?.let { units -> service.amountIssue(units, flow.spendable?.let(flow.cash::units), sheet.intent) }
+            key.first?.let { units -> service.amountIssue(units, flow.spendable?.let(flow.cash::units), sheet.sessionId) }
                 ?: Result.success(null)
         }
 
@@ -63,13 +63,14 @@ class FundingAmountViewModel @AssistedInject constructor(
     }.stateIn(this, WhileOnScreen, null)
 
     fun onRailSelected(rail: FundingRail) {
-        if (sheet.flow.value?.rail != rail) service.quote(null, sheet.intent)
+        if (sheet.flow.value?.rail != rail) service.quote(null, sheet.sessionId)
         sheet.update { it.withRail(rail) }
         scheduleQuote()
     }
 
     fun onKey(key: FundingKey) {
-        sheet.update { it.withAmountText(it.amountText.applying(key)) }
+        val onScreen = sheet.flow.value?.amountText ?: return
+        sheet.update { it.withAmountText((it.amountText ?: onScreen).applying(key)) }
         scheduleQuote()
     }
 
@@ -100,12 +101,10 @@ class FundingAmountViewModel @AssistedInject constructor(
     /** Quotes the new amount once the user pauses, so a provider's limit shows before Continue. */
     private fun scheduleQuote() {
         quoteJob?.cancel()
-        val current = sheet.flow.value ?: return
-        if (current.rail == FundingRail.CRYPTO || current.amount.signum() <= 0) return
-
         quoteJob = launch {
             delay(REQUOTE_DELAY)
-            sheet.requote()
+            val current = sheet.flow.value
+            if (current != null && current.rail != FundingRail.CRYPTO && current.amount.signum() > 0) sheet.requote()
         }
     }
 

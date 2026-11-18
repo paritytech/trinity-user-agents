@@ -48,6 +48,12 @@ fun TokenAmountFormatter.formatFiatSigned(
     abbreviate: Boolean = true,
 ): String = CurrencyConfig.fiatSymbol + formatTokenAmount(model, RoundPrecision.FIAT, withSymbol = withSymbol, abbreviate = abbreviate)
 
+/** A CASH amount as the funding screens and the CASH card's funding rows write it: "$1,250,000 CASH", in full. */
+fun TokenAmountFormatter.formatCash(model: TokenAmountModel): String = formatFiatSigned(model, withSymbol = true, abbreviate = false)
+
+/** The CASH asset with no amount, "$CASH", for where the amount is not known. */
+fun TokenAmountFormatter.formatCashName(model: TokenAmountModel): String = CurrencyConfig.fiatSymbol + formatToSymbol(model)
+
 private class MockedAmountFormatter : TokenAmountFormatter {
     override fun formatTokenAmount(
         tokenAmount: TokenAmountModel,

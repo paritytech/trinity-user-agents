@@ -80,6 +80,7 @@ fun createFundingPageWebView(context: Context, url: String): WebView = WebView(c
  */
 @Composable
 fun FundingExternalPageView(
+    modifier: Modifier = Modifier,
     webView: WebView,
     page: FundingExternalPage,
     state: FundingExternalPageState,
@@ -89,7 +90,6 @@ fun FundingExternalPageView(
     onFailed: (Throwable) -> Unit,
     onReturned: (String) -> Unit,
     onPickFiles: suspend (WebChromeClient.FileChooserParams) -> Array<Uri>?,
-    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -171,8 +171,16 @@ fun FundingExternalPageView(
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams,
             ): Boolean {
-                // The callback is answered exactly once, even with null, or the input stays locked.
-                scope.launch { filePathCallback.onReceiveValue(pickFiles(fileChooserParams)) }
+                // The callback is answered exactly once, even with null when the pick fails or is cancelled, or the
+                // input stays locked.
+                scope.launch {
+                    var picked: Array<Uri>? = null
+                    try {
+                        picked = pickFiles(fileChooserParams)
+                    } finally {
+                        filePathCallback.onReceiveValue(picked)
+                    }
+                }
                 return true
             }
         }

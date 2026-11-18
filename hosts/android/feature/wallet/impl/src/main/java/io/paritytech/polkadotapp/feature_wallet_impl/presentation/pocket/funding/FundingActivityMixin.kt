@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding
 
+import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.disable
 import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
@@ -14,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
@@ -22,28 +24,32 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.minutes
 
 /** The funding activity and sheets a wallet screen shows over the core's sessions. */
 class FundingActivityMixin private constructor(
     private val hostFunding: HostFunding,
     private val chainAssetProvider: ChainAssetProvider,
     private val tokenAmountMapper: TokenAmountMapper,
+    private val timeProvider: TimeProvider,
     private val scope: CoroutineScope,
 ) {
     class Factory @Inject constructor(
         private val hostFunding: HostFunding,
         @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
         private val tokenAmountMapper: TokenAmountMapper,
+        private val timeProvider: TimeProvider,
     ) {
-        fun create(scope: CoroutineScope) = FundingActivityMixin(hostFunding, chainAssetProvider, tokenAmountMapper, scope)
+        fun create(scope: CoroutineScope) = FundingActivityMixin(hostFunding, chainAssetProvider, tokenAmountMapper, timeProvider, scope)
     }
 
     private val sheets = FundingSheets()
     private val opening = MutableStateFlow(false)
 
-    val activity: StateFlow<FundingActivityUiState> = hostFunding.observeActivity()
-        .map { FundingActivityMapper(chainAssetProvider.asset(), tokenAmountMapper).map(it) }
-        .stateIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), EMPTY)
+    val activity: StateFlow<FundingActivityUiState> =
+        combine(hostFunding.observeActivity(), timeProvider.ticking(NOW_TICK)) { activity, now ->
+            FundingActivityMapper(chainAssetProvider.asset(), tokenAmountMapper).map(activity, now)
+        }.stateIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), empty())
 
     val sheet: StateFlow<FundingSheet?> = sheets.shown.stateIn(scope, SharingStarted.Eagerly, null)
 
@@ -84,8 +90,10 @@ class FundingActivityMixin private constructor(
             .collect { hostFunding.acknowledgeShown(it) }
     }
 
+    private fun empty() = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = timeProvider.now())
+
     private companion object {
         const val STOP_TIMEOUT_MS = 5_000L
-        val EMPTY = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf())
+        val NOW_TICK = 1.minutes
     }
 }

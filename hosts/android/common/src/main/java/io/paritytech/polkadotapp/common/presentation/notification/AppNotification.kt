@@ -10,5 +10,5 @@ sealed interface AppNotification {
     data class Error(override val message: String) : AppNotification
 
     /** A notice the user can tap to act on; it stays up longer than a confirmation. */
-    class Tappable(override val message: String, val onTap: () -> Unit) : AppNotification
+    data class Tappable(override val message: String, val onTap: () -> Unit) : AppNotification
 }

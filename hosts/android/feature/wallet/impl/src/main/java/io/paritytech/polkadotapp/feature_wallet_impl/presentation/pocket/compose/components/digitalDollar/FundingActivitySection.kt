@@ -46,7 +46,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatCash
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
@@ -54,6 +54,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ROW_SHAPE = RoundedCornerShape(16.dp)
@@ -134,7 +135,16 @@ private fun FundingInProgressSheetContent(
             modifier = Modifier.weight(1f, fill = false),
             verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         ) {
-            items(rows, key = { it.id }) { row -> FundingActivityRow(row = row, onClick = { onRowClick(row.id) }) }
+            items(rows, key = { it.id }) { row ->
+                FundingActivityRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = ROW_MIN_HEIGHT),
+                    row = row,
+                    now = state.now,
+                    onClick = { onRowClick(row.id) },
+                )
+            }
         }
         VerticalSpacer { medium }
         PolkadotTextButton(
@@ -182,8 +192,8 @@ internal fun FundingHistorySheetContent(
             )
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
-            section(RCommon.string.funding_activity_in_progress, state.inFlight, onRowClick)
-            section(RCommon.string.funding_activity_completed, state.completed, onRowClick)
+            section(RCommon.string.funding_activity_in_progress, state.inFlight, state.now, onRowClick)
+            section(RCommon.string.funding_activity_completed, state.completed, state.now, onRowClick)
         }
     }
 }
@@ -191,6 +201,7 @@ internal fun FundingHistorySheetContent(
 private fun LazyListScope.section(
     title: Int,
     rows: List<FundingActivityRowUi>,
+    now: Instant,
     onRowClick: (id: String) -> Unit,
 ) {
     if (rows.isEmpty()) return
@@ -202,17 +213,24 @@ private fun LazyListScope.section(
             color = PolkadotTheme.colors.fg.primary,
         )
     }
-    items(rows, key = { it.id }, contentType = { "row" }) { row -> FundingActivityRow(row = row, onClick = { onRowClick(row.id) }) }
+    items(rows, key = { it.id }, contentType = { "row" }) { row ->
+        FundingActivityRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = ROW_MIN_HEIGHT),
+            row = row,
+            now = now,
+            onClick = { onRowClick(row.id) },
+        )
+    }
 }
 
 /** One session: a glyph and the amount, the rail in a pill, and the line under it. */
 @Composable
-fun FundingActivityRow(row: FundingActivityRowUi, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun FundingActivityRow(modifier: Modifier = Modifier, row: FundingActivityRowUi, now: Instant, onClick: () -> Unit) {
     val warning = row.icon == FundingRowIcon.IN_PROGRESS_WARNING
     PolkadotSurface(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = ROW_MIN_HEIGHT),
+        modifier = modifier,
         shape = ROW_SHAPE,
         color = PolkadotTheme.colors.bg.surface.container,
         onClick = onClick,
@@ -228,7 +246,7 @@ fun FundingActivityRow(row: FundingActivityRowUi, onClick: () -> Unit, modifier:
                 ) {
                     RowGlyph(row.icon)
                     NovaText(
-                        text = row.amount?.let { it.sign + LocalTokenAmountFormatter.current.formatFiatSigned(it.value, withSymbol = true) }.orEmpty(),
+                        text = row.amount?.let { it.sign + LocalTokenAmountFormatter.current.formatCash(it.value) }.orEmpty(),
                         style = PolkadotTheme.typography.body.mediumEmphasized,
                         color = when (row.amountTone) {
                             FundingAmountTone.SUCCESS -> PolkadotTheme.colors.fg.success
@@ -239,7 +257,7 @@ fun FundingActivityRow(row: FundingActivityRowUi, onClick: () -> Unit, modifier:
                     )
                 }
                 NovaText(
-                    text = subtitle(row.subtitle),
+                    text = subtitle(row.subtitle, now),
                     style = PolkadotTheme.typography.body.small,
                     color = if (warning) PolkadotTheme.colors.fg.warning else PolkadotTheme.colors.fg.secondary,
                     maxLines = 1,
@@ -289,7 +307,7 @@ private fun RowGlyph(icon: FundingRowIcon) {
 }
 
 @Composable
-private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
+private fun subtitle(subtitle: FundingRowSubtitle, now: Instant): String = when (subtitle) {
     is FundingRowSubtitle.Step -> when (val step = subtitle.step) {
         FundingActivityStep.WaitingForPayment -> stringResource(RCommon.string.funding_activity_waiting_payment)
         FundingActivityStep.WaitingForTransfer -> stringResource(RCommon.string.funding_activity_waiting_transfer)
@@ -311,7 +329,7 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
     }
 
     is FundingRowSubtitle.Ended -> {
-        val moment = LocalTimeFormatter.current.formatDayAndTime(subtitle.at.toEpochMilliseconds(), System.currentTimeMillis())
+        val moment = LocalTimeFormatter.current.formatDayAndTime(subtitle.at.toEpochMilliseconds(), now.toEpochMilliseconds())
         when (subtitle.outcome) {
             FundingRowOutcome.MOVED -> moment
             FundingRowOutcome.REFUNDED -> outcomeAt(RCommon.string.funding_activity_refunded, moment)

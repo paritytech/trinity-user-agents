@@ -32,6 +32,8 @@ class FundingActivityMapperTest {
     private val now = Instant.fromEpochMilliseconds(86_400_000)
     private val mapper = FundingActivityMapper(asset, PlainAmounts)
 
+    private fun FundingActivityMapper.map(activity: FundingActivity) = map(activity, now)
+
     @Test
     fun `a failure reads why and when, under an unsigned amount`() {
         val failed = FundingActivityStatus.Failed(FundingFailureReason.Declined)

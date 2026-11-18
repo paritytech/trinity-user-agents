@@ -14,6 +14,6 @@ class FundingEndedBottomSheet : BaseComposeBottomSheet<FundingEndedViewModel>() 
     override fun Screen() = FundingEndedScreen(viewModel)
 
     companion object {
-        const val INTENT = "fundingEndedIntent"
+        const val SESSION_ID = "fundingEndedSessionId"
     }
 }

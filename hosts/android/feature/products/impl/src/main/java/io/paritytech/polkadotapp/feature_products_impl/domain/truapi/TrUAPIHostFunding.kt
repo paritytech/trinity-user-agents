@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRail
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.toActivityStatus
 import kotlinx.coroutines.flow.Flow
@@ -30,15 +31,15 @@ class TrUAPIHostFunding @Inject constructor(
     private val sessionScreens: FundingSessionScreens,
 ) : HostFunding {
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
-        service.open(direction.toCore(), amount?.toU128())
+        service.open(direction.toCore(), amount?.toU128()).map { it?.value }
 
     override fun observeActivity(): Flow<FundingActivity> = service.entries().map(::activityOf)
 
     override suspend fun acknowledgeShown(intents: List<String>) {
-        intents.forEach { service.acknowledge(it) }
+        intents.forEach { service.acknowledge(FundingSessionId(it)) }
     }
 
-    override suspend fun showSession(intent: String) = sessionScreens.show(intent)
+    override suspend fun showSession(intent: String) = sessionScreens.show(FundingSessionId(intent))
 
     override suspend fun presentScreens() = sessionScreens.present()
 }

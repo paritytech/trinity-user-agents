@@ -47,6 +47,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.co
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendPaymentEmptySearch
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendToYourselfItem
 import kotlinx.collections.immutable.persistentListOf
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -223,7 +224,7 @@ private fun SendPaymentScreenPreview() {
                         )
                     )
                 ),
-                funding = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf()),
+                funding = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), now = Instant.fromEpochMilliseconds(0)),
                 fundingSheet = null,
             ),
             onInputChange = {},

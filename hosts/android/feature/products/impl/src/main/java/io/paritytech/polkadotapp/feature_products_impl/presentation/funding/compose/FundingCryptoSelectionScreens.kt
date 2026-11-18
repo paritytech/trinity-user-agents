@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -19,6 +20,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCryptoIcon
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingNetworkRow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTokensUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FUNDING_CRYPTO_ICON_SIZE
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCryptoIconImage
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import kotlinx.collections.immutable.ImmutableList
@@ -30,16 +32,16 @@ private val CHIP_ICON_SIZE = 16.dp
 /** The networks the providers' crypto routes name. */
 @Composable
 fun FundingNetworkScreen(
+    modifier: Modifier = Modifier,
     rows: ImmutableList<FundingNetworkRow>,
     onBack: () -> Unit,
     onNetwork: (String) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        FundingHeader(title = stringResource(RCommon.string.funding_network_title), onBack = onBack)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = stringResource(RCommon.string.funding_network_title), onBack = onBack)
 
         if (rows.isEmpty()) {
             NovaText(
@@ -67,16 +69,16 @@ fun FundingNetworkScreen(
 /** The tokens the providers take on the chosen network. */
 @Composable
 fun FundingTokenScreen(
+    modifier: Modifier = Modifier,
     state: FundingTokensUiState,
     onBack: () -> Unit,
     onToken: (String) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        FundingHeader(title = stringResource(RCommon.string.funding_token_title), onBack = onBack)
+        FundingHeader(modifier = Modifier.fillMaxWidth(), title = stringResource(RCommon.string.funding_token_title), onBack = onBack)
 
         if (state.networkName != null) {
             PolkadotSurface(
@@ -93,7 +95,7 @@ fun FundingTokenScreen(
                     horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
                 ) {
                     state.networkIcon?.takeIf { it !is FundingCryptoIcon.Monogram }?.let {
-                        FundingCryptoIconImage(icon = it, size = CHIP_ICON_SIZE)
+                        FundingCryptoIconImage(modifier = Modifier.size(CHIP_ICON_SIZE), icon = it)
                     }
                     NovaText(
                         text = stringResource(RCommon.string.funding_token_network_selected, state.networkName),
@@ -140,7 +142,7 @@ private fun FundingSelectionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.smallIncreased),
         ) {
-            FundingCryptoIconImage(icon = icon)
+            FundingCryptoIconImage(modifier = Modifier.size(FUNDING_CRYPTO_ICON_SIZE), icon = icon)
             Column {
                 NovaText(
                     text = title,

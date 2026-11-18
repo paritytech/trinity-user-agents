@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.testCashFormat
+import kotlinx.collections.immutable.persistentListOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -56,7 +57,7 @@ class FundingEndedMapperTest {
         assertEquals(FundingDotState.FAILED, ended.timeline.dots[FundingTimeline.MILESTONE_GAP])
         assertEquals(1, ended.timeline.failedLabel)
         assertEquals(RCommon.string.funding_ended_step_payment_declined, ended.timeline.labels[1])
-        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_card_declined, emptyList()), ended.note)
+        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_card_declined, persistentListOf()), ended.note)
         assertEquals(FundingEndedAction.START_OVER, ended.action)
     }
 
@@ -68,7 +69,7 @@ class FundingEndedMapperTest {
 
         assertEquals(FundingDotState.FAILED, ended.timeline.dots.last())
         assertEquals(RCommon.string.funding_activity_refunded, ended.timeline.labels.last())
-        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_refunded_card, listOf(PAID)), ended.note)
+        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_refunded_card, persistentListOf(PAID)), ended.note)
         assertEquals(FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)), ended.rows.first())
     }
 
@@ -88,7 +89,7 @@ class FundingEndedMapperTest {
 
         assertEquals(RCommon.string.funding_activity_payout_failed, ended.timeline.labels.last())
         assertEquals(FundingDotState.FAILED, ended.timeline.dots.last())
-        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_withdraw_refunded, listOf("$49 CASH")), ended.note)
+        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_withdraw_refunded, persistentListOf("$49 CASH")), ended.note)
     }
 
     @Test
@@ -100,7 +101,7 @@ class FundingEndedMapperTest {
         assertEquals(FundingDotState.CURRENT, ended.timeline.dots[5])
         assertTrue(
             ended.rows.contains(
-                FundingEndedRow.Value(RCommon.string.funding_ended_payout, FundingEndedText.Res(RCommon.string.funding_ended_payout_pending, emptyList())),
+                FundingEndedRow.Value(RCommon.string.funding_ended_payout, FundingEndedText.Res(RCommon.string.funding_ended_payout_pending, persistentListOf())),
             ),
         )
     }
@@ -115,7 +116,7 @@ class FundingEndedMapperTest {
             listOf(
                 FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)),
                 FundingEndedRow.Settled(RCommon.string.funding_ended_credited, "$50 CASH", requested = "$60 CASH"),
-                FundingEndedRow.Value(RCommon.string.funding_ended_method, FundingEndedText.Res(RCommon.string.funding_rail_card, emptyList())),
+                FundingEndedRow.Value(RCommon.string.funding_ended_method, FundingEndedText.Res(RCommon.string.funding_rail_card, persistentListOf())),
                 FundingEndedRow.Provider(ramp),
                 FundingEndedRow.Copy(RCommon.string.funding_ended_transaction_id, "tx-1"),
                 FundingEndedRow.Moment(RCommon.string.funding_ended_started, OPENED),
@@ -140,7 +141,7 @@ class FundingEndedMapperTest {
                 FundingEndedRow.Value(RCommon.string.funding_ended_sent, FundingEndedText.Plain("2.5 USDC")),
                 FundingEndedRow.Value(
                     RCommon.string.funding_ended_method,
-                    FundingEndedText.Res(RCommon.string.funding_ended_method_crypto_network, listOf("Polkadot")),
+                    FundingEndedText.Res(RCommon.string.funding_ended_method_crypto_network, persistentListOf("Polkadot")),
                 ),
             ),
             ended.rows.filterIsInstance<FundingEndedRow.Value>(),

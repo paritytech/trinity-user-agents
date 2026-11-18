@@ -10,6 +10,8 @@ import kotlin.time.Instant
 data class FundingActivityUiState(
     val inFlight: ImmutableList<FundingActivityRowUi>,
     val completed: ImmutableList<FundingActivityRowUi>,
+    /** What the ended rows' times are read against, as "today" or a weekday. */
+    val now: Instant,
 ) {
     /** Top-ups in progress, for the Topping up sheet. */
     val toppingUp: List<FundingActivityRowUi>

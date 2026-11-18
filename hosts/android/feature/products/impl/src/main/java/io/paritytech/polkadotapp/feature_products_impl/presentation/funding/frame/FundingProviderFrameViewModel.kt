@@ -8,10 +8,14 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationError
+import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
+import io.paritytech.polkadotapp.common.presentation.ui.errors.StringResPresentationError
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebFileChooserExecutor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -27,6 +31,7 @@ import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import uniffi.truapi.FundingFrameOutcome
 import javax.inject.Inject
+import io.paritytech.polkadotapp.common.R as RCommon
 
 data class FundingProviderFrameUiState(
     /** The session waits on a transfer the user makes outside the frame, as its progress says now. */
@@ -50,7 +55,7 @@ class FundingProviderFrameViewModel @Inject constructor(
     private val contextManager: ContextManager,
     private val fileProvider: FileProvider,
 ) : BaseViewModel() {
-    private val frame: FundingFrame? = frames.get(savedStateHandle.get<String>(FundingProviderFrameBottomSheet.REQUEST).orEmpty())
+    private val frame: FundingFrame? = frames.get(FundingFrameRequestId(savedStateHandle.get<String>(FundingProviderFrameBottomSheet.REQUEST_ID).orEmpty()))
 
     /** No frame waits under this screen, as after process death: it closes at once. */
     val isOrphaned: Boolean = frame == null
@@ -70,7 +75,7 @@ class FundingProviderFrameViewModel @Inject constructor(
     val webView: StateFlow<WebView?> = frame?.appWebView ?: MutableStateFlow(null)
 
     private val awaitsUserTransfer = frame?.let { frame ->
-        service.entryState(frame.request.entryId).map { it.progress?.awaitsUserTransfer == true }.onStart { emit(false) }
+        service.entryState(frame.request.sessionId).map { it.progress?.awaitsUserTransfer == true }.onStart { emit(false) }
     } ?: flowOf(false)
 
     val state: StateFlow<FundingProviderFrameUiState> = (frame?.loadProgress ?: MutableStateFlow(DotNsLoadProgress.Idle))
@@ -122,13 +127,15 @@ class FundingProviderFrameViewModel @Inject constructor(
 
     /**
      * The files the user picked for the page's `<input type="file">`, as a KYC check asks for an ID; `null` when the
-     * picker was dismissed or failed, which releases the input so it can open again.
+     * picker was dismissed or failed, which releases the input so it can open again. A failure is shown to the user.
      */
     suspend fun pickFiles(params: FileChooserParams): Array<Uri>? =
-        runCatching { WebFileChooserExecutor(contextManager.requireActivity(), params, fileProvider).execute() }
+        runCancellableCatching { WebFileChooserExecutor(contextManager.requireActivity(), params, fileProvider).execute() }
             .flatMap { it }
-            .logFailure("Funding page file chooser failed")
-            .getOrNull()
+            .getOrElse { failure ->
+                showPresentationError(FundingFilesPresentationError(failure))
+                null
+            }
 
     /** The page reached its return URL; [url] carries the result in its query. */
     fun onPageReturned(url: String) = finish(FundingFrameOutcome.Returned(url))
@@ -146,14 +153,18 @@ class FundingProviderFrameViewModel @Inject constructor(
         frame?.isShown = false
     }
 
-    private fun hide() = launchUnit { frame?.let { router.closeFundingProviderFrame(it.request.entryId) } }
+    private fun hide() = launchUnit { frame?.let { router.closeFundingProviderFrame(it.request.sessionId) } }
 
     private fun finish(outcome: FundingFrameOutcome) = launchUnit {
         val frame = frame ?: return@launchUnit
         service.answerFrame(frame.request, outcome)
         frames.release(frame.request.id)
-        router.closeFundingProviderFrame(frame.request.entryId)
+        router.closeFundingProviderFrame(frame.request.sessionId)
     }
 
     private data class LoadState(val isContentVisible: Boolean, val failed: Boolean)
 }
+
+private class FundingFilesPresentationError(cause: Throwable) :
+    PresentationThrowable(cause),
+    PresentationError by StringResPresentationError(RCommon.string.funding_frame_files_failed)

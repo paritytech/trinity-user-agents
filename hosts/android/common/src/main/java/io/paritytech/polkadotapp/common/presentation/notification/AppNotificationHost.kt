@@ -5,7 +5,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -109,11 +108,10 @@ private fun AppNotificationItem(notification: AppNotification, onTap: (() -> Uni
     }
 
     PolkadotSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier),
+        modifier = Modifier.fillMaxWidth(),
         color = backgroundColor,
         shape = RoundedCornerShape(28.dp),
+        onClick = onTap,
     ) {
         Row(
             modifier = Modifier.padding(

@@ -39,9 +39,9 @@ private val GREYSCALE = ColorFilter.colorMatrix(ColorMatrix().apply { setToSatur
  */
 @Composable
 fun FundingRailTabs(
+    modifier: Modifier = Modifier,
     tabs: ImmutableList<FundingRailTab>,
     onSelect: (FundingRail) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier,

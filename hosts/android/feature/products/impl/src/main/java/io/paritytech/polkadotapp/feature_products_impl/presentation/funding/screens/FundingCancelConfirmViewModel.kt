@@ -34,15 +34,15 @@ class FundingCancelConfirmViewModel @AssistedInject constructor(
     private val isCancelling = MutableStateFlow(false)
 
     val state: StateFlow<FundingDepositUiState?> =
-        combine(sheet.flow.filterNotNull(), sheet.entry, isCancelling) { flow, entry, cancelling ->
-            flow.toDepositUiState(entry?.progress, FundingSessionFacts.of(entry), cancelling)
+        combine(sheet.flow.filterNotNull(), sheet.entry, isCancelling, sheet.now) { flow, entry, cancelling, now ->
+            flow.toDepositUiState(entry?.progress, FundingSessionFacts.of(entry), cancelling, now)
         }.stateIn(this, WhileOnScreen, null)
 
     fun onConfirm() = launchUnit {
         if (isCancelling.value) return@launchUnit
         isCancelling.value = true
 
-        service.cancel(sheet.intent)
+        service.cancel(sheet.sessionId)
             .logFailure("Funding cancel failed")
             .onSuccess { outcome ->
                 when (outcome) {
