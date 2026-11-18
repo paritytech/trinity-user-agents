@@ -20,15 +20,15 @@ class SentryLogTree(
         logger.log(priority.toSentryLogLevel(), SentryLogParameters.create(attributes), message)
     }
 
-    private fun Int.toSentryLogLevel(): SentryLogLevel = when (this) {
-        Log.ASSERT -> SentryLogLevel.FATAL
-        Log.ERROR -> SentryLogLevel.ERROR
-        Log.WARN -> SentryLogLevel.WARN
-        else -> SentryLogLevel.INFO
-    }
-
     private companion object {
         const val TAG_PREFIX = "truapi."
         const val TAG_ATTRIBUTE = "tag"
     }
+}
+
+internal fun Int.toSentryLogLevel(): SentryLogLevel = when (this) {
+    Log.ASSERT -> SentryLogLevel.FATAL
+    Log.ERROR -> SentryLogLevel.ERROR
+    Log.WARN -> SentryLogLevel.WARN
+    else -> SentryLogLevel.INFO
 }
