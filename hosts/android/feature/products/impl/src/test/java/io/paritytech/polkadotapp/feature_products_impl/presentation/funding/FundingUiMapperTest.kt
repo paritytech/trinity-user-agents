@@ -96,10 +96,10 @@ class FundingUiMapperTest {
     }
 
     /** Asks for quotes of the amount on screen, as the funding service reports a new ask of the same amount. */
-    private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, quotedProviders.toMap(), asking = true)
+    private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount)
 
     /** The ask's list, as the funding service reports it. */
-    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, emptyMap(), asking = false)
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount })
 
     private fun flow() = FundingFlowState.initial(
         direction = FundingDirection.IN,

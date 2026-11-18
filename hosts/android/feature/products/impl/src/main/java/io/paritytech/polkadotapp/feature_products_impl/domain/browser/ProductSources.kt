@@ -3,8 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.appHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.debugServedUrl
 import uniffi.truapi.DevServerProduct
@@ -14,27 +12,24 @@ import uniffi.truapi.productSource
 import java.net.URI
 import javax.inject.Inject
 
-/** Decides once, when a page or Worker opens, where the product it names runs from; the core holds the rule. */
+// Decided once, when a page opens, and passed down: nothing below it reads the source off a URL again.
 class ProductSources @Inject constructor(
-    private val bundledProducts: BundledProducts,
     private val devServers: DevServers,
     private val dotNsTldProvider: DotNsTldProvider,
     private val debugPocketCards: DebugPocketCards,
 ) {
-    fun of(urlOrId: String): ProductSource? = productSource(
-        urlOrId,
+    fun of(url: String): ProductSource? = productSource(
+        url,
         dotNsTldProvider.currentTldOrNull()?.value.orEmpty(),
         devServers.enabled,
-        bundledProducts.entries,
+        emptyList(),
     )
 
-    /**
-     * As [of], for a page opened in a SPA session: a published product whose page the debug menu serves from the
-     * developer's machine runs from there.
-     */
-    fun ofSpaPage(launchUrl: String): ProductSource? = when (val source = of(launchUrl)) {
-        is ProductSource.Bundled, is ProductSource.DevServer -> source
-        is ProductSource.Published, null -> debugServedPage(launchUrl) ?: source
+    fun ofSpaPage(launchUrl: String): ProductSource? {
+        val source = of(launchUrl)
+        if (source is ProductSource.DevServer) return source
+
+        return debugServedPage(launchUrl) ?: source
     }
 
     // A product with no published app is served from the developer's machine, so its page's host
@@ -50,18 +45,10 @@ class ProductSources @Inject constructor(
     }
 }
 
-/** The id a page runs under whatever its URL says; `null` for a published product, read off each URL it loads. */
+// A dev server page loads from an address that reaches the developer's machine but runs under the id the core
+// gave it, so neither can be read off the other. A published page reads its id off each URL it loads.
 val ProductSource.fixedProductId: ProductId?
-    get() = when (this) {
-        is ProductSource.Bundled -> entry.productId
-        is ProductSource.DevServer -> product.productId
-        is ProductSource.Published -> null
-    }
+    get() = (this as? ProductSource.DevServer)?.product?.productId
 
-/** The origin a page loads from when it is not a dotNS host. */
 val ProductSource.firstPartyOrigin: String?
-    get() = when (this) {
-        is ProductSource.Bundled -> "https://${entry.appHost}"
-        is ProductSource.DevServer -> product.origin
-        is ProductSource.Published -> null
-    }
+    get() = (this as? ProductSource.DevServer)?.product?.origin

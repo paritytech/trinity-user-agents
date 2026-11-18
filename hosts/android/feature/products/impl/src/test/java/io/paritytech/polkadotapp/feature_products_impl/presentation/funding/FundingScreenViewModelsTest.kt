@@ -134,7 +134,7 @@ class FundingScreenViewModelsTest {
 
     @Test
     fun `starting hands the session to the quoted provider, and a refusal lets the user try again`() = runTest(testDispatcher) {
-        val sheet = FakeFundingSheet(flow().withQuotes(quotedByRamp(), emptyMap(), asking = false), entry())
+        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount) }, entry())
         val model = FundingSummaryViewModel(sheet, service)
         model.state.launchIn(backgroundScope)
         service.startResult = Result.failure(FundingStartError.NotSelected(null))

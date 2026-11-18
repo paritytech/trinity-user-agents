@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
@@ -23,7 +25,7 @@ class TrUAPIFundingCore @Inject constructor(
     override suspend fun start(): Result<Unit> = runtimeProvider.runtime().map { }
 
     override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> =
-        runtimeProvider.runtime().mapCatching { it.openFunding(direction, amount) }
+        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.openFunding(direction, amount) } }
 
     override suspend fun session(intent: String): Result<FundingSession?> =
         runtimeProvider.runtime().mapCatching { it.fundingSession(intent) }
@@ -62,16 +64,16 @@ class TrUAPIFundingCore @Inject constructor(
         runtimeProvider.runtime().mapCatching { it.fundingAmountIssue(intent, amount, spendable) }
 
     override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
-        runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
+        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.selectFundingProvider(intent, providerId, quoteId) } }
 
     override suspend fun cancel(intent: String): Result<CancelOutcome> =
-        runtimeProvider.runtime().mapCatching { it.cancelFunding(intent) }
+        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.cancelFunding(intent) } }
 
     override suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation> =
-        runtimeProvider.runtime().mapCatching { it.confirmFundingCancel(intent, terms) }
+        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.confirmFundingCancel(intent, terms) } }
 
     override suspend fun acknowledge(intent: String): Result<Boolean> =
-        runtimeProvider.runtime().mapCatching { it.acknowledgeFundingSession(intent) }
+        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.acknowledgeFundingSession(intent) } }
 
     override suspend fun openFrame(intent: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.openProviderFrame(intent) }

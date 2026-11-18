@@ -147,7 +147,7 @@ class TrUAPIHostRuntimeProviderTest {
         pinnedPocketCards = pinnedPocketCards,
         workerSupervisor = { mockk(relaxed = true) },
         workerCrashNotice = mockk(relaxed = true),
-        fundingService = { mockk(relaxed = true) },
+        workerCrashListener = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )
 

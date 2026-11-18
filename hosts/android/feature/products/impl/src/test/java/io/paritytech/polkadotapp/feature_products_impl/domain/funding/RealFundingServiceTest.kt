@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -46,9 +47,12 @@ class RealFundingServiceTest {
 
     private fun TestScope.service() = RealFundingService(core, testDispatchers())
 
-    /** Presents session "intent" as the core does, with something following it so the presentation holds. */
+    /** Presents session "intent" as the core does, with its screens up so the presentation holds. */
     private fun TestScope.presented(service: RealFundingService) = async(detached) { service.present("intent", FundingDirection.IN, null) }
-        .also { service.entryState("intent").launchIn(this + detached) }
+        .also {
+            (this + detached).launch { service.shown("intent") }
+            service.entryState("intent").launchIn(this + detached)
+        }
 
     @Test
     fun `a session's state comes first, with the options the core offers while it is set up`() = runTest {
@@ -83,7 +87,7 @@ class RealFundingServiceTest {
         val entry = service.entryState("intent").first()
 
         assertEquals(2uL, entry.quotes?.requestId)
-        assertFalse(entry.isQuoting)
+        assertEquals("200", entry.askedAmount)
     }
 
     @Test
@@ -96,27 +100,6 @@ class RealFundingServiceTest {
         advanceUntilIdle()
 
         assertEquals(listOf("select CARD", "quote 100"), core.calls)
-    }
-
-    // A provider asked again keeps its last price greyed until it answers.
-    @Test
-    fun `asking the same amount again keeps the quotes on screen until their providers answer`() = runTest {
-        val service = service()
-        presented(service)
-        service.quote("100", "intent")
-        advanceUntilIdle()
-        val quoted = FakeFundingCore.quote("q-1")
-        core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(quoted))
-        service.changed("intent", FundingChangeKind.QUOTES)
-        advanceUntilIdle()
-
-        service.quote("100", "intent")
-        advanceUntilIdle()
-        core.quotes["intent"] = FakeFundingCore.list(2uL, "100", ramp to FundingQuoteState.Pending, complete = false)
-        service.changed("intent", FundingChangeKind.QUOTES)
-        advanceUntilIdle()
-
-        assertEquals(mapOf(ramp to quoted), service.entryState("intent").first().staleQuotes)
     }
 
     @Test
@@ -227,9 +210,10 @@ class RealFundingServiceTest {
 
     // Navigation can fail silently; the core must not wait on screens that never came.
     @Test
-    fun `a session nobody follows within ten seconds is taken as dismissed`() = runTest {
+    fun `a session whose screens do not come up within ten seconds is taken as dismissed`() = runTest {
         val service = service()
         val outcome = async(detached) { service.present("intent", FundingDirection.IN, null) }
+        service.entryState("intent").launchIn(this + detached)
 
         advanceTimeBy(9_999)
         assertFalse(outcome.isCompleted)
@@ -305,10 +289,10 @@ class RealFundingServiceTest {
         service.frameRequested(ramp, "intent")
 
         assertEquals(FundingEvent.FrameRequested("intent", ramp), service.events.first())
-        assertTrue(service.isFrameWaiting("intent"))
-        assertTrue(service.openProviderFrame("intent"))
-        assertFalse(service.isFrameWaiting("intent"))
-        assertFalse(service.openProviderFrame("intent"))
+        assertTrue(service.isFrameWaiting("intent").getOrThrow())
+        assertTrue(service.openProviderFrame("intent").getOrThrow())
+        assertFalse(service.isFrameWaiting("intent").getOrThrow())
+        assertFalse(service.openProviderFrame("intent").getOrThrow())
     }
 
     @Test
@@ -384,8 +368,8 @@ class RealFundingServiceTest {
         advanceUntilIdle()
         val event = async { service.events.first { it is FundingEvent.ProviderNotWorking } }
 
-        assertTrue(service.workerCrashing(ramp))
-        assertFalse(service.workerCrashing(ProductId.parse("chat.dot").getOrThrow()))
+        assertTrue(service.onWorkerCrashing(ramp))
+        assertFalse(service.onWorkerCrashing(ProductId.parse("chat.dot").getOrThrow()))
         assertEquals(FundingEvent.ProviderNotWorking(ramp), event.await())
     }
 

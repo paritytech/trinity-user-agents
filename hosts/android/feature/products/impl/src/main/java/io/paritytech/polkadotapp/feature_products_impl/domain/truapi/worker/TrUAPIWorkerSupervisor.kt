@@ -49,7 +49,6 @@ sealed interface WorkerExecutionState {
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
  * A worker that fails to boot, or whose renderer goes away while it runs, is reported to the core as
  * exited, which starts it again with backoff while it is still held. A stop the core asked for is not.
- * A worker the app ships runs from its own files, with no dotNS lookup.
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -131,12 +130,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     }
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
-        val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
-        val includesChat = resolved.executable.includesChat
+        val script = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
-        val workerScript = WorkerScript.of(resolved.executable.scriptUrl)
+        val workerScript = WorkerScript.of(script.scriptUrl)
 
-        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, resolved.source), worker.scope)
+        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {
@@ -152,7 +150,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 navigation.policy(productId, worker.scope),
                 ExecutableKind.WORKER,
-                chat = if (includesChat) {
+                chat = if (script.includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
                 } else {
                     null

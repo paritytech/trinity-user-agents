@@ -88,6 +88,20 @@ class FundingFlowStateTest {
         assertFalse(asked.received(list(quoted(providerA, send = "500"), best = providerA)).isQuoting)
     }
 
+    // A provider asked again keeps its last price greyed until it answers.
+    @Test
+    fun `asking the same amount again keeps the quotes on screen until their providers answer`() {
+        val quoted = state(options(asset = "EUR"), amount = "50").asked()
+            .received(list(quoted(providerA, send = "500"), best = providerA))
+
+        val again = quoted.asked()
+        val pending = again.received(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), complete = false))
+
+        assertEquals(listOf(providerA), again.staleQuotes.keys.toList())
+        assertEquals(listOf(providerA), pending.staleQuotes.keys.toList())
+        assertTrue(quoted.withAmountText("60").asked().staleQuotes.isEmpty())
+    }
+
     @Test
     fun `a list the core withdrew drops the quotes`() {
         val quoted = state(options(asset = "EUR"), amount = "50").asked()
@@ -163,11 +177,11 @@ class FundingFlowStateTest {
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 
-    /** Asks for quotes of the amount on screen, as the funding service reports a new ask of the same amount. */
-    private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, quotedProviders.toMap(), asking = true)
+    /** Asks for quotes of the amount on screen, as the funding service reports a new ask. */
+    private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount)
 
-    /** The ask's list, as the funding service reports it. */
-    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, emptyMap(), asking = false)
+    /** The ask's list, as the funding service reports it; none is the core withdrawing it, which drops the ask. */
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount })
 
     private fun state(
         options: FundingOptions?,
