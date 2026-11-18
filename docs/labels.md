@@ -115,7 +115,7 @@ The first time a pull request touches an app, a comment lists `ci:ios-simulator`
 
 ## Outside the families
 
-A few labels are applied by automation that names them, so they keep plain names: `backport-host` on the pull requests `backport-host.yml` opens, `dependencies` on Dependabot's and `update-chain-specs.yml`'s, and `diagnosis-report`, which the playground puts on the issues it opens.
+A few labels are applied by automation that names them, so they keep plain names: `backport-host` on the pull requests `backport-host.yml` opens, `dependencies` on Dependabot's, `update-chain-specs.yml`'s and `update-stacks.yml`'s, and `diagnosis-report`, which the playground puts on the issues it opens.
 
 ## What is not a label
 
