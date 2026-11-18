@@ -45,7 +45,7 @@ fn a_reconstruction_adopts_what_an_installation_from_the_registry_holds() {
 		chain,
 		registry: Arc::new(Registry(Some(vec![key().seal(EARLIER).to_vec()]))),
 	};
-	let config = ScanConfig { batch: 4, gap: 2, deep_gap: 4, purse_gap: 1 };
+	let config = ScanConfig { batch: 4, gap: 2, deep_batches: 4, purse_gap: 1 };
 	let adopted = block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap();
 	assert_eq!(adopted, 1);
 	let view = wallet.view();
@@ -64,12 +64,12 @@ fn a_failed_registry_read_still_scans_the_installations_already_known() {
 		chain: Arc::new(FakeChain::default()),
 		registry: Arc::new(Registry(None)),
 	};
-	let config = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+	let config = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
 	assert_eq!(block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap(), 0);
 	assert!(wallet.view().installations().iter().all(|(_, progress)| progress.first_scan_done));
 }
 
-const GAP_OF_TWO: ScanConfig = ScanConfig { batch: 4, gap: 2, deep_gap: 4, purse_gap: 1 };
+const GAP_OF_TWO: ScanConfig = ScanConfig { batch: 4, gap: 2, deep_batches: 4, purse_gap: 1 };
 
 /// The account of the coin at `index` of the main purse under `EARLIER`.
 fn earlier_coin(index: u32) -> [u8; 32] {
@@ -199,7 +199,7 @@ fn a_reconstruction_skips_entries_whose_alias_is_unloaded() {
 		chain,
 		registry: Arc::new(Registry(Some(vec![key().seal(EARLIER).to_vec()]))),
 	};
-	let config = ScanConfig { batch: 4, gap: 2, deep_gap: 4, purse_gap: 1 };
+	let config = ScanConfig { batch: 4, gap: 2, deep_batches: 4, purse_gap: 1 };
 	assert_eq!(block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap(), 2);
 	let mut adopted: Vec<Asset> = wallet.view().all_assets().map(|record| record.asset).collect();
 	adopted.sort();
@@ -258,7 +258,7 @@ fn app_coins_held(wallet: &TestWallet) -> Vec<u32> {
 /// lies spent below, and applies the gap rule only past the mark.
 #[test]
 fn a_scan_reads_a_handed_over_installation_up_to_its_high_water_mark() {
-	let short = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+	let short = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
 	let (wallet, deps) = handed_over(40, Vec::new(), &[30, 50]);
 	block_on(reconstruct(&deps, Purses::MainOnly, false, &short, &chain_params())).unwrap();
 	assert_eq!(app_coins_held(&wallet), vec![30]);
@@ -268,7 +268,7 @@ fn a_scan_reads_a_handed_over_installation_up_to_its_high_water_mark() {
 /// never spend them, and the user can still take them back.
 #[test]
 fn a_coin_of_a_sent_payment_is_adopted_as_handed_out() {
-	let short = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+	let short = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
 	let payment = handover::OutstandingPayment { id: [8; 32], accounts: vec![app_coin(3)] };
 	let (wallet, deps) = handed_over(8, vec![payment], &[2, 3]);
 	block_on(reconstruct(&deps, Purses::MainOnly, false, &short, &chain_params())).unwrap();
@@ -279,4 +279,69 @@ fn a_coin_of_a_sent_payment_is_adopted_as_handed_out() {
 		(vec![2, 3], Some(ledger::Mark::Committed), None)
 	);
 	assert_eq!(classify(&coin(3), &view, NOW, &chain_params()).selectability, Selectability::Never);
+}
+
+const OTHER: InstallationId = InstallationId([6; 32]);
+
+fn coin_at(installation: InstallationId, index: u32) -> [u8; 32] {
+	coin_key(&ENTROPY, PurseId::MAIN, installation, index).unwrap().1
+}
+
+fn coins_held(wallet: &TestWallet, of: InstallationId) -> Vec<u32> {
+	let mut held: Vec<u32> = wallet
+		.view()
+		.assets(PurseId::MAIN)
+		.filter_map(|record| match record.asset {
+			Asset::Coin { installation, index, .. } if installation == of => Some(index),
+			_ => None,
+		})
+		.collect();
+	held.sort();
+	held
+}
+
+/// One installation whose reads fail must not keep the others from being
+/// recovered; it stays unscanned, so the next reconstruction tries it again.
+#[test]
+fn a_failed_read_stops_only_its_installation() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let chain = Arc::new(FakeChain::default());
+	chain.coins.lock().insert(coin_at(OTHER, 1), ChainCoin { instance: 0, value: 5, age: 1, locked_until: None });
+	chain.failing_accounts.lock().push(coin_at(EARLIER, 0));
+	let records = vec![key().seal(EARLIER).to_vec(), key().seal(OTHER).to_vec()];
+	let deps = ReconstructionDeps {
+		store: wallet.db.clone(),
+		seed: Arc::new(FixedSeed),
+		chain,
+		registry: Arc::new(Registry(Some(records))),
+	};
+	let config = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
+	assert!(block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).is_err());
+	let view = wallet.view();
+	let scanned = |of: InstallationId| view.installations().iter().any(|(id, progress)| *id == of && progress.first_scan_done);
+	assert_eq!((coins_held(&wallet, OTHER), scanned(OTHER), scanned(EARLIER)), (vec![1], true, false));
+}
+
+/// A deep scan looks further than the last scan stopped, which is where a
+/// wallet whose spent indices left a long empty run keeps the rest.
+#[test]
+fn a_deep_scan_reads_past_where_the_last_scan_stopped() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let chain = Arc::new(FakeChain::default());
+	for index in [6, 13] {
+		chain.coins.lock().insert(coin_at(EARLIER, index), ChainCoin { instance: 0, value: 5, age: 1, locked_until: None });
+	}
+	let deps = ReconstructionDeps {
+		store: wallet.db.clone(),
+		seed: Arc::new(FixedSeed),
+		chain,
+		registry: Arc::new(Registry(Some(vec![key().seal(EARLIER).to_vec()]))),
+	};
+	let config = ScanConfig { batch: 4, gap: 1, deep_batches: 2, purse_gap: 1 };
+	block_on(reconstruct(&deps, Purses::MainOnly, false, &config, &chain_params())).unwrap();
+	assert_eq!(coins_held(&wallet, EARLIER), Vec::<u32>::new(), "the default scan stops after one empty batch");
+	block_on(reconstruct(&deps, Purses::MainOnly, true, &config, &chain_params())).unwrap();
+	assert_eq!(coins_held(&wallet, EARLIER), vec![6], "the deep scan reads two batches past index 4");
+	block_on(reconstruct(&deps, Purses::MainOnly, true, &config, &chain_params())).unwrap();
+	assert_eq!(coins_held(&wallet, EARLIER), vec![6, 13], "the next deep scan continues past index 12");
 }
