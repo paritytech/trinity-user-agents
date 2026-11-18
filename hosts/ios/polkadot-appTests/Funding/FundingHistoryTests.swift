@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
 import Testing

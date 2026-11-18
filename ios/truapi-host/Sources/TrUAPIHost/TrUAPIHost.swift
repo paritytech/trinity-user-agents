@@ -1228,8 +1228,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// it is connected to, and skips a name that carries one. Call it on
     /// every remote config refresh: a call listing what the last one did
     /// changes nothing.
-    public func setFundingProviderConfig(publishedNames: [String]) throws {
-        try inner.setFundingProviderConfig(publishedNames: publishedNames)
+    public func setFundingProviderConfig(publishedNames: [String]) {
+        inner.setFundingProviderConfig(publishedNames: publishedNames)
     }
 
     /// Ask every provider routing the selected rail to price `amount` for
