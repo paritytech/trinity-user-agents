@@ -6,7 +6,9 @@
 //! instance on the People chain and reaches the chain only through the
 //! interfaces the design's section 1 lists.
 
+pub mod balance;
 pub mod chain;
+pub mod classification;
 pub mod denominations;
 pub mod handover;
 pub mod ledger;
@@ -15,7 +17,9 @@ pub mod operation;
 pub mod params;
 pub mod policy;
 pub mod registration;
+pub mod selection;
 pub mod split;
+pub mod tokens;
 
 #[cfg(test)]
 pub mod testing;
