@@ -196,12 +196,16 @@ does not check genesis hashes against the live chains.
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,
-whichever has the higher `sequence`. It never waits on the network to start.
+whichever has the higher `sequence`. It never waits on the network to start,
+and waits a few seconds at most for the stored copy before it starts from the
+bundled one.
 
 The core has no HTTP client. A native host installs `NativeStackCallbacks` with
 `set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,
-and the core keeps the last descriptor it verified in its database. Without the
-callbacks the core stays on the descriptor it started from.
+and the core keeps the last descriptor it verified in its database. A browser
+host passes the `fetchStackDescriptor` and `stackChanged` raw callbacks, and the
+core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
+Without the callbacks the core stays on the descriptor it started from.
 
 The core fetches once the callbacks are installed, unless the last fetch was
 under an hour ago, then once an hour and whenever the host calls
@@ -254,7 +258,22 @@ reads it, is kept. A node that answers with bytes that do not hash to the ID
 ends the fetch, and the material falls back as `Integrity`. A material a saved
 Pocket face draws is never
 evicted, and the others share 4 MiB, oldest out first. At start-up the core
-fetches what the saved faces draw and the database lacks.
+fetches what the saved faces draw and the database lacks. From a material's
+text the core builds the shaders an app compiles: the GLSL ES 3.00 that
+Shaderlab's own compile step writes, for OpenGL ES, and naga's Metal
+translation of it, with where each uniform and texture goes.
+
+A host that draws materials (`materials_enabled` in its startup config) asks
+the core to resolve a tree's materials: for each `Materials` node, depth first,
+whether it is loading, ready with its built layers, or drawn plain and why.
+The resolution follows the shared fetch, checks the tree's limits and each layer's
+arguments, builds the shaders for the platform (Metal on iOS, GLSL ES
+elsewhere), and changes as materials arrive or fail and as the app reports a
+shader it could not compile or an image it could not use. A node that falls
+back is logged on the device, and when the resolution runs on a product's execution,
+reported to that product through `Renderer::failure_subscribe`, once. The
+capability answer to the materials question is yes only with materials on, for
+the format version and features the core reads.
 
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.

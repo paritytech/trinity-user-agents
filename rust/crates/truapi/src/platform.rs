@@ -33,8 +33,9 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse, StackHost,
-		ReplaceCheck, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
+		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
+		StackStatus,
 	},
 };
 
@@ -105,6 +106,8 @@ pub struct SigningHostConfig {
 	/// derives ends in its TLD, which has to equal the People chain's
 	/// `NetworkSuffix.NetworkSuffix`; the core does not check that it does.
 	pub stack: Stack,
+	/// Whether the host draws materials. Off by default: `new` leaves it off.
+	pub materials_enabled: bool,
 }
 
 /// Product identity attached to one product-facing TrUAPI connection.
@@ -200,7 +203,11 @@ impl SigningHostConfig {
 		platform_info: PlatformInfo,
 		stack: Stack,
 	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self { host: HostIdentity::new(host_info, platform_info)?, stack })
+		Ok(Self {
+			host: HostIdentity::new(host_info, platform_info)?,
+			stack,
+			materials_enabled: false,
+		})
 	}
 }
 
@@ -1207,6 +1214,14 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// The last descriptor a browser core verified for a stack, so its next
+	/// start does not go back to the bundled copy. A native core keeps this
+	/// record in its own database instead.
+	#[codec(index = 17)]
+	StackRecord {
+		/// The stack's `stack_id`, the key in its link.
+		stack_id: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1325,6 +1340,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
