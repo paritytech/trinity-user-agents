@@ -1,25 +1,45 @@
 import { afterEach, describe, expect, it, jest } from "bun:test";
-import { createHostConnection } from "./host-connection.js";
-import { createClient } from "./generated/client.js";
-import { createTransport } from "./client.js";
+import { createHostConnection, type HostConnection } from "./host-connection.js";
 import {
     ConnectionResetError,
+    createClient,
     createMessagePortProvider,
-    createWebSocketProviderFactory,
+    createTransport,
     decodeWireMessage,
     encodeWireMessage,
     MESSAGE_TYPE_RECEIVE,
+    scale as S,
     type ProtocolMessage,
+    type TrUApiClient,
     type WebSocketWireProvider,
-} from "./transport.js";
-import * as W from "./generated/wire-table.js";
-import * as T from "./generated/types.js";
-import * as S from "./scale.js";
+} from "@parity/truapi";
+import * as T from "@parity/truapi";
+import { createWebSocketProviderFactory } from "@parity/truapi/internal";
+import * as W from "@parity/truapi/wire-table";
 
 const cleanup: (() => void)[] = [];
 afterEach(() => {
     for (const close of cleanup.splice(0)) close();
 });
+
+const productClients = new WeakMap<HostConnection, TrUApiClient>();
+
+// Builds the client the way the product's SDK does over the injected transport.
+function productClient(connection: HostConnection): TrUApiClient {
+    let client = productClients.get(connection);
+    if (!client) {
+        const { transport } = connection;
+        client = createClient(
+            createTransport({ ...transport, dispose() {} }, { prepare: transport.prepare }),
+        );
+        productClients.set(connection, client);
+    }
+    return client;
+}
+
+function last<Item>(items: readonly Item[]): Item | undefined {
+    return items[items.length - 1];
+}
 
 async function until(condition: () => boolean) {
     for (let attempt = 0; attempt < 1000 && !condition(); attempt++) await Bun.sleep(1);
@@ -170,7 +190,7 @@ function controlledHost(url = "ws://127.0.0.1:9955") {
 describe("shared SDK host connection", () => {
     it("uses one transport for public calls and internal authorization", async () => {
         const { connection, sockets, frames } = host();
-        const client = connection.client;
+        const client = productClient(connection);
         const grant = client.permissions.requestRemotePermission(permission);
         const authorization = connection.internal.permissions.authorizeRemotePermission(permission);
         expect([(await grant)._unsafeUnwrap(), (await authorization)._unsafeUnwrap()]).toEqual([
@@ -196,7 +216,6 @@ describe("shared SDK host connection", () => {
                 ],
             ],
         });
-        expect(connection.client).toBe(client);
     });
 
     it("starts a connection for a passive client and retains it after socket loss without lifecycle hooks", async () => {
@@ -204,12 +223,11 @@ describe("shared SDK host connection", () => {
         const { connection, sockets } = host(createProvider);
         const statuses: string[] = [];
         connection.subscribeConnectionStatus((status) => statuses.push(status));
-        const client = connection.client;
-        await until(() => statuses.at(-1) === "connected");
+        const client = productClient(connection);
+        await until(() => last(statuses) === "connected");
         sockets[0]!.close();
-        await until(() => sockets.length === 2 && statuses.at(-1) === "connected");
+        await until(() => sockets.length === 2 && last(statuses) === "connected");
         expect(createProvider).toHaveBeenCalledTimes(2);
-        expect(connection.client).toBe(client);
         expect(
             (await client.permissions.requestRemotePermission(permission))._unsafeUnwrap(),
         ).toEqual({ granted: false });
@@ -225,7 +243,7 @@ describe("shared SDK host connection", () => {
 
     it("fails interrupted calls and subscriptions instead of replaying them", async () => {
         const fixture = host();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         await client.system.handshake();
         fixture.answer(false);
         const interrupted = Promise.resolve(
@@ -284,23 +302,20 @@ describe("shared SDK host connection", () => {
         const fixture = host();
         const statuses: string[] = [];
         fixture.connection.subscribeConnectionStatus((status) => statuses.push(status));
-        const client = fixture.connection.client;
-        await until(() => statuses.at(-1) === "connected");
+        const client = productClient(fixture.connection);
+        await until(() => last(statuses) === "connected");
         fixture.connection.dispose();
-        expect(statuses.at(-1)).toBe("disconnected");
+        expect(last(statuses)).toBe("disconnected");
         await until(() => fixture.sockets[0]!.readyState === WebSocket.CLOSED);
         await expect(
             Promise.resolve(client.permissions.requestRemotePermission(permission)),
-        ).rejects.toThrow("transport disposed");
-        expect({ client: fixture.connection.client, connections: fixture.sockets.length }).toEqual({
-            client,
-            connections: 1,
-        });
+        ).rejects.toBeInstanceOf(ConnectionResetError);
+        expect(fixture.sockets).toHaveLength(1);
     });
 
     it("retains renderer handlers and receives a new host start without another public call", async () => {
         const fixture = host();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         const handled: T.ProductRendererRenderRequest[] = [];
         let teardowns = 0;
         client.renderer.onRender((request) => {
@@ -309,7 +324,7 @@ describe("shared SDK host connection", () => {
                 teardowns++;
             };
         });
-        const request: T.ProductRendererRenderRequest = {
+        const request: T.V01ProductRendererRenderRequest = {
             context: {
                 tag: "ChatMessage",
                 value: { roomId: "room", messageId: "message", messageType: "vote" },
@@ -351,7 +366,7 @@ describe("shared SDK connection failure timing", () => {
         "checks a stale OPEN socket and sends the side effect on its replacement after a %i ms clock adjustment",
         async (clockAdjustment) => {
             const fixture = controlledHost();
-            const client = fixture.connection.client;
+            const client = productClient(fixture.connection);
             const stale = fixture.sockets[0]!;
             const initial = client.permissions.requestRemotePermission(permission);
             stale.open();
@@ -369,7 +384,7 @@ describe("shared SDK connection failure timing", () => {
             ]);
             expect(stale.readyState).toBe(WebSocket.OPEN);
             fixture.advance(10_000);
-            await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
+            await untilPrepared(() => last(fixture.statuses) === "disconnected");
             fixture.respond(true);
             fixture.advance(0);
             await nextTask();
@@ -411,7 +426,7 @@ describe("shared SDK connection failure timing", () => {
 
     it("bounds a failed opening without a retry loop and leaves a later call free to reconnect", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         const pending = Promise.resolve(
             client.permissions.requestRemotePermission(permission),
         ).catch((error) => error);
@@ -421,7 +436,7 @@ describe("shared SDK connection failure timing", () => {
         expect({
             attempts: fixture.sockets.length,
             sent: fixture.sockets[0]!.sent,
-            status: fixture.statuses.at(-1),
+            status: last(fixture.statuses),
         }).toEqual({ attempts: 1, sent: [], status: "disconnected" });
         const fresh = client.permissions.requestRemotePermission(permission);
         fixture.sockets[1]!.open();
@@ -432,13 +447,13 @@ describe("shared SDK connection failure timing", () => {
 
     it("stops automatic replacement after one failed reconnect instead of retrying indefinitely", async () => {
         const fixture = controlledHost();
-        void fixture.connection.client;
+        void productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         fixture.advance(0);
         fixture.sockets[1]!.close();
-        await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
+        await untilPrepared(() => last(fixture.statuses) === "disconnected");
         fixture.advance(120_000);
         expect(fixture.sockets).toHaveLength(2);
     });
@@ -458,16 +473,16 @@ describe("shared SDK connection failure timing", () => {
     it("retries a reconnect that fails while the page is visible", async () => {
         visibleDocument();
         const fixture = controlledHost();
-        void fixture.connection.client;
+        void productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         fixture.advance(0);
         fixture.sockets[1]!.close();
-        await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
+        await untilPrepared(() => last(fixture.statuses) === "disconnected");
         fixture.advance(250);
         fixture.sockets[2]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         expect(fixture.sockets).toHaveLength(3);
     });
 
@@ -475,13 +490,13 @@ describe("shared SDK connection failure timing", () => {
     it("stops retrying a refused reconnect after a bounded number of attempts", async () => {
         visibleDocument();
         const fixture = controlledHost();
-        void fixture.connection.client;
+        void productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         for (const delay of [0, 250, 1_000, 4_000]) {
             fixture.advance(delay);
-            fixture.sockets.at(-1)!.close();
+            last(fixture.sockets)!.close();
         }
         fixture.advance(120_000);
         expect(fixture.sockets).toHaveLength(5);
@@ -490,9 +505,9 @@ describe("shared SDK connection failure timing", () => {
     it("sends calls and subscription starts made during a refused redial on the connection that completes its handshake", async () => {
         visibleDocument();
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         const response = client.permissions.requestRemotePermission(permission);
         client.theme.subscribe().subscribe();
@@ -535,9 +550,9 @@ describe("shared SDK connection failure timing", () => {
 
     it("rejects a call waiting for a redial once no further dial is scheduled", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         const pending = Promise.resolve(
             client.permissions.requestRemotePermission(permission),
@@ -555,16 +570,16 @@ describe("shared SDK connection failure timing", () => {
     it("rejects a waiting call when a visible page spends its retries", async () => {
         visibleDocument();
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         const pending = Promise.resolve(
             client.permissions.requestRemotePermission(permission),
         ).catch((error) => error);
         for (const delay of [0, 250, 1_000, 4_000]) {
             fixture.advance(delay);
-            fixture.sockets.at(-1)!.close();
+            last(fixture.sockets)!.close();
         }
         const error = await pending;
         fixture.advance(120_000);
@@ -576,9 +591,9 @@ describe("shared SDK connection failure timing", () => {
 
     it("fails a call whose connection retired before its frame could be written", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         let failure: Error | undefined;
         void Promise.resolve(client.permissions.requestRemotePermission(permission)).catch(
             (error) => {
@@ -593,9 +608,9 @@ describe("shared SDK connection failure timing", () => {
 
     it("warns once with the close reason when a connection retires", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         const warnings: unknown[][] = [];
         const originalWarn = console.warn;
         console.warn = (...args: unknown[]) => {
@@ -623,9 +638,9 @@ describe("shared SDK connection failure timing", () => {
         "keeps the bridge token in the URL query out of the warning a socket %s causes",
         async (event, reason) => {
             const fixture = controlledHost("ws://127.0.0.1:9955/?t=0123456789abcdef");
-            void fixture.connection.client;
+            void productClient(fixture.connection);
             fixture.sockets[0]!.open();
-            await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+            await untilPrepared(() => last(fixture.statuses) === "connected");
             const warnings: unknown[][] = [];
             const originalWarn = console.warn;
             console.warn = (...args: unknown[]) => {
@@ -651,7 +666,7 @@ describe("shared SDK connection failure timing", () => {
             else delete (globalThis as { document?: Document }).document;
         });
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         const items: T.HostAccountConnectionStatusSubscribeItem[] = [];
         let waiting = false;
         function watch() {
@@ -674,7 +689,7 @@ describe("shared SDK connection failure timing", () => {
         fixture.sockets[0]!.close();
         fixture.advance(0);
         fixture.sockets[1]!.close();
-        await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
+        await untilPrepared(() => last(fixture.statuses) === "disconnected");
         fixture.advance(120_000);
         expect(fixture.sockets).toHaveLength(2);
 
@@ -696,16 +711,12 @@ describe("shared SDK connection failure timing", () => {
                 }),
             },
         });
-        expect({ items, waiting, client: fixture.connection.client }).toEqual({
-            items: ["Connected"],
-            waiting: false,
-            client,
-        });
+        expect({ items, waiting }).toEqual({ items: ["Connected"], waiting: false });
 
         fixture.connection.dispose();
         document.dispatchEvent(new Event("visibilitychange"));
         fixture.advance(120_000);
-        expect({ sockets: fixture.sockets.length, status: fixture.statuses.at(-1) }).toEqual({
+        expect({ sockets: fixture.sockets.length, status: last(fixture.statuses) }).toEqual({
             sockets: 3,
             status: "disconnected",
         });
@@ -714,7 +725,7 @@ describe("shared SDK connection failure timing", () => {
     it("preserves a rejected handshake as the cause of interrupted calls", async () => {
         const fixture = controlledHost();
         fixture.respond(false);
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         const pending = Promise.resolve(
             client.permissions.requestRemotePermission(permission),
         ).catch((error) => error);
@@ -754,13 +765,13 @@ describe("shared SDK connection failure timing", () => {
         "recovers from a malformed %s without approving permissions (legacy port: %s)",
         async (_name, legacyPort, frame) => {
             const fixture = controlledHost();
-            const client = fixture.connection.client;
+            void productClient(fixture.connection);
             if (legacyPort) {
                 const port = fixture.connection.legacyPort;
                 cleanup.push(() => port.close());
             }
             fixture.sockets[0]!.open();
-            await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+            await untilPrepared(() => last(fixture.statuses) === "connected");
             const pending = Promise.resolve(
                 fixture.connection.internal.permissions.authorizeRemotePermission(permission),
             ).catch((error) => error);
@@ -772,26 +783,20 @@ describe("shared SDK connection failure timing", () => {
             fixture.advance(0);
             const replacement = fixture.sockets[1]!;
             replacement.open();
-            await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+            await untilPrepared(() => last(fixture.statuses) === "connected");
             const fresh =
                 fixture.connection.internal.permissions.authorizeRemotePermission(permission);
             await untilPrepared(() => replacement.sent.length === 2);
             replacement.reply(replacement.sent[1]!, Uint8Array.of(0, 0, 0));
-            expect({
-                decision: (await fresh)._unsafeUnwrap(),
-                client: fixture.connection.client,
-            }).toEqual({
-                decision: { granted: false },
-                client,
-            });
+            expect((await fresh)._unsafeUnwrap()).toEqual({ granted: false });
         },
     );
 
     it("ignores replies and errors from retired sockets through repeated resets", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         for (let cycle = 0; cycle < 3; cycle++) {
             const old = fixture.sockets[cycle]!;
             const pending = Promise.resolve(
@@ -799,9 +804,9 @@ describe("shared SDK connection failure timing", () => {
             ).catch((error) => error);
             await untilPrepared(
                 () =>
-                    old.sent.at(-1)?.payload.methodId ===
+                    last(old.sent)?.payload.methodId ===
                         W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.method &&
-                    old.sent.at(-1)?.payload.traitId ===
+                    last(old.sent)?.payload.traitId ===
                         W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait,
             );
             old.close();
@@ -809,59 +814,54 @@ describe("shared SDK connection failure timing", () => {
             fixture.advance(0);
             const replacement = fixture.sockets[cycle + 1]!;
             replacement.open();
-            await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+            await untilPrepared(() => last(fixture.statuses) === "connected");
             const response = client.permissions.requestRemotePermission(permission);
             await untilPrepared(() => replacement.sent.length === 2);
             const request = replacement.sent[1]!;
             old.reply(request, Uint8Array.of(0, 0, 1));
             old.dispatchEvent(new Event("error"));
             replacement.reply(request, Uint8Array.of(0, 0, 0));
-            expect({
-                value: (await response)._unsafeUnwrap(),
-                client: fixture.connection.client,
-            }).toEqual({ value: { granted: false }, client });
+            expect((await response)._unsafeUnwrap()).toEqual({ granted: false });
         }
         expect(fixture.sockets).toHaveLength(4);
     });
 
     it("keeps recovering when one status observer throws and another reenters the client", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.connection.subscribeConnectionStatus((status) => {
             if (status === "connected") throw new Error("broken observer");
-            if (status === "disconnected") void fixture.connection.client;
+            if (status === "disconnected")
+                void Promise.resolve(client.permissions.requestRemotePermission(permission)).catch(
+                    () => {},
+                );
         });
         const observed: string[] = [];
         fixture.connection.subscribeConnectionStatus((status) => observed.push(status));
         fixture.sockets[0]!.open();
-        await untilPrepared(() => observed.at(-1) === "connected");
+        await untilPrepared(() => last(observed) === "connected");
         fixture.sockets[0]!.close();
         fixture.sockets[1]!.open();
-        await untilPrepared(() => observed.at(-1) === "connected");
+        await untilPrepared(() => last(observed) === "connected");
         fixture.advance(0);
-        expect({
-            observed,
-            sockets: fixture.sockets.length,
-            client: fixture.connection.client,
-        }).toEqual({
+        expect({ observed, sockets: fixture.sockets.length }).toEqual({
             observed: ["connecting", "connected", "connecting", "connected"],
             sockets: 2,
-            client,
         });
     });
 
     it("discards a scheduled reconnect when the owner disposes the connection", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         fixture.sockets[0]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
         fixture.sockets[0]!.close();
         fixture.connection.dispose();
         fixture.advance(120_000);
         await expect(
             Promise.resolve(client.permissions.requestRemotePermission(permission)),
-        ).rejects.toThrow("transport disposed");
-        expect({ sockets: fixture.sockets.length, status: fixture.statuses.at(-1) }).toEqual({
+        ).rejects.toBeInstanceOf(ConnectionResetError);
+        expect({ sockets: fixture.sockets.length, status: last(fixture.statuses) }).toEqual({
             sockets: 1,
             status: "disconnected",
         });
@@ -873,7 +873,7 @@ describe("shared SDK connection failure timing", () => {
     // old status would dial a host that is not listening yet.
     it("reports a status other than connected between a stream's reset and the next connection", async () => {
         const fixture = controlledHost();
-        const client = fixture.connection.client;
+        const client = productClient(fixture.connection);
         let reopenedOn: { sockets: number; verified: boolean } | undefined;
         client.theme.subscribe().subscribe({
             error: (error) => {
@@ -884,7 +884,7 @@ describe("shared SDK connection failure timing", () => {
                     else if (lost && !reopenedOn)
                         reopenedOn = {
                             sockets: fixture.sockets.length,
-                            verified: fixture.statuses.at(-1) === "connected",
+                            verified: last(fixture.statuses) === "connected",
                         };
                 });
             },
@@ -896,7 +896,7 @@ describe("shared SDK connection failure timing", () => {
         expect(reopenedOn).toBeUndefined();
         fixture.advance(0);
         fixture.sockets[1]!.open();
-        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        await untilPrepared(() => last(fixture.statuses) === "connected");
 
         expect(reopenedOn).toEqual({ sockets: 2, verified: true });
     });
