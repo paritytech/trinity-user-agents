@@ -381,8 +381,12 @@ and the core database records only the public key, its purse and its creator.
 `createCheque` hands items to a receive key or a static X25519 key: it seals
 the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
 key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
-under the cheque id, so they are spent from then on. A second cheque with the
-same id from the same product answers `OperationExists`.
+under the cheque id, so they are spent from then on. In the same write, the
+core database keeps the cheque as returned, with its source purse, destination
+and creation time, in `nft_cheque`. A second cheque with the same id from the
+same product answers `OperationExists`, and `listCheques` returns every cheque
+the calling product created since the core started keeping them, oldest first,
+so a product that lost one can deliver the same bytes again or revoke it.
 
 `deposit` opens a received cheque and registers one move per item into fresh
 keys of the purse the product names, under the cheque id, and returns;
@@ -613,7 +617,9 @@ The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from
 `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), which is what makes one
 card removable and one privileged, and records every removal it is asked for in
-the transcript named by `TRUAPI_POCKET_LOG`. The cases read that transcript, so
+the transcript named by `TRUAPI_POCKET_LOG`. As the product connects, the host
+renders each card, resolves the materials of every face, reports each fallback
+to the product and records each result in the same transcript. The cases read that transcript, so
 a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's

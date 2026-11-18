@@ -1,4 +1,4 @@
-//! Schema version 14: a card's back kept beside its front.
+//! Schema version 15: a card's back kept beside its front.
 
 use rusqlite_migration::M;
 
@@ -36,7 +36,7 @@ mod tests {
 	fn a_face_kept_before_backs_stays_the_front() {
 		let mut conn = Connection::open_in_memory().unwrap();
 		let migrations = core_migrations();
-		migrations.to_version(&mut conn, 13).unwrap();
+		migrations.to_version(&mut conn, 14).unwrap();
 		conn.execute_batch(
 			"INSERT INTO pocket_card (product_id, card_id, title) VALUES ('loyalty.dot', 'stamps', 'Stamps');
 			INSERT INTO pocket_card_face (product_id, card_id, face, draw_order)
