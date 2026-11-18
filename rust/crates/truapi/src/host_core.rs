@@ -337,12 +337,21 @@ impl<Role: HostRole> HostRuntime<Role> {
 		product: ProductContext,
 		sink: Arc<dyn FrameSink>,
 	) -> ProductRuntime {
+		self.connect_product(product, ConnectionAdapters::from_services(&self.services), sink)
+	}
+
+	fn connect_product(
+		&self,
+		product: ProductContext,
+		adapters: ConnectionAdapters,
+		sink: Arc<dyn FrameSink>,
+	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
 			self.role.accounts().clone(),
 			self.role.host_session(),
 			product,
-			ConnectionAdapters::from_services(&self.services),
+			adapters,
 			sink,
 		)
 	}
@@ -350,12 +359,20 @@ impl<Role: HostRole> HostRuntime<Role> {
 	/// Build a product-scoped administration handle from this host.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.product_admin"))]
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
+		self.admin_for_product(product, ConnectionAdapters::from_services(&self.services))
+	}
+
+	fn admin_for_product(
+		&self,
+		product: ProductContext,
+		adapters: ConnectionAdapters,
+	) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
 			self.role.accounts().clone(),
 			self.role.host_session(),
 			product,
-			ConnectionAdapters::from_services(&self.services),
+			adapters,
 		)
 	}
 
@@ -1155,14 +1172,7 @@ impl HostRuntime<SigningHost> {
 		adapters: ConnectionAdapters,
 		sink: Arc<dyn FrameSink>,
 	) -> ProductRuntime {
-		ProductRuntime::new(
-			self.services.clone(),
-			self.role.accounts().clone(),
-			self.role.clone(),
-			product,
-			adapters,
-			sink,
-		)
+		self.connect_product(product, adapters, sink)
 	}
 
 	/// Build a product administration handle with adapters scoped to one
@@ -1173,13 +1183,7 @@ impl HostRuntime<SigningHost> {
 		product: ProductContext,
 		adapters: ConnectionAdapters,
 	) -> HostAdmin {
-		HostAdmin::new(
-			self.services.clone(),
-			self.role.accounts().clone(),
-			self.role.clone(),
-			product,
-			adapters,
-		)
+		self.admin_for_product(product, adapters)
 	}
 
 	/// Return whether this host currently has an authenticated signing session.

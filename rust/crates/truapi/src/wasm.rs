@@ -25,10 +25,9 @@ use std::{
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
 use crate::platform::{
-	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
-	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
-	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
-	ScannerPlatform, Stack, StackRefresh,
+	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, HostInfo, JsonRpcConnection,
+	PairingHostConfig, PlatformInfo, ProductContext, ProductId, ProductIdError, ProviderError,
+	RuntimeConfigValidationError, Stack, StackRefresh,
 };
 use futures::{
 	channel::mpsc,
@@ -128,8 +127,37 @@ struct WasmPlatform {
 }
 
 impl WasmPlatform {
-	fn new(bridge: Arc<JsBridge>) -> Self {
-		Self { bridge: SendWrapper::new(bridge) }
+	fn from_callbacks(callbacks: &JsValue) -> Result<Arc<Self>, JsValue> {
+		let bridge = Arc::new(JsBridge::from_js(callbacks)?);
+		Ok(Arc::new(Self { bridge: SendWrapper::new(bridge) }))
+	}
+
+	fn chat(self: &Arc<Self>) -> Option<Arc<dyn ChatPlatform>> {
+		self.bridge.has_chat().then(|| self.clone() as Arc<dyn ChatPlatform>)
+	}
+
+	fn contacts(self: &Arc<Self>) -> Option<Arc<dyn ContactsPlatform>> {
+		self.bridge.has_contacts().then(|| self.clone() as Arc<dyn ContactsPlatform>)
+	}
+
+	fn install_on<Role>(
+		self: &Arc<Self>,
+		runtime: &HostRuntime<Role>,
+		callbacks: &JsValue,
+	) -> Result<(), JsValue> {
+		if self.bridge.has_permission_status() {
+			runtime.set_permission_status_host(self.clone());
+		}
+		if self.bridge.has_pocket() {
+			runtime.set_pocket_platform(self.clone());
+		}
+		if self.bridge.has_game() {
+			runtime.set_game_platform(self.clone());
+		}
+		if self.bridge.has_scanner() {
+			runtime.set_scanner_platform(self.clone());
+		}
+		install_worker_controller(runtime.worker_ledger(), callbacks)
 	}
 }
 
@@ -832,42 +860,6 @@ struct WasmCoreInner {
 	disposing: Cell<bool>,
 }
 
-struct WasmPlatformAdapters {
-	platform: Arc<WasmPlatform>,
-	chat_platform: Option<Arc<dyn ChatPlatform>>,
-	contacts_platform: Option<Arc<dyn ContactsPlatform>>,
-	status_host: Option<Arc<dyn PermissionStatusHost>>,
-	pocket_platform: Option<Arc<dyn PocketPlatform>>,
-	game_platform: Option<Arc<dyn GamePlatform>>,
-	scanner_platform: Option<Arc<dyn ScannerPlatform>>,
-}
-
-/// Build the platform and the optional capability adapters supplied by the host.
-fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
-	let has_chat = bridge.has_chat();
-	let has_contacts = bridge.has_contacts();
-	let has_permission_status = bridge.has_permission_status();
-	let has_pocket = bridge.has_pocket();
-	let has_game = bridge.has_game();
-	let has_scanner = bridge.has_scanner();
-	let platform = Arc::new(WasmPlatform::new(bridge));
-	let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
-	let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
-	let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
-	let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
-	let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
-	let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
-	WasmPlatformAdapters {
-		platform,
-		chat_platform: chat,
-		contacts_platform: contacts,
-		status_host: status,
-		pocket_platform: pocket,
-		game_platform: game,
-		scanner_platform: scanner,
-	}
-}
-
 /// Forwards every worker transition request to the host's
 /// `requestWorkerTransition(productId, transition)` callback, and a worker
 /// that keeps crashing to its optional `workerCrashing(productId, crashes)`.
@@ -922,7 +914,7 @@ fn install_worker_controller(
 /// cores.
 #[wasm_bindgen]
 pub struct WasmPairingHostRuntime {
-	runtime: Rc<HostRuntime<PairingHost>>,
+	runtime: HostRuntime<PairingHost>,
 	/// The refresh of the stack's descriptor, or `None` for a test stack.
 	stack_refresh: Option<StackRefresh>,
 }
@@ -952,44 +944,23 @@ impl WasmPairingHostRuntime {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
 		require_host_config(&host_config)?;
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
+		let platform = WasmPlatform::from_callbacks(&callbacks)?;
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
 		let host_config = pairing_host_config_from_js(&host_config, stack)?;
 		let runtime = HostRuntime::<PairingHost>::with_platforms(
-			platform,
+			platform.clone(),
 			host_config,
 			spawner.clone(),
-			chat_platform,
-			contacts_platform,
+			platform.chat(),
+			platform.contacts(),
 		);
-		if let Some(status_host) = status_host {
-			runtime.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			runtime.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			runtime.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			runtime.set_scanner_platform(scanner_platform);
-		}
-		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		platform.install_on(&runtime, &callbacks)?;
 		// Last, so a host is told of a stack only once the runtime exists.
 		if let Some(refresh) = &stack_refresh {
 			start_refresh(refresh, &callbacks, &spawner)?;
 		}
-		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+		Ok(Self { runtime, stack_refresh })
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
@@ -1262,7 +1233,7 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 /// JS-callable handle to a wallet-local signing-host runtime.
 #[wasm_bindgen]
 pub struct WasmSigningHostRuntime {
-	runtime: Rc<HostRuntime<SigningHost>>,
+	runtime: HostRuntime<SigningHost>,
 	/// The refresh of the stack's descriptor, or `None` for a test stack.
 	stack_refresh: Option<StackRefresh>,
 }
@@ -1338,44 +1309,23 @@ impl WasmSigningHostRuntime {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
 		require_host_config(&host_config)?;
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
+		let platform = WasmPlatform::from_callbacks(&callbacks)?;
 		let spawner = Spawner::default();
 		let (stack, stack_refresh) = stack_from_js(&host_config, platform.clone()).await?;
 		let host_config = signing_host_config_from_js(&host_config, stack)?;
 		let runtime = HostRuntime::<SigningHost>::with_platforms(
-			platform,
+			platform.clone(),
 			host_config,
 			spawner.clone(),
-			chat_platform,
-			contacts_platform,
+			platform.chat(),
+			platform.contacts(),
 		);
-		if let Some(status_host) = status_host {
-			runtime.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			runtime.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			runtime.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			runtime.set_scanner_platform(scanner_platform);
-		}
-		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
+		platform.install_on(&runtime, &callbacks)?;
 		// Last, so a host is told of a stack only once the runtime exists.
 		if let Some(refresh) = &stack_refresh {
 			start_refresh(refresh, &callbacks, &spawner)?;
 		}
-		Ok(Self { runtime: Rc::new(runtime), stack_refresh })
+		Ok(Self { runtime, stack_refresh })
 	}
 
 	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
@@ -1679,46 +1629,21 @@ impl WasmProductRuntime {
 		console_error_panic_hook::set_once();
 		crate::logging::init();
 		require_host_config(&runtime_config)?;
-		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
+		let platform = WasmPlatform::from_callbacks(&callbacks)?;
 		let channel = CoreChannel::from_js(&callbacks)?;
 		let frame_sink =
 			Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
-		let WasmPlatformAdapters {
-			platform,
-			chat_platform,
-			contacts_platform,
-			status_host,
-			pocket_platform,
-			game_platform,
-			scanner_platform,
-		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
 		let (stack, _no_refresh) = stack_from_js(&runtime_config, platform.clone()).await?;
 		let (host_config, product) = runtime_config_from_js(&runtime_config, stack)?;
-		// The optional adapters install on the host runtime the product hangs
-		// off, not on the product runtime itself.
-		let pairing = HostRuntime::<PairingHost>::with_chat_platform(
-			platform,
+		let pairing = HostRuntime::<PairingHost>::with_platforms(
+			platform.clone(),
 			host_config,
 			spawner,
-			chat_platform,
+			platform.chat(),
+			platform.contacts(),
 		);
-		if let Some(status_host) = status_host {
-			pairing.set_permission_status_host(status_host);
-		}
-		if let Some(pocket_platform) = pocket_platform {
-			pairing.set_pocket_platform(pocket_platform);
-		}
-		if let Some(game_platform) = game_platform {
-			pairing.set_game_platform(game_platform);
-		}
-		if let Some(scanner_platform) = scanner_platform {
-			pairing.set_scanner_platform(scanner_platform);
-		}
-		if let Some(contacts_platform) = contacts_platform {
-			pairing.set_contacts_platform(contacts_platform);
-		}
-		install_worker_controller(pairing.worker_ledger(), &callbacks)?;
+		platform.install_on(&pairing, &callbacks)?;
 		let core = pairing.product_runtime(product, frame_sink);
 		Ok(Self::from_parts(core, channel.dispose))
 	}
