@@ -1,28 +1,29 @@
-import { createTransport } from "./client.js";
-import { createClient, type TrUApiClient } from "./generated/client.js";
-import {
-  createInternalClient,
-  type InternalTrUApiClient,
-} from "./generated/internal-client.js";
-import { SYSTEM_HANDSHAKE } from "./generated/wire-table.js";
-import type { ConnectionStatus } from "./sandbox.js";
 import {
   ConnectionResetError,
-  createWebSocketProviderFactory,
+  createClient,
+  createTransport,
   decodeWireMessage,
   type MethodIds,
   type WebSocketWireProvider,
-} from "./transport.js";
+} from "@parity/truapi";
+import {
+  createInternalClient,
+  createWebSocketProviderFactory,
+  type InternalTrUApiClient,
+} from "@parity/truapi/internal";
+import type { ConnectionStatus, HostTransport } from "@parity/truapi/sandbox";
+import { SYSTEM_HANDSHAKE } from "@parity/truapi/wire-table";
+import { createLegacyPort, type LegacyPort } from "./legacy-port.js";
 
 /** One native host connection shared by product calls and browser authorization. */
 export interface HostConnection {
-  /** Stable public client. Reading it also connects passive host-initiated handlers. */
-  readonly client: TrUApiClient;
+  /** Frame channel for the product's own client, which survives connection resets. */
+  readonly transport: HostTransport;
   /** Private generated authorization methods on the same transport. */
   readonly internal: InternalTrUApiClient;
-  /** Startup compatibility for SDKs predating the injected client. */
+  /** Frame channel for SDKs that predate the injected transport. */
   readonly legacyPort: MessagePort;
-  /** Observe connection readiness without replacing the client. */
+  /** Observe the connection's status, starting with the current one. */
   subscribeConnectionStatus(
     callback: (status: ConnectionStatus) => void,
   ): () => void;
@@ -42,7 +43,7 @@ interface Connection {
 const VISIBLE_RETRY_DELAYS_MS = [250, 1_000, 4_000];
 
 /**
- * Creates a client that fails the operations a lost connection carried and
+ * Creates a connection that fails the operations a lost connection carried and
  * sends the ones still waiting on its replacement.
  */
 export function createHostConnection(
@@ -56,8 +57,9 @@ export function createHostConnection(
   let stopped = false;
   let receive: ((frame: Uint8Array) => void) | undefined;
   let reset: ((error: Error) => void) | undefined;
-  let legacy: { receive(frame: Uint8Array): void; close(): void } | undefined;
-  let legacyPort: MessagePort | undefined;
+  let productReceive: ((frame: Uint8Array) => void) | undefined;
+  let productReset: ((error: Error) => void) | undefined;
+  let legacy: LegacyPort | undefined;
   let status: ConnectionStatus = "disconnected";
   let retries = 0;
   let nextDial: Promise<void> | undefined;
@@ -79,13 +81,13 @@ export function createHostConnection(
   function retire(connection: Connection, cause?: unknown): void {
     if (current !== connection) return;
     current = undefined;
-    const oldLegacy = legacy;
-    legacy = undefined;
-    oldLegacy?.close();
-    try {
-      reset?.(new ConnectionResetError({ cause }));
-    } catch {
-      /* Other callers must still recover. */
+    legacy?.lost();
+    for (const notify of [reset, productReset]) {
+      try {
+        notify?.(new ConnectionResetError({ cause }));
+      } catch {
+        /* Other callers must still recover. */
+      }
     }
     connection.provider.dispose();
     if (!current) setStatus("disconnected");
@@ -124,13 +126,11 @@ export function createHostConnection(
     provider.subscribe((frame) => {
       if (current !== connection) return;
       connection.checkedAt = now();
-      if (legacy) {
-        const decoded = decodeWireMessage(frame);
-        if (decoded.isErr()) return retire(connection, decoded.error);
-        if (!decoded.value.requestId.startsWith("host:"))
-          return legacy.receive(frame);
-      }
-      receive?.(frame);
+      const decoded = decodeWireMessage(frame);
+      if (decoded.isErr()) return retire(connection, decoded.error);
+      if (decoded.value.requestId.startsWith("host:")) return receive?.(frame);
+      productReceive?.(frame);
+      legacy?.receive(frame, decoded.value);
     });
     provider.subscribeClose?.((error) => retire(connection, error));
     setStatus("connecting");
@@ -148,6 +148,7 @@ export function createHostConnection(
         connection.checkedAt = now();
         retries = 0;
         setStatus("connected");
+        legacy?.connected();
       })
       .catch((error) => {
         retire(connection, error);
@@ -162,7 +163,9 @@ export function createHostConnection(
     try {
       void ready(open()).catch(() => {});
     } catch {
-      /* A later call can try again. */
+      // A later call can try again, but nothing will carry the frames
+      // waiting on the port.
+      legacy?.lost();
     }
   }
 
@@ -202,11 +205,7 @@ export function createHostConnection(
         // A call made ready on a connection that retired before its frame was
         // written has nowhere to go, so it fails now instead of at its deadline.
         if (!connection) return reset?.(new ConnectionResetError());
-        try {
-          connection.provider.postMessage(frame);
-        } catch (error) {
-          retire(connection, error);
-        }
+        write(connection, frame);
       },
       subscribe(callback) {
         receive = callback;
@@ -233,59 +232,67 @@ export function createHostConnection(
   const client = createClient(transport);
   const handshake = client.system.handshake.bind(client.system);
 
+  function write(connection: Connection, frame: Uint8Array): void {
+    try {
+      connection.provider.postMessage(frame);
+    } catch (error) {
+      retire(connection, error);
+    }
+  }
+
+  function sendFromPort(frame: Uint8Array): boolean {
+    if (!current?.verified) return false;
+    write(current, frame);
+    return true;
+  }
+
+  function subscribeConnectionStatus(
+    callback: (status: ConnectionStatus) => void,
+  ): () => void {
+    listeners.add(callback);
+    callback(status);
+    return () => {
+      listeners.delete(callback);
+    };
+  }
+
   return {
-    get client() {
-      activate();
-      return client;
-    },
-    internal: createInternalClient(transport),
-    get legacyPort() {
-      if (legacyPort) return legacyPort;
-      const { port1: product, port2: host } = new MessageChannel();
-      legacyPort = product;
-      const adapter = {
-        receive(frame: Uint8Array) {
-          host.postMessage(frame);
-        },
-        close() {
-          host.close();
-        },
-      };
-      legacy = adapter;
-      const onMessage = (event: MessageEvent) => {
-        if (legacy !== adapter || !current?.verified) return;
-        const { data: frame } = event;
-        if (!(frame instanceof Uint8Array)) return;
+    transport: {
+      postMessage(product) {
+        // A copy, so the bytes checked are the bytes sent whatever the
+        // product put on its own object.
+        const frame = new Uint8Array(product);
         const decoded = decodeWireMessage(frame);
         if (decoded.isErr() || decoded.value.requestId.startsWith("host:"))
           return;
-        try {
-          current.provider.postMessage(frame);
-        } catch (error) {
-          if (current) retire(current, error);
-        }
-      };
-      try {
-        void ready(open()).then(
-          () => {
-            if (legacy !== adapter) return;
-            host.addEventListener("message", onMessage);
-            host.start();
-          },
-          () => adapter.close(),
-        );
-      } catch {
-        adapter.close();
+        if (!current) return productReset?.(new ConnectionResetError());
+        write(current, frame);
+      },
+      subscribe(callback) {
+        productReceive = callback;
+        activate();
+        return () => {
+          if (productReceive === callback) productReceive = undefined;
+        };
+      },
+      subscribeReset(callback) {
+        productReset = callback;
+        return () => {
+          if (productReset === callback) productReset = undefined;
+        };
+      },
+      prepare,
+      subscribeConnectionStatus,
+    },
+    internal: createInternalClient(transport),
+    get legacyPort() {
+      if (!legacy) {
+        legacy = createLegacyPort({ send: sendFromPort, dial: activate });
+        activate();
       }
-      return product;
+      return legacy.port;
     },
-    subscribeConnectionStatus(callback) {
-      listeners.add(callback);
-      callback(status);
-      return () => {
-        listeners.delete(callback);
-      };
-    },
+    subscribeConnectionStatus,
     dispose() {
       try {
         stop();

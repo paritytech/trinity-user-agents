@@ -102,7 +102,25 @@ fn expand_versioned(input: &VersionedInput) -> syn::Result<proc_macro2::TokenStr
 	for enum_def in &input.enums {
 		out.extend(expand_versioned_enum(enum_def)?);
 	}
+	out.extend(expand_latest_aliases(&input.enums));
 	Ok(out)
+}
+
+fn expand_latest_aliases(enums: &[VersionedEnum]) -> proc_macro2::TokenStream {
+	let aliases = enums.iter().map(|VersionedEnum { name, .. }| {
+		let doc = format!("Latest payload of [`{name}`](super::{name}).");
+		quote! {
+			#[doc = #doc]
+			pub type #name = <super::#name as crate::versioned::Versioned>::Latest;
+		}
+	});
+	quote! {
+		/// Latest payload of each envelope declared beside this module, under
+		/// the envelope's name.
+		pub mod latest {
+			#(#aliases)*
+		}
+	}
 }
 
 fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenStream> {

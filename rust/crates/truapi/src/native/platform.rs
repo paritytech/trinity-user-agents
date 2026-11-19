@@ -10,7 +10,7 @@ use crate::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProviderError, StackFetchRequest, StackFetchResponse,
+		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse,
 		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
@@ -70,6 +70,15 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 		self.contacts
 			.pick_contact(product.product_id.clone())
 			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn contact_usernames(
+		&self,
+		product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, v01::GenericError> {
+		self.contacts
+			.contact_usernames(product.product_id.clone())
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 }
@@ -346,6 +355,16 @@ impl ProductStorage for CallbackPlatform {
 	async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
 		self.callbacks.local_storage_clear(key.clone()).await?;
 		self.storage_events.notify_storage_changed(&key, None);
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.callbacks.clear_product_storage(product_id).await?;
+		self.storage_events.notify_storage_cleared_under(&owned);
 		Ok(())
 	}
 
