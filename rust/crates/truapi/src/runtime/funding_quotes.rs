@@ -398,7 +398,7 @@ impl RuntimeServices {
 			self.funding_quotes().start(intent, ask.clone(), current_unix_millis());
 		if let Some(superseded) = superseded {
 			let fact = self.funding().telemetry().quotes_superseded(intent, superseded);
-			self.funding().report_facts(intent, None, Some(&ask), vec![fact]);
+			self.funding().report_facts(intent, None, Some(&ask), Vec::from_iter(fact));
 		}
 		let rounds =
 			self.clone()

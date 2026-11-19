@@ -35,7 +35,7 @@ fn facts() -> Vec<CoreEvent> {
 	let settled = QuotesSettled { list, superseded: false, first_quote_ms: Some(3), settle_ms: 9 };
 	vec![
 		CoreEvent::new(markers::FUNDING_OVERLAY_OPENED).flag("amount_preset", true),
-		telemetry.quotes_superseded("fs_secret", settled),
+		telemetry.quotes_superseded("fs_secret", settled).expect("tracked"),
 		telemetry.changed(Some(&top_up()), &delivered, NOW).pop().expect("ended"),
 		telemetry.changed(Some(&top_up()), &failed, NOW).pop().expect("ended"),
 		telemetry.provider_took(&top_up(), false, NOW).expect("first"),
@@ -180,6 +180,7 @@ fn endings_say_whether_they_were_expected() {
 			ended(FundingFailure::WrongAssetOrChain),
 			ended(FundingFailure::Expired),
 			ended(FundingFailure::Cancelled),
+			ended(FundingFailure::Refunded),
 			ended(FundingFailure::ProviderTimeout),
 			ended(FundingFailure::Other { code: "not_claimed".into(), message: String::new() }),
 		],
@@ -190,6 +191,7 @@ fn endings_say_whether_they_were_expected() {
 			(some("failed"), some("wrong_asset_or_chain"), true),
 			(some("expired"), some("expired"), true),
 			(some("cancelled"), some("cancelled"), true),
+			(some("refunded"), some("refunded"), true),
 			(some("failed"), some("provider_timeout"), false),
 			(some("failed"), some("not_claimed"), false),
 		]
@@ -226,11 +228,44 @@ fn a_worker_taking_its_session_logs_once_each_way() {
 	);
 }
 
+// A route's asset or network is a string its manifest wrote, so only a
+// known id is tagged as it is.
 #[test]
-fn route_identifiers_are_tagged_only_when_plain() {
+fn route_identifiers_are_tagged_only_when_known() {
 	assert_eq!(
-		[None, Some("USDT"), Some("polkadot-asset-hub"), Some("a b"), Some("https://x")]
-			.map(plain_tag),
-		["none", "usdt", "other", "other", "other"]
+		[None, Some("USDT"), Some("dot"), Some("ramp-token"), Some("a b"), Some("https://x")]
+			.map(|asset| known_tag(asset, KNOWN_ASSETS)),
+		["none", "usdt", "dot", "other", "other", "other"]
+	);
+	assert_eq!(
+		[Some("polkadot-asset-hub"), Some("Paseo"), Some("someones-chain")]
+			.map(|network| known_tag(network, KNOWN_NETWORKS)),
+		["polkadot-asset-hub", "paseo", "other"]
+	);
+}
+
+// A fact arriving for a session whose entry went, once enough others
+// retired after it, emits nothing and leaves no entry behind.
+#[test]
+fn a_session_gone_from_telemetry_stays_gone() {
+	let mut telemetry = Telemetry::default();
+	let first = telemetry.session_ref("fs_old").expect("tracked");
+	telemetry.forget("fs_old");
+	let retired = telemetry.session_ref("fs_old");
+	for index in 0..RETIRED_KEPT {
+		telemetry.forget(&format!("fs_{index}"));
+	}
+	let mut late = top_up();
+	late.intent = "fs_old".to_string();
+
+	assert_eq!(
+		(
+			retired,
+			telemetry.session_ref("fs_old"),
+			telemetry.provider_took(&late, false, NOW).is_some(),
+			telemetry.changed(None, &late, NOW).len(),
+			telemetry.sessions.contains_key("fs_old"),
+		),
+		(Some(first), None, false, 0, false)
 	);
 }

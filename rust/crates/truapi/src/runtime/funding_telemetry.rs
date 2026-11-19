@@ -34,9 +34,17 @@ const CASH_UNIT: u128 = 1_000_000;
 /// them, so a fact emitted just after a session ended still carries its
 /// `funding.ref`.
 const RETIRED_KEPT: usize = 16;
-/// Longest asset or network identifier tagged as it is, so a value a
-/// manifest wrote passes only when it reads as a plain identifier.
-const PLAIN_ID_MAX_CHARS: usize = 16;
+/// How many sessions whose entry went are remembered as gone, so a fact
+/// arriving later for one of them is dropped rather than drawing a new
+/// `funding.ref`.
+const GONE_KEPT: usize = 256;
+/// Assets tagged by name; any other is `other`. The product-sdk asset
+/// catalog replaces this list once the core reads it.
+const KNOWN_ASSETS: &[&str] = &["dot", "usdt", "usdc", "eur", "usd", "gbp"];
+/// Networks tagged by name; any other is `other`. The product-sdk asset
+/// catalog replaces this list once the core reads it.
+const KNOWN_NETWORKS: &[&str] =
+	&["polkadot", "polkadot-asset-hub", "kusama", "paseo", "ethereum"];
 /// ISO 3166-1 alpha-2 codes of the European Union's member states.
 const EU_COUNTRIES: &[&str] = &[
 	"AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT",
@@ -247,8 +255,8 @@ impl Common {
 			("product", product_tag(session.owner_product_id.as_ref())),
 			("rail", rail.map_or("none".to_string(), |rail| lower(rail.into()))),
 			("provider", provider),
-			("asset", plain_tag(asset)),
-			("network", plain_tag(network)),
+			("asset", known_tag(asset, KNOWN_ASSETS).to_string()),
+			("network", known_tag(network, KNOWN_NETWORKS).to_string()),
 			("amount_bucket", amount_bucket(session.amount).to_string()),
 		];
 		Self { tags, age_ms: Some(now_ms.saturating_sub(session.opened_at_ms)) }
@@ -289,43 +297,58 @@ pub struct Telemetry {
 	/// Sessions that emit nothing more, oldest first, whose entries go once
 	/// [`RETIRED_KEPT`] newer ones follow.
 	retired: VecDeque<String>,
+	/// Sessions whose entry went, oldest first, the last [`GONE_KEPT`] of
+	/// them: they emit nothing and get no new entry.
+	gone: VecDeque<String>,
 }
 
 impl Telemetry {
-	/// Session `intent`'s random id, drawn on first use.
-	pub fn session_ref(&mut self, intent: &str) -> String {
-		self.tracked(intent)
-			.session_ref
-			.get_or_insert_with(|| nanoid::nanoid!(16))
-			.clone()
+	/// Session `intent`'s random id, drawn on first use; `None` once its
+	/// entry went, as it emits nothing more.
+	pub fn session_ref(&mut self, intent: &str) -> Option<String> {
+		let tracked = self.tracked(intent)?;
+		Some(tracked.session_ref.get_or_insert_with(|| nanoid::nanoid!(16)).clone())
 	}
 
-	fn tracked(&mut self, intent: &str) -> &mut Tracked {
-		self.sessions.entry(intent.to_string()).or_default()
+	/// What is kept for session `intent`, made on first use; `None` once its
+	/// entry went.
+	fn tracked(&mut self, intent: &str) -> Option<&mut Tracked> {
+		if self.gone.iter().any(|gone| gone == intent) {
+			return None;
+		}
+		Some(self.sessions.entry(intent.to_string()).or_default())
 	}
 
 	/// Retire session `intent`, which emits nothing more: what is kept for it
-	/// goes once [`RETIRED_KEPT`] other sessions retired after it.
+	/// goes once [`RETIRED_KEPT`] other sessions retired after it, and from
+	/// then on a fact for it is dropped.
 	pub fn forget(&mut self, intent: &str) {
-		if self.retired.iter().any(|retired| retired == intent) {
+		if self.retired.iter().chain(&self.gone).any(|known| known == intent) {
 			return;
 		}
 		self.retired.push_back(intent.to_string());
 		while self.retired.len() > RETIRED_KEPT {
-			if let Some(oldest) = self.retired.pop_front() {
-				self.sessions.remove(&oldest);
-			}
+			let Some(oldest) = self.retired.pop_front() else {
+				break;
+			};
+			self.sessions.remove(&oldest);
+			self.gone.push_back(oldest);
+		}
+		while self.gone.len() > GONE_KEPT {
+			self.gone.pop_front();
 		}
 	}
 
 	/// Whether session `intent`'s overlay showed any quote list.
 	pub fn quoted(&mut self, intent: &str) -> bool {
-		self.tracked(intent).quoted
+		self.tracked(intent).is_some_and(|tracked| tracked.quoted)
 	}
 
 	/// The region session `intent`'s quotes are asked for.
 	pub fn asked_in(&mut self, intent: &str, region: Region) {
-		self.tracked(intent).region = region;
+		if let Some(tracked) = self.tracked(intent) {
+			tracked.region = region;
+		}
 	}
 
 	/// Session `intent`'s host was shown a quote list. Returns the round's
@@ -335,27 +358,32 @@ impl Telemetry {
 		intent: &str,
 		settled: Option<QuotesSettled>,
 	) -> Option<CoreEvent> {
-		let tracked = self.tracked(intent);
+		let tracked = self.tracked(intent)?;
 		tracked.quoted = true;
 		settled.map(|settled| settled.fact(tracked.region))
 	}
 
 	/// The round a newer request replaced before it settled, as a fact.
-	pub fn quotes_superseded(&mut self, intent: &str, settled: QuotesSettled) -> CoreEvent {
-		settled.fact(self.tracked(intent).region)
+	pub fn quotes_superseded(
+		&mut self,
+		intent: &str,
+		settled: QuotesSettled,
+	) -> Option<CoreEvent> {
+		Some(settled.fact(self.tracked(intent)?.region))
 	}
 
 	/// The user asked to cancel session `intent` at `now_ms`.
 	pub fn cancel_asked(&mut self, intent: &str, now_ms: u64) {
-		let tracked = self.tracked(intent);
-		tracked.cancel_asked_ms = Some(now_ms);
-		tracked.cancel_unanswered = false;
+		if let Some(tracked) = self.tracked(intent) {
+			tracked.cancel_asked_ms = Some(now_ms);
+			tracked.cancel_unanswered = false;
+		}
 	}
 
 	/// The worker did not answer session `intent`'s cancel: emitted the first
 	/// time for each cancel.
 	pub fn cancel_unanswered(&mut self, intent: &str, now_ms: u64) -> Option<CoreEvent> {
-		let tracked = self.tracked(intent);
+		let tracked = self.tracked(intent)?;
 		if core::mem::replace(&mut tracked.cancel_unanswered, true) {
 			return None;
 		}
@@ -370,7 +398,7 @@ impl Telemetry {
 		taken: bool,
 		now_ms: u64,
 	) -> Option<CoreEvent> {
-		let tracked = self.tracked(&session.intent);
+		let tracked = self.tracked(&session.intent)?;
 		if tracked.took == Some(true) || tracked.took == Some(taken) {
 			return None;
 		}
@@ -384,12 +412,22 @@ impl Telemetry {
 
 	/// `session` showed `flag`: emitted the first time.
 	pub fn flagged(&mut self, session: &FundingSession, flag: Flag) -> Option<CoreEvent> {
-		let flags = &mut self.tracked(&session.intent).flags;
+		let flags = &mut self.tracked(&session.intent)?.flags;
 		if flags.contains(&flag) {
 			return None;
 		}
 		flags.push(flag);
 		Some(CoreEvent::new(markers::FUNDING_STATUS_FLAG).tag("flag", flag))
+	}
+
+	/// Session `intent` showed `flag` before this process loaded it, so it
+	/// is not emitted again.
+	pub fn flagged_before(&mut self, intent: &str, flag: Flag) {
+		if let Some(tracked) = self.tracked(intent) &&
+			!tracked.flags.contains(&flag)
+		{
+			tracked.flags.push(flag);
+		}
 	}
 
 	/// What changed from `before` to `after`, a session a commit stored at
@@ -402,6 +440,9 @@ impl Telemetry {
 		now_ms: u64,
 	) -> Vec<CoreEvent> {
 		let mut facts = Vec::new();
+		if self.tracked(&after.intent).is_none() {
+			return facts;
+		}
 		let reached_before = before.map(FundingSession::steps_reached).unwrap_or_default();
 		let mut prev_ms = after.opened_at_ms;
 		for step in after.steps_reached() {
@@ -439,12 +480,13 @@ impl Telemetry {
 				_ => None,
 			};
 			if let Some((answer, fee)) = answered {
-				let asked = self.tracked(&after.intent).cancel_asked_ms;
+				let asked =
+					self.tracked(&after.intent).and_then(|tracked| tracked.cancel_asked_ms);
 				facts.push(cancel_answered(answer, fee, asked, now_ms));
 			}
 		}
 		if !after.serves_provider() && before.is_none_or(FundingSession::serves_provider) {
-			let region = self.tracked(&after.intent).region;
+			let region = self.tracked(&after.intent).map_or_else(Region::default, |t| t.region);
 			facts.push(ended(after, region, now_ms));
 		}
 		facts
@@ -565,11 +607,10 @@ fn failure_expected(failure: &FundingFailure, money_moved: bool) -> bool {
 		FundingFailure::InsufficientBalance |
 		FundingFailure::WrongAssetOrChain |
 		FundingFailure::Declined |
-		FundingFailure::Cancelled => true,
+		FundingFailure::Cancelled |
+		FundingFailure::Refunded => true,
 		FundingFailure::Expired => !money_moved,
-		FundingFailure::ProviderTimeout |
-		FundingFailure::Refunded |
-		FundingFailure::Other { .. } => false,
+		FundingFailure::ProviderTimeout | FundingFailure::Other { .. } => false,
 	}
 }
 
@@ -639,20 +680,13 @@ fn product_tag(product: Option<&ProductId>) -> String {
 	}
 }
 
-/// An asset or network a provider route declared, when it is a short plain
-/// identifier; anything else is `other`.
-fn plain_tag(value: Option<&str>) -> String {
-	match value {
-		None => "none".to_string(),
-		Some(value)
-			if !value.is_empty() &&
-				value.chars().count() <= PLAIN_ID_MAX_CHARS &&
-				value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
-		{
-			value.to_ascii_lowercase()
-		},
-		Some(_) => "other".to_string(),
-	}
+/// An asset or network a provider route declared, when `known` lists it,
+/// in either case; anything else, which only a manifest wrote, is `other`.
+fn known_tag(value: Option<&str>, known: &[&'static str]) -> &'static str {
+	let Some(value) = value else {
+		return "none";
+	};
+	known.iter().find(|known| known.eq_ignore_ascii_case(value)).copied().unwrap_or("other")
 }
 
 /// Reading a fact's attributes back, for tests.

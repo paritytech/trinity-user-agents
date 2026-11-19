@@ -916,7 +916,7 @@ impl FundingSession {
 	}
 
 	/// The session's steps, each with when it was reached, if it was.
-	pub(crate) fn steps_reached(&self) -> Vec<FundingProgressStep> {
+	pub fn steps_reached(&self) -> Vec<FundingProgressStep> {
 		let steps = FundingStep::of(self.direction);
 		let first = |matches: fn(&FundingUpdate) -> bool| {
 			self.updates

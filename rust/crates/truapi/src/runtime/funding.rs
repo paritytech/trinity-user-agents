@@ -869,6 +869,7 @@ impl FundingRegistry {
 			target,
 			requested_ms: current_unix_millis(),
 			opened_ms: None,
+			withdrawn: false,
 			shown: None,
 		}
 	}
@@ -1299,12 +1300,26 @@ impl FundingRegistry {
 		if !self.loaded.load(Ordering::Acquire) {
 			// Held as stored, so a commit writes only the rows it changes.
 			let (sessions, summaries) = store::load(db).await?;
-			let mut held = self.lock_held();
-			held.sessions
-				.extend(sessions.into_iter().map(|session| (session.intent.clone(), session)));
-			held.pack.extend(
-				summaries.into_iter().map(|packed| (packed.summary.intent.clone(), packed)),
-			);
+			// A session already taking longer when loaded was flagged by the
+			// process that stored it; its host still hears of it below.
+			let longer_before: Vec<String> = sessions
+				.iter()
+				.filter(|session| session.longer_at_ms().is_some_and(|at_ms| at_ms <= now_ms))
+				.map(|session| session.intent.clone())
+				.collect();
+			{
+				let mut held = self.lock_held();
+				held.sessions
+					.extend(sessions.into_iter().map(|session| (session.intent.clone(), session)));
+				held.pack.extend(
+					summaries.into_iter().map(|packed| (packed.summary.intent.clone(), packed)),
+				);
+			}
+			let mut telemetry = self.telemetry();
+			for intent in &longer_before {
+				telemetry.flagged_before(intent, super::funding_telemetry::Flag::TakingLonger);
+			}
+			drop(telemetry);
 			self.loaded.store(true, Ordering::Release);
 		}
 		let mut lapsed = Vec::new();
@@ -1975,6 +1990,10 @@ impl FundingRegistry {
 		if facts.is_empty() {
 			return;
 		}
+		// A session whose telemetry went emits nothing more.
+		let Some(session_ref) = self.telemetry().session_ref(intent) else {
+			return;
+		};
 		let held = match session {
 			Some(_) => None,
 			None => self.get(intent),
@@ -1990,7 +2009,6 @@ impl FundingRegistry {
 			},
 			current_unix_millis(),
 		);
-		let session_ref = self.telemetry().session_ref(intent);
 		for fact in facts {
 			let event = common.attach(fact, &session_ref);
 			#[cfg(test)]
@@ -2037,8 +2055,10 @@ pub struct FrameTicket<'a> {
 	target: FrameTarget,
 	/// When the provider asked for it, in Unix milliseconds.
 	requested_ms: u64,
-	/// When the host opened it, in Unix milliseconds.
+	/// When it went on screen, in Unix milliseconds.
 	opened_ms: Option<u64>,
+	/// Whether the host opened it but it was withdrawn before it showed.
+	withdrawn: bool,
 	/// How it closed once shown.
 	shown: Option<FrameClose>,
 }
@@ -2053,25 +2073,25 @@ impl FrameTicket<'_> {
 	/// otherwise the provider gets the outcome and nothing goes on screen.
 	pub async fn opened(&mut self) -> Option<FundingFrameOutcome> {
 		let receiver = self.receiver.take()?;
-		let gate = receiver.await;
-		if let Ok(FrameGate::Present) = gate {
-			let now_ms = current_unix_millis();
-			self.opened_ms = Some(now_ms);
-			let opened = CoreEvent::new(markers::FUNDING_FRAME_OPENED)
-				.tag("target", self.target)
-				.count("wait_ms", now_ms.saturating_sub(self.requested_ms));
-			self.registry.report_facts(&self.intent, None, None, vec![opened]);
-		}
-		match gate {
+		match receiver.await {
 			// The payment may have moved, or the worker closed the frame,
 			// between the host opening it and the worker running again.
 			Ok(FrameGate::Present)
 				if self.registry.frame_done(&self.intent) ||
 					!self.registry.holds_open(&self.intent, self.frame) =>
 			{
+				self.withdrawn = true;
 				Some(FundingFrameOutcome::Closed)
 			},
-			Ok(FrameGate::Present) => None,
+			Ok(FrameGate::Present) => {
+				let now_ms = current_unix_millis();
+				self.opened_ms = Some(now_ms);
+				let opened = CoreEvent::new(markers::FUNDING_FRAME_OPENED)
+					.tag("target", self.target)
+					.count("wait_ms", now_ms.saturating_sub(self.requested_ms));
+				self.registry.report_facts(&self.intent, None, None, vec![opened]);
+				None
+			},
 			Ok(FrameGate::Answer(outcome)) => Some(outcome),
 			// The registry went away: nothing to show.
 			Err(_) => Some(FundingFrameOutcome::Closed),
@@ -2082,6 +2102,7 @@ impl FrameTicket<'_> {
 impl Drop for FrameTicket<'_> {
 	fn drop(&mut self) {
 		let outcome = match (self.opened_ms, self.shown) {
+			_ if self.withdrawn => FrameClose::ClosedByCore,
 			(None, _) => FrameClose::DroppedUnopened,
 			(Some(_), Some(shown)) => shown,
 			(Some(_), None) => FrameClose::ClosedByCore,

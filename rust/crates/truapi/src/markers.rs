@@ -133,8 +133,8 @@ markers! {
 	// `product`), `product` (a first-party product's dotNS label,
 	// `third_party`, `none`), `rail` (`card`, `bank`, `crypto`, `none`),
 	// `provider` (a provider the host lists, `other`, `none`), `asset` and
-	// `network` (a short plain identifier a provider route declares, `other`,
-	// `none`), `amount_bucket` (CASH: `<10`, `10-50`, `50-100`, `100-250`,
+	// `network` (a known id a provider route declares, such as `usdt` or
+	// `polkadot-asset-hub`, else `other`; `none`), `amount_bucket` (CASH: `<10`, `10-50`, `50-100`, `100-250`,
 	// `250-500`, `500-1k`, `1k-5k`, `5k+`, `unset`). A session the core no
 	// longer holds carries `session` as `unknown` instead, and no age.
 
@@ -176,11 +176,12 @@ markers! {
 	FUNDING_STATUS_FLAG = "truapi.funding.status_flag" => Export(Info);
 
 	/// The provider is done with the session, on an ending that is no fault.
-	/// `outcome`: `topped_up`, `sent`, `refunded`, `failed`, `expired`,
-	/// `cancelled`, `paid_out_after_cancel`. `reason`: `none`, a failure's
-	/// kind such as `declined`, the core's `not_claimed` or `payment_failed`,
-	/// or `provider_other`. `money_moved`, `region`, and `to_received_ms`;
-	/// `age_ms` is the session's whole run.
+	/// `outcome`: `topped_up`, `sent`, `refunded`, `payout_failed`, `failed`,
+	/// `expired`, `cancelled`, `paid_out_after_cancel`. `reason`: `none`,
+	/// `refunded`, `payout_failed`, a failure's kind such as `declined`, the
+	/// core's `not_claimed` or `payment_failed`, or `provider_other`.
+	/// `payout_failed` comes only under `ended_unexpectedly`. `money_moved`,
+	/// `region`, and `to_received_ms`; `age_ms` is the session's whole run.
 	FUNDING_ENDED = "truapi.funding.ended" => Export(Info);
 
 	/// An ending that is a fault: failed, a failed payout, or expired once
