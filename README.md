@@ -158,7 +158,8 @@ js/packages/
                           reading with a store and publishing; `/reader` keeps stacks
                           current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
-                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
+                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js;
+                           owns the host connection whose frame channel products encode over
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
                            published to GitHub Packages as io.parity:truapi-host-android
                            (AAR with per-ABI cdylibs; see android/truapi-host/README.md)
@@ -682,11 +683,13 @@ reaches it through a development-only `<script>` tag:
 ```
 
 The host serves that script itself, with no imports or environment variables
-needed. It installs the shared client and browser container before product code
-runs. Keep the tag before application scripts, without `async` or `defer`.
-SDK calls and permission checks share one connection. Updated SDKs reuse the
-injected client across reconnects; older SDKs can still start through the
-MessagePort adapter but require a page reload after a disconnect.
+needed. It installs the shared host transport and browser container before
+product code runs. Keep the tag before application scripts, without `async` or
+`defer`. SDK calls and permission checks share one connection. Each product
+encodes its frames with its own `@parity/truapi`. Updated SDKs keep their
+client across reconnects. SDKs that predate the injected transport use the
+MessagePort adapter, which survives a reconnect too: what the lost connection
+carried ends with a `HostFailure` error.
 A visible page retries a failed reconnect after 250 ms, 1 s and 4 s; after that, the next API
 call or return to a visible page tries again.
 On iOS the host rebinds its localhost listener on the same port each time the app
