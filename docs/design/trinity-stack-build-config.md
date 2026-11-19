@@ -76,7 +76,8 @@ The app no longer chooses anything. It has one stack, and that stack is the one 
 }
 ```
 
-- `name` matches `[a-z0-9][a-z0-9-]*`. It is also the file name of the descriptor copy, `<name>.json`.
+- `name` matches `[a-z0-9][a-z0-9-]*`. It is also the file name of the descriptor copy, `<name>.json`. It is only a file
+  name, so it does not have to equal the descriptor's `id`, although it does in all four copies in `stacks/`.
 - `link` is the stack link. It has to include the key, because RFC 2 requires a built-in stack to be signed.
 - `reservedValues` has the same fields as `ReservedValuesPolicy` in
   [#2024](https://github.com/paritytech/trinity-user-agents/pull/2024). Only `allowed` is required. The two lists
@@ -118,8 +119,15 @@ The command also looks for a `<name>.json` next to the config and treats it as t
 refused if its `sequence` is lower or its TLD is different. Nothing is written next to the config, so building does not
 change the source tree. The copies in `stacks/` are still updated by `scripts/update-stacks.sh`.
 
-The price of this is that every build needs the `truapi-host` binary and network access. CI can install the binary with
-`.github/actions/install-truapi-host`, and developers with `scripts/truapi-host-installer.sh`.
+The price of this is that every build needs the `truapi-host` binary and network access. We soften that in two ways.
+
+A debug build can still be built offline. When the descriptor cannot be downloaded, the command falls back to the copy
+next to the config and prints a warning. It verifies that copy the same way and refuses it if it has expired. A release
+build never falls back.
+
+The version of `truapi-host` is pinned in this repository, so a new CLI release cannot change a build on its own. CI
+installs that version with `.github/actions/install-truapi-host`, and developers with
+`scripts/truapi-host-installer.sh`. Both already take a version.
 
 ## Selecting a config
 
@@ -138,7 +146,7 @@ Release has no default on purpose. Right now Release runs `polkadot` with reserv
 build to end up with that just because nobody set a config. So a release build with an empty setting fails.
 
 This means Parity's own Release builds need a config before the change can land, and we have not decided which one
-(question 4 below). Release is what the TestFlight build, the Profile and Archive actions of the Xcode scheme, and
+(question 1 below). Release is what the TestFlight build, the Profile and Archive actions of the Xcode scheme, and
 Android's release unit tests in CI use.
 
 PCF would keep its own `production.build.json` outside this repository, together with the last `polkadot.json` it
@@ -165,6 +173,9 @@ build step and the app loads the bundled config and descriptor. This replaces do
 
 `reservedValues` depends on [#2024](https://github.com/paritytech/trinity-user-agents/pull/2024). Until that merges, a
 host can pass `allowed` to the core as `allowsReservedValues` and refuse any config that fills in one of the lists.
+
+polkadot-desktop is not covered here, because [#1899](https://github.com/paritytech/trinity-user-agents/issues/1899)
+only names iOS, Android and web.
 
 We also checked what happens when an app update ships a different config while the device still has a descriptor stored
 from the old one. The core already handles all three cases:
@@ -212,37 +223,23 @@ as well. `scripts/write-refresh-changeset.sh` treats every `stacks/*.json` as a 
 
 ## Open questions
 
-For the RFCs:
+For the iOS and Android owners:
 
-1. [RFC 3, Running more than one stack](https://github.com/paritytech/trinity-user-agents/pull/1565) lets a build choose
-   whether it accepts Imported stacks. Should that choice be a field in this file?
-
-For iOS and Android:
-
-2. A build without network access fails. Should a debug build be allowed to fall back to the copy next to the config,
-   with a warning?
-3. Which version of `truapi-host` should a build use: the latest stable release, or one pinned next to the config?
-4. Which config should Parity's Release builds get, and which configuration is the mainnet-fork build? Release runs
+1. Which config should Parity's Release builds get, and which configuration is the mainnet-fork build? Release runs
    `polkadot` now, and nothing runs polkadot-test.
-5. `UNSTABLE`, `NIGHTLY` and `SAFETYNET` on iOS and `TestnetEnvironment` on Android will still select Firebase keys and
-   chain tables. Should a build fail when they do not match the config?
-6. Does PCF build iOS from this tree or from polkadot-ios-community? The second one has no `stacks/` directory.
+2. Does PCF build iOS from this tree or from polkadot-ios-community? The second one has no `stacks/` directory.
 
-For web:
+For the dotli owners:
 
-7. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
+3. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
    container starts. Should such a build take several configs, or should its choice of networks stay outside this
    format?
-8. dotli can run pcf-devnet with reserved values allowed, but the table in
-   [#1899](https://github.com/paritytech/trinity-user-agents/issues/1899) does not list it. Does it get a config?
-9. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
+4. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
    should its build run the `truapi-host` binary, or should `trinity-stack update` learn `--config`?
-10. Should polkadot-desktop read the same file?
 
-About the stacks themselves:
+For whoever runs the stacks:
 
-11. Who will publish polkadot-test, and under which key and URL? We cannot write the mainnet-fork config until we know.
-12. Does `name` have to equal the descriptor's `id`? They are equal in all four copies in `stacks/`.
+5. Who will publish polkadot-test, and under which key and URL? We cannot write the mainnet-fork config until we know.
 
 Two things in this proposal have not been tried yet:
 
