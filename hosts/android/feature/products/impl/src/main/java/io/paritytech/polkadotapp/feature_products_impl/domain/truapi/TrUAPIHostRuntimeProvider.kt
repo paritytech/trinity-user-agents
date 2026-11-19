@@ -289,7 +289,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing
-         * sheet needs a core-driven session, and `PairingHostRuntime` is not
+         * sheet needs a core-driven session, and `HostRuntime<PairingHost>` is not
          * reachable from a native host yet (truapi#334, "Move SSO to the shared
          * Rust core"), so the core never reaches a state worth showing. iOS
          * stubs this the same way. Surfaced as state rather than a log line so

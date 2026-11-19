@@ -898,7 +898,7 @@ fn deliver_subtree_request(
 	(0..deliveries)
 		.map(|_| {
 			futures::executor::block_on(serve_statement(
-				&responder,
+				responder,
 				&service,
 				&session,
 				replay_scope,
@@ -1075,7 +1075,7 @@ fn a_replaced_activation_leaves_the_request_to_the_next_loop() {
 	let responder = signing_host.sso_responder();
 	let serve = |service| {
 		futures::executor::block_on(serve_statement(
-			&responder,
+			responder,
 			service,
 			&session,
 			replay_scope,

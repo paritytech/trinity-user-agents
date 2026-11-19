@@ -21,7 +21,7 @@ use crate::{
 	},
 	platform::{ProductContext, ProductId},
 	runtime::{
-		HostSession, LocalActivation, SigningHostRole,
+		HostRole, HostSession, LocalActivation, SigningHost,
 		allowances::AllowanceResource,
 		authority::{Allowance, AuthorityError, StatementStoreAllowanceKey},
 		statement_allowance::slot,
@@ -36,7 +36,7 @@ use crate::{
 const PRODUCT_ID: &str = "myapp.dot";
 
 /// Whether this host keeps an AutoSigning key for `product_id` in this activation.
-fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
+fn keeps_auto_signing(authority: &SigningHost, product_id: &str) -> bool {
 	let session = authority.session_state().current().expect("an active wallet");
 	futures::executor::block_on(
 		authority
@@ -177,7 +177,7 @@ fn secret_key() -> StatementStoreAllowanceKey {
 	StatementStoreAllowanceKey::from_secret_bytes(SECRET.to_vec()).expect("64-byte secret")
 }
 
-fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
+fn remember(signing_host: &SigningHost, product_id: &str, period: u32) {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
 	let revision = grant_revision(signing_host.accounts());
@@ -190,7 +190,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 	.unwrap();
 }
 
-fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 64]> {
+fn remembered(signing_host: &SigningHost, product_id: &str) -> Option<[u8; 64]> {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
 	let revision = grant_revision(signing_host.accounts());
@@ -206,7 +206,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
 
 /// The key the host serves for the product, bounded so a lookup that falls
 /// through to an unanswered chain read fails instead of hanging.
-fn served(signing_host: &SigningHostRole) -> Option<[u8; 64]> {
+fn served(signing_host: &SigningHost) -> Option<[u8; 64]> {
 	futures::executor::block_on(async {
 		let session = signing_host.accounts().current_session().expect("a session is active");
 		let cx = CallContext::default();
@@ -330,7 +330,7 @@ fn rejected(reason: &str) -> String {
 fn submit_answered(
 	answers: Vec<String>,
 	signer: [u8; 32],
-) -> (Result<(), CallError<RemoteStatementStoreSubmitError>>, Arc<SigningHostRole>) {
+) -> (Result<(), CallError<RemoteStatementStoreSubmitError>>, Arc<SigningHost>) {
 	let platform = Arc::new(StubPlatform {
 		rpc_method_responses: answers
 			.into_iter()
@@ -359,7 +359,7 @@ fn submit_answered(
 	(submitted, signing_host)
 }
 
-fn submit_rejected(reason: &str, attempts: usize, signer: [u8; 32]) -> Arc<SigningHostRole> {
+fn submit_rejected(reason: &str, attempts: usize, signer: [u8; 32]) -> Arc<SigningHost> {
 	let (submitted, signing_host) = submit_answered(vec![rejected(reason); attempts], signer);
 	let Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(error))) = submitted else {
 		panic!("the store rejection must surface as a domain error: {submitted:?}");
