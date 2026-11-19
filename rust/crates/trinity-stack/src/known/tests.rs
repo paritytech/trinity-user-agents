@@ -1,12 +1,12 @@
 use super::*;
 
-/// A known stack without a key would let whoever serves its URL change what it describes.
+/// `known_stack` panics on a link that does not read as a pointer.
 #[test]
-fn test_known_stack_keys() {
-	let unsigned: Vec<_> = known_stack_links()
-		.filter(|(name, _)| known_stack(name).expect("unknown name").key().is_none())
+fn test_known_stack_links_parse() {
+	let invalid: Vec<_> = known_stack_links()
+		.filter(|(_, link)| Pointer::from_link(link).is_err())
 		.collect();
-	assert_eq!(unsigned, Vec::new());
+	assert_eq!(invalid, Vec::new());
 }
 
 #[test]

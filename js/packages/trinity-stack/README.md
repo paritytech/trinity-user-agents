@@ -28,16 +28,17 @@ store gets no rollback protection. Errors from a rule of the RFC carry a `code`,
 
 ## Known stacks
 
-`knownStacks` maps the name of each known Trinity stack to its signed link, and `trinity-stack add <name>` without a
-link adds the known stack of that name:
+`knownStacks` maps the name of each known Trinity stack to its link, signed or unsigned, and `trinity-stack add <name>`
+without a link adds the known stack of that name:
 
 ```sh
 npx @parity/trinity-stack add previewnet
 ```
 
-`trinity-stack known` prints each name and link. The
+`trinity-stack known` prints each name and link. An unsigned known stack, marked `(unsigned)`, is listed for its link
+only: a build copy must be signed, so `add` refuses it, and a reader loads it from its link. The
 [trinity-stack crate's README](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack#known-stacks)
-lists who operates each stack and how to add one.
+lists each stack and how to add one.
 
 ## Running from build copies
 

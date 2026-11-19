@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `trinity-stack add | update | generate | list | known | remove`: the build copies of a project's stacks.
 import { parseArgs } from "node:util";
-import { knownStacks } from "./index.js";
+import { decodeLink, knownStacks } from "./index.js";
 import { add, generate, list, remove, update } from "./project.js";
 
 const USAGE = `usage:
@@ -16,7 +16,8 @@ options:
   --dir <path>  where the stacks live, .trinity by default
 
 add without a link uses the link of the known stack <name>; known prints each known stack and
-its link.
+its link. An unsigned known stack, marked (unsigned), is listed for its link only: a build copy
+must be signed, so add refuses it.
 
 update exits 0 when no committed file changed, 2 when one did and 1 when a stack failed; a
 stack that fails is left as it was while the others update.
@@ -67,7 +68,9 @@ try {
     }
   } else if (command === "known" && rest.length === 0) {
     for (const [name, link] of Object.entries(knownStacks))
-      console.log(`${name}\n  ${link}`);
+      console.log(
+        `${name}${decodeLink(link).key ? "" : " (unsigned)"}\n  ${link}`,
+      );
   } else if (command === "remove" && rest.length === 1) {
     const { changed } = await remove(rest[0], options);
     console.log(`wrote ${changed.join(", ")}`);

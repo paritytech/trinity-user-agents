@@ -1,6 +1,6 @@
-//! The repository's `stacks/` copies, which host builds bundle, against the crate's known stacks.
-//! `scripts/update-stacks.sh` writes both copies of each stack from `known-stacks.json`; run it
-//! when these tests fail after a change to that file.
+//! The repository's `stacks/` copies, which host builds bundle, against the crate's signed known
+//! stacks. `scripts/update-stacks.sh` writes both copies of each signed stack from
+//! `known-stacks.json`; run it when these tests fail after a change to that file.
 
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use trinity_stack::{known_stack, known_stack_links, open};
@@ -18,6 +18,12 @@ fn find_stack_files(extension: &str) -> BTreeMap<String, PathBuf> {
 		.collect()
 }
 
+/// The known stacks whose link carries a key, the only ones a host build bundles.
+fn find_signed_stack_links() -> impl Iterator<Item = (&'static str, &'static str)> {
+	known_stack_links()
+		.filter(|(name, _)| known_stack(name).expect("unknown stack").key().is_some())
+}
+
 /// A host build bundles `stacks/<name>.link`, so it must carry the link the crate lists.
 #[test]
 fn test_stack_links() {
@@ -25,7 +31,7 @@ fn test_stack_links() {
 		.into_iter()
 		.map(|(name, path)| (name, fs::read_to_string(path).expect("stack link is unreadable")))
 		.collect();
-	let expected: BTreeMap<String, String> = known_stack_links()
+	let expected: BTreeMap<String, String> = find_signed_stack_links()
 		.map(|(name, link)| (name.to_owned(), format!("{link}\n")))
 		.collect();
 	assert_eq!(links, expected);
@@ -36,7 +42,7 @@ fn test_stack_links() {
 fn test_stack_copy_signatures() {
 	let copies = find_stack_files("json");
 	let names: Vec<_> = copies.keys().map(String::as_str).collect();
-	let known: Vec<_> = known_stack_links().map(|(name, _)| name).collect();
+	let known: Vec<_> = find_signed_stack_links().map(|(name, _)| name).collect();
 	assert_eq!(names, known);
 	for (name, path) in &copies {
 		let document = fs::read(path).expect("stack copy is unreadable");

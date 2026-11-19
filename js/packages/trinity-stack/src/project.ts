@@ -43,8 +43,8 @@ const IGNORES = [
 
 /**
  * Adds a stack under `name` from a link, or a URL and its key, then writes its copy as
- * `update` does. Without `target`, `name` must be one of `knownStacks` and its link is used. A
- * build copy must be signed, so a stack without a key is refused.
+ * `update` does. Without `target`, `name` must be a signed stack of `knownStacks` and its link is
+ * used. A build copy must be signed, so a stack without a key is refused.
  */
 export async function add(
   name: string,
@@ -293,12 +293,21 @@ function checkName(name: string) {
     throw new Error("stacks is the name of stacks.json; pick another");
 }
 
-/** The link of the known stack `name`; fails, listing the known stacks, for any other name. */
+/**
+ * The link of the known stack `name`. Fails, listing the known stacks, for any other name, and
+ * for an unsigned known stack, which cannot be a build copy.
+ */
 function knownLink(name: string): string {
-  if (Object.hasOwn(knownStacks, name)) return knownStacks[name];
-  throw new Error(
-    `${name} is not a known stack; known stacks: ${Object.keys(knownStacks).join(", ")}. Pass its link or URL`,
-  );
+  if (!Object.hasOwn(knownStacks, name))
+    throw new Error(
+      `${name} is not a known stack; known stacks: ${Object.keys(knownStacks).join(", ")}. Pass its link or URL`,
+    );
+  const link = knownStacks[name];
+  if (!decodeLink(link).key)
+    throw new Error(
+      `${name} is unsigned, so it cannot be a build copy; a reader can still load it from its link ${link}`,
+    );
+  return link;
 }
 
 async function writeStacks(

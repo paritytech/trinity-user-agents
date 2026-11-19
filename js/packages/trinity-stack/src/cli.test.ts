@@ -18,7 +18,10 @@ function runCli(...args: string[]) {
 describe("trinity-stack CLI", () => {
   test("known prints each known stack's name and link", () => {
     const expected = Object.entries(knownStacks)
-      .map(([name, link]) => `${name}\n  ${link}\n`)
+      .map(([name, link]) => {
+        const mark = name === "westend" ? " (unsigned)" : "";
+        return `${name}${mark}\n  ${link}\n`;
+      })
       .join("");
     expect(runCli("known")).toEqual({
       exitCode: 0,

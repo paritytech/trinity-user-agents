@@ -104,8 +104,8 @@ hosts/android/             Android host app; resolves the core from this tree
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
-stacks/                    generated copies, which host builds bundle, of each known stack's link
-                           and signed descriptor; `scripts/update-stacks.sh` writes them from
+stacks/                    generated copies, which host builds bundle, of each signed known stack's
+                           link and descriptor; `scripts/update-stacks.sh` writes them from
                            `rust/crates/trinity-stack/known-stacks.json`
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate

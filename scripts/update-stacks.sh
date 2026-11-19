@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Write stacks/<name>.link and refresh stacks/<name>.json, the copies host builds bundle, for each
-# known stack in rust/crates/trinity-stack/known-stacks.json, and delete the copies of any stack
-# that file does not list.
+# known stack in rust/crates/trinity-stack/known-stacks.json whose link carries a key, skipping
+# unsigned ones since host builds bundle only signed copies, and delete the copies of any other stack.
 # Fails when any stack was not refreshed; how the CLI uses the copies is in
 # rust/crates/truapi-host-cli/SPEC.md §14.1.
 # Usage: TRUAPI_HOST=<truapi-host binary, default `truapi-host` on PATH> bash scripts/update-stacks.sh
@@ -27,10 +27,10 @@ if "$HOST" stack bundle --help | grep -q -- --skip-same-projection; then
     skip_flag=(--skip-same-projection)
 fi
 
-known_names="$(jq -r 'keys[]' "$KNOWN_STACKS")"
+signed_stacks="$(jq -r 'to_entries[] | select(.value | test("[?&]key=")) | "\(.key)\t\(.value)"' "$KNOWN_STACKS")"
 for link_file in "$STACKS_DIR"/*.link; do
     name="$(basename "$link_file" .link)"
-    if ! grep -qxF "$name" <<<"$known_names"; then
+    if ! cut -f1 <<<"$signed_stacks" | grep -qxF "$name"; then
         rm -f "$link_file" "$STACKS_DIR/$name.json"
     fi
 done
@@ -43,7 +43,7 @@ while IFS=$'\t' read -r name link; do
         --out "$STACKS_DIR/$name.json" ${skip_flag[@]+"${skip_flag[@]}"}; then
         failed+=("$name")
     fi
-done < <(jq -r 'to_entries[] | "\(.key)\t\(.value)"' "$KNOWN_STACKS")
+done <<<"$signed_stacks"
 
 if [ "${#failed[@]}" -gt 0 ]; then
     echo "error: not refreshed: ${failed[*]}" >&2
