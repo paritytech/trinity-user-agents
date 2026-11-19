@@ -241,8 +241,17 @@ For whoever runs the stacks:
 
 5. Who will publish polkadot-test, and under which key and URL? We cannot write the mainnet-fork config until we know.
 
-Two things in this proposal have not been tried yet:
+## What we checked about running the build step
 
-- Running `truapi-host` with network access from an Xcode script phase and from a Gradle task, in every CI job that
-  builds an app.
-- Per-build-type assets in the Android bindings module.
+The build step is the first thing in these builds that runs an outside program and uses the network, so we looked at
+what could get in its way:
+
+- Xcode's script sandbox is not a problem. The "Bundle Trinity stacks" phase belongs to the `polkadot-app` target, and
+  that target turns `ENABLE_USER_SCRIPT_SANDBOXING` off in all five configurations.
+- Both build systems skip a step when its inputs have not changed. Xcode decides from the phase's declared inputs and
+  outputs, and the Android build has Gradle's build cache and configuration cache turned on. The build step has to be
+  marked to run on every build, otherwise a build would reuse an old descriptor.
+- None of the iOS or Android app workflows installs `truapi-host` today, so each of them needs the install step.
+
+One thing is still untried: giving each build type its own assets in the Android bindings module. Today one `syncStacks`
+task writes one directory that every build type uses.
