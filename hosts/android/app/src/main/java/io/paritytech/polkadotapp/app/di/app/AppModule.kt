@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.app.di.app
 
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
@@ -30,11 +31,19 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.presentation.ActivityIntentProvider
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.sentry.Sentry
+import io.sentry.logger.ILoggerApi
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 internal interface AppModule {
+    companion object {
+        // Unscoped, so each consumer reads the logger of the Sentry instance current when it is built.
+        @Provides
+        fun provideSentryLogger(): ILoggerApi = Sentry.logger()
+    }
+
     @Binds
     fun bindIssueReportApi(impl: RealIssueReportApi): IssueReportApi
 

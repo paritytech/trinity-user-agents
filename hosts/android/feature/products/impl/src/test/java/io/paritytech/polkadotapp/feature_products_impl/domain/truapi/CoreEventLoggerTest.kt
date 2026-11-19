@@ -12,13 +12,14 @@ import timber.log.Timber
 import uniffi.truapi.CoreAttribute
 import uniffi.truapi.CoreAttributeValue
 
-class CoreEventLogTest {
+class CoreEventLoggerTest {
     private val tree = spyk(
         object : Timber.Tree() {
             public override fun log(priority: Int, tag: String?, message: String, t: Throwable?) = Unit
         },
     )
     private val sink = mockk<CoreEventSink>(relaxed = true)
+    private val logger = CoreEventLogger(sink)
     private val attributes = listOf(
         CoreAttribute("outcome", CoreAttributeValue.Text("sent")),
         CoreAttribute("age_ms", CoreAttributeValue.Count(1200uL)),
@@ -37,7 +38,7 @@ class CoreEventLogTest {
 
     @Test
     fun `an exported marker reaches the sink with its attributes`() {
-        logCoreEvent(sink, "truapi.chain.follow_budget_reached", attributes)
+        logger.log("truapi.chain.follow_budget_reached", attributes)
 
         verify(exactly = 1) {
             sink.log(
@@ -58,14 +59,14 @@ class CoreEventLogTest {
 
     @Test
     fun `a local marker stays on the device`() {
-        logCoreEvent(sink, "truapi.native.callback.push_notification", attributes)
+        logger.log("truapi.native.callback.push_notification", attributes)
 
         verify(exactly = 0) { sink.log(any(), any(), any()) }
     }
 
     @Test
     fun `a marker the table does not list stays on the device`() {
-        logCoreEvent(sink, "truapi.chain.not_registered", attributes)
+        logger.log("truapi.chain.not_registered", attributes)
 
         verify(exactly = 0) { sink.log(any(), any(), any()) }
     }
