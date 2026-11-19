@@ -99,8 +99,8 @@ Parity's configs are in `stacks/`, next to the descriptor copies: `nightly.build
 
 The defaults for Debug, DevCI, Nightly and Safetynet are the stacks those configurations run now.
 
-Release has no default. A release build fails when the setting is empty. Release currently runs `polkadot` with reserved
-values allowed. If that stayed as a default, a publisher who did not set a config would ship it without choosing it.
+Release has no default on purpose. Right now Release runs `polkadot` with reserved values allowed, and we don't want a
+build to end up with that just because nobody set a config. So a release build with an empty setting fails.
 
 This also breaks Parity's own Release builds until someone picks a config for them. Those are the TestFlight build, the
 Profile and Archive actions of the Xcode scheme, and Android's release unit tests in CI.
