@@ -13,9 +13,8 @@ const ACTION_BUFFER_CAPACITY: usize = 64;
 struct State<Item> {
 	/// Every open subscription of this connection. A product may subscribe more
 	/// than once (an SDK keeps one stream per surface it draws), and each one
-	/// hears every item published while it is open; a new subscription never
-	/// cuts off an older one. Items buffered while none was open go only to the
-	/// next subscription.
+	/// hears every item published while it is open. Items buffered while none
+	/// was open go only to the next subscription.
 	subscribers: Vec<mpsc::UnboundedSender<Item>>,
 	buffer: VecDeque<Item>,
 	closed: bool,
