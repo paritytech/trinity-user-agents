@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use futures::TryStreamExt;
 use image::ImageReader;
 use truapi::{
-	ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile, PublicProfileResolutionOptions,
-	SigningHostRuntime, check_image, preimage_key,
+	HostRuntime, ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile,
+	PublicProfileResolutionOptions, SigningHost, check_image, preimage_key,
 };
 
 use crate::network::Stack;
@@ -19,7 +19,7 @@ use crate::network::Stack;
 /// Reads understood profile metadata from dotNS without provisioning an identity.
 ///
 /// Forces a dotNS lookup and reports invalid usernames and lookup failures.
-pub async fn read(runtime: &SigningHostRuntime, username: &str) -> Result<String> {
+pub async fn read(runtime: &HostRuntime<SigningHost>, username: &str) -> Result<String> {
 	let profile = runtime
 		.observe_public_profile(
 			username,
@@ -37,7 +37,7 @@ pub async fn read(runtime: &SigningHostRuntime, username: &str) -> Result<String
 /// upload go through the `peopl.<tld>` product's TrUAPI calls, with their usual
 /// confirmations. Ownership, upload and publication failures return errors.
 pub async fn upload(
-	runtime: &SigningHostRuntime,
+	runtime: &HostRuntime<SigningHost>,
 	network: &Stack,
 	entropy: &[u8],
 	username: &str,

@@ -21,21 +21,21 @@ use truapi::{Bytes32, latest, v01, versioned::IntoLatest};
 
 use super::{
 	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
-	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	pocket::{NativePocketObserver, card_side, keeping_faces, observe_pocket_cards},
 	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfileResolutionOptions,
-	ResponderExit, SigningHostRuntime, Spawner,
+	HostRuntime, ImageError, ImageReference, LoadedImage, PairedSsoPeer,
+	PublicProfileResolutionOptions, ResponderExit, SigningHost, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -89,7 +89,7 @@ impl crate::logging::HostSink for CallbackSink {
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
@@ -179,7 +179,8 @@ impl NativeTrUApiHostRuntime {
 			storage_events: events.clone(),
 		});
 		let spawner = executor.spawner();
-		let runtime = Arc::new(SigningHostRuntime::new(platform.clone(), signing, spawner.clone()));
+		let runtime =
+			Arc::new(HostRuntime::<SigningHost>::new(platform.clone(), signing, spawner.clone()));
 		assert!(
 			runtime.worker_ledger().install_worker_controller(platform.clone()),
 			"a freshly built runtime installs its worker controller once"
@@ -205,6 +206,11 @@ impl NativeTrUApiHostRuntime {
 			"a freshly built runtime installs its encrypted storage once"
 		);
 		runtime.start_core_services();
+		if let Some(secret) = runtime_config.device_encryption_key {
+			futures::executor::block_on(runtime.adopt_device_encryption_key(secret)).map_err(
+				|err| NativeRuntimeConfigError::DeviceEncryptionKeyAdoption { reason: err.reason },
+			)?;
+		}
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
 				secret,
@@ -371,7 +377,7 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Funding session `intent` as the core holds it in full; see
-	/// [`SigningHostRuntime::funding_session`].
+	/// [`HostRuntime::funding_session`].
 	pub fn funding_session(
 		&self,
 		intent: String,
@@ -442,11 +448,8 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Offer the funding providers the remote configuration names; see
-	/// [`SigningHostRuntime::set_funding_provider_config`].
-	pub fn set_funding_provider_config(
-		&self,
-		published_names: Vec<String>,
-	) {
+	/// [`HostRuntime::set_funding_provider_config`].
+	pub fn set_funding_provider_config(&self, published_names: Vec<String>) {
 		self.runtime.set_funding_provider_config(published_names);
 	}
 
@@ -879,6 +882,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.statement_renewal_owner_key().map_err(HostRejection::from)
 	}
 
+	/// Read this device's X25519 encryption secret, the key behind
+	/// `SessionUiInfo.deviceEncPublicKey` that the host's own chat and device
+	/// sync encrypt with.
+	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
+		Ok(futures::executor::block_on(self.runtime.device_encryption_key())?)
+	}
+
 	/// Stop renewing one fixed statement account, returning whether the ledger
 	/// held it.
 	///
@@ -1047,13 +1057,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.pocket.remove(product_id, card_id).await?)
 	}
 
-	/// The newest face kept for a card, if one is.
+	/// The newest face kept for one side of a card, if one is.
 	pub async fn pocket_card_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
+		side: PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
-		Ok(self.pocket.face(product_id, card_id).await?)
+		Ok(self.pocket.face(product_id, card_id, side).await?)
 	}
 
 	/// Decides durable transactions from the chain until none is live, then
@@ -1104,7 +1115,7 @@ impl NativeTrUApiHostRuntime {
 /// One native executable connection opened from a process-owned host runtime.
 #[derive(uniffi::Object)]
 pub struct NativeProductExecution {
-	runtime: Arc<SigningHostRuntime>,
+	runtime: Arc<HostRuntime<SigningHost>>,
 	product: ProductContext,
 	platform: Arc<dyn crate::platform::Platform>,
 	chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
@@ -1278,12 +1289,6 @@ impl NativeProductExecution {
 		Ok(futures::executor::block_on(self.admin().get_session_chat_identity_key())?)
 	}
 
-	/// Read this device's X25519 encryption secret, for device sync against a
-	/// peer's `deviceEncPublicKey`. Generated and persisted on first read.
-	pub fn device_encryption_key(&self) -> Result<Bytes32, HostRejection> {
-		Ok(futures::executor::block_on(self.admin().get_device_encryption_key())?)
-	}
-
 	/// Resolve a product's hard-subtree public key for hosts naming the account
 	/// a review will sign with. Answers from the cache, the persisted slot, or
 	/// the Account Holder, and `timeout_ms` bounds that wait. Exceeding it is
@@ -1372,16 +1377,14 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
-		let card_id = match &request.context {
-			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
-			_ => None,
-		};
+		let card = card_side(&request.context);
 		let stream = control.render(request)?;
-		let observer = match card_id {
-			Some(card_id) => keeping_faces(
+		let observer = match card {
+			Some((card_id, side)) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
+				side,
 				observer,
 				&self.spawner,
 			),

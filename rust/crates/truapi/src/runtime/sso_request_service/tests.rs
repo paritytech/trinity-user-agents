@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
-	runtime::{ProductRuntimeHost, allowances},
+	runtime::{HostRole, ProductRuntimeHost, allowances},
 	test_support::{StubPlatform, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};
@@ -153,7 +153,7 @@ fn clearing_the_old_session_during_login_keeps_the_new_one_connected() {
 		(host.session_state.current(), states.lock().unwrap().last().cloned()),
 		(
 			Some(next.clone()),
-			Some(AuthState::Connected(Box::new(connected_session_ui_info(&next))))
+			Some(AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&next))))
 		)
 	);
 }
