@@ -967,15 +967,28 @@
     <string name="pocket_coinage_trace_quality_high">High</string>
 
     <string name="payment_privacy_mode_title">%1$s Privacy Mode</string>
+    <string name="payment_privacy_mode_subtitle">Choose the balance between coin quality and waiting time.</string>
+    <string name="payment_privacy_mode_coin_quality_title">What is coin quality?</string>
+    <string name="payment_privacy_mode_coin_quality_description">%1$s describes how %2$s coins of the same denomination are from one another.\n\nCoins with %3$s behave more like real coins: they are harder to tell apart based on their individual histories or distinguishing characteristics.</string>
+    <string name="payment_privacy_mode_coin_quality_highlight_coin_quality">Coin quality</string>
+    <string name="payment_privacy_mode_coin_quality_highlight_indistinguishable">indistinguishable</string>
+    <string name="payment_privacy_mode_coin_quality_highlight_higher_quality">higher quality</string>
+    <string name="payment_privacy_mode_why_it_matters_title">Why does it matter?</string>
+    <string name="payment_privacy_mode_why_it_matters_description">When coins of the %1$s are %2$s, they can be treated as interchangeable, regardless of their individual histories. This property is called %3$s.\n\nGreater %3$s means fewer differences between individual coins.</string>
+    <string name="payment_privacy_mode_why_it_matters_highlight_same_denomination">same denomination</string>
+    <string name="payment_privacy_mode_why_it_matters_highlight_fungibility">fungibility</string>
     <string name="payment_privacy_mode_fastest_label">Fastest</string>
-    <string name="payment_privacy_mode_fastest_description">Fastest payments, lower privacy</string>
-    <string name="payment_privacy_mode_fastest_accessibility">Fastest. Fastest payments, lower privacy.</string>
+    <string name="payment_privacy_mode_fastest_bullet_1">Minimises waiting time</string>
+    <string name="payment_privacy_mode_fastest_bullet_2">Funds typically ready in seconds</string>
+    <string name="payment_privacy_mode_fastest_bullet_3">Coins somewhat distinguishable</string>
     <string name="payment_privacy_mode_balanced_label">Balanced</string>
-    <string name="payment_privacy_mode_balanced_description">Stronger privacy, moderate speed</string>
-    <string name="payment_privacy_mode_balanced_accessibility">Balanced. Stronger privacy, moderate speed.</string>
+    <string name="payment_privacy_mode_balanced_bullet_1">Balances coin quality and waiting time</string>
+    <string name="payment_privacy_mode_balanced_bullet_2">Most funds ready in seconds, the rest in minutes</string>
+    <string name="payment_privacy_mode_balanced_bullet_3">Coins typically indistinguishable</string>
     <string name="payment_privacy_mode_most_private_label">Most Private</string>
-    <string name="payment_privacy_mode_most_private_description">Maximum privacy, lowest speed</string>
-    <string name="payment_privacy_mode_most_private_accessibility">Most private. Maximum privacy, lowest speed.</string>
+    <string name="payment_privacy_mode_most_private_bullet_1">Maximises coin quality</string>
+    <string name="payment_privacy_mode_most_private_bullet_2">Funds ready in minutes</string>
+    <string name="payment_privacy_mode_most_private_bullet_3">Coins practically indistinguishable</string>
     <string name="payment_privacy_mode_state_selected">Selected</string>
     <string name="payment_privacy_mode_state_not_selected">Not selected</string>
 
