@@ -20,6 +20,7 @@ if (connection) {
   freezeValue(window, '__HOST_WEBVIEW_MARK__', true);
   freezeValue(window, '__HOST_API_TRANSPORT__', Object.freeze(connection.transport));
   // SDKs predating the injected transport encode their own frames over this port.
+  // TODO: Remove the port once no deployed product ships an SDK below 0.32.
   Object.defineProperty(window, '__HOST_API_PORT__', {
     get: () => connection.legacyPort,
     set() {},
