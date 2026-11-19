@@ -98,6 +98,9 @@ each one would have:
 | Parity mainnet fork | `polkadot-test` | `true`    | nobody publishes a polkadot-test stack |
 | PCF production      | `polkadot`      | `true`    | same as `stacks/polkadot.link`         |
 
+The mainnet-fork config can be added later, once someone publishes a polkadot-test stack and we know its key and URL.
+Nothing else in this proposal depends on it.
+
 ## The build step
 
 Every host runs the same command as part of its build:
@@ -240,7 +243,3 @@ For the dotli owners:
    format?
 4. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
    should its build run the `truapi-host` binary, or should `trinity-stack update` learn `--config`?
-
-For whoever runs the stacks:
-
-5. Who will publish polkadot-test, and under which key and URL? We cannot write the mainnet-fork config until we know.
