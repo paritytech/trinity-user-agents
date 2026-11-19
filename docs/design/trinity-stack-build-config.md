@@ -15,16 +15,22 @@ Right now each host decides in code which stack it runs. iOS switches on compile
 `TestnetEnvironment` to a stack, and dotli keeps a hand-written table. If PCF or anyone else wants to ship a different
 stack, they have to change that code.
 
-This is how a stack gets into the iOS and Android apps today. Every build carries the descriptors of all three stacks,
-and the code picks one of them when the app starts:
+This is how a stack gets into a host today. All three hosts work the same way: the build carries the descriptors of
+three stacks, and code picks one of them at run time. The mobile apps take their descriptors from `stacks/` in this
+repository. dotli keeps its own copies in `packages/config/.trinity/`, and its deployment sets `VITE_NETWORKS` to say
+which of them the page offers.
 
 ```mermaid
 flowchart LR
-  S["stacks/ in this repository<br/>descriptors of three stacks<br/>refreshed by a weekly job"]
-  B["app build<br/>copies all three into the app"]
-  C["code in the app picks one<br/>iOS: compiler flags<br/>Android: TestnetEnvironment"]
+  S1["stacks/ in this repository<br/>descriptors of three stacks<br/>refreshed by a weekly job"]
+  B1["iOS and Android build<br/>copies all three into the app"]
+  C1["code in the app picks one<br/>iOS: compiler flags<br/>Android: TestnetEnvironment"]
+  S2[".trinity/ in dotli<br/>descriptors of three stacks<br/>updated with trinity-stack update"]
+  B2["dotli build<br/>bundles all three"]
+  C2["loadStack.ts picks one<br/>from the networks in VITE_NETWORKS<br/>and sets reserved values from a table"]
   K["core"]
-  S --> B --> C --> K
+  S1 --> B1 --> C1 --> K
+  S2 --> B2 --> C2 --> K
 ```
 
 [RFC 2](https://github.com/paritytech/trinity-user-agents/pull/1564) moves this choice into the build's configuration.
