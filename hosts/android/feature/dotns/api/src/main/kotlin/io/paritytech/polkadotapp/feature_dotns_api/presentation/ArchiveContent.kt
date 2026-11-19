@@ -42,11 +42,7 @@ class ArchiveContent(
 }
 
 object DiskArchiveFiles : ArchiveFiles {
-    override fun list(dir: String): List<String> = File(dir).list()?.toList().orEmpty()
-
     override fun exists(path: String): Boolean = File(path).isFile
-
-    override fun readText(path: String): String? = File(path).takeIf(File::isFile)?.readText()
 
     override fun open(path: String): InputStream? = File(path).takeIf(File::isFile)?.inputStream()
 }
