@@ -92,23 +92,22 @@ internal fun ChatInputRow(
         ime = WindowInsets.ime,
         hiddenFraction = dockletHiddenFraction,
     )
-    val measuredModifier = Modifier
-        .fillMaxWidth()
-        .onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
+    val heightReporter = Modifier.onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
     if (inputState is ChatInputUiState.ExtensionCard) {
-        Box(modifier = measuredModifier.then(dockletLift)) { inputState.renderer.drawInputSlot() }
+        Box(modifier = Modifier.fillMaxWidth().then(dockletLift).then(heightReporter)) { inputState.renderer.drawInputSlot() }
         return
     }
     PolkadotSurface(
-        modifier = measuredModifier,
+        modifier = Modifier.fillMaxWidth(),
         brush = footerBackgroundBrush(inputState)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .then(dockletLift)
+                .then(heightReporter)
                 .navigationBarsPadding()
                 .imePadding()
-                .then(dockletLift)
         ) {
             when (inputState) {
                 is ChatInputUiState.SendMessage -> {
