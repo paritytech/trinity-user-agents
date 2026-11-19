@@ -2387,6 +2387,8 @@ export interface ProductStorage {
    * keeps one shared store removes every key starting with
    * `ProductStorageKey::owner_prefix`; a host that separates storage by
    * product drops that product's store. Values another product wrote stay.
+   * Every subscription to a removed key then sees it empty, as after
+   * `Self::clear`.
    */
   clearProduct(productId: ProductId): Promise<void>;
 

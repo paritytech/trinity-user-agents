@@ -834,7 +834,12 @@ pub trait ProductStorage: Send + Sync {
 	/// keeps one shared store removes every key starting with
 	/// [`ProductStorageKey::owner_prefix`]; a host that separates storage by
 	/// product drops that product's store. Values another product wrote stay.
-	async fn clear_product(&self, product_id: ProductId) -> Result<(), GenericError>;
+	/// Every subscription to a removed key then sees it empty, as after
+	/// [`Self::clear`].
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Emit `key`'s current value, then each later change from any of the
 	/// product's runtimes. `key` is namespaced exactly as [`Self::read`] takes

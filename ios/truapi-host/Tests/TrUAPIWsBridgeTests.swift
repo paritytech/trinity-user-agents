@@ -334,10 +334,6 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
     }
     
     func localStorageClear(key: String) throws { try storage.clear(key: key) }
-
-    func localStorageClearProduct(productId: ProductId) throws {
-        try storage.clearProduct(productId: productId)
-    }
 }
 
 // Conforms to `ChatHostBridge` so a new requirement there fails this job.

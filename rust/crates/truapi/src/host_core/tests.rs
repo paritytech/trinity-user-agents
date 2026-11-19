@@ -2258,7 +2258,8 @@ fn stored_values(platform: &StubPlatform, keys: [&str; 2]) -> [Option<Vec<u8>>; 
 fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host_config, _) = runtime_config("myapp.dot");
-	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
 	let (cleared, kept) = seed_two_products(&platform);
 
 	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))

@@ -743,8 +743,11 @@ impl NativeTrUApiHostRuntime {
 
 	/// Forget one product: revoke its grants and Allow once answers, then
 	/// remove its values from product storage through
-	/// [`HostCallbacks::local_storage_clear_product`]. The wallet session and
+	/// [`HostCallbacks::clear_product_storage`]. The wallet session and
 	/// other products are kept.
+	///
+	/// Stop the product's executions first: a value a running execution
+	/// writes after the clear is kept.
 	pub async fn clear_product_state(&self, product_id: ProductId) -> Result<(), HostRejection> {
 		self.runtime
 			.clear_product_state(&product_id)

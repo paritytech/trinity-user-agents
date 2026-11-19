@@ -654,6 +654,8 @@ fn product_storage_uses_safe_per_product_files() {
 	assert_eq!(localhost_value, Some(b"light".to_vec()));
 }
 
+// Clearing removes the product's file rather than leaving an empty one, and
+// writes none for a product that never stored anything.
 #[test]
 fn a_cleared_product_stays_cleared_after_a_restart() {
 	let temporary = tempdir().expect("create product storage root");
@@ -679,8 +681,14 @@ fn a_cleared_product_stays_cleared_after_a_restart() {
 			.clear_product(cleared.product_id().clone())
 			.await
 			.expect("clearing again is Ok");
+		platform
+			.clear_product(ProductId::for_test("never.dot"))
+			.await
+			.expect("clearing a product that never stored is Ok");
 	});
 
+	let directory = temporary.path().join("storage").join("test");
+	assert_eq!(fs::read_dir(&directory).expect("list product storage").count(), 1);
 	drop(platform);
 	let restored = open();
 	let values = futures::executor::block_on(async {

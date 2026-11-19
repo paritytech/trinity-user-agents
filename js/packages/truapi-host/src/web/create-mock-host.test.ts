@@ -79,6 +79,8 @@ describe("createMockHost callbacks", () => {
     const neighbour = "truapi:product-storage:v1:16:myapp.dotapp.dot:theme";
     await storage.write(cleared, new Uint8Array([1]));
     await storage.write(neighbour, new Uint8Array([2]));
+    const updates = storage.subscribeStorage(cleared)[Symbol.asyncIterator]();
+    await updates.next();
 
     await storage.clearProduct(asProductId("myapp.dot"));
 
@@ -86,6 +88,8 @@ describe("createMockHost callbacks", () => {
       await storage.read(cleared),
       await storage.read(neighbour),
     ]).toEqual([undefined, new Uint8Array([2])]);
+    // A running product following the key must not keep the deleted value.
+    expect(await drain(updates, 1)).toEqual([ok({ value: undefined })]);
   });
 
   it("core storage round-trips per slot", async () => {

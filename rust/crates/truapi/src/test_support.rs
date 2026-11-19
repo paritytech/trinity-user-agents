@@ -1148,15 +1148,25 @@ impl PlatformProductStorage for StubPlatform {
 		self.push_storage_change(&key, None);
 		Ok(())
 	}
-	async fn clear_product(&self, product_id: ProductId) -> Result<(), v01::GenericError> {
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
 		if let Some(reason) = self.local_storage_error {
-			return Err(v01::GenericError { reason: reason.to_string() });
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
 		}
 		let owned = ProductStorageKey::owner_prefix(&product_id);
-		self.local_storage
+		let keys: Vec<String> = self
+			.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.retain(|key, _| !key.starts_with(&owned));
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in keys {
+			self.clear(key).await?;
+		}
 		Ok(())
 	}
 

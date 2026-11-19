@@ -637,7 +637,7 @@ impl crate::platform::ProductStorage for WasmPlatform {
     async fn clear_product(
         &self,
         product_id: truapi::ProductId,
-    ) -> Result<(), latest::GenericError> {
+    ) -> Result<(), truapi::v01::HostLocalStorageReadError> {
         invoke_unit(
             &self.bridge.clear_product,
             vec![JsValue::from_str(product_id.as_str())],

@@ -77,7 +77,7 @@ function normalizePermissionPolicy(
 }
 
 /** The core's product-storage key prefix, up to and including its version. */
-const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
+const CORE_PRODUCT_STORAGE_PREFIX = "truapi:product-storage:v1:";
 
 /**
  * The prefix of every key the core hands the host for `productId`'s values,
@@ -87,7 +87,7 @@ const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
  */
 function coreProductStorageOwnerPrefix(productId: ProductId): string {
   const length = new TextEncoder().encode(productId).length;
-  return `truapi:product-storage:v1:${length}:${productId}:`;
+  return `${CORE_PRODUCT_STORAGE_PREFIX}${length}:${productId}:`;
 }
 
 /**
@@ -104,9 +104,8 @@ function coreProductStorageOwnerPrefix(productId: ProductId): string {
  * where the id ends, not the next separator.
  */
 export function coreProductStorageKey(stored: string): string | undefined {
-  const prefix = CORE_PRODUCT_STORAGE_PREFIX.exec(stored);
-  if (!prefix) return undefined;
-  const rest = stored.slice(prefix[0].length);
+  if (!stored.startsWith(CORE_PRODUCT_STORAGE_PREFIX)) return undefined;
+  const rest = stored.slice(CORE_PRODUCT_STORAGE_PREFIX.length);
   const separator = rest.indexOf(":");
   if (separator < 0) return undefined;
   const length = Number(rest.slice(0, separator));
@@ -1129,9 +1128,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
       async clearProduct(productId) {
         if (faults.storageError) throw new Error(faults.storageError);
-        const owned = productKey(coreProductStorageOwnerPrefix(productId));
+        const owned = coreProductStorageOwnerPrefix(productId);
         for (const stored of [...storage.keys()]) {
-          if (stored.startsWith(owned)) storage.delete(stored);
+          if (stored.startsWith(productKey(owned))) storage.delete(stored);
+        }
+        for (const key of [...storageSubscribers.keys()]) {
+          if (key.startsWith(owned)) publishStorage(key, undefined);
         }
       },
       subscribeStorage(key) {

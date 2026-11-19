@@ -10,7 +10,7 @@ use crate::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProviderError, StackFetchRequest, StackFetchResponse,
+		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest, StackFetchResponse,
 		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
@@ -349,8 +349,14 @@ impl ProductStorage for CallbackPlatform {
 		Ok(())
 	}
 
-	async fn clear_product(&self, product_id: ProductId) -> Result<(), v01::GenericError> {
-		Ok(self.callbacks.local_storage_clear_product(product_id).await?)
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.callbacks.clear_product_storage(product_id).await?;
+		self.storage_events.notify_storage_cleared_under(&owned);
+		Ok(())
 	}
 
 	fn subscribe_storage(

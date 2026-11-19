@@ -167,7 +167,8 @@ each product connection. Role-specific operations live only on the matching hand
 the values it wrote to product storage, through `ProductStorage::clear_product`,
 without touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
-a compile error, not a runtime `Unavailable`.
+a compile error, not a runtime `Unavailable`. Stop a product's executions
+before clearing its state, since a value written after the clear is kept.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
