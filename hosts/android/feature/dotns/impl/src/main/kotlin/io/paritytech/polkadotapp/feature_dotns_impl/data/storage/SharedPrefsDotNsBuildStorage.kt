@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_dotns_impl.data.storage
 import android.content.Context
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.DotNsNameVersion
+import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.DotNsBuild
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.Json
@@ -19,19 +19,23 @@ class SharedPrefsDotNsBuildStorage @Inject constructor(
 
     private val builds by lazy { MutableStateFlow(readAll()) }
 
-    override fun get(dotNsName: String): DotNsNameVersion? = builds.value[dotNsName]
+    override fun get(dotNsName: String): DotNsBuild? = builds.value[dotNsName]
 
-    override fun put(dotNsName: String, served: DotNsNameVersion) {
-        prefs.edit { putString(dotNsName, Json.encodeToString(served)) }
-        builds.update { it + (dotNsName to served) }
+    override fun putAll(builds: Map<String, DotNsBuild>) {
+        prefs.edit {
+            builds.forEach { (dotNsName, build) -> putString(dotNsName, Json.encodeToString(build)) }
+        }
+        this.builds.update { it + builds }
     }
+
+    override fun all(): Map<String, DotNsBuild> = builds.value
 
     override fun clear() {
         prefs.edit { clear() }
         builds.value = emptyMap()
     }
 
-    private fun readAll(): Map<String, DotNsNameVersion> {
+    private fun readAll(): Map<String, DotNsBuild> {
         val storedBuilds = prefs.all.mapValues { (_, value) -> (value as? String)?.let(::decodeOrNull) }
         val unreadableNames = storedBuilds.filterValues { it == null }.keys
 
@@ -43,8 +47,8 @@ class SharedPrefsDotNsBuildStorage @Inject constructor(
         return storedBuilds.mapNotNull { (dotNsName, build) -> build?.let { dotNsName to it } }.toMap()
     }
 
-    private fun decodeOrNull(encoded: String): DotNsNameVersion? {
-        return runCatching { Json.decodeFromString<DotNsNameVersion>(encoded) }.getOrNull()
+    private fun decodeOrNull(encoded: String): DotNsBuild? {
+        return runCatching { Json.decodeFromString<DotNsBuild>(encoded) }.getOrNull()
     }
 
     private companion object {

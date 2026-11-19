@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
 import io.novasama.substrate_sdk_android.extensions.fromHex
+import io.paritytech.polkadotapp.common.utils.KeyedMutex
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
@@ -14,34 +15,44 @@ import io.paritytech.polkadotapp.tools_car_parser.CarParser
 import timber.log.Timber
 import java.io.File
 import javax.inject.Inject
+import javax.inject.Singleton
 
+@Singleton
 internal class DotNsContentDownloader @Inject constructor(
     private val carFetcher: CarFetcher,
     private val contentStorage: DotNsContentStorage,
     private val progressRegistry: DotNsLoadProgressRegistry,
     private val networkStateService: NetworkStateService,
 ) {
-    suspend fun download(contentHash: ContentHash, retryPolicy: NetworkRetryPolicy, progressDomain: String): Result<File> {
-        contentStorage.getContentDirectory(contentHash)?.let { directory ->
-            progressRegistry.markCompleted(progressDomain)
-            return Result.success(directory)
-        }
+    private val downloadLocks = KeyedMutex<ContentHash>()
 
+    suspend fun download(contentHash: ContentHash, retryPolicy: NetworkRetryPolicy, progressDomain: String?): Result<File> {
+        return downloadLocks.withLock(contentHash) {
+            contentStorage.getContentDirectory(contentHash)?.let { directory ->
+                progressDomain?.let(progressRegistry::markCompleted)
+                return@withLock Result.success(directory)
+            }
+
+            fetchAndUnpack(contentHash, retryPolicy, progressDomain)
+        }
+    }
+
+    private suspend fun fetchAndUnpack(contentHash: ContentHash, retryPolicy: NetworkRetryPolicy, progressDomain: String?): Result<File> {
         Timber.d("content $contentHash not on the device, fetching CAR")
-        progressRegistry.markResolving(progressDomain)
+        progressDomain?.let(progressRegistry::markResolving)
 
         return networkStateService.retrying(retryPolicy, ::isWorthRetrying) {
             carFetcher.fetchCarToFile(
                 contentHash = contentHash.fromHex(),
-                onProgress = { downloaded, total -> progressRegistry.markDownloadProgress(progressDomain, downloaded, total) }
+                onProgress = { downloaded, total -> progressDomain?.let { progressRegistry.markDownloadProgress(it, downloaded, total) } }
             )
         }
             .mapCatching { carFile ->
-                progressRegistry.markUnpacking(progressDomain)
+                progressDomain?.let(progressRegistry::markUnpacking)
                 unpack(contentHash, carFile)
             }
             .requireNotNull { IllegalStateException("nothing unpacked for $contentHash") }
-            .onSuccess { progressRegistry.markCompleted(progressDomain) }
+            .onSuccess { progressDomain?.let(progressRegistry::markCompleted) }
             .logFailure("failed to download $contentHash")
     }
 
