@@ -4,7 +4,11 @@ import { SYSTEM_HANDSHAKE } from "./generated/wire-table.js";
 import {
     ConnectionResetError,
     MESSAGE_TYPE_REQUEST,
+    MESSAGE_TYPE_RESPONSE,
+    PROTOCOL_ERROR_METHOD_ID,
+    PROTOCOL_ERROR_TRAIT_ID,
     decodeWireMessage,
+    encodeWireMessage,
     type MethodIds,
 } from "./transport.js";
 
@@ -23,6 +27,7 @@ function installHost(initialStatus: ConnectionStatus = "connecting") {
     let ready: Promise<void> = Promise.resolve();
     let refused = false;
     let reset: ((error: Error) => void) | undefined;
+    let receive: ((frame: Uint8Array) => void) | undefined;
     let status = initialStatus;
     let frameSubscriptions = 0;
     let statusSubscriptions = 0;
@@ -31,8 +36,9 @@ function installHost(initialStatus: ConnectionStatus = "connecting") {
             postMessage(frame: Uint8Array) {
                 sent.push(frame);
             },
-            subscribe() {
+            subscribe(callback: (frame: Uint8Array) => void) {
                 frameSubscriptions++;
+                receive = callback;
                 return () => {};
             },
             subscribeReset(callback: (error: Error) => void) {
@@ -79,6 +85,9 @@ function installHost(initialStatus: ConnectionStatus = "connecting") {
         },
         reset(error: Error) {
             reset?.(error);
+        },
+        deliver(frame: Uint8Array) {
+            receive?.(frame);
         },
         status(next: ConnectionStatus) {
             status = next;
@@ -158,6 +167,36 @@ describe("host-injected transport adoption", () => {
             reset: failures.map((failure) => failure instanceof ConnectionResetError),
             client: sandbox.getClientSync(),
         }).toEqual({ reset: [true, true], client });
+    });
+
+    // The host keeps its connection, and this client is never rebuilt, so a
+    // frame it cannot read must not close it for the rest of the page.
+    it("fails the calls in flight on an unreadable protocol error and keeps the client", async () => {
+        host = installHost("connected");
+        const sandbox = await importSandbox();
+        const client = sandbox.getClientSync()!;
+        const inFlight = Promise.resolve(client.system.handshake()).catch(
+            (error: unknown) => error,
+        );
+        await settle();
+        host.deliver(
+            encodeWireMessage({
+                requestId: "p:1",
+                payload: {
+                    traitId: PROTOCOL_ERROR_TRAIT_ID,
+                    methodId: PROTOCOL_ERROR_METHOD_ID,
+                    messageType: MESSAGE_TYPE_RESPONSE,
+                    value: new Uint8Array(),
+                },
+            })._unsafeUnwrap(),
+        );
+        const failure = await inFlight;
+        void client.system.handshake();
+        await settle();
+        expect({
+            reset: failure instanceof ConnectionResetError,
+            sent: host.sent.length,
+        }).toEqual({ reset: true, sent: 2 });
     });
 
     it("adopts the injected transport before an iframe can negotiate another connection", async () => {

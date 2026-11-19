@@ -339,18 +339,22 @@ function createSandboxProvider(
  * {@link ConnectionResetError} for products that check the class.
  */
 function createInjectedClient(host: HostTransport): TrUApiClient {
+  let reset: ((cause: Error) => void) | undefined;
   return createClient(
     createTransport(
       {
         postMessage: (frame) => host.postMessage(frame),
         subscribe: (callback) => host.subscribe(callback),
-        subscribeReset: (callback) =>
-          host.subscribeReset((cause) =>
-            callback(new ConnectionResetError({ cause })),
-          ),
+        subscribeReset: (callback) => {
+          reset = (cause) => callback(new ConnectionResetError({ cause }));
+          return host.subscribeReset(reset);
+        },
         dispose() {},
       },
       {
+        // The host keeps its connection and this client is never rebuilt, so
+        // an unreadable frame ends the work in flight instead of the client.
+        onProtocolError: (error) => reset?.(error),
         prepare: async (ids) => {
           try {
             await host.prepare(ids);
