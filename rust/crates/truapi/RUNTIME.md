@@ -14,7 +14,7 @@ protocol API into a working host. It owns:
 - the auto-generated dispatcher/wire-table tables shipped under
   [`crate::generated`]
 - the host embedding surface: one long-lived role handle
-  (`PairingHostRuntime` or `SigningHostRuntime`) per host application, exposing
+  (`HostRuntime<PairingHost>` or `HostRuntime<SigningHost>`) per host application, exposing
   shared [`RuntimeServices`] plus one [`ProductRuntime`] per product connection
 
 ## Architecture
@@ -157,8 +157,8 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
-The embedder builds a role handle, `PairingHostRuntime::new(...)` or
-`SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
+The embedder builds a role handle, `HostRuntime::<PairingHost>::new(...)` or
+`HostRuntime::<SigningHost>::new(...)`, then calls `product_runtime(product, sink)` for
 each product connection. Role-specific operations live only on the matching handle:
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
@@ -232,7 +232,7 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+it on iOS and Android, and `HostRuntime::<SigningHost>::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
 `EncryptedStorage` that keeps NFT receive key and deposited item secrets with
@@ -241,13 +241,17 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each. The host lists the cards it
+cards in the Pocket and the newest face of each side. The host lists the cards it
 pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
 approves with `add_pocket_card`, and follows the collection with
 `observe_pocket_cards`. A card no longer pinned stays only if the user added
 it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, at most every two seconds and once more
-when the render stops, so a card has a face offline and at cold start.
+`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+render, at most every two seconds and once more when the render stops, so a
+card has both sides offline and at cold start. `pocket_card_face` reads a side.
+A product connection's renderer actions leave out a press on a back that
+connection has not drawn: a product whose SDK predates `PocketCardBack` cannot
+decode one and would lose its whole action stream.
 
 It also keeps materials (`materials` module), the text behind each material
 ID a renderer tree names. The core reads a material it lacks from Bulletin
@@ -280,7 +284,7 @@ Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
-embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+embedder calls `HostRuntime::<SigningHost>::set_encrypted_storage`. Web hosts do not
 compile it.
 
 ### Durable transactions
@@ -378,7 +382,7 @@ a withdrawn request posts no response. See the
 
 When a device finishes pairing, the signing host reports it to the embedder's
 [`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
-once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
+once through `HostRuntime::<SigningHost>::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and
 `disconnect_paired_host` take.
@@ -782,7 +786,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
   `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
-  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  Widget, and turn that card to its back or front. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`

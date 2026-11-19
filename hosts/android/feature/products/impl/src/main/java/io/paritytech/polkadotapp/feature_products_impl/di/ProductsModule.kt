@@ -145,6 +145,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIOurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -161,6 +162,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotMa
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -171,6 +173,9 @@ import javax.inject.Singleton
 internal interface ProductsModule {
     @Multibinds
     fun messageRenderObservers(): Set<ProductMessageRenderObserver>
+
+    @Binds
+    fun bindOurDeviceKeypairProvider(impl: TrUAPIOurDeviceKeypairProvider): OurDeviceKeypairProvider
 
     @Binds
     @Singleton

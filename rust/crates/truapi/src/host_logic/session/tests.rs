@@ -9,7 +9,7 @@ fn info(pubkey_byte: u8) -> SessionInfo {
 		root_entropy_source: None,
 		identity_account_id: None,
 		identity_chat_private_key: None,
-		device_enc_public_key: None,
+		peer_device_enc_public_key: None,
 		lite_username: Some("alice".to_string()),
 		full_username: None,
 	}
@@ -76,7 +76,7 @@ fn a_six_field_session_decodes_in_every_username_shape() {
 				decoded.full_username.as_deref(),
 				decoded.identity_account_id,
 				decoded.identity_chat_private_key,
-				decoded.device_enc_public_key,
+				decoded.peer_device_enc_public_key,
 			),
 			([0x11; 32], lite, full, Some([0x22; 32]), None, None),
 			"{label}: fields did not survive the older layout"
@@ -94,7 +94,7 @@ fn a_six_field_session_decodes_in_every_username_shape() {
 fn a_written_session_matches_the_eight_field_layout() {
 	let mut live = info(0xa1);
 	live.identity_chat_private_key = Some([0xa2; 32]);
-	live.device_enc_public_key = Some([0xa3; 32]);
+	live.peer_device_enc_public_key = Some([0xa3; 32]);
 
 	const GUIDANCE: &str = "SessionInfo no longer matches the eight-field layout. Mint a \
          new PERSISTED_SESSION version and give it its own frozen layout; do not change \
@@ -164,7 +164,7 @@ fn an_untagged_eight_field_session_keeps_its_identity_material() {
 		(
 			decoded.public_key,
 			decoded.identity_chat_private_key,
-			decoded.device_enc_public_key,
+			decoded.peer_device_enc_public_key,
 			decoded.lite_username.as_deref(),
 		),
 		([0x77; 32], Some([0x88; 32]), Some([0x99; 32]), Some("alice.dot")),
@@ -188,7 +188,7 @@ fn an_untagged_session_whose_key_starts_with_the_tag_byte_still_decodes() {
 fn a_persisted_session_round_trips_through_the_tagged_layout() {
 	let mut original = info(0x33);
 	original.identity_chat_private_key = Some([0x44; 32]);
-	original.device_enc_public_key = Some([0x55; 32]);
+	original.peer_device_enc_public_key = Some([0x55; 32]);
 
 	let blob = encode_persisted_session(&original);
 
@@ -346,7 +346,7 @@ fn external_paired_session_uses_canonical_shape_and_exact_fields() {
 		root_entropy_source: [12; 32],
 		identity_account_id: [5; 32],
 		identity_chat_private_key: Some([13; 32]),
-		device_enc_public_key: Some([14; 32]),
+		peer_device_enc_public_key: Some([14; 32]),
 	};
 
 	let blob = encode_external_paired_session(external);
@@ -371,7 +371,7 @@ fn external_paired_session_uses_canonical_shape_and_exact_fields() {
 			root_entropy_source: Some([12; 32]),
 			identity_account_id: Some([5; 32]),
 			identity_chat_private_key: Some([13; 32]),
-			device_enc_public_key: Some([14; 32]),
+			peer_device_enc_public_key: Some([14; 32]),
 			lite_username: None,
 			full_username: None,
 		}
