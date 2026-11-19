@@ -30,7 +30,12 @@ internal fun Modifier.liftAboveDocklet(
     layout(placeable.width, height) { placeable.place(0, 0) }
 }
 
-private fun Density.visibleLiftPx(barInsets: WindowInsets, navigationBars: WindowInsets, ime: WindowInsets, hiddenFraction: Float): Int {
+private fun Density.visibleLiftPx(
+    barInsets: WindowInsets,
+    navigationBars: WindowInsets,
+    ime: WindowInsets,
+    hiddenFraction: Float,
+): Int {
     val systemBottom = maxOf(navigationBars.getBottom(this), ime.getBottom(this))
     return visibleDockletBandPx(barInsets.getBottom(this), systemBottom, hiddenFraction)
 }
