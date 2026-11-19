@@ -72,7 +72,7 @@ pub type Bytes64 = [u8; 64];
 /// from the `latest` module `versioned_type!` generates beside each service's
 /// envelopes. Types nested in a payload are re-exported here by name.
 pub mod latest {
-	use crate::versioned::{self, Versioned};
+	use crate::versioned::Versioned;
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
@@ -88,18 +88,19 @@ pub mod latest {
 		FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail,
 		FundingReceived, FundingUpdate, GenericError, HorizontalAlignment, HostPlatform,
 		HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource,
-		MaterialFailure, MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES,
-		NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
-		NftPurseChequeRecord, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
-		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
-		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, Parameter, PaymentTopUpSource, PocketCard, ProductAccount,
-		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
-		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		LegacyAccountTxPayload, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
+		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
+		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
+		PocketCard, PreimageSubmitError, ProductAccount, ProductAccountId, ProductAccountTxPayload,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission, RendererNode,
+		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{ChatRoomFooter, RenderContext};
@@ -116,14 +117,6 @@ pub mod latest {
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
-
-	/// Transaction creation payload for a legacy account.
-	pub type LegacyAccountTxPayload =
-		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
-	/// Preimage submission error.
-	pub type PreimageSubmitError = LatestOf<versioned::preimage::RemotePreimageSubmitError>;
-	/// Transaction creation payload for a product account.
-	pub type ProductAccountTxPayload = LatestOf<versioned::signing::HostCreateTransactionRequest>;
 }
 
 pub use truapi_macros::{service, wire, wire_trait};
