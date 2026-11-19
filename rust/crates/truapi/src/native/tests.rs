@@ -7,7 +7,7 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProductStorageKey, ProviderError, StackFetchRequest,
 	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
 	UserConfirmationReview,
 };
@@ -422,6 +422,12 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
+	async fn clear_product_storage(
+		&self,
+		_product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
 	async fn begin_operation(
 		&self,
 		_product_id: ProductId,
@@ -548,6 +554,32 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
 		Some(Some(Ok(v01::HostLocalStorageChangeItem { value: Some(vec![1, 2, 3]) }))),
 		"a write the product made is a change its own subscribers must see"
 	);
+}
+
+// A running product follows its keys; once its storage is cleared it must stop
+// seeing the values the host just deleted, while a product whose id extends
+// the cleared one keeps its own.
+#[test]
+fn clearing_a_product_reaches_its_storage_subscriptions_only() {
+	let (_callbacks, _events, platform) = event_platform();
+	let cleared = ProductId::for_test("myapp.dot");
+	let other = ProductId::for_test("myapp.dotapp.dot");
+	let mut own =
+		platform.subscribe_storage(ProductStorageKey::new(cleared.clone(), "progress").encode());
+	let mut others =
+		platform.subscribe_storage(ProductStorageKey::new(other, "progress").encode());
+	for subscription in [&mut own, &mut others] {
+		futures::executor::block_on(futures::StreamExt::next(subscription));
+	}
+
+	futures::executor::block_on(ProductStorage::clear_product(&platform, cleared))
+		.expect("clear product");
+
+	assert_eq!(
+		futures::FutureExt::now_or_never(futures::StreamExt::next(&mut own)),
+		Some(Some(Ok(v01::HostLocalStorageChangeItem { value: None })))
+	);
+	assert_eq!(futures::FutureExt::now_or_never(futures::StreamExt::next(&mut others)), None);
 }
 
 pub fn native_host_runtime_config() -> HostRuntimeConfig {
@@ -2326,6 +2358,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
+		async fn clear_product_storage(
+			&self,
+			_product_id: ProductId,
+		) -> Result<(), v01::HostLocalStorageReadError> {
+			Ok(())
+		}
 		async fn begin_operation(
 			&self,
 			_product_id: ProductId,
@@ -2527,6 +2565,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		async fn local_storage_clear(
 			&self,
 			_key: String,
+		) -> Result<(), v01::HostLocalStorageReadError> {
+			Ok(())
+		}
+		async fn clear_product_storage(
+			&self,
+			_product_id: ProductId,
 		) -> Result<(), v01::HostLocalStorageReadError> {
 			Ok(())
 		}
