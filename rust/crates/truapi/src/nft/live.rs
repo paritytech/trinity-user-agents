@@ -138,7 +138,7 @@ struct LivePurses {
 
 fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	let (dir, db) = open_temporary_core_db();
-	let keys = Arc::new(FixedEntropy::new(rand::random::<[u8; 16]>().to_vec()));
+	let keys = Arc::new(FixedEntropy::new(rand::random::<[u8; 16]>()));
 	let imported = ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default()));
 	let storage: Arc<dyn WatchedStorage> = Arc::new(chain.clone());
 	let heads = Arc::new(chain.clone());

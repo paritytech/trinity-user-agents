@@ -47,12 +47,13 @@ pub fn test_ledger(db: Db) -> NftLedger {
 /// What [`test_ledger`] runs on, for tests that replace one part. Transfers are
 /// registered with an engine that never builds them.
 pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
+	let entropy = Arc::new(FixedEntropy::new(TEST_ENTROPY));
 	NftLedgerDeps {
 		db: db.clone(),
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
-		keys: Arc::new(FixedEntropy::new(TEST_ENTROPY.to_vec())),
+		keys: entropy.clone(),
 		durable: unbuilt_transfers_engine(db),
-		secrets: Arc::new(FixedEntropy::new(TEST_ENTROPY.to_vec())),
+		secrets: entropy,
 		imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 		recovery: Arc::new(NftRecovery::off()),
 	}
@@ -104,7 +105,7 @@ pub struct FixedEntropy(RootEntropy);
 
 impl FixedEntropy {
 	/// Derives every key from `entropy`.
-	pub fn new(entropy: Vec<u8>) -> Self {
+	pub fn new(entropy: impl Into<Vec<u8>>) -> Self {
 		Self(RootEntropy::new(entropy))
 	}
 }
@@ -140,7 +141,7 @@ const SENDER_ENTROPY: [u8; 16] = [0x77; 16];
 pub fn imported_test_key(index: u32) -> ImportedItemKey {
 	let slot =
 		ItemSlot { purse: PurseId(0), installation: TEST_INSTALLATION, index: ItemIndex(index) };
-	let sender = RootEntropy::new(SENDER_ENTROPY.to_vec());
+	let sender = RootEntropy::new(SENDER_ENTROPY);
 	let secret = sender.item_secrets(&[slot]).unwrap().remove(0);
 	ImportedItemKey::from_secret(secret).expect("a derived secret is valid")
 }

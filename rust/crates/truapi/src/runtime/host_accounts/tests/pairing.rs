@@ -37,16 +37,16 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	);
 	install_pairing_session(&host, session.clone());
 
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root_entropy = RootEntropy::new([0xAB; 16]);
+	let root = root_entropy.derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
-	let domain = RootEntropy::new(vec![0xAB; 16]).derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let domain = root_entropy
+		.derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	futures::executor::block_on(remember_auto_key(
 		&pairing_host,
 		&session,
@@ -182,8 +182,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 	);
 	install_pairing_session(&host, session.clone());
 	let stale_revision = grant_revision(pairing_host.accounts());
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -263,8 +262,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	install_pairing_session(&host, session.clone());
 	cache_test_product_subtree(&host, &session, "other.dot");
 	let stale_revision = grant_revision(pairing_host.accounts());
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let first = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -411,8 +409,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	);
 	install_pairing_session(&host, session.clone());
 	let grant_revision = grant_revision(pairing_host.accounts());
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -473,8 +470,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	install_pairing_session(&host, session.clone());
 	request_auto_signing(&host, "auto-replace");
 	let grant_revision = grant_revision(pairing_host.accounts());
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -586,8 +582,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 	);
 	install_pairing_session(&host, session.clone());
 	let grant_revision = grant_revision(pairing_host.accounts());
-	let allowance =
-		RootEntropy::new(vec![0x42; 32]).derive_root_keypair().unwrap();
+	let allowance = RootEntropy::new([0x42; 32]).derive_root_keypair().unwrap();
 	futures::executor::block_on(retain_allowance_key(
 		&pairing_host,
 		AllowanceResource::Bulletin,

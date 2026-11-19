@@ -6,9 +6,7 @@ use crate::{
 	},
 	host_logic::{
 		root_entropy::RootEntropy,
-		sso::pairing::{
-			PairingBootstrap, establish_sso_session_info,
-		},
+		sso::pairing::{PairingBootstrap, establish_sso_session_info},
 		statement_store::SUBMIT_STATEMENT_METHOD,
 		worker::WorkerTransition,
 		x25519_seal::X25519PrivateKey,
@@ -2010,10 +2008,11 @@ fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer(
 		statement_account_id: [0x31; 32],
 		encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 	};
-	let identity =
-		RootEntropy::new(vec![0xab; 32]).derive_identity_keypair("testnet").expect("identity derivation succeeds");
-	let (_, responder_encryption_public_key) =
-		RootEntropy::new(vec![0xab; 32]).derive_x25519_keypair(b"sso");
+	let entropy = RootEntropy::new([0xab; 32]);
+	let identity = entropy
+		.derive_identity_keypair("testnet")
+		.expect("identity derivation succeeds");
+	let (_, responder_encryption_public_key) = entropy.derive_x25519_keypair(b"sso");
 	let pairing_session = establish_sso_session_info(
 		&PairingBootstrap {
 			deeplink: String::new(),

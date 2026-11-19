@@ -7,11 +7,8 @@ use super::{
 use crate::{
 	Spawner,
 	host_logic::{
+		product_account::{SR25519_SIGNING_CONTEXT, derive_product_keypair, index_bytes},
 		root_entropy::RootEntropy,
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_keypair, 
-			index_bytes,
-		},
 		statement_store::{MAX_MATCH_ANY_TOPICS, SUBMIT_STATEMENT_METHOD, TopicFilterKind},
 	},
 	platform::{CoreStorageKey, ProductContext},
@@ -129,7 +126,7 @@ fn statement_store_create_proof_signing_host_uses_product_key() {
 	let (host, _signing_host) = signing_host_runtime("myapp.dot");
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
-	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
 	let product_keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let expected_signer = product_keypair.public.to_bytes();
@@ -163,7 +160,7 @@ fn statement_store_create_proof_confirms_a_cross_product_account() {
 	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
-	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
 	let owner =
 		derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0)).unwrap();
 	let request = RemoteStatementStoreCreateProofRequest::V1(

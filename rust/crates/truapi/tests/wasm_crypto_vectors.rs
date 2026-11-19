@@ -88,7 +88,7 @@ fn sso_session() -> SsoSessionInfo {
 #[wasm_bindgen_test]
 fn product_account_and_entropy_vectors_match_mobile() {
 	let product_id = ProductId::for_test("myapp.dot");
-	let root = RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
 	let derived = derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap();
 	assert_eq!(
@@ -96,7 +96,7 @@ fn product_account_and_entropy_vectors_match_mobile() {
 		"1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
 	);
 
-	let entropy = RootEntropy::new(entropy_secret().to_vec())
+	let entropy = RootEntropy::new(entropy_secret())
 		.derive_product_entropy(&product_id, b"product-key")
 		.unwrap();
 	assert_eq!(

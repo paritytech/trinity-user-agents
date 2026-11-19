@@ -158,7 +158,8 @@ fn the_static_receive_secret_is_the_users_chat_key() {
 
 	let signed_in = authority.static_receive_secret().unwrap().public_key();
 
-	let chat_key = X25519PrivateKey::from(RootEntropy::new(ENTROPY.to_vec()).derive_identity_chat_private_key());
+	let chat_key =
+		X25519PrivateKey::from(RootEntropy::new(ENTROPY).derive_identity_chat_private_key());
 	assert_eq!(signed_in, chat_key.public_key());
 	assert!(matches!(signed_out, Err(AuthorityError::Disconnected)));
 }

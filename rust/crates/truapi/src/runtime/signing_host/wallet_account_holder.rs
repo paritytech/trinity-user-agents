@@ -322,9 +322,7 @@ impl WalletAccountHolder {
 		&self,
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
-		self.with_installed_keys(|keys| {
-			keys.entropy.item_keys(slots).map_err(AuthorityError::from)
-		})
+		self.with_installed_keys(|keys| keys.entropy.item_keys(slots).map_err(AuthorityError::from))
 	}
 
 	/// The signer for one item slot.
@@ -343,8 +341,7 @@ impl WalletAccountHolder {
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {
 		self.with_installed_keys(|keys| {
-			keys.entropy.item_secrets(slots)
-				.map_err(AuthorityError::from)
+			keys.entropy.item_secrets(slots).map_err(AuthorityError::from)
 		})
 	}
 
@@ -357,7 +354,8 @@ impl WalletAccountHolder {
 		indices: core::ops::Range<u32>,
 	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
 		self.with_installed_keys(|keys| {
-			keys.entropy.item_key_range(purse, installation, indices)
+			keys.entropy
+				.item_key_range(purse, installation, indices)
 				.map_err(AuthorityError::from)
 		})
 	}
@@ -448,7 +446,8 @@ impl WalletKeys {
 		&self,
 		handle: &ProductAccountId,
 	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
-		self.entropy.derive_ring_vrf_entropy(&handle.dot_ns_identifier, &handle.derivation_index)
+		self.entropy
+			.derive_ring_vrf_entropy(&handle.dot_ns_identifier, &handle.derivation_index)
 			.map(Zeroizing::new)
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })
 	}
@@ -474,7 +473,8 @@ impl WalletKeys {
 		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
-		self.entropy.derive_product_entropy(product_id, context)
+		self.entropy
+			.derive_product_entropy(product_id, context)
 			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
 
@@ -493,15 +493,19 @@ impl WalletKeys {
 		&self,
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		self.entropy.derive_sr25519_hard_path(&["allowance", "statement-store", product_id.as_str()],
-		)
+		self.entropy.derive_sr25519_hard_path(&[
+			"allowance",
+			"statement-store",
+			product_id.as_str(),
+		])
 	}
 
 	fn bulletin_allowance_key(
 		&self,
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		self.entropy.derive_sr25519_hard_path(&["allowance", "bulletin", product_id.as_str()])
+		self.entropy
+			.derive_sr25519_hard_path(&["allowance", "bulletin", product_id.as_str()])
 	}
 
 	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO

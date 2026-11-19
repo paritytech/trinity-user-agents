@@ -176,9 +176,7 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	// The signature has to verify against the key the activation entropy
 	// derives, not merely against whatever the runtime happens to hold: that is
 	// what makes this a signature by *the user's* product account.
-	let root = RootEntropy::new(ENTROPY.to_vec())
-		.derive_root_keypair()
-		.expect("root keypair derives");
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().expect("root keypair derives");
 	let keypair = derive_product_keypair(
 		&root,
 		&ProductId::for_test(PRODUCT_ID),

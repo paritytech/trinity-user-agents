@@ -7,10 +7,7 @@
 
 use thiserror::Error;
 
-use super::root_entropy::RootEntropy;
 use crate::platform::ProductId;
-
-const DOMAIN_SEPARATOR: &[u8] = b"product-entropy-derivation";
 
 /// Error deriving product-scoped entropy.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -21,24 +18,6 @@ pub enum ProductEntropyError {
 	/// Session has no entropy secret to derive from.
 	#[error("entropy secret is missing")]
 	MissingSecret,
-}
-
-impl RootEntropy {
-	/// Derive product-scoped entropy from the root entropy.
-	pub fn derive_product_entropy(
-		&self,
-		product_id: &ProductId,
-		key: &[u8],
-	) -> Result<[u8; 32], ProductEntropyError> {
-		derive_product_entropy_from_source(&self.root_entropy_source(), product_id, key)
-	}
-
-	/// Pre-hashed root entropy source (RFC-0007 layer 1). Signing hosts share this
-	/// value with paired hosts during the SSO handshake so both sides derive the
-	/// same product entropy.
-	pub fn root_entropy_source(&self) -> [u8; 32] {
-		self.keyed_hash(DOMAIN_SEPARATOR)
-	}
 }
 
 /// Derive product-scoped entropy when the session already stores the

@@ -1,7 +1,8 @@
 use super::*;
+use crate::host_logic::root_entropy::RootEntropy;
 
 fn fixture_root() -> Keypair {
-	RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap()
+	RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap()
 }
 
 #[test]
@@ -105,7 +106,7 @@ fn wire_index_derivation_matches_the_mobile_vector() {
 	// The JS export composes these two steps over a wire `DerivationIndex`
 	// so hosts never build the 32-byte chain code. Pin that composition
 	// against the same vector the internal `index_bytes` path produces.
-	let root = RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let subtree = derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot")).unwrap();
 	let derived = derive_product_public_key(
 		subtree.public.to_bytes(),
@@ -143,15 +144,16 @@ fn reserved_product_ids_cover_every_supported_network() {
 fn person_ring_vrf_entropy_matches_ios_vectors() {
 	let root_entropy: Vec<u8> = (1..=32).collect();
 	assert_eq!(
-		hex::encode(blake2b256_keyed(&root_entropy, RING_VRF_ROOT_KEY)),
+		hex::encode(blake2b256_keyed(&root_entropy, b"ring-vrf")),
 		"372b08255c7798fe3193756296005adc4c44adb9f3986fb718aa98a48b4bf725"
 	);
+	let root_entropy = RootEntropy::new(root_entropy);
 	assert_eq!(
-		hex::encode(RootEntropy::new(root_entropy.to_vec()).derive_full_person_ring_vrf_entropy("dot")),
+		hex::encode(root_entropy.derive_full_person_ring_vrf_entropy("dot")),
 		"c47086f94a7f4c05b7afd9f2339d3fea168f3823b5424ba1f7b31043d8ef60af"
 	);
 	assert_eq!(
-		hex::encode(RootEntropy::new(root_entropy.to_vec()).derive_lite_person_ring_vrf_entropy("dot")),
+		hex::encode(root_entropy.derive_lite_person_ring_vrf_entropy("dot")),
 		"8d7f5e1510a7e8d813887e100f5a260ec9de60e68695477b93360ee7e3d16a9f"
 	);
 }
@@ -162,7 +164,7 @@ fn person_ring_vrf_entropy_follows_the_network_suffix() {
 	// independent RFC-0022 implementation (`@web3-citizenship/accounts`
 	// `fullPersonRingVrfEntropy(entropy, tld)`), which is also what the
 	// iOS host derives; a `.dot` key is never a `.paseo` key.
-	let root_entropy: Vec<u8> = (1..=32).collect();
+	let root_entropy = RootEntropy::new((1..=32).collect::<Vec<u8>>());
 	let vectors = [
 		(
 			"paseo",
@@ -177,12 +179,12 @@ fn person_ring_vrf_entropy_follows_the_network_suffix() {
 	];
 	for (suffix, full, lite) in vectors {
 		assert_eq!(
-			hex::encode(RootEntropy::new(root_entropy.to_vec()).derive_full_person_ring_vrf_entropy(suffix)),
+			hex::encode(root_entropy.derive_full_person_ring_vrf_entropy(suffix)),
 			full,
 			"full person key under peopl.{suffix}"
 		);
 		assert_eq!(
-			hex::encode(RootEntropy::new(root_entropy.to_vec()).derive_lite_person_ring_vrf_entropy(suffix)),
+			hex::encode(root_entropy.derive_lite_person_ring_vrf_entropy(suffix)),
 			lite,
 			"light person key under peopl.{suffix}"
 		);
@@ -192,10 +194,12 @@ fn person_ring_vrf_entropy_follows_the_network_suffix() {
 		for (index, expected) in [(0u32, full), (1, lite)] {
 			assert_eq!(
 				hex::encode(
-					RootEntropy::new(root_entropy.to_vec()).derive_ring_vrf_entropy(&product_id,
-						&truapi::v01::DerivationIndex::Index(index),
-					)
-					.unwrap()
+					root_entropy
+						.derive_ring_vrf_entropy(
+							&product_id,
+							&truapi::v01::DerivationIndex::Index(index),
+						)
+						.unwrap()
 				),
 				expected
 			);
@@ -207,26 +211,25 @@ fn person_ring_vrf_entropy_follows_the_network_suffix() {
 fn ring_vrf_domain_entropy_derives_the_same_registered_key_as_the_root() {
 	use truapi::v01::DerivationIndex;
 
-	let root_entropy: Vec<u8> = (1..=32).collect();
-	let domain =
-		RootEntropy::new(root_entropy.to_vec()).derive_ring_vrf_domain_entropy(&ProductId::for_test("people-provider.dot"))
-			.unwrap();
+	let root_entropy = RootEntropy::new((1..=32).collect::<Vec<u8>>());
+	let domain = root_entropy
+		.derive_ring_vrf_domain_entropy(&ProductId::for_test("people-provider.dot"))
+		.unwrap();
 	for index in [DerivationIndex::Index(7), DerivationIndex::Raw([0xEE; 32])] {
 		assert_eq!(
 			derive_ring_vrf_entropy_from_domain(&domain, &index),
-			RootEntropy::new(root_entropy.to_vec()).derive_ring_vrf_entropy(&ProductId::for_test("people-provider.dot"),
-				&index
-			)
-			.unwrap()
+			root_entropy
+				.derive_ring_vrf_entropy(&ProductId::for_test("people-provider.dot"), &index)
+				.unwrap()
 		);
 	}
 }
 
 #[test]
 fn identity_is_peopl_dot_default_product_account_and_signs() {
-	let entropy = [0xAB; 16];
-	let identity = RootEntropy::new(entropy.to_vec()).derive_identity_keypair("dot").unwrap();
-	let root = RootEntropy::new(entropy.to_vec()).derive_root_keypair().unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let identity = entropy.derive_identity_keypair("dot").unwrap();
+	let root = entropy.derive_root_keypair().unwrap();
 	let peopl_subtree =
 		derive_hard_path_from_keypair(root, &[PRODUCT_JUNCTION, "peopl.dot"]).unwrap();
 	let expected = peopl_subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0;
@@ -251,19 +254,19 @@ fn identity_account_follows_the_network_suffix() {
 	// `//product//peopl.<suffix>/index_bytes(0)`, one ordinary product
 	// account per network: the personhood product's account 0, which owns
 	// the person's usernames and is the wallet's main account.
-	let entropy = [0xAB; 16];
+	let entropy = RootEntropy::new([0xAB; 16]);
 	for (suffix, address) in [
 		("paseo", "5CM1iRJQs1fceofARxxpvmUbaS7kU3WtKPj5QS6ihwWWtYBG"),
 		("testnet", "5DWk4cZyixLSTtudEUVjKYmJb5cjAjj5Vq7QpQSGaurN3FNf"),
 	] {
-		let identity = RootEntropy::new(entropy.to_vec()).derive_identity_keypair(suffix).unwrap();
+		let identity = entropy.derive_identity_keypair(suffix).unwrap();
 		assert_eq!(
 			product_public_key_to_address(identity.public.to_bytes()),
 			address,
 			"identity account under peopl.{suffix}"
 		);
 		let subtree = derive_product_subtree_keypair(
-			&RootEntropy::new(entropy.to_vec()).derive_root_keypair().unwrap(),
+			&entropy.derive_root_keypair().unwrap(),
 			&personhood_product_id(suffix),
 		)
 		.unwrap();
@@ -297,7 +300,7 @@ fn root_keypair_from_entropy_regression_pin() {
 	// NOTE: this is a self-computed regression value, NOT yet cross-checked
 	// against a polkadot-app-ios-v2 `deriveAccount` vector. Replace with an
 	// iOS-sourced value once available to make it a true interop anchor.
-	let root = RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	assert_eq!(
 		hex::encode(root.public.to_bytes()),
 		"0062ba8ae929ea64bc2ad6f21359e96a29e236a41d376d1c5ba76491da94fc72",
@@ -306,7 +309,7 @@ fn root_keypair_from_entropy_regression_pin() {
 
 #[test]
 fn product_secret_signs_verifiably() {
-	let root = RootEntropy::new(vec![0xABu8; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xABu8; 16]).derive_root_keypair().unwrap();
 	let keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let message = b"<Bytes>hello</Bytes>";

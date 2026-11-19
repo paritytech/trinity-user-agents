@@ -56,9 +56,9 @@ async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 	let dub = format!("http://{}/", listener.local_addr()?);
 	let server = tokio::spawn(serve_candidate_bound_registration(listener));
 
-	let entropy = [7u8; 16];
+	let entropy = RootEntropy::new([7u8; 16]);
 	let registration = build_lite_registration(
-		&RootEntropy::new(entropy.to_vec()),
+		&entropy,
 		"paseo",
 		[9u8; 32],
 		"testing",
@@ -72,7 +72,7 @@ async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
 		.with_dub(&dub);
 	let config = AttestConfig {
 		network: &network,
-		entropy: RootEntropy::new(entropy.to_vec()),
+		entropy,
 		username_base: "testing".to_string(),
 		reserved_username: None,
 	};
@@ -204,7 +204,7 @@ async fn cached_401_reauthenticates_and_retries_once() -> Result<()> {
 	let listener = TcpListener::bind("127.0.0.1:0").await?;
 	let backend_base = format!("http://{}/api/v1", listener.local_addr()?);
 	let server = tokio::spawn(serve_auth_retry(listener));
-	let entropy = RootEntropy::new(vec![11u8; 16]);
+	let entropy = RootEntropy::new([11u8; 16]);
 	let auth_client_id = entropy.derive_identity_keypair("paseo")?.public.to_bytes();
 
 	{

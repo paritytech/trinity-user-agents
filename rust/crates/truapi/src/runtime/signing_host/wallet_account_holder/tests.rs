@@ -54,16 +54,19 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 		let signer = futures::executor::block_on(wallet.personhood_signer(&session)).unwrap();
 		let members = PersonhoodCollection::ALL
 			.map(|collection| (collection, signer.member(collection).unwrap()));
+		let root_entropy = RootEntropy::new([7; 32]);
 		let expected = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.map(|(collection, index)| {
-				let entropy = RootEntropy::new(vec![7; 32]).derive_ring_vrf_entropy(&ProductId::for_test(&format!("peopl.{suffix}")),
-					&DerivationIndex::Index(index),
-				)
-				.unwrap();
+				let entropy = root_entropy
+					.derive_ring_vrf_entropy(
+						&ProductId::for_test(&format!("peopl.{suffix}")),
+						&DerivationIndex::Index(index),
+					)
+					.unwrap();
 				(collection, signer.vrf.member(&entropy).unwrap())
 			});
 		assert_eq!(members, expected);
-		let identity = RootEntropy::new(vec![7; 32]).derive_identity_keypair(suffix).unwrap();
+		let identity = root_entropy.derive_identity_keypair(suffix).unwrap();
 		assert_eq!(session.identity_account_id, Some(identity.public.to_bytes()));
 	}
 }

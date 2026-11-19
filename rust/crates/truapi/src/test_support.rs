@@ -536,7 +536,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 		.unwrap()
 		.expand_to_keypair(ExpansionMode::Ed25519);
 	let (encryption_secret_key, encryption_public_key) =
-		RootEntropy::new(vec![0xAB; 16]).derive_x25519_keypair(b"sso");
+		RootEntropy::new([0xAB; 16]).derive_x25519_keypair(b"sso");
 	let responder = ResponderIdentity {
 		statement_secret: statement_keypair.secret.to_bytes(),
 		statement_public_key: statement_keypair.public.to_bytes(),

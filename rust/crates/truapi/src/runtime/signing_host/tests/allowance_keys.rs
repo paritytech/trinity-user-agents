@@ -16,9 +16,10 @@ const PEOPLE_METADATA: &[u8] =
 
 /// Slot 0 already holds the product's allowance.
 fn chain_with_allocated_slot() -> Arc<StubPlatform> {
-	let allowance =
-		RootEntropy::new(ENTROPY.to_vec()).derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
-			.expect("allowance derivation succeeds");
+	let entropy = RootEntropy::new(ENTROPY);
+	let allowance = entropy
+		.derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
+		.expect("allowance derivation succeeds");
 	let slot_entry = slot::StatementStoreAllowanceEntry {
 		account_id: allowance.public.to_bytes(),
 		seq: 0,
@@ -26,7 +27,7 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 	}
 	.encode();
 	let people_row = slot::testing::slot_row(
-		RootEntropy::new(ENTROPY.to_vec()).derive_full_person_ring_vrf_entropy(TEST_NETWORK_SUFFIX),
+		entropy.derive_full_person_ring_vrf_entropy(TEST_NETWORK_SUFFIX),
 		TEST_NETWORK_SUFFIX.as_bytes(),
 		slot::current_period(crate::unix_time::current_unix_secs()),
 		&[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],
@@ -89,9 +90,9 @@ fn sent_rpc_count(platform: &StubPlatform) -> usize {
 /// rather than passing quietly.
 #[test]
 fn an_existing_allowance_is_served_without_touching_the_ring() {
-	let allowance =
-		RootEntropy::new(ENTROPY.to_vec()).derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
-			.expect("allowance derivation succeeds");
+	let allowance = RootEntropy::new(ENTROPY)
+		.derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
+		.expect("allowance derivation succeeds");
 	let platform = chain_with_allocated_slot();
 	let signing_host = active_signing_host(platform.clone());
 

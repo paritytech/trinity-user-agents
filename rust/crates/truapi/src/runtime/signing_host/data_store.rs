@@ -9,11 +9,8 @@ use zeroize::Zeroizing;
 
 use crate::{
 	host_logic::{
-		dotns_gateway::account_to_h160,
-		keyed_hash::blake2b_256_keyed,
-		product_account::ProductAccountError,
-		root_entropy::RootEntropy,
-		x25519_seal::AeadKey,
+		dotns_gateway::account_to_h160, keyed_hash::blake2b_256_keyed,
+		product_account::ProductAccountError, root_entropy::RootEntropy, x25519_seal::AeadKey,
 	},
 	installation::InstallationId,
 };

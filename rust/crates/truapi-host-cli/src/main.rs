@@ -4250,7 +4250,7 @@ mod cli_tests {
 		session.network = session.network.with_dub("http://127.0.0.1:1/");
 		let mut resets = session.runtime_factory.connection_reset().unwrap();
 		let expected_key =
-			RootEntropy::new(vec![0; 16]).derive_root_keypair().unwrap().public.to_bytes();
+			RootEntropy::new([0; 16]).derive_root_keypair().unwrap().public.to_bytes();
 
 		switch_session(&mut session, "pending".to_string()).await?;
 

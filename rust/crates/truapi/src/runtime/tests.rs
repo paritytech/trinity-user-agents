@@ -102,8 +102,8 @@ use crate::{
 		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
 	},
 	host_logic::{
-		root_entropy::RootEntropy,
 		product_account::{derive_product_public_key, index_bytes},
+		root_entropy::RootEntropy,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	test_support::*,
@@ -111,7 +111,8 @@ use crate::{
 };
 
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
-	let root = RootEntropy::new(vec![0xAB; 16]).derive_root_keypair()
+	let root = RootEntropy::new([0xAB; 16])
+		.derive_root_keypair()
 		.expect("test entropy derives a root");
 	crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
@@ -6663,8 +6664,8 @@ fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
 }
 
 pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let root = entropy.derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -6686,9 +6687,9 @@ pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Ar
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key: subtree.secret.to_bytes(),
                                     ring_vrf_domain_entropy:
-                                        RootEntropy::new(vec![0xAB; 16]).derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -6736,8 +6737,7 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccoun
 
 /// The product account the capability in [`granted_pairing_host`] derives.
 fn granted_keypair() -> schnorrkel::Keypair {
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	crate::host_logic::product_account::derive_product_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -7169,8 +7169,8 @@ fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
 #[test]
 fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let root = entropy.derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),
@@ -7191,9 +7191,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key,
                                     ring_vrf_domain_entropy:
-                                        RootEntropy::new(vec![0xAB; 16]).derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -7324,8 +7324,7 @@ fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
 #[test]
 fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
-	let root =
-		RootEntropy::new(vec![0xAB; 16]).derive_root_keypair().unwrap();
+	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("myapp.dot"),

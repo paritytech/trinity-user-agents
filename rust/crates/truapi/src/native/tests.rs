@@ -2934,16 +2934,14 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		host_internal::sso_messages::{
 			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
 		},
-		host_logic::{
-			product_account::{derive_product_subtree_keypair},
-			root_entropy::RootEntropy,
-			},
+		host_logic::{product_account::derive_product_subtree_keypair, root_entropy::RootEntropy},
 	};
 	use parity_scale_codec::Encode;
 
 	let entropy = [7; 32];
-	let statement = RootEntropy::new(entropy.to_vec()).derive_identity_keypair("paseo").unwrap().public.to_bytes();
-	let (_, encryption) = RootEntropy::new(entropy.to_vec()).derive_x25519_keypair(b"sso");
+	let root_entropy = RootEntropy::new(entropy);
+	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
 			.open_sso_service(statement, encryption)
@@ -2979,8 +2977,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			.encode(),
 		};
 		let public_key = derive_product_subtree_keypair(
-			&RootEntropy::new(entropy.to_vec()).derive_root_keypair()
-				.unwrap(),
+			&root_entropy.derive_root_keypair().unwrap(),
 			&ProductId::for_test("browse.dot"),
 		)
 		.unwrap()

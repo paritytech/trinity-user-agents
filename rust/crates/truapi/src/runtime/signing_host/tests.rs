@@ -32,12 +32,9 @@ use crate::{
 		transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
 	},
 	host_logic::{
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_keypair,
-			index_bytes,
-		},
+		product_account::{SR25519_SIGNING_CONTEXT, derive_product_keypair, index_bytes},
 		root_entropy::RootEntropy,
-		},
+	},
 	platform::{CoreStorageKey, Platform, ProductContext, ProductId},
 	runtime::{
 		sso_service::Dispatch,
@@ -189,8 +186,9 @@ fn relayed<'a>(cx: &'a CallContext, session: &'a AuthoritySession) -> AccountInv
 
 /// The service a paired host reaches, bound to `authority`'s wallet from `ENTROPY`.
 fn sso_service(authority: &SigningHost) -> SsoAccountHolderService {
-	let statement = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
-	let (_, encryption) = RootEntropy::new(ENTROPY.to_vec()).derive_x25519_keypair(b"sso");
+	let entropy = RootEntropy::new(ENTROPY);
+	let statement = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+	let (_, encryption) = entropy.derive_x25519_keypair(b"sso");
 	authority
 		.sso_responder()
 		.open_service(statement.public.to_bytes(), encryption)
@@ -216,10 +214,9 @@ fn full_person_key_handle() -> v01::ProductAccountId {
 }
 
 fn full_person_ring_resolver() -> Arc<StubRingResolver> {
-	let full_entropy = RootEntropy::new(ENTROPY.to_vec()).derive_ring_vrf_entropy(&ProductId::for_test("peopl.dot"),
-		&v01::DerivationIndex::Index(0),
-	)
-	.expect("full-person entropy");
+	let full_entropy = RootEntropy::new(ENTROPY)
+		.derive_ring_vrf_entropy(&ProductId::for_test("peopl.dot"), &v01::DerivationIndex::Index(0))
+		.expect("full-person entropy");
 	let full_member = futures::executor::block_on(crate::runtime::vrf::load())
 		.expect("verifiable is linked")
 		.member(&full_entropy)
@@ -1928,7 +1925,8 @@ fn local_activation_exposes_the_peopl_dot_identity_account() {
 		.expect("activation succeeds");
 
 	let session = authority.accounts().current_session().expect("active session");
-	let identity = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(TEST_NETWORK_SUFFIX)
+	let identity = RootEntropy::new(ENTROPY)
+		.derive_identity_keypair(TEST_NETWORK_SUFFIX)
 		.expect("peopl.dot identity derivation")
 		.public
 		.to_bytes();
@@ -1954,7 +1952,7 @@ fn activate_then_sign_raw_verifies_against_derived_product_key() {
 		futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
 	assert!(response.signed_transaction.is_none());
 
-	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
 	let keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let signature =
@@ -1991,7 +1989,7 @@ fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
 	))
 	.expect("VRF signing succeeds");
 
-	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
 	let keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let mut transcript = merlin::Transcript::new(b"pop:airdrop");
@@ -2263,7 +2261,7 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 	))
 	.expect("product payload signing succeeds");
 
-	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
 	let keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	assert_eq!(product_response.signature.len(), 65);
@@ -2319,7 +2317,7 @@ fn sign_raw_legacy_accepts_only_the_peopl_dot_identity_key() {
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
-	let identity = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+	let identity = RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 	let request = |account| SignRawAuthorityRequest::IdentityAccount {
 		account,
 		request: v01::HostSignRawWithLegacyAccountRequest {
@@ -2509,7 +2507,7 @@ fn sign_raw_leaves_already_wrapped_payload_untouched() {
 	});
 	let HostSignRawResponse::V1(response) =
 		futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
-	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
+	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
 	let keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let signature =

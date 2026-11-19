@@ -14,8 +14,6 @@
 //! `ProductAccountId` shape:
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L66-L128>
 
-use core::ops::Range;
-
 use parity_scale_codec::Encode;
 use schnorrkel::{
 	ExpansionMode, Keypair, PublicKey, SecretKey,
@@ -24,7 +22,6 @@ use schnorrkel::{
 use std::str::FromStr;
 use thiserror::Error;
 
-use super::root_entropy::RootEntropy;
 use crate::platform::ProductId;
 
 const JUNCTION_ID_LEN: usize = 32;
@@ -34,7 +31,6 @@ const PRODUCT_JUNCTION: &str = "product";
 /// account; the product id is `peopl.<network suffix>`, see
 /// [`personhood_product_id`].
 pub const PERSONHOOD_LABEL: &str = "peopl";
-const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 
 /// The reserved personhood product id on the network with `network_suffix`:
 /// `peopl.dot` on Polkadot, `peopl.paseo` on paseo-next-v2, `peopl.testnet` on
@@ -91,86 +87,6 @@ pub fn derivation_index_bytes(index: &truapi::v01::DerivationIndex) -> [u8; 32] 
 	match index {
 		truapi::v01::DerivationIndex::Index(index) => index_bytes(*index),
 		truapi::v01::DerivationIndex::Raw(bytes) => *bytes,
-	}
-}
-impl RootEntropy {
-	/// Derive the RFC-0028 identity account on the network with `network_suffix`:
-	/// `//product//peopl.<network_suffix>/index_bytes(0)`, the personhood
-	/// product's account 0.
-	pub fn derive_identity_keypair(
-		&self,
-		network_suffix: &str,
-	) -> Result<Keypair, ProductAccountError> {
-		let subtree = self.derive_sr25519_hard_path(&[
-			PRODUCT_JUNCTION,
-			personhood_product_id(network_suffix).as_str(),
-		])?;
-		Ok(subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0)
-	}
-
-	/// Derive the RFC-0022 full-person ring-VRF entropy on the network with
-	/// `network_suffix`:
-	/// `hash(root_entropy, "ring-vrf")//peopl.<network_suffix>//index_bytes(0)`.
-	pub fn derive_full_person_ring_vrf_entropy(&self, network_suffix: &str) -> [u8; 32] {
-		self.derive_person_ring_vrf_entropy(network_suffix, 0)
-	}
-
-	/// Derive the RFC-0022 light-person ring-VRF entropy on the network with
-	/// `network_suffix`:
-	/// `hash(root_entropy, "ring-vrf")//peopl.<network_suffix>//index_bytes(1)`.
-	pub fn derive_lite_person_ring_vrf_entropy(&self, network_suffix: &str) -> [u8; 32] {
-		self.derive_person_ring_vrf_entropy(network_suffix, 1)
-	}
-
-	fn derive_person_ring_vrf_entropy(&self, network_suffix: &str, index: u32) -> [u8; 32] {
-		self.derive_ring_vrf_entropy(
-			&personhood_product_id(network_suffix),
-			&truapi::v01::DerivationIndex::Index(index),
-		)
-		.expect("a product id cannot be an overflowing numeric derivation junction; qed")
-	}
-
-	/// Derive arbitrary RFC-0022 ring-VRF entropy:
-	/// `hash(root_entropy, "ring-vrf")//{product_id}//{derivation_index}`.
-	pub fn derive_ring_vrf_entropy(
-		&self,
-		product_id: &ProductId,
-		derivation_index: &truapi::v01::DerivationIndex,
-	) -> Result<[u8; 32], ProductAccountError> {
-		let domain = self.derive_ring_vrf_domain_entropy(product_id)?;
-		Ok(derive_ring_vrf_entropy_from_domain(&domain, derivation_index))
-	}
-
-	/// Derive the RFC-0024 AutoSigning entropy for a product in the ring-VRF tree.
-	pub fn derive_ring_vrf_domain_entropy(
-		&self,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], ProductAccountError> {
-		let root = self.keyed_hash(RING_VRF_ROOT_KEY);
-		Ok(blake2b256_keyed(&root, &create_chain_code(product_id.as_str())?))
-	}
-
-	/// Derive an sr25519 keypair down a path of hard string junctions from the
-	/// canonical BIP-39 root key.
-	pub fn derive_sr25519_hard_path(
-		&self,
-		junctions: &[&str],
-	) -> Result<Keypair, ProductAccountError> {
-		derive_hard_path_from_keypair(self.derive_root_keypair()?, junctions)
-	}
-
-	/// The public key at `prefix//index` for each of `indices`, in order, with
-	/// every junction hard, derived from the canonical BIP-39 root key. The prefix
-	/// is derived once for the whole range.
-	pub fn derive_hard_public_keys_for_range(
-		&self,
-		prefix: &[&str],
-		indices: Range<u32>,
-	) -> Result<Vec<[u8; 32]>, ProductAccountError> {
-		let prefix_keypair = self.derive_sr25519_hard_path(prefix)?;
-		indices
-			.map(|index| derive_hard_public_key_for_index(prefix_keypair.clone(), index))
-			.collect()
 	}
 }
 
@@ -269,17 +185,8 @@ pub fn derive_hard_path_from_keypair(
 	Ok(keypair)
 }
 
-/// The public key at `keypair//index`, a hard junction.
-fn derive_hard_public_key_for_index(
-	keypair: Keypair,
-	index: u32,
-) -> Result<[u8; 32], ProductAccountError> {
-	let junction = index.to_string();
-	Ok(derive_hard_path_from_keypair(keypair, &[junction.as_str()])?.public.to_bytes())
-}
-
 /// Create a Substrate soft-derivation chain code for one junction.
-fn create_chain_code(code: &str) -> Result<[u8; 32], ProductAccountError> {
+pub fn create_chain_code(code: &str) -> Result<[u8; 32], ProductAccountError> {
 	let encoded = if !code.is_empty() && code.bytes().all(|byte| byte.is_ascii_digit()) {
 		code.parse::<u64>()
 			.map_err(|_| ProductAccountError::NumericJunctionOutOfRange)?
@@ -291,7 +198,7 @@ fn create_chain_code(code: &str) -> Result<[u8; 32], ProductAccountError> {
 }
 
 /// Normalize a SCALE-encoded junction to a 32-byte chain code.
-fn normalize_chain_code(encoded: Vec<u8>) -> [u8; 32] {
+pub fn normalize_chain_code(encoded: Vec<u8>) -> [u8; 32] {
 	let mut chain_code = [0u8; JUNCTION_ID_LEN];
 	if encoded.len() > JUNCTION_ID_LEN {
 		chain_code = sp_crypto_hashing::blake2_256(&encoded);
