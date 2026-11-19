@@ -15,4 +15,7 @@ data class DebugMenuState(
     val truapiRuntimeEnabled: Boolean = true,
     /** Non-null while the restart prompt is up; the value to restore if it is declined. */
     val runtimeRestartRevertsTo: Boolean? = null,
+    val lightClientEnabled: Boolean = false,
+    /** Non-null while the light client restart prompt is up; the value to restore if it is declined. */
+    val lightClientRestartRevertsTo: Boolean? = null,
 )

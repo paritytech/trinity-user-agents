@@ -10,10 +10,11 @@ import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.parity.truapi.LightClient
 import io.parity.truapi.LocalhostBridgeBootstrap
+import io.parity.truapi.CoreChainConnections
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
-import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
@@ -23,7 +24,6 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
-import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductTheme
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
@@ -38,9 +38,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
@@ -52,7 +52,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.Severity
@@ -79,7 +78,6 @@ import uniffi.truapi.ThemeVariant as NativeThemeVariant
  */
 class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
-    @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
@@ -87,6 +85,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val lightClient: LightClient,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -104,12 +103,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     // where a suspending registry lookup is not allowed.
     private val cachedChains = AtomicReference(EMPTY_CHAINS)
 
-    private val chainProvider = WebSocketChainProvider(
+    private val chainConnections = CoreChainConnections(
         // Pure lookup against the snapshot resolved on attach(). The core calls
         // this inline on its dispatcher thread, where blocking on the registry
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
-        client = chainHttpClient,
+        lightClient = lightClient,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
@@ -243,12 +242,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }
 
-        override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
+        override fun chainConnect(genesisHash: ByteArray): UInt? = chainConnections.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
-            chainProvider.send(connectionId, request)
+            chainConnections.send(connectionId, request)
 
-        override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+        override fun chainClose(connectionId: UInt) = chainConnections.close(connectionId)
 
         override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
             card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
@@ -298,14 +297,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             execution = opened
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            chainProvider.attach(
+            chainConnections.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
             )
             val endpoint = opened.startWsBridge()
             observeAppTheme()
             observeAppLifecycle()
-            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainConnections)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -319,7 +318,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 // not idle in background and recover on foreground. Teardown
                 // takes the other path: stop() detaches first, so the core is
                 // not notified about an execution that is going away anyway.
-                if (state == AppLifecycleState.BACKGROUND) chainProvider.closeAll()
+                if (state == AppLifecycleState.BACKGROUND) chainConnections.closeAll()
             }
         }
     }
@@ -344,8 +343,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     fun stop() {
         val opened = execution ?: return
         execution = null
-        chainProvider.detach()
-        chainProvider.closeAll()
+        chainConnections.detach()
+        chainConnections.closeAll()
         opened.stopWsBridge()
         // Shuts the connection down and releases the native handle. Without it
         // the execution outlives the product tab even though its bridge and

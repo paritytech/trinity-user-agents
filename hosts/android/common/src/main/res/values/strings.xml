@@ -306,6 +306,8 @@
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>
+    <string name="debug_menu_light_client">Light client for this build\'s network</string>
+    <string name="debug_menu_light_client_restart_message">The light client setting changed. Restart the app to apply it.</string>
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>

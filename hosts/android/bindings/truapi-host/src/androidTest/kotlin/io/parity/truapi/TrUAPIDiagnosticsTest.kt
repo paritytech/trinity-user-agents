@@ -7,7 +7,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,7 +68,7 @@ class TrUAPIDiagnosticsTest {
         // any genesis to the configured node so chain-touching methods can
         // reach a backend.
         val chainNode = args.getString("truapi.chainWs")
-        val chainProvider = WebSocketChainProvider({ listOfNotNull(chainNode) }, OkHttpClient())
+        val chainConnections = CoreChainConnections({ listOfNotNull(chainNode) })
 
         val authStates = ArrayList<AuthState>()
         val logs = ArrayList<String>()
@@ -99,9 +98,9 @@ class TrUAPIDiagnosticsTest {
             ): PermissionDecision = PermissionDecision.ALLOW_ALWAYS
             override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean = true
             override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean = false
-            override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
-            override fun chainSend(connectionId: UInt, request: String) = chainProvider.send(connectionId, request)
-            override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+            override fun chainConnect(genesisHash: ByteArray): UInt? = chainConnections.connect(genesisHash)
+            override fun chainSend(connectionId: UInt, request: String) = chainConnections.send(connectionId, request)
+            override fun chainClose(connectionId: UInt) = chainConnections.close(connectionId)
         }
 
         val config = HostRuntimeConfig(
@@ -120,7 +119,7 @@ class TrUAPIDiagnosticsTest {
             bridge = bridge,
             configuration = ProductExecutionConfig(ProductId.parse("dotli.dot").getOrThrow(), ExecutableKind.APP),
         )
-        chainProvider.attach(
+        chainConnections.attach(
             onResponse = execution::notifyChainResponse,
             onClosed = execution::notifyChainClosed,
         )
@@ -171,8 +170,8 @@ class TrUAPIDiagnosticsTest {
         // Teardown order matters: stop feeding the core from socket callbacks
         // (detach) and close sockets before closing the core, so no chain
         // callback races with execution.close().
-        chainProvider.closeAll()
-        chainProvider.detach()
+        chainConnections.closeAll()
+        chainConnections.detach()
         execution.stopWsBridge()
         execution.close()
         runtime.close()

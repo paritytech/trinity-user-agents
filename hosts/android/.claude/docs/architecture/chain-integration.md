@@ -16,6 +16,7 @@ How the app talks to substrate chains: storage, runtime APIs, SCALE codec, and c
 10. **`major`** — Diffing subscription emissions before persisting — overwrite is fine when updates are rare.
 11. **`major`** — Hand-rolling `runCatching` at storage call sites when `queryCatching` / `subscribeCatching` covers it.
 12. **`minor`** — Hardcoded base URL when `NetworkApiCreator` provides one.
+13. **`major`** — Looking up a block hash by number (`chain_getBlockHash(n)`) when a hash is already at hand. See `§ Block hashes`.
 
 ---
 
@@ -241,6 +242,12 @@ Subscriptions live as long as the chain socket is connected. When the connection
 - The flow does not error by default; it stalls until reconnect.
 - For background work, the default connection isn't always active — request one via `ChainConnectionRefCounter` (see `transactions.md § Background chain work`).
 - Don't depend on a specific node URL; collation may transparently switch. When you must hit a specific node (e.g. HOP file fetch), open a dedicated socket — don't rely on the chain connection.
+
+---
+
+## Block hashes
+
+A chain may be served by the embedded light client (debug-menu switch), which answers `chain_getBlockHash(n)` with `null` for every block but the genesis. Work from hashes the chain already gave you: `chain_getFinalizedHead`, a header's `parentHash`, a subscription's block. A lookup by number is only acceptable where `null` is handled as "unknown", never as a failure the user sees.
 
 ---
 

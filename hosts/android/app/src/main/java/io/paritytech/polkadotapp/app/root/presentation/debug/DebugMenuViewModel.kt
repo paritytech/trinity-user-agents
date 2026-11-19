@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.app.root.domain.debug.GetWalletMnemonicUseCase
 import io.paritytech.polkadotapp.app.root.domain.debug.RandomizeAccountUseCase
 import io.paritytech.polkadotapp.app.root.domain.debug.RestartAppUseCase
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.LightClientSettings
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -40,6 +41,7 @@ class DebugMenuViewModel @Inject constructor(
     private val productRuntimeSettings: ProductRuntimeSettings,
     private val restartAppUseCase: RestartAppUseCase,
     private val devServerAddresses: DevServerAddresses,
+    private val lightClientSettings: LightClientSettings,
 ) : BaseViewModel(), DebugMenuContract {
     override val state = MutableStateFlow(
         DebugMenuState(
@@ -52,6 +54,7 @@ class DebugMenuViewModel @Inject constructor(
         refreshJWTTokenState()
         refreshCoinageDebugWidgetsState()
         refreshTruapiRuntimeState()
+        refreshLightClientState()
     }
 
     override fun onBackClick() {
@@ -161,6 +164,28 @@ class DebugMenuViewModel @Inject constructor(
         state.value.runtimeRestartRevertsTo?.let(productRuntimeSettings::setTrUAPIRuntimeEnabled)
         state.update { it.copy(runtimeRestartRevertsTo = null) }
         refreshTruapiRuntimeState()
+    }
+
+    /** The light client is chosen once when the app starts, so a change only applies through a restart. */
+    override fun onLightClientToggled(enabled: Boolean) {
+        val previous = state.value.lightClientEnabled
+        lightClientSettings.setEnabled(enabled)
+        state.update { it.copy(lightClientRestartRevertsTo = previous) }
+        refreshLightClientState()
+    }
+
+    override fun onLightClientRestartConfirmed() {
+        restartAppUseCase()
+    }
+
+    override fun onLightClientRestartCancelled() {
+        state.value.lightClientRestartRevertsTo?.let(lightClientSettings::setEnabled)
+        state.update { it.copy(lightClientRestartRevertsTo = null) }
+        refreshLightClientState()
+    }
+
+    private fun refreshLightClientState() {
+        state.update { it.copy(lightClientEnabled = lightClientSettings.isEnabled()) }
     }
 
     private fun refreshJWTTokenState() {
