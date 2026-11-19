@@ -1,5 +1,6 @@
 import Foundation
 import Products
+import StructuredConcurrency
 import TrUAPIHost
 
 /// Which handler is drawing a product's cards.
@@ -123,20 +124,30 @@ private extension RealPocketFaceSource {
     /// answers: a read that did not land says nothing about the card. Nil when
     /// the answer is that there is no such card to draw.
     func answeredLookup(of key: PocketCardKey) async -> PublishedPocketCard? {
-        var attempt = 0
-        while !Task.isCancelled {
-            do {
-                return try await published.find(productId: key.productId, cardId: key.cardId)
-            } catch let refusal as PocketPublishError {
-                logger.debug("[pocket] \(key.cardId.value) has no published back: \(refusal)")
-                return nil
-            } catch {
-                logger.warning("[pocket] \(key.cardId.value) could not be looked up, asking again: \(error)")
+        do {
+            return try await withRetry(strategy: CardLookupRetry(key: key, logger: logger)) { [published] in
+                try await published.find(productId: key.productId, cardId: key.cardId)
             }
-
-            try? await Task.sleep(for: pocketReopenDelay(after: attempt))
-            attempt += 1
+        } catch let refusal as PocketPublishError {
+            logger.debug("[pocket] \(key.cardId.value) has no published back: \(refusal)")
+            return nil
+        } catch {
+            return nil
         }
-        return nil
+    }
+}
+
+/// Asks again after any failure but a refusal, which is the manifest's answer.
+private struct CardLookupRetry: RetryStrategy {
+    let key: PocketCardKey
+    let logger: LoggerProtocol
+    var failures = 0
+
+    mutating func decideOnFailure(_ error: Error) async throws {
+        if error is PocketPublishError { throw error }
+
+        logger.warning("[pocket] \(key.cardId.value) could not be looked up, asking again: \(error)")
+        try await Task.sleep(for: pocketReopenDelay(after: failures))
+        failures += 1
     }
 }

@@ -51,7 +51,7 @@ struct PocketOpenedCardView: View {
 
         for await node in pocket.backFaces(for: card.key) {
             back = node?.toWidgetNode(resolver: resolver)
-            turn.backChanged(available: node != nil)
+            turn.backChanged(available: back != nil)
         }
     }
 }
