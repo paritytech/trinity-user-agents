@@ -31,8 +31,7 @@ private func makeHostBridge(
         confirmationPresenter: confirmationPresenter,
         backedUpInstallation: TrUAPIBackedUpInstallation(),
         encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
-        logger: Logger.shared,
-        coreEventLogger: CoreEventLogger(logger: Logger.shared, sink: nil)
+        logger: Logger.shared
     )
 }
 

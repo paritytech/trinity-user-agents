@@ -173,7 +173,7 @@ extension ServiceCoordinator {
             return nil
         }
 
-        let logger: LoggerProtocol = Logger.shared
+        let logger: CoreEventLoggerProtocol = Logger.shared
 
         guard let allowanceManagerFacade = AllowanceManagerFacade.create() else {
             return nil
@@ -235,11 +235,7 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
-            logger: logger,
-            coreEventLogger: CoreEventLogger(
-                logger: logger,
-                sink: Logger.shared.hostLogSink
-            )
+            logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
         RootDependencyLocator.setDependency(

@@ -22,8 +22,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let workerManager: (any TrUAPIWorkerManaging)?
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let encryptedStorage: TrUAPIEncryptedStorage
-    private let logger: LoggerProtocol
-    private let coreEventLogger: CoreEventLogger
+    private let logger: CoreEventLoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
     init(
@@ -34,8 +33,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         workerManager: (any TrUAPIWorkerManaging)? = nil,
         backedUpInstallation: TrUAPIBackedUpInstallation,
         encryptedStorage: TrUAPIEncryptedStorage,
-        logger: LoggerProtocol,
-        coreEventLogger: CoreEventLogger
+        logger: CoreEventLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
@@ -44,7 +42,6 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.backedUpInstallation = backedUpInstallation
         self.encryptedStorage = encryptedStorage
         self.logger = logger
-        self.coreEventLogger = coreEventLogger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
         chainConnections.eventHandler = self
@@ -61,7 +58,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
-        coreEventLogger.log(marker: marker, attributes: attributes)
+        logger.logCoreEvent(marker: marker, attributes: attributes)
     }
 
     /// Demand is runtime-wide, so it arrives here rather than on a product's

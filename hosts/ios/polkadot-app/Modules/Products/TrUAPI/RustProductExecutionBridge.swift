@@ -33,8 +33,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
         let themeManager: ThemeManagerProtocol
-        let logger: LoggerProtocol
-        let coreEventLogger: CoreEventLogger
+        let logger: CoreEventLoggerProtocol
     }
 
     let storage: HostStorageBackend
@@ -72,7 +71,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
-        dependencies.coreEventLogger.log(marker: marker, attributes: attributes)
+        dependencies.logger.logCoreEvent(marker: marker, attributes: attributes)
     }
 
     func navigateTo(url: String) async throws {
