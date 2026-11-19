@@ -36,7 +36,7 @@ func makeChatBridgeDependencies(
         hostProvider: InertHostProvider(),
         themeManager: MockThemeManager(),
         logger: Logger.shared,
-        coreEventSink: nil
+        coreEventLogger: CoreEventLogger(logger: Logger.shared, sink: nil)
     )
 }
 

@@ -116,7 +116,7 @@ private func makeBridge(
         hostProvider: hostProvider,
         themeManager: themeManager,
         logger: Logger.shared,
-        coreEventSink: nil
+        coreEventLogger: CoreEventLogger(logger: Logger.shared, sink: nil)
     ), cardFace: cardFace)
 }
 
@@ -652,7 +652,7 @@ struct RustRuntimeBridgeTests {
             hostProvider: StubHostProvider(),
             themeManager: MockThemeManager(),
             logger: Logger.shared,
-            coreEventSink: nil
+            coreEventLogger: CoreEventLogger(logger: Logger.shared, sink: nil)
         ))
 
         #expect(pool.eventHandler == nil)

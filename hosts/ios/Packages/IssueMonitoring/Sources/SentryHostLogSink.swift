@@ -3,18 +3,24 @@
     import Sentry
 
     struct SentryHostLogSink: HostLogSink {
+        private let logger: SentryLogger
+
+        init(logger: SentryLogger) {
+            self.logger = logger
+        }
+
         func log(level: HostLogLevel, tag: String, message: String, attributes: [String: HostLogAttribute]) {
             var fields: [String: Any] = attributes.mapValues(\.sentryValue)
             fields["tag"] = tag
 
-            switch level {
-            case .info:
-                SentrySDK.logger.info(message, attributes: fields)
-            case .warning:
-                SentrySDK.logger.warn(message, attributes: fields)
-            case .error:
-                SentrySDK.logger.error(message, attributes: fields)
-            }
+            let send: (String, [String: Any]) -> Void =
+                switch level {
+                case .info: logger.info
+                case .warning: logger.warn
+                case .error: logger.error
+                }
+
+            send(message, fields)
         }
     }
 

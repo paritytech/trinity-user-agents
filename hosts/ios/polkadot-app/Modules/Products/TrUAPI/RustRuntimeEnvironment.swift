@@ -1,5 +1,4 @@
 import Foundation
-import IssueMonitoring
 import TrUAPIHost
 import Products
 import ChainRegistry
@@ -22,7 +21,7 @@ struct RustRuntimeEnvironment {
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
     let logger: LoggerProtocol
-    let coreEventSink: HostLogSink?
+    let coreEventLogger: CoreEventLogger
 
     /// The rust pieces a runtime needs: the opened execution and its chain
     /// connection pool for lifecycle control.
@@ -163,7 +162,7 @@ private extension RustRuntimeEnvironment {
             hostProvider: hostProvider,
             themeManager: themeManager,
             logger: logger,
-            coreEventSink: coreEventSink
+            coreEventLogger: coreEventLogger
         )
     }
 }

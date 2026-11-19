@@ -9,7 +9,6 @@ import Products
 import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
-import IssueMonitoring
 
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
 /// the single shared runtime, so its authentication and core services are
@@ -45,7 +44,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let tldProvider: DotNsTldProviding
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
     private let logger: LoggerProtocol
-    private let coreEventSink: HostLogSink?
+    private let coreEventLogger: CoreEventLogger
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
@@ -68,7 +67,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
         logger: LoggerProtocol,
-        coreEventSink: HostLogSink?
+        coreEventLogger: CoreEventLogger
     ) {
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager
@@ -78,7 +77,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.tldProvider = tldProvider
         self.deviceEncryptionKeys = deviceEncryptionKeys
         self.logger = logger
-        self.coreEventSink = coreEventSink
+        self.coreEventLogger = coreEventLogger
     }
 
     @MainActor
@@ -161,7 +160,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             backedUpInstallation: backedUpInstallation,
             encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger,
-            coreEventSink: coreEventSink
+            coreEventLogger: coreEventLogger
         )
 
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)

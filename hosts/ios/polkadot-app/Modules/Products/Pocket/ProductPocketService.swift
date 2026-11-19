@@ -1,5 +1,4 @@
 import Foundation
-import IssueMonitoring
 import os
 import AsyncExtensions
 import BulletinChain
@@ -147,7 +146,10 @@ final class ProductPocketService: @unchecked Sendable {
                         hostProvider: flowState.hostProvider,
                         themeManager: themeManager,
                         logger: logger,
-                        coreEventSink: IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN)
+                        coreEventLogger: CoreEventLogger(
+                            logger: logger,
+                            sink: Logger.shared.hostLogSink
+                        )
                     )
                 },
                 contentLoader: flowState.contentLoader,
