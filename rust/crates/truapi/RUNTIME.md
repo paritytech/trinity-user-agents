@@ -241,8 +241,8 @@ the live chains, so those reads are protected only by a light client that
 starts from the pinned relay light spec. A host that reads over RPC has no
 such protection.
 
-A newer descriptor that changes a genesis hash, the network or the
-`generation` applies from the next start. Once the core has stored it,
+A newer descriptor the core takes that changes a genesis hash, the network or
+the `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
 again. Any other change applies at once. `StackStatus` documents the rest,
 including the `generation` a host keys cached chain data by.

@@ -458,20 +458,25 @@ fn a_reserved_stack_follows_a_new_generation_with_no_pinned_field_changed() {
 
 /// A record may hold a copy that differs from the build's in a pinned field,
 /// such as one written by another build of the app. The bundled copy starts
-/// the host, and the published copy the record came from is refused when it
-/// is fetched again.
+/// the host and is fetched at once although the record was fetched a moment
+/// ago, and the published copy the record came from is refused when it is
+/// fetched.
 #[test]
 fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
 	let bundled = reserved_test_descriptor(1);
 	let record = stored_test_record(&redeployed_reserved_test_descriptor(2), START);
 
 	let mut source = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
-	let at_start = source.status();
+	let at_start = (source.status(), source.due_fetch(START));
 	let fetched = serve(&mut source, &redeployed_reserved_test_descriptor(2), START);
 
 	assert_eq!(
 		(at_start, fetched, source.status()),
-		(stack_status(&bundled, None), None, stack_status(&bundled, refused_for_pinned("dotns")))
+		(
+			(stack_status(&bundled, None), bundled_copys_fetch()),
+			None,
+			stack_status(&bundled, refused_for_pinned("dotns"))
+		)
 	);
 }
 
