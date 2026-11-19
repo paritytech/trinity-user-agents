@@ -125,7 +125,11 @@ use truapi::{
 			HostChatRegisterBotResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
 			HostChatSetRoomFooterResponse,
 		},
-		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
+		contacts::{
+			HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
+			HostContactsUsernamesError, HostContactsUsernamesRequest,
+			HostContactsUsernamesResponse,
+		},
 		funding::{
 			HostFundingError, HostFundingRequest, HostFundingResponse,
 			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
@@ -1416,6 +1420,50 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 						},
 					};
 				Ok(latest::HostContactsPickResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "contacts.usernames"))]
+	async fn usernames(
+		&self,
+		cx: &CallContext,
+		request: HostContactsUsernamesRequest,
+	) -> Result<HostContactsUsernamesResponse, CallError<HostContactsUsernamesError>> {
+		version(request)
+			.exec(|request| async move {
+				let latest::HostContactsUsernamesRequest {} = request;
+				if !self.connection.product.product_id.is_game_product() {
+					return Err(CallError::Unsupported);
+				}
+				let platform =
+					self.connection.services.contacts_platform().ok_or(CallError::Unsupported)?;
+				if self.accounts.current_session().is_none() {
+					return Err(CallError::Domain(latest::GenericError {
+						reason: "No active session".to_string(),
+					}));
+				}
+				let listing =
+					until_cancelled(cx, platform.contact_usernames(&self.connection.product))
+						.await
+						.map_err(|cancelled| {
+							CallError::Domain(latest::GenericError { reason: cancelled.to_string() })
+						})?
+						.map_err(CallError::Domain)?;
+				match listing {
+					crate::platform::HostContactUsernames::Listed { mut usernames } => {
+						usernames.retain(|username| {
+							crate::dotns_name::is_dns_label(username) ||
+								crate::host_logic::dotns_gateway::is_dotted_lite_username(
+									username,
+								)
+						});
+						Ok(latest::HostContactsUsernamesResponse { usernames })
+					},
+					crate::platform::HostContactUsernames::Unsupported => {
+						Err(CallError::Unsupported)
+					},
+				}
 			})
 			.await
 	}

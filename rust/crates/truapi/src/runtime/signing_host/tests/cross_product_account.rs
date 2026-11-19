@@ -18,8 +18,8 @@ use parity_scale_codec::Encode;
 use truapi::versioned::{
 	account::{HostAccountSignVrfError, HostAccountSignVrfRequest},
 	signing::{
-		HostCreateTransactionRequest, HostSignPayloadError, HostSignPayloadRequest,
-		HostSignPayloadResponse, HostSignRawRequest,
+		HostSignPayloadError, HostSignPayloadRequest, HostSignPayloadResponse, HostSignRawRequest,
+		ProductAccountTxPayload,
 	},
 };
 
@@ -200,10 +200,10 @@ fn raw_request(account: v01::ProductAccountId) -> HostSignRawRequest {
 	})
 }
 
-fn transaction_request(account: v01::ProductAccountId) -> HostCreateTransactionRequest {
+fn transaction_request(account: v01::ProductAccountId) -> ProductAccountTxPayload {
 	let mut payload = crate::test_support::product_tx_payload("dim2.dot");
 	payload.signer = account;
-	HostCreateTransactionRequest::V1(payload)
+	ProductAccountTxPayload::V1(payload)
 }
 
 fn sign_payload_with(

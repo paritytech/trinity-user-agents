@@ -745,6 +745,20 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.worker_ledger().release(&product_id);
 	}
 
+	/// Forget one product: revoke its grants and Allow once answers, then
+	/// remove its values from product storage through
+	/// [`HostCallbacks::clear_product_storage`]. The wallet session and
+	/// other products are kept.
+	///
+	/// Stop the product's executions first: a value a running execution
+	/// writes after the clear is kept.
+	pub async fn clear_product_state(&self, product_id: ProductId) -> Result<(), HostRejection> {
+		self.runtime
+			.clear_product_state(&product_id)
+			.await
+			.map_err(|error| HostRejection::Rejected { reason: error.reason })
+	}
+
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
 	/// under way, so it leaves its QR screen while the allocation runs.
 	///
