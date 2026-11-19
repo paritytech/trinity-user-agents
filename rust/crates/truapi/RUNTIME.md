@@ -163,10 +163,12 @@ each product connection. Role-specific operations live only on the matching hand
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
 `activate_local_session` on the signing handle. Both handles expose
-`clear_product_state` to revoke one product's capability material without
-touching the session or other products, and `notify_contacts_changed` to drop
+`clear_product_state` to revoke one product's capability material and remove
+the values it wrote to product storage, through `ProductStorage::clear_product`,
+without touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
-a compile error, not a runtime `Unavailable`.
+a compile error, not a runtime `Unavailable`. Stop a product's executions
+before clearing its state, since a value written after the clear is kept.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
@@ -790,13 +792,22 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget, and turn that card to its back or front. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
+- `ContactsPlatform`: resolve the handles a transaction names to contacts,
+  render the picker that selects one, and list the dotNS usernames of the
+  contacts the picker would offer. `contacts` is the only required method.
+  `pick_contact` defaults to `Unsupported`, so a host serving no picker says so
+  rather than looking like a user who declined, and `contact_usernames`
+  defaults to `Unsupported` the same way. The host owns the UI, so no account
+  on the list reaches the product. A product gets a handle for the selection,
+  and the game product may also read the usernames. The core caches resolved
+  handles. A host calls `notify_contacts_changed` on its runtime when a contact
+  is removed or blocked.
+  The core serves `contacts.usernames` only to the game product, `dim2` on
+  every network, and answers `Unsupported` to any other product without
+  calling the host. While nobody is signed in it answers a domain error
+  with the reason `No active session`, also without calling the host. Each
+  username is the bare dotNS label with no top-level domain, and the core
+  drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host
