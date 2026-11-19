@@ -10,7 +10,7 @@ use crate::{
 	platform::{
 		AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey,
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
-		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
+		PermissionAuthorizationRequest, ProductSubtreeReview, SignPayloadReview, SignRawReview,
 	},
 };
 use parity_scale_codec::{Decode, Encode};
@@ -4986,6 +4986,121 @@ fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
 		.expect("a cached subtree resolves without prompting");
 	let HostAccountGetResponse::V1(inner) = response;
 	assert_eq!(inner.account.public_key, test_product_account_public("myapp.dot", 0).to_vec());
+}
+
+#[test]
+fn concurrent_get_account_calls_share_one_subtree_request() {
+	// A product asking on every keystroke must not stack requests on the phone.
+	// The confirmation is not shared, so each call still raises its own.
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-subtree-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: String::new(),
+					payload: Ok(test_product_subtree("myapp.dot")),
+				})),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session.clone());
+	let contexts: Vec<_> = (0..3).map(|_| CallContext::default()).collect();
+	let calls = contexts.iter().zip(0..).map(|(cx, index)| {
+		host.get_account(
+			cx,
+			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+				product_account_id: account_id("myapp.dot", index),
+			}),
+		)
+	});
+
+	let public_keys: Vec<_> = futures::executor::block_on(futures::future::join_all(calls))
+		.into_iter()
+		.map(|response| {
+			let HostAccountGetResponse::V1(inner) = response.expect("the shared request serves");
+			inner.account.public_key
+		})
+		.collect();
+	let subtree_requests = submitted_remote_messages(&platform, &session)
+		.into_iter()
+		.filter(|message| {
+			matches!(
+				message.data,
+				RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(_))
+			)
+		})
+		.count();
+
+	assert_eq!(
+		(public_keys, platform.product_subtree_reviews.lock().unwrap().clone(), subtree_requests),
+		(
+			(0..3)
+				.map(|index| test_product_account_public("myapp.dot", index).to_vec())
+				.collect(),
+			vec![ProductSubtreeReview { product_id: ProductId::for_test("myapp.dot") }; 3],
+			1,
+		)
+	);
+}
+
+/// A subtree request callers share stays on the phone while any of them still
+/// waits for it, and is withdrawn there once the last of them is withdrawn.
+#[test]
+fn a_shared_subtree_request_is_cancelled_on_the_phone_with_its_last_caller() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		rpc_responses: vec![
+			subscribe_ack_frame("truapi:1", "own-sub-shared-subtree"),
+			subscribe_ack_frame("truapi:2", "peer-sub-shared-subtree"),
+			r#"{"jsonrpc":"2.0","id":"truapi:3","result":{"status":"new"}}"#.to_string(),
+		],
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session.clone());
+	let first_cancel = truapi::CancellationToken::default();
+	let second_cancel = truapi::CancellationToken::default();
+	let calls = std::thread::spawn({
+		let first = CallContext::with_parts("account-first".to_string(), first_cancel.clone());
+		let second = CallContext::with_parts("account-second".to_string(), second_cancel.clone());
+		move || {
+			let request = |index| {
+				HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+					product_account_id: account_id("myapp.dot", index),
+				})
+			};
+			let (first, second) = futures::executor::block_on(futures::future::join(
+				host.get_account(&first, request(0)),
+				host.get_account(&second, request(1)),
+			));
+			(first.is_err(), second.is_err())
+		}
+	});
+	let published = submitted_remote_message(&platform, &session).message_id;
+	wait_until(
+		|| platform.product_subtree_reviews.lock().unwrap().len() == 2,
+		"both calls did not reach the subtree request",
+	);
+
+	first_cancel.cancel();
+	// Long enough for a wrongly spawned `Cancel` to have been submitted.
+	std::thread::sleep(std::time::Duration::from_millis(200));
+	let withdrawn_while_one_waits = withdrawn_requests(&platform, &session);
+	second_cancel.cancel();
+	let both_failed = calls.join().expect("get_account thread panicked");
+
+	let withdrawn = || withdrawn_requests(&platform, &session);
+	wait_until(|| !withdrawn().is_empty(), "no request was withdrawn");
+	assert_eq!(
+		(withdrawn_while_one_waits, both_failed, withdrawn()),
+		(vec![], (true, true), vec![published])
+	);
 }
 
 #[test]
