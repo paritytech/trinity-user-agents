@@ -3,6 +3,10 @@
 mod account;
 mod allowance;
 mod allowance_renewal;
+#[cfg(not(target_arch = "wasm32"))]
+mod data_store;
+#[cfg(not(target_arch = "wasm32"))]
+mod item_key_range;
 mod pairing;
 #[cfg(test)]
 mod tests;
@@ -339,41 +343,6 @@ impl WalletAccountHolder {
 	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {
 		self.with_installed_keys(|keys| {
 			keys.entropy.item_secrets(slots).map_err(AuthorityError::from)
-		})
-	}
-
-	/// The item keys of `purse` allocated by `installation` at each of
-	/// `indices`, in order.
-	pub fn item_key_range(
-		&self,
-		purse: crate::nft::PurseId,
-		installation: crate::installation::InstallationId,
-		indices: core::ops::Range<u32>,
-	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
-		self.with_installed_keys(|keys| {
-			keys.entropy
-				.item_key_range(purse, installation, indices)
-				.map_err(AuthorityError::from)
-		})
-	}
-
-	/// The H160 the `AccountDataStore` contract keeps this seed's
-	/// installation records under.
-	pub fn data_store_owner(&self) -> Result<[u8; 20], AuthorityError> {
-		self.with_installed_keys(|keys| {
-			keys.entropy.data_store_owner().map_err(AuthorityError::from)
-		})
-	}
-
-	/// The distinct installations in `records` that were encrypted under this
-	/// seed, skipping every other record.
-	pub fn decrypt_installation_records(
-		&self,
-		records: &[Vec<u8>],
-	) -> Result<std::collections::HashSet<crate::installation::InstallationId>, AuthorityError> {
-		self.with_installed_keys(|keys| {
-			let key = keys.entropy.installation_record_encryption_key()?;
-			Ok(super::data_store::decrypt_installation_records(&key, records))
 		})
 	}
 

@@ -45,7 +45,8 @@ fn only_records_encrypted_under_the_seed_decrypt_and_each_installation_comes_bac
 #[test]
 fn the_data_store_account_and_record_key_match_the_apps() {
 	let mnemonic = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
-	let entropy = RootEntropy::new(bip39::Mnemonic::parse(mnemonic).unwrap().to_entropy());
+	let entropy = bip39::Mnemonic::parse(mnemonic).unwrap().to_entropy();
+	let keys = WalletKeys::new(entropy, String::new());
 	let public_key: [u8; 32] =
 		bytes("0x82fde43d07766255566803c486f9427cfb7026328a3d87cddd34b362acbdb54d")
 			.try_into()
@@ -57,8 +58,8 @@ fn the_data_store_account_and_record_key_match_the_apps() {
 	));
 	let encrypted_by_app = app_key.encrypt_with_nonce(&PINNED_INSTALLATION.0, [9; 12]).unwrap();
 
-	let owner = entropy.data_store_owner().unwrap();
-	let key = entropy.installation_record_encryption_key().unwrap();
+	let owner = keys.data_store_owner().unwrap();
+	let key = keys.installation_record_encryption_key().unwrap();
 
 	assert_eq!(owner, account_to_h160(&public_key));
 	assert_eq!(

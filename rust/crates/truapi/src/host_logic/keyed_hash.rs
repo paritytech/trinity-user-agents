@@ -6,7 +6,7 @@
 /// BLAKE2b with a 32-byte output over `message`, keyed with `key`.
 ///
 /// Panics when `key` is longer than 64 bytes, the BLAKE2b limit. Every caller
-/// passes a fixed 32- or 64-byte key.
+/// passes a fixed key no longer than that.
 pub fn blake2b_256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
 	let hash = blake2b_simd::Params::new().hash_length(32).key(key).hash(message);
 	hash.as_bytes().try_into().expect("the hash length is set to 32 bytes")

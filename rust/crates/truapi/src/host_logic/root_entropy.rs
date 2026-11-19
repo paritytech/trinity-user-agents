@@ -6,8 +6,6 @@
 //! that module adds: NFT item keys in `nft/keys.rs`, the data store account in
 //! `runtime/signing_host/data_store.rs`.
 
-use core::ops::Range;
-
 use parity_scale_codec::Encode;
 use schnorrkel::{
 	ExpansionMode, Keypair,
@@ -65,20 +63,6 @@ impl RootEntropy {
 		junctions: &[&str],
 	) -> Result<Keypair, ProductAccountError> {
 		derive_hard_path_from_keypair(self.derive_root_keypair()?, junctions)
-	}
-
-	/// The public key at `prefix//index` for each of `indices`, in order, with
-	/// every junction hard, derived from the canonical BIP-39 root key. The prefix
-	/// is derived once for the whole range.
-	pub fn derive_hard_public_keys_for_range(
-		&self,
-		prefix: &[&str],
-		indices: Range<u32>,
-	) -> Result<Vec<[u8; 32]>, ProductAccountError> {
-		let prefix_keypair = self.derive_sr25519_hard_path(prefix)?;
-		indices
-			.map(|index| derive_hard_public_key_for_index(prefix_keypair.clone(), index))
-			.collect()
 	}
 
 	/// Derive the product-subtree keypair at `//product//{product_id}`.
@@ -195,13 +179,4 @@ impl RootEntropy {
 	fn keyed_hash(&self, key: &[u8]) -> [u8; 32] {
 		blake2b_256_keyed(&self.0, key)
 	}
-}
-
-/// The public key at `keypair//index`, a hard junction.
-fn derive_hard_public_key_for_index(
-	keypair: Keypair,
-	index: u32,
-) -> Result<[u8; 32], ProductAccountError> {
-	let junction = index.to_string();
-	Ok(derive_hard_path_from_keypair(keypair, &[junction.as_str()])?.public.to_bytes())
 }

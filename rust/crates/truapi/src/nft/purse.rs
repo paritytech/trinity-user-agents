@@ -8,7 +8,18 @@ use crate::store::DbError;
 /// each one becomes part of its items' key derivation and recovery walks them
 /// in order.
 #[derive(
-	Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode, derive_more::Display,
+	Clone,
+	Copy,
+	Debug,
+	PartialEq,
+	Eq,
+	Hash,
+	PartialOrd,
+	Ord,
+	Encode,
+	Decode,
+	derive_more::Display,
+	derive_more::From,
 )]
 pub struct PurseId(pub u32);
 
@@ -20,12 +31,6 @@ pub struct UnknownPurse(pub PurseId);
 impl PurseId {
 	/// The purse every user has. No product owns it.
 	pub const MAIN: Self = Self(u32::MAX);
-}
-
-impl From<u32> for PurseId {
-	fn from(id: u32) -> Self {
-		Self(id)
-	}
 }
 
 /// Bytes the caller attaches to a purse when it creates it, written in the

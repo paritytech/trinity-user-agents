@@ -12,12 +12,8 @@ use core::{fmt::Display, num::NonZeroU32, ops::Range};
 use std::{collections::HashSet, hash::Hash, sync::Arc};
 
 use futures::{StreamExt, stream::BoxStream};
-use truapi::latest::GenericError;
 
-use crate::{
-	chain_runtime::RuntimeFailure, installation::InstallationId,
-	installation_registry::RegistryReadError, store::DbError,
-};
+use crate::{installation::InstallationId, store::DbError};
 
 /// Derives the keys of a purse's index space under one installation.
 pub trait KeyRange: Send + Sync {
@@ -70,7 +66,7 @@ pub struct FoundKey<Key, Holding> {
 
 /// Why a scan of one index space stopped before its gap.
 #[derive(Debug, derive_more::Display, derive_more::Error)]
-pub enum GapScanError {
+enum GapScanError {
 	/// A batch of keys could not be derived.
 	#[display("deriving keys failed: {_0:#}")]
 	Derive(#[error(not(source))] anyhow::Error),
@@ -88,7 +84,7 @@ pub enum GapScanError {
 }
 
 /// The keys found in one index space, in index order.
-pub type FoundKeys<Keys, Lookup> =
+type FoundKeys<Keys, Lookup> =
 	Vec<FoundKey<<Keys as KeyRange>::Key, <Lookup as HoldingLookup>::Holding>>;
 
 /// Scans the index space of `purse` under `installation` from index 0 in whole batches and
@@ -98,7 +94,7 @@ pub type FoundKeys<Keys, Lookup> =
 /// so at least that many plus one empty keys follow the last key found. A batch is always read
 /// whole, and what it finds past the gap is kept. Fails at the first batch that cannot be
 /// derived or read.
-pub async fn scan_until_gap<Keys, Lookup>(
+async fn scan_until_gap<Keys, Lookup>(
 	keys: &Keys,
 	purse: &Keys::PurseId,
 	installation: InstallationId,
@@ -185,18 +181,9 @@ fn build_found_keys<Key, Holding>(
 		.collect()
 }
 
-/// Why a backup recovery run stopped before it finished.
+/// Why a purse scan stopped before it finished.
 #[derive(Debug, thiserror::Error)]
-pub enum RecoveryError {
-	/// The finalized block or a contract read could not be reached.
-	#[error(transparent)]
-	Chain(#[from] RuntimeFailure),
-	/// The installation registry could not be read.
-	#[error(transparent)]
-	Registry(#[from] RegistryReadError),
-	/// The current installation is not known yet.
-	#[error("the current installation is unknown: {0}")]
-	Installation(GenericError),
+pub enum PurseScanError {
 	/// A purse could not be scanned.
 	#[error("scanning purse {purse} failed: {reason}")]
 	Scan {
@@ -205,7 +192,7 @@ pub enum RecoveryError {
 		/// Why its scan failed.
 		reason: String,
 	},
-	/// The core database failed.
+	/// What a purse held could not be recorded.
 	#[error(transparent)]
 	Db(#[from] DbError),
 }
@@ -234,7 +221,7 @@ impl<PurseId> PurseScanPass<PurseId> {
 }
 
 /// What became of one purse id a pass took.
-pub enum PurseScanOutcome {
+enum PurseScanOutcome {
 	/// At least one of its keys holds something.
 	Held,
 	/// None of its keys holds anything.
@@ -258,17 +245,26 @@ pub trait ScannedPursesStore<PurseId: Sync, Key: Sync, Holding: Sync>: Send + Sy
 
 /// Scans purses under every installation, each to its gap, and keeps what it finds.
 pub struct PurseScanner<Keys: ?Sized, Lookup: ?Sized, Store> {
-	/// Derives each purse's keys under an installation.
-	pub keys: Arc<Keys>,
-	/// Reads what the keys hold.
-	pub holdings: Arc<Lookup>,
-	/// The installations each purse is scanned under. A purse is empty only when it is empty
-	/// under all of them.
-	pub installations: Vec<InstallationId>,
-	/// Where what is found goes.
-	pub store: Store,
-	/// How each index space is read and when it ends.
-	pub config: GapScanConfig,
+	keys: Arc<Keys>,
+	holdings: Arc<Lookup>,
+	installations: Vec<InstallationId>,
+	store: Store,
+	config: GapScanConfig,
+}
+
+impl<Keys: ?Sized, Lookup: ?Sized, Store> PurseScanner<Keys, Lookup, Store> {
+	/// Scans each purse under every one of `installations`, deriving its keys through `keys`,
+	/// reading them through `holdings` as `config` sets, and keeping what it finds in `store`.
+	/// A purse is empty only when it is empty under all of `installations`.
+	pub fn new(
+		keys: Arc<Keys>,
+		holdings: Arc<Lookup>,
+		installations: Vec<InstallationId>,
+		store: Store,
+		config: GapScanConfig,
+	) -> Self {
+		Self { keys, holdings, installations, store, config }
+	}
 }
 
 impl<Keys, Lookup, Store> PurseScanner<Keys, Lookup, Store>
@@ -289,7 +285,7 @@ where
 	pub async fn scan_purse_passes(
 		&self,
 		passes: &[PurseScanPass<Keys::PurseId>],
-	) -> Result<(), RecoveryError> {
+	) -> Result<(), PurseScanError> {
 		let mut scanned = HashSet::new();
 		for pass in passes {
 			self.run_purse_pass(pass, &mut scanned).await?;
@@ -302,7 +298,7 @@ where
 		&self,
 		pass: &PurseScanPass<Keys::PurseId>,
 		scanned: &mut HashSet<Keys::PurseId>,
-	) -> Result<(), RecoveryError> {
+	) -> Result<(), PurseScanError> {
 		let mut purse_ids = pass.purse_ids.purse_ids();
 		let mut empty_run = 0;
 		while !pass.gap_reached(empty_run) &&
@@ -319,7 +315,7 @@ where
 		&self,
 		scanned: &mut HashSet<Keys::PurseId>,
 		purse: Keys::PurseId,
-	) -> Result<PurseScanOutcome, RecoveryError> {
+	) -> Result<PurseScanOutcome, PurseScanError> {
 		if scanned.contains(&purse) {
 			return Ok(PurseScanOutcome::Skipped);
 		}
@@ -330,7 +326,7 @@ where
 
 	/// Scans `purse` under each installation from its first index, records what it holds, and
 	/// says whether it held anything under any of them.
-	async fn scan_purse(&self, purse: &Keys::PurseId) -> Result<PurseScanOutcome, RecoveryError> {
+	async fn scan_purse(&self, purse: &Keys::PurseId) -> Result<PurseScanOutcome, PurseScanError> {
 		let mut outcome = PurseScanOutcome::Empty;
 		for installation in &self.installations {
 			let found = self.find_held_keys(purse, *installation).await?;
@@ -348,10 +344,10 @@ where
 		&self,
 		purse: &Keys::PurseId,
 		installation: InstallationId,
-	) -> Result<FoundKeys<Keys, Lookup>, RecoveryError> {
+	) -> Result<FoundKeys<Keys, Lookup>, PurseScanError> {
 		let found =
 			scan_until_gap(&*self.keys, purse, installation, &*self.holdings, &self.config).await;
-		found.map_err(|error| RecoveryError::Scan {
+		found.map_err(|error| PurseScanError::Scan {
 			purse: purse.to_string(),
 			reason: error.to_string(),
 		})
@@ -368,7 +364,14 @@ fn adjust_empty_purses_gap_from_outcome(empty_run: u32, outcome: PurseScanOutcom
 }
 
 /// Yields the given purse ids in order.
-pub struct ListedPurseIds<PurseId>(pub Vec<PurseId>);
+pub struct ListedPurseIds<PurseId>(Vec<PurseId>);
+
+impl<PurseId> ListedPurseIds<PurseId> {
+	/// Yields `purse_ids` in the order given.
+	pub fn new(purse_ids: Vec<PurseId>) -> Self {
+		Self(purse_ids)
+	}
+}
 
 impl<PurseId: Clone + Send + Sync + 'static> PurseScanIdGenerator<PurseId>
 	for ListedPurseIds<PurseId>
@@ -379,7 +382,14 @@ impl<PurseId: Clone + Send + Sync + 'static> PurseScanIdGenerator<PurseId>
 }
 
 /// Yields the purse ids of a range of numbers in order.
-pub struct SequentialPurseIds(pub Range<u32>);
+pub struct SequentialPurseIds(Range<u32>);
+
+impl SequentialPurseIds {
+	/// Yields the purse id of each number in `numbers`, in order.
+	pub fn new(numbers: Range<u32>) -> Self {
+		Self(numbers)
+	}
+}
 
 impl<PurseId: From<u32> + Send + 'static> PurseScanIdGenerator<PurseId> for SequentialPurseIds {
 	fn purse_ids(&self) -> BoxStream<'static, PurseId> {

@@ -28,11 +28,11 @@ const MAX_EMPTY_PURSES: NonZeroU32 = NonZeroU32::new(10).expect("10 is not zero"
 pub fn recovery_passes() -> [PurseScanPass<PurseId>; 2] {
 	[
 		PurseScanPass {
-			purse_ids: Arc::new(ListedPurseIds(vec![PurseId::MAIN])),
+			purse_ids: Arc::new(ListedPurseIds::new(vec![PurseId::MAIN])),
 			stop_after_gap: None,
 		},
 		PurseScanPass {
-			purse_ids: Arc::new(SequentialPurseIds(0..PurseId::MAIN.0)),
+			purse_ids: Arc::new(SequentialPurseIds::new(0..PurseId::MAIN.0)),
 			stop_after_gap: Some(MAX_EMPTY_PURSES),
 		},
 	]
@@ -46,7 +46,14 @@ pub fn recovery_scan_config() -> GapScanConfig {
 
 /// Records each recovered purse and its item keys in the core database, in
 /// one write per purse and installation.
-pub struct NftScannedPurses(pub Db);
+pub struct NftScannedPurses(Db);
+
+impl NftScannedPurses {
+	/// Records into `db`.
+	pub fn new(db: Db) -> Self {
+		Self(db)
+	}
+}
 
 #[async_trait::async_trait]
 impl ScannedPursesStore<PurseId, ItemKey, HeldItem> for NftScannedPurses {
@@ -57,7 +64,6 @@ impl ScannedPursesStore<PurseId, ItemKey, HeldItem> for NftScannedPurses {
 		found: &[FoundKey<ItemKey, HeldItem>],
 	) -> Result<(), DbError> {
 		let purse = *purse;
-		log_recovered_items(purse, found);
 		let items = found_item_slots(purse, installation, found);
 		self.0
 			.write(move |tx| {
@@ -68,7 +74,8 @@ impl ScannedPursesStore<PurseId, ItemKey, HeldItem> for NftScannedPurses {
 	}
 }
 
-/// The slot of each key in `found`, a key of `purse` under `installation`.
+/// The slot of each key in `found`, a key of `purse` under `installation`,
+/// logging each NFT found.
 fn found_item_slots(
 	purse: PurseId,
 	installation: InstallationId,
@@ -76,18 +83,14 @@ fn found_item_slots(
 ) -> Vec<(ItemSlot, ItemKey)> {
 	found
 		.iter()
+		.inspect(|hit| {
+			tracing::debug!(
+				purse = purse.0,
+				index = hit.index,
+				instance = hit.holding.instance,
+				"NFT backup recovery found an item"
+			)
+		})
 		.map(|hit| (ItemSlot { purse, installation, index: ItemIndex(hit.index) }, hit.key))
 		.collect()
-}
-
-/// Logs each NFT found in `purse` on the device.
-fn log_recovered_items(purse: PurseId, found: &[FoundKey<ItemKey, HeldItem>]) {
-	for hit in found {
-		tracing::debug!(
-			purse = purse.0,
-			index = hit.index,
-			instance = hit.holding.instance,
-			"NFT backup recovery found an item"
-		);
-	}
 }

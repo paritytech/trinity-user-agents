@@ -242,7 +242,7 @@ async fn a_failed_purse_ends_every_pass() {
 
 	let scanned = purses.scan_purse_passes(&[listed([0, 1, 2]), listed([3])]).await;
 
-	let Err(RecoveryError::Scan { purse, .. }) = scanned else {
+	let Err(PurseScanError::Scan { purse, .. }) = scanned else {
 		panic!("the scan did not fail on purse 1: {scanned:?}");
 	};
 	assert_eq!(purse, "1");

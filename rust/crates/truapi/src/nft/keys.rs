@@ -28,12 +28,6 @@ pub struct ItemIndex(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct ItemKey(pub [u8; 32]);
 
-impl From<[u8; 32]> for ItemKey {
-	fn from(public_key: [u8; 32]) -> Self {
-		Self(public_key)
-	}
-}
-
 /// Where an item key sits in the derivation tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct ItemSlot {
@@ -232,8 +226,8 @@ impl RootEntropy {
 	) -> Result<Vec<ItemKey>, ProductAccountError> {
 		let prefix = item_key_prefix(purse, installation);
 		let prefix = prefix.each_ref().map(String::as_str);
-		let keys = self.derive_hard_public_keys_for_range(&prefix, indices)?;
-		Ok(keys.into_iter().map(ItemKey).collect())
+		let prefix_keypair = self.derive_sr25519_hard_path(&prefix)?;
+		indices.map(|index| item_key_for_index(prefix_keypair.clone(), index)).collect()
 	}
 
 	/// A signer for the key at `slot`.
@@ -258,6 +252,13 @@ fn item_keypair_for_slot(root: Keypair, slot: &ItemSlot) -> Result<Keypair, Prod
 	let junctions = slot.junctions();
 	let junctions = junctions.each_ref().map(String::as_str);
 	derive_hard_path_from_keypair(root, &junctions)
+}
+
+/// The public key at `prefix_keypair//index`, a hard junction.
+fn item_key_for_index(prefix_keypair: Keypair, index: u32) -> Result<ItemKey, ProductAccountError> {
+	let junction = index.to_string();
+	let keypair = derive_hard_path_from_keypair(prefix_keypair, &[junction.as_str()])?;
+	Ok(ItemKey(keypair.public.to_bytes()))
 }
 
 #[cfg(test)]
