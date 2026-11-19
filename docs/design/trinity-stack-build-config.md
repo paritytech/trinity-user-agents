@@ -157,9 +157,9 @@ app works.
 into that build type's `stacks/` assets. `TrUAPIStack` reads `stacks/stack.build.json`, so it no longer has to map
 `TestnetEnvironment` to a stack.
 
-**Web.** `@parity/truapi-host` still does not read any stack files. The page passes the stack in
-`ProductRuntimeConfig.stack`, and the package only exports the TypeScript type of the config. In dotli, the build runs
-the build step and the app loads the bundled config and descriptor. This replaces dotli's hand-written table and
+**Web.** `@parity/truapi-host` runs in the browser and cannot read files, so the page keeps passing the stack to it in
+`ProductRuntimeConfig.stack`. The package only adds the TypeScript type of the config. In dotli, the build runs the
+build step and the app loads the bundled config and descriptor. This replaces dotli's hand-written table and
 `.trinity/stacks.json`.
 
 `reservedValues` depends on #2024. Until that merges, a host can pass `allowed` to the core as `allowsReservedValues`
