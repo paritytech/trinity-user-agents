@@ -103,8 +103,8 @@ Nothing else in this proposal depends on it.
 
 ## The build step
 
-iOS and Android run the same command as part of their build. dotli runs it too, or an equivalent, depending on the last
-open question:
+iOS and Android run the same command as part of their build. dotli runs it too, or an equivalent, depending on the open
+question about its build:
 
 ```sh
 truapi-host stack bundle --config <config> --out <build output directory>
@@ -126,17 +126,17 @@ The command also looks for a `<name>.json` next to the config and treats it as t
 refused if its `sequence` is lower, or if its TLD or `id` is different. Nothing is written next to the config, so
 building does not change the source tree. The copies in `stacks/` are still updated by `scripts/update-stacks.sh`.
 
-The price of downloading during the build is that every build needs the `truapi-host` binary and network access. We
-soften that in two ways.
+For a config with `allowed: true` the command checks one more thing. It refuses a descriptor that changes a value RFC 2
+pins (genesis hashes, TLD, `assets`, `contracts`, `dotns` or `coinage`) compared with the previous copy, and it fails
+when there is no previous copy. Without this, someone with a stolen publisher key could change the contracts, and the
+next release build would ship them with no change for anyone to review. With it, such a change first has to be reviewed
+as a change to the committed copy, and builds of that config fail until it is. RFC 2 does not ask for this rule, so it
+is also the first open question.
 
-A debug build can still be built offline. When the descriptor cannot be downloaded, the command falls back to the copy
-next to the config and prints a warning. It verifies that copy the same way and refuses it if it has expired. A release
-build never falls back.
-
-The version of `truapi-host` is pinned in this repository, so a new CLI release cannot change a build on its own. CI
-installs that version with `.github/actions/install-truapi-host`, and developers with
-`scripts/truapi-host-installer.sh`. Both already take a version. None of the workflows that build the iOS and Android
-apps installs the CLI yet, so each of them needs that step.
+The price of downloading during the build is that every build needs the `truapi-host` binary and network access. CI can
+install the binary with `.github/actions/install-truapi-host`, and developers with `scripts/truapi-host-installer.sh`.
+None of the workflows that build the iOS and Android apps installs the CLI yet, so each of them needs that step. Two of
+the open questions are about making this easier to live with: building offline, and which CLI a build uses.
 
 ## Selecting a config
 
@@ -155,9 +155,9 @@ Debug, DevCI, Nightly and Safetynet keep the stacks they run now.
 Release has no default on purpose. Right now Release runs `polkadot` with reserved values allowed, and we don't want a
 build to end up with that just because nobody set a config. So a release build with an empty setting fails.
 
-This means Parity's own Release builds need a config before the change can land, and we have not decided which one
-(question 1 below). Release is used by the release TestFlight builds, by the Profile and Archive actions of the Xcode
-schemes, and by Android's release unit tests in CI.
+This means Parity's own Release builds need a config before the change can land, and we have not decided which one (see
+the open question about Release builds). Release is used by the release TestFlight builds, by the Profile and Archive
+actions of the Xcode schemes, and by Android's release unit tests in CI.
 
 PCF would keep its own `production.build.json` outside this repository and pass the path through the same setting. Next
 to it PCF keeps a `polkadot.json` as the previous copy, and refreshes it itself with
@@ -227,7 +227,7 @@ stacks have a `.link` file. It needs a change only for a config whose stack has 
 
 - **Several stacks in one config.** #1899 and RFC 2 speak of a build's stacks in the plural, but RFC 2 also says that
   each build still runs one stack, and every build in its table has one. The only hosts that offer more are one
-  development deployment of dotli and its Docker image, which the third open question is about.
+  development deployment of dotli and its Docker image, which one of the open questions is about.
 - **Keeping the link in a separate `.link` file, so that the config only has the stack's name.** The link carries the
   publisher's key. If it lived in another file, a config that says `allowed: true` would not show who gets that
   permission, and someone could swap the key in the `.link` file without touching the config. With the link in the
@@ -239,17 +239,30 @@ stacks have a `.link` file. It needs a change only for a config whose stack has 
 
 ## Open questions
 
+For the author of RFC 2:
+
+1. RFC 2 pins a reserved stack's values from the bundled copy, but with this proposal the bundled copy is whatever the
+   URL serves on the day of the build. We added a rule that the build refuses a change to those values against the
+   committed copy. Is that what the RFC intends, or should it be solved another way?
+
 For the iOS and Android owners:
 
-1. Which config should Parity's Release builds get, and which configuration is the mainnet-fork build? Release runs
+2. Which config should Parity's Release builds get, and which configuration is the mainnet-fork build? Release runs
    `polkadot` now, and nothing runs polkadot-test.
-2. Does PCF build the apps from this tree, or from polkadot-ios-community and polkadot-android-community? Those two have
+3. Does PCF build the apps from this tree, or from polkadot-ios-community and polkadot-android-community? Those two have
    no `stacks/` directory.
+4. Should a debug build be able to build offline, by falling back to the copy next to the config with a warning? If yes,
+   the command needs a flag for it, and we need to agree which configurations pass it and what happens when there is no
+   copy. A release build would never fall back. RFC 2 does not cover this.
+5. Which `truapi-host` should a build use? A pinned release keeps builds reproducible, but it has three problems. An
+   installed CLI updates itself on a developer's machine. Its policy check uses the core of its own release, which can
+   differ from the core in the app. And there is no prebuilt binary for Intel Macs or Windows. Building the CLI from the
+   tree avoids all three, but makes every build slower.
 
 For the dotli owners:
 
-3. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
+6. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
    container starts. Should such a build take several configs, or should its choice of networks stay outside this
    format?
-4. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
+7. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
    should its build run the `truapi-host` binary, or should `trinity-stack update` learn `--config`?
