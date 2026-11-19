@@ -145,6 +145,7 @@ class TrUAPIHostRuntimeProviderTest {
         installations = mockk(),
         extensionVersions = mockk(),
         pinnedPocketCards = pinnedPocketCards,
+        deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
         workerSupervisor = { mockk(relaxed = true) },
         workerCrashNotice = mockk(relaxed = true),
         workerCrashListener = { mockk(relaxed = true) },

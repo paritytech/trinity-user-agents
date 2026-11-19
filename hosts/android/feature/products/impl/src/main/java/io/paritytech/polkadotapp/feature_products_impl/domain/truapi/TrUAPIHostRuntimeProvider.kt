@@ -86,6 +86,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
     private val pinnedPocketCards: PinnedPocketCards,
+    private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     private val workerCrashNotice: WorkerCrashNotice,
@@ -128,9 +129,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
-        val config = buildRuntimeConfig()
+        val handedOverKey = deviceKeyHandOver.keyToHandOver()
+        val config = buildRuntimeConfig(handedOverKey)
         cachedChains.set(chainDirectory.resolve())
-        TrUAPIHostRuntime(HostRuntimeBridge(), config)
+        TrUAPIHostRuntime(HostRuntimeBridge(), config).also {
+            if (handedOverKey != null) deviceKeyHandOver.forgetHandedOverKey()
+        }
     }
 
     private fun wire(runtime: TrUAPIHostRuntime) {
@@ -151,7 +155,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         observeWalletAccount(runtime)
     }
 
-    private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
+    private suspend fun buildRuntimeConfig(deviceEncryptionKey: ByteArray?): HostRuntimeConfig {
         // Booting without a session is the pre-session behaviour: products load
         // and every signing call fails. Worth degrading to rather than refusing
         // every product outright.
@@ -173,6 +177,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = truapiDatabaseDirectory(context).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
+            deviceEncryptionKey = deviceEncryptionKey,
         )
     }
 
@@ -299,7 +304,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         /**
          * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing
-         * sheet needs a core-driven session, and `PairingHostRuntime` is not
+         * sheet needs a core-driven session, and `HostRuntime<PairingHost>` is not
          * reachable from a native host yet (truapi#334, "Move SSO to the shared
          * Rust core"), so the core never reaches a state worth showing. iOS
          * stubs this the same way. Surfaced as state rather than a log line so

@@ -12,7 +12,7 @@
 //                   v
 //   Dedicated Worker
 //   ┌─────────────────────────────────────────────────────────────────┐
-//   │ shared truapi WASM PairingHostRuntime + product runtimes        │
+//   │ shared truapi WasmPairingHostRuntime + product runtimes         │
 //   │ generated raw-callback proxy                                    │
 //   └───────────────┬─────────────────────────────────────────────────┘
 //                   │ WorkerToMain: coreReady, frame, callbackRequest,
@@ -304,7 +304,7 @@ export type WorkerToMain =
       kind: "deviceEncryptionKeyResponse";
       requestId: number;
       ok: true;
-      key: Uint8Array;
+      key: Uint8Array | undefined;
     }
   | {
       kind: "deviceEncryptionKeyResponse";

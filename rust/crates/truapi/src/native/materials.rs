@@ -10,7 +10,7 @@ use super::{
 	renderer::NativeSubscription,
 };
 use crate::{
-	NodeFallback, ResolvedMaterials, ShaderLanguage, SigningHostRuntime, Spawner,
+	HostRuntime, NodeFallback, ResolvedMaterials, ShaderLanguage, SigningHost, Spawner,
 	materials::FallbackReporter,
 };
 
@@ -48,7 +48,7 @@ impl NativeMaterialsResolution {
 /// Follows the resolved materials of `tree` in `context` for `observer`. Each node that
 /// falls back reaches `failures` once.
 pub fn resolve_materials(
-	runtime: &SigningHostRuntime,
+	runtime: &HostRuntime<SigningHost>,
 	tree: RendererNode,
 	context: RenderContext,
 	float_filterable: bool,

@@ -74,7 +74,7 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   notifySessionStoreChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
-  deviceEncryptionKey(): Promise<Uint8Array>;
+  deviceEncryptionKey(): Promise<Uint8Array | undefined>;
   productSubtreePublicKey(
     productId: ProductId,
     timeoutMs?: number,

@@ -10,8 +10,8 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use futures::StreamExt;
 use truapi::{
-	KeepMaterialError, MaterialShader, NodeMaterials, ResolvedMaterials, ShaderLanguage,
-	SigningHostConfig, SigningHostRuntime, Spawner, latest::RenderContext,
+	HostRuntime, KeepMaterialError, MaterialShader, NodeMaterials, ResolvedMaterials,
+	ShaderLanguage, SigningHost, SigningHostConfig, Spawner, latest::RenderContext,
 };
 
 use crate::{
@@ -69,7 +69,7 @@ pub async fn run(command: MaterialsCommand, network: &Stack) -> Result<()> {
 
 /// A runtime that draws materials, kept in their own database under `state`, apart from any
 /// signing host's.
-async fn runtime(network: &Stack, state: &Path) -> Result<SigningHostRuntime> {
+async fn runtime(network: &Stack, state: &Path) -> Result<HostRuntime<SigningHost>> {
 	fs::create_dir_all(state).with_context(|| format!("creating {}", state.display()))?;
 	let db = truapi::store::Db::open(truapi::store::core_db_config(state))
 		.await
@@ -82,14 +82,17 @@ async fn runtime(network: &Stack, state: &Path) -> Result<SigningHostRuntime> {
 	.context("invalid signing host config")?;
 	config.materials_enabled = true;
 	let platform = CliPlatform::new(network, None, ApprovalPolicy::Prompt, None);
-	let runtime =
-		SigningHostRuntime::new(platform, config, Spawner::new(tokio::runtime::Handle::current()));
+	let runtime = HostRuntime::<SigningHost>::new(
+		platform,
+		config,
+		Spawner::new(tokio::runtime::Handle::current()),
+	);
 	runtime.set_core_db(db);
 	runtime.start_core_services();
 	Ok(runtime)
 }
 
-async fn keep_all(runtime: &SigningHostRuntime, directory: &Path) -> Result<()> {
+async fn keep_all(runtime: &HostRuntime<SigningHost>, directory: &Path) -> Result<()> {
 	let mut files = fs::read_dir(directory)
 		.with_context(|| format!("reading {}", directory.display()))?
 		.map(|entry| entry.map(|entry| entry.path()))
