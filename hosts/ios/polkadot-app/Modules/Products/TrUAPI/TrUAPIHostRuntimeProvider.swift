@@ -43,8 +43,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
-    private let logger: LoggerProtocol
-    private let coreEventLogger: CoreEventLogger
+    private let logger: CoreEventLoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
@@ -66,8 +65,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
-        logger: LoggerProtocol,
-        coreEventLogger: CoreEventLogger
+        logger: CoreEventLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager
@@ -77,7 +75,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.tldProvider = tldProvider
         self.deviceEncryptionKeys = deviceEncryptionKeys
         self.logger = logger
-        self.coreEventLogger = coreEventLogger
     }
 
     @MainActor
@@ -159,8 +156,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             workerManager: workerManager,
             backedUpInstallation: backedUpInstallation,
             encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
-            logger: logger,
-            coreEventLogger: coreEventLogger
+            logger: logger
         )
 
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)

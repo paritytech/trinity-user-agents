@@ -81,7 +81,7 @@ private extension AppDelegate {
     func addHostLogSink() {
         guard let sink = IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN) else { return }
 
-        Logger.shared.attach(sink: sink)
+        Logger.shared.log.addDestination(HostLogSinkDestination(sink: sink))
     }
 
     func configureTips() {

@@ -20,8 +20,7 @@ struct RustRuntimeEnvironment {
     let ipfsFetcher: IpfsFetching
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
-    let logger: LoggerProtocol
-    let coreEventLogger: CoreEventLogger
+    let logger: CoreEventLoggerProtocol
 
     /// The rust pieces a runtime needs: the opened execution and its chain
     /// connection pool for lifecycle control.
@@ -161,8 +160,7 @@ private extension RustRuntimeEnvironment {
             },
             hostProvider: hostProvider,
             themeManager: themeManager,
-            logger: logger,
-            coreEventLogger: coreEventLogger
+            logger: logger
         )
     }
 }

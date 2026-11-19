@@ -247,11 +247,7 @@ extension SPAViewFactory {
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
             hostProvider: hostProvider,
             themeManager: ThemeManager.shared,
-            logger: Logger.shared,
-            coreEventLogger: CoreEventLogger(
-                logger: Logger.shared,
-                sink: Logger.shared.hostLogSink
-            )
+            logger: Logger.shared
         )
     }
 }
