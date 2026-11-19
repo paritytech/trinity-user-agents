@@ -466,10 +466,10 @@ pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value 
 }
 
 /// The `ETag` every [`stored_test_record`] carries.
-pub const STORED_TEST_ETAG: &str = "\"stored\"";
+const STORED_TEST_ETAG: &str = "\"stored\"";
 
 /// The record a store holds once a reader stored `descriptor`, fetched at
-/// the Unix time `fetched_at` and served with [`STORED_TEST_ETAG`].
+/// the Unix time `fetched_at` and served with an `ETag`.
 pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
 	let (link, bytes) = sign_test_descriptor(descriptor);
 	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");

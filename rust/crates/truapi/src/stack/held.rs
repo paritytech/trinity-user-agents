@@ -74,7 +74,7 @@ impl CopyRules {
 	/// refuses. The core starts from neither kind of record, and neither
 	/// keeps a copy the core takes out of the store. A copy that passes is
 	/// one the core can start from, and it does so unless the bundled copy
-	/// is newer.
+	/// has a higher `sequence`, or the same one with other content.
 	pub fn stored_copy(&self, record: &[u8]) -> Result<Option<HeldCopy>, StackError> {
 		let mut reader = StackReader::new(Refresh::Never);
 		reader.load(&self.pointer, None, Some(record)).map_err(StackError::Descriptor)?;
