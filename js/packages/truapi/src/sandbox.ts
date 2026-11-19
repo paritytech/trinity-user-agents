@@ -1,8 +1,9 @@
 /**
  * Sandbox bootstrap for browser-embedded hosts.
  *
- * Detects whether the app runs inside a TrUAPI host (iframe or webview), adopts
- * its client or builds the matching {@link WireProvider}, and exposes a cached
+ * Detects whether the app runs inside a TrUAPI host (iframe or webview), builds
+ * a client over the host's injected {@link HostTransport} or the matching
+ * {@link WireProvider}, and exposes a cached
  * {@link TrUApiClient} via {@link getClientSync}. {@link subscribeConnectionStatus}
  * surfaces a connected / disconnected signal over that client.
  *
@@ -10,8 +11,10 @@
  */
 
 import {
+  ConnectionResetError,
   createMessagePortProvider,
   createWebSocketProvider,
+  type MethodIds,
   type WireProvider,
 } from "./transport.js";
 import { createTransport } from "./client.js";
@@ -26,15 +29,36 @@ import { tryCreateLegacyIframeProvider } from "./sandbox-legacy.js";
  */
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
+/**
+ * Frame channel a webview host injects as `window.__HOST_API_TRANSPORT__`.
+ *
+ * The host owns the connection to its core and recovers it. The product's own
+ * client encodes every frame it sends, so a product speaks the protocol
+ * version it was built against whatever version the host was built with.
+ */
+export interface HostTransport {
+  /** Send one encoded frame to the host. */
+  postMessage(frame: Uint8Array): void;
+  /**
+   * Receive the frames addressed to the product. Subscribing opens the
+   * connection. The channel serves one client: a later subscriber replaces
+   * the earlier one.
+   */
+  subscribe(callback: (frame: Uint8Array) => void): () => void;
+  /** Learn that the connection was replaced, losing the work the host may have started. */
+  subscribeReset(callback: (error: Error) => void): () => void;
+  /** Resolve once the connection can carry a call to `ids`; reject if it cannot. */
+  prepare(ids: MethodIds): Promise<void>;
+  /** Observe the connection's status, starting with the current one. */
+  subscribeConnectionStatus(
+    callback: (status: ConnectionStatus) => void,
+  ): () => void;
+}
+
 declare global {
   interface Window {
-    /** Public client and connection status supplied by the embedding host. */
-    __HOST_API_CLIENT__?: {
-      readonly client: TrUApiClient;
-      subscribeConnectionStatus(
-        callback: (status: ConnectionStatus) => void,
-      ): () => void;
-    };
+    /** Frame channel supplied by the embedding host. */
+    __HOST_API_TRANSPORT__?: HostTransport;
     /** Set by webview hosts (Polkadot Desktop / Mobile) to mark the embedding. */
     __HOST_WEBVIEW_MARK__?: boolean;
     /** Injected by webview hosts to carry the host-side `MessagePort`. */
@@ -82,13 +106,13 @@ function isIframe(): boolean {
 /**
  * Detect whether the app is running inside a TrUAPI host container: an iframe
  * (including a cross-origin parent), a marked webview, or a window carrying an
- * injected host client or message port. Synchronous, so it can gate hot paths.
+ * injected host transport or message port. Synchronous, so it can gate hot paths.
  */
 export function isCorrectEnvironment(): boolean {
   if (webSocketEndpoint !== null) return true;
   const win = hostWindow();
   if (!win) return false;
-  if (win.__HOST_API_CLIENT__) return true;
+  if (win.__HOST_API_TRANSPORT__) return true;
   if (isIframe()) return true;
   if (win.__HOST_WEBVIEW_MARK__ === true) return true;
   if (win.__HOST_API_PORT__ != null) return true;
@@ -309,6 +333,40 @@ function createSandboxProvider(
   return provider;
 }
 
+/**
+ * Build this product's client over the host's transport. The host's errors
+ * come from the host's build, so they are rewrapped in this build's
+ * {@link ConnectionResetError} for products that check the class.
+ */
+function createInjectedClient(host: HostTransport): TrUApiClient {
+  let reset: ((cause: Error) => void) | undefined;
+  return createClient(
+    createTransport(
+      {
+        postMessage: (frame) => host.postMessage(frame),
+        subscribe: (callback) => host.subscribe(callback),
+        subscribeReset: (callback) => {
+          reset = (cause) => callback(new ConnectionResetError({ cause }));
+          return host.subscribeReset(reset);
+        },
+        dispose() {},
+      },
+      {
+        // The host keeps its connection and this client is never rebuilt, so
+        // an unreadable frame ends the work in flight instead of the client.
+        onProtocolError: (error) => reset?.(error),
+        prepare: async (ids) => {
+          try {
+            await host.prepare(ids);
+          } catch (cause) {
+            throw new ConnectionResetError({ cause });
+          }
+        },
+      },
+    ),
+  );
+}
+
 let cachedConnection: {
   client: TrUApiClient;
   endpoint: string | null;
@@ -329,8 +387,9 @@ function setStatus(next: ConnectionStatus): void {
 
 /**
  * Build (or return the cached) {@link TrUApiClient}. Returns `null` outside a
- * host container or if the provider can't be built. Host-injected clients retain
- * their identity across connection resets; other closed pipes renegotiate.
+ * host container or if the provider can't be built. A client over an injected
+ * host transport retains its identity across connection resets; other closed
+ * pipes renegotiate.
  */
 export function getClientSync(): TrUApiClient | null {
   if (cachedConnection) return cachedConnection.client;
@@ -338,9 +397,13 @@ export function getClientSync(): TrUApiClient | null {
   try {
     const endpoint = webSocketEndpoint;
     const injected =
-      endpoint === null ? hostWindow()?.__HOST_API_CLIENT__ : undefined;
+      endpoint === null ? hostWindow()?.__HOST_API_TRANSPORT__ : undefined;
     if (injected) {
-      cachedConnection = { client: injected.client, endpoint, injected: true };
+      cachedConnection = {
+        client: createInjectedClient(injected),
+        endpoint,
+        injected: true,
+      };
       injected.subscribeConnectionStatus(setStatus);
       return cachedConnection.client;
     }
