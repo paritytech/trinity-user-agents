@@ -93,6 +93,7 @@ use truapi::{
 
 use super::{
 	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	sso_request_service::SsoRequestService,
 	*,
 };
 use crate::{
@@ -2328,21 +2329,41 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
 	assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// Records the visibility the host is asked for and answers a configured result.
+/// Records the face visibility and card sides the host is asked for and
+/// answers both with a configured result.
 struct RecordingExpandedCardHost {
-	answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	requested: Mutex<Vec<bool>>,
+	turned: Mutex<Vec<bool>>,
 }
 
 impl RecordingExpandedCardHost {
 	fn answering(
-		answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	) -> Arc<Self> {
-		Arc::new(Self { answer, requested: Mutex::new(Vec::new()) })
+		Arc::new(Self {
+			face_answer,
+			turn_answer,
+			requested: Mutex::new(Vec::new()),
+			turned: Mutex::new(Vec::new()),
+		})
+	}
+
+	fn applying() -> Arc<Self> {
+		Self::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		)
 	}
 
 	fn requested(&self) -> Vec<bool> {
 		self.requested.lock().expect("requested mutex poisoned").clone()
+	}
+
+	fn turned(&self) -> Vec<bool> {
+		self.turned.lock().expect("turned mutex poisoned").clone()
 	}
 }
 
@@ -2353,7 +2374,15 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
 		self.requested.lock().expect("requested mutex poisoned").push(shown);
-		self.answer.clone()
+		self.face_answer.clone()
+	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError> {
+		self.turned.lock().expect("turned mutex poisoned").push(shown);
+		self.turn_answer.clone()
 	}
 }
 
@@ -2393,11 +2422,11 @@ fn set_back_shown(
 }
 
 /// The host must see exactly what the Widget asked for, in order, so a hide
-/// followed by a show never collapses into one state change.
+/// followed by a show, or a turn and a turn back, never collapses into one
+/// state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let card = RecordingExpandedCardHost::applying();
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
 
 	for shown in [false, true, false] {
@@ -2407,7 +2436,14 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 		));
 	}
 
-	assert_eq!(card.requested(), [false, true, false]);
+	for shown in [true, false] {
+		assert!(matches!(
+			set_back_shown(&host, shown),
+			Ok(HostExpandedCardSetBackShownResponse::V1)
+		));
+	}
+
+	assert_eq!((card.requested(), card.turned()), (vec![false, true, false], vec![true, false]));
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind
@@ -2416,14 +2452,12 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
-		let card = RecordingExpandedCardHost::answering(Ok(
-			crate::platform::ExpandedCardFaceOutcome::Applied,
-		));
+		let card = RecordingExpandedCardHost::applying();
 		let host = expanded_card_host(kind, Some(card.clone()));
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
 		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
-		assert!(card.requested().is_empty());
+		assert!(card.requested().is_empty() && card.turned().is_empty());
 	}
 }
 
@@ -2435,18 +2469,7 @@ fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
-}
-
-/// This runtime cannot turn a card, so a Widget must read "not supported"
-/// rather than a failure, even under a card whose host moves its face.
-#[test]
-fn expanded_card_back_is_unsupported() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
-	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
-
 	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
-	assert!(card.requested().is_empty());
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
@@ -2457,7 +2480,10 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 	use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
 
 	let answer = |outcome| {
-		let card = RecordingExpandedCardHost::answering(outcome);
+		let card = RecordingExpandedCardHost::answering(
+			outcome,
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
 		set_face_shown(&host, false)
 	};
@@ -2481,6 +2507,45 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 		panic!("a host failure is reported as an unknown domain error");
 	};
 	assert_eq!(reason, "drawer crashed");
+}
+
+/// A turn answers what the host did, so a Widget can tell a card without a
+/// back from one the user is holding, and retry only the latter.
+#[test]
+fn expanded_card_back_outcomes_map_to_wire_answers() {
+	use crate::platform::ExpandedCardTurnOutcome;
+	use v01::HostExpandedCardSetBackShownError as Answer;
+
+	let answer = |outcome| {
+		let card = RecordingExpandedCardHost::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			outcome,
+		);
+		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
+		set_back_shown(&host, true)
+	};
+	let domain = |outcome| match answer(Ok(outcome)) {
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(error))) => Some(error),
+		_ => None,
+	};
+
+	assert_eq!(
+		[
+			domain(ExpandedCardTurnOutcome::NotPresented),
+			domain(ExpandedCardTurnOutcome::UserMoving),
+			domain(ExpandedCardTurnOutcome::NoBack),
+		],
+		[Some(Answer::NotPresented), Some(Answer::UserMoving), Some(Answer::NoBack)]
+	);
+	assert!(matches!(
+		answer(Ok(ExpandedCardTurnOutcome::Unsupported)),
+		Err(CallError::Unsupported)
+	));
+	assert!(matches!(
+		answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() })),
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(Answer::Unknown { reason })))
+			if reason == "drawer crashed"
+	));
 }
 
 #[test]
@@ -7457,7 +7522,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
+		vec![AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&stored)))]
 	);
 }
 
@@ -8155,6 +8220,28 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
 }
 
+/// A product connection that ends leaves the failures reported after it for
+/// the execution's next connection, as it leaves the user's taps.
+#[test]
+fn a_detached_connection_leaves_later_failures_for_the_next_one() {
+	let host = scanner_host_for(ExecutableKind::Worker, None);
+	let failures = &host.connection.renderer_failures;
+	let _first = failures.subscribe::<truapi::latest::GenericError>();
+	let failure = truapi::latest::HostRendererFailureSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+		node: 0,
+		material: None,
+		reason: truapi::latest::MaterialFailure::NotFound,
+	};
+
+	host.connection.detach_renderer();
+	failures.publish(failure.clone().into()).unwrap();
+	let mut second = failures.subscribe::<truapi::latest::GenericError>();
+
+	let delivered = crate::test_support::next(&mut second).expect("a failure").unwrap();
+	assert_eq!(delivered.into_latest(), failure);
+}
+
 #[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is
@@ -8336,8 +8423,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("provider offered");
+		}]);
 }
 
 /// A provider's worker connection, signed in.
@@ -9441,8 +9527,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9517,8 +9602,7 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("providers offered");
+		}]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9572,8 +9656,7 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -9692,8 +9775,7 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 			root_manifest: None,
 			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
-		}])
-		.expect("providers offered");
+		}]);
 
 	let rows = shown_when(&services, &intent, |rows| {
 		rows.iter()
@@ -9768,8 +9850,7 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10140,8 +10221,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 	services
-		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")])
-		.expect("providers offered");
+		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10213,8 +10293,7 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
-			])
-			.expect("providers offered");
+			]);
 		let intent = futures::executor::block_on(services.open_funding(
 			None,
 			new_intent(),
@@ -12258,8 +12337,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
-		)
-		.expect("providers offered");
+		);
 	let second = futures::executor::block_on(before.open_funding(
 		None,
 		new_intent(),
@@ -12679,8 +12757,7 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
-		)
-		.expect("providers offered");
+		);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),

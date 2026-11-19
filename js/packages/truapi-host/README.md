@@ -32,6 +32,11 @@ A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](..
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
 
+A host that uses the raw glue builds each runtime with an async `create`, as in
+`await WasmPairingHostRuntime.create(callbacks, hostConfig)`. Building one reads
+the core's stack record from the host's core storage, which answers
+asynchronously.
+
 `ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
 the host build runs:
 
@@ -45,8 +50,37 @@ The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key and a
 descriptor without an Asset Hub, People or Bulletin chain.
 
+A pairing or signing host runtime keeps the descriptor current when the host
+passes two raw callbacks to `create`, typed as `StackCallbacks`. A
+`WasmProductRuntime` built on its own starts from the stored copy but does not
+refresh it.
+
+- `fetchStackDescriptor(request)`: fetch `request.url` with a `GET`, without
+  following redirects, and answer `document` or `notModified`. Throw for
+  anything else.
+  The core asks once its copy is an hour old, which is at start unless the
+  copy it stored was fetched less than an hour ago, and on `refreshStack()`.
+  A sleeping device can stretch that hour, so call `refreshStack()` when the
+  page becomes visible again.
+- `stackChanged(status)`: the `StackStatus` at start and on each change, also
+  for a host without `fetchStackDescriptor`. The same value comes from
+  `stackStatus()`. `restartRequired` means a newer copy
+  changes a chain, the network, the TLD or the generation, and applies once
+  the runtime is built again. `generation` changes when the stack restarts its
+  chains: key cached chain data by it.
+
+The core keeps the last copy it verified in core storage, under the
+`StackRecord` key, and starts from it when it is newer than the bundled one.
+`create` waits a few seconds at most for that read, then starts from the
+bundled copy.
+
+Without `fetchStackDescriptor` the core stays on the copy it started from. The
+`/web` worker runtime does not pass these callbacks yet.
+
 The test host has no descriptor, so it passes `testStack` instead: the network,
 the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+A runtime built from it does not refresh: it calls neither stack callback, and
+`stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
@@ -428,11 +462,17 @@ with `no allowance set for account`.
 | ---------------------------------------- | -------------------------------------- |
 | `SessionUiInfo.deviceStatementAccountId` | On every `AuthState.Connected`         |
 | `getDeviceStatementKey()`                | Runtime method, 64-byte sr25519 secret |
+| `SessionUiInfo.deviceEncPublicKey`       | On every `AuthState.Connected`         |
+| `getDeviceEncryptionKey()`               | Runtime method, 32-byte X25519 secret  |
 
 Peers are told to address that same account, so it is also what a host derives
-its own statement topics from. Both are `undefined` without an active session,
-and the account is rotated per login: read it from the current session rather
-than caching it across sign-ins.
+its own statement topics from. The wallet announces the account and the
+encryption public key together as this device, so contacts encrypt to that key:
+decrypt and encrypt with `getDeviceEncryptionKey()`, not a key of the host's
+own. All four are `undefined` without an active session, and both keys are
+rotated per login: read them from the current session rather than caching them
+across sign-ins. The paired wallet device's own encryption key is
+`SessionUiInfo.peerDeviceEncPublicKey`.
 
 ## Worker lifecycle
 

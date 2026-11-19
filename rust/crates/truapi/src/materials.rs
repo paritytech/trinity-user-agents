@@ -31,6 +31,17 @@ use rusqlite::{OptionalExtension, Transaction};
 use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
 
 use self::format::read_material;
+pub use self::{
+	noise::noise_image,
+	resolve::{
+		FallbackReporter, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
+		ResolveSettings, ResolvedMaterials, check_material_image,
+	},
+	shader::{
+		MaterialShader, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
+		UniformRole,
+	},
+};
 use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::PreimageHost,
@@ -39,6 +50,26 @@ use crate::{
 	store::{Db, DbError},
 	time::Timer,
 };
+
+/// Whether a host with materials `enabled` draws materials of format
+/// `version` requiring `features`: the format version this core reads, and
+/// only features it reads (none, in version 1).
+pub fn draws(enabled: bool, version: u32, features: &[String]) -> bool {
+	enabled &&
+		version == format::FORMAT_VERSION &&
+		features.iter().all(|feature| format::FEATURES.contains(&feature.as_str()))
+}
+
+/// Why a material was not kept.
+#[derive(Debug, thiserror::Error)]
+pub enum KeepMaterialError {
+	/// The core cannot read the material, or the host draws no materials.
+	#[error("refused: {0:?}")]
+	Refused(MaterialFailure),
+	/// The core database did not save it.
+	#[error("not saved: {0}")]
+	NotSaved(#[from] DbError),
+}
 
 /// Largest material the format allows.
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
@@ -59,6 +90,7 @@ struct Shared {
 	timer: Arc<dyn Timer>,
 	spawner: Spawner,
 	fetches: Mutex<HashMap<[u8; 32], Fetch>>,
+	shaders: Mutex<resolve::ShaderCache>,
 }
 
 /// One fetch in flight, and the callers it answers.
@@ -77,7 +109,14 @@ impl Materials {
 		timer: Arc<dyn Timer>,
 		spawner: Spawner,
 	) -> Self {
-		Self(Arc::new(Shared { db, lookup, timer, spawner, fetches: Mutex::default() }))
+		Self(Arc::new(Shared {
+			db,
+			lookup,
+			timer,
+			spawner,
+			fetches: Mutex::default(),
+			shaders: Mutex::default(),
+		}))
 	}
 
 	/// The text of material `id` once it is on the device, then the end.
@@ -137,7 +176,7 @@ impl Materials {
 	}
 
 	async fn fetch(self, id: [u8; 32], own: AbortHandle) {
-		let answer = self.resolve(id, &own).await;
+		let answer = self.read_or_fetch(id, &own).await;
 		let mut fetches = self.0.fetches.lock();
 		// Every caller left as the answer came, so the entry may be a newer fetch's.
 		if own.is_aborted() {
@@ -154,7 +193,11 @@ impl Materials {
 		}
 	}
 
-	async fn resolve(&self, id: [u8; 32], own: &AbortHandle) -> Result<Vec<u8>, MaterialFailure> {
+	async fn read_or_fetch(
+		&self,
+		id: [u8; 32],
+		own: &AbortHandle,
+	) -> Result<Vec<u8>, MaterialFailure> {
 		match self.kept(id).await {
 			Ok(Some(text)) => return Ok(text),
 			Ok(None) => {},
@@ -166,7 +209,12 @@ impl Materials {
 			// An answer already in hand beats the deadline.
 			select_biased! {
 				answer = lookup.next() => match answer {
-					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => return self.keep(id, bytes).await,
+					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => {
+						if let Err(error) = self.keep(id, bytes.clone()).await? {
+							tracing::warn!(%error, "a material was not kept, and is fetched again next time");
+						}
+						return Ok(bytes)
+					},
 					Some(Ok(Some(_))) => return Err(MaterialFailure::Integrity),
 					Some(Ok(None)) => {},
 					Some(Err(error)) => {
@@ -189,21 +237,29 @@ impl Materials {
 			.await
 	}
 
-	async fn keep(&self, id: [u8; 32], text: Vec<u8>) -> Result<Vec<u8>, MaterialFailure> {
-		read_material(&text)?;
-		let row = text.clone();
-		let kept = self
+	/// Keeps `text` as material `id` once the core can read it, as a fetch
+	/// does. The inner result says whether the database saved it.
+	pub async fn keep(
+		&self,
+		id: [u8; 32],
+		text: Vec<u8>,
+	) -> Result<Result<(), DbError>, MaterialFailure> {
+		if let Err(error) = read_material(&text) {
+			tracing::info!(
+				target: crate::markers::MATERIALS_NODE_PLAIN.target,
+				"material {} refused: {error}",
+				hex::encode(id)
+			);
+			return Err(error.into());
+		}
+		Ok(self
 			.0
 			.db
 			.write(move |tx| {
-				tx.prepare_cached(KEEP)?.execute(rusqlite::params![id, row])?;
+				tx.prepare_cached(KEEP)?.execute(rusqlite::params![id, text])?;
 				evict(tx)
 			})
-			.await;
-		if let Err(error) = kept {
-			tracing::warn!(%error, "a material was not kept, and is fetched again next time");
-		}
-		Ok(text)
+			.await)
 	}
 
 	fn report(&self, id: [u8; 32], failure: MaterialFailure, own: &AbortHandle) {
@@ -337,12 +393,15 @@ const NEWEST_FIRST: &str = "SELECT id, length(text) FROM material ORDER BY rowid
 
 const DELETE: &str = "DELETE FROM material WHERE id = ?1";
 
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod format;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod glsl;
 mod limits;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod metal;
 mod noise;
+mod resolve;
+mod shader;
 
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;

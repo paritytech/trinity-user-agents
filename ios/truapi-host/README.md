@@ -221,6 +221,27 @@ let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loya
 The core keeps the newest face of a card from every Pocket card render, so a
 card has one to show while its worker is down and at cold start.
 
+## Materials
+
+With `HostRuntimeConfig.materialsEnabled`, the core resolves the `Materials`
+nodes of any tree: for each, in order, whether it loads, draws its layers (each with
+its Metal shaders and where each value and texture goes) or draws plain and
+why. Resolve a saved face or a preview on the runtime, and a body a product
+rendered on its execution, which also reports what falls back to the product.
+
+```swift
+let resolution = execution.resolveMaterials(tree: face, context: .pocketCard(cardId: "loyalty"), floatFilterable: false)
+for await materials in resolution.resolved { draw(materials) }
+
+// A shader that did not compile, or an image argument that could not be used.
+resolution.report(node: 0, material: id, reason: .unsupported)
+let reason = checkMaterialImage(bytes: image)
+let noise = materialNoise(seed: materials.noiseSeed)
+```
+
+Start resolving a new tree before cancelling the old one, so the materials
+they share keep their fetch.
+
 On the execution: `publishChatAction` delivers a user's action back to the
 product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
@@ -389,7 +410,7 @@ has a final status.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `setExpandedCardBackShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -432,6 +453,12 @@ The generated `SsoRequestOutcome` distinguishes these results:
 Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
 
 `runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
+
+## Device encryption key
+
+The core keeps this device's X25519 encryption key. Chat and device sync encrypt with `deviceEncryptionKey()`, and `SessionUiInfo.deviceEncPublicKey` carries its public key on every `AuthState.connected`. The core generates the key on first read.
+
+A host that announced a key of its own before the core kept one passes it as `HostRuntimeConfig.deviceEncryptionKey`. The core adopts it before the local session activates, so contacts addressing that key stay reachable, and the host can delete its own copy once the runtime is built.
 
 ## Statement-store allowance renewal
 
