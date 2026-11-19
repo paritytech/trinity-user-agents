@@ -2085,7 +2085,7 @@ where
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
-                let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::RemotePreimageSubmitError>> =
+                let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::PreimageSubmitError>> =
                     match host.submit(&cx, request).await {
                         Ok(response) => Ok(<versioned::preimage::RemotePreimageSubmitResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -2219,7 +2219,7 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::HostCreateTransactionRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::ProductAccountTxPayload, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
@@ -2238,7 +2238,7 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostCreateTransactionWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::LegacyAccountTxPayload, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();

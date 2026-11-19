@@ -60,8 +60,8 @@ use truapi::{
 		},
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
-			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+			PreimageSubmitError, RemotePreimageLookupSubscribeItem,
+			RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
 			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
@@ -69,14 +69,14 @@ use truapi::{
 		},
 		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
 		signing::{
-			HostCreateTransactionError, HostCreateTransactionRequest,
-			HostCreateTransactionResponse, HostCreateTransactionWithLegacyAccountError,
-			HostCreateTransactionWithLegacyAccountRequest,
+			HostCreateTransactionError, HostCreateTransactionResponse,
+			HostCreateTransactionWithLegacyAccountError,
 			HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
 			HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
 			HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
 			HostSignRawResponse, HostSignRawWithLegacyAccountError,
 			HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
+			LegacyAccountTxPayload, ProductAccountTxPayload,
 		},
 		statement_store::{
 			RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
@@ -5868,7 +5868,7 @@ fn preimage_submit_requires_session_first() {
 	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
 
 	match err {
-		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+		CallError::Domain(PreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
 			reason,
 		})) => assert_eq!(reason, "No active session"),
 		other => panic!("expected preimage session error, got {other:?}"),
@@ -5884,7 +5884,7 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 	let request = RemotePreimageSubmitRequest::V1(vec![1, 2, 3]);
 	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
 	match err {
-		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+		CallError::Domain(PreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
 			reason,
 		})) => assert_eq!(reason, PERMISSION_DENIED_REASON),
 		other => panic!("expected preimage permission denial, got {other:?}"),
@@ -5932,7 +5932,7 @@ fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
 				));
 				if matches!(
 					result,
-					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+					Err(CallError::Domain(PreimageSubmitError::V1(
 						v01::PreimageSubmitError::Unknown { reason },
 					))) if reason == allowance_error
 				) {
@@ -6605,7 +6605,7 @@ fn legacy_create_transaction_rejects_raw_key_mismatch() {
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, sso_session_info());
 	let cx = CallContext::default();
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(v01::LegacyAccountTxPayload {
+	let request = LegacyAccountTxPayload::V1(v01::LegacyAccountTxPayload {
 		signer: [0; 32],
 		genesis_hash: [1; 32],
 		call_data: vec![0],
@@ -6656,7 +6656,7 @@ fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request
 		extensions: vec![],
 		tx_ext_version: 0,
 	};
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+	let request = LegacyAccountTxPayload::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -6718,7 +6718,7 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 		extensions: vec![],
 		tx_ext_version: 0,
 	};
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+	let request = LegacyAccountTxPayload::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -7153,8 +7153,8 @@ fn transfer_naming(recipient: &[u8; 32]) -> Vec<u8> {
 fn transaction_naming(
 	handle: v01::ContactHandle,
 	declared: Vec<v01::ContactHandle>,
-) -> HostCreateTransactionRequest {
-	HostCreateTransactionRequest::V1(v01::ProductAccountTxPayload {
+) -> ProductAccountTxPayload {
+	ProductAccountTxPayload::V1(v01::ProductAccountTxPayload {
 		signer: account_id("myapp.dot", 0),
 		genesis_hash: [1; 32],
 		call_data: transfer_naming(&handle.bytes),
@@ -7316,8 +7316,8 @@ fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
 			.expect_err("the chain cannot be connected")
 	};
 
-	let v2 = create(HostCreateTransactionRequest::V2(payload.clone()));
-	let v1 = create(HostCreateTransactionRequest::V1(payload));
+	let v2 = create(ProductAccountTxPayload::V2(payload.clone()));
+	let v1 = create(ProductAccountTxPayload::V1(payload));
 
 	let CallError::Domain(HostCreateTransactionError::V2(
 		v02::HostCreateTransactionError::Unknown { reason },
