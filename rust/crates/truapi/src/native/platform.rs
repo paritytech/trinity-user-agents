@@ -72,6 +72,15 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
+
+	async fn contact_usernames(
+		&self,
+		product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, v01::GenericError> {
+		self.contacts
+			.contact_usernames(product.product_id.clone())
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
 }
 
 /// [`crate::platform::ScannerPlatform`] served by host-provided
