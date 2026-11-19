@@ -20,8 +20,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "PreviewnetSmoke"
-private const val RELAY = "860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92"
-private const val PEOPLE = "55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9"
+private const val RELAY = "48ab0689e87be8c502ace5f1c953baf4337daad39406f1e596c5f2fed5950fe6"
+private const val PEOPLE = "732abb4e3052154ebd9201a375b0aacf2d1fe7015700235c0a8b30d44b401c19"
 private const val PEOPLE_RPC = "wss://previewnet.substrate.dev/people"
 private const val GET_GENESIS = """{"jsonrpc":"2.0","id":1,"method":"chain_getBlockHash","params":[0]}"""
 
