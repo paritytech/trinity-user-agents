@@ -15,6 +15,7 @@ use std::{collections::HashSet, ops::ControlFlow, sync::Arc, time::Duration};
 
 use futures::StreamExt;
 use subxt::utils::H256;
+use truapi::latest::GenericError;
 
 pub use self::asset_hub::AssetHubRecoveryChain;
 use self::recovered_purses::{NftScannedPurses, recovery_passes, recovery_scan_config};
@@ -22,9 +23,11 @@ use super::{HeldItem, ItemKey, ItemKeyDeriver, dao};
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
-	gap_scan::{HoldingLookup, PurseScanner, RecoveryError},
+	chain_runtime::RuntimeFailure,
+	gap_scan::{HoldingLookup, PurseScanError, PurseScanner},
 	host_logic::session::SessionState,
 	installation::{InstallationId, InstallationIdProvider},
+	installation_registry::RegistryReadError,
 	store::{Db, DbError},
 	time::{Backoff, retry},
 };
@@ -32,23 +35,61 @@ use crate::{
 /// The pauses between failed runs while a session lasts.
 const RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(30), Duration::from_secs(30 * 60));
 
-/// What item keys hold, as [`RecoveryChain::holdings_at`] reads them.
-pub type ItemHoldings = dyn HoldingLookup<Key = ItemKey, Holding = HeldItem>;
+/// Why a backup recovery run stopped before it finished.
+#[derive(Debug, thiserror::Error)]
+pub enum NftRecoveryError {
+	/// The finalized block or a contract read could not be reached.
+	#[error(transparent)]
+	Chain(#[from] RuntimeFailure),
+	/// The installation registry could not be read.
+	#[error(transparent)]
+	Registry(#[from] RegistryReadError),
+	/// The current installation is not known yet.
+	#[error("the current installation is unknown: {0}")]
+	Installation(GenericError),
+	/// The purse scan failed.
+	#[error(transparent)]
+	Scan(#[from] PurseScanError),
+	/// The core database failed.
+	#[error(transparent)]
+	Db(#[from] DbError),
+}
 
 /// The chain reads a recovery run makes, all at one finalized block.
 #[async_trait::async_trait]
 pub trait RecoveryChain: Send + Sync {
 	/// The latest finalized block.
-	async fn finalized_block(&self) -> Result<H256, RecoveryError>;
+	async fn finalized_block(&self) -> Result<H256, NftRecoveryError>;
 
 	/// Every installation the session's seed registered, as of `at`.
 	async fn registered_installations(
 		&self,
 		at: H256,
-	) -> Result<HashSet<InstallationId>, RecoveryError>;
+	) -> Result<HashSet<InstallationId>, NftRecoveryError>;
 
-	/// Reads of what item keys hold at `at`.
-	fn holdings_at(&self, at: H256) -> Arc<ItemHoldings>;
+	/// What each of `keys` holds at `at`, in the same order, with `None` for
+	/// a key that holds nothing.
+	async fn holdings_at(
+		&self,
+		at: H256,
+		keys: &[ItemKey],
+	) -> anyhow::Result<Vec<Option<HeldItem>>>;
+}
+
+/// What item keys hold at one block, read through a [`RecoveryChain`].
+struct HoldingsAtBlock {
+	chain: Arc<dyn RecoveryChain>,
+	at: H256,
+}
+
+#[async_trait::async_trait]
+impl HoldingLookup for HoldingsAtBlock {
+	type Key = ItemKey;
+	type Holding = HeldItem;
+
+	async fn read_holdings(&self, keys: &[ItemKey]) -> anyhow::Result<Vec<Option<HeldItem>>> {
+		self.chain.holdings_at(self.at, keys).await
+	}
 }
 
 /// What backup recovery runs on.
@@ -157,12 +198,12 @@ async fn recover_until_done(deps: Arc<NftRecoveryDeps>) {
 
 /// One run: reads the registered installations at the finalized block and
 /// scans every installation not finished yet.
-async fn run_recovery_once(deps: &NftRecoveryDeps) -> Result<(), RecoveryError> {
+async fn run_recovery_once(deps: &NftRecoveryDeps) -> Result<(), NftRecoveryError> {
 	let current = deps
 		.installation
 		.current_installation()
 		.await
-		.map_err(RecoveryError::Installation)?;
+		.map_err(NftRecoveryError::Installation)?;
 	let at = deps.chain.finalized_block().await?;
 	let registered = deps.chain.registered_installations(at).await?;
 	record_registered_installations(&deps.db, current, registered).await?;
@@ -195,18 +236,20 @@ async fn recover_installations(
 	deps: &NftRecoveryDeps,
 	installations: Vec<InstallationId>,
 	at: H256,
-) -> Result<(), RecoveryError> {
+) -> Result<(), NftRecoveryError> {
 	if installations.is_empty() {
 		return Ok(());
 	}
 	tracing::info!(installations = installations.len(), "NFT backup recovery scanning");
-	let scanner = PurseScanner {
-		keys: deps.keys.clone(),
-		holdings: deps.chain.holdings_at(at),
-		installations: installations.clone(),
-		store: NftScannedPurses(deps.db.clone()),
-		config: recovery_scan_config(),
-	};
+	let holdings = Arc::new(HoldingsAtBlock { chain: deps.chain.clone(), at });
+	let store = NftScannedPurses::new(deps.db.clone());
+	let scanner = PurseScanner::new(
+		deps.keys.clone(),
+		holdings,
+		installations.clone(),
+		store,
+		recovery_scan_config(),
+	);
 	scanner.scan_purse_passes(&recovery_passes()).await?;
 	mark_installations_done(&deps.db, installations).await?;
 	tracing::info!("NFT backup recovery finished");

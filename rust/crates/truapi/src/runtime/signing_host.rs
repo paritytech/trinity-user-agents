@@ -2,8 +2,6 @@
 //!
 //! Wallet replacement and retained grants use the same lifecycle guard.
 
-#[cfg(not(target_arch = "wasm32"))]
-mod data_store;
 mod local_activation;
 pub mod ring_vrf;
 mod wallet_account_holder;

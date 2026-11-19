@@ -11,11 +11,12 @@ use super::*;
 use crate::{
 	nft::{
 		ItemSlot, NftLedger, NftLedgerDeps, PurseId, PurseRecord, PurseTag,
-		item_key_range_from_entropy, item_keys_from_entropy,
+		item_key_range_from_root, item_keys_from_entropy,
 		keys::ItemIndex,
 		test_ledger,
 		testing::{FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, test_ledger_deps},
 	},
+	host_logic::product_account::derive_root_keypair_from_entropy,
 	runtime::AuthorityError,
 	store::open_temporary_core_db,
 	test_support::session_info,
@@ -59,7 +60,8 @@ impl ItemKeyDeriver for TestSeed {
 			return Err(AuthorityError::Unavailable { reason: "session locked".to_string() });
 		}
 		self.installations_scanned.lock().unwrap().insert(installation);
-		Ok(item_key_range_from_entropy(&TEST_ENTROPY, purse, installation, indices).unwrap())
+		let root = derive_root_keypair_from_entropy(&TEST_ENTROPY).unwrap();
+		Ok(item_key_range_from_root(root, purse, installation, indices).unwrap())
 	}
 }
 
@@ -79,32 +81,24 @@ impl TestChain {
 
 #[async_trait::async_trait]
 impl RecoveryChain for TestChain {
-	async fn finalized_block(&self) -> Result<H256, RecoveryError> {
+	async fn finalized_block(&self) -> Result<H256, NftRecoveryError> {
 		Ok(H256::repeat_byte(0xf1))
 	}
 
 	async fn registered_installations(
 		&self,
 		_at: H256,
-	) -> Result<HashSet<InstallationId>, RecoveryError> {
+	) -> Result<HashSet<InstallationId>, NftRecoveryError> {
 		Ok(self.registered.lock().unwrap().clone())
 	}
 
-	fn holdings_at(&self, _at: H256) -> Arc<ItemHoldings> {
-		Arc::new(TestHoldings(self.held.clone()))
-	}
-}
-
-struct TestHoldings(HashSet<ItemKey>);
-
-#[async_trait::async_trait]
-impl HoldingLookup for TestHoldings {
-	type Key = ItemKey;
-	type Holding = HeldItem;
-
-	async fn read_holdings(&self, keys: &[ItemKey]) -> anyhow::Result<Vec<Option<HeldItem>>> {
+	async fn holdings_at(
+		&self,
+		_at: H256,
+		keys: &[ItemKey],
+	) -> anyhow::Result<Vec<Option<HeldItem>>> {
 		let held = HeldItem { collection: 1, item: 2, instance: 3 };
-		Ok(keys.iter().map(|key| self.0.contains(key).then_some(held)).collect())
+		Ok(keys.iter().map(|key| self.held.contains(key).then_some(held)).collect())
 	}
 }
 
@@ -154,7 +148,7 @@ impl Harness {
 		NftLedger::new(NftLedgerDeps { recovery: Arc::new(self.start()), ..deps })
 	}
 
-	fn recover(&self) -> Result<(), RecoveryError> {
+	fn recover(&self) -> Result<(), NftRecoveryError> {
 		block_on(run_recovery_once(&self.deps))
 	}
 
@@ -213,7 +207,10 @@ fn a_failed_run_leaves_the_installation_pending_and_the_retry_finds_its_items() 
 	let seed = TestSeed { failing_derivation: Some(4), ..TestSeed::default() };
 	let harness = Harness::with_seed(TestChain::new(&[EARLIER], [in_main, in_purse_0]), seed);
 
-	assert!(matches!(harness.recover(), Err(RecoveryError::Scan { .. })));
+	assert!(matches!(
+		harness.recover(),
+		Err(NftRecoveryError::Scan(PurseScanError::Scan { .. }))
+	));
 	let pending = block_on(harness.deps.db.read(dao::pending_recoveries)).unwrap();
 	let recorded_before_the_failure = harness.purse_of(in_main);
 	harness.recover().unwrap();

@@ -46,7 +46,8 @@ fn keys_under_the_item_prefix_are_the_allocated_item_keys() {
 	let (purse, installation) = (PurseId(3), InstallationId([0x1d; 32]));
 	let slots = [0, 1, 7].map(|index| ItemSlot { purse, installation, index: ItemIndex(index) });
 
-	let range = item_key_range_from_entropy(&entropy, purse, installation, 0..8).unwrap();
+	let root = derive_root_keypair_from_entropy(&entropy).unwrap();
+	let range = item_key_range_from_root(root, purse, installation, 0..8).unwrap();
 	let allocated = item_keys_from_entropy(&entropy, &slots).unwrap();
 
 	assert_eq!([0, 1, 7].map(|index| range[index]), allocated.as_slice());

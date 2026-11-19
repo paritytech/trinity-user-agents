@@ -12,8 +12,7 @@ use crate::{
 	gap_scan::KeyRange,
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::product_account::{
-		ProductAccountError, derive_hard_path_from_keypair, derive_hard_public_keys_for_range,
-		derive_root_keypair_from_entropy,
+		ProductAccountError, derive_hard_path_from_keypair, derive_root_keypair_from_entropy,
 	},
 	installation::InstallationId,
 	runtime::AuthorityError,
@@ -27,12 +26,6 @@ pub struct ItemIndex(pub u32);
 /// Public key of one item. Its secret is derived again when it is needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct ItemKey(pub [u8; 32]);
-
-impl From<[u8; 32]> for ItemKey {
-	fn from(public_key: [u8; 32]) -> Self {
-		Self(public_key)
-	}
-}
 
 /// Where an item key sits in the derivation tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
@@ -225,17 +218,24 @@ pub fn item_keys_from_entropy(
 }
 
 /// The public keys of `purse` allocated by `installation` at each of
-/// `indices`, derived from `entropy` with the shared prefix derived once.
-pub fn item_key_range_from_entropy(
-	entropy: &[u8],
+/// `indices`, derived from `root` with the shared prefix derived once.
+pub fn item_key_range_from_root(
+	root: Keypair,
 	purse: PurseId,
 	installation: InstallationId,
 	indices: Range<u32>,
 ) -> Result<Vec<ItemKey>, ProductAccountError> {
 	let prefix = item_key_prefix(purse, installation);
 	let prefix = prefix.each_ref().map(String::as_str);
-	let keys = derive_hard_public_keys_for_range(entropy, &prefix, indices)?;
-	Ok(keys.into_iter().map(ItemKey).collect())
+	let prefix_keypair = derive_hard_path_from_keypair(root, &prefix)?;
+	indices.map(|index| item_key_for_index(prefix_keypair.clone(), index)).collect()
+}
+
+/// The public key at `prefix_keypair//index`, a hard junction.
+fn item_key_for_index(prefix_keypair: Keypair, index: u32) -> Result<ItemKey, ProductAccountError> {
+	let junction = index.to_string();
+	let keypair = derive_hard_path_from_keypair(prefix_keypair, &[junction.as_str()])?;
+	Ok(ItemKey(keypair.public.to_bytes()))
 }
 
 /// A signer for the key at `slot`, derived from the root of `entropy`.

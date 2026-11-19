@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use subxt::utils::H256;
 
-pub use chain::{ScarcityChain, ScarcityStorage};
 pub use holdings::ScarcityHoldings;
 pub use policy::{TRANSFER_POLICY, TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner};
 #[cfg(test)]
@@ -22,6 +21,7 @@ pub use testing::ASSET_HUB_PIPELINE;
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
 
 use self::{
+	chain::ScarcityStorage,
 	oracle::ScarcityTransferOracle,
 	policy::{ScarcityTransferPolicy, ScarcityTransferPolicyDeps},
 };
