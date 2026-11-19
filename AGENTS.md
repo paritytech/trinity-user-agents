@@ -84,6 +84,9 @@ js/packages/
                           bun tests run the crate's vectors
 js/container/              Shared TS lockdown container for native web views and CLI dev; scripts reuse its web API gates
                            `npm run build` bundles it into ios/truapi-host/Sources/TrUAPIHost/Resources/
+                           It owns the host connection and injects its frame channel as
+                           `window.__HOST_API_TRANSPORT__`; products encode with their own SDK.
+                           `npm run build:test-sdk` bundles the SDK that host test pages load
 ios/truapi-provider/       TrUAPIProvider Swift package (chain transport over UniFFI);
                            second product of the root Package.swift, released on its
                            own tag (@parity/ios-provider@<v>) via its scripts/

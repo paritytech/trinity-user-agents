@@ -49,7 +49,7 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -895,6 +895,32 @@ impl ProductStorage for MockPlatform {
 		}
 		self.storage.lock().expect("storage poisoned").remove(&product_key(&key));
 		self.publish_storage(&key, None);
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+		if let Some(reason) = &self.config.faults.storage_error {
+			return Err(truapi::v01::HostLocalStorageReadError::Unknown { reason: reason.clone() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.storage
+			.lock()
+			.expect("storage poisoned")
+			.retain(|key, _| !key.starts_with(&product_key(&owned)));
+		let subscribed: Vec<String> = self
+			.storage_subscribers
+			.lock()
+			.expect("storage subscribers poisoned")
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in subscribed {
+			self.publish_storage(&key, None);
+		}
 		Ok(())
 	}
 

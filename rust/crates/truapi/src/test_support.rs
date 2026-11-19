@@ -30,9 +30,10 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview, StackStorage,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StackStorage, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -1176,6 +1177,27 @@ impl PlatformProductStorage for StubPlatform {
 		}
 		self.local_storage.lock().expect("local storage mutex poisoned").remove(&key);
 		self.push_storage_change(&key, None);
+		Ok(())
+	}
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		if let Some(reason) = self.local_storage_error {
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		let keys: Vec<String> = self
+			.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in keys {
+			self.clear(key).await?;
+		}
 		Ok(())
 	}
 

@@ -8,5 +8,5 @@ truapi_macros::versioned_type! {
 	pub enum RemotePreimageLookupSubscribeError { V1 => v01::GenericError }
 	pub enum RemotePreimageSubmitRequest { V1 => Vec<u8> }
 	pub enum RemotePreimageSubmitResponse { V1 => Vec<u8> }
-	pub enum RemotePreimageSubmitError { V1 => v01::PreimageSubmitError }
+	pub enum PreimageSubmitError { V1 => v01::PreimageSubmitError }
 }
