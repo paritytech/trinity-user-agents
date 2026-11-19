@@ -135,7 +135,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 pub fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
 	asset_hub_chain_genesis_hash: [u8; 32],
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	let config = crate::platform::SigningHostConfig::new(
 		crate::platform::HostInfo {
 			name: "Polkadot Mobile".to_string(),
@@ -153,12 +153,12 @@ pub fn signing_runtime_on_asset_hub(
 		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone());
+	let signing_host = SigningHost::new(services.clone());
 	(services, signing_host)
 }
 
 /// A signing host whose wallet is active under [`ENTROPY`].
-pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
+pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
 	let (_services, signing_host) =
 		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
@@ -168,7 +168,7 @@ pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> 
 
 pub fn product_runtime_for(
 	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
+	authority: Arc<SigningHost>,
 	product_id: &str,
 ) -> ProductRuntimeHost<signing_host::WalletAccountHolder> {
 	ProductRuntimeHost::from_services(
@@ -1016,12 +1016,11 @@ fn contacts_host(
 	connected: bool,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		platform as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(contacts) = contacts {
 		services.install_contacts_platform(contacts);
@@ -1086,12 +1085,11 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	// default is truthful: a product learns the picker will never work here,
 	// rather than a dismissal it would keep retrying.
 	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -1408,14 +1406,14 @@ fn host_with_contacts(
 	contacts: Arc<dyn crate::platform::ContactsPlatform>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::with_platforms(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
 		None,
+		Some(contacts),
 	);
-	services.install_contacts_platform(contacts);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
 	let host = ProductRuntimeHost::from_services(
@@ -8287,12 +8285,11 @@ fn scanner_host_for(
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
 	product.execution_kind = kind;
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(scanner) = scanner {
 		services.install_scanner_platform(scanner);

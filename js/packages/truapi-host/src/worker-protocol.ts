@@ -12,7 +12,7 @@
 //                   v
 //   Dedicated Worker
 //   ┌─────────────────────────────────────────────────────────────────┐
-//   │ shared truapi WASM PairingHostRuntime + product runtimes        │
+//   │ shared truapi WasmPairingHostRuntime + product runtimes         │
 //   │ generated raw-callback proxy                                    │
 //   └───────────────┬─────────────────────────────────────────────────┘
 //                   │ WorkerToMain: coreReady, frame, callbackRequest,
