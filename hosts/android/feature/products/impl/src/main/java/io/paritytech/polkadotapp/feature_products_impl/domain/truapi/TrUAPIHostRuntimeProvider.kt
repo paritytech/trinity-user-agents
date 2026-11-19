@@ -11,7 +11,6 @@ import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import io.paritytech.polkadotapp.common.data.telemetry.CoreEventSink
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -83,7 +82,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
     private val pinnedPocketCards: PinnedPocketCards,
-    private val coreEventSink: CoreEventSink,
+    private val coreEventLogger: CoreEventLogger,
     private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
@@ -231,7 +230,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
 
         override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
-            logCoreEvent(coreEventSink, marker, attributes)
+            coreEventLogger.log(marker, attributes)
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.

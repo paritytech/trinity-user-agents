@@ -1,19 +1,15 @@
 package io.paritytech.polkadotapp.app.logging
 
 import io.paritytech.polkadotapp.common.data.telemetry.CoreEventSink
-import io.sentry.Sentry
 import io.sentry.SentryAttribute
 import io.sentry.SentryAttributes
 import io.sentry.logger.ILoggerApi
 import io.sentry.logger.SentryLogParameters
 import javax.inject.Inject
 
-class SentryCoreEventSink(
+class SentryCoreEventSink @Inject constructor(
     private val logger: ILoggerApi,
 ) : CoreEventSink {
-    @Inject
-    constructor() : this(Sentry.logger())
-
     override fun log(priority: Int, marker: String, attributes: Map<String, Any>) {
         val fields = attributes.map { (key, value) -> SentryAttribute.named(key, value) } +
             SentryAttribute.stringAttribute(TAG_ATTRIBUTE, CORE_TAG)
