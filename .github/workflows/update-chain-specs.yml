@@ -142,4 +142,3 @@ jobs:
           commit-message: "chore: refresh bundled chain specs and stack descriptors"
           delete-branch: true
           labels: dependencies
-          reviewers: mordamax
