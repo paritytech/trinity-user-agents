@@ -200,17 +200,10 @@ as well. `scripts/write-refresh-changeset.sh` treats every `stacks/*.json` as a 
 
 ## Alternatives we rejected
 
-- **TOML instead of JSON.** The app reads the config at start, and Foundation, the Android SDK and browsers can all
-  decode JSON out of the box. None of them can decode TOML.
-- **Keeping the link in a separate `.link` file.** Then the file that sets `allowed: true` would not show which key gets
-  that permission.
 - **Several stacks in one config.** RFC 2 has one stack per build. The only hosts that offer more are one development
   deployment of dotli and its Docker image.
-- **One file that lists all builds.** PCF would have to edit a file that Parity owns, and every build would carry the
-  entries of all the others.
-- **Committing the descriptors and not downloading during the build.** A build could then ship a descriptor that expired
-  after the last refresh.
-- **Putting the descriptor inside the config.** Every refresh would rewrite a file that people review by hand.
+- **Keeping the link in a separate `.link` file.** Then the file that sets `allowed: true` would not show which key gets
+  that permission.
 - **Extending `.trinity/stacks.json`.** That file is part of the published `@parity/trinity-stack` package. Its values
   are plain link strings, and projects that are not hosts read it too.
 
