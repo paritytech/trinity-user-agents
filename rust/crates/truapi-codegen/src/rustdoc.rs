@@ -284,7 +284,7 @@ struct ItemCandidate {
 
 /// This crate's newtypes over a private `String`. rustdoc omits the field, so
 /// codegen supplies their string representation while retaining the name.
-const STRING_NEWTYPES: &[&str] = &["ProductId"];
+pub const STRING_NEWTYPES: &[&str] = &["ProductId"];
 
 /// Maps rustdoc item ids and full paths to the output type names used in
 /// generated code, disambiguated when several types share a simple name.

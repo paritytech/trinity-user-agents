@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { createContext, runInContext } from 'node:vm';
 import { browserGlobals, browserScript, frameBytes } from './test-browser.js';
 import { decodeWireMessage, encodeWireMessage, type ProtocolMessage } from '@parity/truapi';
-import type { HostConnection } from '@parity/truapi/internal';
+import type { HostConnection } from './host-connection.js';
 import * as W from '@parity/truapi/wire-table';
 
 const source = await browserScript(`
-  import { createHostConnection } from '@parity/truapi/internal';
+  import { createHostConnection } from './host-connection.ts';
   import { freezePermissionRuntime } from './permission-runtime.ts';
   import { freezeValue } from './freeze.ts';
   import { installFetchGate } from './network.ts';
@@ -14,10 +14,7 @@ const source = await browserScript(`
   freezePermissionRuntime();
   const connection = createHostConnection('ws://127.0.0.1:1234/?t=execution');
   freezeValue(window, '__HOST_WEBVIEW_MARK__', true);
-  freezeValue(window, '__HOST_API_CLIENT__', Object.freeze({
-    get client() { return connection.client; },
-    subscribeConnectionStatus: connection.subscribeConnectionStatus,
-  }));
+  freezeValue(window, '__HOST_API_TRANSPORT__', Object.freeze(connection.transport));
   Object.defineProperty(window, '__HOST_API_PORT__', {
     get: () => connection.legacyPort,
     set() {},
@@ -171,13 +168,12 @@ function browser() {
     sockets,
     port: () => (win as unknown as { __HOST_API_PORT__: MessagePort }).__HOST_API_PORT__,
     async connect() {
-      const client = connection.client;
+      connection.transport.subscribe(() => {});
       sockets[sockets.length - 1]!.open();
       let connected = false;
       const unsubscribe = connection.subscribeConnectionStatus(status => { connected = status === 'connected'; });
       await until(() => connected);
       unsubscribe();
-      return client;
     },
   };
 }
@@ -222,11 +218,10 @@ describe('shared connection permission isolation', () => {
         }
       };
     `],
-    ['SDK result methods', `
-      const result = window.__HOST_API_CLIENT__.client.system.handshake();
-      Object.getPrototypeOf(result).then = function (resolve) {
-        return Promise.resolve(resolve({ isOk: () => true, value: { granted: true } }));
-      };
+    ['the injected transport', `
+      window.__HOST_API_TRANSPORT__.subscribe(frame => {
+        if (frame instanceof Uint8Array) frame[frame.length - 1] = 1;
+      });
     `],
   ]) {
     it(`cannot make native fetch run after a denied reply through ${name}`, async () => {
@@ -334,10 +329,10 @@ describe('shared connection permission isolation', () => {
     expect((await decision)._unsafeUnwrap()).toEqual({ granted: false });
   });
 
-  it('recovers without calling a close method installed on the public legacy port', async () => {
+  it('keeps the public legacy port across a reconnect without calling a close method installed on it', async () => {
     const host = browser();
     const port = host.port();
-    const client = await host.connect();
+    await host.connect();
     let intercepted = false;
     Object.defineProperty(port, 'close', { value() {
       intercepted = true;
@@ -349,43 +344,35 @@ describe('shared connection permission isolation', () => {
     expect(await decision).toBe('ConnectionResetError');
     await until(() => host.sockets.length === 2);
     await host.connect();
-    port.postMessage(frame('p:retired'));
-    await settle();
-    expect({
-      intercepted,
-      sameClient: host.connection.client === client,
-      forwarded: host.sockets[1]!.sent.some(request => request.requestId === 'p:retired'),
-    }).toEqual({ intercepted: false, sameClient: true, forwarded: false });
+    port.postMessage(frame('p:after'));
+    await until(() => host.sockets[1]!.sent.some(request => request.requestId === 'p:after'));
+    expect(intercepted).toBe(false);
   });
 
-  it('accepts legacy assignment without replacing the pinned port or client', () => {
+  it('accepts legacy assignment without replacing the pinned port or transport', () => {
     const host = browser();
     const port = host.port();
-    const client = host.connection.client;
     runInContext(`
       (() => {
         'use strict';
         window.__HOST_API_PORT__ = { postMessage() { throw new Error('replacement port'); } };
-        window.__HOST_API_CLIENT__ = { client: {} };
+        window.__HOST_API_TRANSPORT__ = { postMessage() { throw new Error('replacement transport'); } };
         window.__HOST_WEBVIEW_MARK__ = false;
       })();
     `, host.context);
     expect({
       samePort: host.port() === port,
-      sameClient: runInContext('window.__HOST_API_CLIENT__.client', host.context) === client,
+      sameTransport: runInContext('window.__HOST_API_TRANSPORT__', host.context) === host.connection.transport,
       hosted: runInContext('window.__HOST_WEBVIEW_MARK__', host.context),
       sockets: host.sockets.length,
-    }).toEqual({ samePort: true, sameClient: true, hosted: true, sockets: 1 });
+    }).toEqual({ samePort: true, sameTransport: true, hosted: true, sockets: 1 });
   });
 
-  it('keeps authorization private when public methods and shared prototypes are replaced', async () => {
+  it('keeps authorization private when shared prototypes are replaced', async () => {
     const host = browser();
-    const client = await host.connect();
+    await host.connect();
     runInContext(`
       globalThis.exposed = [];
-      const client = window.__HOST_API_CLIENT__.client;
-      client.permissions.requestRemotePermission = () => ({ granted: true });
-      Object.getPrototypeOf(client.permissions).requestDevicePermission = () => ({ granted: true });
       for (const poison of [
         () => Object.defineProperty(Object.prototype, 'value', { set(value) { exposed.push(value); } }),
         () => { Map.prototype.set = function () { exposed.push(this); }; },
@@ -419,14 +406,8 @@ describe('shared connection permission isolation', () => {
     expect({
       decision: (await second)._unsafeUnwrap(),
       exposed: host.context.exposed,
-      sameClient: host.connection.client === client,
       sameLegacyPort: host.port() === port,
-      publicFields: Reflect.ownKeys(client.permissions),
-      publicResult: runInContext('window.__HOST_API_CLIENT__.client.permissions.requestRemotePermission()', host.context) as unknown,
-    }).toEqual({
-      decision: { granted: false }, exposed: [], sameClient: true, sameLegacyPort: true,
-      publicFields: ['requestRemotePermission'], publicResult: { granted: true },
-    });
+    }).toEqual({ decision: { granted: false }, exposed: [], sameLegacyPort: true });
   });
 
   it('rejects reserved IDs in every legacy frame leg, length form and malformed frame', async () => {
@@ -449,13 +430,34 @@ describe('shared connection permission isolation', () => {
     expect(socket.sent.map(request => request.requestId)).toEqual(['host:1', 'p:allowed']);
   });
 
-  it('keeps private replies off the legacy port and ignores stale socket decisions', async () => {
+  it('rejects reserved IDs and malformed frames from the injected transport', async () => {
+    const host = browser();
+    await host.connect();
+    const socket = host.sockets[0]!;
+    const transport = runInContext('window.__HOST_API_TRANSPORT__', host.context) as HostConnection['transport'];
+    const ProductBytes = runInContext('Uint8Array', host.context) as typeof Uint8Array;
+    const post = (bytes: Uint8Array) => transport.postMessage(ProductBytes.from(bytes));
+    for (let messageType = 0; messageType <= 4; messageType++) post(frame(`host:forged:${messageType}`, messageType));
+    for (const malformed of [new Uint8Array(), Uint8Array.of(1), Uint8Array.of(252)]) post(malformed);
+    // A product owns the object it passes, and can make it read as another frame.
+    const disguised = ProductBytes.from(frame('host:forgery'));
+    const decoy = ProductBytes.from(frame('p:legitimate'));
+    Object.defineProperty(disguised, 'subarray', { value: (...range: number[]) => decoy.subarray(...range) });
+    transport.postMessage(disguised);
+    post(frame('p:allowed'));
+    await until(() => socket.sent.some(request => request.requestId === 'p:allowed'));
+    expect(socket.sent.map(request => request.requestId)).toEqual(['host:1', 'p:allowed']);
+  });
+
+  it('keeps private replies off the public channels and ignores stale socket decisions', async () => {
     const host = browser();
     const port = host.port();
     const publicReplies: string[] = [];
+    const transportReplies: string[] = [];
     port.addEventListener('message', event => publicReplies.push(decode(event.data).requestId));
     port.start();
-    const client = await host.connect();
+    await host.connect();
+    host.connection.transport.subscribe(frame => transportReplies.push(decode(frame).requestId));
     const firstSocket = host.sockets[0]!;
     const first = host.authorize();
     await until(() => permissionRequests(firstSocket).length === 1);
@@ -481,9 +483,10 @@ describe('shared connection permission isolation', () => {
     expect(settled).toBe(false);
     replacement.reply(reply(current, false));
     expect({
-      decision: (await next)._unsafeUnwrap(), publicReplies,
-      sameClient: host.connection.client === client, sameLegacyPort: host.port() === port,
-    }).toEqual({ decision: { granted: false }, publicReplies: ['p:reply'], sameClient: true, sameLegacyPort: true });
+      decision: (await next)._unsafeUnwrap(), publicReplies, transportReplies, sameLegacyPort: host.port() === port,
+    }).toEqual({
+      decision: { granted: false }, publicReplies: ['p:reply'], transportReplies: ['p:reply'], sameLegacyPort: true,
+    });
   });
 
   it('rejects array-like socket data without invoking getters that forge a permission reply', async () => {
