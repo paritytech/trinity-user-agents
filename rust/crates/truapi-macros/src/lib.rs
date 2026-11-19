@@ -74,6 +74,10 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version
 /// envelopes leave those to be written by hand, since the conversion is bespoke.
 ///
+/// Beside the enums, the macro emits a `latest` module with one alias per
+/// declaration, so `latest::HostFooRequest` is the newest payload of
+/// `HostFooRequest`. `truapi::latest` re-exports those modules.
+///
 /// The enum and every variant receive generated doc comments; a variant keeps
 /// its own doc attributes when the declaration provides them.
 ///
