@@ -9,19 +9,23 @@ pr: 2200
 
 # Trinity stack build config
 
-## Summary
+## Problem
 
-[RFC 2](https://github.com/paritytech/trinity-user-agents/pull/1564) lists what a build's configuration holds: the
-stack's pointer, a bundled copy of its descriptor, and whether the stack may use reserved values. It does not define a
-file format. This page proposes one for [#1899](https://github.com/paritytech/trinity-user-agents/issues/1899).
+Right now each host decides in code which stack it runs. iOS switches on compiler flags, Android maps
+`TestnetEnvironment` to a stack, and dotli keeps a hand-written table. If PCF or anyone else wants to ship a different
+stack, they have to change that code.
 
-Each host currently picks its stack in code. iOS switches on compiler flags, Android maps `TestnetEnvironment` to a
-stack, and dotli has a hand-written table. To ship another stack, someone has to change that code.
+[RFC 2](https://github.com/paritytech/trinity-user-agents/pull/1564) moves this choice into the build's configuration.
+It says what the configuration holds (the stack's pointer, a bundled copy of its descriptor, and whether the stack may
+use reserved values) but it does not say what the file looks like. This page proposes a format for
+[#1899](https://github.com/paritytech/trinity-user-agents/issues/1899) and describes what each build system does with
+it.
 
-With a build config, the choice is in a JSON file. There is one file per build and it names one stack: its name, its
-link and its reserved-values policy. The build is given the path to the file. The build step downloads the stack's
-descriptor, verifies it, and puts the descriptor and the config into the app. The app starts the core from those two
-files.
+## Proposal
+
+A build config is a small JSON file that names one stack. Each build is pointed at one config. During the build we
+download that stack's descriptor, verify it, and put both the descriptor and the config into the app, which starts the
+core from them.
 
 ## The format
 
@@ -38,58 +42,54 @@ files.
 }
 ```
 
-- `name` matches `[a-z0-9][a-z0-9-]*`. The descriptor copy is saved as `<name>.json`.
-- `link` is the stack link. It must include the key, because RFC 2 requires a built-in stack to be signed.
+- `name` matches `[a-z0-9][a-z0-9-]*`. It is also the file name of the descriptor copy, `<name>.json`.
+- `link` is the stack link. It has to include the key, because RFC 2 requires a built-in stack to be signed.
 - `reservedValues` has the same fields as `ReservedValuesPolicy` in
-  [#2024](https://github.com/paritytech/trinity-user-agents/pull/2024). `allowed` is required. The two lists are
-  optional. If `allowed` is `true`, both lists must be empty, or the core refuses the policy.
-- A config with an unknown field, or with `$v` other than 1, is refused.
+  [#2024](https://github.com/paritytech/trinity-user-agents/pull/2024). Only `allowed` is required. The two lists
+  reserve more genesis hashes and TLDs on top of the ones the core already reserves, so the stack may not name those
+  either. They make no sense together with `allowed: true`, and the core refuses that combination.
+- A config with an unknown field, or with a `$v` other than 1, is refused.
 
-RFC 2 pins some values for a stack that may use reserved values, such as its genesis hashes, TLD and contracts. The
-config does not list them. The core reads them from the bundled copy.
+RFC 2 also pins some values for a stack that may use reserved values, such as its genesis hashes, TLD and contracts.
+Those are not repeated in the config, because the core takes them from the bundled descriptor.
 
-The builds listed in #1899:
+These are the builds listed in #1899 and the config each one would have:
 
-| Build               | `name`          | `allowed` | Link                              |
-| ------------------- | --------------- | --------- | --------------------------------- |
-| Parity nightly      | `paseo-next-v2` | `false`   | as in `stacks/paseo-next-v2.link` |
-| Parity preview      | `previewnet`    | `false`   | as in `stacks/previewnet.link`    |
-| Parity mainnet fork | `polkadot-test` | `true`    | no polkadot-test stack exists yet |
-| PCF production      | `polkadot`      | `true`    | as in `stacks/polkadot.link`      |
+| Build               | `name`          | `allowed` | Link                                   |
+| ------------------- | --------------- | --------- | -------------------------------------- |
+| Parity nightly      | `paseo-next-v2` | `false`   | same as `stacks/paseo-next-v2.link`    |
+| Parity preview      | `previewnet`    | `false`   | same as `stacks/previewnet.link`       |
+| Parity mainnet fork | `polkadot-test` | `true`    | nobody publishes a polkadot-test stack |
+| PCF production      | `polkadot`      | `true`    | same as `stacks/polkadot.link`         |
 
 ## The build step
 
-Each host's build runs one command:
+Every host runs the same command as part of its build:
 
 ```sh
 truapi-host stack bundle --config <config> --out <build output directory>
 ```
 
-The command does this:
+The command validates the config, downloads the descriptor from the URL in the link and verifies its signature with the
+key in the link. It then checks the descriptor against the config's policy, using the core's own `Stack::bundled`. If
+all of that passes, it writes two files into the output directory: `stack.build.json`, which is the config, and
+`<name>.json`, which is the descriptor. The build ships both as app resources. Since a `name` cannot contain a dot, a
+descriptor can never be written over `stack.build.json`.
 
-1. Validates the config.
-2. Downloads the descriptor from the URL in the link.
-3. Verifies the signature with the key in the link.
-4. Checks the descriptor against the config's policy, using the core's `Stack::bundled`.
-5. Writes `stack.build.json` (the config) and `<name>.json` (the descriptor copy) into the output directory. The build
-   ships both files as app resources.
+If the descriptor cannot be downloaded, is not signed, is signed with a different key, has expired or breaks the policy,
+the command fails and so does the build.
 
-If a step fails, the command fails and the build fails. This covers a descriptor that cannot be downloaded, is unsigned,
-is signed by another key, has expired, or breaks the policy.
+The command also looks for a `<name>.json` next to the config and treats it as the previous copy. The new descriptor is
+refused if its `sequence` is lower or its TLD is different. Nothing is written next to the config, so building does not
+change the source tree. The copies in `stacks/` are still updated by `scripts/update-stacks.sh`.
 
-A `name` cannot contain a dot, so a descriptor copy can never be named `stack.build.json`.
-
-The file `<name>.json` next to the config is the previous copy. The command compares the new descriptor with it. The new
-one must not have a lower `sequence` or a different TLD. The command never writes next to the config, so a build does
-not change the source tree. `scripts/update-stacks.sh` updates the copies in `stacks/`, as it does now.
-
-Every build needs the `truapi-host` binary and network access. CI installs the binary with
-`.github/actions/install-truapi-host`. Developers install it with `scripts/truapi-host-installer.sh`.
+The price of this is that every build needs the `truapi-host` binary and network access. CI can install the binary with
+`.github/actions/install-truapi-host`, and developers with `scripts/truapi-host-installer.sh`.
 
 ## Selecting a config
 
-Parity's configs are in `stacks/`, next to the descriptor copies: `nightly.build.json`, `preview.build.json` and
-`mainnet-fork.build.json`.
+Parity's configs would live in `stacks/`, next to the descriptor copies, as `nightly.build.json`, `preview.build.json`
+and `mainnet-fork.build.json`. Each build system gets one setting that holds the path to a config:
 
 | Build system | Setting                                                          | Defaults                                                          |
 | ------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -97,113 +97,121 @@ Parity's configs are in `stacks/`, next to the descriptor copies: `nightly.build
 | Gradle       | Gradle property `truapi.stackBuildConfig.<buildType>`            | debug: preview. nightly, safetynet: nightly. release: none        |
 | Web          | env var `TRINITY_STACK_BUILD_CONFIG`, read by the bundler config | set per deployment                                                |
 
-The defaults for Debug, DevCI, Nightly and Safetynet are the stacks those configurations run now.
+Debug, DevCI, Nightly and Safetynet keep the stacks they run now.
 
 Release has no default on purpose. Right now Release runs `polkadot` with reserved values allowed, and we don't want a
 build to end up with that just because nobody set a config. So a release build with an empty setting fails.
 
-This also breaks Parity's own Release builds until someone picks a config for them. Those are the TestFlight build, the
-Profile and Archive actions of the Xcode scheme, and Android's release unit tests in CI.
+The downside is that Parity's own Release builds break until someone picks a config for them. That affects the
+TestFlight build, the Profile and Archive actions of the Xcode scheme, and Android's release unit tests in CI.
 
-PCF keeps its config, `production.build.json`, outside this repository, together with the last `polkadot.json` it
-bundled. It passes the path through the same setting. PCF's stack and key appear only in that file, so PCF does not need
-to change host code.
+PCF would keep its own `production.build.json` outside this repository, together with the last `polkadot.json` it
+bundled, and pass the path through the same setting. Its stack and its key appear only in that file, so PCF can build
+the host without changing any code.
 
-## What each host does
+## What changes in each host
 
-**iOS.** The xcconfig files in `hosts/ios/Configs/` set `TRINITY_STACK_BUILD_CONFIG`. A value on the `xcodebuild`
-command line overrides them. The "Bundle Trinity stacks" build phase runs the build step and writes into the app's
-`trinity-stack/` resources. `TrUAPIBundledStack` reads `stack.build.json` and the descriptor copy and builds
-`BundledStack` from them. It does not switch on `UNSTABLE`, `NIGHTLY` or `SAFETYNET`. If the config cannot be decoded,
-the app behaves as it does now when the stack resource is missing: products do not start and the rest of the app works.
+**iOS.** The xcconfig files in `hosts/ios/Configs/` set `TRINITY_STACK_BUILD_CONFIG`, and a value passed on the
+`xcodebuild` command line overrides them. The "Bundle Trinity stacks" build phase runs the build step and writes into
+the app's `trinity-stack/` resources. `TrUAPIBundledStack` then builds `BundledStack` from `stack.build.json` and the
+descriptor, and no longer needs its switch on `UNSTABLE`, `NIGHTLY` and `SAFETYNET`. If the config cannot be decoded,
+the app behaves the way it already does when the stack resource is missing: products do not start, but the rest of the
+app works.
 
-**Android.** `:bindings:truapi-host` has one `syncStacks` task per build type. The task runs the build step and writes
-into that build type's `stacks/` assets. `TrUAPIStack` reads `stacks/stack.build.json`. It does not map
+**Android.** `:bindings:truapi-host` gets one `syncStacks` task per build type. Each task runs the build step and writes
+into that build type's `stacks/` assets. `TrUAPIStack` reads `stacks/stack.build.json`, so it no longer has to map
 `TestnetEnvironment` to a stack.
 
-**Web.** `@parity/truapi-host` does not read stack files. The page passes the stack in `ProductRuntimeConfig.stack`. The
-package exports the config's TypeScript type. In dotli, the build runs the build step, and the app loads the bundled
-config and descriptor copy. dotli's hand-written table and `.trinity/stacks.json` are not used.
+**Web.** `@parity/truapi-host` still does not read any stack files. The page passes the stack in
+`ProductRuntimeConfig.stack`, and the package only exports the TypeScript type of the config. In dotli, the build runs
+the build step and the app loads the bundled config and descriptor. This replaces dotli's hand-written table and
+`.trinity/stacks.json`.
 
-`reservedValues` depends on #2024. Until it merges, a host passes `allowed` to the core as `allowsReservedValues` and
-refuses a config where either list has an entry.
+`reservedValues` depends on #2024. Until that merges, a host can pass `allowed` to the core as `allowsReservedValues`
+and refuse any config that fills in one of the lists.
 
-An app update can ship a changed config. The core already handles the copy stored on the device:
+We also checked what happens when an app update ships a different config while the device still has a descriptor stored
+from the old one. The core already handles all three cases:
 
-- New key: the stack id changes, so the core does not read the old stored record.
-- Stricter policy: if the stored copy breaks the new policy, the core ignores it and runs the bundled copy.
-- New URL only: the core keeps the stored copy.
+- If the key changed, the stack id is different, so the old stored record is never read.
+- If the policy became stricter and the stored copy breaks it, the core ignores the stored copy and runs the bundled
+  one.
+- If only the URL changed, the core keeps using the stored copy.
 
-## CLI, scripts and tests
+## What changes in the CLI, scripts and tests
 
-`truapi-host stack bundle` gets a `--config <file>` option. With it, `--out` is a directory. The command runs the checks
-`bundle <link>` runs now, and two more:
+`truapi-host stack bundle` gets a `--config <file>` option, and with it `--out` is a directory instead of a file. It
+does everything `bundle <link>` does now, plus two new checks:
 
-- The descriptor must pass the config's policy. For example, if a testnet descriptor starts naming a Polkadot genesis
-  hash, the build fails. Without this check the app would fail at start.
-- `allowed: true` is refused when the descriptor names no reserved genesis hash and no reserved TLD. That stack does not
-  need the permission.
+- The descriptor has to pass the config's policy. If a testnet descriptor starts naming a Polkadot genesis hash, for
+  example, the build fails. Without this check we would only find out when the app fails to start.
+- A config with `allowed: true` is refused if its descriptor does not name any reserved genesis hash or TLD, because
+  that stack has no use for the permission.
 
-Only the CLI validates the whole format: the name pattern, the key in the link, unknown fields and `$v`. The Swift,
-Kotlin and TypeScript readers decode the file and refuse it if decoding fails.
+The CLI is the only place that validates the whole format (the name pattern, the key in the link, unknown fields and
+`$v`). The Swift, Kotlin and TypeScript readers just decode the file and refuse it if that fails.
 
-A new test in `truapi-host-cli` reads every `stacks/*.build.json`. It validates the config, then runs `Stack::bundled`
-with the config's link, its policy and the descriptor copy next to it. The app tests currently start the core on every
-bundled stack. With one config per build they would test one stack, so this test covers the others.
+We also need a new test in `truapi-host-cli` that goes over every `stacks/*.build.json`, validates it, and runs
+`Stack::bundled` with its link, its policy and the descriptor next to it. At the moment the app tests start the core on
+every bundled stack. Once a build carries one stack they would only cover that one, and this test makes up for it.
 
-The CLI's built-in networks still use `stacks/<name>.link`, so the paseo-next-v2 and previewnet links are each in two
-files. The same test checks that the two are equal.
+The CLI's built-in networks keep reading `stacks/<name>.link`, which means the paseo-next-v2 and previewnet links end up
+in two files each. The same test checks that both files have the same link.
 
-`scripts/update-stacks.sh` also refreshes the copy for each `stacks/*.build.json`. `scripts/write-refresh-changeset.sh`
-reads every `stacks/*.json` as a descriptor, so it has to skip `*.build.json`.
+Two scripts need a small change. `scripts/update-stacks.sh` has to refresh the descriptor for each `stacks/*.build.json`
+as well. `scripts/write-refresh-changeset.sh` treats every `stacks/*.json` as a descriptor, so it has to skip
+`*.build.json`.
 
-## Rejected alternatives
+## Alternatives we rejected
 
-- **TOML.** The app reads the bundled config at start. Foundation, the Android SDK and browsers decode JSON without
-  extra code. None of them decodes TOML.
-- **The config names the stack and a `.link` file holds the link.** The file that sets `allowed: true` would not show
-  which key gets that permission.
-- **Several stacks in one config.** RFC 2 has one stack per build. Only one development deployment of dotli and its
-  Docker image offer more than one.
-- **One file for all builds.** PCF would have to edit a file Parity owns, and every build would carry the other builds'
-  entries.
-- **Committed copies and no download in the build.** A build could ship a copy that expired after the last refresh.
-- **The descriptor inside the config.** Every refresh would rewrite a file that people review by hand.
-- **Extending `.trinity/stacks.json`.** Its values are link strings in the published `@parity/trinity-stack` package,
-  and projects that are not hosts read it.
+- **TOML instead of JSON.** The app reads the config at start, and Foundation, the Android SDK and browsers can all
+  decode JSON out of the box. None of them can decode TOML.
+- **Keeping the link in a separate `.link` file.** Then the file that sets `allowed: true` would not show which key gets
+  that permission.
+- **Several stacks in one config.** RFC 2 has one stack per build. The only hosts that offer more are one development
+  deployment of dotli and its Docker image.
+- **One file that lists all builds.** PCF would have to edit a file that Parity owns, and every build would carry the
+  entries of all the others.
+- **Committing the descriptors and not downloading during the build.** A build could then ship a descriptor that expired
+  after the last refresh.
+- **Putting the descriptor inside the config.** Every refresh would rewrite a file that people review by hand.
+- **Extending `.trinity/stacks.json`.** That file is part of the published `@parity/trinity-stack` package. Its values
+  are plain link strings, and projects that are not hosts read it too.
 
 ## Open questions
 
 For the RFCs:
 
 1. [RFC 3, Running more than one stack](https://github.com/paritytech/trinity-user-agents/pull/1565) lets a build choose
-   whether it accepts Imported stacks. Is that choice a field of this file?
+   whether it accepts Imported stacks. Should that choice be a field in this file?
 
-iOS and Android:
+For iOS and Android:
 
-2. A build with no network fails. Can a debug build use the copy next to the config instead, with a warning?
-3. Which `truapi-host` version does a build use: the latest stable release, or a version pinned next to the config?
-4. Which config do Parity's Release builds get, and which configuration is the mainnet-fork build? Release runs
-   `polkadot` now and nothing runs polkadot-test.
-5. `UNSTABLE`, `NIGHTLY` and `SAFETYNET` on iOS and `TestnetEnvironment` on Android still select Firebase keys and chain
-   tables. Should a build fail when they do not match the config?
-6. Does PCF build iOS from this tree or from polkadot-ios-community? That repository has no `stacks/`.
+2. A build without network access fails. Should a debug build be allowed to fall back to the copy next to the config,
+   with a warning?
+3. Which version of `truapi-host` should a build use: the latest stable release, or one pinned next to the config?
+4. Which config should Parity's Release builds get, and which configuration is the mainnet-fork build? Release runs
+   `polkadot` now, and nothing runs polkadot-test.
+5. `UNSTABLE`, `NIGHTLY` and `SAFETYNET` on iOS and `TestnetEnvironment` on Android will still select Firebase keys and
+   chain tables. Should a build fail when they do not match the config?
+6. Does PCF build iOS from this tree or from polkadot-ios-community? The second one has no `stacks/` directory.
 
-Web:
+For web:
 
-7. One development deployment of dotli offers two networks, and its Docker image gets its networks when the container
-   starts. Does such a build take several configs, or is its choice of networks outside this format?
-8. dotli can run pcf-devnet with reserved values allowed. The table in #1899 does not list it. Does it get a config?
-9. dotli is a separate repository with no `stacks/`. Where do its config and previous copy live? Does its build run the
-   `truapi-host` binary, or should `trinity-stack update` take `--config`?
-10. Does polkadot-desktop read the same file?
+7. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
+   container starts. Should such a build take several configs, or should its choice of networks stay outside this
+   format?
+8. dotli can run pcf-devnet with reserved values allowed, but the table in #1899 does not list it. Does it get a config?
+9. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
+   should its build run the `truapi-host` binary, or should `trinity-stack update` learn `--config`?
+10. Should polkadot-desktop read the same file?
 
-Stacks:
+About the stacks themselves:
 
-11. Who publishes polkadot-test, and under which key and URL? The mainnet-fork config cannot be written until then.
-12. Must `name` equal the descriptor's `id`? They are equal in all four copies in `stacks/`.
+11. Who will publish polkadot-test, and under which key and URL? We cannot write the mainnet-fork config until we know.
+12. Does `name` have to equal the descriptor's `id`? They are equal in all four copies in `stacks/`.
 
-Not tried yet:
+Two things in this proposal have not been tried yet:
 
 - Running `truapi-host` with network access from an Xcode script phase and from a Gradle task, in every CI job that
   builds an app.
