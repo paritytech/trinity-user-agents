@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use subxt::tx::Signer;
 use truapi::{
-	CallContext, HostAdmin, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHostRuntime,
+	CallContext, HostAdmin, HostRuntime, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHost,
 	Sr25519Signer,
 	api::{Preimage, ResourceAllocation},
 	chain::{EvmContractCaller, PreparedEvmTransaction},
@@ -37,7 +37,7 @@ impl ChainProfile {
 	/// Finds the profile record and verifies the identity owns `username` before anything is
 	/// allocated or uploaded.
 	pub async fn connect(
-		runtime: &SigningHostRuntime,
+		runtime: &HostRuntime<SigningHost>,
 		network: &Stack,
 		entropy: &[u8],
 		username: &str,

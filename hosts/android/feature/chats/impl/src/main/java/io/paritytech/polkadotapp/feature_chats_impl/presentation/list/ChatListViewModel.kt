@@ -122,7 +122,7 @@ class ChatListViewModel @Inject constructor(
 
         return ChatListUiState.ChatItem(
             chatId = id,
-            display = display.toUi(),
+            display = display.toUi(forceFresh = false),
             badge = unreadBadge.toUi(),
             preview = previewModel,
             // TODO: wire mute state from domain Chat once the field exists.

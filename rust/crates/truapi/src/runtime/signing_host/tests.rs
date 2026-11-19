@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use super::{
 	super::{
-		AccountHolder, HostSession, ProductConnection, ProductRuntimeHost, RuntimeServices,
-		SigningHostRole, SsoAccountHolderService,
+		AccountHolder, HostRole, HostSession, ProductConnection, ProductRuntimeHost,
+		RuntimeServices, SigningHost, SsoAccountHolderService,
 		authority::{
 			AccountCaller, AccountInvocation, AuthorityError, AuthoritySession,
 			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
@@ -149,7 +149,7 @@ fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
 	assert!(!granted, "the closed default: no manifest reachable means no grant");
 }
 
-fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	// Auto-confirm raw signing so the role-neutral confirmation gate does
 	// not reject before reaching the signing authority.
 	let platform: Arc<dyn Platform> = Arc::new(StubPlatform {
@@ -164,19 +164,19 @@ fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 /// scripted chain.
 fn signing_runtime_with_platform(
 	platform: Arc<dyn Platform>,
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS)
 }
 
 fn product_runtime(
 	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
+	authority: Arc<SigningHost>,
 ) -> ProductRuntimeHost<WalletAccountHolder> {
 	product_runtime_for(services, authority, "myapp.dot")
 }
 
 /// A connection of `product_id` to `authority`, which the host's account calls act for.
-fn connection(authority: &Arc<SigningHostRole>, product_id: &str) -> Arc<ProductConnection> {
+fn connection(authority: &Arc<SigningHost>, product_id: &str) -> Arc<ProductConnection> {
 	product_runtime_for(authority.services.clone(), authority.clone(), product_id)
 		.connection()
 		.clone()
@@ -188,7 +188,7 @@ fn relayed<'a>(cx: &'a CallContext, session: &'a AuthoritySession) -> AccountInv
 }
 
 /// The service a paired host reaches, bound to `authority`'s wallet from `ENTROPY`.
-fn sso_service(authority: &SigningHostRole) -> SsoAccountHolderService {
+fn sso_service(authority: &SigningHost) -> SsoAccountHolderService {
 	let statement = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 	let (_, encryption) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
 	authority
@@ -377,13 +377,17 @@ fn a_failed_lookup_is_named_in_the_refusal() {
 	assert_eq!(
 		lines,
 		vec![
+			"truapi.tracing.warn truapi::dotns: the dotNS lookup could not open at a best \
+			 Asset Hub block; every grant behind it is refused {reason=finding the best \
+			 Asset Hub block timed out}"
+				.to_string(),
 			"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup \
-			 failed {target=peopl.dot, reason=Asset Hub follow initialization timed out}"
+			 failed {target=peopl.dot, reason=finding the best Asset Hub block timed out}"
 				.to_string(),
 			refusal_line(
 				"because=manifest unavailable, entry=dim2, caller=dim2.dot, \
-				 owner=peopl.dot, source=dotNS lookup failed: Asset Hub follow \
-				 initialization timed out, scopes=None"
+				 owner=peopl.dot, source=dotNS lookup failed: finding the best \
+				 Asset Hub block timed out, scopes=None"
 			),
 		]
 	);
@@ -473,7 +477,7 @@ fn a_consented_alias_read_warns_nobody() {
 	// Cached, so no failed chain lookup warns on the way.
 	cache_grant(&platform, "peopl.dot", r#"{"someone-else":["context"]}"#);
 	let authority =
-		SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		SigningHost::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
@@ -755,7 +759,13 @@ fn third_product_context(
 	Result<v01::HostAccountCreateProofResponse, RingVrfError>,
 	Result<v01::ContextualAlias, RingVrfError>,
 ) {
-	let platform = Arc::new(StubPlatform::default());
+	// Every manifest this needs is cached, so the only chain reads are the
+	// background username lookups activation starts. A refused connection ends
+	// them at once rather than leaving reads open while the runtime drops.
+	let platform = Arc::new(StubPlatform {
+		chain_connect_error: Some("fixture serves no chain"),
+		..StubPlatform::default()
+	});
 	cache_grant(&platform, "peopl.dot", owner_grants);
 	match context_grants {
 		Some(grants) => cache_grant(&platform, "dim2.dot", grants),
@@ -1333,8 +1343,8 @@ fn a_grant_of_all_satisfies_context_at_the_runtime_seam() {
 fn signing_runtime_with_ring_resolver(
 	platform: Arc<StubPlatform>,
 	ring_resolver: Arc<StubRingResolver>,
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-	let authority = SigningHostRole::new_with_ring_resolver(platform, ring_resolver);
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
+	let authority = SigningHost::new_with_ring_resolver(platform, ring_resolver);
 	(authority.services.clone(), authority)
 }
 
@@ -1434,7 +1444,7 @@ fn a_kept_key_answers_another_product_only_within_the_owners_grants() {
 /// A signing host that keeps `peopl.dot`'s AutoSigning key and registered its
 /// ring-VRF key from it, with `peopl.dot`'s manifest listing
 /// `trusted_products` and `bank.dot`'s granting nothing.
-fn with_the_owners_kept_key(trusted_products: &str) -> (Arc<SigningHostRole>, AuthoritySession) {
+fn with_the_owners_kept_key(trusted_products: &str) -> (Arc<SigningHost>, AuthoritySession) {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
 	cache_grant(&platform, "peopl.dot", trusted_products);
@@ -1558,7 +1568,7 @@ const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 
 /// The account holder's answer to `payload` from a paired peer naming itself `caller`.
 fn paired_request<P>(
-	authority: &SigningHostRole,
+	authority: &SigningHost,
 	caller: &str,
 	payload: P,
 ) -> <ProductRequest<P> as SsoRequest>::Response
@@ -1584,7 +1594,7 @@ impl Door {
 	/// `caller`'s ring proof for `request`, entering through this door.
 	fn create_proof(
 		self,
-		authority: &SigningHostRole,
+		authority: &SigningHost,
 		session: &AuthoritySession,
 		caller: &str,
 		request: v01::HostAccountCreateProofRequest,
@@ -1603,7 +1613,7 @@ impl Door {
 	/// `caller`'s ring-VRF signature for `request`, entering through this door.
 	fn ring_vrf_sign(
 		self,
-		authority: &SigningHostRole,
+		authority: &SigningHost,
 		session: &AuthoritySession,
 		caller: &str,
 		request: v01::HostAccountRingVrfSignRequest,
@@ -1727,7 +1737,7 @@ fn full_person_ring_location() -> v01::RingLocation {
 }
 
 fn register_full_person_key(
-	authority: &SigningHostRole,
+	authority: &SigningHost,
 	session: &AuthoritySession,
 	ring: &v01::RingLocation,
 ) {
@@ -1747,7 +1757,7 @@ fn register_full_person_key(
 fn ring_alias_and_proof_share_the_explicit_registered_key() {
 	let resolver = full_person_ring_resolver();
 	let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-	let authority = SigningHostRole::new_with_ring_resolver(platform, resolver);
+	let authority = SigningHost::new_with_ring_resolver(platform, resolver);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
@@ -1792,7 +1802,7 @@ fn ring_alias_and_proof_share_the_explicit_registered_key() {
 #[test]
 fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 	let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-	let authority = SigningHostRole::new_with_ring_resolver(platform, full_person_ring_resolver());
+	let authority = SigningHost::new_with_ring_resolver(platform, full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
@@ -1824,7 +1834,7 @@ fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 	let platform = Arc::new(StubPlatform::default());
 	let authority =
-		SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		SigningHost::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
@@ -1875,7 +1885,7 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 	let platform =
 		Arc::new(StubPlatform { account_access_confirmed: true, ..StubPlatform::default() });
 	let authority =
-		SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		SigningHost::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
