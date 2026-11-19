@@ -5,17 +5,19 @@ import com.google.gson.JsonParser
 
 /**
  * The counters the metrics log reports from one `sudo_unstable_metrics` answer, all since the
- * light client started. Byte and connection totals are the whole process's; [protocolBytes] is this
- * chain's received and sent bytes per network protocol. A counter the smoldot build lacks reads 0.
+ * light client started. Byte and connection totals are the whole process's; [protocolTraffic] is
+ * this chain's received and sent bytes and received messages per network protocol (for a request
+ * protocol such as storage proofs, a received message is one response). A counter the smoldot build
+ * lacks reads 0.
  */
 data class LightClientMetricsReading(
     val bytesReceived: Double,
     val bytesSent: Double,
     val connectionsDialed: Double,
     val handshakesFinished: Double,
-    val protocolBytes: Map<String, ProtocolBytes>,
+    val protocolTraffic: Map<String, ProtocolTraffic>,
 ) {
-    data class ProtocolBytes(val received: Double, val sent: Double)
+    data class ProtocolTraffic(val received: Double, val sent: Double, val messagesReceived: Double)
 
     companion object {
         fun parse(answer: String): LightClientMetricsReading {
@@ -25,21 +27,28 @@ data class LightClientMetricsReading(
                 .filter { it.get("name")?.asString == name }
                 .flatMap { family -> family.getAsJsonArray("entries").map { it.asJsonObject } }
             fun total(name: String): Double = entries(name).sumOf { it.get("value").asDouble }
+            fun JsonObject.label(name: String): String = getAsJsonObject("labels").get(name).asString
+            fun perProtocol(family: String, direction: String): Map<String, Double> = entries(family)
+                .filter { it.label("direction") == direction }
+                .groupBy { it.label("protocol") }
+                .mapValues { (_, protocolEntries) -> protocolEntries.sumOf { it.get("value").asDouble } }
 
-            val protocolBytes = entries("networkProtocolBytesTotal")
-                .groupBy { it.getAsJsonObject("labels").get("protocol").asString }
-                .mapValues { (_, byDirection) ->
-                    fun direction(name: String) = byDirection
-                        .filter { it.getAsJsonObject("labels").get("direction").asString == name }
-                        .sumOf { it.get("value").asDouble }
-                    ProtocolBytes(received = direction("in"), sent = direction("out"))
-                }
+            val received = perProtocol("networkProtocolBytesTotal", "in")
+            val sent = perProtocol("networkProtocolBytesTotal", "out")
+            val messagesReceived = perProtocol("networkProtocolMessagesTotal", "in")
+            val protocolTraffic = (received.keys + sent.keys).associateWith { protocol ->
+                ProtocolTraffic(
+                    received = received[protocol] ?: 0.0,
+                    sent = sent[protocol] ?: 0.0,
+                    messagesReceived = messagesReceived[protocol] ?: 0.0,
+                )
+            }
             return LightClientMetricsReading(
                 bytesReceived = total("networkBytesReceivedTotal"),
                 bytesSent = total("networkBytesSentTotal"),
                 connectionsDialed = total("networkConnectionsDialedTotal"),
                 handshakesFinished = total("networkConnectionsHandshakesFinishedTotal"),
-                protocolBytes = protocolBytes,
+                protocolTraffic = protocolTraffic,
             )
         }
     }

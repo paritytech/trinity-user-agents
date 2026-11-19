@@ -21,7 +21,8 @@ private const val LOG_TAG = "LightClientMetrics"
  * Logs the light client's network counters every [LOG_INTERVAL] while the app is in the foreground,
  * in the same lines as truapi-provider's `network_usage` example, so phone and desktop runs compare
  * directly: the process's bytes and connections (with the change since the last line), then each
- * chain's bytes per protocol, largest first. Counters run from the light client's start.
+ * chain's bytes and received messages per protocol, largest first. Counters run from the light
+ * client's start.
  */
 class LightClientMetricsLogger @Inject constructor(
     private val lightClient: LightClient,
@@ -58,13 +59,15 @@ class LightClientMetricsLogger @Inject constructor(
             previous = process
         }
         readings.forEach { (genesis, reading) ->
-            val listed = reading.protocolBytes.entries
-                .filter { (_, bytes) -> bytes.received + bytes.sent > 0 }
-                .sortedByDescending { (_, bytes) -> bytes.received + bytes.sent }
-                .joinToString(" ") { (protocol, bytes) ->
-                    "%s=%.2f/%.2f".format(Locale.ROOT, protocol, mb(bytes.received), mb(bytes.sent))
+            val listed = reading.protocolTraffic.entries
+                .filter { (_, traffic) -> traffic.received + traffic.sent > 0 }
+                .sortedByDescending { (_, traffic) -> traffic.received + traffic.sent }
+                .joinToString(" ") { (protocol, traffic) ->
+                    "%s=%.2f/%.2f/%.0f".format(
+                        Locale.ROOT, protocol, mb(traffic.received), mb(traffic.sent), traffic.messagesReceived,
+                    )
                 }
-            Timber.tag(LOG_TAG).i("%s MB in/out: %s", genesis.take(8), listed)
+            Timber.tag(LOG_TAG).i("%s MB in/out, messages in: %s", genesis.take(8), listed)
         }
     }
 

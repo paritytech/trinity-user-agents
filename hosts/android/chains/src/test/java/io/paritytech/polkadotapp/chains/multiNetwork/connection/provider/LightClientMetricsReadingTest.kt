@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.chains.multiNetwork.connection.provider
 
 import io.mockk.mockk
 import io.parity.truapi.LightClient
-import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.LightClientMetricsReading.ProtocolBytes
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.provider.LightClientMetricsReading.ProtocolTraffic
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -38,9 +38,9 @@ class LightClientMetricsReadingTest {
                 bytesSent = 170_000.0,
                 connectionsDialed = 198.0,
                 handshakesFinished = 16.0,
-                protocolBytes = mapOf(
-                    "storage-proof" to ProtocolBytes(received = 340_000.0, sent = 40_000.0),
-                    "statements" to ProtocolBytes(received = 10_000.0, sent = 0.0),
+                protocolTraffic = mapOf(
+                    "storage-proof" to ProtocolTraffic(received = 340_000.0, sent = 40_000.0, messagesReceived = 12.0),
+                    "statements" to ProtocolTraffic(received = 10_000.0, sent = 0.0, messagesReceived = 0.0),
                 ),
             ),
             LightClientMetricsReading.parse(answer),
