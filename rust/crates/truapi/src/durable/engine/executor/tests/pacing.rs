@@ -147,3 +147,43 @@ fn a_row_left_unanswered_is_asked_again_when_another_is_built() {
 	let asked_again = || harness.policy().batches().contains(&vec![ids[1]]);
 	wait_until(asked_again, "the undecided row is asked again at once");
 }
+
+/// A watch still owned a waiting transaction when its round came, so the
+/// worker held it back. A later round woken by another transaction's due
+/// time, not by a change in the domain, must keep holding it: the release
+/// changes nothing in the ledger, and is the only thing that tells the
+/// worker to build it before it asks again, much later.
+#[test]
+fn a_held_transaction_is_built_once_released_after_a_round_it_was_not_due_in() {
+	let cooling_asked = AtomicBool::new(false);
+	let policy = ScriptedPolicy::answering_with(move |ids| {
+		let answers = ids.iter().filter_map(|id| match id.0 {
+			1 if cooling_asked.swap(true, Ordering::SeqCst) => None,
+			1 => Some((*id, Preparation::Ready { extrinsic: extrinsic_for_index(0), params: None })),
+			_ => Some((*id, Preparation::Ready { extrinsic: extrinsic_for_index(1), params: None })),
+		});
+		Ok(answers.collect())
+	});
+	let harness = DeferredTxHarness::with_policy(policy);
+	let cooling = harness.defer_one();
+	assert_eq!(cooling, DurableTxId(1));
+	hand_back_first_attempt(&harness, cooling);
+	wait_until(
+		|| harness.timer().remaining().contains(&REBUILD_COOLDOWN),
+		"the rebuild cools down",
+	);
+	// Owned before it is written, so no worker ever sees it unowned.
+	harness.engine().ownership.acquire(DurableTxId(2));
+	let held = harness.leave_waiting_from_previous_process();
+	assert_eq!(held, DurableTxId(2));
+	harness.settle();
+
+	harness.timer().advance(REBUILD_COOLDOWN);
+	wait_until(|| harness.policy().batches().len() == 2, "the cooled-down rebuild is asked");
+	harness.settle();
+	harness.engine().ownership.release(held);
+
+	harness.wait_for(held, DurableTxStatus::Pending);
+	let batches = harness.policy().batches();
+	assert_eq!(batches[..3], [vec![cooling], vec![cooling], vec![held]]);
+}
