@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.KeyedMutex
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import kotlinx.coroutines.flow.Flow
@@ -20,15 +21,18 @@ internal class RealDotNsResolver @Inject constructor(
 ) : DotNsResolver {
     private val firstLoadLocks = KeyedMutex<String>()
 
-    override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
+    override suspend fun resolveToLocalUri(
+        dotNsName: String,
+        retryPolicy: NetworkRetryPolicy,
+    ): Result<Uri> = withContext(dispatchers.computation) {
         firstLoadLocks.withLock(dotNsName) {
             builds.servedDirectory(dotNsName)?.let { directory ->
                 progressRegistry.markCompleted(dotNsName)
                 return@withLock Result.success(directory)
             }
 
-            chainReader.readContentHash(dotNsName).flatMap { contentHash ->
-                contentDownloader.download(contentHash, progressDomain = dotNsName)
+            chainReader.readContentHash(dotNsName, retryPolicy).flatMap { contentHash ->
+                contentDownloader.download(contentHash, retryPolicy, progressDomain = dotNsName)
                     .onSuccess { builds.changeServed(dotNsName) { served -> served.copy(contentHash = contentHash) } }
             }
         }
@@ -41,11 +45,15 @@ internal class RealDotNsResolver @Inject constructor(
         return progressRegistry.observe(dotNsName)
     }
 
-    override suspend fun getMetadataEntry(dotNsName: String, key: String): Result<String?> = withContext(dispatchers.computation) {
+    override suspend fun getMetadataEntry(
+        dotNsName: String,
+        key: String,
+        retryPolicy: NetworkRetryPolicy,
+    ): Result<String?> = withContext(dispatchers.computation) {
         val servedRecords = builds.served(dotNsName)?.records.orEmpty()
         if (key in servedRecords) return@withContext Result.success(servedRecords[key])
 
-        chainReader.readRecord(dotNsName, key)
+        chainReader.readRecord(dotNsName, key, retryPolicy)
             .onSuccess { value -> builds.changeServed(dotNsName) { it.copy(records = it.records + (key to value)) } }
     }
 

@@ -11,15 +11,20 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.firstPartyOrigin
@@ -35,6 +40,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSource
+import uniffi.truapi.parseProductLink
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -157,7 +163,18 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     override suspend fun loadInitialContent() {
+        downloadPageContent()
         accessWebView { it.loadUrl(initialUrl) }
+    }
+
+    private suspend fun downloadPageContent() {
+        if (fixedProductId != null) return
+        val host = initialUrl.toUri().host ?: return
+        val productHost = parseProductLink(host, dotNsTldProvider.getTldRetrying().value)?.identifier?.value ?: return
+
+        servingHostResolver.servingHostFor(productHost, servedExecutable, NetworkRetryPolicy.UntilCancelled)
+            .flatMap { servingHost -> contentLoader.resolveToLocalUri(servingHost, NetworkRetryPolicy.UntilCancelled) }
+            .logFailure("Failed to download the page content for $initialUrl")
     }
 
     override fun onInitialThemeDelivered() {

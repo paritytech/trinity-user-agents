@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
-import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
+import io.paritytech.polkadotapp.common.utils.requireNotNull
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -16,18 +18,25 @@ class ProductServingHostResolver @Inject constructor(
     override suspend fun servingHostFor(requestHost: String): Result<String> = servingHostFor(requestHost, ExecutableKind.APP)
 
     /** A page under a Pocket card uses the product's [ExecutableKind.WIDGET], or its app when it publishes no widget. */
-    suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): Result<String> = runCancellableCatching {
-        val tld = dotNsTldProvider.getTld().getOrThrow()
-        val identifier = parseProductLink(requestHost, tld.value)?.identifier ?: return@runCancellableCatching requestHost
-        val productId = identifier.owner().getOrThrow()
-        if (identifier != productId) return@runCancellableCatching identifier.value
+    suspend fun servingHostFor(
+        requestHost: String,
+        executable: ExecutableKind,
+        retryPolicy: NetworkRetryPolicy = NetworkRetryPolicy.DEFAULT,
+    ): Result<String> = dotNsTldProvider.getTld().flatMap { tld ->
+        val identifier = parseProductLink(requestHost, tld.value)?.identifier ?: return@flatMap Result.success(requestHost)
 
-        val resolved = resolveProductUseCase.resolve(productId).getOrThrow()
-        val served = when (executable) {
-            ExecutableKind.APP -> resolved.executables.app?.host
-            ExecutableKind.WIDGET -> resolved.executables.widget?.host ?: resolved.executables.app?.host
-            ExecutableKind.WORKER -> null
+        identifier.owner().flatMap { productId ->
+            if (identifier != productId) return@flatMap Result.success(identifier.value)
+
+            resolveProductUseCase.resolve(productId, retryPolicy)
+                .map { resolved ->
+                    when (executable) {
+                        ExecutableKind.APP -> resolved.executables.app?.host
+                        ExecutableKind.WIDGET -> resolved.executables.widget?.host ?: resolved.executables.app?.host
+                        ExecutableKind.WORKER -> null
+                    }?.value
+                }
+                .requireNotNull { IllegalStateException("Product $productId has no $executable page") }
         }
-        checkNotNull(served) { "Product $productId has no $executable page" }.value
     }
 }
