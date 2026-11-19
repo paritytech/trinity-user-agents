@@ -289,7 +289,9 @@ Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progres
 
 **Quiet hide.** The auto-hide tuck settles on a softer spring, with no haptic. The content inside the glass stays visible.
 
-**Peek.** The first tuck that lands in a launch, user or auto-hide, starts a peek. 700 ms later the hide progress goes from 1 to 0.86 and back to 1 over 400 ms, out and back on a cosine. The peek follows the same pose path as a pull, so the bar's top end shows about 15 to 20 pt past the edge. It plays once per launch. A touch on the Docklet, a drag, or a restore cancels it. It is off under Reduce Motion.
+**Keyboard tuck.** A rising keyboard tucks a shown bar on the quiet settle, with no tip (`TabBarFoldController.setKeyboardUp(_:tucksShownBar:)`). An open panel, a drag or VoiceOver prevents it. While the keyboard is up, a tucked bar has no Edge glow or Grab zone.
+
+**Peek.** The first tuck that lands in a launch, user or auto-hide, starts a peek. A keyboard tuck does not start one. 700 ms later the hide progress goes from 1 to 0.86 and back to 1 over 400 ms, out and back on a cosine. The peek follows the same pose path as a pull, so the bar's top end shows about 15 to 20 pt past the edge. It plays once per launch. A touch on the Docklet, a drag, or a restore cancels it. It is off under Reduce Motion.
 
 ### Adding a Path
 
