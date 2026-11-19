@@ -51,6 +51,12 @@ impl ProductStorage for WireShapePlatform {
 	async fn clear(&self, _key: String) -> Result<(), v01::HostLocalStorageReadError> {
 		Ok(())
 	}
+	async fn clear_product(
+		&self,
+		_product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
 	fn subscribe_storage(
 		&self,
 		_key: String,

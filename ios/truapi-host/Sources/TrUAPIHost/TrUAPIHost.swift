@@ -245,6 +245,18 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Runtime-wide, like `durableWorkChanged`. Defaults to a rejection.
     func encryptedStorageDelete(key: Data) async throws
 
+    /// Remove every value `productId` keeps in product storage. Idempotent.
+    /// Runtime-wide, like `durableWorkChanged`: the core calls it from
+    /// `TrUAPIHostRuntime.clearProductState`, when the product may have no
+    /// execution and so no bridge of its own. Every key the product owns
+    /// starts with
+    /// `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`, so a
+    /// shared store removes keys with that prefix and a store kept per
+    /// product drops that product's store. Defaults to a rejection, so
+    /// clearing the product's state fails on a host that has not implemented
+    /// it.
+    func clearProductStorage(productId: ProductId) throws
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -452,6 +464,9 @@ public extension HostBridge {
     func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
+    func clearProductStorage(productId _: ProductId) throws {
+        throw HostLocalStorageReadError.Unknown(reason: "this host does not clear product storage")
+    }
     func currentInstallation() async throws -> Data {
         throw HostRejection.Rejected(reason: "this host keeps no installation id")
     }
@@ -906,6 +921,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func clearProductStorage(productId: ProductId) throws {
+        try withStorageError {
+            try bridge.clearProductStorage(productId: productId)
+        }
+    }
+
     func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         try await withHostRejection {
             try await bridge.beginOperation(productId: productId, label: label)
@@ -1117,6 +1138,16 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// host may stop the worker. Releasing with none held is a no-op.
     public func releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId: productId)
+    }
+
+    /// Forget one product: revoke its grants and Allow once answers, then
+    /// remove its values from product storage through
+    /// ``HostBridge/clearProductStorage(productId:)`` on the bridge this
+    /// runtime was built with. The wallet session and other products are kept.
+    /// Stop the product's executions first: a value a running execution
+    /// writes after the clear is kept.
+    public func clearProductState(productId: ProductId) async throws {
+        try await inner.clearProductState(productId: productId)
     }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is

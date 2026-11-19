@@ -57,6 +57,7 @@ pub struct JsBridge {
     pub read: Function,
     pub write: Function,
     pub clear: Function,
+    pub clear_product: Function,
     pub subscribe_storage: Function,
     pub scan_code: Function,
     pub subscribe_theme: Function,
@@ -119,6 +120,7 @@ impl JsBridge {
             read: get_function(callbacks, "read")?,
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
+            clear_product: get_function(callbacks, "clearProduct")?,
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
             scan_code: get_optional_function(callbacks, "scanCode")?
                 .unwrap_or_else(|| missing_callback("scanCode")),
@@ -629,6 +631,18 @@ impl crate::platform::ProductStorage for WasmPlatform {
 
     async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError> {
         invoke_unit(&self.bridge.clear, vec![JsValue::from_str(&key)]).await?;
+        Ok(())
+    }
+
+    async fn clear_product(
+        &self,
+        product_id: truapi::ProductId,
+    ) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+        invoke_unit(
+            &self.bridge.clear_product,
+            vec![JsValue::from_str(product_id.as_str())],
+        )
+        .await?;
         Ok(())
     }
 

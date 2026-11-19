@@ -283,6 +283,16 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		key: String,
 	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
+	/// Remove every value `product_id` owns from the host's scoped key-value
+	/// store. Idempotent.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with, from [`NativeTrUApiHostRuntime::clear_product_state`]: a product
+	/// that is not running has no callbacks of its own.
+	async fn clear_product_storage(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Record a pending operation, whose id keeps the product's worker alive
 	/// until it ends.

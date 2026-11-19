@@ -467,6 +467,20 @@ interface HostBridge {
     suspend fun encryptedStorageDelete(key: ByteArray): Unit =
         throw HostRejection.Rejected("this host keeps no encrypted storage")
 
+    /**
+     * Remove every value [productId] keeps in product storage. Idempotent.
+     * Runtime-wide, like [durableWorkChanged]: the core calls it from
+     * [TrUAPIHostRuntime.clearProductState], when the product may have no
+     * execution and so no bridge of its own. Every key the product owns starts
+     * with `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`,
+     * so a shared store removes keys with that prefix and a store kept per
+     * product drops that product's store. Defaults to a rejection, so clearing
+     * the product's state fails on a host that has not implemented it.
+     */
+    @Throws(HostLocalStorageReadException::class)
+    suspend fun clearProductStorage(productId: ProductId): Unit =
+        throw HostLocalStorageReadException.Unknown("this host does not clear product storage")
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -702,6 +716,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
+
+    override suspend fun clearProductStorage(productId: ProductId) =
+        withStorageException { bridge.clearProductStorage(productId) }
 
     override suspend fun beginOperation(productId: ProductId, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
@@ -1139,6 +1156,18 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId)
+    }
+
+    /**
+     * Forget one product: revoke its grants and Allow once answers, then
+     * remove its values from product storage through
+     * [HostBridge.clearProductStorage] on the bridge this runtime was built
+     * with. The wallet session and other products are kept. Stop the product's
+     * executions first: a value a running execution writes after the clear is
+     * kept.
+     */
+    suspend fun clearProductState(productId: ProductId) {
+        inner.clearProductState(productId)
     }
 
     /**

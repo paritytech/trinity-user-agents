@@ -2381,6 +2381,18 @@ export interface ProductStorage {
   clear(key: string): Promise<void>;
 
   /**
+   * Remove every value `product_id` owns. Idempotent.
+   *
+   * The core calls this when it clears the product's state. A host that
+   * keeps one shared store removes every key starting with
+   * `ProductStorageKey::owner_prefix`; a host that separates storage by
+   * product drops that product's store. Values another product wrote stay.
+   * Every subscription to a removed key then sees it empty, as after
+   * `Self::clear`.
+   */
+  clearProduct(productId: ProductId): Promise<void>;
+
+  /**
    * Emit `key`'s current value, then each later change from any of the
    * product's runtimes. `key` is namespaced exactly as `Self::read` takes
    * it.

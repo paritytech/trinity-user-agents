@@ -780,12 +780,16 @@ impl ProductStorageKey {
 
 	/// Encode the stable opaque key used by existing host callbacks.
 	pub fn encode(&self) -> String {
-		format!(
-			"{PRODUCT_STORAGE_KEY_PREFIX}{}:{}:{}",
-			self.product_id.as_str().len(),
-			self.product_id,
-			self.key
-		)
+		format!("{}{}", Self::owner_prefix(&self.product_id), self.key)
+	}
+
+	/// The prefix every encoded key `product_id` owns starts with, and no key
+	/// of another product does.
+	///
+	/// The product id is length-prefixed, so one product's prefix never
+	/// matches a key owned by a product whose id merely starts with it.
+	pub fn owner_prefix(product_id: &ProductId) -> String {
+		format!("{PRODUCT_STORAGE_KEY_PREFIX}{}:{product_id}:", product_id.as_str().len())
 	}
 }
 
@@ -823,6 +827,19 @@ pub trait ProductStorage: Send + Sync {
 
 	/// Clear a value at a key.
 	async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError>;
+
+	/// Remove every value `product_id` owns. Idempotent.
+	///
+	/// The core calls this when it clears the product's state. A host that
+	/// keeps one shared store removes every key starting with
+	/// [`ProductStorageKey::owner_prefix`]; a host that separates storage by
+	/// product drops that product's store. Values another product wrote stay.
+	/// Every subscription to a removed key then sees it empty, as after
+	/// [`Self::clear`].
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Emit `key`'s current value, then each later change from any of the
 	/// product's runtimes. `key` is namespaced exactly as [`Self::read`] takes
