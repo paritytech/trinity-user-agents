@@ -218,14 +218,11 @@ the request.
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
-without a People chain, and one that names another TLD than the bundled copy:
-accounts derive under the TLD, so only a new build changes it. A stored
-descriptor the core refuses is ignored: the core starts from the bundled copy,
-and the next descriptor it takes replaces the stored one, whatever its
-`sequence`. After a refused or failed fetch `last_refresh` says so even when
-the core could not write its record. That record holds the descriptor the core
-already holds, which may be one whose earlier store failed, and never the one
-just refused.
+without a People chain, and one on another TLD than the bundled copy, since
+accounts derive under the TLD. A stored descriptor it would refuse is ignored
+until the next one the core takes replaces it, whatever its `sequence`. After
+a refused or failed fetch, `last_refresh` reports that fetch even if writing
+the record fails.
 
 A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
