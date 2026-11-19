@@ -466,6 +466,15 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           pairingRuntime(booted, "resetSessionState").resetSessionState(),
       );
       break;
+    case "clearProductState": {
+      const { productId } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "clearProductState",
+        (booted) => booted.runtime.clearProductState(productId),
+      );
+      break;
+    }
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
         host?.runtime ?? null,
