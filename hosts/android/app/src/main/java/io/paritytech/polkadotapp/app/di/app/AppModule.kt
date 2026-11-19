@@ -39,7 +39,6 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 internal interface AppModule {
     companion object {
-        // Unscoped, so each consumer reads the logger of the Sentry instance current when it is built.
         @Provides
         fun provideSentryLogger(): ILoggerApi = Sentry.logger()
     }
