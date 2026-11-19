@@ -15,8 +15,12 @@ import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.sentry.Sentry
+import io.sentry.SentryAttribute
+import io.sentry.SentryAttributes
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
+import io.sentry.SentryLogLevel
+import io.sentry.logger.SentryLogParameters
 import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
@@ -39,13 +43,34 @@ internal class RealSentryEventCapture @Inject constructor() : SentryEventCapture
     }
 }
 
+internal fun interface SentryLogCapture {
+    fun info(message: String, attributes: Map<String, Any>)
+}
+
+internal class RealSentryLogCapture @Inject constructor() : SentryLogCapture {
+    override fun info(message: String, attributes: Map<String, Any>) {
+        // named() keeps each value's type: a Long is sent as an integer, so it can be summed and charted.
+        val sentryAttributes = SentryAttributes.of(*attributes.map { (key, value) -> SentryAttribute.named(key, value) }.toTypedArray())
+        Sentry.logger().log(SentryLogLevel.INFO, SentryLogParameters.create(sentryAttributes), message)
+    }
+}
+
+/**
+ * A failure is a Sentry event, so it raises an issue. Everything else is a measurement, not a problem, and goes
+ * to Sentry Logs: as an event, each name became an error issue of its own that nobody could act on.
+ */
 internal class RealHostEventCapture @Inject constructor(
     private val enabledProvider: HostTelemetryEnabledProvider,
     private val sentryCapture: SentryEventCapture,
+    private val logCapture: SentryLogCapture,
 ) : HostEventCapture {
     override fun capture(event: () -> HostEvent) {
-        if (enabledProvider.isEnabled()) {
-            sentryCapture.capture(event().toSentryEvent())
+        if (!enabledProvider.isEnabled()) return
+        val hostEvent = event()
+        if (hostEvent.isFailure) {
+            sentryCapture.capture(hostEvent.toSentryEvent())
+        } else {
+            logCapture.info(hostEvent.name, hostEvent.toLogAttributes())
         }
     }
 }
@@ -88,15 +113,27 @@ private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = 
         "app.launch_id" to launchId.toString(),
         "event.monotonic_ms" to monotonicMs,
     ),
+    isFailure = false,
 )
+
+/**
+ * A log has one set of attributes where an event has tags and extras. A tag keeps its value: an extra under the
+ * same name would otherwise overwrite it. `tag` is the attribute the host's other Sentry logs are filtered by.
+ */
+internal fun HostEvent.toLogAttributes(): Map<String, Any> =
+    extras + tags + mapOf(LOG_TAG_ATTRIBUTE to LOG_TAG, EVENT_NAME_ATTRIBUTE to name)
+
+private const val LOG_TAG = "host.telemetry"
+private const val LOG_TAG_ATTRIBUTE = "tag"
+private const val EVENT_NAME_ATTRIBUTE = "event.name"
 
 private fun HostEvent.toSentryEvent() = SentryEvent().apply {
     message = Message().apply { formatted = name }
     // One group per event name. Sentry would otherwise group these by the stack
     // trace it attaches, which splits one name across several groups.
     fingerprints = listOf(this@toSentryEvent.name)
-    level = SentryLevel.INFO
-    logger = "host.telemetry"
+    level = if (isFailure) SentryLevel.ERROR else SentryLevel.INFO
+    logger = LOG_TAG
     this@toSentryEvent.tags.forEach(::setTag)
     this@toSentryEvent.extras.forEach(::setExtra)
 }

@@ -20,7 +20,9 @@ import io.paritytech.polkadotapp.app.telemetry.RealHostEventOriginProvider
 import io.paritytech.polkadotapp.app.telemetry.RealHostMonotonicTimeProvider
 import io.paritytech.polkadotapp.app.telemetry.RealHostTelemetryEnabledProvider
 import io.paritytech.polkadotapp.app.telemetry.RealSentryEventCapture
+import io.paritytech.polkadotapp.app.telemetry.RealSentryLogCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryEventCapture
+import io.paritytech.polkadotapp.app.telemetry.SentryLogCapture
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
@@ -60,6 +62,9 @@ internal interface AppModule {
 
     @Binds
     fun bindSentryEventCapture(impl: RealSentryEventCapture): SentryEventCapture
+
+    @Binds
+    fun bindSentryLogCapture(impl: RealSentryLogCapture): SentryLogCapture
 
     @Binds
     fun bindSentryMetricsCapture(impl: RealSentryMetricsCapture): SentryMetricsCapture

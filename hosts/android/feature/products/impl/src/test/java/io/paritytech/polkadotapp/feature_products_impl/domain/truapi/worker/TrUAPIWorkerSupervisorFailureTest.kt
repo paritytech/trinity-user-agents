@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
@@ -16,6 +19,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -25,6 +29,8 @@ import uniffi.truapi.ProductId
 
 class TrUAPIWorkerSupervisorFailureTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
+    private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
+    private val events = mutableListOf<HostEvent>()
 
     private class FailingScriptResolver(private val error: Throwable) : ProductScriptResolver {
         override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> =
@@ -61,6 +67,7 @@ class TrUAPIWorkerSupervisorFailureTest {
         bootstrapInstaller = bootstrapInstaller,
         refCounter = Lazy { refCounter },
         navigation = mock(),
+        loadFailures = HostLoadFailureTelemetry({ origin }, { events += it() }),
         dispatchers = testDispatchers(),
     )
 
@@ -75,6 +82,21 @@ class TrUAPIWorkerSupervisorFailureTest {
         val state = supervisor.executionState(productId).filterNotNull().first()
         assertTrue(state is WorkerExecutionState.Failed)
         assertSame(boom, (state as WorkerExecutionState.Failed).reason)
+    }
+
+    @Test
+    fun `a boot that fails is reported once as a worker load failure for its product`() = runTest {
+        val supervisor = supervisorWith(FailingScriptResolver(IllegalStateException("boom")))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+
+        val event = events.single()
+        assertEquals("host.load.failed", event.name)
+        assertEquals("worker", event.tags["load.stage"])
+        assertEquals("chat.dot", event.tags["product.id"])
+        assertEquals("IllegalStateException", event.tags["error.type"])
+        assertTrue(event.isFailure)
     }
 
     @Test

@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor
 
 import android.net.Uri
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
+import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.common.utils.filterResultSuccess
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
@@ -33,6 +35,7 @@ class PocketInteractor @Inject constructor(
     private val pocketFaceSource: PocketFaceSource,
     private val pocketCardFaceOnOpen: PocketCardFaceOnOpen,
     private val productContentWarmUp: ProductContentWarmUp,
+    private val pageOpens: HostPageOpens,
 ) {
     fun observeBackupProgress(): Flow<BackupProgress> = coinageBackupService.subscribeProgress()
 
@@ -53,6 +56,13 @@ class PocketInteractor @Inject constructor(
     }
 
     fun observeProductCards(): Flow<List<PocketCard>> = pocketCollection.observeCards()
+
+    fun cardTapped(key: PocketCardKey) =
+        pageOpens.hold(key.productId.value, pageOpens.ask(HostOpenSource.POCKET_CARD))
+
+    fun openReused(key: PocketCardKey) = pageOpens.reuse(key.productId.value)
+
+    fun openGivenUp(key: PocketCardKey) = pageOpens.giveUp(key.productId.value)
 
     /** Fetches the product's pages before its card is opened, so opening it does not wait on them. */
     suspend fun warmUpProduct(key: PocketCardKey): Result<Unit> = productContentWarmUp.warmUp(key.productId)

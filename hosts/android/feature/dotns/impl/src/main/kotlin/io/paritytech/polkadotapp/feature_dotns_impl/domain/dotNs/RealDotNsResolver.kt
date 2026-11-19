@@ -4,6 +4,8 @@ import android.net.Uri
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.data.memory.MapCache
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadStage
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -32,7 +34,8 @@ internal class RealDotNsResolver @Inject constructor(
     private val carFetcher: CarFetcher,
     private val contentStorage: DotNsContentStorage,
     private val contentHashOverrides: ContentHashOverrides,
-    private val dispatchers: CoroutineDispatchers
+    private val dispatchers: CoroutineDispatchers,
+    private val loadFailures: HostLoadFailureTelemetry,
 ) : DotNsResolver, CoroutineScope {
     override val coroutineContext = dispatchers.io + SupervisorJob()
 
@@ -44,7 +47,11 @@ internal class RealDotNsResolver @Inject constructor(
         resolveContentHash(domainName)
             .logFailure("failed to resolve content hash for $domainName")
             .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
-            .flatMap { contentHash -> resolveContentHash(domainName, contentHash) }
+            .onFailure { loadFailures.report(HostLoadStage.RESOLVE, it, domain = domainName) }
+            .flatMap { contentHash ->
+                resolveContentHash(domainName, contentHash)
+                    .onFailure { loadFailures.report(HostLoadStage.BULLETIN, it, domain = domainName) }
+            }
             .logFailure("failed to resolve $domainName")
             // A domain with nothing registered behind it never reaches the download that reports its
             // own failures, and a host screen reading progress would wait on it for good.

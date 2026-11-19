@@ -104,5 +104,5 @@ private fun GameReminderEvent.toHostEvent(origin: HostEventOrigin, nowMillis: Lo
             put("reminder.delay_after_start_ms", nowMillis - startsAt)
         }
     }
-    return HostEvent(name = event.eventName(), tags = tags, extras = extras)
+    return HostEvent(name = event.eventName(), tags = tags, extras = extras, isFailure = false)
 }
