@@ -87,7 +87,8 @@ The app no longer chooses anything. It has one stack, and that stack is the one 
 RFC 2 also pins some values for a stack that may use reserved values, such as its genesis hashes, TLD and contracts.
 Those are not repeated in the config, because the core takes them from the bundled descriptor.
 
-These are the builds listed in #1899 and the config each one would have:
+These are the builds listed in [#1899](https://github.com/paritytech/trinity-user-agents/issues/1899) and the config
+each one would have:
 
 | Build               | `name`          | `allowed` | Link                                   |
 | ------------------- | --------------- | --------- | -------------------------------------- |
@@ -162,8 +163,8 @@ into that build type's `stacks/` assets. `TrUAPIStack` reads `stacks/stack.build
 build step and the app loads the bundled config and descriptor. This replaces dotli's hand-written table and
 `.trinity/stacks.json`.
 
-`reservedValues` depends on #2024. Until that merges, a host can pass `allowed` to the core as `allowsReservedValues`
-and refuse any config that fills in one of the lists.
+`reservedValues` depends on [#2024](https://github.com/paritytech/trinity-user-agents/pull/2024). Until that merges, a
+host can pass `allowed` to the core as `allowsReservedValues` and refuse any config that fills in one of the lists.
 
 We also checked what happens when an app update ships a different config while the device still has a descriptor stored
 from the old one. The core already handles all three cases:
@@ -236,7 +237,8 @@ For web:
 7. One development deployment of dotli offers two networks, and the Docker image only learns its networks when the
    container starts. Should such a build take several configs, or should its choice of networks stay outside this
    format?
-8. dotli can run pcf-devnet with reserved values allowed, but the table in #1899 does not list it. Does it get a config?
+8. dotli can run pcf-devnet with reserved values allowed, but the table in
+   [#1899](https://github.com/paritytech/trinity-user-agents/issues/1899) does not list it. Does it get a config?
 9. dotli is a separate repository and has no `stacks/` directory. Where should its config and previous copy live? And
    should its build run the `truapi-host` binary, or should `trinity-stack update` learn `--config`?
 10. Should polkadot-desktop read the same file?
