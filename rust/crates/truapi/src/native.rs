@@ -4,8 +4,8 @@
 //!
 //! The native side builds a `CallbackPlatform` that adapts every
 //! [`crate::platform::Platform`] trait to a corresponding callback. The
-//! resulting platform is fed into [`SigningHostRuntime`] so the rest of the
-//! dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
+//! resulting platform is fed into [`HostRuntime<SigningHost>`](crate::HostRuntime)
+//! so the dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
 //! A native host therefore owns the signer, so it never pairs itself with a
 //! wallet and the pairing-host entry points are inert. It does answer other
 //! devices pairing with it: the signing host's responder side is exposed here,
@@ -81,8 +81,6 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-#[cfg(doc)]
-use crate::SigningHostRuntime;
 use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
