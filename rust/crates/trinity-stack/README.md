@@ -46,30 +46,32 @@ fails or breaks a rule, and reports a new `generation` (drop cached chain data),
 
 ## Known stacks
 
-The crate lists the links of the Trinity stacks below, signed by their operators. `known_stack` returns one's pointer by
-name, and `known_stack_links` lists every name and link:
+The crate lists the links of the Trinity stacks below. A link with a key is a signed stack; host builds bundle only
+signed stacks, from their copies in the repository's `stacks/`. `known_stack` returns one's pointer by name, and
+`known_stack_links` lists every name and link:
 
 ```rust
 let pointer = trinity_stack::known_stack("previewnet").expect("unknown stack previewnet");
 assert_eq!(pointer.url().host_str(), Some("previewnet.substrate.dev"));
 ```
 
-| Name | Operator | Descriptor |
-| --- | --- | --- |
-| `paseo-next-v2` | Parity | <https://stack-paseo-next.parity-testnet.parity.io/.well-known/trinity-stack.json> |
-| `pcf-devnet` | Polkadot Community Foundation | <https://stack.api.polkadotcommunity.foundation/.well-known/trinity-stack.json> |
-| `polkadot` | Polkadot Community Foundation | <https://stack.api.pcf.network/.well-known/trinity-stack.json> |
-| `previewnet` | Parity | <https://previewnet.substrate.dev/.well-known/trinity-stack.json> |
+| Name | Stack | Signed | Descriptor |
+| --- | --- | --- | --- |
+| `paseo-next-v2` | Paseo Next v2 | yes | <https://stack-paseo-next.parity-testnet.parity.io/.well-known/trinity-stack.json> |
+| `pcf-devnet` | PCF Devnet | yes | <https://stack.api.polkadotcommunity.foundation/.well-known/trinity-stack.json> |
+| `polkadot` | Polkadot | yes | <https://stack.api.pcf.network/.well-known/trinity-stack.json> |
+| `previewnet` | Previewnet | yes | <https://previewnet.substrate.dev/.well-known/trinity-stack.json> |
+| `westend` | Westend | no | <https://stack-westend.parity-testnet.parity.io/.well-known/trinity-stack.json> |
 
 To add a stack to the list, open a pull request that:
 
-1. adds its name and signed link to
+1. adds its name and link to
    [`known-stacks.json`](https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/trinity-stack/known-stacks.json);
 2. adds its row to the table above;
-3. writes its copies in `stacks/` with `scripts/update-stacks.sh`.
+3. for a signed stack, writes its copies in `stacks/` with `scripts/update-stacks.sh`. An unsigned stack is only the
+   JSON entry and the table row.
 
-Users get the stack with the next release of
-`@parity/trinity-stack` and the crate. Only signed stacks are listed.
+Users get the stack with the next release of `@parity/trinity-stack` and the crate.
 
 ## What else is here
 
