@@ -87,10 +87,12 @@ Parity's configs sit in `stacks/` beside the copies: `nightly.build.json`, `prev
 | Gradle       | Gradle property `truapi.stackBuildConfig.<buildType>`            | debug: preview. nightly, safetynet: nightly. release: none        |
 | Web          | env var `TRINITY_STACK_BUILD_CONFIG`, read by the bundler config | set per deployment                                                |
 
-Each default is the stack that configuration runs today. Release has none, so a release build without a config fails
-instead of shipping a stack nobody chose with reserved values allowed. Until the owners choose one, that also fails
-Parity's own Release builds: TestFlight, the Xcode scheme's Profile and Archive actions, and Android's release unit
-tests in CI.
+Debug, DevCI, Nightly and Safetynet default to the stack they run today. Release has no default. Today it runs
+`polkadot` with reserved values allowed, and a build should have to ask for that, so a release build without a config
+fails.
+
+Parity's own Release builds fail too until the owners pick a config for them: TestFlight, the Xcode scheme's Profile and
+Archive actions, and Android's release unit tests in CI.
 
 PCF keeps `production.build.json` and the last `polkadot.json` it bundled in a directory outside this repository, and
 passes the config's path through the same setting. Its stack, key and publisher are named only in that file, so there is
