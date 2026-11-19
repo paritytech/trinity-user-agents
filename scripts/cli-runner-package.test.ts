@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import {
+  createClient,
+  createTransport,
   decodeWireMessage,
   encodeWireMessage,
   MESSAGE_TYPE_RESPONSE,
@@ -156,7 +158,7 @@ it("shares web permissions with installed scripts and the injected browser clien
     import { readFileSync, writeFileSync } from 'node:fs';
     import { join } from 'node:path';
     assert(window === window.top && window.__HOST_WEBVIEW_MARK__);
-    assert(window.__HOST_API_CLIENT__.client === truapi);
+    assert(!('__HOST_API_CLIENT__' in window) && Object.isFrozen(window.__HOST_API_TRANSPORT__));
     assert(window.__HOST_API_PORT__ instanceof MessagePort);
     assert(Object.getOwnPropertyDescriptor(globalThis, 'fetch').configurable === false);
     const expected: string = process.env.PACKAGED_TEST_VALUE!;
@@ -276,7 +278,15 @@ it("shares web permissions with installed scripts and the injected browser clien
       await readFile(join(directory, "sandbox-assets/container.js"), "utf8"),
       context,
     );
-    const client = context.__HOST_API_CLIENT__.client;
+    // A product's own client, carrying bytes across the context boundary.
+    const transport = context.__HOST_API_TRANSPORT__;
+    const ProductBytes = runInContext("Uint8Array", context) as typeof Uint8Array;
+    const client = createClient(createTransport({
+      postMessage: (frame) => transport.postMessage(ProductBytes.from(frame)),
+      subscribe: (callback) => transport.subscribe((frame: Uint8Array) => callback(Uint8Array.from(frame))),
+      subscribeReset: (callback) => transport.subscribeReset(callback),
+      dispose() {},
+    }, { prepare: transport.prepare }));
     const permission = {
       permission: { tag: "Remote" as const, value: { domains: ["127.0.0.1"] } },
     };
