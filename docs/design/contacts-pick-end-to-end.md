@@ -25,7 +25,7 @@ Two halves, and both are needed: **pick** mints the handle, **create_transaction
 ## Who holds what
 
 ```
-product         handle (32 bytes)                        — never a name, account, or list
+product         handle (32 bytes)                          never an account or the list
   │
   │ contacts.pick
   ▼
@@ -104,7 +104,8 @@ no `contacts` field, so a handle in one of those is signed as-is.
 
 ## Implementing it on a host
 
-Serve `contacts(lookup)` and `pick_contact(product_id)`. Beyond that:
+Serve `contacts(lookup)` and `pick_contact(product_id)`. A JS host also serves `contactUsernames`.
+Native hosts get a default for it. Beyond that:
 
 - **Hash the same way.** A contact's handle is BLAKE2b-256 keyed with `lookup.handle_key` over the
   contact's 32 raw account bytes. Key `0x11` × 32 and account `0x22` × 32 give
@@ -119,4 +120,5 @@ Serve `contacts(lookup)` and `pick_contact(product_id)`. Beyond that:
 - **Name the product.** The user is deciding who to tell, so the sheet says who is asking.
 - **Signal removals.** Call `notify_contacts_changed()` whenever a contact is removed or blocked;
   without it, a handle the core cached keeps resolving until the runtime restarts.
-- **Never send the list anywhere.** The lookup answers only the handles asked about.
+- **Never send the accounts of the list.** The lookup answers only the handles asked about, and
+  `contact_usernames` hands the core usernames only, which it serves to Jollity alone.

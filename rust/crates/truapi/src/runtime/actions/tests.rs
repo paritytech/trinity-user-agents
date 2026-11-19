@@ -85,3 +85,25 @@ fn separate_connections_cannot_observe_each_others_actions() {
 	second.close();
 	assert!(matches!(second.publish("closed".to_string()), Err(ProductRuntimeError::Closed)));
 }
+
+#[test]
+fn every_open_subscription_of_a_connection_hears_each_action() {
+	// An SDK keeps one stream per surface it draws (chat messages, pocket cards, a
+	// room footer); a later subscription must not cut an earlier one off.
+	let channel = channel();
+	let mut messages = channel.subscribe::<truapi::latest::GenericError>();
+	let mut footer = channel.subscribe::<truapi::latest::GenericError>();
+
+	channel.publish("press".to_string()).unwrap();
+	assert_eq!(block_on(messages.next()), Some(Ok("press".to_string())));
+	assert_eq!(block_on(footer.next()), Some(Ok("press".to_string())));
+
+	drop(messages);
+	channel.publish("again".to_string()).unwrap();
+	assert_eq!(block_on(footer.next()), Some(Ok("again".to_string())));
+
+	drop(footer);
+	channel.publish("later".to_string()).unwrap();
+	let mut next = channel.subscribe::<truapi::latest::GenericError>();
+	assert_eq!(block_on(next.next()), Some(Ok("later".to_string())));
+}
