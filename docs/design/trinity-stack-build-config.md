@@ -136,8 +136,9 @@ Debug, DevCI, Nightly and Safetynet keep the stacks they run now.
 Release has no default on purpose. Right now Release runs `polkadot` with reserved values allowed, and we don't want a
 build to end up with that just because nobody set a config. So a release build with an empty setting fails.
 
-The downside is that Parity's own Release builds break until someone picks a config for them. That affects the
-TestFlight build, the Profile and Archive actions of the Xcode scheme, and Android's release unit tests in CI.
+This means Parity's own Release builds need a config before the change can land, and we have not decided which one
+(question 4 below). Release is what the TestFlight build, the Profile and Archive actions of the Xcode scheme, and
+Android's release unit tests in CI use.
 
 PCF would keep its own `production.build.json` outside this repository, together with the last `polkadot.json` it
 bundled, and pass the path through the same setting. Its stack and its key appear only in that file, so PCF can build
