@@ -792,6 +792,7 @@
     <string name="settings_theme_preview_message_first">Hey, are you going to Web3Summit? 🎉</string>
     <string name="settings_theme_preview_message_second">Of course! You?</string>
     <string name="settings_theme_preview_message_third">Wouldn\'t miss it 👋 See you there!</string>
+    <string name="settings_auto_hide_docklet">Auto-hide docklet</string>
     <string name="settings_connected_devices">Connected Devices</string>
     <string name="settings_revoke_payments">Revoke Payments</string>
 

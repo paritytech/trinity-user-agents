@@ -167,6 +167,10 @@ impl AccountHolder for RemoteAccountHolder {
 		require_current_session(&self.service.session_state(), session)
 	}
 
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		Ok(self.service.device_encryption_secret())
+	}
+
 	async fn product_subtree_public_key<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,
