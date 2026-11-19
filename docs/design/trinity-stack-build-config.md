@@ -9,11 +9,11 @@ pr: 2200
 
 # Trinity stack build config
 
-_The file format and build step for "Build configuration" in
-[RFC 2, Hosts load stacks from descriptors](https://github.com/paritytech/trinity-user-agents/pull/1564), tracked in
-[#1899](https://github.com/paritytech/trinity-user-agents/issues/1899). The RFC is normative._
-
 ## Summary
+
+[RFC 2](https://github.com/paritytech/trinity-user-agents/pull/1564) says what a build's configuration holds: the
+stack's pointer, a bundled copy of its descriptor, and whether it may use reserved values. It gives no file format. This
+page proposes one, for [#1899](https://github.com/paritytech/trinity-user-agents/issues/1899).
 
 Each host picks its stack in code today: a switch on compiler flags on iOS, a mapping from `TestnetEnvironment` on
 Android, a hand-written table in dotli. Shipping another stack means changing that code.
