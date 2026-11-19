@@ -96,7 +96,6 @@ mock = ["runtime"]
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true }
-anyhow = { workspace = true, optional = true }
 async-lock = { workspace = true, optional = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
@@ -143,6 +142,7 @@ imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optio
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uniffi = { workspace = true }
+anyhow = { workspace = true, optional = true }
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
 verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
 truapi-verifiable = { path = "../truapi-verifiable", optional = true }

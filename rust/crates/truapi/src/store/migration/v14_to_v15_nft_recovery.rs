@@ -1,4 +1,4 @@
-//! Schema version 14: which installations NFT backup recovery has finished.
+//! Schema version 15: which installations NFT backup recovery has finished.
 
 use rusqlite_migration::M;
 
