@@ -5,6 +5,7 @@
 //! doc tags preserve the metadata without requiring such attributes.
 
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
 use quote::quote;
 use syn::{
 	Ident, ItemFn, ItemTrait, LitInt, Token, TraitItemFn,
@@ -12,10 +13,13 @@ use syn::{
 	parse_macro_input,
 };
 
+/// Arguments to `#[wire(...)]`.
 #[derive(Default)]
-struct WireArgs {
-	host_initiated: bool,
-	internal: bool,
+pub struct WireArgs {
+	/// The host starts the call and the product answers it.
+	pub host_initiated: bool,
+	/// Kept out of the product SDK.
+	pub internal: bool,
 	id: Option<u8>,
 }
 
@@ -132,22 +136,26 @@ impl Parse for WireTraitArgs {
 	}
 }
 
-/// Parse `#[wire_trait(id = N)]` and re-emit the trait with its hidden tag.
+/// Emit the wire trait metadata and, in the protocol crate, its worker bindings.
 pub fn expand_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 	let args = parse_macro_input!(args as WireTraitArgs);
 	let tag = format!("@wire_trait_id={}", args.id);
 
-	match syn::parse::<ItemTrait>(item) {
-		Ok(mut item_trait) => {
-			item_trait.attrs.push(syn::parse_quote!(#[doc = #tag]));
-			quote!(#item_trait).into()
-		},
-		Err(_) => syn::Error::new(
+	let Ok(mut item_trait) = syn::parse::<ItemTrait>(item) else {
+		return syn::Error::new(
 			proc_macro2::Span::call_site(),
 			"#[wire_trait] can only be applied to traits",
 		)
 		.to_compile_error()
-		.into(),
+		.into();
+	};
+	item_trait.attrs.push(syn::parse_quote!(#[doc = #tag]));
+	if !matches!(crate_name("truapi"), Ok(FoundCrate::Itself)) {
+		return quote!(#item_trait).into();
+	}
+	match crate::wasm_env::service(&item_trait) {
+		Ok(bindings) => quote!(#item_trait #bindings).into(),
+		Err(error) => error.to_compile_error().into(),
 	}
 }
 

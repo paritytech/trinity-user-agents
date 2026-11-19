@@ -153,9 +153,11 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 	let doc = format!("Versioned envelope for [`{name}`].");
 	let latest_lit =
 		Literal::u8_unsuffixed(u8::try_from(variants.len()).expect("variant count fits in u8"));
-	let latest_ty = match &variants.last().expect("checked non-empty").ty {
-		Some(ty) => quote! { #ty },
-		None => quote! { () },
+	let newest = variants.last().expect("checked non-empty");
+	let newest_ident = &newest.ident;
+	let (latest_ty, from_param, from_body) = match &newest.ty {
+		Some(ty) => (quote! { #ty }, quote! { latest }, quote! { Self::#newest_ident(latest) }),
+		None => (quote! { () }, quote! { () }, quote! { Self::#newest_ident }),
 	};
 
 	let mut tokens = quote! {
@@ -175,33 +177,19 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 				}
 			}
 		}
-	};
 
-	let newest = variants.last().expect("checked non-empty");
-	if let Some(ty) = &newest.ty {
-		let vident = &newest.ident;
-		tokens.extend(quote! {
-			impl From<#ty> for #name {
-				fn from(latest: #ty) -> Self {
-					Self::#vident(latest)
-				}
+		impl From<#latest_ty> for #name {
+			fn from(#from_param: #latest_ty) -> Self {
+				#from_body
 			}
-		});
-	}
+		}
+	};
 
 	if let [only] = &variants[..] {
 		let vident = &only.ident;
-		let (into_body, from_param, from_body) = match &only.ty {
-			Some(_) => (
-				quote! { match self { Self::#vident(inner) => inner } },
-				quote! { latest },
-				quote! { Self::#vident(latest) },
-			),
-			None => (
-				quote! { match self { Self::#vident => () } },
-				quote! { _latest },
-				quote! { Self::#vident },
-			),
+		let into_body = match &only.ty {
+			Some(_) => quote! { match self { Self::#vident(inner) => inner } },
+			None => quote! { match self { Self::#vident => () } },
 		};
 		tokens.extend(quote! {
 			impl crate::versioned::IntoLatest for #name {
@@ -211,8 +199,8 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 			}
 
 			impl crate::versioned::FromLatest for #name {
-				fn from_latest(#from_param: Self::Latest, _target: u8) -> Self {
-					#from_body
+				fn from_latest(latest: Self::Latest, _target: u8) -> Self {
+					Self::from(latest)
 				}
 			}
 		});

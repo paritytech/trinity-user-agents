@@ -94,6 +94,11 @@ fn parses_all_operational_commands() {
 		Ok(ShellCommand::Script(ScriptCommand::Run(Some(PathBuf::from("scripts/my smoke.ts")))))
 	);
 	assert_eq!(parse_command("/script"), Ok(ShellCommand::Script(ScriptCommand::Edit)));
+	assert_eq!(
+		parse_command("/worker guests/hello guest.wasm"),
+		Ok(ShellCommand::Worker(PathBuf::from("guests/hello guest.wasm")))
+	);
+	assert_eq!(parse_command("/worker"), Err("usage: /worker <wasm-path>".into()));
 	assert_eq!(parse_command("/login"), Ok(ShellCommand::Login));
 	assert_eq!(parse_command("/logout"), Ok(ShellCommand::Logout));
 	assert_eq!(parse_command("/log trace"), Ok(ShellCommand::Log(LogLevel::Trace)));

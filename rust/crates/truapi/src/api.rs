@@ -89,6 +89,7 @@ pub use theme::Theme;
 pub use worker::Worker;
 
 /// The unified TrUAPI contract.
+#[truapi_macros::product_services]
 pub trait TrUApi:
 	Account
 	+ Chain
@@ -116,39 +117,5 @@ pub trait TrUApi:
 	+ System
 	+ Theme
 	+ Worker
-	+ Send
-	+ Sync
-{
-}
-
-impl<T> TrUApi for T where
-	T: Account
-		+ Chain
-		+ Chat
-		+ CoinPayment
-		+ Contacts
-		+ Entropy
-		+ ExpandedCard
-		+ Funding
-		+ Game
-		+ FundingProvider
-		+ LocalStorage
-		+ Locale
-		+ NftPurse
-		+ Notifications
-		+ Payment
-		+ Permissions
-		+ Pocket
-		+ Preimage
-		+ Renderer
-		+ ResourceAllocation
-		+ Scanner
-		+ Signing
-		+ StatementStore
-		+ System
-		+ Theme
-		+ Worker
-		+ Send
-		+ Sync
 {
 }

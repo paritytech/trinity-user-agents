@@ -3,9 +3,12 @@
 //! Each macro's implementation lives in its own module. Rust requires the
 //! public proc-macro entry points to be defined at the crate root.
 
+mod guest_main;
+mod product_services;
 mod service;
 mod sso_service;
 mod versioned_type;
+mod wasm_env;
 mod wire;
 
 use proc_macro::TokenStream;
@@ -53,9 +56,38 @@ pub fn wire(args: TokenStream, item: TokenStream) -> TokenStream {
 /// every frame of the trait's methods carries on the wire. Expands to the
 /// original trait plus a hidden `@wire_trait_id=N` doc tag that
 /// `truapi-codegen` extracts from rustdoc JSON.
+///
+/// Inside `truapi`, this also generates a typed host linker for each service on native builds
+/// with `wasm-worker` and wrappers for its product-callable methods on wasm32 with `guest`.
 #[proc_macro_attribute]
 pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 	wire::expand_trait(args, item)
+}
+
+/// Make an `async fn` the entry point of a product worker compiled to wasm.
+///
+/// ```ignore
+/// #[truapi::main]
+/// async fn main() -> Result<(), truapi::Error> {
+///     Ok(())
+/// }
+/// ```
+///
+/// Emits the exports the host starts the worker and delivers events through.
+/// Re-exported as `truapi_guest_api::main`; the expansion finds that crate
+/// under whatever name the worker depends on it by.
+#[proc_macro_attribute]
+pub fn guest_main(args: TokenStream, item: TokenStream) -> TokenStream {
+	guest_main::expand(args, item)
+}
+
+/// Generate the blanket protocol implementation and the worker environment for a set of services.
+///
+/// Apply to the product trait whose supertraits are its service traits. On native hosts with
+/// `wasm-worker`, `WasmEnv::for_product` links each service's product-callable methods.
+#[proc_macro_attribute]
+pub fn product_services(args: TokenStream, item: TokenStream) -> TokenStream {
+	product_services::expand(args, item)
 }
 
 /// Generate versioned message envelopes.
@@ -68,11 +100,10 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// Each declaration becomes a SCALE enum with positional codec indices and an
-/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. When the newest
-/// variant carries a payload, `From<payload>` wraps it in that variant, so callers
-/// write `latest.into()` instead of naming a version. Single-version
-/// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version
-/// envelopes leave those to be written by hand, since the conversion is bespoke.
+/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. Converting
+/// the latest payload with `From` produces the newest variant, including when
+/// its payload is `()`. Single-version envelopes also implement `IntoLatest`
+/// and `FromLatest`. Multi-version envelopes provide their own conversions.
 ///
 /// The enum and every variant receive generated doc comments; a variant keeps
 /// its own doc attributes when the declaration provides them.

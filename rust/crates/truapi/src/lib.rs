@@ -48,6 +48,10 @@ pub use product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdE
 pub mod v01;
 pub mod v02;
 pub mod versioned;
+pub mod wasm_abi;
+
+#[cfg(all(feature = "guest", target_arch = "wasm32"))]
+pub mod guest;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
 /// the FFI conversion in `uniffi_types` applies to `[u8; 32]` fields in every
@@ -885,6 +889,9 @@ cfg_select! {
 		#[cfg(target_arch = "wasm32")]
 		pub mod wasm;
 
+		#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+		mod wasm_worker;
+
 		#[cfg(not(target_arch = "wasm32"))]
 		pub mod native_debug;
 
@@ -921,6 +928,8 @@ cfg_select! {
 		pub use spawner::Spawner;
 
 		pub use truapi_core::TrUApiCore;
+		#[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+		pub use wasm_worker::{WasmEnv, WasmWorker, WasmWorkerError};
 
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};

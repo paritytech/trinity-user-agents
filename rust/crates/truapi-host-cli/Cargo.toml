@@ -25,7 +25,7 @@ complexity = "warn"
 correctness = "warn"
 
 [dependencies]
-truapi = { path = "../truapi" }
+truapi = { path = "../truapi", features = ["wasm-worker"] }
 # Chain connections for the People, Bulletin and Asset Hub host traffic the preset
 # serves as roles, plus `Chain/*` playground methods: RPC nodes over TLS, or the
 # light client with the bundled network catalog. See src/chain.rs.
