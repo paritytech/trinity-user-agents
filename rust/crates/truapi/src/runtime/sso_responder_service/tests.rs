@@ -9,7 +9,6 @@ use crate::{
 	},
 	host_logic::{
 		attestation::{SigningContexts, build_lite_registration},
-		product_account::derive_product_subtree_keypair,
 		root_entropy::RootEntropy,
 		sso::pairing::{
 			ResponderIdentity, SsoStatementData, VersionedHandshakeResponse,
@@ -605,13 +604,11 @@ fn native_product_reset_does_not_invalidate_remote_allocation_review() {
 	});
 	let (_, signing_host) = signing_fixture(platform.clone());
 	let entropy = RootEntropy::new(ENTROPY);
-	let expected_secret = derive_product_subtree_keypair(
-		&entropy.derive_root_keypair().unwrap(),
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap()
-	.secret
-	.to_bytes();
+	let expected_secret = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap()
+		.secret
+		.to_bytes();
 	let expected_domain = entropy
 		.derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
 		.unwrap();
@@ -1230,16 +1227,11 @@ fn product_subtree_request_is_consent_free_and_hard_derived() {
 	let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
 		panic!("expected product subtree response");
 	};
-	let root = RootEntropy::new(ENTROPY)
-		.derive_root_keypair()
-		.expect("fixture entropy derives root");
-	let expected = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("browse.dot"),
-	)
-	.expect("fixture derives subtree")
-	.public
-	.to_bytes();
+	let expected = RootEntropy::new(ENTROPY)
+		.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+		.expect("fixture derives subtree")
+		.public
+		.to_bytes();
 	assert_eq!(response.responding_to, "subtree-1");
 	assert_eq!(response.payload, Ok(expected));
 }

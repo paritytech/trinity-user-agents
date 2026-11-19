@@ -111,16 +111,11 @@ use crate::{
 };
 
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
-	let root = RootEntropy::new([0xAB; 16])
-		.derive_root_keypair()
-		.expect("test entropy derives a root");
-	crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test(product_id),
-	)
-	.expect("test product id derives a subtree")
-	.public
-	.to_bytes()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test(product_id))
+		.expect("test product id derives a subtree")
+		.public
+		.to_bytes()
 }
 
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
@@ -6665,12 +6660,9 @@ fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
 
 pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
 	let entropy = RootEntropy::new([0xAB; 16]);
-	let root = entropy.derive_root_keypair().unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
         // A grant skips confirmation, except for a call naming contacts.
@@ -6737,13 +6729,9 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccoun
 
 /// The product account the capability in [`granted_pairing_host`] derives.
 fn granted_keypair() -> schnorrkel::Keypair {
-	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
-	crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap()
 }
 
 #[test]
@@ -7170,12 +7158,9 @@ fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
 fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
 	let entropy = RootEntropy::new([0xAB; 16]);
-	let root = entropy.derive_root_keypair().unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
 	let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -7238,12 +7223,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 			.is_empty()
 	);
 
-	let keypair = crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap();
+	let keypair = entropy
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let mut transcript = merlin::Transcript::new(b"ctx");
 	transcript.append_message(b"round", &[7]);
 	let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
@@ -7324,12 +7306,9 @@ fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
 #[test]
 fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
-	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let platform = Arc::new(StubPlatform::default());
 	let legacy_key =
 		CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("myapp.dot") };

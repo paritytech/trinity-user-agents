@@ -419,39 +419,34 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 pub async fn inspect_imported_signer(network: &Stack, mnemonic: &str) -> Result<ImportedSigner> {
 	let mnemonic = Mnemonic::parse(mnemonic.trim()).context("invalid BIP-39 mnemonic")?.to_string();
 	let identity = identity_from_mnemonic(&mnemonic, network.tld())?;
-	let username = attestation::lookup_registered_username(network, &identity.root_entropy())
+	let username = attestation::lookup_registered_username(network, &identity.entropy)
 		.await
 		.with_context(|| {
 			format!("look up the mnemonic's optional dotNS username on {}", network.namespace())
 		})?;
 	let username = match username {
 		Some(username) => Some(username),
-		None => attestation::lookup_backend_username(
-			network,
-			&identity.root_entropy(),
-			&identity.address,
-		)
-		.await
-		.with_context(|| {
-			format!(
-				"reverse-resolve the mnemonic's assigned identity-backend username on {}",
-				network.namespace()
-			)
-		})?,
+		None => attestation::lookup_backend_username(network, &identity.entropy, &identity.address)
+			.await
+			.with_context(|| {
+				format!(
+					"reverse-resolve the mnemonic's assigned identity-backend username on {}",
+					network.namespace()
+				)
+			})?,
 	};
-	wait_for_ring_membership(network, &identity.root_entropy())
-		.await
-		.with_context(|| {
-			let account = username.as_deref().unwrap_or(&identity.address);
-			format!(
-				"verify personhood ring membership for account {account:?} on {}",
-				network.namespace()
-			)
-		})?;
+	wait_for_ring_membership(network, &identity.entropy).await.with_context(|| {
+		let account = username.as_deref().unwrap_or(&identity.address);
+		format!(
+			"verify personhood ring membership for account {account:?} on {}",
+			network.namespace()
+		)
+	})?;
 	let session_name = imported_session_name(username.as_deref(), &identity.public_key);
+	let entropy = mnemonic_entropy(&mnemonic)?;
 	Ok(ImportedSigner {
 		mnemonic,
-		entropy: identity.entropy,
+		entropy,
 		username,
 		session_name,
 		public_key: identity.public_key,
@@ -557,7 +552,7 @@ async fn create_auto_account(
 	let mnemonic = Mnemonic::generate(12).context("generate BIP-39 mnemonic")?.to_string();
 	let identity = identity_from_mnemonic(&mnemonic, network.tld())?;
 
-	if !attestation::lite_username_available(network, &identity.root_entropy(), &lite_username)
+	if !attestation::lite_username_available(network, &identity.entropy, &lite_username)
 		.await
 		.with_context(|| format!("check lite username {lite_username:?} availability"))?
 	{
@@ -588,8 +583,8 @@ async fn create_auto_account(
 	);
 
 	record.lite_username = attest_record(network, &record, reserved_username).await?;
-	let root_entropy = RootEntropy::new(identity.entropy);
-	finish_account_readiness(store, record, wait_for_ring_membership(network, &root_entropy)).await
+	finish_account_readiness(store, record, wait_for_ring_membership(network, &identity.entropy))
+		.await
 }
 
 async fn ensure_record_ready(
@@ -600,24 +595,19 @@ async fn ensure_record_ready(
 ) -> Result<AccountRecord> {
 	let identity = identity_from_mnemonic(&record.mnemonic, network.tld())?;
 	if record.origin == AccountOrigin::Imported {
-		wait_for_ring_membership(network, &identity.root_entropy()).await?;
+		wait_for_ring_membership(network, &identity.entropy).await?;
 		return Ok(record.clone());
 	}
 	let mut record = record.clone();
 	if !record.attested {
 		record.lite_username = attest_record(network, &record, reserved_username).await?;
 	} else {
-		record.lite_username =
-			attestation::registered_lite_username(network, &identity.root_entropy())
-				.await
-				.with_context(|| format!("resolve Lite username for account {}", record.name))?;
+		record.lite_username = attestation::registered_lite_username(network, &identity.entropy)
+			.await
+			.with_context(|| format!("resolve Lite username for account {}", record.name))?;
 	}
-	finish_account_readiness(
-		store,
-		record,
-		wait_for_ring_membership(network, &identity.root_entropy()),
-	)
-	.await
+	finish_account_readiness(store, record, wait_for_ring_membership(network, &identity.entropy))
+		.await
 }
 
 async fn finish_account_readiness(
@@ -642,7 +632,7 @@ async fn attest_record(
 	record: &AccountRecord,
 	reserved_username: Option<&str>,
 ) -> Result<String> {
-	let entropy = RootEntropy::new(mnemonic_entropy(&record.mnemonic)?);
+	let entropy = root_entropy_from_mnemonic(&record.mnemonic)?;
 	let lite_username = attestation::attest(&attest_config(
 		network,
 		entropy,
@@ -819,10 +809,9 @@ pub async fn attest_mnemonic(
 ) -> Result<AttestedIdentity> {
 	let username_base = lite_username_base(username_base)?;
 	let identity = identity_from_mnemonic(mnemonic, network.tld())?;
-	let lite_username =
-		attestation::attest(&attest_config(network, identity.root_entropy(), username_base, None))
-			.await?;
-	wait_for_ring_membership(network, &identity.root_entropy()).await?;
+	let config = attest_config(network, identity.entropy, username_base, None);
+	let lite_username = attestation::attest(&config).await?;
+	wait_for_ring_membership(network, &config.entropy).await?;
 	Ok(AttestedIdentity {
 		address: identity.address,
 		public_key: identity.public_key,
@@ -831,25 +820,23 @@ pub async fn attest_mnemonic(
 }
 
 struct SignerIdentity {
-	entropy: Vec<u8>,
+	entropy: RootEntropy,
 	public_key: [u8; 32],
 	address: String,
 }
 
-impl SignerIdentity {
-	/// The root entropy this signer's keys derive from.
-	fn root_entropy(&self) -> RootEntropy {
-		RootEntropy::new(self.entropy.clone())
-	}
-}
-
 fn identity_from_mnemonic(mnemonic: &str, network_suffix: &str) -> Result<SignerIdentity> {
-	let entropy = mnemonic_entropy(mnemonic)?;
-	let candidate = RootEntropy::new(entropy.clone())
+	let entropy = root_entropy_from_mnemonic(mnemonic)?;
+	let candidate = entropy
 		.derive_identity_keypair(network_suffix)
 		.map_err(IdentityDerivationError::from)?;
 	let public_key = candidate.public.to_bytes();
 	Ok(SignerIdentity { entropy, public_key, address: product_public_key_to_address(public_key) })
+}
+
+/// The root entropy of a BIP-39 `mnemonic`.
+pub fn root_entropy_from_mnemonic(mnemonic: &str) -> Result<RootEntropy> {
+	Ok(RootEntropy::new(mnemonic_entropy(mnemonic)?))
 }
 
 fn mnemonic_entropy(mnemonic: &str) -> Result<Vec<u8>> {

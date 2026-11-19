@@ -2934,7 +2934,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		host_internal::sso_messages::{
 			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
 		},
-		host_logic::{product_account::derive_product_subtree_keypair, root_entropy::RootEntropy},
+		host_logic::root_entropy::RootEntropy,
 	};
 	use parity_scale_codec::Encode;
 
@@ -2976,13 +2976,11 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			}
 			.encode(),
 		};
-		let public_key = derive_product_subtree_keypair(
-			&root_entropy.derive_root_keypair().unwrap(),
-			&ProductId::for_test("browse.dot"),
-		)
-		.unwrap()
-		.public
-		.to_bytes();
+		let public_key = root_entropy
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.unwrap()
+			.public
+			.to_bytes();
 		assert_eq!(
 			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
 			response(Ok(public_key))

@@ -1,15 +1,16 @@
 use super::*;
 use crate::host_logic::root_entropy::RootEntropy;
 
-fn fixture_root() -> Keypair {
-	RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap()
-}
-
 #[test]
 fn product_subtrees_are_hard_firewalls() {
-	let root = fixture_root();
-	let first = derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot")).unwrap();
-	let second = derive_product_subtree_keypair(&root, &ProductId::for_test("other.dot")).unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let root = entropy.derive_root_keypair().unwrap();
+	let first = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
+	let second = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("other.dot"))
+		.unwrap();
 
 	assert_ne!(first.public, root.public);
 	assert_ne!(first.public, second.public);
@@ -17,7 +18,7 @@ fn product_subtrees_are_hard_firewalls() {
 
 #[test]
 fn product_secret_derivation_matches_subtree_public_derivation() {
-	let root = fixture_root();
+	let entropy = RootEntropy::new([0xAB; 16]);
 	for (product_id, index) in [
 		("myapp.dot", index_bytes(0)),
 		("myapp.dot", index_bytes(1)),
@@ -25,8 +26,8 @@ fn product_secret_derivation_matches_subtree_public_derivation() {
 		("myapp.dot", [0xEE; 32]),
 	] {
 		let product_id = ProductId::for_test(product_id);
-		let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
-		let keypair = derive_product_keypair(&root, &product_id, index).unwrap();
+		let subtree = entropy.derive_product_subtree_keypair(&product_id).unwrap();
+		let keypair = entropy.derive_product_keypair(&product_id, index).unwrap();
 		let public = derive_product_public_key(subtree.public.to_bytes(), index).unwrap();
 		let allocated =
 			derive_product_keypair_from_subtree_secret(subtree.secret.to_bytes(), index).unwrap();
@@ -41,9 +42,11 @@ fn product_secret_derivation_matches_subtree_public_derivation() {
 
 #[test]
 fn root_public_key_cannot_substitute_for_product_subtree() {
-	let root = fixture_root();
-	let actual =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let root = entropy.derive_root_keypair().unwrap();
+	let actual = entropy
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let unsafe_soft_only =
 		derive_product_public_key(root.public.to_bytes(), index_bytes(0)).unwrap();
 
@@ -52,12 +55,12 @@ fn root_public_key_cannot_substitute_for_product_subtree() {
 
 #[test]
 fn long_product_id_derives_stably() {
-	let root = fixture_root();
+	let entropy = RootEntropy::new([0xAB; 16]);
 	let product_id = ProductId::for_test(
 		"w-credentialless-staticblitz-com.local-credentialless.webcontainer-api.dot",
 	);
-	let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
-	let from_secret = derive_product_keypair(&root, &product_id, index_bytes(0)).unwrap();
+	let subtree = entropy.derive_product_subtree_keypair(&product_id).unwrap();
+	let from_secret = entropy.derive_product_keypair(&product_id, index_bytes(0)).unwrap();
 	let from_public = derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap();
 
 	assert_eq!(from_secret.public.to_bytes(), from_public);
@@ -65,8 +68,8 @@ fn long_product_id_derives_stably() {
 
 #[test]
 fn ss58_address_round_trips_to_public_key() {
-	let root = fixture_root();
-	let derived = derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+	let derived = RootEntropy::new([0xAB; 16])
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
 		.unwrap()
 		.public
 		.to_bytes();
@@ -106,8 +109,9 @@ fn wire_index_derivation_matches_the_mobile_vector() {
 	// The JS export composes these two steps over a wire `DerivationIndex`
 	// so hosts never build the 32-byte chain code. Pin that composition
 	// against the same vector the internal `index_bytes` path produces.
-	let root = RootEntropy::new([0xAB; 16]).derive_root_keypair().unwrap();
-	let subtree = derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot")).unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let derived = derive_product_public_key(
 		subtree.public.to_bytes(),
 		derivation_index_bytes(&DerivationIndex::Index(0)),
@@ -230,8 +234,7 @@ fn identity_is_peopl_dot_default_product_account_and_signs() {
 	let entropy = RootEntropy::new([0xAB; 16]);
 	let identity = entropy.derive_identity_keypair("dot").unwrap();
 	let root = entropy.derive_root_keypair().unwrap();
-	let peopl_subtree =
-		derive_hard_path_from_keypair(root, &[PRODUCT_JUNCTION, "peopl.dot"]).unwrap();
+	let peopl_subtree = derive_hard_path_from_keypair(root, &["product", "peopl.dot"]).unwrap();
 	let expected = peopl_subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0;
 	assert_eq!(identity.public, expected.public);
 	assert_eq!(
@@ -265,11 +268,8 @@ fn identity_account_follows_the_network_suffix() {
 			address,
 			"identity account under peopl.{suffix}"
 		);
-		let subtree = derive_product_subtree_keypair(
-			&entropy.derive_root_keypair().unwrap(),
-			&personhood_product_id(suffix),
-		)
-		.unwrap();
+		let subtree =
+			entropy.derive_product_subtree_keypair(&personhood_product_id(suffix)).unwrap();
 		assert_eq!(
 			derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap(),
 			identity.public.to_bytes(),
@@ -282,8 +282,9 @@ fn identity_account_follows_the_network_suffix() {
 fn raw_index_space_is_disjoint_from_plain_indexes() {
 	// A raw all-zero index must not collide with plain index 0: the magic
 	// keeps the two spaces separate.
-	let subtree =
-		derive_product_subtree_keypair(&fixture_root(), &ProductId::for_test("myapp.dot")).unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let indexed = derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap();
 	let raw = derive_product_public_key(subtree.public.to_bytes(), [0u8; 32]).unwrap();
 	assert_ne!(indexed, raw);
@@ -309,9 +310,9 @@ fn root_keypair_from_entropy_regression_pin() {
 
 #[test]
 fn product_secret_signs_verifiably() {
-	let root = RootEntropy::new([0xABu8; 16]).derive_root_keypair().unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new([0xABu8; 16])
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let message = b"<Bytes>hello</Bytes>";
 	let signature = keypair.secret.sign_simple(b"substrate", message, &keypair.public);
 	assert!(keypair.public.verify_simple(b"substrate", message, &signature).is_ok());

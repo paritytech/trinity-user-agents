@@ -1505,13 +1505,11 @@ pub fn derive_product_subtree_public_key(
 	root_entropy: Vec<u8>,
 	raw_product_id: String,
 ) -> Result<Vec<u8>, JsValue> {
-	let root = crate::host_logic::root_entropy::RootEntropy::new(root_entropy)
-		.derive_root_keypair()
-		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	let product_id = raw_product_id
 		.parse::<crate::platform::ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
+	crate::host_logic::root_entropy::RootEntropy::new(root_entropy)
+		.derive_product_subtree_keypair(&product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())
 		.map_err(|err| JsValue::from_str(&err.to_string()))
 }

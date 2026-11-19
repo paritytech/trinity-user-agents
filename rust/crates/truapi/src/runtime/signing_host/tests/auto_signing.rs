@@ -56,9 +56,9 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 			.is_empty(),
 		"the grant waives the prompt",
 	);
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(

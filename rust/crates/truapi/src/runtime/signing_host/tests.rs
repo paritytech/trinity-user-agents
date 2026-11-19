@@ -32,7 +32,7 @@ use crate::{
 		transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
 	},
 	host_logic::{
-		product_account::{SR25519_SIGNING_CONTEXT, derive_product_keypair, index_bytes},
+		product_account::{SR25519_SIGNING_CONTEXT, index_bytes},
 		root_entropy::RootEntropy,
 	},
 	platform::{CoreStorageKey, Platform, ProductContext, ProductId},
@@ -1952,9 +1952,9 @@ fn activate_then_sign_raw_verifies_against_derived_product_key() {
 		futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
 	assert!(response.signed_transaction.is_none());
 
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(
@@ -1989,9 +1989,9 @@ fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
 	))
 	.expect("VRF signing succeeds");
 
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let mut transcript = merlin::Transcript::new(b"pop:airdrop");
 	transcript.append_message(b"domain", b"lottery");
 	transcript.append_message(b"round", &7u32.to_le_bytes());
@@ -2261,9 +2261,9 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 	))
 	.expect("product payload signing succeeds");
 
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	assert_eq!(product_response.signature.len(), 65);
 	assert_eq!(product_response.signature[0], 1);
 	let signature = schnorrkel::Signature::from_bytes(&product_response.signature[1..]).unwrap();
@@ -2507,9 +2507,9 @@ fn sign_raw_leaves_already_wrapped_payload_untouched() {
 	});
 	let HostSignRawResponse::V1(response) =
 		futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(

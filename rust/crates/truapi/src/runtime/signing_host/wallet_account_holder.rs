@@ -20,10 +20,7 @@ use crate::{
 	host_internal::sso_messages::RingVrfError,
 	host_logic::{
 		device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret},
-		product_account::{
-			ProductAccountError, derivation_index_bytes, derive_product_keypair,
-			derive_product_subtree_keypair,
-		},
+		product_account::{ProductAccountError, derivation_index_bytes},
 		root_entropy::RootEntropy,
 		session::{SessionInfo, SessionState},
 		sso::pairing::ResponderIdentity,
@@ -404,8 +401,7 @@ impl WalletKeys {
 		&self,
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
-		let root = self.entropy.derive_root_keypair()?;
-		Ok(derive_product_subtree_keypair(&root, product_id)?)
+		Ok(self.entropy.derive_product_subtree_keypair(product_id)?)
 	}
 
 	/// The root keypair is recomputed per call (PBKDF2, 2048 rounds, via
@@ -415,9 +411,7 @@ impl WalletKeys {
 		&self,
 		account: &ProductAccountId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
-		let root = self.entropy.derive_root_keypair()?;
-		Ok(derive_product_keypair(
-			&root,
+		Ok(self.entropy.derive_product_keypair(
 			&account.dot_ns_identifier,
 			derivation_index_bytes(&account.derivation_index),
 		)?)

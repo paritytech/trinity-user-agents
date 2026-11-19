@@ -66,9 +66,7 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	)
 	.unwrap()
 	.unwrap();
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, &myapp).unwrap();
+	let subtree = RootEntropy::new(ENTROPY).derive_product_subtree_keypair(&myapp).unwrap();
 	authority.clear_product_state(&myapp);
 	let current_session = authority.accounts().current_session().unwrap();
 	let own = keeps_auto_signing(&authority, "myapp.dot");

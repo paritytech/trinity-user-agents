@@ -25,7 +25,6 @@ use thiserror::Error;
 use crate::platform::ProductId;
 
 const JUNCTION_ID_LEN: usize = 32;
-const PRODUCT_JUNCTION: &str = "product";
 /// Reserved RFC-0022 dotNS label of the personhood product: its ring-VRF
 /// domain holds the person keys and its account 0 is the RFC-0028 identity
 /// account; the product id is `peopl.<network suffix>`, see
@@ -106,30 +105,6 @@ fn blake2b256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
 		.as_bytes()
 		.try_into()
 		.expect("hash_length(32) configures BLAKE2b output to exactly 32 bytes; qed")
-}
-
-/// Derive the product-subtree keypair at `//product//{product_id}`.
-///
-/// The hard junctions are the security boundary: exposing this keypair grants
-/// access to one product subtree without exposing the root account.
-pub fn derive_product_subtree_keypair(
-	root: &Keypair,
-	product_id: &ProductId,
-) -> Result<Keypair, ProductAccountError> {
-	derive_hard_path_from_keypair(root.clone(), &[PRODUCT_JUNCTION, product_id.as_str()])
-}
-
-/// Derive a product-account keypair from the root keypair.
-///
-/// First derives the hard product subtree, then applies the account's 32-byte
-/// derivation index as one soft junction.
-pub fn derive_product_keypair(
-	root: &Keypair,
-	product_id: &ProductId,
-	derivation_index: [u8; 32],
-) -> Result<Keypair, ProductAccountError> {
-	let subtree = derive_product_subtree_keypair(root, product_id)?;
-	Ok(subtree.derived_key_simple(ChainCode(derivation_index), []).0)
 }
 
 /// Soft-derive a product account from an allocated 64-byte subtree secret.

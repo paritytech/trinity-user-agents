@@ -280,7 +280,7 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 	let identity = identity_from_mnemonic(MNEMONIC, "paseo")?;
 	let imported = ImportedSigner {
 		mnemonic: MNEMONIC.to_string(),
-		entropy: identity.entropy,
+		entropy: mnemonic_entropy(MNEMONIC)?,
 		username: Some("alice.01".to_string()),
 		session_name: "alice.01".to_string(),
 		public_key: identity.public_key,
@@ -319,7 +319,7 @@ fn imported_signer_without_dotns_username_is_still_cached() -> Result<()> {
 	let session_name = imported_session_name(None, &identity.public_key);
 	let imported = ImportedSigner {
 		mnemonic: MNEMONIC.to_string(),
-		entropy: identity.entropy,
+		entropy: mnemonic_entropy(MNEMONIC)?,
 		username: None,
 		session_name: session_name.clone(),
 		public_key: identity.public_key,

@@ -9,7 +9,10 @@
 use core::ops::Range;
 
 use parity_scale_codec::Encode;
-use schnorrkel::{ExpansionMode, Keypair};
+use schnorrkel::{
+	ExpansionMode, Keypair,
+	derive::{ChainCode, Derivation},
+};
 use zeroize::Zeroizing;
 
 use super::{
@@ -17,14 +20,15 @@ use super::{
 	keyed_hash::blake2b_256_keyed,
 	product_account::{
 		ProductAccountError, create_chain_code, derive_hard_path_from_keypair,
-		derive_product_keypair, derive_ring_vrf_entropy_from_domain, index_bytes,
-		normalize_chain_code, personhood_product_id,
+		derive_ring_vrf_entropy_from_domain, index_bytes, normalize_chain_code,
+		personhood_product_id,
 	},
 	sso::pairing::CHAT_ENCRYPTION_DOMAIN,
 	x25519_seal::X25519PrivateKey,
 };
 use crate::platform::ProductId;
 
+const PRODUCT_JUNCTION: &str = "product";
 const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 const PRODUCT_ENTROPY_DOMAIN_SEPARATOR: &[u8] = b"product-entropy-derivation";
 
@@ -77,6 +81,30 @@ impl RootEntropy {
 			.collect()
 	}
 
+	/// Derive the product-subtree keypair at `//product//{product_id}`.
+	///
+	/// The hard junctions are the security boundary: exposing this keypair grants
+	/// access to one product subtree without exposing the root account.
+	pub fn derive_product_subtree_keypair(
+		&self,
+		product_id: &ProductId,
+	) -> Result<Keypair, ProductAccountError> {
+		self.derive_sr25519_hard_path(&[PRODUCT_JUNCTION, product_id.as_str()])
+	}
+
+	/// Derive a product-account keypair.
+	///
+	/// First derives the hard product subtree, then applies the account's 32-byte
+	/// derivation index as one soft junction.
+	pub fn derive_product_keypair(
+		&self,
+		product_id: &ProductId,
+		derivation_index: [u8; 32],
+	) -> Result<Keypair, ProductAccountError> {
+		let subtree = self.derive_product_subtree_keypair(product_id)?;
+		Ok(subtree.derived_key_simple(ChainCode(derivation_index), []).0)
+	}
+
 	/// Derive the RFC-0028 identity account on the network with `network_suffix`:
 	/// `//product//peopl.<network_suffix>/index_bytes(0)`, the personhood
 	/// product's account 0.
@@ -84,8 +112,7 @@ impl RootEntropy {
 		&self,
 		network_suffix: &str,
 	) -> Result<Keypair, ProductAccountError> {
-		let root = self.derive_root_keypair()?;
-		derive_product_keypair(&root, &personhood_product_id(network_suffix), index_bytes(0))
+		self.derive_product_keypair(&personhood_product_id(network_suffix), index_bytes(0))
 	}
 
 	/// Derive the RFC-0022 full-person ring-VRF entropy on the network with
@@ -163,11 +190,6 @@ impl RootEntropy {
 	/// lets a wallet share it with a paired host that has no entropy of its own.
 	pub fn derive_identity_chat_private_key(&self) -> [u8; 32] {
 		self.derive_x25519_keypair(CHAT_ENCRYPTION_DOMAIN).0
-	}
-
-	/// BLAKE2b-256 of the entropy, with no key.
-	pub fn hash(&self) -> [u8; 32] {
-		sp_crypto_hashing::blake2_256(&self.0)
 	}
 
 	fn keyed_hash(&self, key: &[u8]) -> [u8; 32] {

@@ -32,9 +32,7 @@ use truapi::{
 		Payload, ProtocolMessage, request_ids, subscription_ids,
 	},
 	host_logic::{
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair,
-		},
+		product_account::{SR25519_SIGNING_CONTEXT, derivation_index_bytes},
 		root_entropy::RootEntropy,
 	},
 	platform::{
@@ -176,13 +174,12 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	// The signature has to verify against the key the activation entropy
 	// derives, not merely against whatever the runtime happens to hold: that is
 	// what makes this a signature by *the user's* product account.
-	let root = RootEntropy::new(ENTROPY).derive_root_keypair().expect("root keypair derives");
-	let keypair = derive_product_keypair(
-		&root,
-		&ProductId::for_test(PRODUCT_ID),
-		derivation_index_bytes(&v01::DerivationIndex::Index(0)),
-	)
-	.expect("product keypair derives");
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(
+			&ProductId::for_test(PRODUCT_ID),
+			derivation_index_bytes(&v01::DerivationIndex::Index(0)),
+		)
+		.expect("product keypair derives");
 
 	// `sign_raw` watermarks the payload before signing, so the signed message
 	// is the wrapped form rather than the bytes the product handed over.
