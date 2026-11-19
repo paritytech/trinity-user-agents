@@ -931,9 +931,8 @@ cfg_select! {
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
-			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
-			PairingHostRuntime, ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
-			SigningHostRuntime,
+			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
+			ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
 		};
 		pub use host_internal::{
 			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
@@ -973,8 +972,8 @@ cfg_select! {
 		};
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
-			PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, StatementRenewalTarget,
+			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
+			ResumePairingError, SigningHost, StatementRenewalTarget,
 			contacts::contact_handle,
 			login_failure::reports_exhausted_period,
 			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},
