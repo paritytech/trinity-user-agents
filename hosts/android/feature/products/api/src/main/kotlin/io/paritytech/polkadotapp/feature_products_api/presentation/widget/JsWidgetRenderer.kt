@@ -91,6 +91,9 @@ private fun JsWidgetContent(
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
+        is JsWidget.Materials -> LocalJsMaterialsRenderer.current.Node(modifier, widget.node) {
+            widget.children.forEach { JsWidgetContent(it) }
+        }
     }
 }
 
@@ -298,6 +301,7 @@ private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.Button -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
+    is JsWidget.Materials -> emptyList()
 }.any { it is JsModifier.FillMaxHeight }
 
 @Composable

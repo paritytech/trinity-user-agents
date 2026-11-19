@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
@@ -21,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertArrayEquals
@@ -64,9 +66,10 @@ class ProductPocketCardThemeTest {
                         pinned = false,
                     ),
                     bindings = ProductFaceBindings(
-                        face = MutableStateFlow(faceUsingThemeDefaults),
+                        face = MutableStateFlow(PocketFace(faceUsingThemeDefaults, materials = null)),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
+                        materials = CardMaterialsSlot(),
                     ),
                     onOpen = null,
                     onRemoveRequested = null,

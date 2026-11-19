@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -461,7 +462,7 @@ class PocketViewModelTest {
     @Test
     fun `a card drawn again can read the face the first copy already holds`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
-        val face = JsWidget.Text(text = "Loyalty")
+        val face = PocketFace(JsWidget.Text(text = "Loyalty"), materials = null)
         every { interactor.observeProductCards() } returns flowOf(listOf(card))
         every { interactor.observeFace(card.key) } returns flowOf(face)
 

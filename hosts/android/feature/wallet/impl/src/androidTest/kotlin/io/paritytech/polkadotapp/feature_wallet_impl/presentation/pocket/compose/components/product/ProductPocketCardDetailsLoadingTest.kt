@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketT
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ShownProduct
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalNavAnimatedVisibilityScope
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -67,6 +68,7 @@ class ProductPocketCardDetailsLoadingTest {
                     face = MutableStateFlow(null),
                     onFaceAction = { _, _ -> },
                     imageResolver = JsImageResolver { null },
+                    materials = CardMaterialsSlot(),
                 ),
                 shownProduct = session?.let { ShownProduct(card.key.launchUrl(), it) },
                 openingFaceShown = true,
