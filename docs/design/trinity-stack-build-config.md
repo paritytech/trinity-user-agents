@@ -15,6 +15,18 @@ Right now each host decides in code which stack it runs. iOS switches on compile
 `TestnetEnvironment` to a stack, and dotli keeps a hand-written table. If PCF or anyone else wants to ship a different
 stack, they have to change that code.
 
+This is how a stack gets into the iOS and Android apps today. Every build carries the descriptors of all three stacks,
+and the code picks one of them when the app starts:
+
+```mermaid
+flowchart LR
+  S["stacks/ in this repository<br/>descriptors of three stacks<br/>refreshed by a weekly job"]
+  B["app build<br/>copies all three into the app"]
+  C["code in the app picks one<br/>iOS: compiler flags<br/>Android: TestnetEnvironment"]
+  K["core"]
+  S --> B --> C --> K
+```
+
 [RFC 2](https://github.com/paritytech/trinity-user-agents/pull/1564) moves this choice into the build's configuration.
 It says what the configuration holds (the stack's pointer, a bundled copy of its descriptor, and whether the stack may
 use reserved values) but it does not say what the file looks like. This page proposes a format for
@@ -26,6 +38,22 @@ it.
 A build config is a small JSON file that names one stack. Each build is pointed at one config. During the build we
 download that stack's descriptor, verify it, and put both the descriptor and the config into the app, which starts the
 core from them.
+
+```mermaid
+flowchart LR
+  CFG["build config<br/>one stack: name, link, policy"]
+  URL["publisher's URL<br/>signed descriptor"]
+  PREV["previous copy<br/>next to the config"]
+  B["build step<br/>truapi-host stack bundle<br/>downloads, verifies, checks the policy"]
+  A["app resources<br/>the config and one descriptor"]
+  K["core"]
+  CFG --> B
+  URL --> B
+  PREV -.-> B
+  B --> A --> K
+```
+
+The app no longer chooses anything. It has one stack, and that stack is the one its config names.
 
 ## The format
 
