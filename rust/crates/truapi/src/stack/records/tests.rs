@@ -1,12 +1,14 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use parity_scale_codec::Encode;
-use trinity_stack::{Refresh, Served, StackReader};
 
 use super::*;
 use crate::{
-	stack::signed_pointer,
-	test_support::{TEST_STACK_PEOPLE, published_test_descriptor, sign_test_descriptor},
+	stack::{ReservedValuesPolicy, signed_pointer},
+	test_support::{
+		on_testnet, published_test_descriptor_at, redeployed_reserved_test_descriptor,
+		reserved_test_descriptor, sign_test_descriptor, stored_test_record, without_bulletin,
+	},
 };
 
 /// Core storage held in memory, as a browser host's might be.
@@ -38,14 +40,20 @@ impl CoreStorage for MemoryCoreStorage {
 }
 
 /// The record a reader stores for the test stack's descriptor at `sequence`.
-fn record_at(pointer: &Pointer, sequence: u32) -> Vec<u8> {
-	let (_, bytes) =
-		sign_test_descriptor(&published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE));
-	StackReader::new(Refresh::Never)
-		.fetched(pointer, Served::Document { bytes: &bytes, etag: None }, 0)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored")
+fn record_at(sequence: u32) -> Vec<u8> {
+	stored_test_record(&published_test_descriptor_at(sequence), 0)
+}
+
+/// The rules of a build that bundles the test stack at `sequence` 1.
+fn bundled_rules() -> CopyRules {
+	rules_of(&published_test_descriptor_at(1), ReservedValuesPolicy::default())
+}
+
+/// The rules of a build that bundles `bundled` under `reserved_values`.
+fn rules_of(bundled: &serde_json::Value, reserved_values: ReservedValuesPolicy) -> CopyRules {
+	let (link, bundled) = sign_test_descriptor(bundled);
+	let pointer = signed_pointer(&link).expect("test link carries a key");
+	CopyRules::new(pointer, &bundled, reserved_values).expect("bundled copy is valid")
 }
 
 /// Two runtimes can refresh at once while a host rebuilds its runtime. The
@@ -53,13 +61,12 @@ fn record_at(pointer: &Pointer, sequence: u32) -> Vec<u8> {
 /// or the next start would go back to chains that no longer exist.
 #[test]
 fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
-	let (link, _) = sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let stack_id = pointer.stack_id();
+	let rules = bundled_rules();
+	let stack_id = rules.pointer().stack_id();
 	let records = CoreStorageRecords::new(Arc::new(MemoryCoreStorage::default()));
 	let write = |sequence| {
-		let record = record_at(&pointer, sequence);
-		let check = ReplaceCheck::new(pointer.clone(), &record);
+		let record = record_at(sequence);
+		let check = ReplaceCheck::new(rules.clone(), &record);
 		futures::executor::block_on(records.write_stack_record(&stack_id, record, check))
 			.expect("memory storage writes");
 	};
@@ -73,8 +80,66 @@ fn an_older_record_does_not_replace_a_newer_one_in_core_storage() {
 	let after_an_older_one = stored();
 	write(4);
 
-	assert_eq!(
-		[after_an_older_one, stored()],
-		[Some(record_at(&pointer, 3)), Some(record_at(&pointer, 4))]
-	);
+	assert_eq!([after_an_older_one, stored()], [Some(record_at(3)), Some(record_at(4))]);
+}
+
+/// The core ignores a record whose copy fails its rules, on every start. If
+/// such a record kept a copy the core took out of the store, that copy would
+/// never be the one the next start reads. A record whose copy passes the
+/// rules still keeps an older copy out.
+#[test]
+fn only_a_record_whose_copy_passes_the_cores_rules_keeps_an_older_copy_out() {
+	let check = ReplaceCheck::new(bundled_rules(), &record_at(3));
+	let existing = [
+		record_at(5),
+		record_at(3),
+		stored_test_record(&on_testnet(published_test_descriptor_at(5)), 0),
+		stored_test_record(&without_bulletin(published_test_descriptor_at(5)), 0),
+		b"not a record".to_vec(),
+	];
+
+	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true, true, true, true]);
+}
+
+/// On a stack allowed reserved values the core also ignores a record that
+/// changes a field the bundled copy pins, so that record keeps no copy out
+/// either. The check follows the build's policy on what is pinned.
+#[test]
+fn a_record_that_changes_a_reserved_pin_keeps_no_copy_out() {
+	let rules = rules_of(&reserved_test_descriptor(1), ReservedValuesPolicy::ALLOWED);
+	let check = ReplaceCheck::new(rules, &stored_test_record(&reserved_test_descriptor(3), 0));
+	let existing = [
+		stored_test_record(&reserved_test_descriptor(5), 0),
+		stored_test_record(&redeployed_reserved_test_descriptor(5), 0),
+	];
+
+	assert_eq!(existing.map(|existing| check.replaces(&existing)), [false, true]);
+}
+
+/// iOS and Android keep the record in the core database, which checks and
+/// writes in one transaction. It applies the same check as the browser's
+/// store: a record on another TLD is replaced whatever its `sequence`, and a
+/// record the core can run keeps an older one out.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_core_database_replaces_an_ignored_record_and_keeps_a_newer_one_it_can_run() {
+	let (_directory, db) = crate::store::open_temporary_core_db();
+	let rules = bundled_rules();
+	let stack_id = rules.pointer().stack_id();
+	let write = |record: Vec<u8>| {
+		let check = ReplaceCheck::new(rules.clone(), &record);
+		futures::executor::block_on(db.write_stack_record(&stack_id, record, check))
+			.expect("the database writes");
+	};
+	let stored = || {
+		futures::executor::block_on(db.read_stack_record(&stack_id)).expect("the database reads")
+	};
+
+	write(stored_test_record(&on_testnet(published_test_descriptor_at(5)), 0));
+	write(record_at(3));
+	let over_an_ignored_one = stored();
+	write(record_at(5));
+	write(record_at(4));
+
+	assert_eq!([over_an_ignored_one, stored()], [Some(record_at(3)), Some(record_at(5))]);
 }

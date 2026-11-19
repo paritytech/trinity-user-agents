@@ -1,10 +1,13 @@
-use trinity_stack::{Descriptor, Refresh, Served, StackReader};
+use trinity_stack::{FetchRequest, Served};
 
 use super::*;
 use crate::{
 	stack::signed_pointer,
 	test_support::{
-		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
+		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
+		redeployed_reserved_test_descriptor, refused_for_its_tld, refused_for_pinned,
+		reserved_test_descriptor, sign_test_descriptor, stack_status, stored_test_record,
+		test_chain, without_bulletin,
 	},
 };
 
@@ -12,13 +15,6 @@ const START: i64 = 1_800_000_000;
 
 fn signed(descriptor: &serde_json::Value) -> Vec<u8> {
 	sign_test_descriptor(descriptor).1
-}
-
-/// What [`StackStatus::descriptor`] holds for `descriptor`.
-fn plain(descriptor: &serde_json::Value) -> String {
-	let descriptor: Descriptor =
-		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
-	serde_json::to_string(&descriptor).expect("a descriptor always serialises")
 }
 
 fn load(bundled: &serde_json::Value, stored: Option<&[u8]>) -> StackSource {
@@ -61,20 +57,6 @@ fn fail(source: &mut StackSource, now: i64) -> Option<Vec<u8>> {
 	source.fetched(Err("connection refused".to_string()), now)
 }
 
-fn status(
-	descriptor: &serde_json::Value,
-	last_refresh: Option<StackRefreshOutcome>,
-) -> StackStatus {
-	StackStatus {
-		descriptor: plain(descriptor),
-		generation: descriptor["generation"].as_str().expect("generation is a string").to_string(),
-		stale: false,
-		expired: false,
-		restart_required: false,
-		last_refresh,
-	}
-}
-
 /// A stack never waits on its descriptor's server: the bundled copy is enough
 /// to start, and the first fetch is only asked for.
 #[test]
@@ -84,7 +66,7 @@ fn the_bundled_copy_starts_the_stack_and_a_fetch_is_due() {
 
 	assert_eq!(
 		(source.stack().chains().people, source.status()),
-		(TEST_STACK_PEOPLE, status(&bundled, None))
+		(TEST_STACK_PEOPLE, stack_status(&bundled, None))
 	);
 	let request = source.due_fetch(START).expect("a build copy is due at once");
 	assert_eq!(
@@ -105,7 +87,7 @@ fn a_newer_copy_on_the_same_chains_is_used_at_once() {
 	let record = serve(&mut source, &newer, START);
 
 	assert!(record.is_some(), "the newer copy is stored");
-	assert_eq!(source.status(), status(&newer, Some(StackRefreshOutcome::Current)));
+	assert_eq!(source.status(), stack_status(&newer, Some(StackRefreshOutcome::Current)));
 }
 
 /// After a wipe the chains have new genesis hashes. The core's services were
@@ -126,7 +108,7 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 			TEST_STACK_PEOPLE,
 			StackStatus {
 				restart_required: true,
-				..status(&bundled, Some(StackRefreshOutcome::Current))
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
 			}
 		)
 	);
@@ -136,7 +118,7 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 	let restarted = load(&bundled, Some(&record));
 	assert_eq!(
 		(restarted.stack().chains().people, restarted.status()),
-		(TEST_STACK_WIPED_PEOPLE, status(&wiped, None))
+		(TEST_STACK_WIPED_PEOPLE, stack_status(&wiped, None))
 	);
 }
 
@@ -175,7 +157,7 @@ fn an_unreachable_server_keeps_the_copy_in_use() {
 
 	let record = fail(&mut source, START);
 
-	assert_eq!((record, source.status()), (None, status(&bundled, Some(unreachable()))));
+	assert_eq!((record, source.status()), (None, stack_status(&bundled, Some(unreachable()))));
 }
 
 /// A signed descriptor without a Bulletin chain passes the descriptor rules
@@ -185,11 +167,8 @@ fn an_unreachable_server_keeps_the_copy_in_use() {
 fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
-	let mut without_bulletin = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	without_bulletin["chains"]
-		.as_array_mut()
-		.expect("chains is an array")
-		.retain(|chain| chain["role"] != "Bulletin");
+	let without_bulletin =
+		without_bulletin(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
 
 	let record = serve(&mut source, &without_bulletin, START);
 
@@ -197,7 +176,7 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 		(record, source.status()),
 		(
 			None,
-			status(
+			stack_status(
 				&bundled,
 				Some(StackRefreshOutcome::Refused {
 					reason: "stack has no Bulletin chain".to_string()
@@ -215,8 +194,9 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 	let mut on_extra_tld = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 	on_extra_tld["tld"] = "testnet".into();
 	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
-	let refused =
-		|reason: String| (None, status(&bundled, Some(StackRefreshOutcome::Refused { reason })));
+	let refused = |reason: String| {
+		(None, stack_status(&bundled, Some(StackRefreshOutcome::Refused { reason })))
+	};
 
 	assert_eq!(
 		[&on_extra_tld, &on_extra_genesis].map(|newer| {
@@ -238,42 +218,32 @@ fn a_refreshed_copy_that_names_an_extra_reserved_value_is_refused() {
 #[test]
 fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let (link, _) = sign_test_descriptor(&bundled);
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let on_extra_genesis = published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS);
-	let mut reader = StackReader::new(Refresh::Never);
-	let record = reader
-		.fetched(
-			&pointer,
-			Served::Document { bytes: &signed(&on_extra_genesis), etag: None },
-			START,
-		)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored");
+	let record =
+		stored_test_record(&published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS), START);
 
-	let source = load_reserving(&bundled, Some(&record), reserving_extras());
+	let mut source = load_reserving(&bundled, Some(&record), reserving_extras());
 
-	assert_eq!(source.status(), status(&bundled, None));
+	assert_eq!(
+		(source.status(), source.due_fetch(START)),
+		(stack_status(&bundled, None), bundled_copys_fetch())
+	);
 }
 
 /// The reader judges every fetch against the copy it holds. A copy the core
-/// refused must not become that copy, or the operator's corrected descriptor
-/// at the same `sequence` would be turned away as a conflict.
+/// cannot run must not become that copy, or the operator's corrected
+/// descriptor at the same `sequence` would be turned away as a conflict.
 #[test]
-fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
+fn a_copy_the_core_cannot_run_does_not_stand_in_the_way_of_the_corrected_one() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	let mut on_dot = corrected.clone();
-	on_dot["tld"] = "dot".into();
 
-	let refused = serve(&mut source, &on_dot, START);
+	let refused = serve(&mut source, &without_bulletin(corrected.clone()), START);
 	let record = serve(&mut source, &corrected, START + 3600);
 
 	assert_eq!(
 		(refused, record.is_some(), source.status()),
-		(None, true, status(&corrected, Some(StackRefreshOutcome::Current)))
+		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
 	);
 }
 
@@ -317,31 +287,219 @@ fn an_older_copy_is_refused() {
 		(record, source.status()),
 		(
 			None,
-			status(&bundled, Some(StackRefreshOutcome::Refused { reason: "rollback".to_string() }))
+			stack_status(
+				&bundled,
+				Some(StackRefreshOutcome::Refused { reason: "rollback".to_string() })
+			)
 		)
 	);
 }
 
+/// The fetch a core that runs its bundled copy makes: at once, since a
+/// bundled copy was never fetched, and with no `ETag`, since it came with
+/// none.
+fn bundled_copys_fetch() -> Option<FetchRequest> {
+	Some(FetchRequest {
+		url: "https://stack.test.invalid/stack.json".to_string(),
+		if_none_match: None,
+	})
+}
+
 /// A record written by another core version may hold a copy this one cannot
-/// run. The bundled copy still starts the host.
+/// run. The bundled copy still starts the host, and it is fetched at once
+/// although the record was fetched a moment ago.
 #[test]
 fn a_stored_copy_the_core_cannot_run_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let (link, _) = sign_test_descriptor(&bundled);
-	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let mut on_dot = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	on_dot["tld"] = "dot".into();
-	let mut reader = StackReader::new(Refresh::Never);
-	let record = reader
-		.fetched(&pointer, Served::Document { bytes: &signed(&on_dot), etag: None }, START)
-		.expect("the copy passes the descriptor rules")
-		.stored
-		.expect("a first copy is stored");
+	let cannot_run = without_bulletin(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
+	let record = stored_test_record(&cannot_run, START);
 
 	let mut source = load(&bundled, Some(&record));
 
-	assert_eq!(source.status(), status(&bundled, None));
-	assert!(source.due_fetch(START).is_some(), "the bundled copy is due at once");
+	assert_eq!(
+		(source.status(), source.due_fetch(START)),
+		(stack_status(&bundled, None), bundled_copys_fetch())
+	);
+}
+
+/// The server answers `304 Not Modified` to an `ETag` it knows, and the core
+/// takes that as the copy it holds being current. A core that sent the `ETag`
+/// of a record it ignored would be told its bundled copy is the published
+/// one. The record's `ETag` goes with the record.
+#[test]
+fn an_ignored_records_etag_is_not_sent() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let newer = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let fetched_long_ago = START - 2 * 3600;
+	let ignored = [without_bulletin(newer.clone()), on_testnet(newer)];
+
+	assert_eq!(
+		ignored.map(|ignored| {
+			let record = stored_test_record(&ignored, fetched_long_ago);
+			load(&bundled, Some(&record)).due_fetch(START)
+		}),
+		[bundled_copys_fetch(), bundled_copys_fetch()]
+	);
+}
+
+/// Accounts derive under the TLD, so a descriptor signed with a stolen key
+/// must not move a stack to another one. The copy is refused on every fetch
+/// and never stored, and the core keeps the copy it holds.
+#[test]
+fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let held = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let moved = on_testnet(published_test_descriptor(3, "first", TEST_STACK_PEOPLE));
+	let held_record = serve(&mut source, &held, START);
+
+	let refusals = [START + 3600, START + 7200].map(|now| {
+		(serve(&mut source, &moved, now), source.status(), source.stack().tld() == "paseo")
+	});
+
+	let refused = (None, stack_status(&held, refused_for_its_tld()), true);
+	assert_eq!((held_record.is_some(), refusals), (true, [refused.clone(), refused]));
+}
+
+/// The reader judges every fetch against the copy it holds. A copy refused
+/// for its TLD must not become that copy, or the operator's corrected
+/// descriptor at the same `sequence` would be turned away as a conflict.
+#[test]
+fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+
+	let refused = serve(&mut source, &on_testnet(corrected.clone()), START);
+	let record = serve(&mut source, &corrected, START + 3600);
+
+	assert_eq!(
+		(refused, record.is_some(), source.status()),
+		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
+	);
+}
+
+/// A record may hold a copy on another TLD than the build bundles, such as
+/// one written by another build of the app. The bundled copy starts the host
+/// and is fetched at once although the record was fetched a moment ago, and
+/// the published copy the record came from is refused when it is fetched.
+#[test]
+fn a_stored_copy_on_another_tld_is_ignored() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let moved = on_testnet(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
+	let record = stored_test_record(&moved, START);
+
+	let mut source = load(&bundled, Some(&record));
+	let at_start = (source.stack().tld().to_string(), source.status(), source.due_fetch(START));
+	let fetched = serve(&mut source, &moved, START);
+
+	assert_eq!(
+		(at_start, fetched, source.status()),
+		(
+			("paseo".to_string(), stack_status(&bundled, None), bundled_copys_fetch()),
+			None,
+			stack_status(&bundled, refused_for_its_tld())
+		)
+	);
+}
+
+/// A key that signs the descriptor of a stack allowed reserved values must
+/// not be able to name other dotNS contracts or another chain for its hosts.
+/// The build's copy decides both, so such a copy is refused on every fetch
+/// and never stored, and the core keeps the copy it holds.
+#[test]
+fn a_reserved_stacks_refresh_that_changes_dotns_or_a_chain_is_refused_and_not_stored() {
+	let mut moved_endpoint = reserved_test_descriptor(2);
+	test_chain(&mut moved_endpoint, "People")["rpc"] =
+		serde_json::json!(["wss://moved.test.invalid"]);
+	let mut wiped = reserved_test_descriptor(3);
+	wiped["generation"] = "second".into();
+	test_chain(&mut wiped, "People")["genesisHash"] =
+		format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE)).into();
+	let refused_copies =
+		[(redeployed_reserved_test_descriptor(3), "dotns"), (wiped, "a chain's genesisHash")];
+
+	assert_eq!(
+		refused_copies.clone().map(|(copy, _)| {
+			let mut source =
+				load_reserving(&reserved_test_descriptor(1), None, ReservedValuesPolicy::ALLOWED);
+			let held = serve(&mut source, &moved_endpoint, START);
+			let refusals = [START + 3600, START + 7200]
+				.map(|now| (serve(&mut source, &copy, now), source.status()));
+			(held.is_some(), refusals)
+		}),
+		refused_copies.map(|(_, field)| {
+			let refused = (None, stack_status(&moved_endpoint, refused_for_pinned(field)));
+			(true, [refused.clone(), refused])
+		})
+	);
+}
+
+/// A stack allowed reserved values can name a new `generation` while no
+/// pinned field changes. `generation` is not pinned, so the stack follows it
+/// the way any stack follows a restart of its chains.
+#[test]
+fn a_reserved_stack_follows_a_new_generation_with_no_pinned_field_changed() {
+	let bundled = reserved_test_descriptor(1);
+	let mut regenerated = reserved_test_descriptor(2);
+	regenerated["generation"] = "second".into();
+	let mut source = load_reserving(&bundled, None, ReservedValuesPolicy::ALLOWED);
+
+	let record = serve(&mut source, &regenerated, START).expect("the newer copy is stored");
+	source.record_stored();
+	let restarted = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+
+	assert_eq!(
+		(source.status(), restarted.status()),
+		(
+			StackStatus {
+				restart_required: true,
+				..stack_status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			stack_status(&regenerated, None)
+		)
+	);
+}
+
+/// A record may hold a copy that differs from the build's in a pinned field,
+/// such as one written by another build of the app. The bundled copy starts
+/// the host and is fetched at once although the record was fetched a moment
+/// ago, and the published copy the record came from is refused when it is
+/// fetched.
+#[test]
+fn a_reserved_stacks_stored_copy_that_changes_a_pinned_field_is_ignored() {
+	let bundled = reserved_test_descriptor(1);
+	let record = stored_test_record(&redeployed_reserved_test_descriptor(2), START);
+
+	let mut source = load_reserving(&bundled, Some(&record), ReservedValuesPolicy::ALLOWED);
+	let at_start = (source.status(), source.due_fetch(START));
+	let fetched = serve(&mut source, &redeployed_reserved_test_descriptor(2), START);
+
+	assert_eq!(
+		(at_start, fetched, source.status()),
+		(
+			(stack_status(&bundled, None), bundled_copys_fetch()),
+			None,
+			stack_status(&bundled, refused_for_pinned("dotns"))
+		)
+	);
+}
+
+/// A stack without reserved values follows its operator: a redeployed
+/// contract reaches its hosts at once, without a new build.
+#[test]
+fn a_stack_without_reserved_values_follows_a_redeployed_contract() {
+	let on_paseo = |mut descriptor: serde_json::Value| {
+		descriptor["tld"] = "paseo".into();
+		descriptor
+	};
+	let redeployed = on_paseo(redeployed_reserved_test_descriptor(2));
+	let mut source = load(&on_paseo(reserved_test_descriptor(1)), None);
+
+	let record = serve(&mut source, &redeployed, START);
+
+	assert_eq!(
+		(record.is_some(), source.status()),
+		(true, stack_status(&redeployed, Some(StackRefreshOutcome::Current)))
+	);
 }
 
 /// The descriptor's server sees one request an hour from each core, and a
@@ -396,8 +554,8 @@ fn a_stale_or_expired_copy_is_reported() {
 	assert_eq!(
 		[stale, source.status()],
 		[
-			StackStatus { stale: true, ..status(&newer, Some(StackRefreshOutcome::Current)) },
-			StackStatus { stale: true, expired: true, ..status(&newer, Some(unreachable())) },
+			StackStatus { stale: true, ..stack_status(&newer, Some(StackRefreshOutcome::Current)) },
+			StackStatus { stale: true, expired: true, ..stack_status(&newer, Some(unreachable())) },
 		]
 	);
 }

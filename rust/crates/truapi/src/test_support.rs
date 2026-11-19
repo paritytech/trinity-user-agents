@@ -444,6 +444,132 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
+/// The `chains` entry of `descriptor` with this role.
+pub fn test_chain<'a>(
+	descriptor: &'a mut serde_json::Value,
+	role: &str,
+) -> &'a mut serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.iter_mut()
+		.find(|chain| chain["role"] == role)
+		.expect("the test descriptor has the role")
+}
+
+/// A `lightSpec` entry whose digest is 32 bytes of `digest`.
+pub fn test_light_spec(digest: u8) -> serde_json::Value {
+	serde_json::json!({
+		"url": "https://stack.test.invalid/spec.json",
+		"sha256": format!("0x{}", hex::encode([digest; 32])),
+	})
+}
+
+/// A stack on the reserved `dot` TLD as published at `sequence`, which starts
+/// only under a build that allows it reserved values. It sets every field
+/// such a stack pins: the relay's light spec, two `assets`, `contracts`,
+/// `dotns` and `coinage`. Its chains are `Collectives`, a role the core never
+/// reads, listed ahead of the Relay with a light spec of its own, then those
+/// of [`published_test_descriptor`].
+pub fn reserved_test_descriptor(sequence: u32) -> serde_json::Value {
+	let mut descriptor = test_descriptor("dot", TEST_STACK_PEOPLE, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = "first".into();
+	test_chain(&mut descriptor, "Relay")["lightSpec"] = test_light_spec(0x5a);
+	let mut collectives = test_descriptor_chain("Collectives", [0xc0; 32], Some(1001));
+	collectives["lightSpec"] = test_light_spec(0xc5);
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.insert(0, collectives);
+	descriptor["assets"] = serde_json::json!([
+		{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 1984 },
+		{ "role": "fee", "chain": "AssetHub", "pallet": "Assets", "id": 1337 },
+	]);
+	descriptor["contracts"] =
+		serde_json::json!({ "multicall": format!("0x{}", hex::encode([0xc1; 20])) });
+	descriptor["dotns"] =
+		serde_json::json!({ "popController": format!("0x{}", hex::encode([0xd1; 20])) });
+	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
+	descriptor
+}
+
+/// [`reserved_test_descriptor`] at `sequence` with its dotNS contract at
+/// another address, a field such a stack pins.
+pub fn redeployed_reserved_test_descriptor(sequence: u32) -> serde_json::Value {
+	let mut descriptor = reserved_test_descriptor(sequence);
+	descriptor["dotns"]["popController"] = format!("0x{}", hex::encode([0xee; 20])).into();
+	descriptor
+}
+
+/// The test stack's descriptor as published at `sequence`, on the chains and
+/// in the generation every test bundles it with.
+pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
+	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
+}
+
+/// `descriptor` moved to the `testnet` TLD.
+pub fn on_testnet(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["tld"] = "testnet".into();
+	descriptor
+}
+
+/// `descriptor` without its Bulletin chain. It still passes the descriptor
+/// rules, but the core cannot run it.
+pub fn without_bulletin(mut descriptor: serde_json::Value) -> serde_json::Value {
+	descriptor["chains"]
+		.as_array_mut()
+		.expect("chains is an array")
+		.retain(|chain| chain["role"] != "Bulletin");
+	descriptor
+}
+
+/// The `ETag` every [`stored_test_record`] carries.
+const STORED_TEST_ETAG: &str = "\"stored\"";
+
+/// The record a store holds once a reader stored `descriptor`, fetched at
+/// the Unix time `fetched_at` and served with an `ETag`.
+pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Vec<u8> {
+	let (link, bytes) = sign_test_descriptor(descriptor);
+	let pointer = trinity_stack::Pointer::from_link(&link).expect("test link is a stack link");
+	let served = trinity_stack::Served::Document { bytes: &bytes, etag: Some(STORED_TEST_ETAG) };
+	trinity_stack::StackReader::new(trinity_stack::Refresh::Never)
+		.fetched(&pointer, served, fetched_at)
+		.expect("the copy passes the descriptor rules")
+		.stored
+		.expect("a first copy is stored")
+}
+
+/// What the host is told while the core runs `descriptor` on time, with no
+/// restart pending, after a last fetch that came to `last_refresh`.
+pub fn stack_status(
+	descriptor: &serde_json::Value,
+	last_refresh: Option<crate::platform::StackRefreshOutcome>,
+) -> crate::platform::StackStatus {
+	let plain: trinity_stack::Descriptor =
+		serde_json::from_value(descriptor.clone()).expect("test descriptor is valid");
+	crate::platform::StackStatus {
+		descriptor: serde_json::to_string(&plain).expect("a descriptor always serialises"),
+		generation: plain.generation,
+		stale: false,
+		expired: false,
+		restart_required: false,
+		last_refresh,
+	}
+}
+
+/// What a fetch of a copy on another TLD than the bundled one comes to.
+pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
+	refused_for_pinned("tld")
+}
+
+/// What a fetch of a copy that changes the pinned `field` comes to.
+pub fn refused_for_pinned(field: &str) -> Option<crate::platform::StackRefreshOutcome> {
+	Some(crate::platform::StackRefreshOutcome::Refused {
+		reason: format!("stack descriptor changes {field}, which the bundled copy pins"),
+	})
+}
+
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
 /// verifies it.
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {

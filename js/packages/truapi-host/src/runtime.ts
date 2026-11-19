@@ -66,12 +66,25 @@ export type LogLevel = string;
  * type does not have, `allowed` together with extra values, which the allowed
  * stack may name anyway, and an extra TLD that no stack can have. It refuses
  * the policy before it reads the stack.
+ *
+ * A stack that is allowed reserved values is pinned to its bundled
+ * descriptor. A copy the core stored or fetched is refused when it gives a
+ * chain role another genesis hash, adds or drops a chain role, or changes
+ * `assets`, `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
+ * `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
+ * build changes what the descriptor names for those.
+ *
+ * The pins cover the descriptor, not the chains. The core does not check a
+ * genesis hash against the chain a host reads, so what a host reads over the
+ * descriptor's endpoints is protected only by a light client that starts from
+ * the pinned relay light spec, and that protects the relay alone: a parachain's
+ * `paraId` and `lightSpec` are not pinned.
  */
 export interface ReservedValuesPolicy {
   /**
-   * Whether the stack may name reserved values. Only a Polkadot or
-   * Polkadot-fork build sets it, and then reserves no extra values. Defaults
-   * to `false`.
+   * Whether the stack may name reserved values. A build that sets it reserves
+   * no extra values, and its stack is pinned to its bundled descriptor.
+   * Defaults to `false`.
    */
   allowed?: boolean;
   /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
@@ -147,9 +160,10 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core stored a newer copy that changes a chain, the network, the TLD
-   * or the generation. It runs that copy from its next
-   * start, so build the runtime again to follow it.
+   * The core stored a newer copy that changes a chain, the network or the
+   * generation. It runs that copy from its next start, so build the runtime
+   * again to follow it. A copy that changes a field the bundled descriptor
+   * pins, such as the TLD, never sets it: the core refuses that copy.
    */
   restartRequired: boolean;
   /** The last finished fetch. Not set before the first one. */

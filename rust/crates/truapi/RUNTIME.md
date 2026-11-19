@@ -219,10 +219,33 @@ the request.
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
-without a People chain.
+without a People chain, and one that names another TLD than the bundled copy:
+accounts derive under the TLD, so only a new build changes it. A stored
+descriptor the core refuses is ignored: the core starts from the bundled copy,
+and the next descriptor it takes replaces the stored one, whatever its
+`sequence`. After a refused or failed fetch `last_refresh` says so even when
+the core could not write its record. That record holds the descriptor the core
+already holds, which may be one whose earlier store failed, and never the one
+just refused.
 
-A newer descriptor that changes a genesis hash, the network, the TLD or the
-`generation` applies from the next start. Once the core has stored it,
+On a stack whose build allows it reserved values the core pins more of the
+bundled copy: the set of chain roles and each role's genesis hash, `assets`,
+`contracts`, `dotns`, `coinage`, and the `sha256` of the relay's `lightSpec`,
+which carries the relay's sync checkpoint. A descriptor that changes one is
+refused the same way. A fresher relay checkpoint, and a fork made again from a
+later block, change the relay's `lightSpec` and so need a new build.
+
+The pins fix what the descriptor names for those fields, so a stolen
+descriptor key cannot name other chains, assets or contracts for such a stack.
+They do not cover what a host reads from the chains. The descriptor's
+endpoints are not pinned and the core does not check genesis hashes against
+the live chains, so those reads are protected only by a light client that
+starts from the pinned relay light spec, and that protects the relay alone: a
+parachain's `paraId` and `lightSpec` are not pinned. A host that reads over RPC
+has no such protection.
+
+A newer descriptor the core takes that changes a genesis hash, the network or
+the `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
 again. Any other change applies at once. `StackStatus` documents the rest,
 including the `generation` a host keys cached chain data by.

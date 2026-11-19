@@ -5,9 +5,14 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy. The [`Stack`] it resolves holds the network, the dotNS TLD
-//! and each chain's genesis hash, and answers `get_chain_info`.
+//! the same policy, and a stored or fetched copy that changes a field the
+//! bundled one pins is refused: the TLD on every stack, and more on a stack
+//! the policy allows reserved values. The [`Stack`] it resolves holds the
+//! network, the dotNS TLD and each chain's genesis hash, and answers
+//! `get_chain_info`.
 
+mod held;
+mod pinned;
 mod records;
 mod refresh;
 mod source;
@@ -69,11 +74,24 @@ const RESERVED_TLD: &str = "dot";
 /// an extra TLD that no stack can have, one outside
 /// [`DOTNS_TLDS`](crate::platform::DOTNS_TLDS). It refuses the policy before
 /// it reads the stack.
+///
+/// A stack that is allowed reserved values is pinned to its bundled copy. A
+/// copy the core stored or fetched is refused when it gives a chain role
+/// another genesis hash, adds or drops a chain role, or changes `assets`,
+/// `contracts`, `dotns`, `coinage` or the `sha256` of the relay's
+/// `lightSpec`, the file that carries the relay's sync checkpoint. Only a new
+/// build changes what the descriptor names for those.
+///
+/// The pins cover the descriptor, not the chains. The core does not check a
+/// genesis hash against the chain a host reads, so what a host reads over
+/// the descriptor's endpoints is protected only by a light client that
+/// starts from the pinned relay light spec, and that protects the relay
+/// alone: a parachain's `paraId` and `lightSpec` are not pinned.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
-	/// Whether the stack may name reserved values. Only a Polkadot or
-	/// Polkadot-fork build sets it, and then reserves no extra values.
+	/// Whether the stack may name reserved values. A build that sets it
+	/// reserves no extra values, and its stack is pinned to its bundled copy.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
@@ -215,6 +233,14 @@ pub enum StackError {
 	ReservedGenesis {
 		/// The reserved genesis hash.
 		genesis_hash: [u8; 32],
+	},
+	/// A copy the core stored or fetched changes a field the bundled copy
+	/// pins.
+	#[display("stack descriptor changes {field}, which the bundled copy pins")]
+	PinnedFieldChanged {
+		/// What differs: a top-level field by the name the descriptor gives
+		/// it, or a few words for a part of its `chains`.
+		field: &'static str,
 	},
 }
 
