@@ -2231,3 +2231,52 @@ fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
          Bulletin ([0xbb; 32])"
 	);
 }
+
+/// Write a value for each of two products, so a clear can show it removed
+/// only the cleared product's. The kept id starts with the cleared one, so
+/// matching on the bare id would remove both.
+fn seed_two_products(platform: &StubPlatform) -> (String, String) {
+	use crate::platform::{ProductStorage, ProductStorageKey};
+
+	let cleared = ProductStorageKey::new(ProductId::for_test("myapp.dot"), "theme").encode();
+	let kept = ProductStorageKey::new(ProductId::for_test("myapp.dotapp.dot"), "theme").encode();
+	futures::executor::block_on(async {
+		platform.write(cleared.clone(), vec![1]).await.expect("seed write");
+		platform.write(kept.clone(), vec![2]).await.expect("seed write");
+	});
+	(cleared, kept)
+}
+
+fn stored_values(platform: &StubPlatform, keys: [&str; 2]) -> [Option<Vec<u8>>; 2] {
+	let storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+	keys.map(|key| storage.get(key).cloned())
+}
+
+/// Forgetting a product on a pairing host takes the values it wrote with
+/// its grants, so the product opened again starts from nothing.
+#[test]
+fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
+	let platform = Arc::new(StubPlatform::default());
+	let (host_config, _) = runtime_config("myapp.dot");
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
+	let (cleared, kept) = seed_two_products(&platform);
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+		.expect("clear product state");
+
+	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
+}
+
+/// The same on a signing host, whose grants live in its local activation.
+#[test]
+fn forgetting_a_product_on_a_signing_host_clears_its_storage() {
+	let platform = Arc::new(StubPlatform::default());
+	let runtime = activated_signing_runtime(platform.clone());
+	let (cleared, kept) = seed_two_products(&platform);
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+		.expect("clear product state");
+
+	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
+}

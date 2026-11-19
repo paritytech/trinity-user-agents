@@ -1,16 +1,16 @@
 package io.paritytech.polkadotapp.app.logging
 
 import android.util.Log
-import io.sentry.Sentry
 import io.sentry.SentryAttribute
 import io.sentry.SentryAttributes
 import io.sentry.SentryLogLevel
 import io.sentry.logger.ILoggerApi
 import io.sentry.logger.SentryLogParameters
 import timber.log.Timber
+import javax.inject.Inject
 
-class SentryLogTree(
-    private val logger: ILoggerApi = Sentry.logger(),
+class SentryLogTree @Inject constructor(
+    private val logger: ILoggerApi,
 ) : Timber.Tree() {
     override fun isLoggable(tag: String?, priority: Int): Boolean =
         priority >= Log.INFO && tag?.startsWith(TAG_PREFIX) == true
@@ -20,15 +20,15 @@ class SentryLogTree(
         logger.log(priority.toSentryLogLevel(), SentryLogParameters.create(attributes), message)
     }
 
-    private fun Int.toSentryLogLevel(): SentryLogLevel = when (this) {
-        Log.ASSERT -> SentryLogLevel.FATAL
-        Log.ERROR -> SentryLogLevel.ERROR
-        Log.WARN -> SentryLogLevel.WARN
-        else -> SentryLogLevel.INFO
-    }
-
     private companion object {
         const val TAG_PREFIX = "truapi."
         const val TAG_ATTRIBUTE = "tag"
     }
+}
+
+// The iOS host has no fatal level, so an assert lands at error on both hosts.
+internal fun Int.toSentryLogLevel(): SentryLogLevel = when (this) {
+    Log.ERROR, Log.ASSERT -> SentryLogLevel.ERROR
+    Log.WARN -> SentryLogLevel.WARN
+    else -> SentryLogLevel.INFO
 }
