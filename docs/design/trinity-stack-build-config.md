@@ -115,6 +115,9 @@ descriptor can never be written over `stack.build.json`.
 If the descriptor cannot be downloaded, is not signed, is signed with a different key, has expired or breaks the policy,
 the command fails and so does the build.
 
+The step has to run on every build. Xcode and Gradle both skip a step whose inputs have not changed, and here that would
+put an old descriptor into the app.
+
 The command also looks for a `<name>.json` next to the config and treats it as the previous copy. The new descriptor is
 refused if its `sequence` is lower or its TLD is different. Nothing is written next to the config, so building does not
 change the source tree. The copies in `stacks/` are still updated by `scripts/update-stacks.sh`.
@@ -127,7 +130,8 @@ build never falls back.
 
 The version of `truapi-host` is pinned in this repository, so a new CLI release cannot change a build on its own. CI
 installs that version with `.github/actions/install-truapi-host`, and developers with
-`scripts/truapi-host-installer.sh`. Both already take a version.
+`scripts/truapi-host-installer.sh`. Both already take a version. The iOS and Android app workflows do not install the
+CLI yet, so each of them needs that step.
 
 ## Selecting a config
 
@@ -240,18 +244,3 @@ For the dotli owners:
 For whoever runs the stacks:
 
 5. Who will publish polkadot-test, and under which key and URL? We cannot write the mainnet-fork config until we know.
-
-## What we checked about running the build step
-
-The build step is the first thing in these builds that runs an outside program and uses the network, so we looked at
-what could get in its way:
-
-- Xcode's script sandbox is not a problem. The "Bundle Trinity stacks" phase belongs to the `polkadot-app` target, and
-  that target turns `ENABLE_USER_SCRIPT_SANDBOXING` off in all five configurations.
-- Both build systems skip a step when its inputs have not changed. Xcode decides from the phase's declared inputs and
-  outputs, and the Android build has Gradle's build cache and configuration cache turned on. The build step has to be
-  marked to run on every build, otherwise a build would reuse an old descriptor.
-- None of the iOS or Android app workflows installs `truapi-host` today, so each of them needs the install step.
-
-One thing is still untried: giving each build type its own assets in the Android bindings module. Today one `syncStacks`
-task writes one directory that every build type uses.
