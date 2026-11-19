@@ -44,7 +44,7 @@ impl InFlightProductSubtree {
 	pub fn join(self: &Arc<Self>) -> Option<ProductSubtreeCaller> {
 		let request = self.request.upgrade().filter(|request| request.peek().is_none())?;
 		self.callers
-			.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+			.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
 				(count > 0).then_some(count + 1)
 			})
 			.ok()?;
