@@ -202,8 +202,11 @@ as well. `scripts/write-refresh-changeset.sh` treats every `stacks/*.json` as a 
 
 - **Several stacks in one config.** RFC 2 has one stack per build. The only hosts that offer more are one development
   deployment of dotli and its Docker image.
-- **Keeping the link in a separate `.link` file.** Then the file that sets `allowed: true` would not show which key gets
-  that permission.
+- **Keeping the link in a separate `.link` file, so that the config only has the stack's name.** The link carries the
+  publisher's key. If it lived in another file, a config that says `allowed: true` would not show who gets that
+  permission, and someone could swap the key in the `.link` file without touching the config. With the link in the
+  config, the permission and the key it applies to are reviewed together. The cost is that the paseo-next-v2 and
+  previewnet links are written in two files, which is why the test above compares them.
 - **Extending `.trinity/stacks.json`.** That file is part of the published `@parity/trinity-stack` package. Its values
   are plain link strings, and projects that are not hosts read it too.
 
