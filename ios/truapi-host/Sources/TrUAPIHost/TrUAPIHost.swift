@@ -250,10 +250,11 @@ public protocol HostBridge: AnyObject, Sendable {
 /// because a value's stored properties would otherwise cross to it.
 public protocol ChatHostBridge: AnyObject, Sendable {
     /// Create or resolve a native product Chat room. `roomId` is the id that
-    /// the core derived for the room, and every later call names the room with
-    /// it. The core has bounded and normalized these arguments and screened the
-    /// icon scheme; escaping them for the surface that renders them is still the
-    /// host's job.
+    /// the core resolved for the room, and every later call names the room with
+    /// it: the id that the core derived, or, for a product built against the
+    /// earlier client, the id that the product gave. The core has bounded and
+    /// normalized these arguments and screened the icon scheme; escaping them
+    /// for the surface that renders them is still the host's job.
     func createRoom(roomId: String, name: String, icon: String) async throws
         -> ChatRoomRegistrationStatus
 

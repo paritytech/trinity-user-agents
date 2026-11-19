@@ -22,5 +22,8 @@ the parts of the room the product serves (its messages, who reacted and the repo
 product that names a room with its own string must keep the id that `createRoom` returns. A host's `createChatRoom`
 callback receives the derived `roomId` and answers only the registration status. Each `createRoom` replaces the
 configuration of the room, also for a room that exists, so a product declares its rooms again each time it starts.
+A room that `createRoom` version 1 creates keeps the `roomId` that the product gives, because a version 1 answer
+carries no id and the product names the room with that id in its later calls. A host's `createChatRoom` callback
+then receives that id.
 `postMessage` and `setRoomFooter` keep their shapes and versions, so a product built against the earlier client calls
 them the same way through the client a host injects.
