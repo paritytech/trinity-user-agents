@@ -32,6 +32,11 @@ EXEMPT = {
     "docs/rfcs/**",    # inside /docs/, owned by the entry for it
 }
 
+# CODEOWNERS roots that have no area on purpose.
+OWNED_WITHOUT_AREA = {
+    "/.changeset/",    # the bundled refresh's changeset; changesets ride along with every area
+}
+
 
 def root_of(glob: str) -> str:
     """The leading directory a glob constrains, as CODEOWNERS would spell it."""
@@ -62,6 +67,9 @@ def codeowner_roots() -> set[str]:
         pattern = re.split(r"\s+", line)[0]
         if pattern == "*":
             continue
+        # A file glob such as `/stacks/*.json` belongs to the directory it sits in.
+        if "*" in pattern:
+            pattern = pattern.split("*", 1)[0].rsplit("/", 1)[0] + "/"
         roots.add(pattern if pattern.endswith("/") else pattern + "/")
     return roots
 
@@ -80,7 +88,12 @@ def main() -> int:
     owned = codeowner_roots()
 
     unowned = sorted(labelled - owned)
-    unlabelled = sorted(owned - labelled)
+    # An owner entry inside a labelled root narrows that root, as later
+    # CODEOWNERS entries do, so it needs no area of its own.
+    unlabelled = sorted(
+        path for path in owned - OWNED_WITHOUT_AREA
+        if not any(path.startswith(root) for root in labelled)
+    )
 
     for path in unowned:
         print(f"::error::{path} has an area but names no owner in CODEOWNERS")
