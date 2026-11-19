@@ -14,6 +14,7 @@ public final class CoinStateSyncService: BaseSyncService {
     private let databaseFactory: any DatabaseDependencyFactoring
     private let connection: JSONRPCEngine
     private let runtimeService: RuntimeCodingServiceProtocol
+    private let instanceId: CoinageInstanceId
 
     private var localCoinsMonitoringTask: Task<Void, Error>?
     private var syncTask: Task<Void, Error>?
@@ -23,12 +24,14 @@ public final class CoinStateSyncService: BaseSyncService {
         databaseFactory: any DatabaseDependencyFactoring,
         connection: JSONRPCEngine,
         runtimeService: RuntimeCodingServiceProtocol,
+        instanceId: CoinageInstanceId,
         logger: any SDKLoggerProtocol
     ) {
         self.coinService = coinService
         self.databaseFactory = databaseFactory
         self.connection = connection
         self.runtimeService = runtimeService
+        self.instanceId = instanceId
         super.init(logger: logger)
     }
 
@@ -122,33 +125,12 @@ extension CoinStateSyncService {
 
         var updates: [CoinPresenceUpdate] = []
 
-        for (mappingKey, onChainCoin) in result.updates {
-            guard let coin = coinMap[mappingKey] else { continue }
+        for (mappingKey, read) in result.reads(in: instanceId) {
+            guard let coin = coinMap[mappingKey],
+                  let update = presenceUpdate(for: coin, read: read, mappingKey: mappingKey)
+            else { continue }
 
-            if let onChainCoin {
-                // Present on chain -> record presence and sync age.
-                if Int16(onChainCoin.value) != coin.exponent {
-                    logger.error(
-                        "TrackingCoin: \(mappingKey) exponent \(coin.exponent) " +
-                            "doesn't match on chain exponent \(onChainCoin.value)"
-                    )
-                }
-                let onChainAge = onChainCoin.age
-                guard coin.age != onChainAge || !coin.isOnchain else { continue }
-                updates.append(CoinPresenceUpdate(
-                    derivationIndex: coin.derivationIndex,
-                    age: onChainAge,
-                    isOnchain: true
-                ))
-            } else {
-                // Seen before and now absent -> a peer claimed it; derived as spent. Age is kept.
-                guard coin.age != nil, coin.isOnchain else { continue }
-                updates.append(CoinPresenceUpdate(
-                    derivationIndex: coin.derivationIndex,
-                    age: coin.age,
-                    isOnchain: false
-                ))
-            }
+            updates.append(update)
         }
 
         guard !updates.isEmpty else { return }
@@ -158,5 +140,29 @@ extension CoinStateSyncService {
             .saveOperation({ updates }, { [] })
             .asyncExecute()
         logger.debug("Updated \(updates.count) coins via sync subscription")
+    }
+
+    /// What sync records for a tracked coin from the chain's read of its key, or `nil` when nothing changed.
+    private func presenceUpdate(for coin: Coin, read: OnChainCoinRead, mappingKey: String) -> CoinPresenceUpdate? {
+        if case let .foreign(foreignInstanceId) = read {
+            logger.warning("TrackingCoin: \(mappingKey) holds a foreign coin of instance \(foreignInstanceId)")
+        }
+
+        guard let onChainCoin = read.coin else {
+            // Seen before and now absent -> a peer claimed it; derived as spent. Age is kept.
+            guard coin.age != nil, coin.isOnchain else { return nil }
+            return CoinPresenceUpdate(derivationIndex: coin.derivationIndex, age: coin.age, isOnchain: false)
+        }
+
+        // Present on chain -> record presence and sync age.
+        if Int16(onChainCoin.value) != coin.exponent {
+            logger.error(
+                "TrackingCoin: \(mappingKey) exponent \(coin.exponent) " +
+                    "doesn't match on chain exponent \(onChainCoin.value)"
+            )
+        }
+        let onChainAge = onChainCoin.age
+        guard coin.age != onChainAge || !coin.isOnchain else { return nil }
+        return CoinPresenceUpdate(derivationIndex: coin.derivationIndex, age: onChainAge, isOnchain: true)
     }
 }
