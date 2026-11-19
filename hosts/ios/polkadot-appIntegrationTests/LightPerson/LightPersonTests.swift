@@ -50,11 +50,13 @@ final class LightPersonTests: XCTestCase {
                 )
             )
 
-            let params = try factory.deriveLitePersonParams(
+            let params = try factory.deriveRegistrationParams(
                 for: username,
-                verifier: verifierAddress,
-                reservedUsername: nil
-            )
+                attester: verifierAddress,
+                signedAt: 0,
+                reservedUsername: nil,
+                signingContexts: AccountSigningContexts(peopleLite: nil, dotnsGateway: nil)
+            ).litePerson
 
             let mainAddress = try params.accountId.toAddress(using: .substrate(42))
             logger.info("main: \(mainAddress)")
