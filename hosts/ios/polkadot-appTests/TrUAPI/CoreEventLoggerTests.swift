@@ -3,7 +3,7 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-struct CoreEventTests {
+struct CoreEventLoggerTests {
     private let attributes = [
         CoreAttribute(key: "outcome", value: .text(value: "sent")),
         CoreAttribute(key: "age_ms", value: .count(value: 1_200)),
@@ -13,8 +13,9 @@ struct CoreEventTests {
     @Test func anExportedMarkerReachesTheSinkWithItsAttributes() {
         let logger = RecordingLogger()
         let sink = RecordingHostLogSink()
+        let coreEventLogger = CoreEventLogger(logger: logger, sink: sink)
 
-        logger.logCoreEvent(marker: "truapi.chain.follow_budget_reached", attributes: attributes, sink: sink)
+        coreEventLogger.log(marker: "truapi.chain.follow_budget_reached", attributes: attributes)
 
         #expect(sink.lines == [
             RecordingHostLogSink.Line(
@@ -32,8 +33,9 @@ struct CoreEventTests {
     @Test func aLocalMarkerStaysOnTheDevice() {
         let logger = RecordingLogger()
         let sink = RecordingHostLogSink()
+        let coreEventLogger = CoreEventLogger(logger: logger, sink: sink)
 
-        logger.logCoreEvent(marker: "truapi.native.callback.push_notification", attributes: attributes, sink: sink)
+        coreEventLogger.log(marker: "truapi.native.callback.push_notification", attributes: attributes)
 
         #expect(sink.lines.isEmpty)
         #expect(logger.lines.count == 1)
@@ -42,8 +44,9 @@ struct CoreEventTests {
     @Test func aMarkerTheTableDoesNotListStaysOnTheDevice() {
         let logger = RecordingLogger()
         let sink = RecordingHostLogSink()
+        let coreEventLogger = CoreEventLogger(logger: logger, sink: sink)
 
-        logger.logCoreEvent(marker: "truapi.chain.not_registered", attributes: attributes, sink: sink)
+        coreEventLogger.log(marker: "truapi.chain.not_registered", attributes: attributes)
 
         #expect(sink.lines.isEmpty)
         #expect(logger.lines.count == 1)

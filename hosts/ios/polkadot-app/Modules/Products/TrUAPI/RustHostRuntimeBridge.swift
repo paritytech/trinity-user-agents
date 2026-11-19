@@ -2,7 +2,6 @@ import Foundation
 import TrUAPIHost
 import ChainRegistry
 import SubstrateSdk
-import IssueMonitoring
 
 /// `HostBridge` for the process-wide ``TrUAPIHostRuntime``. It has no product
 /// identity: it owns the host-global core storage, host-level chain access, and
@@ -24,7 +23,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
-    private let coreEventSink: HostLogSink?
+    private let coreEventLogger: CoreEventLogger
     private weak var runtime: TrUAPIHostRuntime?
 
     init(
@@ -36,7 +35,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         backedUpInstallation: TrUAPIBackedUpInstallation,
         encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol,
-        coreEventSink: HostLogSink?
+        coreEventLogger: CoreEventLogger
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
@@ -45,7 +44,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.backedUpInstallation = backedUpInstallation
         self.encryptedStorage = encryptedStorage
         self.logger = logger
-        self.coreEventSink = coreEventSink
+        self.coreEventLogger = coreEventLogger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
         chainConnections.eventHandler = self
@@ -62,7 +61,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
-        logger.logCoreEvent(marker: marker, attributes: attributes, sink: coreEventSink)
+        coreEventLogger.log(marker: marker, attributes: attributes)
     }
 
     /// Demand is runtime-wide, so it arrives here rather than on a product's

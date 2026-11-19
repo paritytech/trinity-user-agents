@@ -1,5 +1,4 @@
 import Foundation
-import IssueMonitoring
 import Keystore_iOS
 import Operation_iOS
 import Products
@@ -249,7 +248,10 @@ extension SPAViewFactory {
             hostProvider: hostProvider,
             themeManager: ThemeManager.shared,
             logger: Logger.shared,
-            coreEventSink: IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN)
+            coreEventLogger: CoreEventLogger(
+                logger: Logger.shared,
+                sink: Logger.shared.hostLogSink
+            )
         )
     }
 }
