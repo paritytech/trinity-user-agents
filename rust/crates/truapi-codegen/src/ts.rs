@@ -78,7 +78,7 @@ struct PublicService<'a> {
 }
 
 /// A versioned enum wrapper like `enum HostSignPayloadRequest { V2(Inner) }`,
-/// `enum HostCreateTransactionRequest { V2(CreateTransactionRequest) }`,
+/// `enum HostCreateTransactionWithLegacyAccountError { V1(HostCreateTransactionError) }`,
 /// or a multi-version enum `enum HostDevicePermissionRequest { V1(_), V2(_) }`.
 ///
 /// The client generator selects the latest wrapper variant up to its target

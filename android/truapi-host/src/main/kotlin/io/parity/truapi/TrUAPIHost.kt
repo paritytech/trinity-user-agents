@@ -114,6 +114,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.HostContactUsernames
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
@@ -485,6 +486,20 @@ interface HostBridge {
     suspend fun encryptedStorageDelete(key: ByteArray): Unit =
         throw HostRejection.Rejected("this host keeps no encrypted storage")
 
+    /**
+     * Remove every value [productId] keeps in product storage. Idempotent.
+     * Runtime-wide, like [durableWorkChanged]: the core calls it from
+     * [TrUAPIHostRuntime.clearProductState], when the product may have no
+     * execution and so no bridge of its own. Every key the product owns starts
+     * with `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`,
+     * so a shared store removes keys with that prefix and a store kept per
+     * product drops that product's store. Defaults to a rejection, so clearing
+     * the product's state fails on a host that has not implemented it.
+     */
+    @Throws(HostLocalStorageReadException::class)
+    suspend fun clearProductStorage(productId: ProductId): Unit =
+        throw HostLocalStorageReadException.Unknown("this host does not clear product storage")
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -721,6 +736,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
 
+    override suspend fun clearProductStorage(productId: ProductId) =
+        withStorageException { bridge.clearProductStorage(productId) }
+
     override suspend fun beginOperation(productId: ProductId, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
 
@@ -807,9 +825,11 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
  * belongs to the host and not to any one product. A runtime without one
  * answers `contacts.pick` with `Unsupported`.
  *
- * Nothing here reaches a product, and the list never reaches the core: it
- * asks only about the handles a transaction names, and the picker returns the
- * one person the user chose. Omit the contacts the user has blocked, from both.
+ * No account reaches a product, and the accounts on the list never reach the
+ * core: it asks only about the handles a transaction names, and the picker
+ * returns the one person the user chose. Usernames reach the core only through
+ * [contactUsernames], for the game product. Omit the contacts the
+ * user has blocked, from all three.
  */
 interface ContactsHostBridge {
     /**
@@ -828,6 +848,16 @@ interface ContactsHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun pickContact(productId: ProductId): HostContactPick
+
+    /**
+     * List the dotNS usernames of the unblocked contacts the picker would
+     * offer, each the bare label with no top-level domain. The core asks only
+     * for the game product, so [productId] is not a filter. Runs inline, so
+     * answer from what is already in hand. Defaults to
+     * [HostContactUsernames.Unsupported].
+     */
+    @Throws(HostRejection::class)
+    fun contactUsernames(productId: ProductId): HostContactUsernames = HostContactUsernames.Unsupported
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
@@ -836,6 +866,9 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 
     override suspend fun pickContact(productId: ProductId): HostContactPick =
         withHostRejection { bridge.pickContact(productId) }
+
+    override fun contactUsernames(productId: ProductId): HostContactUsernames =
+        withHostRejection { bridge.contactUsernames(productId) }
 }
 
 /**
@@ -1408,6 +1441,18 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun workerExited(productId: ProductId) {
         inner.workerExited(productId)
+    }
+
+    /**
+     * Forget one product: revoke its grants and Allow once answers, then
+     * remove its values from product storage through
+     * [HostBridge.clearProductStorage] on the bridge this runtime was built
+     * with. The wallet session and other products are kept. Stop the product's
+     * executions first: a value a running execution writes after the clear is
+     * kept.
+     */
+    suspend fun clearProductState(productId: ProductId) {
+        inner.clearProductState(productId)
     }
 
     /**
