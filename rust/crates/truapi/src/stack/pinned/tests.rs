@@ -36,7 +36,7 @@ struct PinnedChange {
 }
 
 /// One change or more to each field a stack allowed reserved values pins.
-const PINNED_FIELD_CHANGES: [PinnedChange; 19] = [
+const PINNED_FIELD_CHANGES: [PinnedChange; 20] = [
 	PinnedChange { make: |copy| copy["tld"] = "paseo".into(), field: "tld" },
 	PinnedChange {
 		make: |copy| chains(copy).push(test_descriptor_chain("Coretime", [0xa9; 32], Some(1005))),
@@ -56,6 +56,15 @@ const PINNED_FIELD_CHANGES: [PinnedChange; 19] = [
 	},
 	PinnedChange {
 		make: |copy| test_chain(copy, "Collectives")["genesisHash"] = hex_of(0xa9, 32),
+		field: "a chain's genesisHash",
+	},
+	PinnedChange {
+		make: |copy| {
+			let people = test_chain(copy, "People")["genesisHash"].take();
+			let bulletin = test_chain(copy, "Bulletin")["genesisHash"].take();
+			test_chain(copy, "People")["genesisHash"] = bulletin;
+			test_chain(copy, "Bulletin")["genesisHash"] = people;
+		},
 		field: "a chain's genesisHash",
 	},
 	PinnedChange { make: |copy| copy["assets"][0]["id"] = 1.into(), field: "assets" },
@@ -172,8 +181,9 @@ fn a_stack_without_reserved_values_pins_only_its_tld() {
 fn a_stack_allowed_reserved_values_follows_every_other_change() {
 	let pinned = Pinned::new(descriptor(&reserved_test_descriptor(1)));
 	let allowed = ReservedValuesPolicy::ALLOWED;
-	let unpinned_changes: [fn(&mut serde_json::Value); 8] = [
+	let unpinned_changes: [fn(&mut serde_json::Value); 9] = [
 		|_unchanged| {},
+		|copy| chains(copy).reverse(),
 		|copy| copy["generation"] = "second".into(),
 		|copy| copy["network"] = "polkadot-test".into(),
 		|copy| copy["validUntil"] = 1_900_000_000.into(),

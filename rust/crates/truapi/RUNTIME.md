@@ -238,8 +238,9 @@ descriptor key cannot name other chains, assets or contracts for such a stack.
 They do not cover what a host reads from the chains. The descriptor's
 endpoints are not pinned and the core does not check genesis hashes against
 the live chains, so those reads are protected only by a light client that
-starts from the pinned relay light spec. A host that reads over RPC has no
-such protection.
+starts from the pinned relay light spec, and that protects the relay alone: a
+parachain's `paraId` and `lightSpec` are not pinned. A host that reads over RPC
+has no such protection.
 
 A newer descriptor the core takes that changes a genesis hash, the network or
 the `generation` applies from the next start. Once the core has stored it,

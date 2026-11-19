@@ -221,9 +221,12 @@ fn a_stored_copy_that_names_an_extra_reserved_value_is_ignored() {
 	let record =
 		stored_test_record(&published_test_descriptor(2, "first", EXTRA_RESERVED_GENESIS), START);
 
-	let source = load_reserving(&bundled, Some(&record), reserving_extras());
+	let mut source = load_reserving(&bundled, Some(&record), reserving_extras());
 
-	assert_eq!(source.status(), stack_status(&bundled, None));
+	assert_eq!(
+		(source.status(), source.due_fetch(START)),
+		(stack_status(&bundled, None), bundled_copys_fetch())
+	);
 }
 
 /// The reader judges every fetch against the copy it holds. A copy the core

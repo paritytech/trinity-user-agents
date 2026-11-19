@@ -85,7 +85,8 @@ const RESERVED_TLD: &str = "dot";
 /// The pins cover the descriptor, not the chains. The core does not check a
 /// genesis hash against the chain a host reads, so what a host reads over
 /// the descriptor's endpoints is protected only by a light client that
-/// starts from the pinned relay light spec.
+/// starts from the pinned relay light spec, and that protects the relay
+/// alone: a parachain's `paraId` and `lightSpec` are not pinned.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {

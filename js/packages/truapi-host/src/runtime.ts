@@ -77,7 +77,8 @@ export type LogLevel = string;
  * The pins cover the descriptor, not the chains. The core does not check a
  * genesis hash against the chain a host reads, so what a host reads over the
  * descriptor's endpoints is protected only by a light client that starts from
- * the pinned relay light spec.
+ * the pinned relay light spec, and that protects the relay alone: a parachain's
+ * `paraId` and `lightSpec` are not pinned.
  */
 export interface ReservedValuesPolicy {
   /**
