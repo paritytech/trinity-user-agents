@@ -4,12 +4,11 @@
 //! module, so the names a guest imports and the names a host links cannot
 //! drift apart.
 
-use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
 	Attribute, FnArg, GenericArgument, Ident, ItemTrait, PathArguments, ReturnType, TraitItem,
-	TraitItemFn, Type, parse_macro_input,
+	TraitItemFn, Type,
 };
 
 use crate::wire::WireArgs;
@@ -34,21 +33,8 @@ struct Binding<'a> {
 	error: &'a Type,
 }
 
-/// Parse the macro input and emit generated code or a compiler diagnostic.
-pub fn expand(args: TokenStream, item: TokenStream) -> TokenStream {
-	if !args.is_empty() {
-		return syn::Error::new(proc_macro2::Span::call_site(), "#[wasm_env] takes no arguments")
-			.to_compile_error()
-			.into();
-	}
-	let item_trait = parse_macro_input!(item as ItemTrait);
-	match expand_trait(&item_trait) {
-		Ok(bindings) => quote!(#item_trait #bindings).into(),
-		Err(error) => error.to_compile_error().into(),
-	}
-}
-
-fn expand_trait(item_trait: &ItemTrait) -> syn::Result<TokenStream2> {
+/// Generate the host and guest bindings for a service declared in the protocol crate.
+pub fn service(item_trait: &ItemTrait) -> syn::Result<TokenStream2> {
 	let trait_prefix = snake_case(&item_trait.ident.to_string());
 	let mut bindings = Vec::new();
 	for item in &item_trait.items {
@@ -59,7 +45,7 @@ fn expand_trait(item_trait: &ItemTrait) -> syn::Result<TokenStream2> {
 			bindings.push(binding);
 		}
 	}
-	let host = expand_host(item_trait, &trait_prefix, &bindings);
+	let host = expand_host(item_trait, &bindings);
 	let guest = expand_guest(item_trait, &bindings);
 	Ok(quote!(#host #guest))
 }
@@ -152,9 +138,14 @@ fn last_segment(ty: &Type) -> syn::Result<(&Ident, Vec<&Type>)> {
 	Ok((&segment.ident, arguments))
 }
 
-fn expand_host(item_trait: &ItemTrait, trait_prefix: &str, bindings: &[Binding]) -> TokenStream2 {
+/// Name of the method that links a single service to a worker environment.
+pub fn link_method(service: &Ident) -> Ident {
+	format_ident!("link_{}", snake_case(&service.to_string()))
+}
+
+fn expand_host(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
 	let trait_ident = &item_trait.ident;
-	let link = format_ident!("link_{trait_prefix}");
+	let link = link_method(trait_ident);
 	let doc = format!("Link the [`{trait_ident}`] methods into this environment.");
 	let registrations = bindings.iter().map(|binding| {
 		let name = &binding.import_name;
@@ -247,48 +238,4 @@ fn snake_case(ident: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	fn import_names(source: &str) -> Vec<(String, Shape)> {
-		let item_trait: ItemTrait = syn::parse_str(source).unwrap();
-		let prefix = snake_case(&item_trait.ident.to_string());
-		item_trait
-			.items
-			.iter()
-			.filter_map(|item| match item {
-				TraitItem::Fn(method) => Binding::parse(&prefix, method).unwrap(),
-				_ => None,
-			})
-			.map(|binding| (binding.import_name, binding.shape))
-			.collect()
-	}
-
-	#[test]
-	fn guests_see_public_product_initiated_methods_under_wire_table_names() {
-		let names = import_names(
-			"pub trait LocalStorage {
-                #[wire(id = 0)]
-                async fn read(&self, cx: &CallContext, request: ReadRequest)
-                    -> Result<ReadResponse, CallError<ReadError>>;
-                #[wire(id = 1)]
-                async fn subscribe(&self, cx: &CallContext, request: SubscribeRequest)
-                    -> Subscription<Item, CallError<SubscribeError>>;
-                #[wire(id = 2, internal)]
-                async fn authorize(&self, cx: &CallContext, request: AuthorizeRequest)
-                    -> Result<AuthorizeResponse, CallError<AuthorizeError>>;
-                #[wire(id = 3, host_initiated)]
-                async fn render(&self, cx: &CallContext, request: RenderRequest)
-                    -> Subscription<Node, CallError<RenderError>>;
-            }",
-		);
-
-		assert_eq!(
-			names,
-			[
-				("local_storage_read".to_string(), Shape::Request),
-				("local_storage_subscribe".to_string(), Shape::Subscription),
-			]
-		);
-	}
-}
+mod tests;

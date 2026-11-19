@@ -7,11 +7,10 @@ use crate::{
 		HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
 		HostPushNotificationResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Notification methods for locally-rendered push notifications.
-#[wasm_env]
 #[wire_trait(id = 8)]
 #[async_trait::async_trait]
 pub trait Notifications: Send + Sync {

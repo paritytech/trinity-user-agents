@@ -58,8 +58,8 @@ pub fn deliver(handle: u32, kind: EventKind, payload: Vec<u8>) {
 	}
 }
 
-fn open<Request: Versioned + Encode>(import: StartImport, request: Request::Latest) -> u32 {
-	let payload = Request::wrap_latest(request).encode();
+fn open<Request: Versioned + Encode>(import: StartImport, request: impl Into<Request>) -> u32 {
+	let payload = request.into().encode();
 	let handle = import(payload.as_ptr(), payload.len() as u32);
 	CALLS.with_borrow_mut(|calls| calls.insert(handle, Slot::default()));
 	handle
@@ -100,7 +100,7 @@ impl<Response, Error> Call<Response, Error> {
 	/// Start a request through its method's import.
 	pub fn start<Request: Versioned + Encode>(
 		import: StartImport,
-		request: Request::Latest,
+		request: impl Into<Request>,
 	) -> Self {
 		Self { handle: Some(open::<Request>(import, request)), payload: PhantomData }
 	}
@@ -149,7 +149,7 @@ impl<Item, Error> GuestSubscription<Item, Error> {
 	/// Start a subscription through its method's import.
 	pub fn start<Request: Versioned + Encode>(
 		import: StartImport,
-		request: Request::Latest,
+		request: impl Into<Request>,
 	) -> Self {
 		Self { handle: Some(open::<Request>(import, request)), payload: PhantomData }
 	}

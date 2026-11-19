@@ -22,11 +22,10 @@ use crate::{
 		RemoteChainTransactionStopError, RemoteChainTransactionStopRequest,
 		RemoteChainTransactionStopResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Chain interaction methods.
-#[wasm_env]
 #[wire_trait(id = 3)]
 #[async_trait::async_trait]
 pub trait Chain: Send + Sync {

@@ -27,7 +27,7 @@ use crate::{
 		HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
 		HostNftPurseTransferItemResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Purses of NFT items, each item held by its own host-derived key.
@@ -37,7 +37,6 @@ use crate::{
 /// that owner; draining one asks the user to confirm each call. A chain
 /// operation returns once it is registered under the product's idempotency
 /// key, and `observe_operation_status` follows it.
-#[wasm_env]
 #[wire_trait(id = 26)]
 #[async_trait::async_trait]
 pub trait NftPurse: Send + Sync {

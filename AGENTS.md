@@ -36,11 +36,11 @@ rust/crates/
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
   truapi-guest-api/      experimental: TrUAPI for a product worker compiled to wasm;
-                         bindings come from #[wasm_env] on every service trait, and the
+                         bindings come from #[wire_trait] on each service trait, and the
                          core runs such a worker in process (truapi `wasm-worker` feature)
-  truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
-                         #[sso_service] for truapi's inter-host SSO protocol;
-                         #[wasm_env] for wasm worker imports
+  truapi-macros/         #[wire_trait(id = N)] generates wire metadata and wasm worker bindings;
+                         #[wire(id = N)] marks methods, #[product_services] links the services
+                         in TrUApi, and #[sso_service] defines the inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
   truapi-provider/       network provider backends (WebSocket RPC or smoldot light-client);
                          its `platform` module holds the chain-access traits, and its

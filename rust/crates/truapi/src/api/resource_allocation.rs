@@ -6,11 +6,10 @@ use crate::{
 		HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
 		HostRequestResourceAllocationResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Resource pre-allocation (allowance management).
-#[wasm_env]
 #[wire_trait(id = 12)]
 #[async_trait::async_trait]
 pub trait ResourceAllocation: Send + Sync {

@@ -568,7 +568,7 @@ pub mod latest {
 	pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
 }
 
-pub use truapi_macros::{service, wasm_env, wire, wire_trait};
+pub use truapi_macros::{service, wire, wire_trait};
 
 /// Wire codec version this crate defines. Frames address a method with a
 /// `(trait, method)` byte pair. The handshake accepts only this version, and

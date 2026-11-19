@@ -12,7 +12,7 @@ use crate::{
 		ProductFundingQuoteResponse, ProductFundingSettleCancelError,
 		ProductFundingSettleCancelRequest, ProductFundingSettleCancelResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Serve the funding sessions the user chooses this provider for.
@@ -26,7 +26,6 @@ use crate::{
 /// settlement it never answered.
 /// The worker keeps its own state per session, such as an onramp order id, in
 /// its storage under the session's `intent`.
-#[wasm_env]
 #[wire_trait(id = 24)]
 #[crate::service(required_execution = Worker)]
 #[async_trait::async_trait]

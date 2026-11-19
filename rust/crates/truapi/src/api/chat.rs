@@ -10,11 +10,10 @@ use crate::{
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 		HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Chat room, bot, and message APIs.
-#[wasm_env]
 #[wire_trait(id = 4)]
 #[crate::service(required_execution = Worker)]
 #[async_trait::async_trait]

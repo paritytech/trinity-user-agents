@@ -6,14 +6,13 @@ use crate::{
 		HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
 		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPocketRemoveCardResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Pocket cards backed by the calling product.
 ///
 /// The host owns the collection: a product observes its own cards and may
 /// remove them, but cannot add one.
-#[wasm_env]
 #[wire_trait(id = 18)]
 #[crate::service(required_execution = Worker)]
 #[async_trait::async_trait]

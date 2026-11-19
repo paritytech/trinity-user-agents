@@ -8,12 +8,11 @@ use crate::{
 		HostRendererFailureSubscribeItem, HostRendererFailureSubscribeRequest,
 		ProductRendererRenderError, ProductRendererRenderItem, ProductRendererRenderRequest,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Product-rendered bodies, the actions triggered inside them, and the
 /// materials that fell back in them.
-#[wasm_env]
 #[wire_trait(id = 17)]
 #[crate::service(required_execution = Worker)]
 #[async_trait::async_trait]

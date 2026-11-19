@@ -89,7 +89,7 @@ macro_rules! log {
 macro_rules! export_entry {
 	($entry:path) => {
 		#[unsafe(no_mangle)]
-		pub extern "C" fn truapi_start() {
+		pub extern "C" fn _initialize() {
 			$crate::exports::start($entry());
 		}
 

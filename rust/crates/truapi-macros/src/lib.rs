@@ -4,6 +4,7 @@
 //! public proc-macro entry points to be defined at the crate root.
 
 mod guest_main;
+mod product_services;
 mod service;
 mod sso_service;
 mod versioned_type;
@@ -55,6 +56,9 @@ pub fn wire(args: TokenStream, item: TokenStream) -> TokenStream {
 /// every frame of the trait's methods carries on the wire. Expands to the
 /// original trait plus a hidden `@wire_trait_id=N` doc tag that
 /// `truapi-codegen` extracts from rustdoc JSON.
+///
+/// Inside `truapi`, this also generates a typed host linker for each service on native builds
+/// with `wasm-worker` and wrappers for its product-callable methods on wasm32 with `guest`.
 #[proc_macro_attribute]
 pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 	wire::expand_trait(args, item)
@@ -77,29 +81,13 @@ pub fn guest_main(args: TokenStream, item: TokenStream) -> TokenStream {
 	guest_main::expand(args, item)
 }
 
-/// Expose a TrUAPI service trait to wasm workers.
+/// Generate the blanket protocol implementation and the worker environment for a set of services.
 ///
-/// ```ignore
-/// #[wasm_env]
-/// #[wire_trait(id = 2)]
-/// #[async_trait::async_trait]
-/// pub trait Account: Send + Sync { ... }
-/// ```
-///
-/// Must precede `#[wire_trait]` and `#[async_trait]`, so it reads the
-/// methods as written. Every method a product may start becomes an import
-/// named `<trait>_<method>` in the `truapi` wasm module, the same name the
-/// wire table uses. From that one list the macro emits:
-///
-/// - under the `wasm-worker` feature, `WasmEnv::link_<trait>`, which links each import to a typed
-///   call on the product's trait implementation;
-/// - under the `guest` feature on wasm32, a `guest` module beside the trait with the import
-///   declarations and one typed wrapper per method.
-///
-/// Only works inside `truapi`.
+/// Apply to the product trait whose supertraits are its service traits. On native hosts with
+/// `wasm-worker`, `WasmEnv::for_product` links each service's product-callable methods.
 #[proc_macro_attribute]
-pub fn wasm_env(args: TokenStream, item: TokenStream) -> TokenStream {
-	wasm_env::expand(args, item)
+pub fn product_services(args: TokenStream, item: TokenStream) -> TokenStream {
+	product_services::expand(args, item)
 }
 
 /// Generate versioned message envelopes.
@@ -112,11 +100,10 @@ pub fn wasm_env(args: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// Each declaration becomes a SCALE enum with positional codec indices and an
-/// `impl Versioned` exposing `Latest`, `LATEST`, `version()`, and `wrap_latest()`. When the newest
-/// variant carries a payload, `From<payload>` wraps it in that variant, so callers
-/// write `latest.into()` instead of naming a version. Single-version
-/// envelopes also get trivial `IntoLatest`/`FromLatest` impls; multi-version
-/// envelopes leave those to be written by hand, since the conversion is bespoke.
+/// `impl Versioned` exposing `Latest`, `LATEST`, and `version()`. Converting
+/// the latest payload with `From` produces the newest variant, including when
+/// its payload is `()`. Single-version envelopes also implement `IntoLatest`
+/// and `FromLatest`. Multi-version envelopes provide their own conversions.
 ///
 /// The enum and every variant receive generated doc comments; a variant keeps
 /// its own doc attributes when the declaration provides them.

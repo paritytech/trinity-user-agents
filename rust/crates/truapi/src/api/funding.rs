@@ -6,7 +6,7 @@ use crate::{
 		HostFundingError, HostFundingRequest, HostFundingResponse, HostFundingStatusSubscribeError,
 		HostFundingStatusSubscribeItem, HostFundingStatusSubscribeRequest,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Move value into or out of the user's balance and watch it to completion.
@@ -14,7 +14,6 @@ use crate::{
 /// The host draws the whole flow. The core decides `Delivered` and `Released`
 /// itself, from the funds that moved, never from the host's or a provider's
 /// word.
-#[wasm_env]
 #[wire_trait(id = 22)]
 #[async_trait::async_trait]
 pub trait Funding: Send + Sync {

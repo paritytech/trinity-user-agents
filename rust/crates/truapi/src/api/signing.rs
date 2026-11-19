@@ -12,11 +12,10 @@ use crate::{
 		HostSignRawWithLegacyAccountError, HostSignRawWithLegacyAccountRequest,
 		HostSignRawWithLegacyAccountResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Signing operations.
-#[wasm_env]
 #[wire_trait(id = 13)]
 #[async_trait::async_trait]
 pub trait Signing: Send + Sync {

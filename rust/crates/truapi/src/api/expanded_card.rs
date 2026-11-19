@@ -7,13 +7,12 @@ use crate::{
 		HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
 		HostExpandedCardSetFaceShownRequest, HostExpandedCardSetFaceShownResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// The card a Widget is shown under.
 ///
 /// Only a Widget execution may call it.
-#[wasm_env]
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
 #[async_trait::async_trait]

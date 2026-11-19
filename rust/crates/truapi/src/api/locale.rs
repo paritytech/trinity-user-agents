@@ -5,11 +5,10 @@ use crate::{
 	versioned::locale::{
 		HostLocaleSubscribeError, HostLocaleSubscribeItem, HostLocaleSubscribeRequest,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Host locale subscription.
-#[wasm_env]
 #[wire_trait(id = 16)]
 #[async_trait::async_trait]
 pub trait Locale: Send + Sync {

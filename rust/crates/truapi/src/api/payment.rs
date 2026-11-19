@@ -10,11 +10,10 @@ use crate::{
 		HostPaymentTopUpResponse, HostPaymentTopUpStatusSubscribeError,
 		HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeRequest,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Payment request and balance/status subscription methods.
-#[wasm_env]
 #[wire_trait(id = 9)]
 #[async_trait::async_trait]
 pub trait Payment: Send + Sync {

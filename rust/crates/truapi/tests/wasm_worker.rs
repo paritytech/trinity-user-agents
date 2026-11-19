@@ -112,6 +112,17 @@ fn env(host: impl Into<Arc<TestHost>>) -> WasmEnv<TestHost> {
 }
 
 #[test]
+fn a_compiled_worker_exports_the_reactor_initializer() {
+	let module = wasmi::Module::new(&wasmi::Engine::default(), &guest("hello")).unwrap();
+	let export = module.get_export("_initialize");
+
+	assert_eq!(
+		export.as_ref().and_then(wasmi::ExternType::func),
+		Some(&wasmi::FuncType::new([], []))
+	);
+}
+
+#[test]
 fn a_worker_reaches_its_product_through_typed_calls() {
 	let worker = WasmWorker::new(env(TestHost::default()), &guest("hello")).unwrap();
 

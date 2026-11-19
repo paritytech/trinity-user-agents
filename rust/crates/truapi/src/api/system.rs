@@ -9,12 +9,11 @@ use crate::{
 		HostInfoRequest, HostInfoResponse, HostNavigateToError, HostNavigateToRequest,
 		HostNavigateToResponse,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// General-purpose TrUAPI methods for handshake, feature detection,
 /// navigation, and runtime information.
-#[wasm_env]
 #[wire_trait(id = 1)]
 #[async_trait::async_trait]
 pub trait System: Send + Sync {

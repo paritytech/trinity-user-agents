@@ -155,9 +155,9 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 		Literal::u8_unsuffixed(u8::try_from(variants.len()).expect("variant count fits in u8"));
 	let newest = variants.last().expect("checked non-empty");
 	let newest_ident = &newest.ident;
-	let (latest_ty, wrap_param, wrap_body) = match &newest.ty {
-		Some(ty) => (quote! { #ty }, quote! { latest }, quote! { Self::from(latest) }),
-		None => (quote! { () }, quote! { _latest }, quote! { Self::#newest_ident }),
+	let (latest_ty, from_param, from_body) = match &newest.ty {
+		Some(ty) => (quote! { #ty }, quote! { latest }, quote! { Self::#newest_ident(latest) }),
+		None => (quote! { () }, quote! { () }, quote! { Self::#newest_ident }),
 	};
 
 	let mut tokens = quote! {
@@ -176,36 +176,20 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 					#(#version_arms),*
 				}
 			}
-			fn wrap_latest(#wrap_param: Self::Latest) -> Self {
-				#wrap_body
+		}
+
+		impl From<#latest_ty> for #name {
+			fn from(#from_param: #latest_ty) -> Self {
+				#from_body
 			}
 		}
 	};
 
-	if let Some(ty) = &newest.ty {
-		let vident = &newest.ident;
-		tokens.extend(quote! {
-			impl From<#ty> for #name {
-				fn from(latest: #ty) -> Self {
-					Self::#vident(latest)
-				}
-			}
-		});
-	}
-
 	if let [only] = &variants[..] {
 		let vident = &only.ident;
-		let (into_body, from_param, from_body) = match &only.ty {
-			Some(_) => (
-				quote! { match self { Self::#vident(inner) => inner } },
-				quote! { latest },
-				quote! { Self::#vident(latest) },
-			),
-			None => (
-				quote! { match self { Self::#vident => () } },
-				quote! { _latest },
-				quote! { Self::#vident },
-			),
+		let into_body = match &only.ty {
+			Some(_) => quote! { match self { Self::#vident(inner) => inner } },
+			None => quote! { match self { Self::#vident => () } },
 		};
 		tokens.extend(quote! {
 			impl crate::versioned::IntoLatest for #name {
@@ -215,8 +199,8 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 			}
 
 			impl crate::versioned::FromLatest for #name {
-				fn from_latest(#from_param: Self::Latest, _target: u8) -> Self {
-					#from_body
+				fn from_latest(latest: Self::Latest, _target: u8) -> Self {
+					Self::from(latest)
 				}
 			}
 		});

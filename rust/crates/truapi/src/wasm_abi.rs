@@ -27,15 +27,16 @@ pub const LOG_IMPORT: &str = "log";
 /// error message when it failed.
 pub const FINISH_IMPORT: &str = "finish";
 
-/// Export the host calls once to run the guest's entry point.
-pub const START_EXPORT: &str = "truapi_start";
+/// WASI reactor export the host calls once to start the guest.
+pub const INITIALIZE_EXPORT: &str = "_initialize";
 
 /// Export delivering one event: `(handle, kind, payload_len)`.
 pub const ON_EVENT_EXPORT: &str = "truapi_on_event";
 
 /// What one event carries for a call handle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
 #[repr(u32)]
+#[try_from(repr)]
 pub enum EventKind {
 	/// Terminal answer of a request: `Result<Response, CallError<Error>>`.
 	Response = 0,
@@ -45,15 +46,5 @@ pub enum EventKind {
 	End = 2,
 }
 
-impl TryFrom<u32> for EventKind {
-	type Error = u32;
-
-	fn try_from(kind: u32) -> Result<Self, u32> {
-		match kind {
-			0 => Ok(Self::Response),
-			1 => Ok(Self::Item),
-			2 => Ok(Self::End),
-			unknown => Err(unknown),
-		}
-	}
-}
+#[cfg(test)]
+mod tests;

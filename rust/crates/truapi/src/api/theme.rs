@@ -5,11 +5,10 @@ use crate::{
 	versioned::theme::{
 		HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest,
 	},
-	wasm_env, wire, wire_trait,
+	wire, wire_trait,
 };
 
 /// Host theme subscription.
-#[wasm_env]
 #[wire_trait(id = 15)]
 #[async_trait::async_trait]
 pub trait Theme: Send + Sync {

@@ -35,6 +35,24 @@ fn multi_version_codec_indices_are_positional() {
 }
 
 #[test]
+fn converting_latest_payloads_sends_the_newest_wire_version() {
+	use super::{
+		account::HostGetUserIdRequest, local_storage::HostLocalStorageReadRequest,
+		payment::HostPaymentResponse,
+	};
+
+	let read = crate::latest::HostLocalStorageReadRequest { product: None, key: "k".into() };
+	assert_eq!(
+		(
+			HostGetUserIdRequest::from(()).encode(),
+			HostPaymentResponse::from(()).encode(),
+			HostLocalStorageReadRequest::from(read).encode(),
+		),
+		(vec![0], vec![1], vec![1, 0, 4, b'k']),
+	);
+}
+
+#[test]
 fn v1_discriminant_is_zero() {
 	let v1 = super::permissions::HostDevicePermissionRequest::V1(
 		crate::v01::HostDevicePermissionRequest::Camera,

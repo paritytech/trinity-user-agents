@@ -24,9 +24,6 @@ pub trait Versioned: Sized {
 
 	/// Version number of the variant currently held.
 	fn version(&self) -> u8;
-
-	/// Wrap a payload in the newest variant, as a caller on the latest protocol sends it.
-	fn wrap_latest(latest: Self::Latest) -> Self;
 }
 
 /// Upgrade a received envelope to its latest payload. Total by construction.

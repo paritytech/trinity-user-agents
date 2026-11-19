@@ -30,7 +30,7 @@ worker.run().await?;
 
 A call goes through three steps, joined by the import name:
 
-1. **Building the env.** `WasmEnv::for_product(host)` calls one `link_<trait>` per service trait. `#[wasm_env]` generates each of them, with one line per method naming the trait method to call:
+1. **Building the env.** `WasmEnv::for_product(host)` links the services declared by `TrUApi`. Each service’s `#[wire_trait]` generates its `link_<trait>` method, with one line per method naming the trait method to call:
 
    ```rust
    impl<H: Account + ?Sized + 'static> WasmEnv<H> {
@@ -95,9 +95,9 @@ A call goes through three steps, joined by the import name:
 
 ## Where the bindings come from
 
-`#[wasm_env]` sits on every service trait in `truapi::api`. From one reading of the trait it emits both sides, so they cannot drift apart:
+Each service trait in `truapi::api` declares its wire ID with `#[wire_trait(id = N)]`. That annotation generates its host and guest bindings. On the aggregate `TrUApi` trait, `#[product_services]` reads the service bounds to generate `WasmEnv::for_product`.
 
-- **Host**, under the `wasm-worker` feature: `WasmEnv::link_<trait>`, the table entries for that trait. `WasmEnv::for_product` links all of them.
+- **Host**, under the `wasm-worker` feature: `WasmEnv::link_<trait>`, the table entries for that trait.
 - **Guest**, under the `guest` feature on wasm32: a `guest` module beside the trait, with the import declarations and one typed async function per method. `truapi-guest-api` re-exports it as `truapi::<trait>` and adds the executor and exports.
 
 Import names are `<trait>_<method>`, the names the wire table uses, and a test holds the linked set equal to the wire table's product-started methods. Internal and host-initiated methods get no import.
@@ -116,7 +116,7 @@ Import names are `<trait>_<method>`, the names the wire table uses, and a test h
 
 | Export | Signature | Meaning |
 | --- | --- | --- |
-| `truapi_start` | `()` | Run the entry point |
+| `_initialize` | `()` | Start the async entry point once, following the WASI reactor convention |
 | `truapi_on_event` | `(handle, kind, len)` | Announce one event for a call; the guest reads its payload with `read_event` |
 
 The guest owns all of its memory: it passes the buffers for requests and events, and the host never allocates in it. This is the caller-provided buffer pattern of WASI preview 1 and `pallet-revive-uapi`, so the ABI itself needs no allocator in the guest. The typed bindings in `truapi-guest-api` still allocate, since protocol types hold `Vec` and `String`.
