@@ -162,7 +162,7 @@ impl Started {
 
 /// The test stack's descriptor as bundled.
 fn bundled() -> serde_json::Value {
-	published_test_descriptor(1, "first", TEST_STACK_PEOPLE)
+	published_test_descriptor_at(1)
 }
 
 /// The test stack's `stack_id`, which its record is stored under.

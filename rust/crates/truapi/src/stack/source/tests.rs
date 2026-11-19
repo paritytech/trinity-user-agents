@@ -5,8 +5,7 @@ use crate::{
 	stack::signed_pointer,
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, on_testnet, published_test_descriptor,
-		refused_for_its_tld, sign_test_descriptor, stack_status, stored_test_record,
-		without_bulletin,
+		sign_test_descriptor, stack_status, stored_test_record, without_bulletin,
 	},
 };
 
@@ -165,22 +164,23 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 	);
 }
 
-/// A copy the core cannot run must not become the copy the reader judges
-/// fetches against, or the corrected descriptor at the same `sequence` would
-/// be refused as a conflict.
+/// A copy the core refuses must not become the copy the reader judges fetches
+/// against, or the corrected descriptor at the same `sequence` would be
+/// refused as a conflict.
 #[test]
-fn a_copy_the_core_cannot_run_does_not_stand_in_the_way_of_the_corrected_one() {
-	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let mut source = load(&bundled, None);
+fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
 	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let refused = [without_bulletin(corrected.clone()), on_testnet(corrected.clone())];
 
-	let refused = serve(&mut source, &without_bulletin(corrected.clone()), START);
-	let record = serve(&mut source, &corrected, START + 3600);
+	let fetched = refused.map(|copy| {
+		let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+		let refusal = serve(&mut source, &copy, START);
+		let record = serve(&mut source, &corrected, START + 3600);
+		(refusal, record.is_some(), source.status())
+	});
 
-	assert_eq!(
-		(refused, record.is_some(), source.status()),
-		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
-	);
+	let taken = (None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)));
+	assert_eq!(fetched, [taken.clone(), taken]);
 }
 
 /// While a host rebuilds its runtime, the old and the new one can both
@@ -240,21 +240,22 @@ fn bundled_copys_fetch() -> Option<FetchRequest> {
 	})
 }
 
-/// A record written by another core version may hold a copy this one cannot
-/// run. The bundled copy starts the host and is fetched at once, though the
-/// record is fresh.
+/// A record written by another core version or another build may hold a copy
+/// this core refuses. The bundled copy starts the host and is fetched at once,
+/// though the record is fresh.
 #[test]
-fn a_stored_copy_the_core_cannot_run_is_ignored() {
+fn a_stored_copy_the_core_refuses_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let cannot_run = without_bulletin(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
-	let record = stored_test_record(&cannot_run, START);
+	let newer = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let refused = [without_bulletin(newer.clone()), on_testnet(newer)];
 
-	let mut source = load(&bundled, Some(&record));
+	let started = refused.map(|copy| {
+		let mut source = load(&bundled, Some(&stored_test_record(&copy, START)));
+		(source.status(), source.due_fetch(START))
+	});
 
-	assert_eq!(
-		(source.status(), source.due_fetch(START)),
-		(stack_status(&bundled, None), bundled_copys_fetch())
-	);
+	let from_bundled = (stack_status(&bundled, None), bundled_copys_fetch());
+	assert_eq!(started, [from_bundled.clone(), from_bundled]);
 }
 
 /// A `304 Not Modified` tells the core its copy is current. Sending an ignored
@@ -272,63 +273,6 @@ fn an_ignored_records_etag_is_not_sent() {
 			load(&bundled, Some(&record)).due_fetch(START)
 		}),
 		[bundled_copys_fetch(), bundled_copys_fetch()]
-	);
-}
-
-/// A stolen key must not move a stack to another TLD. The copy is refused on
-/// every fetch and never stored, and the core keeps the copy it holds.
-#[test]
-fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
-	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
-	let held = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-	let moved = on_testnet(published_test_descriptor(3, "first", TEST_STACK_PEOPLE));
-	let held_record = serve(&mut source, &held, START);
-
-	let refusals = [START + 3600, START + 7200].map(|now| {
-		(serve(&mut source, &moved, now), source.status(), source.stack().tld() == "paseo")
-	});
-
-	let refused = (None, stack_status(&held, refused_for_its_tld()), true);
-	assert_eq!((held_record.is_some(), refusals), (true, [refused.clone(), refused]));
-}
-
-/// A copy refused for its TLD must not become the copy the reader judges
-/// fetches against, or the corrected descriptor at the same `sequence` would
-/// be refused as a conflict.
-#[test]
-fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
-	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
-	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
-
-	let refused = serve(&mut source, &on_testnet(corrected.clone()), START);
-	let record = serve(&mut source, &corrected, START + 3600);
-
-	assert_eq!(
-		(refused, record.is_some(), source.status()),
-		(None, true, stack_status(&corrected, Some(StackRefreshOutcome::Current)))
-	);
-}
-
-/// A record from another build of the app may hold a copy on another TLD.
-/// The bundled copy starts the host and is fetched at once, and the published
-/// copy the record came from is refused.
-#[test]
-fn a_stored_copy_on_another_tld_is_ignored() {
-	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let moved = on_testnet(published_test_descriptor(2, "first", TEST_STACK_PEOPLE));
-	let record = stored_test_record(&moved, START);
-
-	let mut source = load(&bundled, Some(&record));
-	let at_start = (source.stack().tld().to_string(), source.status(), source.due_fetch(START));
-	let fetched = serve(&mut source, &moved, START);
-
-	assert_eq!(
-		(at_start, fetched, source.status()),
-		(
-			("paseo".to_string(), stack_status(&bundled, None), bundled_copys_fetch()),
-			None,
-			stack_status(&bundled, refused_for_its_tld())
-		)
 	);
 }
 

@@ -127,9 +127,8 @@ impl StackSource {
 	/// and `stored`, the record the last [`Self::fetched`] returned.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
-	/// a stack the core can run. A stored record that fails either, or changes
-	/// a field `bundled` pins, is ignored until the next stored record
-	/// replaces it.
+	/// a stack the core can run. A stored record the core would refuse is
+	/// ignored until the next stored record replaces it.
 	pub fn load(
 		pointer: Pointer,
 		bundled: &[u8],

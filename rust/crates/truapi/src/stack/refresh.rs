@@ -86,9 +86,6 @@ impl StackRefresh {
 	/// rule `bundled` breaks. A record that cannot be read, or is not read
 	/// within a few seconds, is logged and ignored.
 	///
-	/// A stored copy on another TLD than `bundled` is logged and ignored, and
-	/// a fetched one is refused.
-	///
 	/// `clock` tells how old a copy is and `timer` waits for the next fetch.
 	pub async fn load(
 		pointer: &str,
