@@ -1,7 +1,7 @@
 // Subframes need the same gates even though only the main frame has an endpoint.
 import { installContainer } from './container.js';
-import { createHostConnection } from '@parity/truapi/internal';
 import { freezeAndDelete, freezeValue } from './freeze.js';
+import { createHostConnection } from './host-connection.js';
 import { logHostLinkReturn } from './link-log.js';
 import { reloadAfterMessagePortLoss } from './message-port-loss.js';
 import { createPermissionAuthorization } from './network-transport.js';
@@ -18,11 +18,9 @@ const connection = typeof config?.url === 'string'
   : undefined;
 if (connection) {
   freezeValue(window, '__HOST_WEBVIEW_MARK__', true);
-  freezeValue(window, '__HOST_API_CLIENT__', Object.freeze({
-    get client() { return connection.client; },
-    subscribeConnectionStatus: connection.subscribeConnectionStatus,
-  }));
-  // TODO: Remove the port once deployed products adopt the injected client.
+  freezeValue(window, '__HOST_API_TRANSPORT__', Object.freeze(connection.transport));
+  // SDKs predating the injected transport encode their own frames over this port.
+  // TODO: Remove the port once no deployed product ships an SDK below 0.32.
   Object.defineProperty(window, '__HOST_API_PORT__', {
     get: () => connection.legacyPort,
     set() {},
