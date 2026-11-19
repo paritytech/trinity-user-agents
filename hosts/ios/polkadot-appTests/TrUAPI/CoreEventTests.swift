@@ -6,7 +6,7 @@ import TrUAPIHost
 struct CoreEventTests {
     private let attributes = [
         CoreAttribute(key: "outcome", value: .text(value: "sent")),
-        CoreAttribute(key: "age_ms", value: .count(value: 1200)),
+        CoreAttribute(key: "age_ms", value: .count(value: 1_200)),
         CoreAttribute(key: "money_moved", value: .flag(value: true))
     ]
 
@@ -21,7 +21,7 @@ struct CoreEventTests {
                 level: .warning,
                 tag: "truapi.core",
                 message: "truapi.chain.follow_budget_reached",
-                attributes: ["outcome": .text("sent"), "age_ms": .count(1200), "money_moved": .flag(true)]
+                attributes: ["outcome": .text("sent"), "age_ms": .count(1_200), "money_moved": .flag(true)]
             )
         ])
         #expect(logger.lines == [
