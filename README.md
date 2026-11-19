@@ -867,10 +867,12 @@ A pull request opened from a fork cannot reach the configuration and signing key
 this needs, and is told so rather than handed a build that misleads. Push the
 branch to this repository to get one.
 
-Every CI build of the app tree resolves Maven Central through Google's mirror
-of it, set up by `.github/actions/setup-android-build`. Maven Central rate
+Every CI job that runs Gradle resolves Maven Central through Google's mirror of
+it, installed by `.github/actions/maven-central-mirror`. Maven Central rate
 limits by IP and hosted runners share theirs, so direct requests are refused
-with a 429 often enough to fail builds. Local builds are unaffected.
+with a 429 often enough to fail builds. Local builds are unaffected, and anyone
+who wants the mirror locally can install the same script in their own Gradle
+home.
 
 ### The iOS nightly
 
