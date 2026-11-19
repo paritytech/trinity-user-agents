@@ -63,17 +63,18 @@ pub trait Contacts: Send + Sync {
 	///
 	/// Served only to the game product, `dim2` on every network, with no prompt.
 	/// Any other product, and a host that lists no usernames, gets `Unsupported`.
-	/// The game product gets `NotConnected` while nobody is signed in.
+	/// While nobody is signed in, the game product gets a `Domain` error whose
+	/// reason is `No active session`.
 	///
 	/// ```ts
 	/// const result = await truapi.contacts.usernames({});
 	/// if (result.isErr()) {
 	///   const refusal =
 	///     result.error.tag === "Domain" && result.error.value.tag === "V1"
-	///       ? result.error.value.value.tag
+	///       ? result.error.value.value.reason
 	///       : result.error.tag;
 	///   assert(
-	///     refusal === "Unsupported" || refusal === "NotConnected",
+	///     refusal === "Unsupported" || refusal === "No active session",
 	///     "contacts.usernames failed:",
 	///     result,
 	///   );

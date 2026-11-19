@@ -1438,18 +1438,17 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 				let platform =
 					self.connection.services.contacts_platform().ok_or(CallError::Unsupported)?;
 				if self.accounts.current_session().is_none() {
-					return Err(CallError::Domain(
-						latest::HostContactsUsernamesError::NotConnected,
-					));
+					return Err(CallError::Domain(latest::GenericError {
+						reason: "No active session".to_string(),
+					}));
 				}
-				let unknown = |reason: String| {
-					CallError::Domain(latest::HostContactsUsernamesError::Unknown { reason })
-				};
 				let listing =
 					until_cancelled(cx, platform.contact_usernames(&self.connection.product))
 						.await
-						.map_err(|cancelled| unknown(cancelled.to_string()))?
-						.map_err(|error| unknown(error.reason))?;
+						.map_err(|cancelled| {
+							CallError::Domain(latest::GenericError { reason: cancelled.to_string() })
+						})?
+						.map_err(CallError::Domain)?;
 				match listing {
 					crate::platform::HostContactUsernames::Listed { mut usernames } => {
 						usernames.retain(|username| {

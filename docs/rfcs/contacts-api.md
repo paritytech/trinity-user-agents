@@ -54,7 +54,7 @@ fn host_contacts_usernames() -> Result<Vec<String>, HostContactsUsernamesError>;
 Each username is the bare dotNS label without a top-level domain, and a contact without one is left
 out. The list carries no account and no handle. Every other product, and a Host that lists no
 usernames, gets `Unsupported`, and the Host is never asked on their behalf. While nobody is signed in,
-Jollity gets `NotConnected`, as `contacts.pick` does.
+Jollity gets a domain error with the reason `No active session`.
 
 The handle is one value per contact, the same in every product and on every Host of this user, keyed
 on the user's entropy so no product can turn it back into an account. It is not an address: a product

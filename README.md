@@ -639,11 +639,12 @@ resting on the product's word. The report lands at
 Pocket compatibility matrix.
 
 `contacts.usernames` serves only the game product, `dim2` on every network,
-and answers `Unsupported` to any other, and `NotConnected` while nobody is
-signed in. The battery runs as another product, so its generated example
-accepts `Unsupported`. The CLI hosts list the names of their configured
-contacts, and the `truapi` runtime tests cover the product gate, a host that
-lists nothing, and host failures.
+and answers `Unsupported` to any other. While nobody is signed in, the game
+product gets a domain error with the reason `No active session`. The battery
+runs as another product, so its generated example accepts `Unsupported`. The
+CLI hosts list the names of their configured contacts, and the `truapi`
+runtime tests cover the product gate, a host that lists nothing, and host
+failures.
 
 `Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
 `dim2` on every network, and answers `Unsupported` to any other. The battery

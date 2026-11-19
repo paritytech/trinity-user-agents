@@ -976,36 +976,12 @@ impl crate::platform::ContactsPlatform for MisanswerContactsPlatform {
 	}
 }
 
-/// A runtime for `product_id` on a host that serves only
-/// [`LookupOnlyContactsPlatform`], with a session.
-fn lookup_only_contacts_host(product_id: &str) -> ProductRuntimeHost<RemoteAccountHolder> {
-	let (host_config, product) = runtime_config(product_id);
-	let services = RuntimeServices::new(
-		stub_platform() as Arc<dyn Platform>,
-		host_config.host.host_info.clone(),
-		host_config.stack.clone(),
-		Spawner::for_test(),
-	);
-	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-	let host = ProductRuntimeHost::from_services(
-		services,
-		adapters,
-		pairing_host.accounts().clone(),
-		pairing_host.session().clone(),
-		product,
-	);
-	install_pairing_session(&host, session_info());
-	host
-}
-
 #[test]
 fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	// `pick_contact` is defaulted so a host needs to write one method. The
 	// default is truthful: a product learns the picker will never work here,
 	// rather than a dismissal it would keep retrying.
-	let host = lookup_only_contacts_host("voting.dot");
+	let host = host_with_contacts("voting.dot", Arc::new(LookupOnlyContactsPlatform));
 
 	assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
 }
@@ -1289,7 +1265,7 @@ fn contacts_usernames_signed_out_without_a_platform_is_unsupported() {
 #[test]
 fn a_host_that_does_not_list_usernames_reports_unsupported() {
 	// Given
-	let host = lookup_only_contacts_host("dim2.dot");
+	let host = host_with_contacts("dim2.dot", Arc::new(LookupOnlyContactsPlatform));
 
 	// When
 	let response = usernames(&host);
@@ -1361,7 +1337,7 @@ fn contacts_usernames_leaves_out_a_name_that_is_not_a_bare_dotns_label() {
 }
 
 #[test]
-fn contacts_usernames_maps_a_platform_failure_to_unknown() {
+fn contacts_usernames_passes_a_platform_failure_through() {
 	// Given
 	let host = contacts_host(
 		"dim2.dot",
@@ -1376,16 +1352,14 @@ fn contacts_usernames_maps_a_platform_failure_to_unknown() {
 	// Then
 	assert_eq!(
 		response,
-		Err(CallError::Domain(HostContactsUsernamesError::V1(
-			v01::HostContactsUsernamesError::Unknown {
-				reason: "contacts store unavailable".to_string(),
-			}
-		)))
+		Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+			reason: "contacts store unavailable".to_string(),
+		})))
 	);
 }
 
 #[test]
-fn contacts_usernames_without_a_session_is_not_connected() {
+fn contacts_usernames_without_a_session_reports_no_active_session() {
 	// Given
 	let contacts = StubContactsPlatform::listing(&["alice"]);
 	let host = contacts_host("dim2.dot", stub_platform(), Some(contacts.clone()), false);
@@ -1397,9 +1371,9 @@ fn contacts_usernames_without_a_session_is_not_connected() {
 	assert_eq!(
 		(response, contacts.username_reads.load(Ordering::SeqCst)),
 		(
-			Err(CallError::Domain(HostContactsUsernamesError::V1(
-				v01::HostContactsUsernamesError::NotConnected
-			))),
+			Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+				reason: "No active session".to_string(),
+			}))),
 			0
 		)
 	);
@@ -1519,11 +1493,12 @@ fn a_handle_no_contact_matches_refuses_the_call() {
 	);
 }
 
-/// A connected runtime whose contacts adapter is `contacts`.
+/// A connected runtime for `product_id` whose contacts adapter is `contacts`.
 fn host_with_contacts(
+	product_id: &str,
 	contacts: Arc<dyn crate::platform::ContactsPlatform>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
-	let (host_config, product) = runtime_config("voting.dot");
+	let (host_config, product) = runtime_config(product_id);
 	let services = RuntimeServices::with_platforms(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
@@ -1550,7 +1525,7 @@ fn host_with_contacts(
 /// made-up handle pay somebody.
 #[test]
 fn an_account_the_host_returns_for_the_wrong_handle_refuses_the_call() {
-	let host = host_with_contacts(Arc::new(MisanswerContactsPlatform));
+	let host = host_with_contacts("voting.dot", Arc::new(MisanswerContactsPlatform));
 	let forged = v01::ContactHandle { bytes: [0x42; 32] };
 
 	assert_eq!(
@@ -8583,8 +8558,8 @@ fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
 	assert_eq!(scanner.asked().len(), 2);
 }
 
-/// A contact picker the user never answers, which records when the core stops
-/// waiting on it.
+/// A contacts host that never answers a pick or a usernames read, and records
+/// when the core stops waiting on it.
 struct ParkedContactsPlatform {
 	abandoned: Arc<AtomicBool>,
 }
@@ -8605,6 +8580,14 @@ impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
 		let _abandoned = SetOnDrop(self.abandoned.clone());
 		futures::future::pending().await
 	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, truapi::latest::GenericError> {
+		let _abandoned = SetOnDrop(self.abandoned.clone());
+		futures::future::pending().await
+	}
 }
 
 #[test]
@@ -8612,8 +8595,10 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 	// The host closes its picker when the core drops the wait. Without that, a
 	// withdrawn pick leaves the picker on screen until the user acts.
 	let abandoned = Arc::new(AtomicBool::new(false));
-	let host =
-		host_with_contacts(Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }));
+	let host = host_with_contacts(
+		"voting.dot",
+		Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }),
+	);
 	let cancel = truapi::CancellationToken::default();
 	let cx = CallContext::with_parts("pick-withdrawn".into(), cancel.clone());
 	let mut pick = Box::pin(Contacts::pick(
@@ -8634,6 +8619,38 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 		)))
 	));
 	assert!(abandoned.load(Ordering::SeqCst));
+}
+
+#[test]
+fn cancelling_contacts_usernames_stops_waiting_on_the_host() {
+	// Given
+	let abandoned = Arc::new(AtomicBool::new(false));
+	let host = host_with_contacts(
+		"dim2.dot",
+		Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }),
+	);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("usernames-withdrawn".into(), cancel.clone());
+	let mut read = Box::pin(Contacts::usernames(
+		&host,
+		&cx,
+		HostContactsUsernamesRequest::V1(v01::HostContactsUsernamesRequest {}),
+	));
+	assert!(futures::FutureExt::now_or_never(&mut read).is_none());
+
+	// When
+	cancel.cancel();
+
+	// Then
+	assert_eq!(
+		(futures::FutureExt::now_or_never(&mut read), abandoned.load(Ordering::SeqCst)),
+		(
+			Some(Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+				reason: "Account authority request cancelled for usernames-withdrawn".to_string(),
+			})))),
+			true
+		)
+	);
 }
 
 fn payment_services() -> Arc<RuntimeServices> {

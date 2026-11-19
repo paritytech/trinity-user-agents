@@ -86,19 +86,3 @@ pub struct HostContactsUsernamesResponse {
 	/// two-digit index (`alice.07`).
 	pub usernames: Vec<String>,
 }
-
-/// Error returned when the host cannot read the contact usernames.
-///
-/// Any product other than the game product, and a host that lists no
-/// usernames, get `Unsupported` at the framework level rather than through
-/// this enum.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostContactsUsernamesError {
-	/// No active session.
-	NotConnected,
-	/// Catch-all.
-	Unknown {
-		/// Human-readable reason.
-		reason: String,
-	},
-}

@@ -802,9 +802,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
   is removed or blocked.
   The core serves `contacts.usernames` only to the game product, `dim2` on
   every network, and answers `Unsupported` to any other product without
-  calling the host. While nobody is signed in it answers `NotConnected`,
-  also without calling the host. Each username is the bare dotNS label with
-  no top-level domain, and the core drops any entry that is not one.
+  calling the host. While nobody is signed in it answers a domain error
+  with the reason `No active session`, also without calling the host. Each
+  username is the bare dotNS label with no top-level domain, and the core
+  drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host
