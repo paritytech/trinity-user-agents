@@ -1,20 +1,17 @@
-//! What no newer copy of a stack's descriptor may change.
+//! The fields no other copy of a stack's descriptor may change.
 //!
-//! [`Pinned`] is read from the copy a host build bundles.
-//! [`Pinned::refuse_change`] holds every copy the core stored or fetched to
-//! it.
+//! [`Pinned`] is read from the copy the build bundles, and
+//! [`Pinned::refuse_change`] checks stored and fetched copies against it.
 
 use trinity_stack::Descriptor;
 
 use super::StackError;
 
-/// The fields of a stack's bundled descriptor that every other copy must
-/// leave as they are.
+/// The bundled descriptor's fields that every other copy must keep.
 ///
-/// The bundled copy ships inside the build, so the key that signs the
-/// stack's descriptors cannot change it. A copy signed with a stolen key
-/// therefore cannot move the stack off a pinned value. The TLD is pinned on
-/// every stack: the signing role derives its accounts under it.
+/// The bundled copy ships in the build, so a copy signed with a stolen key
+/// cannot move the stack off these values. The TLD is pinned on every stack
+/// because accounts derive under it.
 #[derive(Clone)]
 pub struct Pinned {
 	tld: String,
@@ -26,11 +23,9 @@ impl Pinned {
 		Self { tld: bundled.tld.clone() }
 	}
 
-	/// Checks that `copy` leaves every pinned field as the bundled copy has
-	/// it.
+	/// Checks that `copy` keeps every pinned field.
 	///
-	/// Fails with [`StackError::PinnedFieldChanged`] naming the field that
-	/// differs.
+	/// Fails with [`StackError::PinnedFieldChanged`] naming the field.
 	pub fn refuse_change(&self, copy: &Descriptor) -> Result<(), StackError> {
 		if copy.tld != self.tld {
 			return Err(StackError::PinnedFieldChanged { field: "tld" });

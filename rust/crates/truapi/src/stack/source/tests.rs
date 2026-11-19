@@ -165,9 +165,9 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 	);
 }
 
-/// The reader judges every fetch against the copy it holds. A copy the core
-/// cannot run must not become that copy, or the operator's corrected
-/// descriptor at the same `sequence` would be turned away as a conflict.
+/// A copy the core cannot run must not become the copy the reader judges
+/// fetches against, or the corrected descriptor at the same `sequence` would
+/// be refused as a conflict.
 #[test]
 fn a_copy_the_core_cannot_run_does_not_stand_in_the_way_of_the_corrected_one() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
@@ -231,9 +231,8 @@ fn an_older_copy_is_refused() {
 	);
 }
 
-/// The fetch a core that runs its bundled copy makes: at once, since a
-/// bundled copy was never fetched, and with no `ETag`, since it came with
-/// none.
+/// The first fetch of a core running its bundled copy: due at once, with no
+/// `ETag`.
 fn bundled_copys_fetch() -> Option<FetchRequest> {
 	Some(FetchRequest {
 		url: "https://stack.test.invalid/stack.json".to_string(),
@@ -242,8 +241,8 @@ fn bundled_copys_fetch() -> Option<FetchRequest> {
 }
 
 /// A record written by another core version may hold a copy this one cannot
-/// run. The bundled copy still starts the host, and it is fetched at once
-/// although the record was fetched a moment ago.
+/// run. The bundled copy starts the host and is fetched at once, though the
+/// record is fresh.
 #[test]
 fn a_stored_copy_the_core_cannot_run_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
@@ -258,10 +257,8 @@ fn a_stored_copy_the_core_cannot_run_is_ignored() {
 	);
 }
 
-/// The server answers `304 Not Modified` to an `ETag` it knows, and the core
-/// takes that as the copy it holds being current. A core that sent the `ETag`
-/// of a record it ignored would be told its bundled copy is the published
-/// one. The record's `ETag` goes with the record.
+/// A `304 Not Modified` tells the core its copy is current. Sending an ignored
+/// record's `ETag` would get that answer for the bundled copy.
 #[test]
 fn an_ignored_records_etag_is_not_sent() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
@@ -278,9 +275,8 @@ fn an_ignored_records_etag_is_not_sent() {
 	);
 }
 
-/// Accounts derive under the TLD, so a descriptor signed with a stolen key
-/// must not move a stack to another one. The copy is refused on every fetch
-/// and never stored, and the core keeps the copy it holds.
+/// A stolen key must not move a stack to another TLD. The copy is refused on
+/// every fetch and never stored, and the core keeps the copy it holds.
 #[test]
 fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
 	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
@@ -296,9 +292,9 @@ fn a_refreshed_copy_on_another_tld_is_refused_and_not_stored() {
 	assert_eq!((held_record.is_some(), refusals), (true, [refused.clone(), refused]));
 }
 
-/// The reader judges every fetch against the copy it holds. A copy refused
-/// for its TLD must not become that copy, or the operator's corrected
-/// descriptor at the same `sequence` would be turned away as a conflict.
+/// A copy refused for its TLD must not become the copy the reader judges
+/// fetches against, or the corrected descriptor at the same `sequence` would
+/// be refused as a conflict.
 #[test]
 fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
 	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
@@ -313,10 +309,9 @@ fn a_copy_refused_for_its_tld_does_not_stand_in_the_way_of_the_corrected_one() {
 	);
 }
 
-/// A record may hold a copy on another TLD than the build bundles, such as
-/// one written by another build of the app. The bundled copy starts the host
-/// and is fetched at once although the record was fetched a moment ago, and
-/// the published copy the record came from is refused when it is fetched.
+/// A record from another build of the app may hold a copy on another TLD.
+/// The bundled copy starts the host and is fetched at once, and the published
+/// copy the record came from is refused.
 #[test]
 fn a_stored_copy_on_another_tld_is_ignored() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);

@@ -443,8 +443,8 @@ pub fn published_test_descriptor(
 	descriptor
 }
 
-/// The test stack's descriptor as published at `sequence`, on the chains and
-/// in the generation every test bundles it with.
+/// The test stack's descriptor at `sequence`, on the bundled chains and
+/// generation.
 pub fn published_test_descriptor_at(sequence: u32) -> serde_json::Value {
 	published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE)
 }
@@ -481,8 +481,8 @@ pub fn stored_test_record(descriptor: &serde_json::Value, fetched_at: i64) -> Ve
 		.expect("a first copy is stored")
 }
 
-/// What the host is told while the core runs `descriptor` on time, with no
-/// restart pending, after a last fetch that came to `last_refresh`.
+/// The status of a core running `descriptor`, neither stale nor expired, with
+/// no restart pending.
 pub fn stack_status(
 	descriptor: &serde_json::Value,
 	last_refresh: Option<crate::platform::StackRefreshOutcome>,
@@ -499,7 +499,7 @@ pub fn stack_status(
 	}
 }
 
-/// What a fetch of a copy on another TLD than the bundled one comes to.
+/// The outcome of fetching a copy on another TLD.
 pub fn refused_for_its_tld() -> Option<crate::platform::StackRefreshOutcome> {
 	Some(crate::platform::StackRefreshOutcome::Refused {
 		reason: "stack descriptor changes tld, which the bundled copy pins".to_string(),

@@ -5,9 +5,8 @@ fn descriptor(json: &serde_json::Value) -> Descriptor {
 	serde_json::from_value(json.clone()).expect("test descriptor is valid")
 }
 
-/// Accounts derive under the TLD, so a copy on another one would change every
-/// account the host holds. Everything else may differ: a stack follows a wipe
-/// without a new build.
+/// The TLD is pinned because accounts derive under it. Anything else may
+/// change, so a stack can follow a wipe without a new build.
 #[test]
 fn a_copy_passes_only_on_the_bundled_tld() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
