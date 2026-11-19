@@ -10,9 +10,9 @@ use truapi::{
 	api::Preimage,
 	latest,
 	versioned::preimage::{
-		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-		RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError,
-		RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
+		PreimageSubmitError, RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
+		RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitRequest,
+		RemotePreimageSubmitResponse,
 	},
 };
 #[cfg(target_arch = "wasm32")]
@@ -165,7 +165,7 @@ impl<H: AccountHolder> Preimage for ProductRuntimeHost<H> {
 		&self,
 		cx: &CallContext,
 		request: RemotePreimageSubmitRequest,
-	) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
+	) -> Result<RemotePreimageSubmitResponse, CallError<PreimageSubmitError>> {
 		version(request)
 			.exec(|value| async move {
 				let Some(session) = self.accounts.current_session() else {

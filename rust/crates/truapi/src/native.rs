@@ -4,8 +4,8 @@
 //!
 //! The native side builds a `CallbackPlatform` that adapts every
 //! [`crate::platform::Platform`] trait to a corresponding callback. The
-//! resulting platform is fed into [`SigningHostRuntime`] so the rest of the
-//! dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
+//! resulting platform is fed into [`HostRuntime<SigningHost>`](crate::HostRuntime)
+//! so the dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
 //! A native host therefore owns the signer, so it never pairs itself with a
 //! wallet and the pairing-host entry points are inert. It does answer other
 //! devices pairing with it: the signing host's responder side is exposed here,
@@ -42,7 +42,9 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
-	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
+	pocket_cards::{
+		PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketEntry,
+	},
 };
 pub use bundled_products::{
 	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_products,
@@ -79,8 +81,6 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-#[cfg(doc)]
-use crate::SigningHostRuntime;
 use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
@@ -295,8 +295,13 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 
 	// Read back the way a kept face is, so the reader accepts exactly what the
 	// store and the renderer subscription accept.
-	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut node.encode().as_slice())
-		.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })
+	let mut node = latest::RendererNode::decode_all_with_depth_limit(
+		MAX_FACE_DEPTH,
+		&mut node.encode().as_slice(),
+	)
+	.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })?;
+	node.clear_refused_inline_images();
+	Ok(node)
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the

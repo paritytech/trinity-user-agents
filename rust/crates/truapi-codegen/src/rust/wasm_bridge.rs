@@ -14,7 +14,8 @@ use crate::{
 		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
 	},
 	rustdoc::{
-		ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
+		ApiDefinition, STRING_NEWTYPES, TypeDef, TypeDefKind, TypeRef, VariantFields,
+		split_versioned_type_name,
 	},
 };
 
@@ -483,6 +484,11 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
 		},
 		TypeRef::Named { name, args } if name == "Result" && args.len() == 2 => {
 			Ok(format!("Result<{}, {}>", rust_type(&args[0], ctx)?, rust_type(&args[1], ctx)?))
+		},
+		TypeRef::Named { name, args }
+			if STRING_NEWTYPES.contains(&name.as_str()) && args.is_empty() =>
+		{
+			Ok(format!("truapi::{name}"))
 		},
 		TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
 			if args.is_empty() {

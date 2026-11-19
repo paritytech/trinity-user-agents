@@ -56,6 +56,11 @@ enum ClaimUsernameViewFactory {
                 operationManager: OperationManager(operationQueue: operationQueue)
             )
         )
+        let signingContextProvider = AccountSigningContextProvider(
+            peopleChainId: AppConfig.Chains.chatChain,
+            assetHubChainId: AppConfig.Chains.assethubChain,
+            chainRegistry: ChainRegistryFacade.sharedRegistry
+        )
         let dependencies = ClaimLiteUsernameDependency(
             walletSetupManagerFactory: { createWalletManager() },
             registrationParamsFactory: { mainWallet, liteVrfManager in
@@ -66,6 +71,7 @@ enum ClaimUsernameViewFactory {
                 )
             },
             chainTimeProvider: { timeProvider },
+            signingContextProvider: { signingContextProvider },
             usernameOperationFactory: { UsernameOperationFactory(tokenProvider: JWTTokenManager.shared) },
             usernameStorage: { UsernameStorage() },
             walletRepo: .shared,

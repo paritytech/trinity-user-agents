@@ -39,7 +39,9 @@ rust/crates/
                          #[sso_service] for truapi's inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
   truapi-provider/       network provider backends (WebSocket RPC or smoldot light-client);
-                         its `platform` module holds the chain-access traits
+                         its `platform` module holds the chain-access traits, and its
+                         `stack` module runs a Trinity stack's chains on the light client
+                         from light specs the host hands over, checked against the descriptor
   truapi-verifiable/     ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   truapi-host-cli/       CLI pairing/signing hosts; Bun scripts share the container web API gates
   trinity-stack/         Trinity stack descriptors (parse, verify, sign, links, reader state, when
@@ -82,6 +84,9 @@ js/packages/
                           bun tests run the crate's vectors
 js/container/              Shared TS lockdown container for native web views and CLI dev; scripts reuse its web API gates
                            `npm run build` bundles it into ios/truapi-host/Sources/TrUAPIHost/Resources/
+                           It owns the host connection and injects its frame channel as
+                           `window.__HOST_API_TRANSPORT__`; products encode with their own SDK.
+                           `npm run build:test-sdk` bundles the SDK that host test pages load
 ios/truapi-provider/       TrUAPIProvider Swift package (chain transport over UniFFI);
                            second product of the root Package.swift, released on its
                            own tag (@parity/ios-provider@<v>) via its scripts/

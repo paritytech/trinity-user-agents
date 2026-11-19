@@ -1,5 +1,7 @@
 //! Canonical account operations translated to the existing paired SSO protocol.
 
+mod subtree_requests;
+
 use super::{
 	HostSession,
 	allowances::AllowanceResource,
@@ -11,7 +13,7 @@ use super::{
 		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
-	sso_remote::SsoRemoteResponseError,
+	sso_remote::{SsoRemoteResponseError, SsoSessionKey},
 	sso_request_service::SsoRequestService,
 };
 use crate::{
@@ -33,17 +35,23 @@ use crate::{
 	platform::ProductId,
 };
 use futures::{
-	StreamExt,
+	FutureExt, StreamExt,
 	stream::{self, BoxStream},
 };
-use std::sync::Arc;
-use truapi::{CallContext, latest};
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+};
+use subtree_requests::{InFlightProductSubtree, ProductSubtreeCaller};
+use truapi::{CallContext, CancellationToken, latest};
 
 /// Account-holder requests over one runtime's selected SSO channel.
 pub struct RemoteAccountHolder {
 	service: Arc<SsoRequestService>,
 	registry: Arc<RingVrfRegistryStore>,
 	spawner: Spawner,
+	/// `ProductSubtreeRequest`s in flight, which concurrent callers join.
+	product_subtree_requests: Mutex<HashMap<(SsoSessionKey, ProductId), Arc<InFlightProductSubtree>>>,
 }
 
 impl RemoteAccountHolder {
@@ -54,7 +62,42 @@ impl RemoteAccountHolder {
 		registry: Arc<RingVrfRegistryStore>,
 		spawner: Spawner,
 	) -> Self {
-		Self { service, registry, spawner }
+		Self { service, registry, spawner, product_subtree_requests: Mutex::new(HashMap::new()) }
+	}
+
+	/// Join the `ProductSubtreeRequest` in flight for `product_id` in `session`,
+	/// or start one.
+	///
+	/// Concurrent callers share one request and each takes its answer. A
+	/// settled request is never joined, so a failure is not remembered.
+	fn join_product_subtree_request(
+		&self,
+		cx: &CallContext,
+		session: SessionInfo,
+		sso_session: SsoSessionKey,
+		product_id: &ProductId,
+	) -> ProductSubtreeCaller {
+		let request_key = (sso_session, product_id.clone());
+		let mut requests = self
+			.product_subtree_requests
+			.lock()
+			.expect("product subtree request mutex poisoned");
+		if let Some(caller) = requests.get(&request_key).and_then(InFlightProductSubtree::join) {
+			return caller;
+		}
+		let service = self.service.clone();
+		// Others may join, so this caller's cancel must not reach the request.
+		let cancel = CancellationToken::default();
+		let request_cx = CallContext::with_parts(cx.request_id().to_string(), cancel.clone());
+		let request = ProductSubtreeRequest { product_id: product_id.clone() };
+		let fetch = async move {
+			service.call(&request_cx, &session, request).await?.map_err(remote_authority_error)
+		}
+		.boxed();
+		let (in_flight, caller) = InFlightProductSubtree::start(fetch, cancel);
+		requests.retain(|_, in_flight| in_flight.has_callers());
+		requests.insert(request_key, in_flight);
+		caller
 	}
 
 	async fn remember_registration(
@@ -167,21 +210,22 @@ impl AccountHolder for RemoteAccountHolder {
 		require_current_session(&self.service.session_state(), session)
 	}
 
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		Ok(self.service.device_encryption_secret())
+	}
+
 	async fn product_subtree_public_key<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,
 		product_id: &'a ProductId,
 	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
-		if session.sso.is_none() {
-			return Err(AuthorityError::Disconnected);
-		}
-		let request = ProductSubtreeRequest { product_id: product_id.clone() };
+		let sso_session =
+			SsoSessionKey::from_session(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?);
 		Ok(SubtreeResolution::Ask(Box::pin(async move {
-			self.service
-				.call(invocation.call, &session, request)
-				.await?
-				.map_err(remote_authority_error)
+			self.join_product_subtree_request(invocation.call, session, sso_session, product_id)
+				.answer(invocation.call)
+				.await
 		})))
 	}
 

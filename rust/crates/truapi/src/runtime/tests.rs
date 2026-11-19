@@ -10,7 +10,7 @@ use crate::{
 	platform::{
 		AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey,
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
-		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
+		PermissionAuthorizationRequest, ProductSubtreeReview, SignPayloadReview, SignRawReview,
 	},
 };
 use parity_scale_codec::{Decode, Encode};
@@ -36,6 +36,9 @@ use truapi::{
 			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
 			RemoteChainTransactionBroadcastResponse,
 		},
+		contacts::{
+			HostContactsUsernamesError, HostContactsUsernamesRequest, HostContactsUsernamesResponse,
+		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::{
 			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
@@ -57,8 +60,8 @@ use truapi::{
 		},
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
-			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+			PreimageSubmitError, RemotePreimageLookupSubscribeItem,
+			RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
 			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
@@ -66,14 +69,14 @@ use truapi::{
 		},
 		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
 		signing::{
-			HostCreateTransactionError, HostCreateTransactionRequest,
-			HostCreateTransactionResponse, HostCreateTransactionWithLegacyAccountError,
-			HostCreateTransactionWithLegacyAccountRequest,
+			HostCreateTransactionError, HostCreateTransactionResponse,
+			HostCreateTransactionWithLegacyAccountError,
 			HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
 			HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
 			HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
 			HostSignRawResponse, HostSignRawWithLegacyAccountError,
 			HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
+			LegacyAccountTxPayload, ProductAccountTxPayload,
 		},
 		statement_store::{
 			RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
@@ -93,6 +96,7 @@ use truapi::{
 
 use super::{
 	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	sso_request_service::SsoRequestService,
 	*,
 };
 use crate::{
@@ -133,7 +137,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 pub fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
 	asset_hub_chain_genesis_hash: [u8; 32],
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 	let config = crate::platform::SigningHostConfig::new(
 		crate::platform::HostInfo {
 			name: "Polkadot Mobile".to_string(),
@@ -151,13 +155,14 @@ pub fn signing_runtime_on_asset_hub(
 		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone());
+	let signing_host = SigningHost::new(services.clone());
 	(services, signing_host)
 }
 
 /// A signing host whose wallet is active under [`ENTROPY`].
-pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host
@@ -165,7 +170,7 @@ pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> 
 
 pub fn product_runtime_for(
 	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
+	authority: Arc<SigningHost>,
 	product_id: &str,
 ) -> ProductRuntimeHost<signing_host::WalletAccountHolder> {
 	ProductRuntimeHost::from_services(
@@ -782,16 +787,33 @@ struct StubContactsPlatform {
 	failure: Option<&'static str>,
 	/// Products the picker was opened on behalf of, in order.
 	asked_for: Mutex<Vec<String>>,
+	/// The usernames the host lists, in host order.
+	usernames: Vec<String>,
+	/// How many times the core read the usernames.
+	username_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl StubContactsPlatform {
 	fn new(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Arc<Self> {
-		Arc::new(Self {
+		Arc::new(Self::answering(listed, pick))
+	}
+
+	fn answering(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Self {
+		Self {
 			listed: Mutex::new(listed),
 			lookups: Default::default(),
 			pick,
 			failure: None,
 			asked_for: Mutex::new(Vec::new()),
+			usernames: Vec::new(),
+			username_reads: Default::default(),
+		}
+	}
+
+	fn listing(usernames: &[&str]) -> Arc<Self> {
+		Arc::new(Self {
+			usernames: usernames.iter().map(|username| username.to_string()).collect(),
+			..Self::answering(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
 		})
 	}
 
@@ -813,11 +835,8 @@ impl StubContactsPlatform {
 
 	fn failing(reason: &'static str) -> Arc<Self> {
 		Arc::new(Self {
-			listed: Mutex::new(vec![[10u8; 32]]),
-			lookups: Default::default(),
-			pick: crate::platform::HostContactPick::Dismissed,
 			failure: Some(reason),
-			asked_for: Mutex::new(Vec::new()),
+			..Self::answering(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
 		})
 	}
 }
@@ -860,6 +879,19 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
 			None => Ok(self.pick),
 		}
 	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, truapi::latest::GenericError> {
+		self.username_reads.fetch_add(1, Ordering::SeqCst);
+		match self.failure {
+			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
+			None => Ok(crate::platform::HostContactUsernames::Listed {
+				usernames: self.usernames.clone(),
+			}),
+		}
+	}
 }
 
 /// A picker-capable runtime for `product_id`, with a session unless
@@ -871,12 +903,11 @@ fn contacts_host(
 	connected: bool,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		platform as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(contacts) = contacts {
 		services.install_contacts_platform(contacts);
@@ -903,6 +934,16 @@ fn pick(
 		host,
 		&CallContext::default(),
 		HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
+	))
+}
+
+fn usernames(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) -> Result<HostContactsUsernamesResponse, CallError<HostContactsUsernamesError>> {
+	futures::executor::block_on(Contacts::usernames(
+		host,
+		&CallContext::default(),
+		HostContactsUsernamesRequest::V1(v01::HostContactsUsernamesRequest {}),
 	))
 }
 
@@ -940,25 +981,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	// `pick_contact` is defaulted so a host needs to write one method. The
 	// default is truthful: a product learns the picker will never work here,
 	// rather than a dismissal it would keep retrying.
-	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
-		stub_platform() as Arc<dyn Platform>,
-		host_config.host.host_info.clone(),
-		host_config.stack.clone(),
-		Spawner::for_test(),
-		None,
-	);
-	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-	let host = ProductRuntimeHost::from_services(
-		services,
-		adapters,
-		pairing_host.accounts().clone(),
-		pairing_host.session().clone(),
-		product,
-	);
-	install_pairing_session(&host, session_info());
+	let host = host_with_contacts("voting.dot", Arc::new(LookupOnlyContactsPlatform));
 
 	assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
 }
@@ -1145,6 +1168,218 @@ fn contacts_pick_maps_a_platform_failure_to_unknown() {
 }
 
 #[test]
+fn contacts_usernames_returns_the_hosts_list_to_the_game_product() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "bob"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "bob".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_a_product_that_is_not_the_game() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(Err(CallError::Unsupported), 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_a_signed_out_product_that_is_not_the_game() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(Err(CallError::Unsupported), 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_the_other_trusted_products() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let hosts = ["peopl.dot", "stash.dot"]
+		.map(|product_id| contacts_host(product_id, stub_platform(), Some(contacts.clone()), true));
+
+	// When
+	let responses = hosts.each_ref().map(usernames);
+
+	// Then
+	assert_eq!(
+		(responses, contacts.username_reads.load(Ordering::SeqCst)),
+		([Err(CallError::Unsupported), Err(CallError::Unsupported)], 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_without_a_platform_is_unsupported() {
+	// Given
+	let host = contacts_host("dim2.dot", stub_platform(), None, true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn contacts_usernames_signed_out_without_a_platform_is_unsupported() {
+	// Given
+	let host = contacts_host("dim2.dot", stub_platform(), None, false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn a_host_that_does_not_list_usernames_reports_unsupported() {
+	// Given
+	let host = host_with_contacts("dim2.dot", Arc::new(LookupOnlyContactsPlatform));
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn contacts_usernames_with_no_contacts_is_an_empty_list() {
+	// Given
+	let host =
+		contacts_host("dim2.dot", stub_platform(), Some(StubContactsPlatform::listing(&[])), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: Vec::new(),
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_leaves_out_a_contact_without_a_username() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "", "bob.07"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "bob.07".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_leaves_out_a_name_that_is_not_a_bare_dotns_label() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "alice.07", "bob.dot", "Alice Smith"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "alice.07".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_passes_a_platform_failure_through() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::failing("contacts store unavailable")),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+			reason: "contacts store unavailable".to_string(),
+		})))
+	);
+}
+
+#[test]
+fn contacts_usernames_without_a_session_reports_no_active_session() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice"]);
+	let host = contacts_host("dim2.dot", stub_platform(), Some(contacts.clone()), false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(
+			Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+				reason: "No active session".to_string(),
+			}))),
+			0
+		)
+	);
+}
+
+#[test]
 fn contacts_pick_is_available_to_an_app_execution() {
 	// Unlike Chat, the picker is not gated on an execution kind.
 	let (_, product) = runtime_config("voting.dot");
@@ -1258,19 +1493,20 @@ fn a_handle_no_contact_matches_refuses_the_call() {
 	);
 }
 
-/// A connected runtime whose contacts adapter is `contacts`.
+/// A connected runtime for `product_id` whose contacts adapter is `contacts`.
 fn host_with_contacts(
+	product_id: &str,
 	contacts: Arc<dyn crate::platform::ContactsPlatform>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
-	let (host_config, product) = runtime_config("voting.dot");
-	let services = RuntimeServices::with_chat_platform(
+	let (host_config, product) = runtime_config(product_id);
+	let services = RuntimeServices::with_platforms(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
 		None,
+		Some(contacts),
 	);
-	services.install_contacts_platform(contacts);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
 	let host = ProductRuntimeHost::from_services(
@@ -1289,7 +1525,7 @@ fn host_with_contacts(
 /// made-up handle pay somebody.
 #[test]
 fn an_account_the_host_returns_for_the_wrong_handle_refuses_the_call() {
-	let host = host_with_contacts(Arc::new(MisanswerContactsPlatform));
+	let host = host_with_contacts("voting.dot", Arc::new(MisanswerContactsPlatform));
 	let forged = v01::ContactHandle { bytes: [0x42; 32] };
 
 	assert_eq!(
@@ -2359,21 +2595,41 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
 	assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// Records the visibility the host is asked for and answers a configured result.
+/// Records the face visibility and card sides the host is asked for and
+/// answers both with a configured result.
 struct RecordingExpandedCardHost {
-	answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	requested: Mutex<Vec<bool>>,
+	turned: Mutex<Vec<bool>>,
 }
 
 impl RecordingExpandedCardHost {
 	fn answering(
-		answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		face_answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+		turn_answer: Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError>,
 	) -> Arc<Self> {
-		Arc::new(Self { answer, requested: Mutex::new(Vec::new()) })
+		Arc::new(Self {
+			face_answer,
+			turn_answer,
+			requested: Mutex::new(Vec::new()),
+			turned: Mutex::new(Vec::new()),
+		})
+	}
+
+	fn applying() -> Arc<Self> {
+		Self::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		)
 	}
 
 	fn requested(&self) -> Vec<bool> {
 		self.requested.lock().expect("requested mutex poisoned").clone()
+	}
+
+	fn turned(&self) -> Vec<bool> {
+		self.turned.lock().expect("turned mutex poisoned").clone()
 	}
 }
 
@@ -2384,7 +2640,15 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
 		self.requested.lock().expect("requested mutex poisoned").push(shown);
-		self.answer.clone()
+		self.face_answer.clone()
+	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, truapi::latest::GenericError> {
+		self.turned.lock().expect("turned mutex poisoned").push(shown);
+		self.turn_answer.clone()
 	}
 }
 
@@ -2424,11 +2688,11 @@ fn set_back_shown(
 }
 
 /// The host must see exactly what the Widget asked for, in order, so a hide
-/// followed by a show never collapses into one state change.
+/// followed by a show, or a turn and a turn back, never collapses into one
+/// state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let card = RecordingExpandedCardHost::applying();
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
 
 	for shown in [false, true, false] {
@@ -2438,7 +2702,14 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 		));
 	}
 
-	assert_eq!(card.requested(), [false, true, false]);
+	for shown in [true, false] {
+		assert!(matches!(
+			set_back_shown(&host, shown),
+			Ok(HostExpandedCardSetBackShownResponse::V1)
+		));
+	}
+
+	assert_eq!((card.requested(), card.turned()), (vec![false, true, false], vec![true, false]));
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind
@@ -2447,14 +2718,12 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
-		let card = RecordingExpandedCardHost::answering(Ok(
-			crate::platform::ExpandedCardFaceOutcome::Applied,
-		));
+		let card = RecordingExpandedCardHost::applying();
 		let host = expanded_card_host(kind, Some(card.clone()));
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
 		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
-		assert!(card.requested().is_empty());
+		assert!(card.requested().is_empty() && card.turned().is_empty());
 	}
 }
 
@@ -2466,18 +2735,7 @@ fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
-}
-
-/// This runtime cannot turn a card, so a Widget must read "not supported"
-/// rather than a failure, even under a card whose host moves its face.
-#[test]
-fn expanded_card_back_is_unsupported() {
-	let card =
-		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
-	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
-
 	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
-	assert!(card.requested().is_empty());
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
@@ -2488,7 +2746,10 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 	use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
 
 	let answer = |outcome| {
-		let card = RecordingExpandedCardHost::answering(outcome);
+		let card = RecordingExpandedCardHost::answering(
+			outcome,
+			Ok(crate::platform::ExpandedCardTurnOutcome::Applied),
+		);
 		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
 		set_face_shown(&host, false)
 	};
@@ -2512,6 +2773,45 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 		panic!("a host failure is reported as an unknown domain error");
 	};
 	assert_eq!(reason, "drawer crashed");
+}
+
+/// A turn answers what the host did, so a Widget can tell a card without a
+/// back from one the user is holding, and retry only the latter.
+#[test]
+fn expanded_card_back_outcomes_map_to_wire_answers() {
+	use crate::platform::ExpandedCardTurnOutcome;
+	use v01::HostExpandedCardSetBackShownError as Answer;
+
+	let answer = |outcome| {
+		let card = RecordingExpandedCardHost::answering(
+			Ok(crate::platform::ExpandedCardFaceOutcome::Applied),
+			outcome,
+		);
+		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
+		set_back_shown(&host, true)
+	};
+	let domain = |outcome| match answer(Ok(outcome)) {
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(error))) => Some(error),
+		_ => None,
+	};
+
+	assert_eq!(
+		[
+			domain(ExpandedCardTurnOutcome::NotPresented),
+			domain(ExpandedCardTurnOutcome::UserMoving),
+			domain(ExpandedCardTurnOutcome::NoBack),
+		],
+		[Some(Answer::NotPresented), Some(Answer::UserMoving), Some(Answer::NoBack)]
+	);
+	assert!(matches!(
+		answer(Ok(ExpandedCardTurnOutcome::Unsupported)),
+		Err(CallError::Unsupported)
+	));
+	assert!(matches!(
+		answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() })),
+		Err(CallError::Domain(HostExpandedCardSetBackShownError::V1(Answer::Unknown { reason })))
+			if reason == "drawer crashed"
+	));
 }
 
 #[test]
@@ -4956,6 +5256,121 @@ fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
 }
 
 #[test]
+fn concurrent_get_account_calls_share_one_subtree_request() {
+	// A product asking on every keystroke must not stack requests on the phone.
+	// The confirmation is not shared, so each call still raises its own.
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-subtree-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: String::new(),
+					payload: Ok(test_product_subtree("myapp.dot")),
+				})),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session.clone());
+	let contexts: Vec<_> = (0..3).map(|_| CallContext::default()).collect();
+	let calls = contexts.iter().zip(0..).map(|(cx, index)| {
+		host.get_account(
+			cx,
+			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+				product_account_id: account_id("myapp.dot", index),
+			}),
+		)
+	});
+
+	let public_keys: Vec<_> = futures::executor::block_on(futures::future::join_all(calls))
+		.into_iter()
+		.map(|response| {
+			let HostAccountGetResponse::V1(inner) = response.expect("the shared request serves");
+			inner.account.public_key
+		})
+		.collect();
+	let subtree_requests = submitted_remote_messages(&platform, &session)
+		.into_iter()
+		.filter(|message| {
+			matches!(
+				message.data,
+				RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(_))
+			)
+		})
+		.count();
+
+	assert_eq!(
+		(public_keys, platform.product_subtree_reviews.lock().unwrap().clone(), subtree_requests),
+		(
+			(0..3)
+				.map(|index| test_product_account_public("myapp.dot", index).to_vec())
+				.collect(),
+			vec![ProductSubtreeReview { product_id: ProductId::for_test("myapp.dot") }; 3],
+			1,
+		)
+	);
+}
+
+/// A subtree request callers share stays on the phone while any of them still
+/// waits for it, and is withdrawn there once the last of them is withdrawn.
+#[test]
+fn a_shared_subtree_request_is_cancelled_on_the_phone_with_its_last_caller() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		rpc_responses: vec![
+			subscribe_ack_frame("truapi:1", "own-sub-shared-subtree"),
+			subscribe_ack_frame("truapi:2", "peer-sub-shared-subtree"),
+			r#"{"jsonrpc":"2.0","id":"truapi:3","result":{"status":"new"}}"#.to_string(),
+		],
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session.clone());
+	let first_cancel = truapi::CancellationToken::default();
+	let second_cancel = truapi::CancellationToken::default();
+	let calls = std::thread::spawn({
+		let first = CallContext::with_parts("account-first".to_string(), first_cancel.clone());
+		let second = CallContext::with_parts("account-second".to_string(), second_cancel.clone());
+		move || {
+			let request = |index| {
+				HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+					product_account_id: account_id("myapp.dot", index),
+				})
+			};
+			let (first, second) = futures::executor::block_on(futures::future::join(
+				host.get_account(&first, request(0)),
+				host.get_account(&second, request(1)),
+			));
+			(first.is_err(), second.is_err())
+		}
+	});
+	let published = submitted_remote_message(&platform, &session).message_id;
+	wait_until(
+		|| platform.product_subtree_reviews.lock().unwrap().len() == 2,
+		"both calls did not reach the subtree request",
+	);
+
+	first_cancel.cancel();
+	// Long enough for a wrongly spawned `Cancel` to have been submitted.
+	std::thread::sleep(std::time::Duration::from_millis(200));
+	let withdrawn_while_one_waits = withdrawn_requests(&platform, &session);
+	second_cancel.cancel();
+	let both_failed = calls.join().expect("get_account thread panicked");
+
+	let withdrawn = || withdrawn_requests(&platform, &session);
+	wait_until(|| !withdrawn().is_empty(), "no request was withdrawn");
+	assert_eq!(
+		(withdrawn_while_one_waits, both_failed, withdrawn()),
+		(vec![], (true, true), vec![published])
+	);
+}
+
+#[test]
 fn remote_authority_call_bounds_a_call_that_never_unwinds() {
 	let mut cx = CallContext::default();
 	cx.set_timeout(Duration::from_millis(1));
@@ -5484,7 +5899,7 @@ fn preimage_submit_requires_session_first() {
 	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
 
 	match err {
-		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+		CallError::Domain(PreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
 			reason,
 		})) => assert_eq!(reason, "No active session"),
 		other => panic!("expected preimage session error, got {other:?}"),
@@ -5500,7 +5915,7 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 	let request = RemotePreimageSubmitRequest::V1(vec![1, 2, 3]);
 	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
 	match err {
-		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+		CallError::Domain(PreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
 			reason,
 		})) => assert_eq!(reason, PERMISSION_DENIED_REASON),
 		other => panic!("expected preimage permission denial, got {other:?}"),
@@ -5548,7 +5963,7 @@ fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
 				));
 				if matches!(
 					result,
-					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+					Err(CallError::Domain(PreimageSubmitError::V1(
 						v01::PreimageSubmitError::Unknown { reason },
 					))) if reason == allowance_error
 				) {
@@ -6221,7 +6636,7 @@ fn legacy_create_transaction_rejects_raw_key_mismatch() {
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, sso_session_info());
 	let cx = CallContext::default();
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(v01::LegacyAccountTxPayload {
+	let request = LegacyAccountTxPayload::V1(v01::LegacyAccountTxPayload {
 		signer: [0; 32],
 		genesis_hash: [1; 32],
 		call_data: vec![0],
@@ -6272,7 +6687,7 @@ fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request
 		extensions: vec![],
 		tx_ext_version: 0,
 	};
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+	let request = LegacyAccountTxPayload::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -6334,7 +6749,7 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 		extensions: vec![],
 		tx_ext_version: 0,
 	};
-	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+	let request = LegacyAccountTxPayload::V1(tx_payload.clone());
 
 	let response =
 		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
@@ -6769,8 +7184,8 @@ fn transfer_naming(recipient: &[u8; 32]) -> Vec<u8> {
 fn transaction_naming(
 	handle: v01::ContactHandle,
 	declared: Vec<v01::ContactHandle>,
-) -> HostCreateTransactionRequest {
-	HostCreateTransactionRequest::V1(v01::ProductAccountTxPayload {
+) -> ProductAccountTxPayload {
+	ProductAccountTxPayload::V1(v01::ProductAccountTxPayload {
 		signer: account_id("myapp.dot", 0),
 		genesis_hash: [1; 32],
 		call_data: transfer_naming(&handle.bytes),
@@ -6932,8 +7347,8 @@ fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
 			.expect_err("the chain cannot be connected")
 	};
 
-	let v2 = create(HostCreateTransactionRequest::V2(payload.clone()));
-	let v1 = create(HostCreateTransactionRequest::V1(payload));
+	let v2 = create(ProductAccountTxPayload::V2(payload.clone()));
+	let v1 = create(ProductAccountTxPayload::V1(payload));
 
 	let CallError::Domain(HostCreateTransactionError::V2(
 		v02::HostCreateTransactionError::Unknown { reason },
@@ -7488,7 +7903,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
-		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
+		vec![AuthState::Connected(Box::new(SsoRequestService::session_ui_info(&stored)))]
 	);
 }
 
@@ -8102,12 +8517,11 @@ fn scanner_host_for(
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
 	product.execution_kind = kind;
-	let services = RuntimeServices::with_chat_platform(
+	let services = RuntimeServices::new(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
 		host_config.stack.clone(),
 		Spawner::for_test(),
-		None,
 	);
 	if let Some(scanner) = scanner {
 		services.install_scanner_platform(scanner);
@@ -8290,8 +8704,8 @@ fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
 	assert_eq!(scanner.asked().len(), 2);
 }
 
-/// A contact picker the user never answers, which records when the core stops
-/// waiting on it.
+/// A contacts host that never answers a pick or a usernames read, and records
+/// when the core stops waiting on it.
 struct ParkedContactsPlatform {
 	abandoned: Arc<AtomicBool>,
 }
@@ -8312,6 +8726,14 @@ impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
 		let _abandoned = SetOnDrop(self.abandoned.clone());
 		futures::future::pending().await
 	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, truapi::latest::GenericError> {
+		let _abandoned = SetOnDrop(self.abandoned.clone());
+		futures::future::pending().await
+	}
 }
 
 #[test]
@@ -8319,8 +8741,10 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 	// The host closes its picker when the core drops the wait. Without that, a
 	// withdrawn pick leaves the picker on screen until the user acts.
 	let abandoned = Arc::new(AtomicBool::new(false));
-	let host =
-		host_with_contacts(Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }));
+	let host = host_with_contacts(
+		"voting.dot",
+		Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }),
+	);
 	let cancel = truapi::CancellationToken::default();
 	let cx = CallContext::with_parts("pick-withdrawn".into(), cancel.clone());
 	let mut pick = Box::pin(Contacts::pick(
@@ -8341,6 +8765,38 @@ fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
 		)))
 	));
 	assert!(abandoned.load(Ordering::SeqCst));
+}
+
+#[test]
+fn cancelling_contacts_usernames_stops_waiting_on_the_host() {
+	// Given
+	let abandoned = Arc::new(AtomicBool::new(false));
+	let host = host_with_contacts(
+		"dim2.dot",
+		Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }),
+	);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("usernames-withdrawn".into(), cancel.clone());
+	let mut read = Box::pin(Contacts::usernames(
+		&host,
+		&cx,
+		HostContactsUsernamesRequest::V1(v01::HostContactsUsernamesRequest {}),
+	));
+	assert!(futures::FutureExt::now_or_never(&mut read).is_none());
+
+	// When
+	cancel.cancel();
+
+	// Then
+	assert_eq!(
+		(futures::FutureExt::now_or_never(&mut read), abandoned.load(Ordering::SeqCst)),
+		(
+			Some(Err(CallError::Domain(HostContactsUsernamesError::V1(v01::GenericError {
+				reason: "Account authority request cancelled for usernames-withdrawn".to_string(),
+			})))),
+			true
+		)
+	);
 }
 
 fn payment_services() -> Arc<RuntimeServices> {

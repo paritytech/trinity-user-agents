@@ -152,6 +152,34 @@ class DockletHideStateTest {
     }
 
     @Test
+    fun `undoing the quiet hide mid-way brings the dock back without an auto-hide landing`() = runTest {
+        val state = hideState()
+        state.quietHide()
+        advanceTimeBy(FrameMillis * 12)
+        runCurrent()
+
+        state.undoQuietHide()
+        advanceUntilIdle()
+
+        assertTrue(state.isShownAtRest)
+        assertEquals(listOf(DockletLanding.Shown), landings)
+    }
+
+    @Test
+    fun `undoing the quiet hide leaves a dock the user swiped away hidden`() = runTest {
+        val state = hideState()
+        swipe(state, fromX = 50f, toX = 250f)
+        state.releaseHide()
+        advanceUntilIdle()
+
+        state.undoQuietHide()
+        advanceUntilIdle()
+
+        assertTrue(state.countsAsHidden)
+        assertEquals(listOf(DockletLanding.HiddenBySwipe), landings)
+    }
+
+    @Test
     fun `the quiet hide does nothing while the dock is held`() = runTest {
         val state = hideState()
         state.startHide(DockletPoint(200f, 816f), time = 0.milliseconds)
@@ -174,6 +202,80 @@ class DockletHideStateTest {
         advanceUntilIdle()
         assertEquals(emptyList<DockletLanding>(), landings)
         assertEquals(emptyList<DockletMoment>(), moments)
+    }
+
+    @Test
+    fun `a slide tuck moves a shown dock off screen with no landing or haptic`() = runTest {
+        val state = hideState()
+
+        state.slideTuck()
+        advanceTimeBy(FrameMillis * 8)
+        runCurrent()
+        val middle = state.pose().angleDegrees
+        advanceUntilIdle()
+
+        assertTrue("angle $middle", middle in 5f..85f)
+        assertTrue(state.isOffScreen)
+        assertEquals(emptyList<DockletLanding>(), landings)
+        assertEquals(emptyList<DockletMoment>(), moments)
+    }
+
+    @Test
+    fun `a slide tuck waits two frames before it moves`() = runTest {
+        val state = hideState()
+
+        state.slideTuck()
+        advanceTimeBy(FrameMillis * 3)
+        runCurrent()
+
+        assertEquals(0f, state.pose().angleDegrees, EPS)
+    }
+
+    @Test
+    fun `a slide tuck over a quiet hide keeps the fade and stays tucked`() = runTest {
+        val state = hideState()
+        state.quietHide()
+        advanceTimeBy(FrameMillis * 12)
+        runCurrent()
+        val fadeBefore = state.quietFade()
+
+        state.slideTuck()
+        advanceTimeBy(FrameMillis)
+        runCurrent()
+        val fadeAfter = state.quietFade()
+        advanceUntilIdle()
+        state.undoQuietHide()
+        advanceUntilIdle()
+
+        assertTrue("fade $fadeBefore -> $fadeAfter", fadeBefore > 0f && fadeAfter >= fadeBefore - EPS)
+        assertTrue(state.isOffScreen)
+        assertEquals(emptyList<DockletLanding>(), landings)
+    }
+
+    @Test
+    fun `a slide tuck stops a restore in flight without any landing`() = runTest {
+        val state = hiddenState()
+        state.restore()
+        advanceTimeBy(FrameMillis * 6)
+        runCurrent()
+
+        state.slideTuck()
+        advanceUntilIdle()
+
+        assertTrue(state.isOffScreen)
+        assertEquals(emptyList<DockletLanding>(), landings)
+        assertFalse(DockletMoment.Hidden in moments)
+    }
+
+    @Test
+    fun `a slide tuck leaves a held dock in the hand`() = runTest {
+        val state = hideState()
+        state.startHide(DockletPoint(200f, 816f), time = 0.milliseconds)
+
+        state.slideTuck()
+
+        assertFalse(state.countsAsHidden)
+        assertTrue(state.isHeld)
     }
 
     @Test
