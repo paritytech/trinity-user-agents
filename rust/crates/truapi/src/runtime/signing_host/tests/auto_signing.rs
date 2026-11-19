@@ -56,7 +56,7 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 			.is_empty(),
 		"the grant waives the prompt",
 	);
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
 	let keypair =
 		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let signature =
@@ -236,7 +236,7 @@ fn kept_key_in_its_own_ring(
 ) -> Arc<SigningHost> {
 	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let entropy =
-		derive_ring_vrf_entropy(&ENTROPY, &product.product_id, &v01::DerivationIndex::Index(0))
+		RootEntropy::new(ENTROPY.to_vec()).derive_ring_vrf_entropy(&product.product_id, &v01::DerivationIndex::Index(0))
 			.unwrap();
 	let member = futures::executor::block_on(crate::runtime::vrf::load())
 		.expect("verifiable is linked")
@@ -308,7 +308,7 @@ fn a_kept_key_proves_with_its_own_alias() {
 	.expect("the kept key proves");
 
 	let entropy =
-		derive_ring_vrf_entropy(&ENTROPY, &product_id, &v01::DerivationIndex::Index(0)).unwrap();
+		RootEntropy::new(ENTROPY.to_vec()).derive_ring_vrf_entropy(&product_id, &v01::DerivationIndex::Index(0)).unwrap();
 	let vrf =
 		futures::executor::block_on(crate::runtime::vrf::load()).expect("verifiable is linked");
 	let alias =
@@ -400,7 +400,7 @@ fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_pr
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let runtime = product_runtime_for(services, activation, "dim2.paseo");
-	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+	let identity = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 
 	let HostSignRawWithLegacyAccountResponse::V1(response) = futures::executor::block_on(
 		runtime
@@ -428,7 +428,7 @@ fn other_raw_signatures_with_the_users_account_still_ask() {
 		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 			.expect("activation succeeds");
 		let runtime = product_runtime_for(services, activation, product_id);
-		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+		let identity = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 		let request = identity_raw_request(&identity);
 		let cx = CallContext::default();
 

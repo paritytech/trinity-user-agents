@@ -7,6 +7,7 @@
 
 use thiserror::Error;
 
+use super::root_entropy::RootEntropy;
 use crate::platform::ProductId;
 
 const DOMAIN_SEPARATOR: &[u8] = b"product-entropy-derivation";
@@ -22,20 +23,22 @@ pub enum ProductEntropyError {
 	MissingSecret,
 }
 
-/// Derive product-scoped entropy from the session root entropy secret.
-pub fn derive_product_entropy(
-	entropy_secret: &[u8],
-	product_id: &ProductId,
-	key: &[u8],
-) -> Result<[u8; 32], ProductEntropyError> {
-	derive_product_entropy_from_source(&root_entropy_source(entropy_secret), product_id, key)
-}
+impl RootEntropy {
+	/// Derive product-scoped entropy from the root entropy.
+	pub fn derive_product_entropy(
+		&self,
+		product_id: &ProductId,
+		key: &[u8],
+	) -> Result<[u8; 32], ProductEntropyError> {
+		derive_product_entropy_from_source(&self.root_entropy_source(), product_id, key)
+	}
 
-/// Pre-hashed root entropy source (RFC-0007 layer 1). Signing hosts share this
-/// value with paired hosts during the SSO handshake so both sides derive the
-/// same product entropy.
-pub fn root_entropy_source(entropy_secret: &[u8]) -> [u8; 32] {
-	blake2b256_keyed(entropy_secret, DOMAIN_SEPARATOR)
+	/// Pre-hashed root entropy source (RFC-0007 layer 1). Signing hosts share this
+	/// value with paired hosts during the SSO handshake so both sides derive the
+	/// same product entropy.
+	pub fn root_entropy_source(&self) -> [u8; 32] {
+		self.keyed_hash(DOMAIN_SEPARATOR)
+	}
 }
 
 /// Derive product-scoped entropy when the session already stores the

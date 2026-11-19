@@ -1,5 +1,5 @@
 use super::*;
-use crate::{host_logic::product_account::derive_sr25519_hard_path, test_support::StubPlatform};
+use crate::{host_logic::root_entropy::RootEntropy, test_support::StubPlatform};
 use std::{
 	collections::HashMap,
 	sync::{Arc, Mutex},
@@ -491,7 +491,7 @@ fn tracking_over_an_undecodable_ledger_starts_a_fresh_one() {
 #[test]
 fn product_target_resolves_to_allocation_derivation() {
 	let entropy = [7u8; 32];
-	let expected = derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", "a.dot"])
+	let expected = RootEntropy::new(entropy.to_vec()).derive_sr25519_hard_path(&["allowance", "statement-store", "a.dot"])
 		.unwrap()
 		.public
 		.to_bytes();
@@ -508,7 +508,7 @@ fn product_target_resolves_to_allocation_derivation() {
 #[test]
 fn wallet_sso_target_resolves_to_the_responder_identity() {
 	let entropy = [7u8; 32];
-	let expected = crate::host_logic::product_account::derive_identity_keypair(&entropy, "paseo")
+	let expected = RootEntropy::new(entropy.to_vec()).derive_identity_keypair("paseo")
 		.unwrap()
 		.public
 		.to_bytes();

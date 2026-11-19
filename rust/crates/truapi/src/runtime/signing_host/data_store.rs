@@ -11,7 +11,8 @@ use crate::{
 	host_logic::{
 		dotns_gateway::account_to_h160,
 		keyed_hash::blake2b_256_keyed,
-		product_account::{ProductAccountError, derive_sr25519_hard_path},
+		product_account::ProductAccountError,
+		root_entropy::RootEntropy,
 		x25519_seal::AeadKey,
 	},
 	installation::InstallationId,
@@ -23,22 +24,24 @@ const DATA_STORE_JUNCTION: &str = "datastore";
 /// What the record encryption key hashes, keyed with the account's secret.
 const RECORD_KEY_CONTEXT: &[u8] = b"encryption";
 
-/// The H160 the contract keeps the seed's records under: the `//datastore`
-/// account mapped as pallet-revive maps it.
-pub fn data_store_owner(entropy: &[u8]) -> Result<[u8; 20], ProductAccountError> {
-	let public_key = data_store_account(entropy)?.public.to_bytes();
-	Ok(account_to_h160(&public_key))
-}
+impl RootEntropy {
+	/// The H160 the contract keeps the seed's records under: the `//datastore`
+	/// account mapped as pallet-revive maps it.
+	pub fn data_store_owner(&self) -> Result<[u8; 20], ProductAccountError> {
+		let public_key = self.data_store_account()?.public.to_bytes();
+		Ok(account_to_h160(&public_key))
+	}
 
-/// The key the seed's installation records are encrypted under.
-pub fn installation_record_encryption_key(entropy: &[u8]) -> Result<AeadKey, ProductAccountError> {
-	let secret = Zeroizing::new(data_store_account(entropy)?.secret.to_ed25519_bytes());
-	Ok(record_encryption_key_from_secret(&secret))
-}
+	/// The key the seed's installation records are encrypted under.
+	pub fn installation_record_encryption_key(&self) -> Result<AeadKey, ProductAccountError> {
+		let secret = Zeroizing::new(self.data_store_account()?.secret.to_ed25519_bytes());
+		Ok(record_encryption_key_from_secret(&secret))
+	}
 
-/// The seed's `//datastore` account.
-fn data_store_account(entropy: &[u8]) -> Result<Keypair, ProductAccountError> {
-	derive_sr25519_hard_path(entropy, &[DATA_STORE_JUNCTION])
+	/// The seed's `//datastore` account.
+	fn data_store_account(&self) -> Result<Keypair, ProductAccountError> {
+		self.derive_sr25519_hard_path(&[DATA_STORE_JUNCTION])
+	}
 }
 
 /// BLAKE2b-256 of the context, keyed with the 64-byte secret in schnorrkel's

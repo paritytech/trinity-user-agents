@@ -27,9 +27,10 @@ use truapi::{
 		},
 		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 		product_account::{
-			ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-			derive_root_keypair_from_entropy, personhood_product_id, product_public_key_to_address,
+			ProductAccountError, SR25519_SIGNING_CONTEXT, personhood_product_id,
+			product_public_key_to_address,
 		},
+		root_entropy::RootEntropy,
 	},
 	statement_allowance as alloc,
 };
@@ -87,10 +88,11 @@ struct BackendToken {
 async fn backend_token(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	network_suffix: &str,
 ) -> Result<BackendToken> {
-	let auth_client_id = derive_identity_keypair(auth_entropy, network_suffix)
+	let auth_client_id = auth_entropy
+		.derive_identity_keypair(network_suffix)
 		.map_err(BackendIdentityDerivationError::from)?
 		.public
 		.to_bytes();
@@ -150,7 +152,7 @@ fn evict_rejected_backend_token(backend_base: &str, auth_client_id: &[u8; 32], r
 async fn mint_backend_token(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	network_suffix: &str,
 ) -> Result<String> {
 	let url = format!("{backend_base}/auth/challenges");
@@ -171,7 +173,8 @@ async fn mint_backend_token(
 		.to_string();
 	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
-	let keypair = derive_identity_keypair(auth_entropy, network_suffix)
+	let keypair = auth_entropy
+		.derive_identity_keypair(network_suffix)
 		.map_err(BackendIdentityDerivationError::from)?;
 	let client_id = keypair.public.to_bytes();
 
@@ -220,7 +223,7 @@ async fn mint_backend_token(
 async fn send_with_backend_auth<F>(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	network_suffix: &str,
 	request: F,
 ) -> Result<reqwest::Response>
@@ -250,7 +253,7 @@ pub struct AttestConfig<'a> {
 	/// reservation timestamp and the dotNS username poll.
 	pub network: &'a Stack,
 	/// BIP-39 entropy of the signing host's root account.
-	pub entropy: Vec<u8>,
+	pub entropy: RootEntropy,
 	/// Requested lite username base (6+ lowercase letters, no digits).
 	pub username_base: String,
 	/// Optional base name to queue on dotNS for a later full-person claim.
@@ -261,7 +264,7 @@ pub struct AttestConfig<'a> {
 /// backend. The username must be the base form without the digit suffix.
 pub async fn lite_username_available(
 	network: &Stack,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	username_base: &str,
 ) -> Result<bool> {
 	let backend_base = network.identity_backend();
@@ -383,9 +386,10 @@ async fn signing_context_of(
 /// Resolves the on-chain lite username for an already-attested signer: the
 /// discriminated `name.NN` the dotNS contracts hold for its identity account,
 /// whatever base the account record asked for.
-pub async fn registered_lite_username(network: &Stack, entropy: &[u8]) -> Result<String> {
-	let identity =
-		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+pub async fn registered_lite_username(network: &Stack, entropy: &RootEntropy) -> Result<String> {
+	let identity = entropy
+		.derive_identity_keypair(network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::connect(network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
@@ -396,9 +400,13 @@ pub async fn registered_lite_username(network: &Stack, entropy: &[u8]) -> Result
 
 /// Resolve an existing full-person or Lite dotNS identity when one exists.
 /// An unlabeled account is a valid result and can still back a local session.
-pub async fn lookup_registered_username(network: &Stack, entropy: &[u8]) -> Result<Option<String>> {
-	let identity =
-		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+pub async fn lookup_registered_username(
+	network: &Stack,
+	entropy: &RootEntropy,
+) -> Result<Option<String>> {
+	let identity = entropy
+		.derive_identity_keypair(network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::connect(network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
 	Ok(identity.map(|identity| identity.primary_username().to_owned()))
@@ -428,7 +436,7 @@ struct UsernameSearchItem {
 /// from the unauthenticated proof-of-compute challenge.
 pub async fn lookup_backend_username(
 	network: &Stack,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	candidate_account_id: &str,
 ) -> Result<Option<String>> {
 	const SEARCH_CONCURRENCY: usize = 4;
@@ -464,7 +472,7 @@ pub async fn lookup_backend_username(
 async fn search_backend_prefix(
 	client: &reqwest::Client,
 	network: &Stack,
-	auth_entropy: &[u8],
+	auth_entropy: &RootEntropy,
 	candidate_account_id: &str,
 	initial: char,
 ) -> Result<Vec<String>> {
@@ -536,10 +544,11 @@ fn normalize_searched_username(username: &str) -> String {
 /// Probes the dotNS contracts for the bare root and the network's RFC-0022
 /// `peopl.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
-pub async fn check_identity(network: &Stack, entropy: &[u8]) -> Result<()> {
-	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
-	let identity =
-		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+pub async fn check_identity(network: &Stack, entropy: &RootEntropy) -> Result<()> {
+	let root = entropy.derive_root_keypair().map_err(RootKeyDerivationError::from)?;
+	let identity = entropy
+		.derive_identity_keypair(network.tld())
+		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::connect(network).await?;
 	let identity_path =
 		format!("//product//{}/index_bytes(0)", personhood_product_id(network.tld()));

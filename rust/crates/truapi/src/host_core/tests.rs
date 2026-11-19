@@ -5,9 +5,9 @@ use crate::{
 		RemoteMessage, RemoteMessageData, decode_incoming_sso_request, v1,
 	},
 	host_logic::{
-		product_account::derive_identity_keypair,
+		root_entropy::RootEntropy,
 		sso::pairing::{
-			PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
+			PairingBootstrap, establish_sso_session_info,
 		},
 		statement_store::SUBMIT_STATEMENT_METHOD,
 		worker::WorkerTransition,
@@ -2011,9 +2011,9 @@ fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer(
 		encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 	};
 	let identity =
-		derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
+		RootEntropy::new(vec![0xab; 32]).derive_identity_keypair("testnet").expect("identity derivation succeeds");
 	let (_, responder_encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xab; 32], b"sso");
+		RootEntropy::new(vec![0xab; 32]).derive_x25519_keypair(b"sso");
 	let pairing_session = establish_sso_session_info(
 		&PairingBootstrap {
 			deeplink: String::new(),

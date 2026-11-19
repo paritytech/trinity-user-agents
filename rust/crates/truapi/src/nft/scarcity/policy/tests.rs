@@ -4,6 +4,7 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
+	host_logic::root_entropy::RootEntropy,
 	chain::{
 		DEFAULT_MORTALITY_PERIOD, HashAndNumber, Mortality, StorageWatchError,
 		extrinsic_service_serving,
@@ -11,7 +12,7 @@ use crate::{
 	durable::{DomainId, SubmissionPlan},
 	encrypted_storage::{EncryptedStorage, MemoryEncryptedStorage},
 	nft::{
-		PurseId, item_keys_from_entropy,
+		PurseId, 
 		keys::ItemIndex,
 		scarcity::{
 			chain::TransferContext,
@@ -93,7 +94,7 @@ fn registered_transfer(attempts: u32) -> RegisteredTransfer {
 /// [`registered_transfer`] that stops waiting at unix time `give_up_after`.
 fn registered_transfer_until(attempts: u32, give_up_after: u64) -> RegisteredTransfer {
 	let slot = ItemSlot { purse: PurseId(0), installation: TEST_INSTALLATION, index: ItemIndex(0) };
-	let source = item_keys_from_entropy(&TEST_ENTROPY, &[slot]).unwrap()[0];
+	let source = RootEntropy::new(TEST_ENTROPY.to_vec()).item_keys(&[slot]).unwrap()[0];
 	let params = TransferParams {
 		source,
 		signer: TransferSigner::Derived(slot),
@@ -147,7 +148,7 @@ fn policy_importing_from(
 ) -> ScarcityTransferPolicy {
 	ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
 		chain: Arc::new(chain),
-		signer: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		signer: Arc::new(FixedEntropy::new(TEST_ENTROPY.to_vec())),
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: transfer_extrinsics(),
 		genesis: GENESIS,

@@ -11,6 +11,7 @@
 
 use verifiable::{GenerateVerifiable, ring::bandersnatch::BandersnatchVrfVerifiable};
 
+use super::root_entropy::RootEntropy;
 use crate::platform::ProductId;
 
 /// A product-account contextual alias.
@@ -21,23 +22,24 @@ pub struct ProductAlias {
 	pub alias: [u8; 32],
 }
 
-/// Derive the contextual alias for a product account from the wallet entropy.
-///
-/// - `context = blake2b_256("/product/{product_id}/{derivation_index}")`
-/// - `bandersnatch_entropy = blake2b_256(root_entropy)`
-/// - `alias = BandersnatchVrf::alias_in_context(new_secret(bandersnatch_entropy), context)`
-pub fn derive_product_alias(
-	root_entropy: &[u8],
-	product_id: &ProductId,
-	derivation_index: u32,
-) -> Result<ProductAlias, String> {
-	let derivation_path = format!("/product/{product_id}/{derivation_index}");
-	let context = blake2b256(derivation_path.as_bytes());
-	let bandersnatch_entropy = blake2b256(root_entropy);
-	let secret = BandersnatchVrfVerifiable::new_secret(bandersnatch_entropy);
-	let alias = BandersnatchVrfVerifiable::alias_in_context(&secret, &context)
-		.map_err(|err| format!("ring-VRF alias derivation failed: {err:?}"))?;
-	Ok(ProductAlias { context, alias })
+impl RootEntropy {
+	/// Derive the contextual alias for a product account from the wallet entropy.
+	///
+	/// - `context = blake2b_256("/product/{product_id}/{derivation_index}")`
+	/// - `bandersnatch_entropy = blake2b_256(root_entropy)`
+	/// - `alias = BandersnatchVrf::alias_in_context(new_secret(bandersnatch_entropy), context)`
+	pub fn derive_product_alias(
+		&self,
+		product_id: &ProductId,
+		derivation_index: u32,
+	) -> Result<ProductAlias, String> {
+		let derivation_path = format!("/product/{product_id}/{derivation_index}");
+		let context = blake2b256(derivation_path.as_bytes());
+		let secret = BandersnatchVrfVerifiable::new_secret(self.hash());
+		let alias = BandersnatchVrfVerifiable::alias_in_context(&secret, &context)
+			.map_err(|err| format!("ring-VRF alias derivation failed: {err:?}"))?;
+		Ok(ProductAlias { context, alias })
+	}
 }
 
 fn blake2b256(message: &[u8]) -> [u8; 32] {

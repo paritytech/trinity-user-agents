@@ -56,16 +56,14 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 			.map(|collection| (collection, signer.member(collection).unwrap()));
 		let expected = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.map(|(collection, index)| {
-				let entropy = derive_ring_vrf_entropy(
-					&[7; 32],
-					&ProductId::for_test(&format!("peopl.{suffix}")),
+				let entropy = RootEntropy::new(vec![7; 32]).derive_ring_vrf_entropy(&ProductId::for_test(&format!("peopl.{suffix}")),
 					&DerivationIndex::Index(index),
 				)
 				.unwrap();
 				(collection, signer.vrf.member(&entropy).unwrap())
 			});
 		assert_eq!(members, expected);
-		let identity = derive_identity_keypair(&[7; 32], suffix).unwrap();
+		let identity = RootEntropy::new(vec![7; 32]).derive_identity_keypair(suffix).unwrap();
 		assert_eq!(session.identity_account_id, Some(identity.public.to_bytes()));
 	}
 }

@@ -21,6 +21,7 @@ use thiserror::Error;
 use truapi::latest::X25519PublicKey;
 
 use crate::host_logic::{
+	root_entropy::RootEntropy,
 	session::SsoSessionInfo,
 	x25519_seal::{
 		AEAD_NONCE_LEN, AeadKey, SealError, SealedBox, X25519Keypair, X25519PrivateKey,
@@ -300,26 +301,28 @@ pub fn peer_response_channel(session: &SsoSessionInfo) -> [u8; 32] {
 	keyed_hash(session.session_id_peer, RESPONSE_CHANNEL_SUFFIX)
 }
 
-/// Derive an RFC-0022 X25519 keypair from BIP-39 entropy and an ECDH domain.
-///
-/// `root = blake2b256(entropy, key = "ecdh")`, then one hard keyed-hash
-/// junction `//{domain}`. X25519 clamps the resulting private bytes.
-pub fn derive_x25519_keypair_from_entropy(entropy: &[u8], domain: &[u8]) -> ([u8; 32], [u8; 32]) {
-	let root = blake2b256_keyed(entropy, b"ecdh");
-	let chain_code = normalize_chain_code(domain.encode());
-	let secret_bytes = blake2b256_keyed(&root, &chain_code);
-	(secret_bytes, X25519PrivateKey::from(secret_bytes).public_key().0)
-}
-
 /// RFC-0022 domain for the identity chat X25519 key.
 pub const CHAT_ENCRYPTION_DOMAIN: &[u8] = b"chat";
 
-/// Derive the X25519 private key addressing an identity in chat.
-///
-/// Every host holding the identity entropy derives the same key, which is what
-/// lets a wallet share it with a paired host that has no entropy of its own.
-pub fn derive_identity_chat_private_key(entropy: &[u8]) -> [u8; 32] {
-	derive_x25519_keypair_from_entropy(entropy, CHAT_ENCRYPTION_DOMAIN).0
+impl RootEntropy {
+	/// Derive an RFC-0022 X25519 keypair for an ECDH domain.
+	///
+	/// `root = blake2b256(entropy, key = "ecdh")`, then one hard keyed-hash
+	/// junction `//{domain}`. X25519 clamps the resulting private bytes.
+	pub fn derive_x25519_keypair(&self, domain: &[u8]) -> ([u8; 32], [u8; 32]) {
+		let root = self.keyed_hash(b"ecdh");
+		let chain_code = normalize_chain_code(domain.encode());
+		let secret_bytes = blake2b256_keyed(&root, &chain_code);
+		(secret_bytes, X25519PrivateKey::from(secret_bytes).public_key().0)
+	}
+
+	/// Derive the X25519 private key addressing an identity in chat.
+	///
+	/// Every host holding the identity entropy derives the same key, which is what
+	/// lets a wallet share it with a paired host that has no entropy of its own.
+	pub fn derive_identity_chat_private_key(&self) -> [u8; 32] {
+		self.derive_x25519_keypair(CHAT_ENCRYPTION_DOMAIN).0
+	}
 }
 
 /// Encrypt session-channel statement data with a random nonce.

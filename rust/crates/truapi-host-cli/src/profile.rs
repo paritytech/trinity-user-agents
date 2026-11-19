@@ -11,7 +11,8 @@ use futures::TryStreamExt;
 use image::ImageReader;
 use truapi::{
 	HostRuntime, ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile,
-	PublicProfileResolutionOptions, SigningHost, check_image, preimage_key,
+	PublicProfileResolutionOptions, SigningHost, check_image,
+	host_logic::root_entropy::RootEntropy, preimage_key,
 };
 
 use crate::network::Stack;
@@ -39,7 +40,7 @@ pub async fn read(runtime: &HostRuntime<SigningHost>, username: &str) -> Result<
 pub async fn upload(
 	runtime: &HostRuntime<SigningHost>,
 	network: &Stack,
-	entropy: &[u8],
+	entropy: &RootEntropy,
 	username: &str,
 	path: &Path,
 ) -> Result<String> {

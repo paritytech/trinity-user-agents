@@ -8,15 +8,16 @@ use crate::{
 		sso_wire::ResponseOutcome,
 	},
 	host_logic::{
-		attestation::SigningContexts,
+		attestation::{SigningContexts, build_lite_registration},
+		root_entropy::RootEntropy,
 		product_account::{
-			derive_identity_keypair, derive_product_subtree_keypair,
-			derive_ring_vrf_domain_entropy, derive_root_keypair_from_entropy,
+			derive_product_subtree_keypair,
+			
 		},
 		sso::pairing::{
 			ResponderIdentity, SsoStatementData, VersionedHandshakeResponse,
 			decode_app_handshake_data, decrypt_session_statement_data,
-			decrypt_v2_handshake_response, derive_x25519_keypair_from_entropy,
+			decrypt_v2_handshake_response, 
 			encrypt_v2_handshake_response, establish_responder_session_info,
 			generate_pairing_device_identity,
 		},
@@ -53,9 +54,7 @@ fn the_advertised_chat_key_is_the_one_the_responder_serves() {
 	else {
 		panic!("expected pairing success")
 	};
-	let registration = crate::host_logic::attestation::build_lite_registration(
-		&CHAT_ENTROPY,
-		SUFFIX,
+	let registration = build_lite_registration(&RootEntropy::new(CHAT_ENTROPY.to_vec()), SUFFIX,
 		[0x11; 32],
 		"headless",
 		None,
@@ -127,9 +126,9 @@ fn responder_advertises_and_signs_with_the_local_peopl_identity() {
 	// The statement identity is the network's `peopl.<suffix>` account 0, the
 	// one the pairing host resolves a username for; a `.dot` account has
 	// no lite record on a test network.
-	assert_ne!(derive_identity_keypair(&ENTROPY, "dot").unwrap().public.to_bytes(), local_identity);
+	assert_ne!(RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair("dot").unwrap().public.to_bytes(), local_identity);
 
-	let (_, host_encryption_public_key) = derive_x25519_keypair_from_entropy(&[0x42; 16], b"sso");
+	let (_, host_encryption_public_key) = RootEntropy::new(vec![0x42; 16]).derive_x25519_keypair(b"sso");
 	let session = responder
 		.wallet
 		.sso_session(
@@ -161,7 +160,7 @@ fn advertised_device_key_is_independent_of_the_identity() {
 
 	// The regression this guards: advertising the SSO channel key as the
 	// device key makes every device sharing an identity indistinguishable.
-	let (_, sso_public) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+	let (_, sso_public) = RootEntropy::new(ENTROPY.to_vec()).derive_x25519_keypair(b"sso");
 	assert_ne!(advertised, sso_public);
 }
 
@@ -369,9 +368,9 @@ fn persisted_peer_rebuilds_the_original_responder_session() {
 		statement_account_id: [0x53; 32],
 		encryption_public_key: X25519PrivateKey::from([0x64; 32]).public_key().0,
 	};
-	let statement = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
+	let statement = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(NETWORK_SUFFIX).unwrap();
 	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+		RootEntropy::new(ENTROPY.to_vec()).derive_x25519_keypair(b"sso");
 	let identity = ResponderIdentity {
 		statement_secret: statement.secret.to_bytes(),
 		statement_public_key: statement.public.to_bytes(),
@@ -423,8 +422,8 @@ fn replayed_disconnect_still_terminates_the_peer() {
 
 /// The service a paired host reaches, bound to `signing_host`'s wallet from `ENTROPY`.
 fn sso_service(signing_host: &SigningHost) -> SsoAccountHolderService {
-	let statement = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
-	let (_, encryption) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+	let statement = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(NETWORK_SUFFIX).unwrap();
+	let (_, encryption) = RootEntropy::new(ENTROPY.to_vec()).derive_x25519_keypair(b"sso");
 	signing_host
 		.sso_responder()
 		.open_service(statement.public.to_bytes(), encryption)
@@ -599,14 +598,14 @@ fn native_product_reset_does_not_invalidate_remote_allocation_review() {
 	});
 	let (_, signing_host) = signing_fixture(platform.clone());
 	let expected_secret = derive_product_subtree_keypair(
-		&derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
+		&RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap(),
 		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap()
 	.secret
 	.to_bytes();
 	let expected_domain =
-		derive_ring_vrf_domain_entropy(&ENTROPY, &ProductId::for_test("myapp.dot")).unwrap();
+		RootEntropy::new(ENTROPY.to_vec()).derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot")).unwrap();
 	let service = sso_service(&signing_host);
 	let answer = service.answer(allocation_request("remote-reset"));
 	futures::pin_mut!(answer);
@@ -890,7 +889,7 @@ fn deliver_subtree_request(
 ) -> Vec<Result<Option<ResponderExit>, String>> {
 	let peer = paired_peer();
 	let replay_scope =
-		peer.replay_scope(derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes());
+		peer.replay_scope(RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap().public.to_bytes());
 	let (_services, signing_host) = signing_fixture(platform);
 	let session = paired_session(&signing_host);
 	let service = sso_service(&signing_host);
@@ -1066,7 +1065,7 @@ fn a_replaced_activation_leaves_the_request_to_the_next_loop() {
 		..StubPlatform::default()
 	});
 	let replay_scope = paired_peer()
-		.replay_scope(derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes());
+		.replay_scope(RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap().public.to_bytes());
 	let (_services, signing_host) = signing_fixture(platform.clone());
 	let session = paired_session(&signing_host);
 	let replaced = sso_service(&signing_host);
@@ -1119,7 +1118,7 @@ fn legacy_transaction_request_uses_the_controlled_identity_account() {
 		..StubPlatform::default()
 	});
 	let (_, signing_host) = signing_fixture(platform.clone());
-	let identity = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
+	let identity = RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(NETWORK_SUFFIX).unwrap();
 	let payload = api::LegacyAccountTxPayload {
 		signer: identity.public.to_bytes(),
 		genesis_hash: [0xaa; 32],
@@ -1222,7 +1221,7 @@ fn product_subtree_request_is_consent_free_and_hard_derived() {
 	let v1::RemoteMessage::ProductSubtreeResponse(response) = response else {
 		panic!("expected product subtree response");
 	};
-	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("fixture entropy derives root");
+	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().expect("fixture entropy derives root");
 	let expected = crate::host_logic::product_account::derive_product_subtree_keypair(
 		&root,
 		&ProductId::for_test("browse.dot"),

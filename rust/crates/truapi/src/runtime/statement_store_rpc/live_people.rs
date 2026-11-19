@@ -11,7 +11,7 @@ use super::{StatementSubmitError, start_statement_watch_over, submit_sso};
 use crate::{
 	chain::{ExtrinsicService, FixedExtensionVersions, tokio_spawner},
 	host_logic::{
-		product_account::{derive_lite_person_ring_vrf_entropy, derive_sr25519_hard_path},
+		root_entropy::RootEntropy,
 		statement_store::{
 			StatementBatches, StatementStoreApi, StatementWatchError, TopicFilter,
 			validated_topic_filter,
@@ -56,9 +56,13 @@ impl LivePeopleStatements {
 	/// A key that may sign statements this period, derived from the person
 	/// behind `entropy`. Its allowance comes from a slot of the person's People
 	/// Lite ring, which every run reuses.
-	pub async fn statement_signer_with_allowance(&self, entropy: &[u8]) -> schnorrkel::Keypair {
-		let signer =
-			derive_sr25519_hard_path(entropy, &["truapi-live-test", "statement-store"]).unwrap();
+	pub async fn statement_signer_with_allowance(
+		&self,
+		entropy: &RootEntropy,
+	) -> schnorrkel::Keypair {
+		let signer = entropy
+			.derive_sr25519_hard_path(&["truapi-live-test", "statement-store"])
+			.unwrap();
 		self.allocate_statement_allowance(entropy, signer.public.to_bytes()).await;
 		signer
 	}
@@ -75,7 +79,7 @@ impl LivePeopleStatements {
 
 	/// Points a slot of the People Lite ring of the person behind `entropy` at
 	/// `target`, unless one already does.
-	async fn allocate_statement_allowance(&self, entropy: &[u8], target: [u8; 32]) {
+	async fn allocate_statement_allowance(&self, entropy: &RootEntropy, target: [u8; 32]) {
 		let rpc = alloc::rpc::RpcClient::new(self.rpc_client());
 		let metadata = alloc::fetch_metadata(&rpc).await.unwrap();
 		let person = LitePerson::from_entropy(&rpc, entropy).await;
@@ -119,10 +123,10 @@ struct LitePerson {
 
 impl LitePerson {
 	/// The person behind `entropy` on the chain `rpc` reaches.
-	async fn from_entropy(rpc: &alloc::rpc::RpcClient, entropy: &[u8]) -> Self {
+	async fn from_entropy(rpc: &alloc::rpc::RpcClient, entropy: &RootEntropy) -> Self {
 		let network_suffix = alloc::slot::read_network_suffix(rpc).await.unwrap();
 		let suffix = String::from_utf8(network_suffix.clone()).unwrap();
-		let entropy = derive_lite_person_ring_vrf_entropy(entropy, &suffix);
+		let entropy = entropy.derive_lite_person_ring_vrf_entropy(&suffix);
 		let candidates = [alloc::CollectionCandidate { collection: LITE_PEOPLE, entropy }];
 		Self { candidates, network_suffix }
 	}

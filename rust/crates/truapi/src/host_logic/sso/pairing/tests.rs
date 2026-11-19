@@ -135,15 +135,15 @@ fn rejects_short_handshake_ciphertext_and_small_order_key() {
 
 #[test]
 fn rfc0022_entropy_domains_produce_stable_distinct_keys() {
-	let sso = derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso");
-	let chat = derive_x25519_keypair_from_entropy(&[0xAB; 16], b"chat");
-	assert_eq!(sso, derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso"));
+	let sso = RootEntropy::new(vec![0xAB; 16]).derive_x25519_keypair(b"sso");
+	let chat = RootEntropy::new(vec![0xAB; 16]).derive_x25519_keypair(b"chat");
+	assert_eq!(sso, RootEntropy::new(vec![0xAB; 16]).derive_x25519_keypair(b"sso"));
 	assert_ne!(sso, chat);
 	assert_eq!(PublicKey::from(&StaticSecret::from(sso.0)).to_bytes(), sso.1);
 	let cross_platform_entropy: [u8; 32] =
 		std::array::from_fn(|index| u8::try_from(index + 1).expect("index fits in u8"));
-	let (sso_secret, _) = derive_x25519_keypair_from_entropy(&cross_platform_entropy, b"sso");
-	let (chat_secret, _) = derive_x25519_keypair_from_entropy(&cross_platform_entropy, b"chat");
+	let (sso_secret, _) = RootEntropy::new(cross_platform_entropy.to_vec()).derive_x25519_keypair(b"sso");
+	let (chat_secret, _) = RootEntropy::new(cross_platform_entropy.to_vec()).derive_x25519_keypair(b"chat");
 	assert_eq!(
 		hex::encode(sso_secret),
 		"c2c0f3112da0aa390a7d7b644a7f073b80782e49a3240685bc071046d6cc8ad3"
@@ -171,7 +171,7 @@ fn generated_bootstrap_uses_matching_x25519_keypair() {
 fn responder_session_mirrors_pairing_session() {
 	let host = create_pairing_bootstrap(&runtime_config()).unwrap();
 	let (responder_secret, responder_public) =
-		derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso");
+		RootEntropy::new(vec![0xAB; 16]).derive_x25519_keypair(b"sso");
 	let responder = ResponderIdentity {
 		statement_secret: [0x44; 64],
 		statement_public_key: [0x55; 32],

@@ -57,8 +57,8 @@ fn the_data_store_account_and_record_key_match_the_apps() {
 	));
 	let encrypted_by_app = app_key.encrypt_with_nonce(&PINNED_INSTALLATION.0, [9; 12]).unwrap();
 
-	let owner = data_store_owner(&entropy).unwrap();
-	let key = installation_record_encryption_key(&entropy).unwrap();
+	let owner = RootEntropy::new(entropy.to_vec()).data_store_owner().unwrap();
+	let key = RootEntropy::new(entropy.to_vec()).installation_record_encryption_key().unwrap();
 
 	assert_eq!(owner, account_to_h160(&public_key));
 	assert_eq!(

@@ -11,8 +11,8 @@ fn the_signer_at_a_slot_signs_for_the_key_derived_at_it() {
 		index: ItemIndex(7),
 	};
 
-	let signer = item_signer_from_entropy(&entropy, slot).unwrap();
-	let keys = item_keys_from_entropy(&entropy, &[slot]).unwrap();
+	let signer = RootEntropy::new(entropy.to_vec()).item_signer(slot).unwrap();
+	let keys = RootEntropy::new(entropy.to_vec()).item_keys(&[slot]).unwrap();
 
 	assert_eq!(signer.account_id().0, keys[0].0);
 }
@@ -28,8 +28,8 @@ fn an_exported_secret_rebuilds_the_key_derived_at_its_slot_and_signs_for_it() {
 		index: ItemIndex(7),
 	};
 
-	let secrets = item_secrets_from_entropy(&entropy, &[slot]).unwrap();
-	let keys = item_keys_from_entropy(&entropy, &[slot]).unwrap();
+	let secrets = RootEntropy::new(entropy.to_vec()).item_secrets(&[slot]).unwrap();
+	let keys = RootEntropy::new(entropy.to_vec()).item_keys(&[slot]).unwrap();
 	let imported = schnorrkel::SecretKey::from_bytes(secrets[0].as_bytes()).unwrap();
 	let public = imported.to_public();
 	let signature = imported.sign_simple(b"substrate", b"move", &public);
@@ -46,8 +46,8 @@ fn keys_under_the_item_prefix_are_the_allocated_item_keys() {
 	let (purse, installation) = (PurseId(3), InstallationId([0x1d; 32]));
 	let slots = [0, 1, 7].map(|index| ItemSlot { purse, installation, index: ItemIndex(index) });
 
-	let range = item_key_range_from_entropy(&entropy, purse, installation, 0..8).unwrap();
-	let allocated = item_keys_from_entropy(&entropy, &slots).unwrap();
+	let range = RootEntropy::new(entropy.to_vec()).item_key_range(purse, installation, 0..8).unwrap();
+	let allocated = RootEntropy::new(entropy.to_vec()).item_keys(&slots).unwrap();
 
 	assert_eq!([0, 1, 7].map(|index| range[index]), allocated.as_slice());
 }

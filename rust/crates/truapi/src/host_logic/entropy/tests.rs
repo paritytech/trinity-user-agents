@@ -40,7 +40,7 @@ fn product_entropy_cases() {
 
 	for case in success_cases {
 		let entropy =
-			derive_product_entropy(&secret(), &ProductId::for_test(case.product_id), &case.key)
+			RootEntropy::new(secret().to_vec()).derive_product_entropy(&ProductId::for_test(case.product_id), &case.key)
 				.unwrap();
 		assert_eq!(hex::encode(entropy), case.expected_hex, "{}", case.name);
 	}
@@ -67,7 +67,7 @@ fn product_entropy_cases() {
 	];
 	for (product_id, key, expected_hex) in ios_cases {
 		let entropy =
-			derive_product_entropy(&ios_entropy, &ProductId::for_test(product_id), key).unwrap();
+			RootEntropy::new(ios_entropy.to_vec()).derive_product_entropy(&ProductId::for_test(product_id), key).unwrap();
 		assert_eq!(hex::encode(entropy), expected_hex, "ios vector {product_id}");
 	}
 
@@ -77,7 +77,7 @@ fn product_entropy_cases() {
 	];
 	for (key, expected) in error_cases {
 		assert_eq!(
-			derive_product_entropy(&secret(), &ProductId::for_test("myapp.dot"), &key).unwrap_err(),
+			RootEntropy::new(secret().to_vec()).derive_product_entropy(&ProductId::for_test("myapp.dot"), &key).unwrap_err(),
 			expected,
 		);
 	}

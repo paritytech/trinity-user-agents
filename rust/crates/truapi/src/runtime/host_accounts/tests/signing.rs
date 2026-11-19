@@ -17,7 +17,8 @@ use truapi::{
 use super::grant_revision;
 use crate::{
 	host_logic::{
-		product_account::derive_root_keypair_from_entropy, statement_store::SUBMIT_STATEMENT_METHOD,
+		root_entropy::RootEntropy,
+		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	platform::{ProductContext, ProductId},
 	runtime::{
@@ -68,7 +69,7 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	)
 	.unwrap()
 	.unwrap();
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+	let root = RootEntropy::new(ENTROPY.to_vec()).derive_root_keypair().unwrap();
 	let subtree =
 		crate::host_logic::product_account::derive_product_subtree_keypair(&root, &myapp).unwrap();
 	authority.clear_product_state(&myapp);

@@ -31,9 +31,11 @@ use truapi::{
 		MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START,
 		Payload, ProtocolMessage, request_ids, subscription_ids,
 	},
-	host_logic::product_account::{
-		SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair,
-		derive_root_keypair_from_entropy,
+	host_logic::{
+		product_account::{
+			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair,
+		},
+		root_entropy::RootEntropy,
 	},
 	platform::{
 		HostInfo, PlatformInfo, ProductContext, ProductId, SigningHostConfig,
@@ -174,7 +176,9 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	// The signature has to verify against the key the activation entropy
 	// derives, not merely against whatever the runtime happens to hold: that is
 	// what makes this a signature by *the user's* product account.
-	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root keypair derives");
+	let root = RootEntropy::new(ENTROPY.to_vec())
+		.derive_root_keypair()
+		.expect("root keypair derives");
 	let keypair = derive_product_keypair(
 		&root,
 		&ProductId::for_test(PRODUCT_ID),

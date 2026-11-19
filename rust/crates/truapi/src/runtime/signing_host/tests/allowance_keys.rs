@@ -5,7 +5,7 @@ use parity_scale_codec::Encode;
 
 use crate::{
 	host_internal::sso_messages::OnExistingAllowancePolicy,
-	host_logic::product_account::{derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path},
+	host_logic::root_entropy::RootEntropy,
 	runtime::{statement_allowance, statement_allowance::slot},
 };
 
@@ -17,7 +17,7 @@ const PEOPLE_METADATA: &[u8] =
 /// Slot 0 already holds the product's allowance.
 fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 	let allowance =
-		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
+		RootEntropy::new(ENTROPY.to_vec()).derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
 			.expect("allowance derivation succeeds");
 	let slot_entry = slot::StatementStoreAllowanceEntry {
 		account_id: allowance.public.to_bytes(),
@@ -26,7 +26,7 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 	}
 	.encode();
 	let people_row = slot::testing::slot_row(
-		derive_full_person_ring_vrf_entropy(&ENTROPY, TEST_NETWORK_SUFFIX),
+		RootEntropy::new(ENTROPY.to_vec()).derive_full_person_ring_vrf_entropy(TEST_NETWORK_SUFFIX),
 		TEST_NETWORK_SUFFIX.as_bytes(),
 		slot::current_period(crate::unix_time::current_unix_secs()),
 		&[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],
@@ -90,7 +90,7 @@ fn sent_rpc_count(platform: &StubPlatform) -> usize {
 #[test]
 fn an_existing_allowance_is_served_without_touching_the_ring() {
 	let allowance =
-		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
+		RootEntropy::new(ENTROPY.to_vec()).derive_sr25519_hard_path(&["allowance", "statement-store", PRODUCT_ID])
 			.expect("allowance derivation succeeds");
 	let platform = chain_with_allocated_slot();
 	let signing_host = active_signing_host(platform.clone());

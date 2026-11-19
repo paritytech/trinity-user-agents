@@ -69,8 +69,11 @@ use truapi::{
 	PairingProposal, ResponderExit, ResumePairingError, SigningHost, SigningHostConfig, Spawner,
 	StatementRenewalTarget, WsDebugSink,
 	chain::{EvmContractCaller, ExtrinsicService},
-	host_logic::dotns_gateway::{
-		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
+	host_logic::{
+		dotns_gateway::{
+			MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
+		},
+		root_entropy::RootEntropy,
 	},
 	latest::GenericError,
 	platform::{
@@ -654,15 +657,19 @@ async fn dispatch(
 			run_signing_host(args, log_filter, log_controller, None, debugger, &source).await
 		},
 		Command::IdentityCheck { mnemonic } => {
-			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
-				.context("invalid BIP-39 mnemonic")?
-				.to_entropy();
+			let entropy = RootEntropy::new(
+				bip39::Mnemonic::parse(mnemonic.trim())
+					.context("invalid BIP-39 mnemonic")?
+					.to_entropy(),
+			);
 			attestation::check_identity(&source.resolve_checked().await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, label, link_lite, chat_key } => {
-			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
-				.context("invalid BIP-39 mnemonic")?
-				.to_entropy();
+			let entropy = RootEntropy::new(
+				bip39::Mnemonic::parse(mnemonic.trim())
+					.context("invalid BIP-39 mnemonic")?
+					.to_entropy(),
+			);
 			let chat_key = chat_key
 				.map(|value| -> Result<[u8; 65]> {
 					let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(&value))
@@ -746,9 +753,11 @@ async fn run_pgas_check(
 			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
-	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
-		.context("invalid BIP-39 mnemonic")?
-		.to_entropy();
+	let entropy = RootEntropy::new(
+		bip39::Mnemonic::parse(mnemonic.trim())
+			.context("invalid BIP-39 mnemonic")?
+			.to_entropy(),
+	);
 	let candidates = accounts::collection_candidates(&entropy, network.tld());
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
@@ -917,9 +926,11 @@ async fn run_alloc_check(
 	lookback: u32,
 	submit: bool,
 ) -> Result<()> {
-	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
-		.context("invalid BIP-39 mnemonic")?
-		.to_entropy();
+	let entropy = RootEntropy::new(
+		bip39::Mnemonic::parse(mnemonic.trim())
+			.context("invalid BIP-39 mnemonic")?
+			.to_entropy(),
+	);
 	let candidates = accounts::collection_candidates(&entropy, network.tld());
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
@@ -1754,7 +1765,8 @@ async fn start_signing_host(
 			reserved_username: None,
 		})
 		.await?;
-		match attestation::registered_lite_username(&network, &explicit_signer.entropy).await {
+		match attestation::registered_lite_username(&network, &explicit_signer.root_entropy()).await
+		{
 			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
 			Err(error) => {
 				tracing::warn!(error = %format!("{error:#}"), "explicit signer has no resolvable dotNS username")
@@ -4018,8 +4030,14 @@ async fn run_profile_command(session: &SigningHostSession, command: ProfileComma
 		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await?,
 		ProfileCommand::Upload(path) => {
 			let (signer, username) = profile_identity(session)?;
-			profile::upload(&session.runtime, &session.network, &signer.entropy, username, &path)
-				.await?
+			profile::upload(
+				&session.runtime,
+				&session.network,
+				&signer.root_entropy(),
+				username,
+				&path,
+			)
+			.await?
 		},
 	};
 	terminal_ui::output_info(output);
@@ -4232,10 +4250,7 @@ mod cli_tests {
 		session.network = session.network.with_dub("http://127.0.0.1:1/");
 		let mut resets = session.runtime_factory.connection_reset().unwrap();
 		let expected_key =
-			truapi::host_logic::product_account::derive_root_keypair_from_entropy(&[0; 16])
-				.unwrap()
-				.public
-				.to_bytes();
+			RootEntropy::new(vec![0; 16]).derive_root_keypair().unwrap().public.to_bytes();
 
 		switch_session(&mut session, "pending".to_string()).await?;
 

@@ -11,9 +11,9 @@ use super::purse::PurseId;
 use crate::{
 	gap_scan::KeyRange,
 	host_internal::extrinsic::Sr25519Signer,
-	host_logic::product_account::{
-		ProductAccountError, derive_hard_path_from_keypair, derive_hard_public_keys_for_range,
-		derive_root_keypair_from_entropy,
+	host_logic::{
+		product_account::{ProductAccountError, derive_hard_path_from_keypair},
+		root_entropy::RootEntropy,
 	},
 	installation::InstallationId,
 	runtime::AuthorityError,
@@ -211,54 +211,46 @@ impl<Exporter: ItemSecrets> ItemSecrets for Weak<Exporter> {
 	}
 }
 
-/// The public key at each of `slots`, derived from the root of `entropy`.
-pub fn item_keys_from_entropy(
-	entropy: &[u8],
-	slots: &[ItemSlot],
-) -> Result<Vec<ItemKey>, ProductAccountError> {
-	let root = derive_root_keypair_from_entropy(entropy)?;
-	let item_key = |slot: &ItemSlot| {
-		let keypair = item_keypair_for_slot(root.clone(), slot)?;
-		Ok(ItemKey(keypair.public.to_bytes()))
-	};
-	slots.iter().map(item_key).collect()
-}
+impl RootEntropy {
+	/// The public key at each of `slots`.
+	pub fn item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, ProductAccountError> {
+		let root = self.derive_root_keypair()?;
+		let item_key = |slot: &ItemSlot| {
+			let keypair = item_keypair_for_slot(root.clone(), slot)?;
+			Ok(ItemKey(keypair.public.to_bytes()))
+		};
+		slots.iter().map(item_key).collect()
+	}
 
-/// The public keys of `purse` allocated by `installation` at each of
-/// `indices`, derived from `entropy` with the shared prefix derived once.
-pub fn item_key_range_from_entropy(
-	entropy: &[u8],
-	purse: PurseId,
-	installation: InstallationId,
-	indices: Range<u32>,
-) -> Result<Vec<ItemKey>, ProductAccountError> {
-	let prefix = item_key_prefix(purse, installation);
-	let prefix = prefix.each_ref().map(String::as_str);
-	let keys = derive_hard_public_keys_for_range(entropy, &prefix, indices)?;
-	Ok(keys.into_iter().map(ItemKey).collect())
-}
+	/// The public keys of `purse` allocated by `installation` at each of
+	/// `indices`, with the shared prefix derived once.
+	pub fn item_key_range(
+		&self,
+		purse: PurseId,
+		installation: InstallationId,
+		indices: Range<u32>,
+	) -> Result<Vec<ItemKey>, ProductAccountError> {
+		let prefix = item_key_prefix(purse, installation);
+		let prefix = prefix.each_ref().map(String::as_str);
+		let keys = self.derive_hard_public_keys_for_range(&prefix, indices)?;
+		Ok(keys.into_iter().map(ItemKey).collect())
+	}
 
-/// A signer for the key at `slot`, derived from the root of `entropy`.
-pub fn item_signer_from_entropy(
-	entropy: &[u8],
-	slot: ItemSlot,
-) -> Result<Sr25519Signer, ProductAccountError> {
-	let root = derive_root_keypair_from_entropy(entropy)?;
-	let keypair = item_keypair_for_slot(root, &slot)?;
-	Ok(Sr25519Signer::from_keypair(&keypair))
-}
+	/// A signer for the key at `slot`.
+	pub fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, ProductAccountError> {
+		let keypair = item_keypair_for_slot(self.derive_root_keypair()?, &slot)?;
+		Ok(Sr25519Signer::from_keypair(&keypair))
+	}
 
-/// The secret at each of `slots`, derived from the root of `entropy`.
-pub fn item_secrets_from_entropy(
-	entropy: &[u8],
-	slots: &[ItemSlot],
-) -> Result<Vec<ItemSecret>, ProductAccountError> {
-	let root = derive_root_keypair_from_entropy(entropy)?;
-	let item_secret = |slot: &ItemSlot| {
-		let keypair = item_keypair_for_slot(root.clone(), slot)?;
-		Ok(ItemSecret(Zeroizing::new(keypair.secret.to_bytes())))
-	};
-	slots.iter().map(item_secret).collect()
+	/// The secret at each of `slots`.
+	pub fn item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, ProductAccountError> {
+		let root = self.derive_root_keypair()?;
+		let item_secret = |slot: &ItemSlot| {
+			let keypair = item_keypair_for_slot(root.clone(), slot)?;
+			Ok(ItemSecret(Zeroizing::new(keypair.secret.to_bytes())))
+		};
+		slots.iter().map(item_secret).collect()
+	}
 }
 
 /// The keypair at `slot` under `root`.

@@ -7,9 +7,7 @@ const NETWORK_SUFFIX: &str = "paseo";
 #[test]
 fn registration_params_have_expected_shapes_and_verify() {
 	let verifier = [0x11u8; 32];
-	let reg = build_lite_registration(
-		&ENTROPY,
-		NETWORK_SUFFIX,
+	let reg = build_lite_registration(&RootEntropy::new(ENTROPY.to_vec()), NETWORK_SUFFIX,
 		verifier,
 		"headlesstester",
 		None,
@@ -19,10 +17,10 @@ fn registration_params_have_expected_shapes_and_verify() {
 	.unwrap();
 	assert_eq!(
 		reg.candidate_public_key,
-		derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap().public.to_bytes(),
+		RootEntropy::new(ENTROPY.to_vec()).derive_identity_keypair(NETWORK_SUFFIX).unwrap().public.to_bytes(),
 		"registration uses the network's peopl.paseo identity account"
 	);
-	let lite_entropy = derive_lite_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX);
+	let lite_entropy = RootEntropy::new(ENTROPY.to_vec()).derive_lite_person_ring_vrf_entropy(NETWORK_SUFFIX);
 	assert_eq!(
 		reg.ring_vrf_key,
 		BandersnatchVrfVerifiable::member_from_secret(&BandersnatchVrfVerifiable::new_secret(
@@ -33,7 +31,7 @@ fn registration_params_have_expected_shapes_and_verify() {
 	assert_ne!(
 		reg.ring_vrf_key,
 		BandersnatchVrfVerifiable::member_from_secret(&BandersnatchVrfVerifiable::new_secret(
-			derive_lite_person_ring_vrf_entropy(&ENTROPY, "dot")
+			RootEntropy::new(ENTROPY.to_vec()).derive_lite_person_ring_vrf_entropy("dot")
 		)),
 		"a person registered on paseo-next-v2 is not the seed's .dot person"
 	);
@@ -42,7 +40,7 @@ fn registration_params_have_expected_shapes_and_verify() {
 	assert_eq!(reg.identifier_key[0], 0x00, "X25519 keypair type byte");
 	assert_eq!(
 		&reg.identifier_key[1..33],
-		&X25519PrivateKey::from(derive_identity_chat_private_key(&ENTROPY))
+		&X25519PrivateKey::from(RootEntropy::new(ENTROPY.to_vec()).derive_identity_chat_private_key())
 			.public_key()
 			.0,
 		"the advertised key must match the chat identity private key this host serves"
@@ -110,9 +108,7 @@ fn registration_params_have_expected_shapes_and_verify() {
 #[test]
 fn reserved_username_threads_into_both_signed_payloads() {
 	let verifier = [0x33u8; 32];
-	let reg = build_lite_registration(
-		&ENTROPY,
-		NETWORK_SUFFIX,
+	let reg = build_lite_registration(&RootEntropy::new(ENTROPY.to_vec()), NETWORK_SUFFIX,
 		verifier,
 		"headlesstester",
 		Some("reservedbase"),
@@ -182,9 +178,7 @@ fn consumer_registration_payload_matches_runtime_tuple_codec() {
 #[test]
 fn registration_is_deterministic_per_entropy_and_username() {
 	let verifier = [0x22u8; 32];
-	let first = build_lite_registration(
-		&ENTROPY,
-		NETWORK_SUFFIX,
+	let first = build_lite_registration(&RootEntropy::new(ENTROPY.to_vec()), NETWORK_SUFFIX,
 		verifier,
 		"aliceheadless",
 		None,
@@ -192,9 +186,7 @@ fn registration_is_deterministic_per_entropy_and_username() {
 		SigningContexts { people: None, asset_hub: None },
 	)
 	.unwrap();
-	let again = build_lite_registration(
-		&ENTROPY,
-		NETWORK_SUFFIX,
+	let again = build_lite_registration(&RootEntropy::new(ENTROPY.to_vec()), NETWORK_SUFFIX,
 		verifier,
 		"aliceheadless",
 		None,
@@ -215,9 +207,7 @@ fn signatures_in_context_verify_only_with_the_context() {
 	let verifier = [0x44u8; 32];
 	let people = [0x01u8; 32];
 	let asset_hub = [0x02u8; 32];
-	let reg = build_lite_registration(
-		&ENTROPY,
-		NETWORK_SUFFIX,
+	let reg = build_lite_registration(&RootEntropy::new(ENTROPY.to_vec()), NETWORK_SUFFIX,
 		verifier,
 		"headlesstester",
 		None,
