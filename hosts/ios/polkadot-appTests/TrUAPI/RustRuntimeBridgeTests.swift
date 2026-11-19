@@ -115,7 +115,8 @@ private func makeBridge(
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         themeManager: themeManager,
-        logger: Logger.shared
+        logger: Logger.shared,
+        coreEventSink: nil
     ), cardFace: cardFace)
 }
 
@@ -650,7 +651,8 @@ struct RustRuntimeBridgeTests {
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
             themeManager: MockThemeManager(),
-            logger: Logger.shared
+            logger: Logger.shared,
+            coreEventSink: nil
         ))
 
         #expect(pool.eventHandler == nil)

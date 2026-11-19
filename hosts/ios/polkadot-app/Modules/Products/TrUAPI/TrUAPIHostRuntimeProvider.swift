@@ -43,6 +43,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let deviceEncryptionKeys: DeviceEncryptionKeyManager
     private let logger: LoggerProtocol
     private let coreEventSink: HostLogSink?
 
@@ -65,6 +66,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
         logger: LoggerProtocol,
         coreEventSink: HostLogSink?
     ) {
@@ -74,6 +76,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
+        self.deviceEncryptionKeys = deviceEncryptionKeys
         self.logger = logger
         self.coreEventSink = coreEventSink
     }
@@ -133,11 +136,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
         let secret = try entropyManager.fetchRootEntropy()
         let networkSuffix = try tldProvider.currentTldOrError()
+        let handedOverKey = try deviceEncryptionKeys.keyToHandOver()
         let runtimeConfig = try Self.makeRuntimeConfig(
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
-            databaseDirectory: Self.coreDatabaseDirectory()
+            databaseDirectory: Self.coreDatabaseDirectory(),
+            deviceEncryptionKey: handedOverKey
         )
 
         let chainConnections = TrUAPIV2SpecConnectionPool(
@@ -160,6 +165,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
 
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        if handedOverKey != nil {
+            deviceEncryptionKeys.forgetHandedOverKey()
+        }
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
@@ -200,7 +208,8 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
-        databaseDirectory: String
+        databaseDirectory: String,
+        deviceEncryptionKey: Data?
     ) throws -> HostRuntimeConfig {
         let bundle = Bundle.main
         let version = bundle.appVersion.map { version in
@@ -216,7 +225,8 @@ extension TrUAPIHostRuntimeProvider {
             databaseDirectory: databaseDirectory,
             pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            localSessionLiteUsername: liteUsername,
+            deviceEncryptionKey: deviceEncryptionKey
         )
     }
 

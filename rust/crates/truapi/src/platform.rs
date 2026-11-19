@@ -1020,12 +1020,19 @@ pub trait CoreAdmin: Send + Sync {
 	/// [`Self::get_session_chat_identity_key`].
 	async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, GenericError>;
 
-	/// Read this device's X25519 encryption secret, for hosts that run device
-	/// sync against the peer's [`SessionUiInfo::device_enc_public_key`].
+	/// Read this device's X25519 encryption secret, for hosts that encrypt
+	/// their own chat and device-sync traffic.
 	///
-	/// Generated and persisted on first read, so the returned key is stable for
-	/// the install and matches the public key peers were told to address.
-	async fn get_device_encryption_key(&self) -> Result<Bytes32, GenericError>;
+	/// The key behind [`SessionUiInfo::device_enc_public_key`]: decrypting with
+	/// anything else misses what contacts send. The account holder decides
+	/// which key that is. A signing host serves its install-wide key,
+	/// generated and persisted on first read. A pairing host serves the key
+	/// the wallet registered for it at pairing, `None` before pairing and
+	/// rotated per login like [`Self::get_device_statement_key`].
+	///
+	/// Deliberately not on [`SessionUiInfo`], for the reason given on
+	/// [`Self::get_session_chat_identity_key`].
+	async fn get_device_encryption_key(&self) -> Result<Option<Bytes32>, GenericError>;
 
 	/// Read `product_id`'s hard-subtree public key, so a host can name the
 	/// account a review will sign with instead of showing a bare derivation
@@ -1590,17 +1597,25 @@ pub struct SessionUiInfo {
 	pub chat_public_key: Option<Bytes32>,
 	/// X25519 public key of the wallet device that answered pairing. Hosts
 	/// running their own encrypted device-sync channel key it against this.
-	pub device_enc_public_key: Option<Bytes32>,
+	/// `None` on a signing host, which has no paired wallet device.
+	pub peer_device_enc_public_key: Option<Bytes32>,
 	/// Statement-store account id the paired wallet signs every session-channel
 	/// statement with. Whether it is scoped to the wallet device or to the
 	/// wallet identity is the wallet's choice, so hosts must not treat it as a
-	/// device discriminator; use [`Self::device_enc_public_key`] for that.
+	/// device discriminator; use [`Self::peer_device_enc_public_key`] for that.
 	pub peer_statement_account_id: Option<Bytes32>,
 	/// Statement-store account id this device advertises in the pairing
 	/// proposal; the paired wallet registers the statement-store allowance for
 	/// it, and peers address this host on topics derived from it. Rotated per
 	/// login. Secret at [`CoreAdmin::get_device_statement_key`].
 	pub device_statement_account_id: Option<Bytes32>,
+	/// X25519 public key of this device, which the user's other devices and
+	/// contacts encrypt to. A signing host's is its install-wide key; a pairing
+	/// host's is the key it advertised next to
+	/// [`Self::device_statement_account_id`], which the wallet registered and
+	/// announces, rotated per login. Secret at
+	/// [`CoreAdmin::get_device_encryption_key`].
+	pub device_enc_public_key: Option<Bytes32>,
 	/// Short username from the dotNS identity record on Asset Hub.
 	pub lite_username: Option<String>,
 	/// Fully qualified username from the dotNS identity record on Asset Hub.
@@ -2388,10 +2403,26 @@ pub enum ExpandedCardFaceOutcome {
 	Applied,
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is moving the card, so the request had no effect.
+	/// The user is moving or turning the card, so the request had no effect.
 	UserMoving,
 	/// The host draws no card face.
 	Unsupported,
+}
+
+/// What the host did with a request to turn the expanded card.
+#[derive(Debug, Clone, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardTurnOutcome {
+	/// The requested side is now up, including when it already was.
+	Applied,
+	/// The Widget is not shown under its card right now.
+	NotPresented,
+	/// The user is moving or turning the card, so the request had no effect.
+	UserMoving,
+	/// The host cannot turn cards at all.
+	Unsupported,
+	/// The card has no back to show right now.
+	NoBack,
 }
 
 /// Host control of the card face drawn under an opened card's Widget.
@@ -2406,6 +2437,13 @@ pub trait ExpandedCardHost: Send + Sync {
 		&self,
 		shown: bool,
 	) -> Result<ExpandedCardFaceOutcome, GenericError>;
+
+	/// Turn the card above the calling Widget so its back (`true`) or its
+	/// front (`false`) is up.
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<ExpandedCardTurnOutcome, GenericError>;
 }
 
 /// Host store for a product's pending operations, which the host uses to keep
