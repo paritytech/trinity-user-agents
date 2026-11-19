@@ -245,6 +245,18 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Runtime-wide, like `durableWorkChanged`. Defaults to a rejection.
     func encryptedStorageDelete(key: Data) async throws
 
+    /// Remove every value `productId` keeps in product storage. Idempotent.
+    /// Runtime-wide, like `durableWorkChanged`: the core calls it from
+    /// `TrUAPIHostRuntime.clearProductState`, when the product may have no
+    /// execution and so no bridge of its own. Every key the product owns
+    /// starts with
+    /// `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`, so a
+    /// shared store removes keys with that prefix and a store kept per
+    /// product drops that product's store. Defaults to a rejection, so
+    /// clearing the product's state fails on a host that has not implemented
+    /// it.
+    func clearProductStorage(productId: ProductId) throws
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -335,9 +347,11 @@ public protocol GameHostBridge: AnyObject, Sendable {
 /// and not to any one product. A runtime without one answers `contacts.pick`
 /// with `Unsupported`.
 ///
-/// Nothing here reaches a product, and the list never reaches the core: it
-/// asks only about the handles a transaction names, and the picker returns the
-/// one person the user chose. Omit the contacts the user has blocked, from both.
+/// No account reaches a product, and the accounts on the list never reach the
+/// core: it asks only about the handles a transaction names, and the picker
+/// returns the one person the user chose. Usernames reach the core only through
+/// ``contactUsernames(productId:)``, for the game product. Omit the
+/// contacts the user has blocked, from all three.
 public protocol ContactsHostBridge: AnyObject, Sendable {
     /// Resolve `lookup.handles` to contacts: one entry per handle, in order,
     /// `nil` where none matches. A contact's handle is BLAKE2b-256 keyed with
@@ -349,6 +363,18 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// did. With no contacts, answer `.noContacts` instead of drawing an empty
     /// overlay.
     func pickContact(productId: ProductId) async throws -> HostContactPick
+
+    /// List the dotNS usernames of the unblocked contacts the picker would
+    /// offer, each the bare label with no top-level domain. The core asks only
+    /// for the game product, so `productId` is not a filter. Called inline,
+    /// so answer from what is already in hand. Defaults to `.unsupported`.
+    func contactUsernames(productId: ProductId) throws -> HostContactUsernames
+}
+
+public extension ContactsHostBridge {
+    func contactUsernames(productId _: ProductId) throws -> HostContactUsernames {
+        .unsupported
+    }
 }
 
 /// Host-implemented top-up engine: claims a source's funds into the user's
@@ -452,6 +478,9 @@ public extension HostBridge {
     func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
+    func clearProductStorage(productId _: ProductId) throws {
+        throw HostLocalStorageReadError.Unknown(reason: "this host does not clear product storage")
+    }
     func currentInstallation() async throws -> Data {
         throw HostRejection.Rejected(reason: "this host keeps no installation id")
     }
@@ -583,6 +612,10 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
 
     func pickContact(productId: ProductId) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
+    }
+
+    func contactUsernames(productId: ProductId) throws -> HostContactUsernames {
+        try withHostRejection { try bridge.contactUsernames(productId: productId) }
     }
 }
 
@@ -906,6 +939,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func clearProductStorage(productId: ProductId) throws {
+        try withStorageError {
+            try bridge.clearProductStorage(productId: productId)
+        }
+    }
+
     func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         try await withHostRejection {
             try await bridge.beginOperation(productId: productId, label: label)
@@ -1117,6 +1156,16 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// host may stop the worker. Releasing with none held is a no-op.
     public func releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId: productId)
+    }
+
+    /// Forget one product: revoke its grants and Allow once answers, then
+    /// remove its values from product storage through
+    /// ``HostBridge/clearProductStorage(productId:)`` on the bridge this
+    /// runtime was built with. The wallet session and other products are kept.
+    /// Stop the product's executions first: a value a running execution
+    /// writes after the clear is kept.
+    public func clearProductState(productId: ProductId) async throws {
+        try await inner.clearProductState(productId: productId)
     }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is
