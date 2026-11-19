@@ -89,12 +89,12 @@ pub mod latest {
 		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
 		HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource, MaterialFailure,
 		MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque,
-		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem,
-		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
-		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
-		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseChequeRecord,
+		NftPurseClearedItem, NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey,
+		NftPurseInfoPage, NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel,
+		NftPursePurse, NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter,
+		PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
 		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
 		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
 		RemoteStatementStoreSubscribeRequest, RendererNode, ResourceAllocationError, RingLocation,
@@ -421,6 +421,15 @@ pub mod latest {
 	/// NFT cheque revoke failure.
 	pub type HostNftPurseRevokeChequeError =
 		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeError>;
+	/// Request to list the NFT cheques a product created.
+	pub type HostNftPurseListChequesRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListChequesRequest>;
+	/// The NFT cheques a product created.
+	pub type HostNftPurseListChequesResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseListChequesResponse>;
+	/// NFT cheque listing failure.
+	pub type HostNftPurseListChequesError =
+		LatestOf<versioned::nft_purse::HostNftPurseListChequesError>;
 	/// NFT cheque refund request.
 	pub type HostNftPurseRefundRequest = LatestOf<versioned::nft_purse::HostNftPurseRefundRequest>;
 	/// NFT cheque refund response.
@@ -917,9 +926,8 @@ cfg_select! {
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
-			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
-			PairingHostRuntime, ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
-			SigningHostRuntime,
+			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
+			ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
 		};
 		pub use host_internal::{
 			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
@@ -936,9 +944,9 @@ cfg_select! {
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use materials::{
-			MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
-			ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
-			UniformRole,
+			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
+			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform,
+			UniformKind, UniformRole,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
@@ -959,8 +967,8 @@ cfg_select! {
 		};
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
-			PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, StatementRenewalTarget,
+			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
+			ResumePairingError, SigningHost, StatementRenewalTarget,
 			contacts::contact_handle,
 			login_failure::reports_exhausted_period,
 			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},

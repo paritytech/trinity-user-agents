@@ -243,6 +243,21 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 			.await
 			.map_err(v01::GenericError::from)
 	}
+
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, v01::GenericError> {
+		self.callbacks.on_core_log(
+			markers::NATIVE_SET_EXPANDED_CARD_BACK_SHOWN.target.to_string(),
+			format!("{shown}"),
+		);
+
+		self.callbacks
+			.set_expanded_card_back_shown(shown)
+			.await
+			.map_err(v01::GenericError::from)
+	}
 }
 
 #[async_trait::async_trait]
@@ -427,6 +442,9 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 		if let Err(err) = self.callbacks.chain_send(self.id, request) {
 			self.callbacks
 				.on_core_log(markers::NATIVE_CHAIN_SEND_FAILED.target.to_string(), err.to_string());
+			// The request is lost, so end the response stream and let the
+			// client fail what it is still waiting on.
+			self.close();
 		}
 	}
 

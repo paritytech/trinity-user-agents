@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
@@ -64,6 +65,7 @@ import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.DbStatus
+import uniffi.truapi.CoreAttribute
 import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
@@ -74,16 +76,20 @@ import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
 import uniffi.truapi.PublicProfile
 import uniffi.truapi.PublicProfileException
+import uniffi.truapi.PublicProfileResolutionOptions
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
+import uniffi.truapi.NativePublicProfileObserver
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.NativeSubscription
 import uniffi.truapi.PocketAddException
 import uniffi.truapi.PocketCardRemoval
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
@@ -189,6 +195,16 @@ interface HostBridge {
     fun onCoreLog(marker: String, detail: String) {}
 
     /**
+     * Structured lifecycle fact. Marker is the same stable slug [onCoreLog]
+     * carries, and each attribute is a key the core names with a label, a
+     * count or a condition under it. Hand these to the reporter as attributes,
+     * so a marker can be grouped and filtered by what it carries. Every
+     * marker here is listed in the table `coreMarkers()` returns, and its class
+     * decides what the host may do with it, exactly as for a log line.
+     */
+    fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {}
+
+    /**
      * Open a URL in the system browser, suspending for any approval on the main thread.
      */
     @Throws(HostNavigateToException::class)
@@ -247,6 +263,18 @@ interface HostBridge {
      */
     suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         ExpandedCardFaceOutcome.UNSUPPORTED
+
+    /**
+     * Turn this execution's expanded card so its back (`true`) or its front
+     * (`false`) is up. Answers [ExpandedCardTurnOutcome.NO_BACK] when the card
+     * has no back to show, and the face call's outcomes otherwise. Returns
+     * without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardTurnOutcome.UNSUPPORTED], so an app that cannot
+     * turn cards says so.
+     */
+    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+        ExpandedCardTurnOutcome.UNSUPPORTED
 
     /**
      * Prompt for a remote permission bundle [product] requested on the main
@@ -546,6 +574,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+        runCatching { bridge.onCoreEvent(marker, attributes) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         runCatching { bridge.requestWorkerTransition(productId, transition) }
     }
@@ -600,6 +633,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         withHostRejection { bridge.setExpandedCardFaceShown(shown) }
+
+    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+        withHostRejection { bridge.setExpandedCardBackShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -1188,10 +1224,36 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
 
-    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
-    @Throws(PublicProfileException::class)
-    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
-        inner.resolvePublicProfile(username, force)
+    /**
+     * Profile metadata using [options] to force a lookup or suppress stale cached values.
+     * Emits stored metadata when eligible, then a resolved value only when it differs or no
+     * stored value was emitted. At most two values precede completion or a
+     * [PublicProfileException]. Cancelling collection stops the core observation.
+     */
+    fun observePublicProfile(username: String, options: PublicProfileResolutionOptions): Flow<PublicProfile> =
+        callbackFlow {
+            val subscription = inner.observePublicProfile(
+                username,
+                options,
+                object : NativePublicProfileObserver {
+                    override fun onProfile(profile: PublicProfile) {
+                        runCatching { trySend(profile) }
+                    }
+
+                    override fun onComplete() {
+                        runCatching { close() }
+                    }
+
+                    override fun onError(error: PublicProfileException) {
+                        runCatching { close(error) }
+                    }
+                },
+            )
+            awaitClose {
+                subscription.cancel()
+                subscription.close()
+            }
+        }.buffer(2)
 
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and
@@ -1245,10 +1307,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
         inner.removePocketCard(productId, cardId)
 
-    /** The newest face kept for a card, if one is. */
+    /** The newest face kept for one side of a card, if one is. */
     @Throws(NativeCoreDatabaseException::class)
-    suspend fun pocketCardFace(productId: ProductId, cardId: String): RendererNode? =
-        inner.pocketCardFace(productId, cardId)
+    suspend fun pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = PocketCardSide.FRONT,
+    ): RendererNode? = inner.pocketCardFace(productId, cardId, side)
 
     /**
      * Decide durable transactions from the chain until none is live, then
@@ -1264,6 +1329,10 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
+
+    /** This device's 32-byte X25519 encryption secret, the key behind `SessionUiInfo.deviceEncPublicKey`. */
+    @Throws(HostRejection::class)
+    fun deviceEncryptionKey(): ByteArray = inner.deviceEncryptionKey()
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {

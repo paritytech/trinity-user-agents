@@ -28,6 +28,8 @@ fn profile_responder(record: &ProfileRecord) -> crate::test_support::RpcResponde
 
 #[tokio::test]
 async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
+	use futures::TryStreamExt;
+
 	for (expires_in, force) in [(0, false), (RECORD_TTL_SECS, true)] {
 		let record = ProfileRecord {
 			entries: vec![WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
@@ -48,11 +50,23 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 			.unwrap();
 		assert!(services.install_core_db(db.clone()).is_some());
 
-		let profile = services.public_profiles.resolve("alice.01", force).await.unwrap();
+		let profiles: Vec<_> = services
+			.public_profiles
+			.clone()
+			.observe(
+				"alice.01".to_owned(),
+				PublicProfileResolutionOptions { force_fresh: force, skip_stale: false },
+			)
+			.try_collect()
+			.await
+			.unwrap();
+		// The renewal can land in a later second than `now`, and a record more than
+		// one TTL ahead of the clock reads as stale, so freshness is checked after it.
+		let resolved_at = current_unix_secs();
 		let (cached, expires_at) = db
 			.write(move |tx| {
 				let cached = dao::stored_record(tx, "alice.01")?
-					.filter(|cached| cached.is_fresh(now))
+					.filter(|cached| cached.is_fresh(resolved_at))
 					.map(|cached| cached.record);
 				let expires_at: u64 = tx.query_row(
 					"SELECT expires_at FROM public_profiles WHERE username = 'alice.01'",
@@ -65,8 +79,8 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 			.unwrap();
 
 		assert_eq!(
-			(profile, cached, platform.chain_connects.lock().unwrap().clone()),
-			(PublicProfile { avatar: record.avatar() }, Some(record), vec![[3; 32]])
+			(profiles, cached, platform.chain_connects.lock().unwrap().clone()),
+			(vec![PublicProfile { avatar: record.avatar() }], Some(record), vec![[3; 32]])
 		);
 		assert!(
 			(now + RECORD_TTL_SECS..=current_unix_secs() + RECORD_TTL_SECS).contains(&expires_at)
@@ -125,15 +139,15 @@ async fn cached_profiles_do_not_wait_for_the_database_writer() {
 		.unwrap();
 	});
 	started.await.unwrap();
-	let cached = tokio::time::timeout(
-		core::time::Duration::from_secs(1),
-		profiles.resolve("alice.01", false),
-	)
-	.await;
+	let mut profiles = profiles.observe(
+		"alice.01".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+	);
+	let cached = tokio::time::timeout(core::time::Duration::from_secs(1), profiles.next()).await;
 	release.send(()).unwrap();
 	writer.await.unwrap();
 
-	assert_eq!(cached.expect("cached reads use the reader pool").unwrap(), expected);
+	assert_eq!(cached.expect("cached reads use the reader pool").unwrap().unwrap(), expected);
 }
 
 #[tokio::test]

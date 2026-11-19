@@ -42,6 +42,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.icons.StartNewChat
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.rememberSearchRevealState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.dockletBandPx
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.visibleDockletBandPx
 import kotlinx.collections.immutable.persistentListOf
 
 @Composable
@@ -101,7 +103,10 @@ private fun ChatListScreenInternal(
                     .windowInsetsPadding(barInsets)
                     .padding(end = PolkadotTheme.spacings.large, bottom = newChatButtonBottomOffset)
                     .offset {
-                        IntOffset(0, newChatButtonOffsetYPx(barInsets.getBottom(this), navigationBars.getBottom(this), barHiddenFraction.value))
+                        val barInsetBottom = barInsets.getBottom(this)
+                        val navigationBarsBottom = navigationBars.getBottom(this)
+                        val visibleBand = visibleDockletBandPx(barInsetBottom, navigationBarsBottom, barHiddenFraction.value)
+                        IntOffset(0, dockletBandPx(barInsetBottom, navigationBarsBottom) - visibleBand)
                     }
                     .onSizeChanged { newChatButtonHeight = with(density) { it.height.toDp() } }
                     .testTag(ChatTestTags.NEW_CHAT_BUTTON),
