@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use parity_scale_codec::{Decode, Encode};
 
 use truapi::{
-	FrameSink, PairingHostRuntime,
+	FrameSink, HostRuntime, PairingHost,
 	frame::{Payload, ProtocolMessage, request_ids},
 	platform::{
 		DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
@@ -58,7 +58,8 @@ impl PermissionStatusHost for FixedStatus {
 /// is told. `status` is installed on the host runtime when present.
 fn request_camera(status: Option<Arc<dyn PermissionStatusHost>>) -> bool {
 	let (host_config, product) = test_runtime_config();
-	let runtime = PairingHostRuntime::new(Arc::new(WireShapePlatform), host_config, test_spawner());
+	let runtime =
+		HostRuntime::<PairingHost>::new(Arc::new(WireShapePlatform), host_config, test_spawner());
 	if let Some(status) = status {
 		assert!(
 			runtime.set_permission_status_host(status),
@@ -139,7 +140,8 @@ fn an_os_status_of_not_applicable_leaves_the_prompt_deciding() {
 #[test]
 fn a_status_read_and_a_request_agree_once_the_os_refuses() {
 	let (host_config, product) = test_runtime_config();
-	let runtime = PairingHostRuntime::new(Arc::new(WireShapePlatform), host_config, test_spawner());
+	let runtime =
+		HostRuntime::<PairingHost>::new(Arc::new(WireShapePlatform), host_config, test_spawner());
 	assert!(
 		runtime.set_permission_status_host(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))
 	);
@@ -158,7 +160,8 @@ fn a_status_read_and_a_request_agree_once_the_os_refuses() {
 #[test]
 fn a_status_read_of_a_remote_permission_ignores_the_os_gate() {
 	let (host_config, product) = test_runtime_config();
-	let runtime = PairingHostRuntime::new(Arc::new(WireShapePlatform), host_config, test_spawner());
+	let runtime =
+		HostRuntime::<PairingHost>::new(Arc::new(WireShapePlatform), host_config, test_spawner());
 	assert!(
 		runtime.set_permission_status_host(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))
 	);

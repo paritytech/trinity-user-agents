@@ -22,7 +22,7 @@ fn approving_platform() -> Arc<StubPlatform> {
 fn activated(
 	unchecked: bool,
 	withheld: &[&str],
-) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	let (services, activation) = signing_runtime_with_platform(approving_platform());
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
