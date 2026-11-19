@@ -1,0 +1,53 @@
+#!/bin/sh
+root="$(git rev-parse --show-toplevel)"
+
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    exit 0
+fi
+
+if [ -z "$(git diff --cached --name-only --diff-filter=ACMR -- '*.swift')" ]; then
+    exit 0
+fi
+
+staged="$(mktemp -d)"
+trap 'rm -rf "$staged"' EXIT
+
+git diff --cached --name-only --diff-filter=ACMR -z -- '*.swift' \
+    | xargs -0 git checkout-index --prefix="$staged/tree/" --
+
+git -c core.quotePath=false diff --cached -U0 --inter-hunk-context=0 --no-color --no-ext-diff \
+    --src-prefix=a/ --dst-prefix=b/ --diff-filter=ACMR -- '*.swift' > "$staged/added.diff"
+
+git diff --cached --name-only --diff-filter=ACMR -z -- '*.swift' \
+    | xargs -0 python3 "$root/Runscripts/check_hardcoded_strings.py" "$staged/tree" \
+        > "$staged/hits.txt" 2> "$staged/errors.txt"
+
+if [ -s "$staged/errors.txt" ]; then
+    cat "$staged/errors.txt"
+    echo "Commit blocked: the hardcoded string check failed to run."
+    exit 1
+fi
+
+hits="$(awk -v root="$staged/tree/" '
+    FNR == NR {
+        if (/^\+\+\+ b\//) { file = substr($0, 7); sub(/\t$/, "", file) }
+        if (/^@@/) {
+            split($3, range, ",")
+            start = substr(range[1], 2)
+            count = (range[2] == "") ? 1 : range[2]
+            for (line = start; line < start + count; line++) added[file ":" line] = 1
+        }
+        next
+    }
+    {
+        location = substr($0, length(root) + 1)
+        split(location, parts, ":")
+        if ((parts[1] ":" parts[2]) in added) print location
+    }
+' "$staged/added.diff" "$staged/hits.txt")"
+
+if [ -n "$hits" ]; then
+    echo "$hits"
+    echo "Commit blocked: localize the strings above, or use Text(verbatim:) / // hardcoded-string:ignore for text that must not be localized."
+    exit 1
+fi

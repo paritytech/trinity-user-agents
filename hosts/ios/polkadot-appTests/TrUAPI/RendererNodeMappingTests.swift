@@ -152,6 +152,7 @@ struct RendererNodeMappingTests {
         #expect(props.labelStyle.font == PolkadotUI.LabelStyle.caption12Regular().font)
     }
 
+    /// A box that names no alignment places its children at the top start.
     @Test func boxNodeMapsItsChildren() {
         let node = RendererNode.box(
             modifiers: [],
@@ -161,11 +162,12 @@ struct RendererNodeMappingTests {
 
         let mapped = node.toWidgetNode(resolver: resolver)
 
-        guard case let .box(_, children) = mapped?.content else {
+        guard case let .box(props, children) = mapped?.content else {
             Issue.record("expected a box node, got \(String(describing: mapped?.content))")
             return
         }
         #expect(children.count == 2)
+        #expect(props.alignment == .topLeading)
     }
 
     /// A `String` run is absorbed as its parent's text and `Nil` draws nothing,
@@ -348,24 +350,21 @@ struct RendererNodeMappingTests {
         #expect(radius == 0)
     }
 
-    /// The effect is a shader drawn over whatever is inside it, so the node has
-    /// to survive the mapping with its children under it: no node leaves the
-    /// shader unapplied, no children leave it nothing to draw over.
-    @Test func anEffectKeepsItsChildrenAndItsOwnNode() throws {
-        let effect = RendererNode.effect(
-            props: EffectProps(effect: .rainbow),
+    @Test func materialsDrawTheirChildrenPlain() throws {
+        let materials = RendererNode.materials(
+            props: MaterialsProps(layers: []),
             children: [
                 .text(modifiers: [], props: TextProps(style: nil, color: nil), children: [.string(text: "kept")])
             ]
         )
 
-        guard case let .effect(props, children) = try #require(effect.toWidgetNode(resolver: resolver)).content,
+        guard case let .box(props, children) = try #require(materials.toWidgetNode(resolver: resolver)).content,
               case let .text(textProps) = children.first?.content
         else {
-            Issue.record("an effect should keep both its own node and its children")
+            Issue.record("a materials node should draw as a box around its children")
             return
         }
-        #expect(props.effect == .rainbow)
+        #expect(props.alignment == .topLeading)
         #expect(textProps.text == "kept")
     }
 }

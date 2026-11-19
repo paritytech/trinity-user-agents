@@ -10,6 +10,7 @@ import {
   ConnectionResetError,
   createWebSocketProviderFactory,
   decodeWireMessage,
+  type MethodIds,
   type WebSocketWireProvider,
 } from "./transport.js";
 
@@ -40,7 +41,10 @@ interface Connection {
 // visible page redials after these pauses, then waits for its next call.
 const VISIBLE_RETRY_DELAYS_MS = [250, 1_000, 4_000];
 
-/** Creates a client whose interrupted operations fail and whose later calls reconnect. */
+/**
+ * Creates a client that fails the operations a lost connection carried and
+ * sends the ones still waiting on its replacement.
+ */
 export function createHostConnection(
   url: string,
   createProvider: (
@@ -56,6 +60,7 @@ export function createHostConnection(
   let legacyPort: MessagePort | undefined;
   let status: ConnectionStatus = "disconnected";
   let retries = 0;
+  let nextDial: Promise<void> | undefined;
   const listeners = new Set<(status: ConnectionStatus) => void>();
 
   function setStatus(next: ConnectionStatus): void {
@@ -84,13 +89,24 @@ export function createHostConnection(
     }
     connection.provider.dispose();
     if (!current) setStatus("disconnected");
+    nextDial = undefined;
     if (stopped) return;
+    console.warn(`[truapi] host link lost: ${describeCause(cause)}`);
     const delay = VISIBLE_RETRY_DELAYS_MS[retries];
-    if (connection.verified) setTimeout(activate, 0);
+    if (connection.verified) scheduleDial(0);
     else if (delay !== undefined && page?.visibilityState === "visible") {
       retries += 1;
-      setTimeout(activate, delay);
+      scheduleDial(delay);
     }
+  }
+
+  function scheduleDial(delay: number): void {
+    nextDial = new Promise((resolve) =>
+      setTimeout(() => {
+        activate();
+        resolve();
+      }, delay),
+    );
   }
 
   function open(): Connection {
@@ -164,11 +180,28 @@ export function createHostConnection(
     if (current) retire(current);
   }
 
+  function prepare(ids: MethodIds): Promise<void> {
+    const connection = open();
+    if (
+      ids.trait === SYSTEM_HANDSHAKE.trait &&
+      ids.method === SYSTEM_HANDSHAKE.method
+    )
+      return connection.provider.opened;
+    return ready(connection).catch((error) => {
+      if (nextDial) return nextDial.then(() => prepare(ids));
+      throw error instanceof ConnectionResetError
+        ? error
+        : new ConnectionResetError({ cause: error });
+    });
+  }
+
   const transport = createTransport(
     {
       postMessage(frame) {
         const connection = current;
-        if (!connection) return;
+        // A call made ready on a connection that retired before its frame was
+        // written has nowhere to go, so it fails now instead of at its deadline.
+        if (!connection) return reset?.(new ConnectionResetError());
         try {
           connection.provider.postMessage(frame);
         } catch (error) {
@@ -194,13 +227,7 @@ export function createHostConnection(
       onProtocolError(error) {
         if (current) retire(current, error);
       },
-      prepare(ids) {
-        const connection = open();
-        return ids.trait === SYSTEM_HANDSHAKE.trait &&
-          ids.method === SYSTEM_HANDSHAKE.method
-          ? connection.provider.opened
-          : ready(connection);
-      },
+      prepare,
     },
   );
   const client = createClient(transport);
@@ -267,4 +294,14 @@ export function createHostConnection(
       }
     },
   };
+}
+
+// The iOS host prints each console argument as JSON, which shows an Error as {}.
+function describeCause(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  try {
+    return JSON.stringify(cause);
+  } catch {
+    return String(cause);
+  }
 }

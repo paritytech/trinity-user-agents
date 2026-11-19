@@ -16,7 +16,7 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     }
 
     func showBackupFlow(from view: (any SettingsViewProtocol)?) {
-        guard let backup = BackupViewFactory.createView() else {
+        guard let backup = BackupViewFactory.createView(serviceCoordinator: serviceCoordinator) else {
             return
         }
 
@@ -51,7 +51,9 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     }
 
     func showBlockedUsers(from view: (any SettingsViewProtocol)?) {
-        guard let blockedUsersView = BlockedUsersViewFactory.createView() else {
+        guard let blockedUsersView = BlockedUsersViewFactory.createView(
+            allowanceCleanupService: serviceCoordinator.allowanceManagerFacade.cleanupService
+        ) else {
             return
         }
 
@@ -78,10 +80,7 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     ) {
         guard let view else { return }
 
-        let controller = ThemeSelectionViewFactory.createView { [weak view] in
-            view?.controller.navigationController?.popViewController(animated: true)
-            onFinish()
-        }
+        let controller = ThemeSelectionViewFactory.createView(onComplete: onFinish)
 
         controller.hidesBottomBarWhenPushed = true
 

@@ -15,11 +15,11 @@ import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_balances_api.data.updaters.CandidateBalancesUpdateSystem
 import io.paritytech.polkadotapp.feature_balances_api.data.updaters.WalletBalancesUpdateSystem
 import io.paritytech.polkadotapp.feature_coinage_api.data.updaters.CoinageUpdateSystem
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.updaters.DotNsGatewayUpdateSystem
 import io.paritytech.polkadotapp.feature_people_api.data.updaters.PeopleUpdateSystem
 import io.paritytech.polkadotapp.feature_prices_api.domain.SyncPricesUseCase
 import io.paritytech.polkadotapp.feature_splash_api.domain.DevResetCoordinator
-import io.paritytech.polkadotapp.feature_usernames_api.data.UsernameUpdateSystem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import timber.log.Timber
@@ -39,6 +39,8 @@ interface RootInteractor {
     fun shouldShowNetworkStatusTooltip(): Boolean
 
     fun markNetworkStatusTooltipShown()
+
+    fun observePaymentsSetupPending(): Flow<Boolean>
 }
 
 class RealRootInteractor @Inject constructor(
@@ -46,7 +48,6 @@ class RealRootInteractor @Inject constructor(
     private val candidateBalancesUpdateSystem: CandidateBalancesUpdateSystem,
     private val syncPricesUseCase: SyncPricesUseCase,
     private val peopleUpdateSystem: PeopleUpdateSystem,
-    private val usernameUpdateSystem: UsernameUpdateSystem,
     private val dotNsGatewayUpdateSystem: DotNsGatewayUpdateSystem,
     private val coinageUpdateSystem: CoinageUpdateSystem,
     private val chainRegistry: ChainRegistry,
@@ -54,12 +55,12 @@ class RealRootInteractor @Inject constructor(
     private val verifyUsernameOnChainUseCase: VerifyUsernameOnChainUseCase,
     private val devResetCoordinator: DevResetCoordinator,
     private val tooltipStorage: TooltipStorage,
+    private val coinageAccountBackupObserver: CoinageAccountBackupObserver,
 ) : RootInteractor {
     override fun startUpdateSystems(): Flow<*> {
         val updateSystems = buildList {
             add(walletBalancesUpdateSystem.updateSystem.start())
             add(candidateBalancesUpdateSystem.updateSystem.start())
-            add(usernameUpdateSystem.updateSystem.start())
             add(dotNsGatewayUpdateSystem.updateSystem.start())
             add(coinageUpdateSystem.updateSystem.start())
 
@@ -100,6 +101,8 @@ class RealRootInteractor @Inject constructor(
     override fun markNetworkStatusTooltipShown() {
         tooltipStorage.markShown(OneShotTooltip.NetworkStatus)
     }
+
+    override fun observePaymentsSetupPending(): Flow<Boolean> = coinageAccountBackupObserver.subscribeAllocationWaiting()
 
     private suspend fun printAccountAddress(account: MetaAccount) {
         val address = account.addressIn(chainRegistry.peopleChain())

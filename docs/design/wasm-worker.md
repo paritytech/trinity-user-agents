@@ -18,8 +18,8 @@ The host serves a worker with the same per-product object an iframe product talk
 
 ```rust
 // The worker acts as `chess.dot`, running as its Worker executable.
-let product = ProductContext::new_with_execution("chess.dot".to_string(), ProductExecutionKind::Worker)?;
-// `runtime` is the host's `SigningHostRuntime` or `PairingHostRuntime`.
+let product = ProductContext::new_with_execution("chess.dot".parse()?, ExecutableKind::Worker);
+// `runtime` is the host's `HostRuntime<SigningHost>` or `HostRuntime<PairingHost>`.
 let host = runtime.product_admin(product).product_runtime().clone();
 // Maps each import name to a typed call on `host`.
 let env = WasmEnv::for_product(host);
@@ -33,7 +33,7 @@ A call goes through three steps, joined by the import name:
 1. **Building the env.** `WasmEnv::for_product(host)` calls one `link_<trait>` per service trait. `#[wasm_env]` generates each of them, with one line per method naming the trait method to call:
 
    ```rust
-   impl<H: Account + 'static> WasmEnv<H> {
+   impl<H: Account + ?Sized + 'static> WasmEnv<H> {
        pub fn link_account(&mut self) {
            // `host` is the product's `ProductRuntimeHost`, `cx` carries the call id and its
            // cancellation token, `request` is the decoded typed request.

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.domain.model
 
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.CoinageBalanceConversionContext
+import io.paritytech.polkadotapp.feature_coinage_api.domain.common.balance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinRecyclingState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageBalance
@@ -35,6 +36,7 @@ fun CoinageHoldings.toHoldingsInfo() = CoinageHoldingsInfo(
  * spend test: that one releases the gaining-privacy bucket when the strategy sells privacy back, which is a
  * question about what the user *may* do rather than about what is ready.
  */
+context(conversion: CoinageBalanceConversionContext)
 private fun CoinageHoldings.toRows(): List<CoinageHolding> {
     val ready = coins.minted
         .filter { verdicts[it.derivationIndex] == CoinRecyclingState.ALLOW_USE }
@@ -47,9 +49,11 @@ private fun CoinageHoldings.toRows(): List<CoinageHolding> {
     return coinRows + voucherRows
 }
 
+context(conversion: CoinageBalanceConversionContext)
 private fun Coin.toRow(isReady: Boolean) = CoinageHolding(
     id = "coin-${derivationIndex.installation.value}-${derivationIndex.item}",
     exponent = valueExponent,
+    value = valueExponent.balance(),
     derivationIndex = derivationIndex,
     isReady = isReady,
     recyclerFungibility = recyclerFungibility,
@@ -60,9 +64,11 @@ private fun Coin.toRow(isReady: Boolean) = CoinageHolding(
 )
 
 /** A voucher sitting in a recycler has been through no payments, so its coin is unpitted. */
+context(conversion: CoinageBalanceConversionContext)
 private fun RecyclerVoucher.toRow(isReady: Boolean) = CoinageHolding(
     id = "voucher-${ringVrfKeyIndex.installation.value}-${ringVrfKeyIndex.item}",
     exponent = recyclerValue,
+    value = recyclerValue.balance(),
     derivationIndex = ringVrfKeyIndex,
     isReady = isReady,
     recyclerFungibility = recyclerFungibility,

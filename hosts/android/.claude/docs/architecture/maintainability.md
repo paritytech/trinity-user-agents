@@ -93,7 +93,7 @@ A class advertises behavior X; do that. Don't take secret detours.
 ## 8. Boundaries are real — features don't reach into other features' privates
 
 - A feature's `impl` module **must not** be referenced by another feature.
-- A feature's public types **must not** leak into `common`/`design`/`database` (review example: video-game-specific entity in common DB → required `VideoGame` prefix or move).
+- A feature's public types **must not** leak into `common`/`design`/`database` (review example: feature-specific entity in common DB → required feature prefix such as `Coinage`, or move).
 - An RFC-defined cross-app concern (e.g. chat protocol) lives in the smallest module that everyone agrees on, not in whatever feature first needed it.
 
 ## 9. The "north star" exists

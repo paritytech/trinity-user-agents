@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import DesignSystem
 
 // MARK: - Action Handler
@@ -9,23 +10,24 @@ private struct WidgetActionHandlerKey: EnvironmentKey {
     static let defaultValue: WidgetActionHandler? = nil
 }
 
-/// Resolves where an image node's bytes can be fetched from. A source names a
-/// product archive path or a Bulletin CID, which only the host can turn into
-/// something loadable, so the renderer asks for it rather than knowing.
+/// Loads the picture an image node names. A source names a product archive
+/// path or a Bulletin CID, which only the host can fetch, so the renderer asks
+/// for the picture rather than knowing where it lives. Nil means it could not
+/// be loaded.
 ///
 /// A named type rather than a function typealias, because the resolver is held
 /// in the environment and read from a view body. A bare function value carries
 /// the isolation of wherever it was formed, which the environment then has to
 /// convert away.
 public struct WidgetImageResolver: Sendable {
-    private let resolve: @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?
+    private let load: @Sendable (CustomMessageWidgetNode.ImageSource) async -> UIImage?
 
-    public init(_ resolve: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?) {
-        self.resolve = resolve
+    public init(_ load: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> UIImage?) {
+        self.load = load
     }
 
-    public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> URL? {
-        await resolve(source)
+    public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> UIImage? {
+        await load(source)
     }
 }
 
@@ -55,7 +57,7 @@ public struct CustomMessageWidgetView: View {
     public init(
         node: CustomMessageWidgetNode,
         onAction: WidgetActionHandler? = nil,
-        resolveImage: WidgetImageResolver? = nil
+        resolveImage: WidgetImageResolver?
     ) {
         self.node = node
         self.onAction = onAction
@@ -93,8 +95,6 @@ private struct WidgetNodeContent: View {
             NodeTextFieldView(props: props, modifiers: node.modifiers)
         case let .image(props):
             NodeImageView(props: props, modifiers: node.modifiers)
-        case let .effect(props, children):
-            NodeEffectView(props: props, children: children, modifiers: node.modifiers)
         }
     }
 }
@@ -105,30 +105,66 @@ private struct NodeImageView: View {
     let props: CustomMessageWidgetNode.ImageProps
     let modifiers: CustomMessageWidgetNode.Modifiers
 
+    private enum Picture {
+        case loading
+        case loaded(UIImage)
+        case unavailable
+    }
+
     @Environment(\.widgetImageResolver) private var resolveImage
-    @State private var url: URL?
+    @State private var picture: Picture = .loading
 
     var body: some View {
         content
             .applyWidgetNodeModifiers(modifiers)
             .task(id: props.source) {
-                url = await resolveImage?(props.source)
+                picture = .loading
+                picture = await resolveImage?(props.source).map(Picture.loaded) ?? .unavailable
             }
     }
 
-    /// An image the host cannot fetch draws as empty space, so a missing file
-    /// costs the card one node rather than its layout.
+    /// Loading and failure both fill the space the node reserves, so a missing
+    /// file costs the card one node rather than its layout.
     @ViewBuilder
     private var content: some View {
-        if let url {
-            AsyncImage(url: url) { image in
-                props.fit.apply(to: image)
-            } placeholder: {
-                Color.clear
+        switch picture {
+        case .loading:
+            placeholder(ProgressView())
+        case let .loaded(image):
+            switch (modifiers.hasOwnWidth, modifiers.hasOwnHeight) {
+            case (true, true):
+                props.fit.apply(to: Image(uiImage: image))
+            case (false, false):
+                CustomMessageWidgetNode.ImageFit.scaleDown.apply(to: Image(uiImage: image))
+            case let (width, height) where props.fit == .none:
+                Image(uiImage: image)
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: width ? .infinity : nil,
+                        minHeight: 0,
+                        maxHeight: height ? .infinity : nil
+                    )
+                    .clipped()
+            default:
+                Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
             }
-        } else {
-            Color.clear
+        case .unavailable:
+            placeholder(
+                Image(.fileNotFound)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 44, maxHeight: 44)
+                    .foregroundStyle(Color.fgTertiary)
+            )
+            .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
         }
+    }
+
+    private func placeholder(_ view: some View) -> some View {
+        view.frame(
+            maxWidth: modifiers.hasOwnWidth ? .infinity : nil,
+            maxHeight: modifiers.hasOwnHeight ? .infinity : nil
+        )
     }
 }
 
@@ -137,44 +173,18 @@ private extension CustomMessageWidgetNode.ImageFit {
     func apply(to image: Image) -> some View {
         switch self {
         case .none:
-            image
+            Color.clear.overlay(image).clipped()
         case .fill:
             image.resizable()
         case .cover:
-            image.resizable().aspectRatio(contentMode: .fill)
+            Color.clear.overlay(image.resizable().scaledToFill()).clipped()
         case .contain:
             image.resizable().aspectRatio(contentMode: .fit)
         case .scaleDown:
-            image.resizable().aspectRatio(contentMode: .fit).scaledToFit()
-        }
-    }
-}
-
-// MARK: - Effect
-
-private struct NodeEffectView: View {
-    let props: CustomMessageWidgetNode.EffectProps
-    let children: [CustomMessageWidgetNode]
-    let modifiers: CustomMessageWidgetNode.Modifiers
-
-    var body: some View {
-        ZStack {
-            ForEach(children.indices, id: \.self) { index in
-                WidgetNodeContent(node: children[index])
+            ViewThatFits {
+                image
+                image.resizable().scaledToFit()
             }
-        }
-        .modifier(NodeEffectModifier(effect: props.effect))
-        .applyWidgetNodeModifiers(modifiers)
-    }
-}
-
-private struct NodeEffectModifier: ViewModifier {
-    let effect: CustomMessageWidgetNode.Effect
-
-    func body(content: Content) -> some View {
-        switch effect {
-        case .rainbow:
-            content.motionFillingShader(shader: HolographicShaders.iridescentShine)
         }
     }
 }
@@ -223,44 +233,11 @@ private struct NodeColumnView: View {
     }
 
     private var columnContent: some View {
-        VStack(alignment: props.alignment, spacing: props.arrangement.isSpaced ? 0 : nil) {
-            arrangementContent(arrangement: props.arrangement)
-        }
-    }
-
-    @ViewBuilder
-    private func arrangementContent(arrangement: CustomMessageWidgetNode.Arrangement) -> some View {
-        switch arrangement {
-        case .start:
-            childrenContent
-        case .end:
-            Spacer(minLength: 0)
-            childrenContent
-        case .center:
-            Spacer(minLength: 0)
-            childrenContent
-            Spacer(minLength: 0)
-        case .spaceBetween:
-            ForEach(children.indices, id: \.self) { index in
-                WidgetNodeContent(node: children[index])
-                if index < children.count - 1 {
-                    Spacer(minLength: 0)
-                }
-            }
-        case .spaceAround,
-             .spaceEvenly:
-            ForEach(children.indices, id: \.self) { index in
-                if index == 0 { Spacer(minLength: 0) }
-                WidgetNodeContent(node: children[index])
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var childrenContent: some View {
-        ForEach(children.indices, id: \.self) { index in
-            WidgetNodeContent(node: children[index])
+        VStack(alignment: props.alignment, spacing: 0) {
+            ArrangedChildren(
+                children: children,
+                arrangement: modifiers.hasOwnHeight ? props.arrangement : .start
+            )
         }
     }
 }
@@ -273,8 +250,11 @@ private struct NodeRowView: View {
     let modifiers: CustomMessageWidgetNode.Modifiers
 
     var body: some View {
-        HStack(alignment: props.alignment, spacing: props.arrangement.isSpaced ? 0 : nil) {
-            arrangementContent(arrangement: props.arrangement)
+        HStack(alignment: props.alignment, spacing: 0) {
+            ArrangedChildren(
+                children: children,
+                arrangement: modifiers.hasOwnWidth ? props.arrangement : .start
+            )
         }
         .fixedSize(
             horizontal: false,
@@ -282,9 +262,15 @@ private struct NodeRowView: View {
         )
         .applyWidgetNodeModifiers(modifiers, alignment: Alignment(horizontal: .leading, vertical: props.alignment))
     }
+}
 
-    @ViewBuilder
-    private func arrangementContent(arrangement: CustomMessageWidgetNode.Arrangement) -> some View {
+// MARK: - Arrangement
+
+private struct ArrangedChildren: View {
+    let children: [CustomMessageWidgetNode]
+    let arrangement: CustomMessageWidgetNode.Arrangement
+
+    var body: some View {
         switch arrangement {
         case .start:
             childrenContent
@@ -302,8 +288,14 @@ private struct NodeRowView: View {
                     Spacer(minLength: 0)
                 }
             }
-        case .spaceAround,
-             .spaceEvenly:
+        case .spaceAround:
+            // Two spacers between neighbours and one at each end: half a gap at the ends.
+            ForEach(children.indices, id: \.self) { index in
+                Spacer(minLength: 0)
+                WidgetNodeContent(node: children[index])
+                Spacer(minLength: 0)
+            }
+        case .spaceEvenly:
             ForEach(children.indices, id: \.self) { index in
                 if index == 0 { Spacer(minLength: 0) }
                 WidgetNodeContent(node: children[index])
@@ -312,7 +304,6 @@ private struct NodeRowView: View {
         }
     }
 
-    @ViewBuilder
     private var childrenContent: some View {
         ForEach(children.indices, id: \.self) { index in
             WidgetNodeContent(node: children[index])
@@ -350,7 +341,9 @@ private struct NodeButtonView: View {
                 actionHandler?(actionId, nil)
             }
         } label: {
+            // Material's content padding, as on Android.
             Text(props.text)
+                .padding(.horizontal, 24)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(buttonStyle(for: props.variant))
@@ -424,10 +417,12 @@ private struct NodeTextFieldView: View {
     #Preview {
         ScrollView {
             CustomMessageWidgetView(
-                node: .previewTransferCard
-            ) { actionId, payload in
-                print("Action: \(actionId), payload: \(payload ?? "nil")")
-            }
+                node: .previewTransferCard,
+                onAction: { actionId, payload in
+                    print("Action: \(actionId), payload: \(payload ?? "nil")")
+                },
+                resolveImage: nil
+            )
             .padding()
         }
     }

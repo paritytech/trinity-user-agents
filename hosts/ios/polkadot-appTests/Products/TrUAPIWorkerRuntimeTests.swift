@@ -15,7 +15,7 @@ struct TrUAPIWorkerRuntimeTests {
         let engine = MockJSEngine()
         let runtime = makeRuntime(engine: engine)
 
-        try await runtime.start()
+        try await runtime.start {}
 
         #expect(engine.mediaHandlerWasInstalledAtInitialization)
 
@@ -30,7 +30,7 @@ struct TrUAPIWorkerRuntimeTests {
         let execution = MockProductExecution()
         let runtime = makeRuntime(engine: engine, execution: execution)
 
-        try await runtime.start()
+        try await runtime.start {}
 
         #expect(execution.startWsBridgeCallCount == 1)
         #expect(execution.permissionRequests.isEmpty)
@@ -57,7 +57,7 @@ struct TrUAPIWorkerRuntimeTests {
         engine.onInitialize = { await runtime.dispose() }
 
         await #expect(throws: CancellationError.self) {
-            try await runtime.start()
+            try await runtime.start {}
         }
 
         #expect(engine.destroyCallCount == 1)
@@ -78,7 +78,7 @@ struct TrUAPIWorkerRuntimeTests {
             chainConnections: chainConnections
         )
 
-        try await runtime.start()
+        try await runtime.start {}
         await runtime.dispose()
         await runtime.dispose()
 

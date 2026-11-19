@@ -1,4 +1,3 @@
-import BigInt
 import Foundation
 import Foundation_iOS
 import SubstrateSdk
@@ -17,10 +16,6 @@ final class AssetDetailsPresenter {
     let viewModelFactory: WalletCardViewModelFactoryProtocol
     let paymentAssetViewModelFactory: PaymentAssetViewModelMaking
     private let balanceFormatterFactory: AssetBalanceFormatterFactoryProtocol
-    private var balanceFormatter: LocalizableDecimalFormatting?
-    private var priceFormatter: LocalizableDecimalFormatting?
-    private lazy var fundingConfiguration: AssetFundingStatusView.Configuration =
-        .fundingDigitalDollarConfiguration()
 
     private let chainAsset: ChainAsset
     private var balance: Decimal = 0
@@ -29,6 +24,8 @@ final class AssetDetailsPresenter {
     private var holdings: CoinageHoldings = .empty
     /// Ready and Clearing for the real holdings, totalled by the balance service.
     private var coinageAmounts: CoinageAmounts?
+    /// What each denomination is worth, which a tapped coin states in full.
+    private var denominations: DenominationBreakdownContext?
     /// Loaded from chain state; the balance is shown against it.
     private var price: PriceData?
     let logger: LoggerProtocol
@@ -88,18 +85,8 @@ final class AssetDetailsPresenter {
 }
 
 extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
-    func onBackupSync() {
-        interactor?.triggerSync()
-    }
-
-    func onBackupCancel() {
-        wireframe.showCancelBackupConfirmation(from: view) { [weak self] in
-            self?.interactor?.cancelBackupNotification()
-        }
-    }
-
-    func onBackupWhyUpdate() {
-        wireframe.showWhyBackupUpdate(from: view)
+    func onOpenBackupSettings() {
+        wireframe.showBackupSettings()
     }
 
     func setup() {
@@ -117,20 +104,10 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
         wireframe.showAddTokens(from: view)
     }
 
-    func onFundingCompletedAction() {
-        interactor?.removeCompletedFiatOnrampTransactions()
-    }
-
-    func onFundingFailedAction() {
-        interactor?.removeFailedFiatOnrampTransactions()
-    }
-
     func onTopUp() {
-        openRampProduct(.topUp)
-    }
+        view?.didReceive(topUpLoading: true)
 
-    func onWithdraw() {
-        openRampProduct(.withdraw)
+        interactor?.openTopUpProduct()
     }
 
     #if TESTNET_FEATURE
@@ -143,21 +120,26 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveRampProduct(_ action: RampAction, result: Result<ProductPage, Error>) {
-        view?.didReceive(rampLoading: action, isLoading: false)
+    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>) {
+        view?.didReceive(topUpLoading: false)
 
         switch result {
         case let .success(page):
             wireframe.showProduct(page: page)
         case let .failure(error):
             guard !(error is CancellationError) else { return }
-            wireframe.present(error: action.errorContent(for: error), from: view)
+            wireframe.present(error: RampAction.topUp.errorContent(for: error), from: view)
         }
     }
 
-    func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings) {
+    func didReceive(
+        coinageAmounts: CoinageAmounts,
+        holdings: CoinageHoldings,
+        denominations: DenominationBreakdownContext
+    ) {
         self.coinageAmounts = coinageAmounts
         self.holdings = holdings
+        self.denominations = denominations
         provideAssetBalance()
         provideCoinageBreakdown()
     }
@@ -173,10 +155,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
             wireframe.present(error: error, from: view)
         }
     #endif
-
-    func didReceive(fiatOnrampStatuses: Set<FiatOnrampTransactionStatusPayload>) {
-        provideFundingStates(from: fiatOnrampStatuses)
-    }
 
     func didReceive(balance: Decimal) {
         self.balance = balance
@@ -195,92 +173,8 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         view?.didReceive(isRecoveryInProgress: isRecoveryInProgress)
     }
 
-    func didReceive(isAccountBackupPending: Bool) {
-        view?.didReceive(isAccountBackupPending: isAccountBackupPending)
-    }
-
     func didReceive(showsRecoveredBalance: Bool) {
-        if showsRecoveredBalance {
-            view?.didShowBackupNotification()
-        } else {
-            view?.didHideBackupNotification()
-        }
-    }
-}
-
-private extension AssetDetailsPresenter {
-    func provideFundingStates(from statuses: Set<FiatOnrampTransactionStatusPayload>) {
-        let sortedStatuses = statuses.sorted { lhs, rhs in
-            lhs.id.value < rhs.id.value
-        }
-
-        let states: [AssetFundingStatusView.FundingState] = sortedStatuses.map { status in
-            switch status.status {
-            case .funding:
-                .init(id: status.id.value, status: .waiting)
-            case let .inProgress(remainedTime, inAmount, outAmount):
-                .init(
-                    id: status.id.value,
-                    status: .inProgress(
-                        totalSeconds: Int(ceil(remainedTime)),
-                        amountIn: formatAmount(inAmount),
-                        amountOut: formatUsdAmount(outAmount)
-                    )
-                )
-            case let .completed(inAmount, outAmount):
-                .init(
-                    id: status.id.value,
-                    status: .completed(
-                        amountIn: formatAmount(inAmount),
-                        amountOut: formatUsdAmount(outAmount)
-                    )
-                )
-            case .failed:
-                .init(id: status.id.value, status: .failed)
-            }
-        }
-
-        view?.didReceive(fundingStates: states)
-    }
-
-    func formatAmount(_ amount: Balance) -> String {
-        let formatter = getBalanceFormatter()
-        let decimalAmount = amount.decimal(assetInfo: chainAsset.assetDisplayInfo)
-        return formatter.stringFromDecimal(decimalAmount) ?? ""
-    }
-
-    func getBalanceFormatter() -> LocalizableDecimalFormatting {
-        if let balanceFormatter {
-            return balanceFormatter
-        }
-
-        let formatter = balanceFormatterFactory
-            .createTokenFormatter(for: chainAsset.assetDisplayInfo)
-            .value(for: .current)
-
-        balanceFormatter = formatter
-
-        return formatter
-    }
-
-    func getPriceFormatter() -> LocalizableDecimalFormatting {
-        if let priceFormatter {
-            return priceFormatter
-        }
-
-        let formatter = balanceFormatterFactory
-            .createAssetPriceFormatter(for: .usd)
-            .value(for: .current)
-
-        priceFormatter = formatter
-
-        return formatter
-    }
-
-    func formatUsdAmount(_ amount: Balance) -> String {
-        let formatter = getPriceFormatter()
-        let decimalAmount = amount.decimal(assetInfo: chainAsset.assetDisplayInfo)
-        return formatter.stringFromDecimal(decimalAmount) ?? ""
+        view?.didReceive(showsRestoredBalanceHint: showsRecoveredBalance)
     }
 }
 
@@ -304,22 +198,18 @@ private extension AssetDetailsPresenter {
         // a label on one small line, where the headline above has already said what is counted.
         let figureInfo = chainAsset.asset.digitalDollarFigureDisplayInfo
         let strip = CoinageBreakdownFactory.stripCoins(CoinageBreakdownFactory.rows(from: holdings))
+        let traces = CoinageBreakdownFactory.traces(from: holdings) { exponent in
+            formatted(from: denominations?.amount(forExponent: exponent) ?? 0, as: figureInfo)
+        }
 
         let breakdown = CoinageBalanceBreakdownViewModel(
             totalBalance: formatted(from: amounts.total, as: figureInfo),
             availableNowBalance: formatted(from: amounts.availableNow, as: figureInfo),
             gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, as: figureInfo),
             symbol: chainAsset.asset.digitalDollarDisplayInfo.symbol,
-            strip: strip
+            strip: strip,
+            traces: traces
         )
         view?.didReceive(coinageBreakdown: breakdown)
-    }
-}
-
-private extension AssetDetailsPresenter {
-    func openRampProduct(_ action: RampAction) {
-        view?.didReceive(rampLoading: action, isLoading: true)
-
-        interactor?.openRampProduct(action)
     }
 }

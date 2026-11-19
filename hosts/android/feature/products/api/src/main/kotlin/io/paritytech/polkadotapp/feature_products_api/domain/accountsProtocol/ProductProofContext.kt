@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchContext
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.productContext
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 data class ProductProofContext(
     val productId: ProductId,

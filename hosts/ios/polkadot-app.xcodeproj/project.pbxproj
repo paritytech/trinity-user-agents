@@ -25,10 +25,10 @@
 		0CA60CC22FB20D4D008817A9 /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = 0CA60CC12FB20D4D008817A9 /* BulletinChain */; };
 		0CEC59AC2F08EBFC0009CC37 /* FoundationExt in Frameworks */ = {isa = PBXBuildFile; productRef = 0CEC59AB2F08EBFC0009CC37 /* FoundationExt */; };
 		2D0A51D72FFE94810095ECAE /* BackgroundExecution in Frameworks */ = {isa = PBXBuildFile; productRef = 2D0A51D62FFE94810095ECAE /* BackgroundExecution */; };
+		5DE11A012FF0000000000001 /* StatementDelivery in Frameworks */ = {isa = PBXBuildFile; productRef = 5DE11A022FF0000000000002 /* StatementDelivery */; };
 		A526CB302EBBA06D00D2987B /* PolkadotUI in Frameworks */ = {isa = PBXBuildFile; productRef = A526CB2F2EBBA06D00D2987B /* PolkadotUI */; };
 		A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF652F45ECB70066D722 /* StructuredConcurrency */; };
 		A57CAF682F45ED940066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF672F45ED940066D722 /* StructuredConcurrency */; };
-		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
 		A5A948F02F4CA925001E514C /* Coinage in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948EF2F4CA925001E514C /* Coinage */; };
 		A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948F12F4CA925001E5150 /* ExtrinsicServiceExt */; };
 		A5B2502E2F47481900E46E09 /* KeyDerivation in Frameworks */ = {isa = PBXBuildFile; productRef = A5B2502D2F47481900E46E09 /* KeyDerivation */; };
@@ -42,6 +42,7 @@
 		B10000022F7C000000000AAA /* Products in Frameworks */ = {isa = PBXBuildFile; productRef = B10000012F7C000000000AAA /* Products */; };
 		B10000042F7C000000000BBB /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = B10000032F7C000000000BBB /* BulletinChain */; };
 		B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */ = {isa = PBXBuildFile; productRef = B1A2C3D42F8A000000000002 /* BlurHash */; };
+		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
 		CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0202FBA000100CCAA02 /* ChainRegistry */; };
 		CC0CC0302FBA000100CCAA03 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0402FBA000100CCAA04 /* ChainRegistry */; };
 		CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0602FBA000100CCAA06 /* EventCenter */; };
@@ -363,6 +364,7 @@
 				CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */,
 				CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */,
 				2D0A51D72FFE94810095ECAE /* BackgroundExecution in Frameworks */,
+				5DE11A012FF0000000000001 /* StatementDelivery in Frameworks */,
 				B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -477,6 +479,7 @@
 				A5EDAAD12E93ECAF005DDA62 /* Sources */,
 				A5EDAAD22E93ECAF005DDA62 /* Frameworks */,
 				A5EDAAD32E93ECAF005DDA62 /* Resources */,
+				B57AC5000000000000000001 /* Bundle Trinity stacks */,
 				0C6EC9662EC629FB00C9B292 /* Embed Foundation Extensions */,
 				F06E600066544128849BC813 /* Upload Debug Symbols to Sentry */,
 			);
@@ -518,6 +521,7 @@
 				CC0CC0202FBA000100CCAA02 /* ChainRegistry */,
 				CC0CC0602FBA000100CCAA06 /* EventCenter */,
 				2D0A51D62FFE94810095ECAE /* BackgroundExecution */,
+				5DE11A022FF0000000000002 /* StatementDelivery */,
 				B1A2C3D42F8A000000000002 /* BlurHash */,
 				A5F553C23066BB820077443B /* IssueMonitoring */,
 			);
@@ -707,6 +711,36 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "if [ \"$RUN_IN_CI\" = \"true\" ]; then\n    echo \"Skipping secrets generation in CI\"\n    exit 0\nfi\n\n\"${SRCROOT}/Runscripts/generate_secrets.sh\"\n";
+		};
+		B57AC5000000000000000001 /* Bundle Trinity stacks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../stacks/previewnet.link",
+				"$(SRCROOT)/../../stacks/previewnet.json",
+				"$(SRCROOT)/../../stacks/paseo-next-v2.link",
+				"$(SRCROOT)/../../stacks/paseo-next-v2.json",
+				"$(SRCROOT)/../../stacks/polkadot.link",
+				"$(SRCROOT)/../../stacks/polkadot.json",
+			);
+			name = "Bundle Trinity stacks";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-previewnet.link",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-previewnet.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-paseo-next-v2.link",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-paseo-next-v2.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-polkadot.link",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-polkadot.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n\nstacks=\"${SRCROOT}/../../stacks\"\nresources=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nfor name in previewnet paseo-next-v2 polkadot; do\n    for extension in link json; do\n        cp \"${stacks}/${name}.${extension}\" \"${resources}/trinity-stack-${name}.${extension}\"\n    done\ndone\n";
 		};
 		F06E600066544128849BC813 /* Upload Debug Symbols to Sentry */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1058,6 +1092,8 @@
 		};
 		A539854B2E93F1A600A5BB13 /* DevCI */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.devci.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1294,6 +1330,8 @@
 		};
 		A5EDAAFB2E93ECB0005DDA62 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.debug.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1318,6 +1356,8 @@
 		};
 		A5EDAAFC2E93ECB0005DDA62 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.release.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1444,6 +1484,8 @@
 		};
 		A6F1C0102F00A10000AA0003 /* Safetynet */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.safetynet.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1628,6 +1670,8 @@
 		};
 		E97BAB582F7BDE6700ED9B80 /* Nightly */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.nightly.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1842,6 +1886,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = BackgroundExecution;
 		};
+		5DE11A022FF0000000000002 /* StatementDelivery */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StatementDelivery;
+		};
 		A526CB2F2EBBA06D00D2987B /* PolkadotUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PolkadotUI;
@@ -1853,10 +1901,6 @@
 		A57CAF672F45ED940066D722 /* StructuredConcurrency */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = StructuredConcurrency;
-		};
-		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = StructuredConcurrencyTestSupport;
 		};
 		A5A948EF2F4CA925001E514C /* Coinage */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1909,6 +1953,10 @@
 		B1A2C3D42F8A000000000002 /* BlurHash */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BlurHash;
+		};
+		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrencyTestSupport;
 		};
 		CC0CC0202FBA000100CCAA02 /* ChainRegistry */ = {
 			isa = XCSwiftPackageProductDependency;

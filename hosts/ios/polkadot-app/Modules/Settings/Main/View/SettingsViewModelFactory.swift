@@ -7,9 +7,11 @@ import Coinage
 struct SettingsContentInput {
     let visibleCells: Set<SettingsViewModel.CellType>
     let attentionItems: Set<SettingsViewModel.CellType>
+    let isRestoredBalanceWaiting: Bool
     let selectedCurrencyCode: String?
     let selectedThemeName: String?
     let selectedPrivacyStrategy: RecyclingStrategyType?
+    let paymentsBackupStatus: CoinageAccountBackupStatus?
     let appVersion: String?
     let isTabBarLabelsEnabled: Bool
     let onSelect: (SettingsViewModel.CellType) -> Void
@@ -55,23 +57,45 @@ private extension SettingsViewModelFactory {
         cellType: SettingsViewModel.CellType,
         input: SettingsContentInput
     ) -> DSMenuListItem {
-        let needsAttention = input.attentionItems.contains(cellType)
-        let usesToggle = cellType == .tabBarLabels
+        let attention = attention(for: cellType, input: input)
+        let isStatic = cellType == .tabBarLabels || cellType == .paymentsBackup
         return DSMenuListItem(
             id: cellType,
             title: cellType.title,
-            description: needsAttention ? cellType.attentionDetails?.message : nil,
-            style: needsAttention ? .attention : .default,
+            description: attention?.message,
+            style: attention?.style ?? .default,
             icon: icon(for: cellType),
             rightSlot: rightSlot(for: cellType, input: input),
             accessibilityId: AccessibilityID.Settings.menuItem(for: cellType),
-            action: usesToggle ? nil : { input.onSelect(cellType) }
+            action: isStatic ? nil : { input.onSelect(cellType) }
         )
+    }
+
+    func attention(
+        for cellType: SettingsViewModel.CellType,
+        input: SettingsContentInput
+    ) -> (message: String, style: DSMenuListItemStyle)? {
+        if cellType == .backup, input.isRestoredBalanceWaiting {
+            return (String(localized: .BalanceSync.settingsRowDescription), .attentionDot)
+        }
+        guard input.attentionItems.contains(cellType), let details = cellType.attentionDetails else {
+            return nil
+        }
+        return (details.message, .attention)
+    }
+
+    func statusText(for status: CoinageAccountBackupStatus) -> String {
+        switch status {
+        case .registering: String(localized: .settingsPaymentsBackupStatusRegistering)
+        case .delayed: String(localized: .settingsPaymentsBackupStatusDelayed)
+        case .completed: String(localized: .settingsPaymentsBackupStatusCompleted)
+        }
     }
 
     func icon(for cellType: SettingsViewModel.CellType) -> ImageResource? {
         switch cellType {
         case .backup: .iconCloud
+        case .paymentsBackup: .iconDollar
         case .theme: .iconPalette
         case .tabBarLabels: .iconPalette
         case .currency: .iconDollar
@@ -89,6 +113,8 @@ private extension SettingsViewModelFactory {
         switch cellType {
         case .theme:
             input.selectedThemeName.map(DSMenuListItemRightSlot.Style.labelChevron)
+        case .paymentsBackup:
+            input.paymentsBackupStatus.map { .labelOnly(statusText(for: $0)) }
         case .tabBarLabels:
             .toggle(Binding(
                 get: { input.isTabBarLabelsEnabled },

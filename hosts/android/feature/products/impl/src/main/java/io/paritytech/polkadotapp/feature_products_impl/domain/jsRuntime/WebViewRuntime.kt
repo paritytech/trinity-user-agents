@@ -30,6 +30,10 @@ class WebViewRuntime(
         if (initialized) return
 
         try {
+            jsBridge.registerFunction("__initial_theme_delivered__") {
+                webViewProvider.onInitialThemeDelivered()
+                ""
+            }
             webViewProvider.addOnPageFinishedListener {
                 _state.value = RuntimeState.Ready
             }

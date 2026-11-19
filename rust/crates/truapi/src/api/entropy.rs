@@ -1,31 +1,33 @@
 //! Unified [`Entropy`] trait.
 
-use crate::versioned::entropy::{
-    HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
+use crate::{
+	CallContext, CallError,
+	versioned::entropy::{
+		HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
+	},
+	wasm_env, wire, wire_trait,
 };
-use crate::{CallContext, CallError};
-use crate::{wasm_env, wire, wire_trait};
 
 /// Deterministic entropy derivation.
 #[wasm_env]
 #[wire_trait(id = 6)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Entropy: Send + Sync {
-    /// Derive deterministic entropy.
-    ///
-    /// ```ts
-    /// const result = await truapi.entropy.derive({
-    ///   context: "0x70726f647563742d6b6579",
-    /// });
-    /// assert(result.isOk(), "derive failed:", result);
-    /// console.log("entropy derived:", result.value);
-    /// ```
-    #[wire(id = 0)]
-    async fn derive(
-        &self,
-        _cx: &CallContext,
-        _request: HostDeriveEntropyRequest,
-    ) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
-        Err(CallError::unavailable())
-    }
+	/// Derive deterministic entropy.
+	///
+	/// ```ts
+	/// const result = await truapi.entropy.derive({
+	///   context: "0x70726f647563742d6b6579",
+	/// });
+	/// assert(result.isOk(), "derive failed:", result);
+	/// console.log("entropy derived:", result.value);
+	/// ```
+	#[wire(id = 0)]
+	async fn derive(
+		&self,
+		_cx: &CallContext,
+		_request: HostDeriveEntropyRequest,
+	) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
+		Err(CallError::unavailable())
+	}
 }

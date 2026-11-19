@@ -25,6 +25,35 @@ Then draw `http://127.0.0.1:5173/pocket/<name>.json`.
 The size bound is the same one the approval sheet applies (256 KiB), so a face
 that draws here is one the sheet will accept.
 
+Images draw as they will on a published card:
+
+- A `Bulletin` CID loads from the same IPFS gateway the Pocket uses.
+- An `Archive` path loads from the server the face came from, at that path.
+  Serve the folder that becomes your worker archive, so `images/stamp.png` is at
+  `http://127.0.0.1:5173/images/stamp.png` here and at the same path inside the
+  archive once published.
+- An archive path is always read as a file on that server, as the archive reads
+  it. A path that climbs above the root with `..` draws as empty space.
+
+Pressing **Draw** again fetches the face and its images again, so an edited file
+shows without restarting the app.
+
+### Loop A on a physical iPhone
+
+A phone cannot reach `127.0.0.1` on your Mac. Give the dev server a public HTTPS
+address instead, for example with a Cloudflare quick tunnel:
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:5173
+```
+
+It prints an address like `https://<random>.trycloudflare.com`. Draw
+`https://<random>.trycloudflare.com/pocket/<name>.json` in the face preview.
+Images resolve against that address in the same way.
+
+While the tunnel runs, anyone with the address can read what the server serves.
+Serve only test files and stop the tunnel when you are done.
+
 ## Loop B: the whole card, live
 
 A product with **no published worker**, driven by hand.
@@ -39,14 +68,14 @@ A product with **no published worker**, driven by hand.
 3. Open the add deeplink. The screen shows it, ready to copy:
 
    ```
-   polkadot://<product>/-/pocket/add?card=<id>
+   polkadotapp://pocket/add?product=<product>&card=<id>
    ```
 
    In a Debug build the scheme is the brand scheme plus the flavor suffix, so on
    the simulator:
 
    ```sh
-   xcrun simctl openurl booted 'polkadotappdev://<product>/-/pocket/add?card=<id>'
+   xcrun simctl openurl booted 'polkadotappdev://pocket/add?product=<product>&card=<id>'
    ```
 
 4. Approve it. The card joins the Pocket on the Wallet tab, drawn with the face
@@ -58,6 +87,39 @@ A product with **no published worker**, driven by hand.
    `https://<product>?card=<id>`, on a screen the card heads: card and product
    share one scroll, so scrolling past the card leaves the product the whole
    screen.
+
+## The expanded card, live
+
+An opened card's page can call `truapi.expandedCard.setFaceShown({ shown })` to
+move the face away and back. To try it with the
+[`pocket-worker`](../../android/feature/products/product-sample/pocket-worker/README.md)
+test page:
+
+1. Build it against this checkout's client, as its README says, and serve it
+   with `npx serve -l 5173 dist`.
+2. Run Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card
+   `loyalty`, face URL `http://127.0.0.1:5173/faces/loyalty.json` and widget
+   URL `http://127.0.0.1:5173/`. Use `/`, not `/index.html`, which `serve`
+   redirects without its query. The app appends `card=<id>` to the widget URL.
+   Add `?hideOnLoad` to test a call made as the page loads, and turn on **Open
+   with the face away** to open the card with the face hidden.
+3. Add the card and open it.
+
+A card with a widget URL always loads through the TrUAPI runtime. A published
+widget needs **Debug → TrUAPI Runtime** on, which applies at the next launch.
+
+The page logs each answer, and a red bar pinned to its bottom edge goes missing
+when the page is sized wrong.
+
+| Answer | When |
+|---|---|
+| `ok` | the face moved, or was already where the page asked |
+| `UserMoving` | the user is dragging the face or it is still gliding, and nothing moves |
+| `NotPresented` | the card is closed and its page is still loaded |
+| `Denied` | the page is shown somewhere other than a card |
+
+A card's page stays loaded after the card closes. After editing a widget URL,
+open another card first or relaunch.
 
 ## What fails where
 
@@ -82,3 +144,30 @@ Work down this list. Each step rules out the one below it.
 - **A card id that fails screening reads as no card**, not as an error. If a card
   never arrives, check the id before anything else.
 - **Confirm a tap actually lands** before concluding an action was dropped.
+
+## When you are ready to publish
+
+Declare the card in the worker's manifest:
+
+```json
+{
+  "$v": 1,
+  "kind": "worker",
+  "appVersion": [1, 0, 0],
+  "entrypoint": "worker.js",
+  "includes": { "chat": false, "pocket": true },
+  "pocket": {
+    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": false }]
+  }
+}
+```
+
+`faceShown: false` opens the card with its face away. Left out or `null`, the
+face shows. A value that is not a boolean drops all of the product's cards.
+
+The card opens before its product answers. With no answer within five seconds
+the face stays shown, and an answer that comes after the user or the page has
+moved the face is ignored.
+
+A debug card's widget URL still opens in place of the published widget until
+the debug card is deleted.

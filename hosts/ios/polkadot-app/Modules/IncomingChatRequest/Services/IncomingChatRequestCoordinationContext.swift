@@ -6,8 +6,8 @@ import MessageExchangeKit
 actor IncomingChatRequestCoordinationContext {
     let remoteContactResolver: RemoteContactResolving
     let requestStoreService: ChatRequestStoreServicing
-    let messageExchangeModeProvider: any MessageExchangeModeProviding
     private let contactsStorageService: ContactsLocalStorageServicing
+    private let chatRemovalCleanup: ChatRemovalCleanupServicing
 
     let discoveryOwnKeyIds: Set<Chat.Contact.Own>
     let matchOwnKeyIds: Set<Chat.Contact.Own>
@@ -20,16 +20,16 @@ actor IncomingChatRequestCoordinationContext {
         discoveryOwnKeyIds: Set<Chat.Contact.Own>,
         matchOwnKeyIds: Set<Chat.Contact.Own>,
         requestStoreService: ChatRequestStoreServicing,
-        messageExchangeModeProvider: any MessageExchangeModeProviding,
         contactsStorageService: ContactsLocalStorageServicing,
-        remoteContactResolver: RemoteContactResolving
+        remoteContactResolver: RemoteContactResolving,
+        chatRemovalCleanup: ChatRemovalCleanupServicing
     ) {
         self.discoveryOwnKeyIds = discoveryOwnKeyIds
         self.matchOwnKeyIds = matchOwnKeyIds
         self.remoteContactResolver = remoteContactResolver
         self.requestStoreService = requestStoreService
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.contactsStorageService = contactsStorageService
+        self.chatRemovalCleanup = chatRemovalCleanup
     }
 
     func update(
@@ -72,6 +72,11 @@ actor IncomingChatRequestCoordinationContext {
         incomingRequest: ChatRequest.ValidatedRemoteModel,
         ownKeyId: Chat.Contact.Own
     ) async throws {
+        if incomingRequest.message.content.isCancel {
+            try await handleCancel(incomingRequest)
+            return
+        }
+
         if let contact = contactsById[incomingRequest.peerAccountId] {
             guard contact.ownKeyId == ownKeyId else {
                 throw HandleError.ownKeyIdNotMatch(contact.username)
@@ -92,6 +97,35 @@ extension IncomingChatRequestCoordinationContext {
 }
 
 private extension IncomingChatRequestCoordinationContext {
+    func handleCancel(_ remoteCancel: ChatRequest.ValidatedRemoteModel) async throws {
+        guard let localRequest = try await requestStoreService.fetchByRequestId(remoteCancel.requestId) else {
+            try await requestStoreService.storeCancelledRequest(remoteCancel)
+            return
+        }
+
+        guard
+            localRequest.contactAccountId == remoteCancel.peerAccountId,
+            localRequest.status == .incoming(.new) || localRequest.status == .incoming(.accepted),
+            remoteCancel.message.timestamp > localRequest.timestamp
+        else {
+            return
+        }
+
+        if localRequest.status == .incoming(.accepted) {
+            try await cancelAcceptedRequest(localRequest.requestId, peerAccountId: remoteCancel.peerAccountId)
+        } else {
+            _ = try await requestStoreService.cancelIncomingRequest(localRequest.requestId)
+        }
+    }
+
+    func cancelAcceptedRequest(_ requestId: String, peerAccountId: AccountId) async throws {
+        guard try await requestStoreService.cancelIncomingRequest(requestId) else {
+            return
+        }
+
+        try await chatRemovalCleanup.cleanUpAfterRemoval(of: peerAccountId)
+    }
+
     func handleNew(
         incomingRequest: ChatRequest.ValidatedRemoteModel,
         ownKeyId: Chat.Contact.Own
@@ -118,6 +152,10 @@ private extension IncomingChatRequestCoordinationContext {
         _ contact: Chat.Contact,
         incomingRequest: ChatRequest.ValidatedRemoteModel
     ) async throws {
+        guard !contact.isBlocked else {
+            return
+        }
+
         guard let existingRequest = contact.chatRequest else {
             try await handleWhenContactWithoutRequests(
                 remoteRequest: incomingRequest,
@@ -153,13 +191,12 @@ private extension IncomingChatRequestCoordinationContext {
             return
         }
 
-        let messageExchangeMode = messageExchangeModeProvider.mode(for: contact.ownKeyId)
-        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice(for: contact.ownKeyId)
+        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice()
         try await requestStoreService.acceptOutgoingRequest(
             existingOutgoingRequest.requestId,
-            messageExchangeMode: messageExchangeMode,
             remoteIncoming: remoteRequest,
-            acceptorDevice: acceptorDevice
+            acceptorDevice: acceptorDevice,
+            peerAcceptance: nil
         )
 
         await erasePushToken(contact)
@@ -203,14 +240,9 @@ private extension IncomingChatRequestCoordinationContext {
             return
         }
 
-        let messageExchangeMode = messageExchangeModeProvider.mode(for: contact.ownKeyId)
-        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice(for: contact.ownKeyId)
+        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice()
         try await requestStoreService.acceptIncomingRequest(
-            .new(
-                remoteRequest,
-                messageExchangeMode: messageExchangeMode,
-                acceptorDevice: acceptorDevice
-            )
+            .new(remoteRequest, acceptorDevice: acceptorDevice)
         )
         await erasePushToken(contact)
         await eraseVoIPPushToken(contact)

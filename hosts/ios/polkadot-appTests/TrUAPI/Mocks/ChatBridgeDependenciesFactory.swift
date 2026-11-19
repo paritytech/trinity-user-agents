@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import ChainRegistry
 import Foundation
 import Products
@@ -7,7 +8,7 @@ import Products
 /// are exercised, so the rest are inert stand-ins.
 @MainActor
 func makeChatBridgeDependencies(
-    productId: String = "test.dot"
+    productId: ProductId = try! ProductId("test.dot")
 ) -> RustProductExecutionBridge.Dependencies {
     let defaults = UserDefaults(suiteName: "io.parity.tests.chat-bridge") ?? .standard
     return .init(
@@ -19,8 +20,10 @@ func makeChatBridgeDependencies(
         reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
-        chainConnections: TrUAPIChainConnectionPool(
-            engineResolver: { _ in nil },
+        chainConnections: TrUAPIV2SpecConnectionPool(
+            chainRegistry: MockChainRegistry(),
+            applicationHandler: MockApplicationHandler(),
+            dateProvider: MockDateProvider(),
             logger: Logger.shared
         ),
         productStorage: TrUAPILocalStorage.createProductLocalStorage(
@@ -31,6 +34,7 @@ func makeChatBridgeDependencies(
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
+        themeManager: MockThemeManager(),
         logger: Logger.shared
     )
 }

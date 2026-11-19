@@ -11,6 +11,7 @@ sealed interface ChatMenuType {
     data class BlockConfirmation(val username: String) : ChatMenuType
     data class MessageHistory(val current: MessageRevisionUiModel, val history: ImmutableList<MessageRevisionUiModel>) : ChatMenuType
     data class Custom(val renderer: CustomChatMenuRenderer) : ChatMenuType
+    data object PrivacyDisclaimer : ChatMenuType
 }
 
 enum class ChatMenuAction {

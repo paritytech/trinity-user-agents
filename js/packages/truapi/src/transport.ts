@@ -28,7 +28,10 @@ export class UnsupportedMessageError extends Error {
   }
 }
 
-/** The host connection ended; interrupted operations are not retried. */
+/**
+ * The host connection ended after this operation was sent, before its frame
+ * could be written, or with no reconnect left to wait for.
+ */
 export class ConnectionResetError extends Error {
   constructor(options?: ErrorOptions) {
     super("TrUAPI host connection interrupted", options);
@@ -161,6 +164,55 @@ export type HostInitiatedSubscriptionHandler<Request, Item, Reason = never> = (
 ) => (() => void) | void;
 
 /**
+ * One answer to a host request, with cooperative cancellation. Return an Err
+ * for a declared failure; throws and rejected promises become HostFailure.
+ * Stop or connection loss aborts pending work and discards late results.
+ * Cancellation cannot undo work already performed.
+ */
+export type HostInitiatedRequestHandler<Request, Response, Failure> = (
+  request: Request,
+  context: { readonly signal: AbortSignal },
+) => Result<Response, Failure> | PromiseLike<Result<Response, Failure>>;
+
+/** Adapt one typed answer to an item; the host stops after receiving it. */
+export function hostRequestHandler<Request, Response, Failure>(
+  handler: HostInitiatedRequestHandler<Request, Response, Failure>,
+): HostInitiatedSubscriptionHandler<
+  Request,
+  Response,
+  Failure | CallErrorValue<never>
+> {
+  return (request, send, interrupt) => {
+    const controller = new AbortController();
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (controller.signal.aborted) return;
+      settled = true;
+      interrupt({
+        tag: "HostFailure",
+        value: {
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+    };
+    void Promise.resolve()
+      .then(async () => {
+        if (controller.signal.aborted) return;
+        const result = await handler(request, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (result.isOk()) send(result.value);
+        if (controller.signal.aborted) return;
+        settled = true;
+        if (result.isErr()) interrupt(result.error);
+      })
+      .catch(fail);
+    return () => {
+      if (!settled) controller.abort();
+    };
+  };
+}
+
+/**
  * Wire discriminant pair addressing a method. One id addresses a method
  * regardless of shape (request/response, or a subscription's four phases):
  * which leg of the exchange a frame carries is the wire's own `messageType`
@@ -227,7 +279,7 @@ export interface RequestParams<Ok, Err> {
    *
    * A host that predates the `Cancel` leg drops the frame, so an aborted call
    * against one settles on its deadline instead. There is no way to detect that
-   * first: `system.featureSupported` answers only about chains, so an abort
+   * first: `system.featureSupported` has no question for it, so an abort
    * against an older host is indistinguishable from one it honoured.
    **/
   signal?: AbortSignal;
@@ -308,6 +360,8 @@ export interface RegisterHostInitiatedSubscriptionParams<
   declinePayload: Uint8Array;
   /** Number of starts retained before a handler is installed. **/
   bufferCapacity: number;
+  /** Serve one answer, accepting only this request wrapper version. */
+  singleResponse?: { requestVersion: number };
 }
 
 /**
@@ -753,7 +807,8 @@ export function createMessagePortProvider(
 }
 
 /**
- * Wire provider over a binary WebSocket, one message per SCALE frame.
+ * Wire provider over a binary WebSocket at an absolute URL, one message per
+ * SCALE frame.
  *
  * This is the transport a host exposes on a loopback socket: the Rust core's
  * `ws-bridge`, and `truapi-host signing-host --frame-listen`. The frame bytes
@@ -789,9 +844,16 @@ export function createWebSocketProviderFactory(): (
     ArrayBuffer.prototype,
     "byteLength",
   )!.get!;
+  const NativeURL = URL;
+  const urlOrigin = Object.getOwnPropertyDescriptor(
+    NativeURL.prototype,
+    "origin",
+  )!.get!;
 
   return (url) => {
     const base = createBaseProvider();
+    // The query can hold a bridge token, so errors name only the origin.
+    const origin = apply(urlOrigin, new NativeURL(url), []);
     const socket = new NativeWebSocket(url);
     apply(setBinaryType, socket, ["arraybuffer"]);
     const pending: Uint8Array[] = [];
@@ -838,7 +900,7 @@ export function createWebSocketProviderFactory(): (
     apply(addEventListener, socket, [
       "error",
       () => {
-        const error = new Error(`websocket error (${url})`);
+        const error = new Error(`websocket error (${origin})`);
         rejectOpened(error);
         base.close(error);
       },
@@ -846,7 +908,7 @@ export function createWebSocketProviderFactory(): (
     apply(addEventListener, socket, [
       "close",
       () => {
-        const error = new Error(`websocket closed (${url})`);
+        const error = new Error(`websocket closed (${origin})`);
         rejectOpened(error);
         base.close(error);
       },

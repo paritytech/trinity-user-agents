@@ -9,15 +9,9 @@ import ChainRegistry
 
 extension ServiceCoordinator {
     @MainActor
-    // swiftlint:disable:next function_parameter_count
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
-        syncStore: DetermineStateSyncStore,
-        personDataStore: DetermineStatePersonDataStore,
-        syncService: DetermineStateSyncServicing,
-        personhoodRegistrationService: PersonhoodRegistrationServicing,
-        audioSessionManager: AudioSessionManaging,
         spaFlowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         pocket: ProductPocketService?
@@ -28,8 +22,7 @@ extension ServiceCoordinator {
         // which lets the facade wire the factory into the manager in `init`.
         let workerFacade = ProductWorkerFacade { workerOperations in
             DefaultProductWorkerFactory(
-                productResolver: spaFlowState.productResolver,
-                dotNsResolver: spaFlowState.dotNsResolver,
+                contentLoader: spaFlowState.contentLoader,
                 productFileProvider: productFileProvider,
                 chainRegistry: ChainRegistryFacade.sharedRegistry,
                 usernameStorage: UsernameStorage(),
@@ -43,24 +36,19 @@ extension ServiceCoordinator {
             productFileProvider: productFileProvider,
             runtimeProvider: truapiRuntimeProvider,
             workers: { pocket?.workers },
-            workerManager: workerFacade.manager
+            workerManager: workerFacade.manager,
+            productImages: spaFlowState.productImages
         )
 
         let productBotProvider = ProductBotProvider(
             productProvider: productRepositoryFactory.createProvider(),
             botFactory: botFactory,
-            dotNsResolver: spaFlowState.dotNsResolver,
-            productResolver: spaFlowState.productResolver
+            contentLoader: spaFlowState.contentLoader
         )
 
         let registry = MainActor.assumeIsolated {
             ChatExtensionsRegistry.createDefault(
-                syncStateStore: syncStore,
-                personDataStore: personDataStore,
-                syncService: syncService,
-                personhoodRegistrationService: personhoodRegistrationService,
-                productBotProvider: productBotProvider,
-                audioSessionManager: audioSessionManager
+                productBotProvider: productBotProvider
             )
         }
 

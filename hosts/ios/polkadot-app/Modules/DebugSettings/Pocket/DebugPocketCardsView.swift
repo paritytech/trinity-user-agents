@@ -1,10 +1,12 @@
 import SwiftUI
+import func TrUAPIHost.appDeeplinkScheme
 
 /// Cards typed in by hand, for driving a product's Pocket before it
 /// publishes a manifest.
 ///
-/// The product must be one with **no published worker**: a published one
-/// always wins, so a card named here would never be reached.
+/// A card named here is only offered for a product with **no published
+/// worker**: a published one always wins. Its widget URL is the exception and
+/// opens even over a published widget.
 struct DebugPocketCardsView: View {
     @State var viewModel = DebugPocketCardsViewModel()
 
@@ -15,20 +17,31 @@ struct DebugPocketCardsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(card.title): \(card.cardId)")
                             .font(.headline)
-                        Text(card.productId)
+                        Text(card.productId.rawValue)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(card.faceUrl)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        if let widgetUrl = card.widgetUrl {
+                            Text(widgetUrl.absoluteString)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if card.faceShown == false {
+                            Text(verbatim: "Opens with the face away")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .onDelete { viewModel.delete(at: $0) }
             }
 
             Section("Add a card") {
-                TextField("Product (dotNS name)", text: $viewModel.productId)
+                TextField("Product (dotNS name)", text: $viewModel.productIdInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Card id", text: $viewModel.cardId)
@@ -39,6 +52,11 @@ struct DebugPocketCardsView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                TextField("Widget URL (optional)", text: $viewModel.widgetUrl)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Toggle("Open with the face away", isOn: $viewModel.opensWithFaceAway)
 
                 Button("Save") { viewModel.save() }
                     .disabled(!viewModel.canSave)
@@ -50,7 +68,7 @@ struct DebugPocketCardsView: View {
 
             Section("Open") {
                 ForEach(viewModel.cards) { card in
-                    Text("polkadot://\(card.productId)/-/pocket/add?card=\(card.cardId)")
+                    Text(verbatim: "\(appDeeplinkScheme())://pocket/add?product=\(card.productId)&card=\(card.cardId)")
                         .font(.caption)
                         .textSelection(.enabled)
                 }

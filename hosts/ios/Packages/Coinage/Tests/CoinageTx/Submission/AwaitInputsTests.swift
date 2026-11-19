@@ -2,6 +2,7 @@ import AsyncExtensions
 import Foundation
 import FoundationExt
 import Testing
+import FoundationExtTestSupport
 @testable import Coinage
 
 /// The gate every rebuild waits behind. Two things have to hold: a look never claims an input is absent
@@ -158,7 +159,7 @@ private extension AwaitInputsTests {
         holdOut: Duration = .seconds(60),
         idleLimit: Duration = .seconds(60)
     ) -> InputWaitTiming {
-        InputWaitTiming(holdOut: holdOut, idleLimit: idleLimit, dateProvider: StubDateProvider(now))
+        InputWaitTiming(holdOut: holdOut, idleLimit: idleLimit, dateProvider: FixedDateProvider(now))
     }
 
     /// Emits each look in order. `settling` keeps the subscription open afterwards, the way a live one

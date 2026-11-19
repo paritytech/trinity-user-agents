@@ -4,7 +4,6 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 
 sealed interface PocketCardUiModel {
     val id: String
@@ -12,14 +11,12 @@ sealed interface PocketCardUiModel {
     data class DigitalDollar(
         val amounts: LoadingState<Amounts>,
         val syncInProgress: Boolean,
-        val accountBackupPending: Boolean,
     ) : PocketCardUiModel {
         override val id = "digital_dollar_card"
 
         val balanceStatus: DigitalDollarBalanceStatus = amounts.dataOrNull.let { loaded ->
             when {
                 syncInProgress -> DigitalDollarBalanceStatus.Syncing
-                accountBackupPending -> DigitalDollarBalanceStatus.AccountBackupPending
                 loaded != null && loaded.notFullyReady -> DigitalDollarBalanceStatus.PartlyReady(loaded.ready)
                 else -> DigitalDollarBalanceStatus.TotalOnly
             }
@@ -32,14 +29,6 @@ sealed interface PocketCardUiModel {
             val notFullyReady: Boolean
                 get() = balance.amount != ready.amount
         }
-    }
-
-    data class IdCard(
-        val username: String,
-        val address: String,
-        val rank: PocketRank
-    ) : PocketCardUiModel {
-        override val id = "id_card"
     }
 
     /** A card from the Pocket collection, drawn from its product's face tree. Pinned cards cannot be removed. */

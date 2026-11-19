@@ -29,15 +29,18 @@ public final class PGasOriginFactory {
     private let keyResolver: BandersnatchKeyResolving
     private let chainRegistry: ChainResourceProtocol
     private let storageRequestFactory: StorageRequestFactoryProtocol
+    private let networkSuffixProvider: NetworkSuffixProviding
 
     public init(
         keyResolver: BandersnatchKeyResolving,
         chainRegistry: ChainResourceProtocol,
-        storageRequestFactory: StorageRequestFactoryProtocol
+        storageRequestFactory: StorageRequestFactoryProtocol,
+        networkSuffixProvider: NetworkSuffixProviding
     ) {
         self.keyResolver = keyResolver
         self.chainRegistry = chainRegistry
         self.storageRequestFactory = storageRequestFactory
+        self.networkSuffixProvider = networkSuffixProvider
     }
 }
 
@@ -56,16 +59,7 @@ extension PGasOriginFactory: PGasOriginCreating {
             chain: peopleChainId
         )
 
-        let submissionRuntimeProvider = try chainRegistry.getRuntimeCodingServiceOrError(
-            for: submissionChainId
-        )
-        let submissionConnection = try chainRegistry.getRpcConnectionOrError(for: submissionChainId)
-        let submissionCodingFactory = try await submissionRuntimeProvider
-            .fetchCoderFactoryOperation().asyncExecute()
-        let networkSuffix = try await storageRequestFactory.readNetworkSuffix(
-            connection: submissionConnection,
-            codingFactory: submissionCodingFactory
-        )
+        let networkSuffix = try await networkSuffixProvider.networkSuffix()
         let proofContext = try ProductContextSuffix
             .pgasClaim(day: day, slot: slotIndex)
             .context(networkSuffix: networkSuffix)

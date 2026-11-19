@@ -31,7 +31,7 @@ class PocketPreviewLoaderTest {
     private val fetchedUrls = mutableListOf<String>()
     private var remoteFace: Result<RendererNode> = Result.success(faceOf("from the dev server"))
     private val remoteFaces = object : RemoteFaceSource {
-        override suspend fun fetch(url: String): Result<RendererNode> {
+        override suspend fun fetch(url: String, bypassCache: Boolean): Result<RendererNode> {
             fetchedUrls += url
             return remoteFace
         }
@@ -43,7 +43,7 @@ class PocketPreviewLoaderTest {
     )
 
     private fun definition(preview: PocketCardPreview) =
-        PocketCardDefinition(id = PocketCardId("loyalty"), title = "Loyalty", preview = preview)
+        PocketCardDefinition(id = PocketCardId("loyalty"), title = "Loyalty", preview = preview, faceShown = true)
 
     /**
      * The preview is read on the way to the add sheet, before the user has approved anything, so how

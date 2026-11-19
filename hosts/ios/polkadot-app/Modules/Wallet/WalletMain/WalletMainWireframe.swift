@@ -3,24 +3,51 @@ import UIKit
 import UIKitExt
 
 final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
-    private let personDataStore: DetermineStatePersonDataStore
     private let moduleNavigator: ModuleNavigating
     private let flowState: SPAFlowState
+    private let assetDetailsScene: AssetDetailsScene
 
     init(
-        personDataStore: DetermineStatePersonDataStore,
         flowState: SPAFlowState,
+        assetDetailsScene: AssetDetailsScene,
         moduleNavigator: ModuleNavigating = ModuleNavigator()
     ) {
-        self.personDataStore = personDataStore
         self.flowState = flowState
+        self.assetDetailsScene = assetDetailsScene
         self.moduleNavigator = moduleNavigator
+    }
+
+    func showBalanceCard() {
+        let viewModel = assetDetailsScene.viewModel
+        moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? PocketOrigin
+            let screen = AssetDetailsScreenViewController(viewModel: viewModel, origin: origin)
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
+        }
+    }
+
+    func showCollectibles(page: ProductPage) {
+        let configuration = SPAConfiguration(
+            title: String(localized: .Products.collectibles),
+            isRootScreen: false,
+            showMoreButton: false,
+            page: page
+        )
+        guard let product = SPAViewFactory.createView(configuration: configuration, flowState: flowState) else {
+            return
+        }
+
+        moduleNavigator.openWallet { wallet, wasOnScreen in
+            let origin = wallet.viewControllers.first as? PocketOrigin
+            let screen = CollectiblesViewController(product: product, origin: origin)
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
+        }
     }
 
     func showPocketCard(_ card: PocketCardViewModel) {
         guard let pocket = ProductPocketService.current else { return }
 
-        PocketCardOpening.open(card, flowState: flowState, navigator: moduleNavigator, pocket: pocket)
+        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket).open(card)
     }
 
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm: @escaping () -> Void) {
@@ -40,19 +67,5 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
             style: .alert,
             from: nil
         )
-    }
-
-    func showCollectibles(from view: WalletMainViewProtocol?, url: URL) {
-        guard let collectiblesView = CollectiblesViewFactory.createView(
-            url: url,
-            personDataStore: personDataStore
-        ) else {
-            return
-        }
-
-        let nav = AppNavigationController(rootViewController: collectiblesView.controller)
-        nav.modalPresentationStyle = .fullScreen
-
-        view?.controller.present(nav, animated: true)
     }
 }

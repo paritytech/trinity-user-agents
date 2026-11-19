@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.text.KeyboardOptions
@@ -42,6 +43,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.Se
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SearchResult
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendPaymentEmptySearch
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendToYourselfItem
 import kotlinx.collections.immutable.persistentListOf
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -57,6 +59,7 @@ fun SendPaymentScreen(contract: SendPaymentContract) {
         state = uiState,
         onInputChange = contract::onInputChange,
         onRecipientSelect = contract::onRecipientSelect,
+        onSendToYourselfClick = contract::onSendToYourselfClick,
         onPasteClick = contract::onPasteClick,
         onBackClick = contract::onBackClick,
         onScannerClick = contract::onScannerClick,
@@ -68,6 +71,7 @@ private fun SendPaymentScreenInternal(
     state: SendPaymentUiState,
     onInputChange: (String) -> Unit,
     onRecipientSelect: (PaymentSearchResultUiModel) -> Unit,
+    onSendToYourselfClick: () -> Unit,
     onPasteClick: () -> Unit,
     onBackClick: () -> Unit,
     onScannerClick: () -> Unit,
@@ -138,6 +142,15 @@ private fun SendPaymentScreenInternal(
 
             VerticalSpacer { mediumIncreased }
 
+            if (state.sendToYourselfVisible) {
+                SendToYourselfItem(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onSendToYourselfClick
+                )
+
+                VerticalSpacer { mediumIncreased }
+            }
+
             when (val results = state.results) {
                 is PaymentSearchResults.Sections -> SearchResult(results.sections, onRecipientSelect)
                 PaymentSearchResults.Waiting -> Unit
@@ -157,6 +170,7 @@ private fun SendPaymentScreenPreview() {
         SendPaymentScreenInternal(
             state = SendPaymentUiState(
                 input = "alice",
+                sendToYourselfVisible = false,
                 results = PaymentSearchResults.Sections(
                     persistentListOf(
                         PaymentSearchSectionUiModel(
@@ -200,6 +214,7 @@ private fun SendPaymentScreenPreview() {
             ),
             onInputChange = {},
             onRecipientSelect = {},
+            onSendToYourselfClick = {},
             onPasteClick = {},
             onBackClick = {},
             onScannerClick = {},

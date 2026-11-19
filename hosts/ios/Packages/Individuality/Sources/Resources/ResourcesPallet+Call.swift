@@ -114,6 +114,36 @@ public extension ResourcesPallet {
         }
     }
 
+    /// Origin: NotificationAlias via AsResources(RegisterNotificationForCollection(..)).
+    /// Binds `accountId` to one statement of the notification allowance until the period ends plus grace.
+    struct SetNotificationStatementAccountForSequenceCall: RuntimeCallConvertible {
+        public var moduleName: String { ResourcesPallet.name }
+        public var name: String { "set_notification_statement_account_for_sequence" }
+
+        enum CodingKeys: String, CodingKey {
+            case reference
+            case accountId = "account_id"
+        }
+
+        public let reference: NotificationReference
+        @BytesCodable public var accountId: Data
+
+        public init(reference: NotificationReference, accountId: Data) {
+            self.reference = reference
+            _accountId = BytesCodable(wrappedValue: accountId)
+        }
+    }
+
+    struct NotificationReference: Codable, Equatable {
+        @StringCodable public var period: UInt32
+        @StringCodable public var seq: UInt8
+
+        public init(period: UInt32, seq: UInt8) {
+            _period = StringCodable(wrappedValue: period)
+            _seq = StringCodable(wrappedValue: seq)
+        }
+    }
+
     enum UsernameChoice: Codable {
         case standalone(username: BytesCodable)
         case reservation(username: BytesCodable)

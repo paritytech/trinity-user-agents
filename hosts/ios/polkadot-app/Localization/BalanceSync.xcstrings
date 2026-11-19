@@ -1,18 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "account.backup.pending" : {
-      "comment" : "Warning row on the asset details while the installation's on-chain backup registration is still pending",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Account backup is still in progress. Keep the app open until it completes."
-          }
-        }
-      }
-    },
     "backup.updated.message" : {
       "comment" : "Toast message shown after confirming balance sync completion",
       "extractionState" : "manual",
@@ -21,6 +9,30 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Balance updated. You're all set."
+          }
+        }
+      }
+    },
+    "balance.available" : {
+      "comment" : "Caption beside the ready amount on the restored balance card",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Available now"
+          }
+        }
+      }
+    },
+    "balance.updating" : {
+      "comment" : "Status line on the restored balance card while a scan runs",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Updating balance"
           }
         }
       }
@@ -105,6 +117,30 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Why update?"
+          }
+        }
+      }
+    },
+    "pocket.hint" : {
+      "comment" : "Link under the Pocket card actions while the restored balance waits in Settings",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balance restored - check it in Settings"
+          }
+        }
+      }
+    },
+    "settings.row.description" : {
+      "comment" : "Backup row description in Settings while the restored balance waits",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check your restored balance"
           }
         }
       }

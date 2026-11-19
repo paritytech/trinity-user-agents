@@ -1,4 +1,5 @@
 import DesignSystem
+import PolkadotUI
 import SwiftUI
 import UIKit
 
@@ -8,7 +9,9 @@ enum ThemeSelectionViewFactory {
         let model = ThemeSelectionViewModel(themeManager: ThemeManager.shared) { [observer] in
             observer.didSelectTheme()
         }
-        return makeController(model: model)
+        let controller = UIHostingController(rootView: ThemeSelectionView(model: model))
+        controller.view.backgroundColor = .bgSurfaceMain
+        return controller
     }
 
     @MainActor
@@ -20,15 +23,23 @@ enum ThemeSelectionViewFactory {
             context: .settings,
             onComplete: onComplete
         )
-        return makeController(model: model)
-    }
-
-    @MainActor
-    private static func makeController(model: ThemeSelectionViewModel) -> UIViewController {
-        let controller = HiddableThemeHostingController(rootView: ThemeSelectionView(model: model))
+        let controller = ThemeSelectionHostingController(content: ThemeSelectionView(model: model))
         controller.view.backgroundColor = .bgSurfaceMain
+        controller.onLeaving = { model.back() }
         return controller
     }
 }
 
-private final class HiddableThemeHostingController: UIHostingController<ThemeSelectionView>, HiddableBarWhenPushed {}
+private final class ThemeSelectionHostingController: SafeAreaFollowingHostingController<ThemeSelectionView> {
+    /// Runs as the screen starts leaving the stack, by the back button or a swipe, so the screen beneath is current
+    /// before it slides in. A cancelled swipe also runs it.
+    var onLeaving: (() -> Void)?
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        guard isMovingFromParent else {
+            return
+        }
+        onLeaving?()
+    }
+}

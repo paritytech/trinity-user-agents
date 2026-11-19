@@ -2,7 +2,7 @@
 
 ## Overview
 
-Peer-to-peer data transport using WebRTC for voice/video calls and real-time data channels. Used by chat calls, DIM2 game, and device sync.
+Peer-to-peer data transport using WebRTC for voice/video calls and real-time data channels. Used by chat calls and device sync.
 
 ## Key Components
 
@@ -11,7 +11,6 @@ Peer-to-peer data transport using WebRTC for voice/video calls and real-time dat
 
 ### Modules
 - **ChatCall** — voice/video call UI and management
-- **GameRoom** — DIM2 game with WebRTC data channels
 
 ### Services
 - `callCoordinator` (ServiceCoordinator) — call lifecycle management

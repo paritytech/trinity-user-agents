@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_dotns_api.domain
 
 import android.net.Uri
-import io.paritytech.polkadotapp.common.utils.Urls
-import io.paritytech.polkadotapp.common.utils.toCanonicalDotHost
+import androidx.core.net.toUri
+import uniffi.truapi.parseProductLink
 
 object DotNsUtils {
     /**
@@ -13,8 +13,8 @@ object DotNsUtils {
      * Bare hostnames without a scheme will return `false` since [Uri.getHost] returns null for them.
      */
     fun isDotDomain(uri: Uri, tld: DotNsTld): Boolean {
-        val host = uri.host ?: return false
-        return host.toCanonicalDotHost().endsWith(tld.suffix)
+        if (uri.host == null) return false
+        return parseProductLink(uri.toString(), tld.value) != null
     }
 
     /**
@@ -25,17 +25,7 @@ object DotNsUtils {
      * Returns `null` if [uri] is not a dotNS domain of the active network.
      */
     fun normalize(uri: Uri, tld: DotNsTld): Uri? {
-        val withScheme = Urls.ensureHttpsProtocol(uri)
-
-        val host = withScheme.host ?: return null
-
-        val dotDomain = host.toCanonicalDotHost()
-
-        if (!dotDomain.endsWith(tld.suffix)) return null
-
-        return withScheme.buildUpon()
-            .authority(dotDomain)
-            .build()
+        return parseProductLink(uri.toString(), tld.value)?.canonicalUrl?.toUri()
     }
 
     /**

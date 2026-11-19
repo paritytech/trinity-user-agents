@@ -37,23 +37,23 @@ pub const ON_EVENT_EXPORT: &str = "truapi_on_event";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum EventKind {
-    /// Terminal answer of a request: `Result<Response, CallError<Error>>`.
-    Response = 0,
-    /// One subscription item.
-    Item = 1,
-    /// Terminal end of a subscription: `Result<(), CallError<Error>>`.
-    End = 2,
+	/// Terminal answer of a request: `Result<Response, CallError<Error>>`.
+	Response = 0,
+	/// One subscription item.
+	Item = 1,
+	/// Terminal end of a subscription: `Result<(), CallError<Error>>`.
+	End = 2,
 }
 
 impl TryFrom<u32> for EventKind {
-    type Error = u32;
+	type Error = u32;
 
-    fn try_from(kind: u32) -> Result<Self, u32> {
-        match kind {
-            0 => Ok(Self::Response),
-            1 => Ok(Self::Item),
-            2 => Ok(Self::End),
-            unknown => Err(unknown),
-        }
-    }
+	fn try_from(kind: u32) -> Result<Self, u32> {
+		match kind {
+			0 => Ok(Self::Response),
+			1 => Ok(Self::Item),
+			2 => Ok(Self::End),
+			unknown => Err(unknown),
+		}
+	}
 }

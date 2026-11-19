@@ -35,6 +35,12 @@ protocol ChatExtensionDiscoverContextProtocol {
         icon: String?
     ) async throws -> CreateRoomStatus
 
+    func setRoomFooter(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        footer: Chat.RoomFooter
+    ) async throws
+
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
     ) async -> AnyAsyncSequence<[RoomInfo]>
@@ -80,6 +86,8 @@ actor ChatExtensionDiscoverContext {
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let storageFacade: StorageFacadeProtocol
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
+    let roomMetadataRepository: AnyDataProviderRepository<Chat.RoomMetadataUpdate>
+    let roomFooterRepository: AnyDataProviderRepository<Chat.RoomFooterUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
 
     init(
@@ -100,6 +108,18 @@ actor ChatExtensionDiscoverContext {
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 mapper: AnyCoreDataMapper(ChatModelMapper())
+            )
+        )
+
+        roomMetadataRepository = AnyDataProviderRepository(
+            storageFacade.createRepository(
+                mapper: AnyCoreDataMapper(ChatRoomMetadataUpdateMapper())
+            )
+        )
+
+        roomFooterRepository = AnyDataProviderRepository(
+            storageFacade.createRepository(
+                mapper: AnyCoreDataMapper(ChatRoomFooterMapper())
             )
         )
 
@@ -321,15 +341,22 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
             .asyncExecute()
 
-        if existingChat != nil {
-            return .exists
-        }
-
         let roomMetadata = Chat.RoomMetadata(
             chatRelativeId: roomId,
             name: name,
             icon: icon
         )
+
+        // A product registers its room on every start and truapi has no call that updates one, so
+        // this is how a room placed before the product ran (`HostPlacedRoomPlacer`) gets its icon.
+        if let existingChat {
+            if existingChat.roomMetadata != roomMetadata {
+                let update = Chat.RoomMetadataUpdate(chatId: chatId, metadata: roomMetadata)
+                try await roomMetadataRepository.saveOperation({ [update] }, { [] }).asyncExecute()
+            }
+
+            return .exists
+        }
 
         let chat = Chat.LocalModel.newChatWithRoom(
             extensionId: chatBot.identifier,
@@ -340,6 +367,29 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
 
         return .new
+    }
+
+    func setRoomFooter(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        footer: Chat.RoomFooter
+    ) async throws {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+
+        let existingChat = try await chatRepository
+            .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+            .asyncExecute()
+
+        guard let existingChat else {
+            throw RoomFooterError.unknownRoom(roomId)
+        }
+
+        guard (existingChat.roomFooter ?? .textInput) != footer else {
+            return
+        }
+
+        let update = Chat.RoomFooterUpdate(chatId: chatId, footer: footer)
+        try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
     }
 
     func subscribeRooms(
@@ -380,5 +430,16 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await messageRepository.saveOperation({ [message] }, { [] }).asyncExecute()
 
         return message
+    }
+}
+
+enum RoomFooterError: LocalizedError {
+    case unknownRoom(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unknownRoom(roomId):
+            "no chat room \(roomId)"
+        }
     }
 }

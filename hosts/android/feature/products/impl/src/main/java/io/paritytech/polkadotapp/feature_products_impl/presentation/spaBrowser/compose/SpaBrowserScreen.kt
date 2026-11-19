@@ -12,11 +12,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitle
+import io.paritytech.polkadotapp.common.presentation.tabbar.ShowTabBarTucked
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
+import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -26,11 +34,14 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.Produ
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserPageState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserViewModel
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.ProductStatusBarTitle
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
+    ShowTabBarTucked()
+
     val state by viewModel.state.collectAsStateWithLifecycle()
     val webView by viewModel.webView.collectAsStateWithLifecycle()
 
@@ -38,9 +49,22 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
         viewModel.onBackPressed()
     }
 
+    StatusBarTitle {
+        state.statusBar?.let { statusBar ->
+            ProductStatusBarTitle(
+                state = statusBar,
+                onProceedInChatClick = viewModel::onProceedInChatClick,
+                onReloadClick = viewModel::onRefresh,
+                onShareClick = viewModel::onShareClick,
+                onCloseAppClick = viewModel::onCloseAppClick,
+            )
+        }
+    }
+
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
+        onRefresh = viewModel::onRefresh,
     )
 }
 
@@ -48,9 +72,8 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 internal fun SpaBrowserScreenInternal(
     state: SpaBrowserUiState,
     webView: WebView?,
+    onRefresh: () -> Unit,
 ) {
-    // No chrome: the product fills the screen. There is no in-screen way to close it — the only exit is
-    // the global tab bar (pull it out to switch or manage apps).
     PolkadotSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Column(
             modifier = Modifier
@@ -62,10 +85,24 @@ internal fun SpaBrowserScreenInternal(
                 modifier = Modifier.weight(1f),
                 color = PolkadotTheme.colors.bg.surface.container,
             ) {
-                SpaBrowserPageContent(
-                    pageState = state.pageState,
-                    webView = webView,
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SpaBrowserPageContent(
+                        pageState = state.pageState,
+                        webView = webView,
+                    )
+
+                    if (state.isDevServer) {
+                        PolkadotIconButton(
+                            icon = NovaIcons.Refreshing,
+                            onClick = onRefresh,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(PolkadotTheme.spacings.mediumIncreased),
+                            style = PolkadotButtonStyle.secondary(),
+                            size = PolkadotIconButtonSize.medium(),
+                        )
+                    }
+                }
             }
         }
     }
@@ -81,7 +118,7 @@ internal fun SpaBrowserScreenInternal(
  * Hidden when idle / completed / failed.
  */
 @Composable
-private fun DotNsLoadProgressBar(progress: DotNsLoadProgress, modifier: Modifier = Modifier) {
+private fun DotNsLoadProgressBar(progress: DotNsLoadProgress) {
     val target = when (progress) {
         DotNsLoadProgress.Resolving -> RESOLVE_BAND_END
         is DotNsLoadProgress.Downloading ->
@@ -109,7 +146,7 @@ private fun DotNsLoadProgressBar(progress: DotNsLoadProgress, modifier: Modifier
     if (isLoading) {
         NovaLinearProgressIndicator(
             progress = animatedFraction,
-            modifier = modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
             color = PolkadotTheme.colors.fg.link
         )
     }
@@ -152,11 +189,10 @@ private fun SpaBrowserScreenPreview() {
     PolkadotTheme {
         SpaBrowserScreenInternal(
             state = SpaBrowserUiState(
-                title = "Web3 Summit App",
-                subtitle = "web3summit.dot",
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
+            onRefresh = {},
         )
     }
 }

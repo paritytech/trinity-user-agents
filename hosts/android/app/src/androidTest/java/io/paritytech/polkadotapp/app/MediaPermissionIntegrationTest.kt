@@ -8,20 +8,18 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dagger.hilt.android.testing.HiltAndroidTest
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
-import uniffi.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIStack
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,10 +31,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.RemotePermission
+import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
+import uniffi.truapi.RemotePermission
 import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -44,8 +46,9 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 
+@HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-class MediaPermissionIntegrationTest {
+class MediaPermissionIntegrationTest : BaseIntegrationTest() {
     @Test
     fun rustConsentPrecedesNativeCaptureAndAllowOnceIsConsumedOnce() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -64,14 +67,11 @@ class MediaPermissionIntegrationTest {
         }
         val config = HostRuntimeConfig(
             hostName = "Media permission test",
-            peopleChainGenesisHash = ByteArray(32),
-            bulletinChainGenesisHash = ByteArray(32),
-            assetHubChainGenesisHash = ByteArray(32),
-            networkSuffix = "paseo",
+            stack = TrUAPIStack.PREVIEWNET.bundled(context),
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("media.paseo").getOrThrow(), ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
@@ -79,14 +79,17 @@ class MediaPermissionIntegrationTest {
                     webView.settings.javaScriptEnabled = true
                     webView.webChromeClient = ProductWebChromeClient(
                         unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker),
-                        unused(), unused(), "Media test", FixedProductId(ProductId.fromStoredValue("media.paseo")), scope, null,
+                        unused(), unused(), "Media test", FixedProductId(ProductId.parse("media.paseo").getOrThrow()), scope, null,
                     )
                     webView.addJavascriptInterface(reports, "mediaReport")
                     webView.webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) =
                             WebResourceResponse("text/html", "UTF-8", PAGE.byteInputStream())
                     }
-                    TrUAPIBootstrapInstaller(context).installerFor(setOf("http://localhost"))(
+                    TrUAPIBootstrapInstaller(context).installerFor(
+                        setOf("http://localhost"),
+                        "media-permission-test",
+                    )(
                         LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token),
                     )(webView)
                     webView.loadUrl("http://localhost/")

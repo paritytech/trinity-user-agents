@@ -7,14 +7,11 @@ use truapi::latest::RemotePreimageLookupSubscribeRequest;
 
 #[truapi::main]
 async fn main() -> Result<(), truapi::Error> {
-    let key = b"key".to_vec();
-    let mut lookup =
-        truapi::preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
-    lookup
-        .next()
-        .await
-        .ok_or("lookup ended without an item")??;
-    drop(lookup);
-    truapi::account::get_user_id(()).await?;
-    Ok(())
+	let key = b"key".to_vec();
+	let mut lookup =
+		truapi::preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
+	lookup.next().await.ok_or("lookup ended without an item")??;
+	drop(lookup);
+	truapi::account::get_user_id(()).await?;
+	Ok(())
 }

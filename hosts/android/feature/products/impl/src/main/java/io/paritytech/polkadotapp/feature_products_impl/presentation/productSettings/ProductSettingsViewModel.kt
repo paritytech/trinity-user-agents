@@ -5,7 +5,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.withLoading
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.productSettings.ProductSettingsInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -24,7 +23,7 @@ class ProductSettingsViewModel @Inject constructor(
     private val router: ProductsRouter,
 ) : BaseViewModel() {
     private val payload: ProductSettingsPayload = savedStateHandle.getPayload()
-    private val productId = ProductId.fromStoredValue(payload.productId)
+    private val productId = payload.productId
 
     val state: StateFlow<LoadingState<ProductSettingsUiModel>> = interactor.observeProductSettings(productId)
         .filterNotNull()

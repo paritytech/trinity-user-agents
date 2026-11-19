@@ -6,15 +6,19 @@ internal import UIKit_iOS
 
 public struct ChatHeaderConfiguration: HashableContentConfiguration {
     public let avatarViewModel: AvatarViewModel
+    /// Loaded over ``avatarViewModel``, which shows until it arrives.
+    public let icon: AnyImageViewModel?
     public let username: String
     public let additionalInfo: String?
 
     public init(
         avatarViewModel: AvatarViewModel,
+        icon: AnyImageViewModel? = nil,
         username: String,
         additionalInfo: String? = nil
     ) {
         self.avatarViewModel = avatarViewModel
+        self.icon = icon
         self.username = username
         self.additionalInfo = additionalInfo
     }
@@ -86,6 +90,7 @@ private extension ChatHeaderView {
         appliedConfiguration = configuration
 
         avatarView.viewModel = configuration.avatarViewModel
+        avatarView.icon = configuration.icon
         titleLabel.text = configuration.username
     }
 }

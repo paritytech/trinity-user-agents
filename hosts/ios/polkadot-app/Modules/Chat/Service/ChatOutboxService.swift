@@ -5,7 +5,12 @@ import SubstrateSdk
 import OperationExt
 import StatementStore
 
-protocol ChatOutboxServicing: AnyObject {
+protocol ChatDirectMessageSending: AnyObject {
+    // do not trigger APNS push
+    func sendDirectly(_ remoteMessage: Chat.RemoteMessage, to peerAccountId: AccountId)
+}
+
+protocol ChatOutboxServicing: ChatDirectMessageSending {
     var exchangeService: AnyMessageExchangeService<Chat.OpaqueMessage>? { get set }
 
     func setupCallCoordinator(_ callCoordinator: CallCoordinating)
@@ -40,9 +45,6 @@ protocol ChatOutboxServicing: AnyObject {
     )
 
     func sendPeerLeftMessage(to contact: Chat.Contact, completion: @escaping () -> Void)
-
-    // do not trigger APNS push
-    func sendDirectly(_ remoteMessage: Chat.RemoteMessage, to peerAccountId: AccountId)
 }
 
 final class ChatOutboxService {
@@ -52,6 +54,7 @@ final class ChatOutboxService {
     private let contactsStorageService: ContactsLocalStorageServicing
     private let apnsClientService: APNSClientServicing
     private let notifiedMessageIdRepository: AnyDataProviderRepository<Chat.NotifiedMessageId>
+    private let seenReceiptDeliveryRecorder: SeenReceiptDeliveryRecording
 
     private let workQueue: DispatchQueue
     private let operationQueue: OperationQueue
@@ -73,6 +76,7 @@ final class ChatOutboxService {
         apnsClientService: APNSClientServicing,
         notifiedMessageIdRepository: AnyDataProviderRepository<Chat.NotifiedMessageId>,
         chatMessageDataProviderFactory: ChatMessageDataProviderMaking,
+        seenReceiptDeliveryRecorder: SeenReceiptDeliveryRecording,
         workQueue: DispatchQueue,
         operationQueue: OperationQueue,
         logger: LoggerProtocol
@@ -81,6 +85,7 @@ final class ChatOutboxService {
         self.contactsStorageService = contactsStorageService
         self.apnsClientService = apnsClientService
         self.notifiedMessageIdRepository = notifiedMessageIdRepository
+        self.seenReceiptDeliveryRecorder = seenReceiptDeliveryRecorder
         self.workQueue = workQueue
         self.operationQueue = operationQueue
         self.chatMessageDataProviderFactory = chatMessageDataProviderFactory
@@ -175,6 +180,7 @@ extension ChatOutboxService: ChatOutboxServicing {
 
             markDeliveredMessages(messages)
             handleDeliveredCallMessages(messages, to: contact)
+            recordDeliveredSeenReceipts(messages, to: contact)
         }
     }
 
@@ -455,6 +461,28 @@ private extension ChatOutboxService {
         }
     }
 
+    func recordDeliveredSeenReceipts(_ messages: [Chat.RemoteMessage], to contact: Chat.Contact) {
+        let seenContents = messages.compactMap { message -> ChatRemoteMessageContent.SeenContent? in
+            guard case let .seen(seenContent) = message.versioned.ensureV1()?.content else {
+                return nil
+            }
+
+            return seenContent
+        }
+
+        guard !seenContents.isEmpty else {
+            return
+        }
+
+        Task { [seenReceiptDeliveryRecorder, logger] in
+            do {
+                try await seenReceiptDeliveryRecorder.recordDelivered(seenContents, to: contact.accountId)
+            } catch {
+                logger.error("Failed to record delivered seen receipt: \(error)")
+            }
+        }
+    }
+
     func handleSyncPendingRemoteMessages(_ messages: [Chat.RemoteMessage], contactId: AccountId) {
         guard !messages.isEmpty else {
             logger.debug("No pending messages to sync")
@@ -686,6 +714,10 @@ private extension MessageExchange.OutgoingMessageError {
 
 private extension Error {
     var allowsStatementResubmit: Bool {
+        guard !(self is ChatSigningConsentError) else {
+            return false
+        }
+
         guard let submitError = self as? StatementSubmitError else {
             return true
         }

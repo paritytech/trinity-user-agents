@@ -8,6 +8,7 @@ import ChainRegistry
 import SubstrateSdkExt
 import Products
 import StructuredConcurrency
+import Kingfisher
 
 final class RootInteractor {
     private enum SetupWaitOutcome {
@@ -44,7 +45,7 @@ final class RootInteractor {
     }
 
     private static let requiredChainIds: Set<ChainModel.Id> = [
-        AppConfig.Chains.usernameChain,
+        AppConfig.Chains.peopleChain,
         AppConfig.Chains.bulletInChain,
         AppConfig.Chains.assethubChain
     ]
@@ -53,14 +54,13 @@ final class RootInteractor {
 
     let chainRegistryClosure: ChainRegistryLazyClosure
 
-    let migrator: Migrating
+    let initializer: AppSharedInitializing
     let logger: LoggerProtocol
     let resolver: any DecisionResolver<RootDestination>
     let tokenManager: JWTTokenManaging
     let tldProvider: DotNsTldProviding
 
     let remoteConfigManager: RemoteConfigManaging
-    let chainRegistryConfigurator: ChainRegistryConfiguring
     let productPrewarmer: ProductContentPrewarming
     let observer: RootSetupObserver
     let appliedConfigReader: () -> RemoteAppConfig?
@@ -79,12 +79,11 @@ final class RootInteractor {
 
     init(
         chainRegistryClosure: @escaping ChainRegistryLazyClosure,
-        migrator: Migrating,
+        initializer: AppSharedInitializing,
         logger: LoggerProtocol,
         resolver: any DecisionResolver<RootDestination>,
         tokenManager: JWTTokenManaging,
         remoteConfigManager: RemoteConfigManaging,
-        chainRegistryConfigurator: ChainRegistryConfiguring,
         productPrewarmer: ProductContentPrewarming,
         observer: RootSetupObserver,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
@@ -94,12 +93,11 @@ final class RootInteractor {
     ) {
         self.chainRegistryClosure = chainRegistryClosure
 
-        self.migrator = migrator
+        self.initializer = initializer
         self.logger = logger
         self.resolver = resolver
         self.tokenManager = tokenManager
         self.remoteConfigManager = remoteConfigManager
-        self.chainRegistryConfigurator = chainRegistryConfigurator
         self.productPrewarmer = productPrewarmer
         self.observer = observer
         self.tldProvider = tldProvider
@@ -114,34 +112,12 @@ final class RootInteractor {
     }
 
     @MainActor
-    private func performCommonSetup(with chainRegistry: ChainRegistryProtocol) {
+    private func beginSetupAttempt(with chainRegistry: ChainRegistryProtocol) {
         completionTask?.cancel()
         didReportOutcome.withLock { $0 = false }
 
-        setupChainUpdate(for: chainRegistry)
-        fetchRemoteConfig()
         startObservationIfNeeded()
-
         startSetupCompletionTask(for: chainRegistry)
-    }
-
-    private func setupChainUpdate(for registry: ChainRegistryProtocol) {
-        chainRegistryConfigurator.set(chainRegistry: registry)
-    }
-
-    private func runMigrators() {
-        do {
-            try migrator.migrate()
-        } catch {
-            logger.error("Migration failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func fetchRemoteConfig() {
-        remoteConfigManager.fetchRemoteConfigValues()
-
-        // Follows every applied config, so the logos are fetched the moment one names them.
-        paymentAssetBranding.start()
     }
 
     private func setupJWTManager() {
@@ -286,9 +262,14 @@ extension RootInteractor: RootInteractorInputProtocol {
     }
 
     func setup() {
-        runMigrators()
+        KingfisherManager.shared.cache.diskStorage.config.sizeLimit = 100 * 1_024 * 1_024
+
+        initializer.start()
+
+        paymentAssetBranding.start()
+
         let chainRegistry = chainRegistryClosure()
-        performCommonSetup(with: chainRegistry)
+        beginSetupAttempt(with: chainRegistry)
 
         #if TESTNET_FEATURE
             appFactoryResetChecker = appFactoryResetCheckerFactory?
@@ -297,8 +278,8 @@ extension RootInteractor: RootInteractorInputProtocol {
     }
 
     func retrySetup() {
-        let chainRegistry = chainRegistryClosure()
-        performCommonSetup(with: chainRegistry)
+        initializer.refetchConfig()
+        beginSetupAttempt(with: chainRegistryClosure())
     }
 
     func completeWalletsCreation() {
@@ -346,15 +327,9 @@ private extension RootInteractor {
     func logWallets() {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
         let main = try? walletRepo.main().getRawPublicKey().toAddress(using: .genericFormat)
-        let candidate = try? walletRepo.candidate().getRawPublicKey().toAddress(using: .genericFormat)
-        let score = try? walletRepo.scoreAlias().getRawPublicKey().toAddress(using: .genericFormat)
-        let mobRule = try? walletRepo.mobRuleAlias().getRawPublicKey().toAddress(using: .genericFormat)
         let resources = try? walletRepo.resourcesAlias().getRawPublicKey().toAddress(using: .genericFormat)
 
         logger.debug("Main address: \(main ?? "")")
-        logger.debug("Candidate address: \(candidate ?? "")")
-        logger.debug("Score address: \(score ?? "")")
-        logger.debug("Mob rule address: \(mobRule ?? "")")
         logger.debug("Resources address: \(resources ?? "")")
     }
 }

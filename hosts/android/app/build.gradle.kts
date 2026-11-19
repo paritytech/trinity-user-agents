@@ -4,7 +4,6 @@ plugins {
     id("polkadotapp.android.application")
     id("polkadotapp.android.compose")
     id("polkadotapp.android.hilt")
-    alias(libs.plugins.firebase.crashlytics)
     alias(libs.plugins.google.services)
     alias(libs.plugins.sentry.android.gradle)
 }
@@ -123,6 +122,7 @@ dependencies {
     implementation(libs.coil.kt)
 
     implementation(project(":common"))
+    implementation(libs.sentry)
     implementation(project(":design"))
     implementation(project(":chains"))
     implementation(project(":database"))
@@ -130,7 +130,6 @@ dependencies {
     // Region features
     implementation(project(":feature:backup:impl"))
     implementation(project(":feature:xcm:impl"))
-    implementation(project(":feature:fund:impl"))
     implementation(project(":feature:swap:impl"))
     implementation(project(":feature:chats:impl"))
     implementation(project(":feature:device-sync:impl"))
@@ -139,17 +138,14 @@ dependencies {
     implementation(project(":feature:wallet:impl"))
     implementation(project(":feature:tokens:impl"))
     implementation(project(":feature:splash:impl"))
-    implementation(project(":feature:wallet:impl"))
     implementation(project(":feature:prices:impl"))
     implementation(project(":feature:account:impl"))
-    implementation(project(":feature:vouchers:impl"))
     implementation(project(":feature:settings:impl"))
     implementation(project(":feature:balances:impl"))
     implementation(project(":feature:transfers:impl"))
     implementation(project(":feature:usernames:impl"))
     implementation(project(":feature:videogame:impl"))
     implementation(project(":feature:transactions:impl"))
-    implementation(project(":feature:become-citizen:impl"))
     implementation(project(":feature:statement-store:impl"))
     implementation(project(":feature:transaction-storage:impl"))
     implementation(project(":feature:pgas:impl"))
@@ -157,10 +153,8 @@ dependencies {
     implementation(project(":feature:cross-chain-transfers:impl"))
     implementation(project(":feature:sso:impl"))
     implementation(project(":feature:scan:impl"))
-    implementation(project(":feature:mobrules:api"))
-    implementation(project(":feature:mobrules:impl"))
     implementation(project(":feature:products:impl"))
-    implementation(project(":feature:upgrade-username:impl"))
+    implementation(project(":bindings:truapi-host"))
     implementation(project(":feature:calls:api"))
     implementation(project(":feature:calls:impl"))
     implementation(project(":feature:coinage:impl"))
@@ -187,21 +181,20 @@ dependencies {
     implementation(project(":tools:media-connection:api"))
     // Endregion tools
 
-    "gpImplementation"(platform(libs.firebase.bom))
-    "gpImplementation"(libs.firebase.crashlytics)
-    "gpImplementation"(libs.firebase.analytics)
-
     "gpImplementation"(libs.google.play.services.mlkit)
     "vanillaImplementation"(libs.google.mlkit.barcode.scanning)
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
     testImplementation(libs.squareup.okhttp3.mockwebserver)
     testImplementation(libs.squareup.okhttp3.tls)
 
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(project(":bindings:truapi-host"))
     androidTestImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.hilt.android.testing)
     androidTestImplementation(libs.mockk.android) {
@@ -223,4 +216,18 @@ sentry {
     // Sentry only runs on debug/nightly; skip release so the plugin
     // doesn't try to process a variant that has no DSN/auth token
     ignoredBuildTypes.set(setOf("release"))
+
+    // The logcat rewrite would add every Log.w and Log.e in the app.
+    tracingInstrumentation {
+        logcat {
+            enabled.set(false)
+        }
+    }
 }
+
+// The iOS host turns no log line into a Sentry event, and SentryLogTree covers the truapi lines.
+configurations.configureEach {
+    exclude(group = "io.sentry", module = "sentry-android-timber")
+}
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

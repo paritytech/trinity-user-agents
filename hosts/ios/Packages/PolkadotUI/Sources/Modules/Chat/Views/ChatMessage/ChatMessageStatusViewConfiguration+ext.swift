@@ -6,14 +6,19 @@ public extension ChatMessageStatusViewConfiguration {
         case pending
         case sent
         case delivered
+        case failed
+        case seen
 
         public var image: UIImage {
             switch self {
             case .pending:
                 UIImage(resource: .messagePending)
-            case .sent:
+            case .sent,
+                 .delivered:
                 UIImage(resource: .messageSent)
-            case .delivered:
+            case .failed:
+                UIImage(resource: .exclamationMark).withTintColor(.fgError, renderingMode: .alwaysOriginal)
+            case .seen:
                 UIImage(resource: .messageDelivered)
             }
         }
@@ -79,6 +84,10 @@ public extension ChatMessageStatusViewConfiguration.Background {
                 image: UIImage(resource: .messageDelivered),
                 isEdited: false
             )
+        }
+
+        static var failed: Self {
+            .outbox(date: .now, formatter: TimestampFormatter(), status: .failed)
         }
     }
 #endif

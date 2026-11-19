@@ -92,7 +92,7 @@ extension CoinageTransferStatusService {
         }
 
         if coin.isOnchain {
-            return .awaitingClaim
+            return .awaitingClaim(finalized: atFinalized[coin.publicKey] == true)
         }
 
         // Seen on chain before, now gone, and its minter has arrived — the peer took it (best head).
@@ -103,7 +103,7 @@ extension CoinageTransferStatusService {
         // Absent on best but present at finality: cannot tell "not synced yet" from "gone", so play
         // safe and report awaiting; a later pass marks it claimed once it leaves the finalized block.
         if atFinalized[coin.publicKey] == true {
-            return .awaitingClaim
+            return .awaitingClaim(finalized: true)
         }
 
         return .detecting

@@ -2,12 +2,17 @@ package io.paritytech.polkadotapp.tools_media_connection_impl.signaling
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
+import io.paritytech.polkadotapp.common.utils.InformationSize
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.kilobytes
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.megabytes
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.DataTransportState
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerConnectionLogger
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.UseCaseData
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.UseCaseId
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.DataChannelMessage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,20 +21,34 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.webrtc.DataChannel
 import java.nio.ByteBuffer
+import kotlin.time.Duration.Companion.milliseconds
 
 class DataChannelMessaging(
     scope: CoroutineScope,
     private val logger: PeerConnectionLogger
 ) : CoroutineScope by scope {
+    private companion object {
+        val SEND_BUFFER_LIMITS = SendBufferLimits(pauseAbove = 1.megabytes, resumeBelow = 256.kilobytes)
+        val BUFFER_DRAIN_POLL = 100.milliseconds
+    }
+
     private var dataChannel: DataChannel? = null
 
-    private val messagesMutable = MutableSharedFlow<DataChannelMessage>(extraBufferCapacity = 64)
+    // Unbounded: a dropped frame is a lost sync update or file chunk.
+    private val messagesMutable = MutableSharedFlow<DataChannelMessage>(extraBufferCapacity = Channel.UNLIMITED)
     val messages = messagesMutable.asSharedFlow()
 
     private val stateMutable = MutableStateFlow(DataTransportState.Connecting)
     val state = stateMutable.asStateFlow()
+
+    // Mutex is fair, so use cases sharing the channel interleave instead of one draining its backlog first.
+    private val sendMutex = Mutex()
+    private val bufferedAmountChanged = Channel<Unit>(Channel.CONFLATED)
 
     private val observer = createObserver()
 
@@ -48,9 +67,12 @@ class DataChannelMessaging(
         awaitChannelOpen()
 
         val encoded = BinaryScale.encodeToByteArray(DataChannelMessage.serializer(), message)
-        val buffer = DataChannel.Buffer(ByteBuffer.wrap(encoded), true)
-        val success = dataChannel?.send(buffer)
-        logger.log("DataChannelMessaging: message sent success=$success")
+        sendMutex.withLock {
+            awaitSendCapacity(encoded.size.bytes)
+            val buffer = DataChannel.Buffer(ByteBuffer.wrap(encoded), true)
+            val success = dataChannel?.send(buffer)
+            logger.log("DataChannelMessaging: message sent success=$success")
+        }
     }
 
     fun subscribeMessages(id: UseCaseId): Flow<UseCaseData> {
@@ -63,8 +85,21 @@ class DataChannelMessaging(
         send(DataChannelMessage(id = id, data = data))
     }
 
+    // WebRTC closes the channel once its send buffer overflows, so wait for it to drain instead of queueing more.
+    private suspend fun awaitSendCapacity(messageSize: InformationSize) {
+        var throttled = false
+        while (isOpen()) {
+            val bufferedAmount = dataChannel?.bufferedAmount()?.bytes ?: return
+            if (!SEND_BUFFER_LIMITS.shouldWait(bufferedAmount, messageSize, throttled)) return
+
+            throttled = true
+            withTimeoutOrNull(BUFFER_DRAIN_POLL) { bufferedAmountChanged.receive() }
+        }
+    }
+
     private fun createObserver() = object : DataChannel.Observer {
         override fun onBufferedAmountChange(previousAmount: Long) {
+            bufferedAmountChanged.trySend(Unit)
         }
 
         override fun onStateChange() {

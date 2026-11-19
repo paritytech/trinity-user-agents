@@ -13,6 +13,7 @@ import {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -22,6 +23,7 @@ import {
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   RemotePermissionRequest,
@@ -31,10 +33,11 @@ import {
   AuthState,
   CoreStorageKey,
   DevicePermissionStatus,
-  HostChainSet,
+  ExtensionVersionMap,
   HostContactLookup,
   HostContactMatches,
   HostContactPick,
+  HostScan,
   PermissionDecision,
   ProductContext,
   UserConfirmationReview,
@@ -64,6 +67,7 @@ export interface RawCallbacks {
     product: Uint8Array,
     request: Uint8Array,
   ): Promise<Uint8Array>;
+  setChatRoomFooter?(product: Uint8Array, request: Uint8Array): Promise<void>;
   subscribeChatRooms?(
     product: Uint8Array,
     sendItem: (item?: Uint8Array) => void,
@@ -74,8 +78,8 @@ export interface RawCallbacks {
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
+  transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
-  supportedChains(): Promise<Uint8Array>;
   scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
   cancelGameReminder?(product: Uint8Array): Promise<void>;
   subscribeLocale(
@@ -115,6 +119,7 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  scanCode?(product: Uint8Array, request: Uint8Array): Promise<Uint8Array>;
   subscribeTheme(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
@@ -132,6 +137,7 @@ export function createWasmRawCallbacks(
   const game = callbacks.game;
   const permissionStatus = callbacks.permissionStatus;
   const pocket = callbacks.pocket;
+  const scanner = callbacks.scanner;
   return {
     authStateChanged: async (state) =>
       await callbacks.auth.authStateChanged(AuthState.dec(state)),
@@ -158,6 +164,11 @@ export function createWasmRawCallbacks(
                 ProductContext.dec(product),
                 HostChatPostMessageRequest.dec(request),
               ),
+            ),
+          setChatRoomFooter: async (product, request) =>
+            await chat.setChatRoomFooter(
+              ProductContext.dec(product),
+              HostChatSetRoomFooterRequest.dec(request),
             ),
           subscribeChatRooms: (product, sendItem, sendError) =>
             driveResultStream(
@@ -188,14 +199,16 @@ export function createWasmRawCallbacks(
       ),
     clearCoreStorage: async (key) =>
       await callbacks.coreStorage.clearCoreStorage(CoreStorageKey.dec(key)),
+    transactionExtensionVersions: async () =>
+      ExtensionVersionMap.enc(
+        await callbacks.extrinsicVersion.transactionExtensionVersions(),
+      ),
     featureSupported: async (request) =>
       HostFeatureSupportedResponse.enc(
         await callbacks.features.featureSupported(
           HostFeatureSupportedRequest.dec(request),
         ),
       ),
-    supportedChains: async () =>
-      HostChainSet.enc(await callbacks.features.supportedChains()),
     ...(game
       ? {
           scheduleGameReminder: async (product, startsAt) =>
@@ -289,6 +302,17 @@ export function createWasmRawCallbacks(
         (item) => sendItem(HostLocalStorageChangeItem.enc(item)),
         sendError,
       ),
+    ...(scanner
+      ? {
+          scanCode: async (product, request) =>
+            HostScan.enc(
+              await scanner.scanCode(
+                ProductContext.dec(product),
+                HostScannerScanRequest.dec(request),
+              ),
+            ),
+        }
+      : {}),
     subscribeTheme: (sendItem, sendError) =>
       driveResultStream(
         callbacks.theme.subscribeTheme(),

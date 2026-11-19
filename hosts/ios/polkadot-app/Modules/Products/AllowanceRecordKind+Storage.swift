@@ -26,3 +26,33 @@ extension AllowanceRecord.Kind {
         }
     }
 }
+
+extension AllowanceRecord.Domain {
+    var persistenceCode: Int16 {
+        switch self {
+        case .chat:
+            0
+        case .device:
+            1
+        case .product:
+            2
+        case .coinage:
+            3
+        }
+    }
+
+    init?(persistenceCode: Int16) {
+        switch persistenceCode {
+        case 0:
+            self = .chat
+        case 1:
+            self = .device
+        case 2:
+            self = .product
+        case 3:
+            self = .coinage
+        default:
+            return nil
+        }
+    }
+}

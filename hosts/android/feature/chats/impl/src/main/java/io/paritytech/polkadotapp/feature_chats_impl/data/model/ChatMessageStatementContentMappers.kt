@@ -65,6 +65,11 @@ fun EncodedMessage.decodeChatMessageStatement(): Result<ChatMessageStatement> {
     return runCatching { BinaryScale.decodeFromByteArray<ChatMessageStatement>(this) }
 }
 
+fun EncodedMessage.isDeviceChatAccepted(): Boolean {
+    val versioned = decodeChatMessageStatement().getOrNull()?.versioned as? VersionedChatMessage.V1 ?: return false
+    return versioned.message.content is ChatMessageStatementContent.DeviceChatAccepted
+}
+
 fun EncodedMessage.decodeAlwaysDecodableChatMessagePart(): Result<AlwaysDecodableChatMessagePart> {
     return runCatching { BinaryScale.decodeFromByteArray<AlwaysDecodableChatMessagePart>(this) }
         .logFailure("Failed to parse AlwaysDecodableChatMessagePart - this should never happen")

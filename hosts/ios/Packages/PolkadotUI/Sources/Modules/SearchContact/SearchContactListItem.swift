@@ -6,10 +6,17 @@ internal import SnapKit
 public struct SearchContactListConfiguration: HashableContentConfiguration {
     public var userName: String
     public var avatarViewModel: AvatarViewModel
+    /// Loaded over the placeholder while preserving the row's identity.
+    public var icon: AnyImageViewModel?
 
-    public init(userName: String, avatarViewModel: AvatarViewModel) {
+    public init(
+        userName: String,
+        avatarViewModel: AvatarViewModel,
+        icon: AnyImageViewModel? = nil
+    ) {
         self.userName = userName
         self.avatarViewModel = avatarViewModel
+        self.icon = icon
     }
 
     public func makeContentView() -> any UIView & UIContentView {
@@ -20,11 +27,11 @@ public struct SearchContactListConfiguration: HashableContentConfiguration {
 }
 
 final class SearchContactListView: UIView, UIContentView {
-    let avatarView = DSAvatarView(size: .s40)
+    let avatarView = DSSearchAvatarView()
 
     let nameLabel: Label = create {
-        $0.typography = .titleMedium
-        $0.textColor = UIColor.fgPrimary
+        $0.typography = .bodyLargeEmphasized
+        $0.textColor = .fgPrimary
         $0.numberOfLines = 1
     }
 
@@ -51,14 +58,14 @@ final class SearchContactListView: UIView, UIContentView {
     private func setupViews() {
         addSubview(avatarView)
         avatarView.snp.makeConstraints {
-            $0.size.equalTo(avatarView.proposedDimension)
+            $0.size.equalTo(DSLetterAvatar.Size.s40.dimension)
             $0.leading.equalToSuperview()
-            $0.top.bottom.equalToSuperview()
+            $0.top.bottom.equalToSuperview().inset(12)
         }
 
         addSubview(nameLabel)
         nameLabel.snp.makeConstraints {
-            $0.leading.equalTo(avatarView.snp.trailing).offset(16)
+            $0.leading.equalTo(avatarView.snp.trailing).offset(12)
             $0.trailing.equalToSuperview().inset(16)
             $0.centerY.equalToSuperview()
         }
@@ -70,6 +77,7 @@ final class SearchContactListView: UIView, UIContentView {
 
         nameLabel.text = configuration.userName
         avatarView.viewModel = configuration.avatarViewModel
+        avatarView.icon = configuration.icon
     }
 }
 

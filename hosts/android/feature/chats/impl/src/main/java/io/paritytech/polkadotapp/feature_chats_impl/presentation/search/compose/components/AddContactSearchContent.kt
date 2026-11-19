@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.components
 
-import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,8 +21,6 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.compose.components.ChatSearchNoResults
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.compose.components.ChatSearchPersonRow
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models.NoRowStatus
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models.RecentChatUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactSearchResults
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactUiState
@@ -71,17 +68,14 @@ private fun LazyListScope.recentsSection(
     recents: ImmutableList<RecentChatUiModel>,
     onRecentClick: (ChatId) -> Unit,
 ) {
-    if (recents.isEmpty()) return
-
-    sectionHeader(key = "recent_header", titleRes = RCommon.string.search_section_recent)
     items(
         items = recents,
         key = { recent -> "recent_${recent.key}" }
     ) { recent ->
-        ChatSearchPersonRow(
+        AddContactRow(
             title = recent.title,
             avatarModel = recent.avatarModel,
-            status = recent.status,
+            loading = false,
             onClick = { onRecentClick(recent.chatId) },
         )
     }
@@ -92,35 +86,28 @@ private fun LazyListScope.allUsersSection(
     loadingContactId: AccountId?,
     onClick: (UserSearchResultUiModel) -> Unit,
 ) {
-    if (users.isEmpty()) return
-
-    sectionHeader(key = "user_header", titleRes = RCommon.string.search_section_all_users)
     items(
         items = users,
         key = { user -> "user_${user.contactAccountId.value.toHexString()}" }
     ) { user ->
-        ChatSearchPersonRow(
+        AddContactRow(
             title = user.username,
             avatarModel = user.avatarModel,
-            status = NoRowStatus,
-            onClick = { onClick(user) },
             loading = user.contactAccountId == loadingContactId,
+            onClick = { onClick(user) },
         )
     }
 }
 
-private fun LazyListScope.sectionHeader(key: String, @StringRes titleRes: Int) {
-    item(key = key) {
-        NovaText(
-            modifier = Modifier.padding(
-                horizontal = PolkadotTheme.spacings.extraMedium,
-                vertical = PolkadotTheme.spacings.small
-            ),
-            text = stringResource(titleRes),
-            style = PolkadotTheme.typography.caption.medium,
-            color = PolkadotTheme.colors.fg.secondary,
-        )
-    }
+@Composable
+internal fun AddContactSearchHeader(query: String) {
+    NovaText(
+        text = stringResource(
+            if (query.isEmpty()) RCommon.string.search_section_recents else RCommon.string.search_section_results
+        ),
+        style = PolkadotTheme.typography.caption.medium,
+        color = PolkadotTheme.colors.fg.secondary,
+    )
 }
 
 @Composable

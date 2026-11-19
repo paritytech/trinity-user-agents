@@ -87,7 +87,7 @@ object CoinageAssetStore {
     private fun bytes(assets: AssetManager, name: String): ByteArray =
         assets.open("$ROOT/$name").use { it.readBytes() }
 
-    /** Six rows of two `vec4`: reflectance plus roughness, then the darker tone plus a pad. */
+    /** One row of two `vec4` per metal: reflectance plus roughness, then the darker tone plus a pad. */
     private fun List<RawMetal>.rows(): FloatArray {
         val rows = FloatArray(size * 8)
 
@@ -212,7 +212,6 @@ object CoinageAssetStore {
         val lusterMinPx: Float,
         val studioRadius: Float,
         val studioScale: Float,
-        val basin: Float,
         val rollGloss: Float,
         val rollReliefHaze: Float,
         val haze: Float,
@@ -234,7 +233,6 @@ object CoinageAssetStore {
             lusterMinPx = lusterMinPx,
             studioRadius = studioRadius,
             studioScale = studioScale,
-            basin = basin,
             rollGloss = rollGloss,
             rollReliefHaze = rollReliefHaze,
             envSharpen = envSharpen,
@@ -282,7 +280,6 @@ data class CoinageMaterial(
     val lusterMinPx: Float,
     val studioRadius: Float,
     val studioScale: Float,
-    val basin: Float,
     val rollGloss: Float,
     val rollReliefHaze: Float,
     val envSharpen: Float,

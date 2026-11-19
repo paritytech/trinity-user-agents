@@ -2,11 +2,15 @@ package io.paritytech.polkadotapp.feature_coinage_impl.data.transaction
 
 import io.mockk.coEvery
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.runs
+import io.mockk.slot
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.database.dao.CoinageAssetStateProjection
 import io.paritytech.polkadotapp.database.dao.CoinageEntryDao
 import io.paritytech.polkadotapp.database.model.CoinageAssetKindLocal
+import io.paritytech.polkadotapp.database.model.CoinageHandoffLocal
 import io.paritytech.polkadotapp.database.model.DurableTxLocal
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
@@ -20,7 +24,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -108,6 +114,37 @@ class RealCoinageAssetLedgerTest {
         givenProjections()
 
         assertEquals(CoinageAssetState.UNTRACKED, subscribedStateOf(TEST_INSTALLATION))
+    }
+
+    @Test
+    fun `writes an uncommitted mark when a handoff is only reserved`() = runTest {
+        val written = givenHandoffWrites()
+
+        ledger.markHandedOff(listOf(handoff())).getOrThrow()
+
+        assertFalse(written.captured.single().committed)
+    }
+
+    @Test
+    fun `writes a committed mark when a handoff is marked final`() = runTest {
+        val written = givenHandoffWrites()
+
+        ledger.markHandedOffCommitted(listOf(handoff())).getOrThrow()
+
+        assertTrue(written.captured.single().committed)
+    }
+
+    private fun givenHandoffWrites() = slot<List<CoinageHandoffLocal>>().also { written ->
+        coEvery { dao.withTransaction(any()) } coAnswers { firstArg<suspend () -> Unit>().invoke() }
+        coEvery { dao.filterClaimed(any()) } returns emptyList()
+        coEvery { dao.filterHandedOff(any()) } returns emptyList()
+        coEvery { dao.insertHandoffs(capture(written)) } just runs
+    }
+
+    private fun handoff(): LedgerAsset {
+        val coin = coinOf(TEST_INSTALLATION)
+
+        return LedgerAsset(CoinageAssetKind.COIN, coin, byteArrayOf(DERIVATION_INDEX.toByte()).toDataByteArray())
     }
 
     private suspend fun subscribedStateOf(installation: CoinageInstallationId): CoinageAssetState =

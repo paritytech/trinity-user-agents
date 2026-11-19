@@ -20,8 +20,12 @@ class HopNodeUrlProvider @Inject constructor(
     }
 
     suspend fun pickForSending(): String {
+        return availableUrls().pickRandom()
+    }
+
+    suspend fun pickForRetry(failedNodeUrl: String): String {
         val urls = availableUrls()
-        return urls.randomOrNull() ?: error("No Hop node URLs available for bulletIn chain")
+        return urls.filter { it != failedNodeUrl }.randomOrNull() ?: urls.pickRandom()
     }
 
     suspend fun isAllowed(nodeUrl: String): Boolean {
@@ -31,5 +35,9 @@ class HopNodeUrlProvider @Inject constructor(
     suspend fun allWithSenderPriority(senderNodeUrl: String): List<String> {
         val available = availableUrls()
         return listOf(senderNodeUrl) + available.filter { it != senderNodeUrl }
+    }
+
+    private fun List<String>.pickRandom(): String {
+        return randomOrNull() ?: error("No Hop node URLs available for bulletIn chain")
     }
 }

@@ -5,7 +5,6 @@ import SwiftUI
 // to black the further the surface is from the core:
 //
 //   AssetDetailsBalanceCard(...).motionShine(.balanceCard)
-//   Image(.imageCollectibles).motionShine(.collectibles(isExpanded: false))
 //
 
 public extension View {

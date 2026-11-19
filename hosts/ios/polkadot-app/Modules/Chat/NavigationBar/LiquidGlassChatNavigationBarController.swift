@@ -11,8 +11,6 @@ final class LiquidGlassChatNavigationBarController: ChatNavigationBarControlling
     private let onStartCall: (ChatCallType) -> Void
 
     private var headerConfiguration: ChatHeaderConfiguration?
-    private var pinnedTitle: String?
-    private var pinnedTitlePill: PolkadotPrizesNavTitlePill?
     private var callActions: [ChatCallType] = []
     private var contactMenu: UIMenu?
 
@@ -52,26 +50,6 @@ final class LiquidGlassChatNavigationBarController: ChatNavigationBarControlling
         self.headerConfiguration = headerConfiguration
         applyHeader()
     }
-
-    func setPinnedTitle(_ title: String?) {
-        pinnedTitle = title
-        navigationItem?.leftBarButtonItem = title == nil ? UIBarButtonItem(customView: titleView) : nil
-
-        if let title {
-            let pill = PolkadotPrizesNavTitlePill(text: title)
-            pill.accessibilityId(AccessibilityID.Game.weeklyTitle)
-            pinnedTitlePill = pill
-            navigationItem?.style = .navigator
-            navigationItem?.titleView = pill
-        } else {
-            pinnedTitlePill = nil
-            navigationItem?.style = .editor
-            navigationItem?.titleView = nil
-        }
-
-        refreshContactMenuPresentation()
-        applyHeader()
-    }
 }
 
 @available(iOS 26.0, *)
@@ -90,11 +68,6 @@ private extension LiquidGlassChatNavigationBarController {
     }
 
     func applyHeader() {
-        if pinnedTitle != nil {
-            navigationItem?.title = nil
-            navigationItem?.subtitle = nil
-            return
-        }
         navigationItem?.title = headerConfiguration?.username
         navigationItem?.subtitle = headerConfiguration?.additionalInfo
     }
@@ -104,23 +77,12 @@ private extension LiquidGlassChatNavigationBarController {
     }
 
     func refreshContactMenuPresentation() {
-        navigationItem?.titleMenuProvider = pinnedTitle == nil
-            ? contactMenu.map { menu in { _ in menu } }
-            : nil
+        navigationItem?.titleMenuProvider = contactMenu.map { menu in { _ in menu } }
         refreshRightBarButtonItems()
     }
 
     func refreshRightBarButtonItems() {
-        var items: [UIBarButtonItem] = []
-        if pinnedTitle != nil, let contactMenu {
-            items.append(UIBarButtonItem(
-                title: nil,
-                image: UIImage(systemName: "ellipsis"),
-                primaryAction: nil,
-                menu: contactMenu
-            ))
-        }
-        items.append(contentsOf: ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall))
+        let items = ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
         navigationItem?.rightBarButtonItems = items.isEmpty ? nil : items
     }
 }

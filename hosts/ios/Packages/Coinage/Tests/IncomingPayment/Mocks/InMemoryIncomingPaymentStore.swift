@@ -11,6 +11,11 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
     private struct State {
         var payments: [CoinageTxGroupId: IncomingPayment] = [:]
         var settledGroupIds: [CoinageTxGroupId] = []
+
+        /// Oldest first, so tests that queue one payment behind another do not depend on dictionary order.
+        var activePayments: [IncomingPayment] {
+            payments.values.filter { $0.outcome == nil }.sorted { $0.createdAt < $1.createdAt }
+        }
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -41,7 +46,7 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
     }
 
     func fetchActivePayments() async throws -> [IncomingPayment] {
-        state.withLock { Array($0.payments.values.filter { $0.outcome == nil }) }
+        state.withLock { $0.activePayments }
     }
 
     func settle(groupId: CoinageTxGroupId, outcome: IncomingPaymentTerminalOutcome) async throws {
@@ -76,7 +81,6 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
     }
 
     private func publishActive() {
-        let active = state.withLock { Array($0.payments.values.filter { $0.outcome == nil }) }
-        activeSubject.send(active)
+        activeSubject.send(state.withLock { $0.activePayments })
     }
 }

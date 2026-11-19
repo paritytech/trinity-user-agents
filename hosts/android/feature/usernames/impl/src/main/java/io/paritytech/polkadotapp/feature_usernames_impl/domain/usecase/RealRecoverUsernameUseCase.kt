@@ -20,8 +20,7 @@ class RealRecoverUsernameUseCase @Inject constructor(
     private val accountRepository: AccountRepository
 ) : RecoverUsernameUseCase {
     override suspend fun invoke(): Result<Boolean> {
-        // TODO: People Chain is used until dotNS resolve-by-address lands (paritytech/dotns#216, #217)
-        val chain = chainRegistry.getChain(knownChains.people)
+        val chain = chainRegistry.getChain(knownChains.assetHub)
         val accountId = accountRepository.getWalletAccountIdIn(chain)
 
         return resourcesRepository.consumerInfo(chain.id, accountId)

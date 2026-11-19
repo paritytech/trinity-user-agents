@@ -1,3 +1,4 @@
+import type { ExecutableKind, ProductId } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -6,11 +7,7 @@ import type {
   WireProvider,
 } from "@parity/truapi";
 import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
-import type {
-  CoreAdmin,
-  CoreStorageKey,
-  ProductExecutionKind,
-} from "./generated/host-callbacks.js";
+import type { CoreAdmin, CoreStorageKey } from "./generated/host-callbacks.js";
 
 // The typed capability interfaces below come straight from the
 // `truapi::platform` Rust module via `truapi-codegen --platform-ts-output`.
@@ -19,9 +16,7 @@ import type {
 // SCALE bytes. The web worker pairing-host runtime adapts this typed surface
 // into the byte-oriented callback bridge consumed by the WASM core.
 export * from "./generated/host-callbacks.js";
-export type {
-  JsonRpcConnection as PlatformJsonRpcConnection,
-} from "./generated/host-callbacks.js";
+export type { JsonRpcConnection as PlatformJsonRpcConnection } from "./generated/host-callbacks.js";
 
 /** Encode a typed core-storage slot for hosts that need an opaque backing key. */
 export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
@@ -61,12 +56,126 @@ export interface ChainConnection {
  */
 export type LogLevel = string;
 
+/** The Trinity stack a host build bundles. */
+export interface BundledStack {
+  /**
+   * The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a key:
+   * the core refuses an unsigned stack.
+   */
+  pointer: string;
+  /**
+   * The bundled descriptor's bytes as served: a signed envelope that verifies
+   * under the pointer's key.
+   */
+  descriptor: Uint8Array;
+  /**
+   * Whether this build may run a stack that uses Polkadot's genesis hashes or
+   * the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it. Defaults to
+   * `false`.
+   */
+  allowsReservedValues?: boolean;
+}
+
+/** A fetch of the stack's descriptor for the host to make. */
+export interface StackFetchRequest {
+  /** The descriptor's URL. Send a `GET` and do not follow redirects. */
+  url: string;
+  /** The `ETag` to send as `If-None-Match`, when the core holds one. */
+  ifNoneMatch?: string;
+  /**
+   * The largest body to read. Stop reading and throw once a body passes it.
+   */
+  maxBytes: number;
+}
+
+/**
+ * What a fetch of the stack's descriptor got. Anything but these two is a
+ * failed fetch, which the callback throws: a transport error, a timeout, a
+ * redirect, another status or a body larger than `maxBytes`.
+ */
+export type StackFetchResponse =
+  /** `200 OK`: the body as served and the response's `ETag`. */
+  | { status: "document"; bytes: Uint8Array; etag?: string }
+  /** `304 Not Modified`. */
+  | { status: "notModified" };
+
+/** The stack the core runs, and what the host shows and does about it. */
+export interface StackStatus {
+  /**
+   * The verified descriptor the core runs, as plain descriptor JSON. The
+   * host's own features read their chains and services from it.
+   */
+  descriptor: string;
+  /**
+   * The descriptor's `generation`, which changes when the stack restarts its
+   * chains. Key cached chain data by it, such as a light client's database:
+   * data kept under another generation is for chains that are gone.
+   */
+  generation: string;
+  /**
+   * Past `validUntil` when the core last looked, at start and after each
+   * fetch: show the stack as stale and keep running on it.
+   */
+  stale: boolean;
+  /**
+   * Past `expiresAt` when the core last looked, at start and after each
+   * fetch: the stack has shut down.
+   */
+  expired: boolean;
+  /**
+   * The core stored a newer copy that changes a chain, the network, the TLD
+   * or the generation. It runs that copy from its next
+   * start, so build the runtime again to follow it.
+   */
+  restartRequired: boolean;
+  /** The last finished fetch. Not set before the first one. */
+  lastRefresh?: {
+    /**
+     * `current`: the published descriptor is the copy the core holds.
+     * `unreachable` and `refused`: the core keeps the copy it holds.
+     * `notStored`: the published descriptor is newer, but core storage did
+     * not keep it, so the core asks for no restart and stores it after the
+     * next fetch.
+     */
+    outcome: "current" | "unreachable" | "refused" | "notStored";
+    /**
+     * Why a fetch was `unreachable` or `notStored`, or the rule a `refused`
+     * descriptor breaks.
+     */
+    reason?: string;
+  };
+}
+
+/**
+ * Raw callbacks a host passes to the wasm runtime, next to the generated
+ * ones, to keep the stack's descriptor current. Without
+ * `fetchStackDescriptor` the core stays on the copy it started from.
+ */
+export interface StackCallbacks {
+  /**
+   * Fetch the stack's descriptor over HTTP. Throw or reject when the server
+   * gave no usable answer: the core keeps its copy and reports
+   * `unreachable`. The core gives up after 30 seconds. It asks once its
+   * copy is an hour old, which is at start unless the copy it stored was
+   * fetched less than an hour ago.
+   */
+  fetchStackDescriptor?(
+    request: StackFetchRequest,
+  ): StackFetchResponse | Promise<StackFetchResponse>;
+  /**
+   * The stack's status when the runtime starts, and on each change. A host
+   * without `fetchStackDescriptor` gets the one at start. A runtime built
+   * from a test stack has no status and calls neither callback.
+   */
+  stackChanged?(status: StackStatus): void;
+}
+
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
   /** Stable identifier used to scope product accounts, permissions, and storage. */
-  productId: string;
+  productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
-  executionKind?: ProductExecutionKind;
+  executionKind?: ExecutableKind;
   /** Metadata describing the host application. */
   host: {
     /** Human-readable host name. */
@@ -88,45 +197,17 @@ export interface ProductRuntimeConfig {
     /** Platform or operating-system version. */
     version?: string;
   };
-  /** People-chain configuration used for statement-store SSO. */
-  people: {
-    /** People-chain genesis hash. */
-    genesisHash: string | Uint8Array;
-  };
-  /** Bulletin-chain configuration used for in-core preimage submission. */
-  bulletin: {
-    /** Bulletin-chain genesis hash. */
-    genesisHash: string | Uint8Array;
-  };
   /**
-   * Asset Hub configuration. Session usernames and the product manifests
-   * that carry `trustedProducts` grants are both read from the dotNS
-   * contracts deployed there. Without a usable genesis hash no manifest
-   * resolves, so every cross-product grant not already cached is refused,
-   * indistinguishably from the other product having granted nothing. An
-   * all-zero hash declares deliberately that this host has no Asset Hub.
-   *
-   * The wasm signing host requires the same `assetHub.genesisHash`, though it
-   * takes an untyped config object rather than this interface.
+   * The stack the host build runs. Every chain the core uses, the network
+   * `getChainInfo` reports and the TLD a signing host derives its identities
+   * under come from it.
    */
-  assetHub: {
-    /** Asset Hub genesis hash. */
-    genesisHash: string | Uint8Array;
-  };
+  stack: BundledStack;
   /** Wallet pairing configuration. */
   pairing: {
     /** URI scheme used for wallet pairing deeplinks. */
     deeplinkScheme: string;
   };
-  /**
-   * dotNS TLD the host's reserved identities derive under, such as `"dot"` or
-   * `"paseo"`.
-   *
-   * Required by a signing host, which derives its own keys and so has to know
-   * which network's identities it is deriving. A pairing host never derives
-   * them -- the paired wallet does -- and ignores this.
-   */
-  networkSuffix?: string;
 }
 
 /**
@@ -155,7 +236,7 @@ export interface RenderSink {
  * one left, so the host may stop it.
  */
 export interface WorkerDemandChange {
-  productId: string;
+  productId: ProductId;
   wanted: boolean;
 }
 

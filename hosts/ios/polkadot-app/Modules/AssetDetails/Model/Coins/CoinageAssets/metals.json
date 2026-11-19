@@ -100,5 +100,23 @@
    0.22,
    0.15
   ]
+ },
+ {
+  "index": 6,
+  "id": "titanium",
+  "label": "Titanium",
+  "optics": "titanium",
+  "f0": [
+   0.615073,
+   0.579629,
+   0.540493
+  ],
+  "roughness": 0.12,
+  "tone": [
+   0.55,
+   0.53,
+   0.5
+  ],
+  "brush": 1
  }
 ]

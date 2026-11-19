@@ -17,13 +17,13 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
 
     is TrUAPIConfirmation.AccountAlias -> build(
         RCommon.string.truapi_confirm_title_account_alias,
-        detail(RCommon.string.truapi_confirm_label_context, proofContext),
+        detail(RCommon.string.truapi_confirm_label_context, proofContext.value),
         detail(RCommon.string.truapi_confirm_label_ring, ring),
     )
 
     is TrUAPIConfirmation.CreateProof -> build(
         RCommon.string.truapi_confirm_title_create_proof,
-        detail(RCommon.string.truapi_confirm_label_context, proofContext),
+        detail(RCommon.string.truapi_confirm_label_context, proofContext.value),
         detail(RCommon.string.truapi_confirm_label_ring, ring),
         detail(RCommon.string.truapi_confirm_label_message_size, "$messageSize"),
     )
@@ -37,19 +37,34 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         *resources.map { detail(RCommon.string.truapi_confirm_label_resource, it) }.toTypedArray(),
     )
 
-    is TrUAPIConfirmation.PreimageSubmit -> build(
-        RCommon.string.truapi_confirm_title_preimage_submit,
-        detail(RCommon.string.truapi_confirm_label_payload_size, "$sizeBytes"),
-    )
-
     is TrUAPIConfirmation.AccountAccess -> build(
         RCommon.string.truapi_confirm_title_account_access,
-        detail(RCommon.string.truapi_confirm_label_target_product, targetProductId),
+        detail(RCommon.string.truapi_confirm_label_target_product, targetProductId.value),
     )
 
     is TrUAPIConfirmation.ProductSubtree -> build(
         RCommon.string.truapi_confirm_title_product_subtree,
     )
+
+    is TrUAPIConfirmation.NftPurseDrain -> build(
+        RCommon.string.truapi_confirm_title_nft_purse_drain,
+        detail(RCommon.string.truapi_confirm_label_nft_from_purse, "$fromPurse"),
+        ownerProductId?.let { detail(RCommon.string.truapi_confirm_label_nft_owner, it.value) }
+            ?: detailRes(RCommon.string.truapi_confirm_label_nft_owner, RCommon.string.truapi_confirm_value_nft_owner_you),
+        detail(RCommon.string.truapi_confirm_label_nft_item_count, "$itemCount"),
+        destination.toDetail(),
+    )
+}
+
+private fun TrUAPIConfirmation.NftPurseDrain.Destination.toDetail() = when (this) {
+    is TrUAPIConfirmation.NftPurseDrain.Destination.Purse ->
+        detail(RCommon.string.truapi_confirm_label_nft_to_purse, "$purse")
+    is TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey ->
+        detail(RCommon.string.truapi_confirm_label_nft_to_key, keyHex)
+    TrUAPIConfirmation.NftPurseDrain.Destination.Cheque ->
+        detailRes(RCommon.string.truapi_confirm_label_nft_to, RCommon.string.truapi_confirm_value_nft_cheque)
+    TrUAPIConfirmation.NftPurseDrain.Destination.Refund ->
+        detailRes(RCommon.string.truapi_confirm_label_nft_to, RCommon.string.truapi_confirm_value_nft_refund)
 }
 
 private fun TrUAPIConfirmation.Prompt.build(

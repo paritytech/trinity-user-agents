@@ -5,6 +5,7 @@
 // fund it once, in a `globalSetup`, rather than per test: funding is a property
 // of the account, not of the run.
 
+import type { ProductId } from "@parity/truapi";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
@@ -23,7 +24,7 @@ export interface ProductAccountQuery {
   /** The dev account whose session root the product account descends from. */
   account: DevAccountName | DevAccount;
   /** The product's dotNS identifier, e.g. `"tx-demo.dot"`. */
-  productId: string;
+  productId: ProductId;
   /** Index within the product's subtree. Defaults to `0`. */
   index?: number;
 }
@@ -33,7 +34,7 @@ interface Derivation {
   default: (init: { module_or_path: Uint8Array }) => Promise<unknown>;
   deriveProductSubtreePublicKey(
     rootEntropy: Uint8Array,
-    productId: string,
+    productId: ProductId,
   ): Uint8Array;
   deriveProductAccountPublicKey(
     productSubtreePublicKey: Uint8Array,
@@ -50,13 +51,16 @@ async function derivation(): Promise<Derivation> {
     const glue = (await import(
       // A file URL rather than a path: node refuses a Windows drive letter as
       // an ESM specifier.
-      /* @vite-ignore */ pathToFileURL(wasmArtifact("testing/truapi_server.js")).href
+      /* @vite-ignore */ pathToFileURL(wasmArtifact("testing/truapi_server.js"))
+        .href
     )) as Derivation;
     // The bytes are handed over rather than left to the glue's own loader,
     // which fetches a URL: node has none to fetch, and a suite reaches this
     // from a Playwright global setup, which node runs.
     await glue.default({
-      module_or_path: await readFile(wasmArtifact("testing/truapi_server_bg.wasm")),
+      module_or_path: await readFile(
+        wasmArtifact("testing/truapi_server_bg.wasm"),
+      ),
     });
     return glue;
   })();

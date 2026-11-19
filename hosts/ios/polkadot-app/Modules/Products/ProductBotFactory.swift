@@ -1,6 +1,8 @@
 import Foundation
+import FoundationExt
 import UIKit
 import Keystore_iOS
+import PolkadotUI
 import Products
 
 /// Creates ``ProductBot`` instances for a given product.
@@ -15,6 +17,7 @@ final class ProductBotFactory {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
+    private let productImages: ProductImageSources
     private let logger: LoggerProtocol
 
     init(
@@ -22,6 +25,7 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
+        productImages: ProductImageSources,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -30,25 +34,41 @@ final class ProductBotFactory {
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
+        self.productImages = productImages
         self.logger = logger
     }
 
     func create(resolved: ResolvedProduct) -> ProductBot? {
-        guard servesChat(resolved) else { return nil }
+        guard let source = chatSource(resolved) else { return nil }
 
         let product = resolved.product
+        let description = resolved.description?.nilIfEmpty
+        let images = productImages.resolver(contentId: { source.contentId })
+        let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
-                productId: product.identifier,
+                productId: product.id,
                 workers: workers,
                 logger: logger
             )
-            return ProductBot(product: product, runtime: runtime, logger: logger)
+            return ProductBot(
+                product: product,
+                description: description,
+                runtime: runtime,
+                resolveImage: resolveImage,
+                logger: logger
+            )
         }
 
-        let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
-        return ProductBot(product: product, runtime: runtime, logger: logger)
+        let runtime = ManagedChatRuntime(productId: product.id, manager: workerManager)
+        return ProductBot(
+            product: product,
+            description: description,
+            runtime: runtime,
+            resolveImage: resolveImage,
+            logger: logger
+        )
     }
 }
 
@@ -59,11 +79,11 @@ private extension ProductBotFactory {
     ///
     /// A script installed by hand through debug settings stands in for a product
     /// that has published no worker at all.
-    func servesChat(_ resolved: ResolvedProduct) -> Bool {
-        if ProductWorkerSource.published(for: resolved, serving: .chat) != nil { return true }
+    func chatSource(_ resolved: ResolvedProduct) -> ProductWorkerSource? {
+        if let published = ProductWorkerSource.published(for: resolved, serving: .chat) { return published }
 
         return ProductWorkerSource.installedByHand(for: resolved) {
             productFileProvider.manualScriptEntryPath(productId: $0)
-        } != nil
+        }
     }
 }

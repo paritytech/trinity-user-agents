@@ -272,7 +272,8 @@ class ChatMessageUiMapper @Inject constructor(
                         status = status,
                         renderer = renderer,
                         origin = origin,
-                        content = latestContent.content
+                        content = latestContent.content,
+                        chatId = chatId,
                     )
                 } else {
                     // Fallback to Unsupported if renderer not found
@@ -524,7 +525,7 @@ private fun constructEmojiReactionGroup(
                     authorName = originDisplay.name,
                     timestamp = reaction.timestamp,
                     isUser = reaction.origin.isUser(),
-                    avatarModel = originDisplay.avatar.toUi()
+                    avatarModel = originDisplay.avatar.toUi(forceFresh = false)
                 )
             }
             .toImmutableList()

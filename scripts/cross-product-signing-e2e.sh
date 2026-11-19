@@ -7,6 +7,9 @@
 # `cross-product-ringvrf-e2e.sh`, for the same `context` scope on the signing
 # methods rather than on a ring-VRF key.
 #
+# The granted phase also requires its VRF signature to raise no prompt in the
+# approvals transcript (paritytech/platform-bugs#205).
+#
 # Chain-free. Every manifest a phase resolves is seeded by `--product-config`,
 # including the owner's in the untrusted phase, which is the document that
 # refuses it.
@@ -32,6 +35,7 @@ export HOST_CLI_SIGNER_MNEMONIC="${HOST_CLI_SIGNER_MNEMONIC:-bottom drive obey l
 
 state="${E2E_STATE_DIR:-$(mktemp -d)}"
 trap 'rm -rf "$state"' EXIT
+export TRUAPI_APPROVALS_LOG="$state/approvals.log"
 
 echo "==> building truapi-host"
 cargo build -q -p truapi-host-cli

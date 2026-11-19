@@ -9,6 +9,8 @@ import android.provider.OpenableColumns
 import android.util.Size
 import androidx.exifinterface.media.ExifInterface
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.InformationSize
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
 import java.io.InputStream
 import javax.inject.Inject
 import kotlin.time.Duration
@@ -28,6 +30,13 @@ internal class RealContentResolver @Inject constructor(
                 if (index >= 0) cursor.getString(index) else null
             } else null
         }
+    }
+
+    override fun querySize(uri: Uri): InformationSize? {
+        return runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }
+            .getOrNull()
+            ?.takeIf { it >= 0 }
+            ?.bytes
     }
 
     override fun getImageSize(uri: Uri): Size {

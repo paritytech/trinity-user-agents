@@ -103,12 +103,61 @@ enum CoinageBreakdownFactory {
     static func wear(forScore score: UInt8?, isBatchUnloaded: Bool) -> CGFloat {
         guard let score else { return CoinageWear.unknown }
 
-        let crowd = Int(CGFloat(min(score, CoinageConstants.fullFungibility))
+        let penalty = isBatchUnloaded ? CoinageStatusMetrics.batchUnloadPenalty : 0
+        let level = CoinageWear.level(hiddenAmong: crowd(forScore: score)) - penalty
+
+        return CoinageWear.amount(forLevel: max(level, 0))
+    }
+
+    /// How many others a recycler's score says a holding hides among. The score is a share of
+    /// ring capacity, so this is the share converted back.
+    static func crowd(forScore score: UInt8) -> Int {
+        Int(CGFloat(min(score, CoinageConstants.fullFungibility))
             / CGFloat(CoinageConstants.fullFungibility)
             * CGFloat(CoinageWear.ringCapacity - 1))
-        let penalty = isBatchUnloaded ? CoinageStatusMetrics.batchUnloadPenalty : 0
+    }
 
-        return CoinageWear.amount(forLevel: max(CoinageWear.level(hiddenAmong: crowd) - penalty, 0))
+    /// What the card says about each holding when its coin is tapped, keyed the way the coins are.
+    ///
+    /// `value` formats a denomination's amount, which needs the chain's unit and the card's own
+    /// formatter, neither of which belongs here.
+    static func traces(
+        from holdings: CoinageHoldings,
+        value: (Int16) -> String
+    ) -> [String: CoinageCoinTrace] {
+        var traces: [String: CoinageCoinTrace] = [:]
+
+        for holding in holdings.coins {
+            let coin = holding.coin
+
+            traces["coin-\(coin.derivationIndex)"] = CoinageCoinTrace(
+                value: value(coin.exponent),
+                partition: holding.availability.displayBucket == .ready ? .ready : .clearing,
+                hops: coin.hops.count,
+                quality: quality(forScore: coin.recyclerFungibility)
+            )
+        }
+
+        for holding in holdings.vouchers {
+            let voucher = holding.voucher
+
+            traces["voucher-\(voucher.derivationIndex)"] = CoinageCoinTrace(
+                value: value(voucher.exponent),
+                partition: holding.availability.displayBucket == .ready ? .ready : .clearing,
+                hops: 0,
+                quality: quality(forScore: voucher.recyclerFungibility)
+            )
+        }
+
+        return traces
+    }
+
+    /// The grade a score is told as, or `unknown` without a score, which is every coin received
+    /// from someone else.
+    static func quality(forScore score: UInt8?) -> CoinageCoinTrace.Quality {
+        guard let score else { return .unknown }
+
+        return CoinageCoinTrace.Quality(score: score)
     }
 
     /// One coin per holding for the summary strip. Clearing leads, as the reference orders it, so

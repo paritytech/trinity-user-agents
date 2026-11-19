@@ -1,0 +1,7 @@
+[bindings.swift.custom_types.ProductId]
+lift = "ProductId(fromRust: {})"
+lower = "{}.rawValue"
+
+[bindings.kotlin.custom_types.ProductId]
+lift = "ProductId.fromRust({})"
+lower = "{}.value"

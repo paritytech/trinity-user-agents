@@ -6,7 +6,6 @@ internal import UIKit_iOS
 public enum SearchContactResultsItemId: Hashable {
     case header(sectionId: String)
     case row(sectionId: String, rowId: String)
-    case separator(sectionId: String, rowId: String)
 }
 
 public final class SearchContactResultsView: DiffableCollectionViewProviderView<String, SearchContactResultsItemId> {
@@ -20,12 +19,6 @@ public final class SearchContactResultsView: DiffableCollectionViewProviderView<
     private let loadingView = SearchContactLoadingView()
 
     private let fadeMask = CAGradientLayer()
-
-    private let separatorConfiguration = SeparatorContentConfiguration(
-        color: UIColor.strokePrimary,
-        height: Constants.separatorHeight,
-        insets: NSDirectionalEdgeInsets(top: 0, leading: 64, bottom: 0, trailing: DSSpacings.mediumIncreased)
-    )
 
     public var selectionHandler: ((String) -> Void)?
 
@@ -106,12 +99,6 @@ public final class SearchContactResultsView: DiffableCollectionViewProviderView<
             for: collectionView,
             reuseId: SearchContactSectionHeaderConfiguration.defaultReuseIdentifier
         )
-
-        CollectionRegistration.registerCell(
-            UICollectionViewCell.self,
-            for: collectionView,
-            reuseId: SeparatorContentView.reuseIdentifier
-        )
     }
 
     public func bind(status: StatusViewModel) {
@@ -175,8 +162,6 @@ private extension SearchContactResultsView {
     enum Constants {
         static let statusHeight: CGFloat = 120
         static let sectionTopInset = DSSpacings.mediumIncreased
-        static let interItemSpacing = DSSpacings.small
-        static let separatorHeight: CGFloat = 1
         static let fadeHeight: CGFloat = 16
     }
 
@@ -193,7 +178,7 @@ private extension SearchContactResultsView {
             )
         }
 
-        for (offset, row) in section.rows.enumerated() {
+        for row in section.rows {
             itemProviders.append(
                 ItemProviderType(
                     id: .row(sectionId: section.id, rowId: row.id),
@@ -201,16 +186,6 @@ private extension SearchContactResultsView {
                     reuseIdentifier: SearchContactListConfiguration.defaultReuseIdentifier
                 )
             )
-
-            if offset < section.rows.count - 1 {
-                itemProviders.append(
-                    ItemProviderType(
-                        id: .separator(sectionId: section.id, rowId: row.id),
-                        configuration: separatorConfiguration,
-                        reuseIdentifier: SeparatorContentView.reuseIdentifier
-                    )
-                )
-            }
         }
 
         return SectionProviderType(
@@ -226,7 +201,6 @@ private extension SearchContactResultsView {
         )
 
         let section = NSCollectionLayoutSection(group: group)
-        section.interGroupSpacing = Constants.interItemSpacing
         section.contentInsets = .init(
             top: Constants.sectionTopInset,
             leading: DSSpacings.mediumIncreased,

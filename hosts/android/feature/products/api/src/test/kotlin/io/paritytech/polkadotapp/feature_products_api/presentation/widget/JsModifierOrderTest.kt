@@ -10,7 +10,7 @@ import org.junit.Test
 class JsModifierOrderTest {
     private val opacity = JsModifier.Opacity(alpha = 128)
     private val blending = JsModifier.BlendingMode(JsBlendingMode.MULTIPLY)
-    private val background = JsModifier.Background(JsColor.BG_SURFACE_CONTAINER, JsShape.Square)
+    private val background = JsModifier.Background(JsColor.BG_SURFACE_CONTAINER)
     private val border = JsModifier.Border(width = 1, color = JsColor.FG_TERTIARY, shape = JsShape.Square)
 
     // Compose applies modifiers outside-in, so one applied after the background covers only what
@@ -20,6 +20,18 @@ class JsModifierOrderTest {
         val ordered = listOf(background, opacity, border, blending).orderedForCompose()
 
         assertEquals(listOf(opacity, blending, background, border), ordered)
+    }
+
+    // The protocol has no clip of its own, so a rounded background is how a face rounds an image.
+    @Test
+    fun `a shaped background clips the content but not the border`() {
+        val rounded = JsShape.Rounded(radius = 12)
+        val shapedBackground = JsModifier.Background(JsColor.BG_SURFACE_CONTAINER, rounded)
+        val padding = JsModifier.Padding(all = 4)
+
+        val ordered = listOf(padding, border, shapedBackground).orderedForCompose()
+
+        assertEquals(listOf(shapedBackground, border, JsModifier.Clip(rounded), padding), ordered)
     }
 
     @Test

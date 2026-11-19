@@ -9,6 +9,7 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.feature_transactions.api.data.ExtrinsicService
 import io.paritytech.polkadotapp.feature_transactions.api.data.SignerProvider
+import io.paritytech.polkadotapp.feature_transactions.api.data.TransactionExtensionVersions
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.DefaultTransactionExtensionProvider
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.TxPayloadExtensionsResolver
 import io.paritytech.polkadotapp.feature_transactions.api.data.origins.FreeTransactionOrigins
@@ -60,6 +61,9 @@ internal interface TransactionsFeatureApiModule {
 
     @Binds
     fun bindDefaultExtrinsicVersionProvider(impl: RealDefaultExtrinsicVersionProvider): DefaultExtrinsicVersionProvider
+
+    @Binds
+    fun bindTransactionExtensionVersions(impl: RealDefaultExtrinsicVersionProvider): TransactionExtensionVersions
 
     @Binds
     fun bindTxPayloadExtensionsResolver(impl: RealTxPayloadExtensionsResolver): TxPayloadExtensionsResolver

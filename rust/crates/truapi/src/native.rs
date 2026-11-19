@@ -4,8 +4,8 @@
 //!
 //! The native side builds a `CallbackPlatform` that adapts every
 //! [`crate::platform::Platform`] trait to a corresponding callback. The
-//! resulting platform is fed into [`SigningHostRuntime`] so the rest of the
-//! dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
+//! resulting platform is fed into [`HostRuntime<SigningHost>`](crate::HostRuntime)
+//! so the dispatcher pipeline behaves identically to the WS-bridge and wasm flavors.
 //! A native host therefore owns the signer, so it never pairs itself with a
 //! wallet and the pairing-host entry points are inert. It does answer other
 //! devices pairing with it: the signing host's responder side is exposed here,
@@ -16,46 +16,179 @@
 //! [`NativeTrUApiHostRuntime::set_contacts_callbacks`]. A host that installs
 //! none leaves `contacts.pick` answering `Unsupported`.
 
+mod bundled_products;
 mod callbacks;
 mod config;
+mod engine_follow;
 mod errors;
 mod events;
 mod executor;
+mod funding;
+mod funding_feed;
+mod funding_page;
+mod materials;
 mod platform;
+mod pocket;
+mod public_profile;
 mod renderer;
 mod runtime;
+mod sso;
+mod subscribers;
 mod ws_bridge;
 
-pub use crate::host_internal::sso_messages::SsoRequestOutcome;
-pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
+pub use crate::{
+	host_logic::{
+		dev_server::{DevServerError, DevServerProduct},
+		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
+		scanner::{ScanFilter, ScanVerdict},
+	},
+	pocket_cards::{
+		PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketEntry,
+	},
+};
+pub use bundled_products::{
+	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_products,
+	product_source,
+};
 pub use callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval,
+	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
+	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
+	NativeStackCallbacks, NativeTopUpCallbacks,
 };
-pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError};
-pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
+pub use config::{
+	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,
+};
+pub use errors::{
+	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+};
+pub use funding::funding_status_in_flight;
+pub use funding_feed::{FundingChangeKind, funding_resume_pending};
+pub use funding_page::{
+	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,
+	funding_page_origin,
+};
+pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
+pub use pocket::NativePocketObserver;
+pub use public_profile::NativePublicProfileObserver;
+pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
-    NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-use crate::PairingProposal;
-use crate::host_logic::dotns;
-#[cfg(doc)]
-use crate::SigningHostRuntime;
+use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
-/// call: dotNS first, then `localhost`, then normalized external, with
-/// everything else rejected. Pure and stateless; hosts call it on every
-/// webview-internal navigation.
+/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
+/// normalized external, with everything else rejected. Pure and stateless;
+/// hosts call it on every webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
-    dotns::parse_navigate(&input)
+	dotns::parse_navigate(&input)
+}
+
+/// The canonical app scheme used for deeplinks and native handoffs.
+#[uniffi::export]
+pub fn app_deeplink_scheme() -> String {
+	dotns::APP_SCHEME.to_owned()
+}
+
+/// The internal scheme under which native hosts serve product content.
+#[uniffi::export]
+pub fn product_content_scheme() -> String {
+	dotns::PRODUCT_SCHEME.to_owned()
+}
+
+/// The `@parity/truapi-host` release this core was built from, which the
+/// native host packages share.
+#[uniffi::export]
+pub fn truapi_host_version() -> String {
+	env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Validate and normalize an identifier before storing it in a native value.
+#[uniffi::export]
+pub fn parse_product_id(input: String) -> Result<ProductId, ProductIdError> {
+	input.parse()
+}
+
+/// Construct a product name on an explicitly supplied network.
+#[uniffi::export]
+pub fn product_id_from_name(
+	name: String,
+	network_suffix: String,
+) -> Result<ProductId, ProductIdError> {
+	ProductId::from_name(&name, &network_suffix)
+}
+
+/// The complete dotNS name above the network suffix, including nested labels.
+#[uniffi::export]
+pub fn product_id_name(product_id: ProductId) -> Option<String> {
+	product_id.dotns_name().map(str::to_owned)
+}
+
+/// Check a product against an explicitly supplied network suffix.
+#[uniffi::export]
+pub fn product_id_matches_network(product_id: ProductId, network_suffix: String) -> bool {
+	product_id.matches_network(&network_suffix)
+}
+
+/// Name an executable under its product's full dotNS namespace.
+#[uniffi::export]
+pub fn product_id_executable(
+	product_id: ProductId,
+	kind: crate::platform::ExecutableKind,
+) -> Result<ProductId, ProductIdError> {
+	product_id.executable(kind)
+}
+
+/// The manifest discriminator and dotNS prefix for an executable kind.
+#[uniffi::export]
+pub fn executable_kind_label(kind: crate::platform::ExecutableKind) -> String {
+	<&str>::from(kind).to_owned()
+}
+
+/// Resolve an executable identity to its owning product without losing nested labels.
+#[uniffi::export]
+pub fn product_id_owner(product_id: ProductId) -> Result<ProductId, ProductIdError> {
+	product_id.executable_owner()
+}
+
+/// Normalize a product link only when its network matches the supplied suffix.
+#[uniffi::export]
+pub fn parse_product_link(input: String, network_suffix: String) -> Option<ProductLink> {
+	ProductLink::parse(&input, &network_suffix)
+}
+
+/// Recognize a supported share host without consulting host configuration.
+#[uniffi::export]
+pub fn parse_product_share_host(input: String) -> Option<ProductId> {
+	ProductId::from_share_host(&input)
+}
+
+/// The public share host for this identity, excluding local development.
+#[uniffi::export]
+pub fn product_id_share_host(product_id: ProductId) -> Option<String> {
+	product_id.to_share_host()
+}
+
+/// Share domains recognized by the canonical Rust parser.
+#[uniffi::export]
+pub fn product_share_hosts() -> Vec<String> {
+	dotns::product_share_hosts()
+}
+
+/// The development product a debug build opens for an address the developer
+/// typed. Hosts call it only in development builds, since the product it
+/// returns runs with the core's development wildcard or as a named product.
+#[uniffi::export]
+pub fn parse_dev_server(input: String) -> Result<DevServerProduct, DevServerError> {
+	input.parse()
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`
@@ -65,7 +198,7 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 /// lockdown container, which reads the endpoint this publishes.
 #[uniffi::export]
 pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
-    crate::bootstrap::script(&format!("ws://127.0.0.1:{port}/?t={token}"))
+	crate::bootstrap::script(&format!("ws://127.0.0.1:{port}/?t={token}"))
 }
 
 /// Read what a pairing deeplink offers: the peer it advertises, and how that
@@ -88,25 +221,26 @@ pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
 /// deeplink this rejects is one no pairing call would have accepted either.
 #[uniffi::export]
 pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, NativePairingError> {
-    PairingProposal::from_deeplink(&deeplink)
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+	PairingProposal::from_deeplink(&deeplink)
+		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
 /// Refuse a deeplink the core's decoder would refuse anyway, so the caller
 /// hears [`NativePairingError::UndecodableDeeplink`] rather than the
 /// [`NativePairingError::Rejected`] every later failure shares.
 fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError> {
-    PairingProposal::from_deeplink(deeplink)
-        .map(|_| ())
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+	PairingProposal::from_deeplink(deeplink)
+		.map(|_| ())
+		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
-/// Largest nesting a face may carry, matching what the core accepts on the
+/// Largest nesting a face may carry, counted as the core's decoder counts it:
+/// each list of children, layers or arguments is one level. It matches the
 /// renderer subscription. A host with a shallower bound would draw a live face
 /// it could not read back.
-const MAX_FACE_DEPTH: u32 = 64;
+pub(crate) const MAX_FACE_DEPTH: u32 = 64;
 
-/// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
+/// Bracket nesting a face of [`MAX_FACE_DEPTH`] levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
 /// this is generous on purpose: it bounds how far the reader recurses, while
 /// `MAX_FACE_DEPTH` is what actually decides whether a face is drawable.
@@ -125,130 +259,81 @@ const FACE_READER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// about which faces are drawable, and about how deep one may nest.
 #[uniffi::export]
 pub fn parse_renderer_node_json(json: String) -> Result<latest::RendererNode, NativeRendererError> {
-    read_face_on_stack(json, FACE_READER_STACK_BYTES)
+	read_face_on_stack(json, FACE_READER_STACK_BYTES)
 }
 
 /// [`parse_renderer_node_json`] on a thread of its own carrying `stack_bytes`.
 fn read_face_on_stack(
-    json: String,
-    stack_bytes: usize,
+	json: String,
+	stack_bytes: usize,
 ) -> Result<latest::RendererNode, NativeRendererError> {
-    std::thread::Builder::new()
-        .name("truapi-face-reader".to_string())
-        .stack_size(stack_bytes)
-        .spawn(move || read_renderer_node_json(&json))
-        .map_err(|error| NativeRendererError::ReaderUnavailable {
-            reason: error.to_string(),
-        })?
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+	std::thread::Builder::new()
+		.name("truapi-face-reader".to_string())
+		.stack_size(stack_bytes)
+		.spawn(move || read_renderer_node_json(&json))
+		.map_err(|error| NativeRendererError::ReaderUnavailable { reason: error.to_string() })?
+		.join()
+		.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// [`parse_renderer_node_json`] on the calling thread, which must carry
 /// [`FACE_READER_STACK_BYTES`].
 fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRendererError> {
-    // Bounded before it is parsed, not after: serde_json recurses as it reads,
-    // so a tree built to exhaust the stack would do so before any check on the
-    // value it produced. Counting brackets needs no recursion at all.
-    if json_nesting_exceeds(json, MAX_FACE_JSON_NESTING) {
-        return Err(NativeRendererError::TooDeep {
-            limit: MAX_FACE_DEPTH,
-        });
-    }
+	// Bounded before it is parsed, not after: serde_json recurses as it reads,
+	// so a tree built to exhaust the stack would do so before any check on the
+	// value it produced. Counting brackets needs no recursion at all.
+	if json_nesting_exceeds(json, MAX_FACE_JSON_NESTING) {
+		return Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH });
+	}
 
-    // With the text bounded above, the reader's own limit would only impose a
-    // second, stricter bound in JSON levels rather than in renderer levels.
-    let mut reader = serde_json::Deserializer::from_str(json);
-    reader.disable_recursion_limit();
-    let node = latest::RendererNode::deserialize(&mut reader).map_err(|error| {
-        NativeRendererError::Malformed {
-            reason: error.to_string(),
-        }
-    })?;
+	// With the text bounded above, the reader's own limit would only impose a
+	// second, stricter bound in JSON levels rather than in decoder levels.
+	let mut reader = serde_json::Deserializer::from_str(json);
+	reader.disable_recursion_limit();
+	let node = latest::RendererNode::deserialize(&mut reader)
+		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })?;
 
-    match node_depth(&node, MAX_FACE_DEPTH) {
-        Some(_) => Ok(node),
-        None => Err(NativeRendererError::TooDeep {
-            limit: MAX_FACE_DEPTH,
-        }),
-    }
+	// Read back the way a kept face is, so the reader accepts exactly what the
+	// store and the renderer subscription accept.
+	let mut node = latest::RendererNode::decode_all_with_depth_limit(
+		MAX_FACE_DEPTH,
+		&mut node.encode().as_slice(),
+	)
+	.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })?;
+	node.clear_refused_inline_images();
+	Ok(node)
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the
 /// ones inside strings. Iterative, so measuring a hostile tree costs no stack.
 fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
-    let (mut depth, mut in_string, mut escaped) = (0u32, false, false);
+	let (mut depth, mut in_string, mut escaped) = (0u32, false, false);
 
-    for byte in json.bytes() {
-        if in_string {
-            match byte {
-                _ if escaped => escaped = false,
-                b'\\' => escaped = true,
-                b'"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
+	for byte in json.bytes() {
+		if in_string {
+			match byte {
+				_ if escaped => escaped = false,
+				b'\\' => escaped = true,
+				b'"' => in_string = false,
+				_ => {},
+			}
+			continue;
+		}
 
-        match byte {
-            b'"' => in_string = true,
-            b'{' | b'[' => {
-                depth += 1;
-                if depth > limit {
-                    return true;
-                }
-            }
-            b'}' | b']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
+		match byte {
+			b'"' => in_string = true,
+			b'{' | b'[' => {
+				depth += 1;
+				if depth > limit {
+					return true;
+				}
+			},
+			b'}' | b']' => depth = depth.saturating_sub(1),
+			_ => {},
+		}
+	}
 
-    false
-}
-
-/// Depth of `node`, or `None` once it passes `remaining`. Bounded rather than
-/// measured, so a tree built to exhaust the stack is refused before it does.
-fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
-    if remaining == 0 {
-        return None;
-    }
-
-    let children: &[latest::RendererNode] = match node {
-        latest::RendererNode::Box { children, .. }
-        | latest::RendererNode::Column { children, .. }
-        | latest::RendererNode::Row { children, .. }
-        | latest::RendererNode::Text { children, .. }
-        | latest::RendererNode::Button { children, .. }
-        | latest::RendererNode::Effect { children, .. } => children,
-        _ => &[],
-    };
-
-    let deepest = children
-        .iter()
-        .map(|child| node_depth(child, remaining - 1))
-        .try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
-
-    Some(deepest + 1)
-}
-
-/// The bytes to keep a face under, so it can be drawn again at a cold start.
-///
-/// SCALE, the encoding the tree already travels in, rather than a shape a host
-/// invents for its own store: a host that writes its own cannot read back what
-/// the protocol later adds, and two hosts disagree about what they kept.
-#[uniffi::export]
-pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
-    node.encode()
-}
-
-/// Read back a face kept as [`encode_renderer_node`] wrote it.
-#[uniffi::export]
-pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
-        |error| NativeRendererError::Malformed {
-            reason: error.to_string(),
-        },
-    )
+	false
 }
 
 /// Screen a product-supplied Pocket card id with the rules every Pocket call
@@ -259,7 +344,7 @@ pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, Nati
 /// core's, and a host that guesses at them refuses links the core accepted.
 #[uniffi::export]
 pub fn screen_pocket_card_id(id: String) -> Result<String, NativeChatFieldError> {
-    crate::platform::normalize_chat_identifier("cardId", &id).map_err(Into::into)
+	crate::platform::normalize_chat_identifier("cardId", &id).map_err(Into::into)
 }
 
 /// Screen the display title a product gives one of its cards.
@@ -270,29 +355,56 @@ pub fn screen_pocket_card_id(id: String) -> Result<String, NativeChatFieldError>
 /// would cost a product every card it publishes.
 #[uniffi::export]
 pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatFieldError> {
-    crate::platform::validate_chat_name("title", &title).map_err(Into::into)
+	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
+}
+
+/// Screen a product-supplied chat icon with the rules `create_room` and
+/// `register_bot` apply.
+///
+/// Hosts call this wherever they take a room icon from a product instead of
+/// screening it themselves: the rules are the core's, and a host that guesses
+/// at them draws icons the core refused. An absent icon screens to the empty
+/// string.
+#[uniffi::export]
+pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
+	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
 }
 
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
-/// Blessed products bypass recorded permissions. Only device permissions require
-/// consent. Hosts mediating product network access can use this check before storage.
-///
-/// Normalizes before matching, and answers `false` for an id that does not
-/// normalize, so an unknown spelling is never read as trusted.
+/// Trusted products bypass recorded permissions and permission prompts. Device
+/// permissions still need the OS grant. Hosts mediating product network access
+/// can use this check before storage.
 #[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-    crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
+	product_id.has_trusted_remote_permissions()
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for
 /// the `tracing` output, which on native routes to stderr (system logs on
 /// iOS/Android). Most native diagnostics flow through `on_core_log` instead;
 /// this controls the cross-platform `tracing` events shared with wasm.
+/// Warnings and errors reach `on_core_log` as well, whatever this level.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
-    crate::logging::set_level_from_str(&level);
+	crate::logging::set_level_from_str(&level);
+}
+
+/// Every marker the core may address to a host, keyed by its dotted target.
+///
+/// A host reads this once and looks each marker it is handed up in the result.
+/// A target the map does not hold stays on the device, because nothing has
+/// said what its detail carries. The core refuses such a target before a host
+/// is handed it, so this is the host's backstop rather than its first line.
+/// Pure and stateless, so a host may call it whenever it likes, though reading
+/// it once at startup is what it is for.
+#[uniffi::export]
+pub fn core_markers() -> std::collections::HashMap<String, crate::markers::MarkerClass> {
+	crate::markers::MARKERS
+		.iter()
+		.map(|marker| (marker.target.to_string(), marker.class))
+		.collect()
 }
 
 #[cfg(test)]

@@ -1,29 +1,20 @@
 import SwiftUI
-import ExternalAccessibility
 import PolkadotUI
 
-final class WalletMainViewController: UIHostingController<WalletView>, RootScreen {
+final class WalletMainViewController: SafeAreaFollowingHostingController<WalletView>, RootScreen, NavigationDependable,
+    NavigationBarHiding {
     let presenter: WalletMainPresenterProtocol
+    weak var navigationControlling: NavigationControlling?
+
+    var hidesNavigationBar: Bool { true }
 
     private var assetDetailsScene: AssetDetailsScene
-    private var identityDetailsScene: IdentityDetailsScene
+    private var isCollectiblesPressed = false
 
-    private let titleLabel: PolkadotUI.Label = .create { view in
-        view.typography = .headlineSmall
-        view.textColor = .fgPrimary
-    }
-
-    private let statusTitleView = NetworkStatusTitleView()
-
-    init(
-        presenter: WalletMainPresenterProtocol,
-        assetDetailsScene: AssetDetailsScene,
-        identityDetailsScene: IdentityDetailsScene
-    ) {
+    init(presenter: WalletMainPresenterProtocol, assetDetailsScene: AssetDetailsScene) {
         self.presenter = presenter
         self.assetDetailsScene = assetDetailsScene
-        self.identityDetailsScene = identityDetailsScene
-        super.init(rootView: WalletView())
+        super.init(content: WalletView())
     }
 
     @available(*, unavailable)
@@ -31,143 +22,160 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        guard content.viewModel.collectiblesPeek != .lifted else { return }
+
+        withTransaction(Transaction(animation: nil)) {
+            content.viewModel.collectiblesPeek = .resting
+        }
+    }
+
+    override var bottomSafeAreaChange: BottomSafeAreaChange {
+        if holdsCollectiblesPeek {
+            return .held
+        }
+        return content.viewModel.openItem == nil ? .animated : .immediate
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .bgSurfaceMain
-        setMainTitle()
+        navigationItem.style = .browser
+        navigationControlling?.setNavigationBarHidden(hidesNavigationBar, animated: true)
 
         assetDetailsScene.attachNavigationHost(self)
-        identityDetailsScene.attachNavigationHost(self)
         setupHandlers()
         presenter.setup()
     }
 
     private func setupHandlers() {
-        rootView.viewModel.identityDetailsViewModel = identityDetailsScene.viewModel
-        rootView.viewModel.assetDetailsViewModel = assetDetailsScene.viewModel
-        rootView.viewModel.onUsername = { [weak self] in
-            self?.showIdentityDetailsOverlay()
+        content.viewModel.assetDetailsViewModel = assetDetailsScene.viewModel
+
+        content.viewModel.onBalance = { [weak presenter] in
+            presenter?.showBalanceCard()
         }
 
-        rootView.viewModel.onBalance = { [weak self] in
-            self?.showAssetDetailsOverlay()
+        content.viewModel.onCollectibles = { [weak self] in
+            self?.openCollectibles()
         }
 
-        rootView.viewModel.onCollapse = { [weak self] in
-            self?.collapseExpandedSection()
+        content.viewModel.onCollectiblesPress = { [weak self] isPressed in
+            self?.isCollectiblesPressed = isPressed
+            self?.applySafeAreaInsets()
         }
 
-        rootView.viewModel.onCollectibles = { [weak self] in
-            self?.showCollectiblesOverlay()
-        }
-
-        rootView.viewModel.onViewCollectibles = { [weak presenter] in
-            presenter?.showCollectibles()
-        }
-
-        rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
+        content.viewModel.onOpenPocketCard = { [weak presenter] card in
             presenter?.showPocketCard(card)
         }
 
-        rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
+        content.viewModel.onRemovePocketCard = { [weak presenter] card in
             presenter?.removePocketCard(card)
         }
-    }
-
-    private func setShareButton() {
-        let item = UIBarButtonItem(
-            image: .iconShareWallet,
-            style: .plain,
-            target: self,
-            action: #selector(didTapShare)
-        )
-        navigationItem.setRightBarButton(item, animated: true)
-    }
-
-    private func resetRightButton() {
-        navigationItem.setRightBarButton(nil, animated: true)
-    }
-
-    private func resetOverlayCloseButton() {
-        navigationItem.setLeftBarButton(nil, animated: true)
-    }
-
-    private func setOverlayCloseButton() {
-        let item = UIBarButtonItem(
-            image: .buttonClose.withRenderingMode(.alwaysTemplate),
-            style: .plain,
-            target: self,
-            action: #selector(collapseExpandedSection)
-        )
-        item.accessibilityId(AccessibilityID.Wallet.detailCloseButton)
-        navigationItem.setLeftBarButton(item, animated: true)
     }
 }
 
 extension WalletMainViewController: WalletMainViewProtocol {
     func didReceive(isCollectiblesAvailable: Bool) {
-        rootView.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
+        content.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
     }
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
-        rootView.viewModel.pocketCards = pocketCards
+        content.viewModel.pocketCards = pocketCards
     }
 
-    @objc
-    func didTapShare() {
-        identityDetailsScene.share()
-    }
+    /// Nil once the item is gone or the Wallet is not what closing the item
+    /// returns to.
+    func frame(of item: PocketItem) -> CGRect? {
+        guard
+            UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
+            navigationController?.viewControllers.suffix(2).first === self
+        else { return nil }
 
-    @objc
-    func collapseExpandedSection() {
-        rootView.viewModel.expandedSection = .none
-        resetOverlayCloseButton()
-        resetRightButton()
-        setMainTitle()
-    }
+        // A return can ask before the Pocket has laid out on the Clearance it comes back to.
+        view.layoutIfNeeded()
 
-    private func showAssetDetailsOverlay() {
-        rootView.viewModel.expandedSection = .assetDetails
-        setOverlayCloseButton()
-        resetRightButton()
-        setTitleCenter(String(localized: .walletMainBalanceCard(PaymentAssetBranding.shared.current.symbol)))
-    }
+        switch item {
+        case .balance:
+            let frame = content.viewModel.balanceCardFrame
+            return frame.isEmpty ? nil : frame
+        case .collectibles:
+            let frame = content.viewModel.collectiblesFrame
+            return frame.isEmpty ? nil : frame
+        case let .card(key):
+            guard content.viewModel.pocketCards.contains(where: { $0.key == key }) else { return nil }
 
-    private func showIdentityDetailsOverlay() {
-        rootView.viewModel.expandedSection = .identityDetails
-        setOverlayCloseButton()
-        setShareButton()
-        setTitleCenter(String(localized: .walletMainIdCard))
-    }
-
-    private func showCollectiblesOverlay() {
-        rootView.viewModel.expandedSection = .collectiblesDetails
-        setOverlayCloseButton()
-        resetRightButton()
-        setTitleCenter(nil)
-    }
-
-    func setMainTitle() {
-        navigationItem.style = .browser
-        if #unavailable(iOS 26.0) {
-            navigationItem.title = nil
+            return content.viewModel.pocketCardFrames[key]
         }
-        setTitleView(statusTitleView)
     }
 
-    func setTitleCenter(_ title: String?) {
-        navigationItem.style = .navigator
-        guard #available(iOS 26, *) else {
-            navigationItem.title = title
-            return
+    var openItem: PocketItem? {
+        content.viewModel.openItem
+    }
+
+    func setOpenItem(_ item: PocketItem?) {
+        let previous = content.viewModel.openItem
+        content.viewModel.openItem = item
+
+        if item == .collectibles {
+            liftCollectiblesPeek()
+        } else if previous == .collectibles {
+            landCollectiblesPeek()
         }
-        titleLabel.text = title
-        titleLabel.typography = .titleLarge
-        titleLabel.sizeToFit()
-        navigationItem.titleView = titleLabel
     }
 
-    func didReceive(titleViewModel: NetworkStatusTitleView.ViewModel) {
-        statusTitleView.bind(viewModel: titleViewModel)
+    func moveOpenItem(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+        let viewModel = content.viewModel
+        withTransaction(Transaction(animation: animated ? PocketFlightTiming.animation : nil)) {
+            viewModel.openPocketCardOffset = offset
+            viewModel.isPocketCleared = clearingPocket
+        }
+
+        applySafeAreaInsets()
+    }
+
+    private func openCollectibles() {
+        guard content.viewModel.collectiblesPeek == .resting else { return }
+
+        withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
+            content.viewModel.collectiblesPeek = .colouring
+        }
+
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(CollectiblesBookTiming.colourDuration))
+            self?.presenter.showCollectibles()
+        }
+    }
+}
+
+private extension WalletMainViewController {
+    /// The peek keeps its place from the touch that opens it until its book has lifted out of it, so the Docklet
+    /// tucking under that touch does not move it. The book flies from, and back to, the frame the peek reports.
+    var holdsCollectiblesPeek: Bool {
+        let viewModel = content.viewModel
+        guard !viewModel.isPocketCleared else { return false }
+
+        return isCollectiblesPressed || viewModel.collectiblesPeek != .resting
+    }
+
+    func liftCollectiblesPeek() {
+        withTransaction(Transaction(animation: nil)) {
+            content.viewModel.collectiblesPeek = .lifted
+        }
+    }
+
+    func landCollectiblesPeek() {
+        guard content.viewModel.collectiblesPeek == .lifted else { return }
+
+        withTransaction(Transaction(animation: nil)) {
+            content.viewModel.collectiblesPeek = .colouring
+        }
+        DispatchQueue.main.async { [weak self] in
+            withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
+                self?.content.viewModel.collectiblesPeek = .resting
+            }
+            self?.applySafeAreaInsets()
+        }
     }
 }

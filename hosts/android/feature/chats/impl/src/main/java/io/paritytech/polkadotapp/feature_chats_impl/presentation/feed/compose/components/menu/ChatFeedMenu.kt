@@ -65,6 +65,10 @@ fun ChatFeedMenu(
                     is ChatMenuType.Custom -> {
                         it.renderer.DrawMenu(onDismiss = onDismiss)
                     }
+
+                    ChatMenuType.PrivacyDisclaimer -> {
+                        PrivacyDisclaimerContent(onDismiss = onDismiss)
+                    }
                 }
             }
         }

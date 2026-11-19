@@ -4,14 +4,29 @@ import Foundation
 /// Serves a fixed TLD so name canonicalisation is deterministic without a chain read.
 struct StubTldProvider: DotNsTldProviding {
     var tld: String = "dot"
+    var resolveError: Error?
 
     func currentTld() -> String? { tld }
 
-    func resolveTld() async throws -> String { tld }
+    func resolveTld() async throws -> String {
+        if let resolveError {
+            throw resolveError
+        }
+
+        return tld
+    }
 
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 /// Stands in for a network whose TLD cannot be read.
@@ -25,4 +40,12 @@ struct FailingTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }

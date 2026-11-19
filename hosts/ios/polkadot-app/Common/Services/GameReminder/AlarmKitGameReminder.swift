@@ -1,38 +1,48 @@
+import struct TrUAPIHost.ProductId
 import AlarmKit
 import AppIntents
 import Foundation
 import Keystore_iOS
+import Products
 import SwiftUI
 import Individuality
 
+/// The AlarmKit calls a game reminder makes, so the reminder can be exercised without the system alarm store.
+@available(iOS 26.1, *)
+protocol GameAlarmManaging {
+    var isAuthorized: Bool { get }
+    func alarmIds() throws -> [UUID]
+    func scheduleGameAlarm(id: UUID, at date: Date, playIntent: GameAlarmPlayIntent) async throws
+    func cancel(id: UUID) throws
+}
+
 @available(iOS 26.1, *)
 final class AlarmKitGameReminder: GameStartReminderServicing {
-    private let alarmManger: AlarmManager
+    private let alarmManger: GameAlarmManaging
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
+    private let diagnostics: GameReminderDiagnostics
     private let taskLock = NSLock()
     private var lastTask: Task<Void, Never>?
 
     init(
-        alarmManger: AlarmManager,
+        alarmManger: GameAlarmManaging,
         settingsManager: SettingsManagerProtocol,
-        keys: GameReminderStorageKeys = .game,
-        logger: LoggerProtocol = Logger.shared
+        keys: GameReminderStorageKeys,
+        logger: LoggerProtocol = Logger.shared,
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics()
     ) {
         self.alarmManger = alarmManger
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
+        self.diagnostics = diagnostics
     }
 
-    func scheduleReminder(gameDate: Date, target: GameReminderTarget, timingSeconds: Int) {
+    func scheduleReminder(gameDate: Date, productId: ProductId) {
         enqueue { [weak self] in
-            await self?.performScheduleReminder(
-                gameDate: gameDate,
-                target: target,
-                timingSeconds: timingSeconds
-            )
+            await self?.performScheduleReminder(gameDate: gameDate, productId: productId)
         }
     }
 
@@ -58,20 +68,16 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         taskLock.unlock()
     }
 
-    private func performScheduleReminder(
-        gameDate: Date,
-        target: GameReminderTarget,
-        timingSeconds: Int
-    ) async {
-        guard alarmManger.authorizationState == .authorized else {
+    private func performScheduleReminder(gameDate fireDate: Date, productId: ProductId) async {
+        guard alarmManger.isAuthorized else {
             logger.debug("Not authorized, skipping schedule")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .notAuthorized)
             return
         }
 
-        let fireDate = gameDate.addingTimeInterval(-TimeInterval(timingSeconds))
-
         guard fireDate > Date() else {
             logger.debug("Fire date is in the past, skipping")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .startInPast)
             performCancelReminder(alarmId: nil)
             return
         }
@@ -93,12 +99,14 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let newAlarmId = UUID()
 
         do {
-            try await schedule(id: newAlarmId, at: fireDate, timingSeconds: timingSeconds, target: target)
+            try await schedule(id: newAlarmId, at: fireDate, productId: productId)
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
+            diagnostics.scheduled(productId: productId, startsAt: fireDate, delivery: .alarm)
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .failed)
         }
     }
 
@@ -123,8 +131,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func isAlarmScheduled(id: UUID) -> Bool {
         do {
-            let alarms = try alarmManger.alarms
-            return alarms.contains { $0.id == id }
+            return try alarmManger.alarmIds().contains(id)
         } catch {
             logger.error("Failed to fetch scheduled alarms: \(error)")
             return false
@@ -134,36 +141,45 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private func schedule(
         id newAlarmId: UUID,
         at date: Date,
-        timingSeconds: Int,
-        target: GameReminderTarget
+        productId: ProductId
     ) async throws {
+        let playIntent = GameAlarmPlayIntent()
+        playIntent.alarmID = newAlarmId.uuidString
+        playIntent.productId = productId.rawValue
+
+        try await alarmManger.scheduleGameAlarm(id: newAlarmId, at: date, playIntent: playIntent)
+    }
+}
+
+@available(iOS 26.1, *)
+extension AlarmManager: GameAlarmManaging {
+    var isAuthorized: Bool {
+        authorizationState == .authorized
+    }
+
+    func alarmIds() throws -> [UUID] {
+        try alarms.map(\.id)
+    }
+
+    func scheduleGameAlarm(id: UUID, at date: Date, playIntent: GameAlarmPlayIntent) async throws {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
                 alert: .init(
-                    title: .Notification.gameNotificationGameStartTitle(String(timingSeconds)),
+                    title: LocalizedStringResource.Notification.gameNotificationGameStartTitle.resolvedText,
                     secondaryButton: .init(
-                        text: .Notification.gameAlarmPlayGame,
+                        text: LocalizedStringResource.Notification.gameAlarmPlayGame.resolvedText,
                         textColor: .textAndIconsPrimaryDark,
                         systemImageName: "figure.walk.arrival"
                     ),
                     secondaryButtonBehavior: .custom
                 )
             ),
-            metadata: GameAlarmMetadata(timingSeconds: timingSeconds),
+            metadata: GameAlarmMetadata(),
             tintColor: Color.accentColor
         )
 
-        let playIntent = GameAlarmPlayIntent()
-        playIntent.alarmID = newAlarmId.uuidString
-        switch target {
-        case let .game(gameIndex):
-            playIntent.gameIndex = Int(gameIndex)
-        case let .product(productId):
-            playIntent.productId = productId
-        }
-
-        _ = try await alarmManger.schedule(
-            id: newAlarmId,
+        _ = try await schedule(
+            id: id,
             configuration: AlarmManager.AlarmConfiguration(
                 countdownDuration: nil,
                 schedule: .fixed(date),
@@ -177,6 +193,15 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 }
 
 @available(iOS 26.1, *)
-struct GameAlarmMetadata: AlarmMetadata {
-    let timingSeconds: Int
+struct GameAlarmMetadata: AlarmMetadata {}
+
+extension LocalizedStringResource {
+    /// The string translated now, in this process, as a resource whose fallback is that text.
+    ///
+    /// The system looks alarm strings up in the app bundle when the alarm fires, through a bundle
+    /// path and sandbox token captured at scheduling. A device restart or an app update invalidates
+    /// both, and the lookup then shows the key.
+    var resolvedText: LocalizedStringResource {
+        LocalizedStringResource(stringLiteral: String(localized: self))
+    }
 }

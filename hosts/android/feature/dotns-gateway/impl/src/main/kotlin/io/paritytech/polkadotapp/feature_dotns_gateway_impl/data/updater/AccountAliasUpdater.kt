@@ -7,8 +7,8 @@ import io.paritytech.polkadotapp.chains.network.updaters.Updater
 import io.paritytech.polkadotapp.chains.storage.StorageCache
 import io.paritytech.polkadotapp.chains.util.WithRuntime
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
-import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.api.accountAlias
-import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.api.dotNsGateway
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.api.accountAlias
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.api.dotNsGateway
 
 class AccountAliasUpdater(
     chainRegistry: ChainRegistry,

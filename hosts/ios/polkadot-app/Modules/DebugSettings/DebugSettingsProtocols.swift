@@ -25,6 +25,9 @@ protocol DebugSettingsPresenterProtocol: AnyObject {
     func toggleTruApiRuntime()
     func toggleHostPlacement()
     func openTrUAPIPlayground()
+    #if DEBUG
+        func openDevServer()
+    #endif
     func showPocketFacePreview()
     func showPocketCards()
     func resetTips()
@@ -60,6 +63,9 @@ protocol DebugSettingsWireframeProtocol: AnyObject, AlertPresentable {
     func showDotNsBrowser(from view: ControllerBackedProtocol?)
     func showThemeSelection(from view: ControllerBackedProtocol?)
     func showTrUAPIPlayground(from view: ControllerBackedProtocol?)
+    #if DEBUG
+        func showDevServer(from view: ControllerBackedProtocol?)
+    #endif
     func showPocketFacePreview(from view: ControllerBackedProtocol?)
     func showPocketCards(from view: ControllerBackedProtocol?)
 }

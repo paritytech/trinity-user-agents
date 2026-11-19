@@ -11,19 +11,26 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.handleAndProcessOu
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductSource
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,20 +43,31 @@ class TrUAPISpaHost @Inject constructor(
     private val deepLinkHandler: DeepLinkHandler,
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val productSources: ProductSources,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String): SpaHostSession {
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession =
+        createSession(initialUrl, underCard, productSources.ofSpaPage(initialUrl))
+
+    context(scope: ComputationalScope, messageDisplay: MessageDisplay)
+    fun createSession(initialUrl: String, underCard: Boolean, source: ProductSource?): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
+
+        val pageUrl = (source as? ProductSource.DevServer)?.product?.url ?: initialUrl
+        val fixedProductId = source?.fixedProductId
 
         val webViewNavigation = NavigationPolicy.InlineNavigation(
             onDeeplinkNavigation = { launchDeeplinkNavigation(it) }
         )
 
         webViewProvider = browserWebViewProviderFactory.create(
-            initialUrl = initialUrl,
+            initialUrl = pageUrl,
             navigationPolicy = webViewNavigation,
             allowIframes = true,
-            scope = scope
+            scope = scope,
+            source = source,
+            servedExecutable = if (underCard) ExecutableKind.WIDGET else ExecutableKind.APP,
+            waitForInitialTheme = true,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
@@ -58,16 +76,23 @@ class TrUAPISpaHost @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        val bridge = sessionStarter.start(webViewProvider, initialUrl, scope, hostApiNavigation)
+        val cardFaceRequests = if (underCard) CardFaceRequests() else null
+        val bridge = sessionStarter.start(
+            webViewProvider,
+            pageUrl,
+            scope,
+            hostApiNavigation,
+            card = cardFaceRequests,
+            explicitProductId = fixedProductId,
+        )
 
-        val currentUrlFlow = MutableStateFlow(initialUrl)
+        val currentUrlFlow = MutableStateFlow(pageUrl)
         webViewProvider.addOnPageStartedListener { url ->
             currentUrlFlow.value = url
             scope.launch {
-                val tld = dotNsTldProvider.getTld().getOrNull() ?: return@launch
-                ProductId.fromUrl(url.toUri(), tld).getOrNull()?.let {
-                    productRegistrar.ensureRegistered(it)
-                }
+                val productId = fixedProductId ?: dotNsTldProvider.getTld().getOrNull()
+                    ?.let { tld -> productIdFromUrl(url.toUri(), tld).getOrNull() }
+                productId?.let { productRegistrar.ensureRegistered(it) }
             }
         }
 
@@ -82,7 +107,15 @@ class TrUAPISpaHost @Inject constructor(
             titleFlow.value = webViewProvider.getWebViewOrNull()?.title.orEmpty()
         }
 
-        return TrUAPISpaHostSession(webViewFlow, currentUrlFlow, loadProgressFlow, titleFlow, webViewProvider, bridge)
+        return TrUAPISpaHostSession(
+            webViewFlow,
+            currentUrlFlow,
+            loadProgressFlow,
+            titleFlow,
+            webViewProvider,
+            bridge,
+            cardFaceRequests?.requests ?: emptyFlow(),
+        )
     }
 
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
@@ -102,7 +135,10 @@ private class TrUAPISpaHostSession(
     override val title: StateFlow<String>,
     private val provider: BrowserWebViewProvider,
     private val bridge: ProductTrUAPIHostBridge,
+    override val faceShownRequests: Flow<FaceShownRequest>,
 ) : SpaHostSession {
+    override val isPageRevealed: StateFlow<Boolean> = provider.isPageRevealed
+
     override fun pauseConnections() {
         provider.pauseConnections()
     }

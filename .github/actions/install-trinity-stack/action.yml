@@ -1,0 +1,70 @@
+name: Install trinity-stack
+description: >-
+  Installs the trinity-stack CLI from npm and puts it on PATH for the rest of
+  the job. Needs Node.js 22.3 or later on PATH, for example from
+  actions/setup-node. Without a `version`, the action installs the
+  @parity/trinity-stack version its own ref ships: each release tags this
+  action as trinity-stack-v<version>, so that tag installs that release.
+
+inputs:
+  version:
+    description: >-
+      Version to install, for example 0.2.1, or `latest` for the newest
+      release. Empty installs the version this action's ref ships.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: The installed version, for example 0.2.1.
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: Absolute path of the installed trinity-stack executable.
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    # Installs under RUNNER_TEMP rather than globally, so the job's own npm
+    # prefix and any other trinity-stack on the runner stay untouched.
+    - name: Install trinity-stack
+      id: install
+      shell: bash
+      env:
+        REQUESTED_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 3) ? 0 : 1)' 2>/dev/null; then
+          echo "::error::trinity-stack needs Node.js 22.3 or later on PATH, found '$(node --version 2>/dev/null || echo none)'. Add actions/setup-node before this step."
+          exit 1
+        fi
+
+        version="${REQUESTED_VERSION}"
+        if [ -z "${version}" ]; then
+          package_json="${GITHUB_ACTION_PATH}/../../../js/packages/trinity-stack/package.json"
+          version="$(node -p "require(process.argv[1]).version" "${package_json}" 2>/dev/null || true)"
+          if [ -z "${version}" ]; then
+            echo "::error::could not read the trinity-stack version this action ships from ${package_json}"
+            exit 1
+          fi
+        fi
+        if [ "${version}" != latest ] \
+          && ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::version must be empty, \`latest\` or a release version, got '${version}'"
+          exit 1
+        fi
+
+        # One prefix per requested version, so a job that installs twice keeps
+        # both and an earlier step's `path` output stays valid.
+        prefix="${RUNNER_TEMP}/trinity-stack/${version}"
+        npm install --prefix "${prefix}" --no-save --no-audit --no-fund \
+          "@parity/trinity-stack@${version}"
+
+        bin_dir="${prefix}/node_modules/.bin"
+        installed="$(node -p "require(process.argv[1]).version" \
+          "${prefix}/node_modules/@parity/trinity-stack/package.json")"
+        echo "${bin_dir}" >> "$GITHUB_PATH"
+        {
+          echo "version=${installed}"
+          echo "path=${bin_dir}/trinity-stack"
+        } >> "$GITHUB_OUTPUT"

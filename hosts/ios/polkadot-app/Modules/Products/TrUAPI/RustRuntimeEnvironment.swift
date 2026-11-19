@@ -2,8 +2,11 @@ import Foundation
 import TrUAPIHost
 import Products
 import ChainRegistry
+import Foundation_iOS
+import FoundationExt
 import SubstrateSdk
 import BulletinChain
+import DesignSystem
 
 /// Shared dependencies for opening one product execution off the process-wide
 /// ``TrUAPIHostRuntime``. Embedded by both the SPA and chat rust runtime
@@ -16,6 +19,7 @@ struct RustRuntimeEnvironment {
     let gameReminders: ProductGameReminderScheduling?
     let ipfsFetcher: IpfsFetching
     let hostProvider: ProductHostProviding
+    let themeManager: ThemeManagerProtocol
     let logger: LoggerProtocol
 
     /// The rust pieces a runtime needs: the opened execution and its chain
@@ -42,45 +46,58 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
-    func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .app)
+    func makeSPAExecution(
+        productId: ProductId,
+        routers: ProductRoutersFacadeProtocol
+    ) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, purpose: .app)
+    }
+
+    /// A Widget execution even for an app archive, so the page can call `ExpandedCard`.
+    func makeExpandedCardExecution(
+        productId: ProductId,
+        routers: ProductRoutersFacadeProtocol,
+        face: any ExpandedCardFaceShowing
+    ) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, purpose: .expandedCard(face: face))
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
     /// execution per product and closes the previous one when another opens, so
-    /// every modality is served from this one: both bridges are handed over
-    /// here rather than attached afterwards, because the worker may list its
-    /// cards or post a chat message as soon as it connects.
+    /// every modality is served from this one: the chat bridge is handed over
+    /// here rather than attached afterwards, because the worker may post a chat
+    /// message as soon as it connects.
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging,
-        pocket: any PocketHostBridge
+        chatMessaging: any ProductChatMessaging
     ) throws -> ExecutionModel {
         try makeExecution(
             productId: productId,
             routers: routers,
-            kind: .worker,
-            chatMessaging: chatMessaging,
-            pocket: pocket
+            purpose: .worker(chatMessaging: chatMessaging)
         )
     }
+}
+
+/// What one execution serves, which decides the bridge the core calls back on.
+enum ExecutionPurpose {
+    case app
+    case expandedCard(face: any ExpandedCardFaceShowing)
+    /// The product's one worker, serving its chat bot and its Pocket cards.
+    case worker(chatMessaging: any ProductChatMessaging)
 }
 
 private extension RustRuntimeEnvironment {
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        kind: ProductExecutionKind,
-        chatMessaging: (any ProductChatMessaging)? = nil,
-        pocket: (any PocketHostBridge)? = nil
+        purpose: ExecutionPurpose
     ) throws -> ExecutionModel {
-        let chainConnections = TrUAPIChainConnectionPool(
-            engineResolver: { [chainRegistry] genesisHash in
-                chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                    chainRegistry.getConnection(for: chain.chainId)
-                }
-            },
+        let chainConnections = TrUAPIV2SpecConnectionPool(
+            chainRegistry: chainRegistry,
+            applicationHandler: ApplicationHandler(),
+            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -92,20 +109,16 @@ private extension RustRuntimeEnvironment {
             osPermissionAsker: osPermissionAsker
         )
 
-        let chatBridge = chatMessaging.map {
-            RustChatExecutionBridge(dependencies: dependencies, chatMessaging: $0)
-        }
-        let bridge = chatBridge ?? RustProductExecutionBridge(dependencies: dependencies)
+        let bridges = purpose.makeBridges(dependencies: dependencies)
 
         let execution = try runtime.openProductExecution(
-            bridge: bridge,
-            configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
-            chat: chatBridge,
-            pocket: pocket,
-            game: gameReminders == nil ? nil : bridge
+            bridge: bridges.host,
+            configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
+            chat: bridges.chat,
+            game: gameReminders == nil ? nil : bridges.host
         )
 
-        bridge.attach(execution)
+        bridges.host.attach(execution)
 
         return ExecutionModel(
             execution: execution,
@@ -146,7 +159,35 @@ private extension RustRuntimeEnvironment {
                 }
             },
             hostProvider: hostProvider,
+            themeManager: themeManager,
             logger: logger
         )
+    }
+}
+
+extension ExecutionPurpose {
+    var executionKind: ExecutableKind {
+        switch self {
+        case .app: .app
+        case .expandedCard: .widget
+        case .worker: .worker
+        }
+    }
+}
+
+private extension ExecutionPurpose {
+    /// A worker's bridge also answers its chat callbacks, so it is handed back twice.
+    func makeBridges(
+        dependencies: RustProductExecutionBridge.Dependencies
+    ) -> (host: RustProductExecutionBridge, chat: RustChatExecutionBridge?) {
+        switch self {
+        case .app:
+            return (RustProductExecutionBridge(dependencies: dependencies), nil)
+        case let .expandedCard(face):
+            return (RustProductExecutionBridge(dependencies: dependencies, cardFace: face), nil)
+        case let .worker(chatMessaging):
+            let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
+            return (chat, chat)
+        }
     }
 }

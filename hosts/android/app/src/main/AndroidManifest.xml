@@ -26,6 +26,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.DETECT_SCREEN_CAPTURE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
 
     <uses-feature
         android:name="android.hardware.camera"
@@ -35,6 +36,7 @@
         android:name="io.paritytech.polkadotapp.app.App"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:label="${appName}"
@@ -111,6 +113,17 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data
+                    android:host="pocket"
+                    android:scheme="polkadotapp" />
+            </intent-filter>
+
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
                     android:host="*.dot"
                     android:scheme="polkadotapp" />
                 <data
@@ -133,8 +146,8 @@
                 <data android:host="*.dot.li" />
                 <data android:host="paseo.li" />
                 <data android:host="*.paseo.li" />
-                <data android:host="test.li" />
-                <data android:host="*.test.li" />
+                <data android:host="testnet.li" />
+                <data android:host="*.testnet.li" />
             </intent-filter>
         </activity>
 
@@ -189,11 +202,6 @@
             android:name="io.paritytech.polkadotapp.feature_calls_impl.service.CallService"
             android:exported="false"
             android:foregroundServiceType="phoneCall|microphone|camera" />
-
-        <service
-            android:name="io.paritytech.polkadotapp.feature_videogame_impl.service.VideoGameService"
-            android:exported="false"
-            android:foregroundServiceType="camera" />
 
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

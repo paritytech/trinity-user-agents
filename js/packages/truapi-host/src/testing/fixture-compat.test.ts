@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -10,6 +11,7 @@ import {
 import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 import { PASEO_ASSET_HUB, LIVE_CHAINS } from "./dev-accounts.js";
+import { mockTestStack } from "../web/create-mock-host.js";
 
 const SAMPLE_CHAIN = {
   id: "paseo-asset-hub",
@@ -48,29 +50,40 @@ async function hostPageUrlFor(
 }
 
 describe("host-api-test-sdk option compatibility", () => {
-  it("expands `networks` into the three settings that must agree", () => {
-    const { mock, runtimeConfig } = fromNetworks([SAMPLE_CHAIN]);
-    expect(mock.supportedChains).toEqual({
-      network: "paseo",
-      chains: [{ identifier: "AssetHub", genesisHash: "0x23e730eb" }],
-    });
+  it("expands `networks` into the settings that must agree", () => {
     // Unhashed on purpose: an unhashed proxy takes every request, so routing
-    // survives a chain reset even when the declared hash goes stale.
-    expect(mock.chainProxies).toEqual([{ rpcUrl: SAMPLE_CHAIN.rpcUrl }]);
-    expect(runtimeConfig).toEqual({ assetHub: { genesisHash: "0x23e730eb" } });
+    // survives a chain reset even when the declared hash goes stale. The test
+    // stack keeps the mock People and Bulletin, which the core needs to start.
+    expect(fromNetworks([SAMPLE_CHAIN])).toEqual({
+      mock: {
+        chainProxies: [{ rpcUrl: SAMPLE_CHAIN.rpcUrl }],
+        servedChains: ["0x23e730eb"],
+      },
+      runtimeConfig: {
+        testStack: {
+          ...mockTestStack(),
+          network: "paseo",
+          assetHub: { genesisHash: "0x23e730eb" },
+        },
+      },
+    });
   });
 
   it("reads the chain's role from the id suffix", () => {
-    expect(
-      fromNetworks([{ ...SAMPLE_CHAIN, id: "paseo-people" }]).runtimeConfig,
-    ).toEqual({ people: { genesisHash: "0x23e730eb" } });
-    const relay = fromNetworks([{ ...SAMPLE_CHAIN, id: "previewnet" }]);
-    expect(relay.mock.supportedChains).toEqual({
-      network: "previewnet",
-      chains: [{ identifier: "Relay", genesisHash: "0x23e730eb" }],
-    });
-    // The runtime config has no relay slot, so there is nothing to declare.
-    expect(relay.runtimeConfig).toEqual({});
+    const stackOf = (id: string) =>
+      fromNetworks([{ ...SAMPLE_CHAIN, id }]).runtimeConfig.testStack;
+    expect([stackOf("paseo-people"), stackOf("previewnet")]).toEqual([
+      {
+        ...mockTestStack(),
+        network: "paseo",
+        people: { genesisHash: "0x23e730eb" },
+      },
+      {
+        ...mockTestStack(),
+        network: "previewnet",
+        relay: { genesisHash: "0x23e730eb" },
+      },
+    ]);
   });
 
   it("rejects a pinned product account, and says why", () => {
@@ -103,8 +116,8 @@ describe("host-api-test-sdk option compatibility", () => {
   it("exports PASEO_ASSET_HUB, carrying the hash we actually proxy to", () => {
     expect(PASEO_ASSET_HUB.id).toBe("paseo-asset-hub");
     const expanded = fromNetworks([PASEO_ASSET_HUB]);
-    expect(expanded.runtimeConfig).toEqual({
-      assetHub: { genesisHash: LIVE_CHAINS.paseoAssetHub.genesisHash },
+    expect(expanded.runtimeConfig.testStack.assetHub).toEqual({
+      genesisHash: LIVE_CHAINS.paseoAssetHub.genesisHash,
     });
   });
 
@@ -194,7 +207,9 @@ describe("reading a stored value back the way the old package spelled it", () =>
   // result inside a `page.waitForFunction` predicate. All three matter: a
   // promise, or a node-only member, fails such a predicate rather than the
   // assertion under it.
-  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+  const suite = wasmIsBuilt("testing/truapi_server.js")
+    ? describe
+    : describe.skip;
 
   suite("against the real core", () => {
     it("decodes what the product wrote, matching on the product's own key", async () => {
@@ -240,7 +255,7 @@ describe("reading a stored value back the way the old package spelled it", () =>
       // id up to the next separator instead of by its length stops at
       // `localhost`, and every lookup answers `undefined`.
       const { client, host, dispose } = await createMockClient({
-        runtimeConfig: { productId: "localhost:3000" },
+        runtimeConfig: { productId: asProductId("localhost:3000") },
       });
       try {
         await client.localStorage.write({ key: "greeting", value: "0x6869" });
@@ -355,7 +370,11 @@ describe("where the loopback statement store attaches", () => {
   });
 
   it("refuses several chains with no People among them, rather than silently serving nothing", () => {
-    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const second = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-bulletin",
+      genesisHash: "0xb",
+    };
     expect(() => fromNetworks([SAMPLE_CHAIN, second], true)).toThrow(
       /needs a People chain/,
     );
@@ -366,7 +385,11 @@ describe("where the loopback statement store attaches", () => {
     // refusal above must not reach one that never named it: it would attach
     // nowhere, and the whole fixture would fail over an option the suite does
     // not use.
-    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const second = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-bulletin",
+      genesisHash: "0xb",
+    };
     const { mock } = fromNetworks([SAMPLE_CHAIN, second], "default");
     expect(mock.chainProxies).toEqual([
       { genesisHash: SAMPLE_CHAIN.genesisHash, rpcUrl: SAMPLE_CHAIN.rpcUrl },
@@ -378,7 +401,11 @@ describe("where the loopback statement store attaches", () => {
     // The default-on store is derived from `allowances`, which itself defaults
     // to "granted", so this is what a suite declaring a relay and a hub writes
     // without naming statements at all.
-    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const second = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-bulletin",
+      genesisHash: "0xb",
+    };
     expect(() =>
       createTestHostFixture({
         productUrl: "http://localhost:5200",
@@ -395,7 +422,9 @@ describe("where the loopback statement store attaches", () => {
 });
 
 describe("the permission policy the old package's name asks for", () => {
-  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+  const suite = wasmIsBuilt("testing/truapi_server.js")
+    ? describe
+    : describe.skip;
 
   suite("against the real core", () => {
     it("takes `reject-all` without complaint", async () => {
@@ -427,7 +456,9 @@ describe("the permission policy the old package's name asks for", () => {
 });
 
 describe("changing an answer the core has already settled", () => {
-  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+  const suite = wasmIsBuilt("testing/truapi_server.js")
+    ? describe
+    : describe.skip;
 
   suite("against the real core", () => {
     it("asks once, then answers from the core's own record", async () => {
@@ -456,7 +487,8 @@ describe("changing an answer the core has already settled", () => {
         expect(host.getPermissionLog()).toHaveLength(1);
 
         host.revokePermission("Camera");
-        const second = await client.permissions.requestDevicePermission("Camera");
+        const second =
+          await client.permissions.requestDevicePermission("Camera");
 
         expect(host.getPermissionLog()).toHaveLength(2);
         expect(host.getPermissionLog().at(-1)?.approved).toBe(false);

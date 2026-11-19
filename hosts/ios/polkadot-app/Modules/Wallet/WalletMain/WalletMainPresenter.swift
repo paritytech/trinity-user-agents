@@ -1,35 +1,36 @@
 import Foundation
 import ChainRegistry
+import Products
 
 @MainActor
 final class WalletMainPresenter {
     weak var view: WalletMainViewProtocol?
     let wireframe: WalletMainWireframeProtocol
     let interactor: WalletMainInteractorInputProtocol
-    let titleViewModelFactory: NetworkStatusTitleViewModelMaking
 
-    private var collectiblesURL: URL?
+    private var collectiblesPage: ProductPage?
 
     init(
         interactor: WalletMainInteractorInputProtocol,
-        wireframe: WalletMainWireframeProtocol,
-        titleViewModelFactory: NetworkStatusTitleViewModelMaking
+        wireframe: WalletMainWireframeProtocol
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
-        self.titleViewModelFactory = titleViewModelFactory
     }
 }
 
 extension WalletMainPresenter: WalletMainPresenterProtocol {
     func setup() {
-        didReceive(networkStatus: .connected)
         interactor.setup()
     }
 
+    func showBalanceCard() {
+        wireframe.showBalanceCard()
+    }
+
     func showCollectibles() {
-        guard let collectiblesURL else { return }
-        wireframe.showCollectibles(from: view, url: collectiblesURL)
+        guard let collectiblesPage else { return }
+        wireframe.showCollectibles(page: collectiblesPage)
     }
 
     func showPocketCard(_ card: PocketCardViewModel) {
@@ -46,17 +47,12 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
 }
 
 extension WalletMainPresenter: WalletMainInteractorOutputProtocol {
-    func didReceiveCollectibles(url: URL?) {
-        collectiblesURL = url
-        view?.didReceive(isCollectiblesAvailable: url != nil)
+    func didReceiveCollectibles(page: ProductPage) {
+        collectiblesPage = page
+        view?.didReceive(isCollectiblesAvailable: true)
     }
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
         view?.didReceive(pocketCards: pocketCards)
-    }
-
-    func didReceive(networkStatus: NetworkStatus) {
-        let titleViewModel = titleViewModelFactory.createTitleViewModel(for: networkStatus)
-        view?.didReceive(titleViewModel: titleViewModel)
     }
 }

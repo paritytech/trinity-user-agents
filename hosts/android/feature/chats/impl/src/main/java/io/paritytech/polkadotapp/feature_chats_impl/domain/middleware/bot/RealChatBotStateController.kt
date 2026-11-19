@@ -35,9 +35,6 @@ class RealChatBotStateController @Inject constructor(
     }
 
     override suspend fun applyDefaultBotStates() {
-        val activated = ChatBotData.defaultBots().map { ChatBotStateLocal(middlewareId = it.id, isActive = true) }
-        val deactivated = ChatBotData.disabledBots().map { ChatBotStateLocal(middlewareId = it.id, isActive = false) }
-
-        dao.insertAll(activated + deactivated)
+        dao.insertAll(ChatBotData.defaultBots().map { ChatBotStateLocal(middlewareId = it.id, isActive = true) })
     }
 }

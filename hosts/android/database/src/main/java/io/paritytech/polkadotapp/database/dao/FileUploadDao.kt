@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import io.paritytech.polkadotapp.database.model.FileUploadLocal
 import kotlinx.coroutines.flow.Flow
 
@@ -12,19 +13,32 @@ interface FileUploadDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(upload: FileUploadLocal)
 
+    @Query("SELECT * FROM file_uploads WHERE messageId = :messageId")
+    suspend fun get(messageId: String): FileUploadLocal?
+
     @Query(
-        """SELECT * FROM file_uploads
-        WHERE status IN ('PENDING', 'IN_PROGRESS')
+        """SELECT messageId FROM file_uploads
+        WHERE status = 'PENDING'
             AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now)
         ORDER BY createdAt ASC LIMIT 1"""
     )
-    suspend fun getNextPending(now: Long): FileUploadLocal?
+    suspend fun getNextDueId(now: Long): String?
 
-    @Query(
-        """SELECT MIN(nextAttemptAt) FROM file_uploads
-        WHERE status IN ('PENDING', 'IN_PROGRESS') AND nextAttemptAt IS NOT NULL"""
-    )
-    suspend fun getSoonestNextAttemptAt(): Long?
+    @Transaction
+    suspend fun claimNextDue(now: Long): FileUploadLocal? {
+        val messageId = getNextDueId(now) ?: return null
+        markInProgress(messageId)
+        return get(messageId)
+    }
+
+    @Query("UPDATE file_uploads SET status = 'PENDING' WHERE status = 'IN_PROGRESS'")
+    suspend fun releaseInProgress()
+
+    @Query("SELECT MIN(nextAttemptAt) FROM file_uploads WHERE status = 'PENDING' AND nextAttemptAt IS NOT NULL")
+    suspend fun getNextBackoffEndAt(): Long?
+
+    @Query("SELECT messageId FROM file_uploads WHERE status = 'PENDING'")
+    fun observePendingIds(): Flow<List<String>>
 
     @Query("SELECT * FROM file_uploads WHERE status IN ('PENDING', 'IN_PROGRESS', 'FAILED')")
     fun observeActive(): Flow<List<FileUploadLocal>>
@@ -45,11 +59,15 @@ interface FileUploadDao {
             firstFailureAt = :firstFailureAt,
             nextAttemptAt = :nextAttemptAt,
             errorCategory = NULL,
-            errorCause = NULL
+            errorCause = NULL,
+            uploadedChunks = CASE WHEN nodeUrl = :nodeUrl THEN uploadedChunks ELSE 0 END,
+            chunkHashes = CASE WHEN nodeUrl = :nodeUrl THEN chunkHashes ELSE NULL END,
+            nodeUrl = :nodeUrl
         WHERE messageId = :messageId"""
     )
     suspend fun scheduleRetry(
         messageId: String,
+        nodeUrl: String,
         attemptCount: Int,
         firstFailureAt: Long,
         nextAttemptAt: Long

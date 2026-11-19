@@ -3,6 +3,7 @@
 // declaration in `src/wasm/web/truapi_server.d.ts` types that module against
 // these interfaces so the worker can name it in a statically analysable import.
 
+import type { ProductId } from "@parity/truapi";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 
 /** Cancellable handle on one live render stream inside the core. */
@@ -45,38 +46,42 @@ export interface WorkerProductRuntime {
 /** What the host does with a product's worker after demand on it changed. */
 export type WorkerTransition = "Start" | "Stop";
 
-/** The long-lived pairing-host runtime product cores are created from. */
-export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime {
+/** The long-lived runtime product cores are created from, in either role. */
+export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
+  notifyContactsChanged(): void;
+  /** Only on a core built with `test-host`. */
+  setSubmitPreimagesLocally?(local: boolean): void;
+  /**
+   * Take one reference on the product's worker. The first one reports
+   * `"Start"` through the runtime's `requestWorkerTransition` callback.
+   */
+  acquireWorker(productId: ProductId): void;
+  /**
+   * Release one reference. The last one reports `"Stop"` the same way.
+   */
+  releaseWorker(productId: ProductId): void;
+  free(): void;
+}
+
+/** The pairing-host runtime: the user's keys live in a paired wallet. */
+export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
-  notifyContactsChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
-  deviceEncryptionKey(): Promise<Uint8Array>;
+  deviceEncryptionKey(): Promise<Uint8Array | undefined>;
   productSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
-  /** Only on a core built with `test-host`. */
-  setSubmitPreimagesLocally?(local: boolean): void;
-  /**
-   * Take one reference on the product's worker. The first one reports
-   * `"Start"` through the runtime's `workerDemandChanged` callback.
-   */
-  acquireWorker(productId: string): void;
-  /**
-   * Release one reference. The last one reports `"Stop"` the same way.
-   */
-  releaseWorker(productId: string): void;
-  free(): void;
 }
 
 /**
@@ -86,17 +91,19 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
  * entropy rather than by pairing with a wallet. The production `web` bundle is
  * built without it on purpose, so this is optional on the module surface.
  */
-export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
+export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
+  /** Derived from the active session root, so it never waits. */
+  productSubtreePublicKey(productId: ProductId): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  /** Only on a core built with `wasm-signing-host`. */
+  setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
    * `account.get_user_id` answers with. Optional: a core built before this
    * entry point existed exposes only {@link activateLocalSession}.
    */
-  /** Only on a core built with `wasm-signing-host`. */
-  setGrantAllowancesUnchecked?(granted: boolean): void;
-  /** Only on a core built with `wasm-signing-host`. */
-  setWithheldResources?(tags: string[]): void;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
     liteUsername?: string | null,
@@ -106,19 +113,32 @@ export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
 /** Module surface the wasm-pack glue exports. */
 export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
-  WasmPairingHostRuntime: new (
-    callbacks: unknown,
-    hostConfig: unknown,
-  ) => WorkerPairingHostRuntime;
+  /** Validate and normalize an identifier using the core's canonical parser. */
+  parseProductId: (value: string) => ProductId;
+  /**
+   * Each runtime is built with `create`, which resolves once the core has read
+   * its stack record from the host's core storage, or after a few seconds
+   * without it.
+   */
+  WasmPairingHostRuntime: {
+    create(
+      callbacks: unknown,
+      hostConfig: unknown,
+    ): Promise<WorkerPairingHostRuntime>;
+  };
   /** Only in the `testing` bundle; see {@link WorkerSigningHostRuntime}. */
-  WasmSigningHostRuntime?: new (
-    callbacks: unknown,
-    hostConfig: unknown,
-  ) => WorkerSigningHostRuntime;
-  WasmProductRuntime: new (
-    callbacks: unknown,
-    runtimeConfig: unknown,
-  ) => WorkerProductRuntime;
+  WasmSigningHostRuntime?: {
+    create(
+      callbacks: unknown,
+      hostConfig: unknown,
+    ): Promise<WorkerSigningHostRuntime>;
+  };
+  WasmProductRuntime: {
+    create(
+      callbacks: unknown,
+      runtimeConfig: unknown,
+    ): Promise<WorkerProductRuntime>;
+  };
   setLogLevel?: (level: string) => void;
   /**
    * Derive a product account public key from that product's hard-subtree

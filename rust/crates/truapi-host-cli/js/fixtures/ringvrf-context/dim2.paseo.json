@@ -1,0 +1,9 @@
+{
+  "productName": "dim2.paseo",
+  "displayName": "Jollity",
+  "description": "The third product in the cross-product ring-VRF context e2e. Grants dim2next its context, so dim2next may prove in it with peopl.paseo's key.",
+  "icon": "./icon.png",
+  "trustedProducts": {
+    "dim2next": ["context"]
+  }
+}

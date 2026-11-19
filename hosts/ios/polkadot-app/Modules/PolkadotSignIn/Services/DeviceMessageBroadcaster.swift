@@ -17,18 +17,15 @@ protocol DeviceMessageBroadcasting {
 final class DeviceMessageBroadcaster {
     private let contactRepository: AnyDataProviderRepository<Chat.Contact>
     private let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
-    private let messageExchangeModeProvider: MessageExchangeModeProviding
     private let logger: LoggerProtocol
 
     init(
         contactRepositoryFactory: ChatContactRepositoryMaking = ChatContactRepositoryFactory(),
         messageRepositoryFactory: ChatMessageRepositoryMaking = ChatMessageRepositoryFactory(),
-        messageExchangeModeProvider: MessageExchangeModeProviding,
         logger: LoggerProtocol = Logger.shared
     ) {
         contactRepository = contactRepositoryFactory.createRepository(forFilter: nil)
         messageRepository = messageRepositoryFactory.createRepository(forFilter: nil)
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.logger = logger
     }
 }
@@ -63,9 +60,7 @@ private extension DeviceMessageBroadcaster {
             .asyncExecute()
 
         let activeContacts = allContacts.filter {
-            $0.chatRequest == nil &&
-                !$0.isBlocked &&
-                messageExchangeModeProvider.mode(for: $0) == .multidevice
+            $0.chatRequest == nil && !$0.isBlocked
         }
 
         let messages = activeContacts.map {

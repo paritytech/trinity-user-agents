@@ -15,29 +15,43 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.debug.CoinageCoinSetSwitch
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.debug.CoinageTestDataSwitch
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
-fun CoinageCardContent(
+internal fun CoinageCardContent(
     state: CoinageUiState,
     onAutoFundClick: () -> Unit,
-    onDetailsToggled: () -> Unit,
-    onShareLogsClick: () -> Unit
+    onCoinTapped: (String?) -> Unit,
+    onCoinsFlickedDown: () -> Unit,
+    onHeadingClicked: () -> Unit,
+    onShareLogsClick: () -> Unit,
+    onTestDataSelected: (CoinageTestDataMode) -> Unit,
+    onCoinSetSelected: (CoinageScene.CoinSet) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
         CoinageStateCard(
             modifier = Modifier.fillMaxWidth(),
             state = state.tokensState,
             detailsVisible = state.detailsVisible,
-            onDetailsToggled = onDetailsToggled
+            focusedCoin = state.focusedCoin,
+            coinSet = state.coinSet,
+            onCoinTapped = onCoinTapped,
+            onCoinsFlickedDown = onCoinsFlickedDown,
+            onHeadingClicked = onHeadingClicked
         )
 
         if (FeatureOption.COINAGE_DEBUG_FEATURES.isEnabled) {
             DebugFeaturesCard(
                 modifier = Modifier.fillMaxWidth(),
                 state = state,
+                onTestDataChange = onTestDataSelected,
+                onCoinSetChange = onCoinSetSelected,
                 onAutoFundClick = onAutoFundClick,
                 onShareLogsClick = onShareLogsClick
             )
@@ -49,6 +63,8 @@ fun CoinageCardContent(
 private fun DebugFeaturesCard(
     modifier: Modifier = Modifier,
     state: CoinageUiState,
+    onTestDataChange: (CoinageTestDataMode) -> Unit,
+    onCoinSetChange: (CoinageScene.CoinSet) -> Unit,
     onAutoFundClick: () -> Unit,
     onShareLogsClick: () -> Unit
 ) {
@@ -57,6 +73,12 @@ private fun DebugFeaturesCard(
         title = stringResource(RCommon.string.pocket_debug_features_title),
         subtitle = stringResource(RCommon.string.pocket_debug_features_subtitle)
     ) {
+        if (FeatureOption.COINAGE_DEBUG_TOOLS.isEnabled) {
+            CoinageTestDataSwitch(mode = state.testData, onModeChange = onTestDataChange)
+
+            CoinageCoinSetSwitch(set = state.coinSet, onSetChange = onCoinSetChange)
+        }
+
         BalanceBreakdownTable(breakdown = state.tokensState.breakdown)
 
         if (state.autoFundAvailable) {

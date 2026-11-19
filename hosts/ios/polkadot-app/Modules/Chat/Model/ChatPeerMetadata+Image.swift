@@ -7,6 +7,9 @@ extension Chat.PeerMetadata.Icon {
             data.flatMap { UIImage(data: $0) }
         case .bot:
             .iconBot
+        case .product,
+             .publicProfile:
+            nil
         }
     }
 }

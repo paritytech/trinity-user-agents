@@ -33,18 +33,13 @@ private extension SelectTokenViewLayout.TokenRow {
         switch model {
         case let .chainAsset(chainAsset):
             self.init(icon: chainAsset.icon, label: chainAsset.symbol)
-        case .fiat:
-            self.init(
-                icon: StaticImageViewModel(image: UIImage(resource: .creditCardIcon)),
-                label: String(localized: "fiat.onramp.credit.card.label")
-            )
         }
     }
 }
 
 private extension SelectTokenViewLayout {
     struct TokenRow: View {
-        let icon: (any ImageViewModelProtocol)?
+        let icon: AnyImageViewModel?
         let label: String
 
         var body: some View {

@@ -17,4 +17,8 @@ class RealStatementStoreMessageProverFactory @Inject constructor(
     override fun createKeyPairProver(keypair: Sr25519Keypair): StatementStoreMessageProver {
         return KeypairSigningStatementStoreMessageProver { keypair }
     }
+
+    override fun createLazyKeyPairProver(getKeypair: suspend () -> Sr25519Keypair): StatementStoreMessageProver {
+        return KeypairSigningStatementStoreMessageProver(getKeypair)
+    }
 }

@@ -72,7 +72,7 @@ fun PolkadotMenuListScope.PolkadotMenuListItem(
     trailing: (@Composable () -> Unit)? = null,
     title: @Composable () -> Unit,
     description: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
 ) {
     PolkadotMenuListItemInternal(
         modifier = Modifier,
@@ -102,7 +102,7 @@ private fun PolkadotMenuListItemInternal(
     trailing: (@Composable () -> Unit)?,
     title: @Composable () -> Unit,
     description: (@Composable () -> Unit)?,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
 ) {
     PolkadotSurface(
         modifier = modifier,

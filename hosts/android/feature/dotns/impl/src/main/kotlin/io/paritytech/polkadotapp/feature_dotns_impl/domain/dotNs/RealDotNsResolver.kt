@@ -57,6 +57,8 @@ internal class RealDotNsResolver @Inject constructor(
     //  acknowledge and update to a newer version when available.
     override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
         localDomainsCache.getOrCompute(dotNsName)
+            // Usually a read that did not land; remembered, it would outlast the outage until restart.
+            .onFailure { localDomainsCache.remove(dotNsName) }
     }
 
     private suspend fun resolveContentHash(domainName: DomainName): Result<ContentHash?> {

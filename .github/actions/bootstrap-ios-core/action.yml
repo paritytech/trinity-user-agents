@@ -50,8 +50,8 @@ runs:
         shared-key: ${{ inputs.cache-key }}
         save-if: ${{ inputs.save == 'true' && github.ref == 'refs/heads/main' }}
 
-    # The truapi runtime declares its generated modules unconditionally and they are
-    # gitignored, so the crate does not compile until codegen has run.
+    # The runtime feature enables generated modules that are gitignored, so
+    # codegen must run before the crate builds.
     - name: Generate the Rust codegen output
       shell: bash
       run: |

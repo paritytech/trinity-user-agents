@@ -4,6 +4,7 @@ import android.os.Build
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.combineToPair
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -30,15 +31,18 @@ class SettingsViewModel @Inject constructor(
         interactor.observeBackupExists(),
         interactor.subscribeHasBlockedContacts(),
         interactor.observePrivacyMode(),
-        appThemeSelector.selectedTheme
-    ) { backupExists, hasBlockedUsers, privacyMode, selectedTheme ->
+        interactor.observePaymentsBackupStatus(),
+        combineToPair(appThemeSelector.selectedTheme, interactor.observeDockletAutoHide())
+    ) { backupExists, hasBlockedUsers, privacyMode, paymentsBackupStatus, (selectedTheme, dockletAutoHideEnabled) ->
         SettingsUiState(
             debugMenuEnabled = FeatureOption.DEBUG_MENU.isEnabled,
             linkedDevicesEnabled = FeatureOption.LINKED_DEVICES.isEnabled,
             productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
             isLanguageSettingsAvailable = isLanguageSettingsAvailable,
             selectedTheme = selectedTheme,
+            dockletAutoHideEnabled = dockletAutoHideEnabled,
             privacyMode = privacyMode,
+            paymentsBackupStatus = paymentsBackupStatus,
             isBackupMissing = !backupExists,
             hasBlockedUsers = hasBlockedUsers
         )
@@ -52,7 +56,9 @@ class SettingsViewModel @Inject constructor(
                 productSettingsEnabled = FeatureOption.PRODUCT_SETTINGS.isEnabled,
                 isLanguageSettingsAvailable = isLanguageSettingsAvailable,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
+                dockletAutoHideEnabled = interactor.observeDockletAutoHide().value,
                 privacyMode = null,
+                paymentsBackupStatus = null,
                 isBackupMissing = false,
                 hasBlockedUsers = false
             )
@@ -61,6 +67,10 @@ class SettingsViewModel @Inject constructor(
     fun onPrivacyModeSelected(mode: RecyclingStrategyType) = launchUnit {
         interactor.setPrivacyMode(mode)
             .logFailure("Failed to change payment privacy mode")
+    }
+
+    fun onDockletAutoHideChange(enabled: Boolean) {
+        interactor.setDockletAutoHide(enabled)
     }
 
     fun onBackupClick() {

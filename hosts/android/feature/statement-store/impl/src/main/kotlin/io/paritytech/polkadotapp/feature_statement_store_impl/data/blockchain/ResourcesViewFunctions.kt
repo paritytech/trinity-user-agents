@@ -28,3 +28,21 @@ suspend fun ViewFunctionsApi.getStmtStoreReplacementCooldown(): Result<UInt> {
         arguments = noArgs()
     )
 }
+
+/** Highest valid notification seq for a full person; seqs `0..=value` are claimable. */
+suspend fun ViewFunctionsApi.getNotificationSlotsPerPeriod(): Result<UByte> {
+    return call(
+        pallet = Modules.RESOURCES,
+        name = "get_notification_slots_per_period",
+        arguments = noArgs()
+    )
+}
+
+/** Highest valid notification seq for a lite person; seqs `0..=value` are claimable. */
+suspend fun ViewFunctionsApi.getLiteNotificationSlotsPerPeriod(): Result<UByte> {
+    return call(
+        pallet = Modules.RESOURCES,
+        name = "get_lite_notification_slots_per_period",
+        arguments = noArgs()
+    )
+}

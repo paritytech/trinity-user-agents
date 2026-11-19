@@ -1,94 +1,44 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
-import UIKit
-import UIKitExt
 @testable import polkadot_app
 
-/// A web view and a page load are what a card costs to open, so a card opened
-/// again is worth not paying twice. One is held at a time, which is the bound
-/// that keeps a Pocket full of cards from becoming a web view each.
+/// The navigation stack owns the opened card's screen, so closing the card frees its web view and runtime.
 @MainActor
 struct PocketCardHostsTests {
     @Test
-    func opensACardOnceAndReusesItAfterwards() {
+    func closingTheCardFreesIt() {
         let hosts = PocketCardHosts()
-        let factory = CountingFactory()
+        var view = hosts.open(loyalty, make: { StubExpandedPocketCardView() })
+        weak var opened = view
 
-        let first = hosts.view(for: loyalty, make: factory.make)
-        let second = hosts.view(for: loyalty, make: factory.make)
+        view = nil
 
-        #expect(factory.built == 1)
-        #expect(first === second)
+        #expect(opened == nil)
+        #expect(!hosts.isOnDisplay(loyalty))
     }
 
-    /// One at a time: a second card takes the first down rather than adding to it.
+    /// A link to the card on screen cannot open a second screen, so its params
+    /// are loaded into the page already there. The same params leave the page
+    /// where the user took it.
     @Test
-    func openingAnotherCardTakesTheFirstDown() {
+    func loadsNewParamsIntoThePageOnScreen() {
         let hosts = PocketCardHosts()
-        let factory = CountingFactory()
+        let view = hosts.open(loyalty, pageQuery: "open=scratch", make: { StubExpandedPocketCardView() })
+        var loaded: [String] = []
 
-        let first = hosts.view(for: loyalty, make: factory.make)
-        _ = hosts.view(for: trophy, make: factory.make)
-        let loyaltyAgain = hosts.view(for: loyalty, make: factory.make)
+        hosts.reload(loyalty, at: "open=scratch") { _ in loaded.append("open=scratch") }
+        hosts.reload(loyalty, at: "open=prizes") { _ in loaded.append("open=prizes") }
+        hosts.reload(loyalty, at: "open=prizes") { _ in loaded.append("open=prizes again") }
+        hosts.reload(trophy, at: "open=prizes") { _ in loaded.append("trophy") }
 
-        #expect(factory.built == 3)
-        #expect(first !== loyaltyAgain)
-    }
-
-    /// A card the collection no longer holds has no next tap, so the product
-    /// behind it is given up rather than kept warm.
-    @Test
-    func givesUpAProductWhoseCardIsGone() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        _ = hosts.view(for: loyalty, make: factory.make)
-
-        hosts.keepOnly { $0 != loyalty }
-        _ = hosts.view(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 2)
-    }
-
-    /// The product is wired to the runtime provider of the session that opened
-    /// it, so one kept across a sign-out would be handed to the next session
-    /// still talking to the last one's core.
-    @Test
-    func buildsAgainAfterTheSessionLetItGo() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        _ = hosts.view(for: loyalty, make: factory.make)
-
-        hosts.release()
-        _ = hosts.view(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 2)
-    }
-
-    @Test
-    func keepsAProductWhoseCardIsStillHeld() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-        _ = hosts.view(for: loyalty, make: factory.make)
-
-        hosts.keepOnly { $0 == loyalty }
-        _ = hosts.view(for: loyalty, make: factory.make)
-
-        #expect(factory.built == 1)
+        #expect(loaded == ["open=prizes"])
+        withExtendedLifetime(view) {}
     }
 }
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
-private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
-
-@MainActor
-private final class CountingFactory {
-    private(set) var built = 0
-
-    func make() -> SPAViewProtocol? {
-        built += 1
-        return StubSPAView()
-    }
-}
+private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+private let trophy = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy"))

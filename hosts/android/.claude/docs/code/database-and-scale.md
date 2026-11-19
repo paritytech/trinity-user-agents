@@ -11,7 +11,7 @@ Room is the storage layer; SCALE codec is the wire format. Both are migration-se
 5. **`major`** — New SCALE type missing a conformance test.
 6. **`major`** — Manual binary encoder where `BinaryScale` / `@Serializable` covers it.
 7. **`major`** — Repository accessing `Preferences` directly. Use a typed `XxxStorage` interface.
-8. **`major`** — Feature-specific entity placed in shared `database/.../entity/` without a feature-prefixed class name (e.g. `VideoGameSessionEntity`, not bare `SessionEntity`).
+8. **`major`** — Feature-specific entity placed in shared `database/.../entity/` without a feature-prefixed class name (e.g. `CoinageSessionEntity`, not bare `SessionEntity`).
 9. **`major`** — DAO returning `List<…>` just to check existence — use `@Query("SELECT EXISTS(...)")`.
 10. **`major`** — Legacy `Entry<N>Encoders` introduced in new code (only for migrating old data).
 11. **`minor`** — Append-only addition at the **end** of an enum is the one SCALE additive change that doesn't need a migration.
@@ -39,7 +39,7 @@ database/
 | Shared across multiple features (Account, Chain, ChatMessage) | `database/.../entity/` |
 | Feature-private | `feature/<X>/impl/.../data/local/entity/` — kept in the feature module's part of the schema |
 
-If you put a feature-specific entity in shared `database`, **prefix the class name with the feature** (`VideoGameSessionEntity`, not `SessionEntity`).
+If you put a feature-specific entity in shared `database`, **prefix the class name with the feature** (`CoinageSessionEntity`, not `SessionEntity`).
 
 ### Repositories own entity ↔ domain mapping
 

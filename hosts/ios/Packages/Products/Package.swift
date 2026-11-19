@@ -13,6 +13,7 @@ let package = Package(
         )
     ],
     dependencies: [
+        .package(name: "trinity-user-agents", path: "../../../.."),
         .package(
             url: "https://github.com/novasamatech/substrate-sdk-ios",
             from: "5.7.0"
@@ -52,12 +53,15 @@ let package = Package(
         .package(path: "../ChainStore"),
         .package(path: "../SubstrateOperation"),
         .package(path: "../SubstrateSdkExt"),
-        .package(path: "../Revive")
+        .package(path: "../Revive"),
+        .package(path: "../BackgroundExecution"),
+        .package(path: "../IssueMonitoring")
     ],
     targets: [
         .target(
             name: "Products",
             dependencies: [
+                .product(name: "TrUAPIHost", package: "trinity-user-agents"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
                 .product(name: "NovaCrypto", package: "crypto-ios"),
                 .product(name: "BigInt", package: "BigInt"),
@@ -76,7 +80,9 @@ let package = Package(
                 .product(name: "ChainStore", package: "ChainStore"),
                 "SubstrateOperation",
                 "SubstrateSdkExt",
-                "Revive"
+                "Revive",
+                "BackgroundExecution",
+                "IssueMonitoring"
             ],
             resources: [.process("Resources")]
         ),
@@ -84,6 +90,11 @@ let package = Package(
             name: "ProductsTests",
             dependencies: [
                 "Products",
+                "FoundationExt",
+                "BackgroundExecution",
+                "IssueMonitoring",
+                .product(name: "StructuredConcurrency", package: "StructuredConcurrency"),
+                .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
                 .product(name: "KeyDerivation", package: "KeyDerivation"),
                 "Revive",

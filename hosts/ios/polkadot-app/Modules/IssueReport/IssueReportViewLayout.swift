@@ -7,7 +7,7 @@ struct IssueReportViewLayout: View {
     @Bindable var viewModel: IssueReportViewModel
     let screenshot: UIImage
     @Environment(\.dismiss) private var dismiss
-    @FocusState private var isEditing: Bool
+    @FocusState private var focusedField: Field?
 
     var body: some View {
         VStack(spacing: 24) {
@@ -17,6 +17,7 @@ struct IssueReportViewLayout: View {
                     Text(String(localized: .reportIssueQuestion))
                         .typography(.titleMedium.emphasized)
                     descriptionField
+                    gitHubUsernameField
                     Text(String(localized: .reportIssueAttachments))
                         .typography(.bodyMedium)
                         .foregroundStyle(.fgSecondary)
@@ -50,6 +51,11 @@ struct IssueReportViewLayout: View {
 
 @MainActor
 private extension IssueReportViewLayout {
+    enum Field {
+        case description
+        case gitHubUsername
+    }
+
     var header: some View {
         Text(String(localized: .reportIssueTitle))
             .typography(.titleLarge.emphasized)
@@ -80,7 +86,7 @@ private extension IssueReportViewLayout {
                 }
                 TextEditor(text: $viewModel.description)
                     .scrollContentBackground(.hidden)
-                    .focused($isEditing)
+                    .focused($focusedField, equals: .description)
                     .disabled(viewModel.isSending)
                     .accessibilityLabel(String(localized: .reportIssueQuestion))
                     .onChange(of: viewModel.description) { _, description in
@@ -97,9 +103,31 @@ private extension IssueReportViewLayout {
         .background(.bgSurfaceContainer, in: RoundedRectangle(cornerRadius: 24))
     }
 
+    var gitHubUsernameField: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                String(localized: .reportIssueGithubUsername),
+                text: $viewModel.gitHubUsername,
+                prompt: Text(String(localized: .reportIssueGithubUsername)).foregroundStyle(.fgSecondary)
+            )
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .focused($focusedField, equals: .gitHubUsername)
+            .disabled(viewModel.isSending)
+            .typography(.bodyLarge)
+            .padding(16)
+            .background(.bgSurfaceContainer, in: RoundedRectangle(cornerRadius: 24))
+            if !viewModel.isGitHubUsernameValid {
+                Text(String(localized: .reportIssueGithubUsernameInvalid))
+                    .typography(.bodyMedium)
+                    .foregroundStyle(.fgError)
+            }
+        }
+    }
+
     var sendButton: some View {
         Button {
-            isEditing = false
+            focusedField = nil
             viewModel.send()
         } label: {
             HStack(spacing: 8) {

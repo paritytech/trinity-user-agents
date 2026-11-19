@@ -2,9 +2,9 @@ import Observation
 import SwiftUI
 
 @Observable
-public final class AppsListViewModel {
-    public var items: [AppsListViewLayout.Item] = []
-    public var onSelect: ((AppsListViewLayout.Item) -> Void)?
+public final class AppsListViewModel<Identifier: Hashable> {
+    public var items: [AppsListViewLayout<Identifier>.Item] = []
+    public var onSelect: ((AppsListViewLayout<Identifier>.Item) -> Void)?
 
     public init() {}
 }

@@ -4,13 +4,12 @@ import PolkadotUI
 
 enum SelectTokenCellViewModel: Hashable {
     case chainAsset(ChainAssetViewModel)
-    case fiat
 
     struct ChainAssetViewModel: Hashable {
         let chainAssetId: ChainAssetId
         let name: String
         let symbol: String
-        let icon: ImageViewModelProtocol?
+        let icon: AnyImageViewModel?
 
         func hash(into hasher: inout Hasher) {
             hasher.combine(chainAssetId)

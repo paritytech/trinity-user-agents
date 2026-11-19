@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SubstrateSdk
 import KeyDerivation
@@ -125,7 +126,8 @@ private extension ProductsAccountManager {
                 try await allowanceSupport.sssManager.allocate(
                     accountId: accountId,
                     policy: policy,
-                    priority: .normal
+                    priority: .normal,
+                    domain: .product
                 )
                 let privateKey = try wallet.fetchRawSecretKey()
                 return .allocated(.statementStoreAllowance(privateKey: privateKey))
@@ -135,7 +137,8 @@ private extension ProductsAccountManager {
                 try await allowanceSupport.bulletInManager.allocate(
                     accountId: accountId,
                     policy: policy,
-                    priority: .normal
+                    priority: .normal,
+                    domain: .product
                 )
                 let privateKey = try wallet.fetchRawSecretKey()
                 return .allocated(.bulletInAllowance(privateKey: privateKey))
@@ -148,7 +151,8 @@ private extension ProductsAccountManager {
                 try await allowanceSupport.smartContractManager.allocate(
                     accountId: accountId,
                     policy: policy,
-                    priority: .normal
+                    priority: .normal,
+                    domain: .product
                 )
                 return .allocated(.smartContractAllowance)
             }

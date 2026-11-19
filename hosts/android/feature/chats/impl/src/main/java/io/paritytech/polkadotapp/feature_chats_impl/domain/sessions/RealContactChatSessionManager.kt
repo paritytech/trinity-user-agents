@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.diffed
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapToSet
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatPushId
@@ -20,22 +21,25 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ContactChatSessionMana
 import io.paritytech.polkadotapp.feature_chats_api.domain.isMultiDeviceChatSupported
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactAccountId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactDevice
 import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.ContactChatSessionRefCounter
 import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.withSessionsEnabled
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.isDeviceChatAccepted
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotificationPayloadEncoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatAcceptanceRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactDevicesRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.compaction.ChatMessageCompactor
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ContactWithDevicePresence
 import io.paritytech.polkadotapp.feature_chats_impl.domain.notifications.ChatPushNotificationsSender
 import io.paritytech.polkadotapp.feature_chats_impl.domain.notifications.PushSubscriptionSynchronizer
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.ContactChatSigners
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SyncContactUsernameUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatPushTokenUtils
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.CommunicationSessionCreator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStoreMessageProver
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.IncomingRequestResponsePolicy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.SessionAccount
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationsHelper
 import kotlinx.coroutines.CoroutineScope
@@ -47,9 +51,12 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -68,6 +75,23 @@ private data class ContactWithSessionType(
     override val identifier: String = "${contact.identifier}:$sessionType"
 }
 
+// The contact and the session type come from one snapshot of the contact and its devices, so an accepted chat is
+// never paired with the pairwise session its acceptance replaces.
+private class RunningSession(
+    val contact: Contact,
+    val sessionType: SessionType,
+    val session: RealContactChatSession,
+) : Identifiable {
+    override val identifier: String = "${contact.identifier}:$sessionType"
+
+    fun withContact(contact: Contact) = RunningSession(contact, sessionType, session)
+}
+
+// Acceptances are never acknowledged: the response would be the only statement we sign on the identity route.
+private val ACCEPTANCES_UNACKNOWLEDGED = IncomingRequestResponsePolicy { messages ->
+    messages.any { message -> !message.isDeviceChatAccepted() }
+}
+
 @Singleton
 internal class RealContactChatSessionManager @Inject constructor(
     private val sessionCreatorFactory: CommunicationSessionCreator.Factory,
@@ -80,22 +104,26 @@ internal class RealContactChatSessionManager @Inject constructor(
     private val chatPushNotificationsSender: ChatPushNotificationsSender,
     private val encryptionFactory: CommunicationEncryption.Factory,
     private val chatEngine: ChatEngine,
-    private val contactDevicesRepository: ContactDevicesRepository,
     private val refCounter: ContactChatSessionRefCounter,
     private val pushSubscriptionSynchronizer: PushSubscriptionSynchronizer,
     private val syncContactUsernameUseCase: SyncContactUsernameUseCase,
     private val chatMessageCompactor: ChatMessageCompactor,
     private val incomingChatMessageProcessor: IncomingChatMessageProcessor,
     private val notificationPayloadEncoder: ChatNotificationPayloadEncoder,
+    private val proverFactory: StatementStoreMessageProver.Factory,
+    private val chatSigners: ContactChatSigners,
+    private val chatAcceptanceRepository: ChatAcceptanceRepository,
     dispatchers: CoroutineDispatchers
-) : ContactChatSessionManager, CoroutineScope, ChatSessionCallbacks {
+) : ContactChatSessionManager, ContactChatSessionRestarter, CoroutineScope, ChatSessionCallbacks {
     companion object {
         private val MAX_STATEMENT_SIZE = 100.kilobytes
     }
 
     override val coroutineContext = dispatchers.io + SupervisorJob()
 
-    private val sessionsFlow = MutableStateFlow<Map<AccountId, RealContactChatSession>>(emptyMap())
+    private val sessionsFlow = MutableStateFlow<Map<AccountId, RunningSession>>(emptyMap())
+
+    private val sessionsMutex = Mutex()
 
     private val sessionCreatorsCache: MapCache<Long, SessionCreatorWithAccount> = MapCache(this) { ourMetaAccountId ->
         val account = accountRepository.getAccountById(ourMetaAccountId)!!
@@ -110,23 +138,40 @@ internal class RealContactChatSessionManager @Inject constructor(
     }
 
     override fun getSession(accountId: AccountId): ContactChatSession? {
-        return sessionsFlow.value[accountId]
+        return sessionsFlow.value[accountId]?.session
     }
 
     override fun getAllSessions(): List<ContactChatSession> {
-        return sessionsFlow.value.values.toList()
+        return sessionsFlow.value.values.map { it.session }
     }
 
     override suspend fun awaitSession(accountId: AccountId): ContactChatSession {
         return sessionsFlow
-            .mapNotNull { it[accountId] }
+            .mapNotNull { it[accountId]?.session }
             .first()
     }
 
     fun startSubscriptions() {
         registerSubscriptionOnTokenChanges()
         subscribeToEnabledContacts()
+        subscribeToEstablishedChats()
         subscribeToTokenUpdates()
+    }
+
+    override suspend fun restartSession(accountId: AccountId) {
+        sessionsMutex.withLock {
+            val running = sessionsFlow.value[accountId] ?: return@withLock
+
+            createSession(running.contact, running.sessionType).onSuccess { restarted ->
+                running.session.dispose()
+                sessionsFlow.update { it + (accountId to RunningSession(running.contact, running.sessionType, restarted)) }
+            }
+        }
+        syncPushRules()
+    }
+
+    override suspend fun onContactSeenOnDeviceRoute(contactAccountId: AccountId) {
+        chatAcceptanceRepository.remove(contactAccountId)
     }
 
     override suspend fun onShouldNotifyNewMessageSent(
@@ -174,35 +219,23 @@ internal class RealContactChatSessionManager @Inject constructor(
         combine(
             refCounter.enabledIds,
             accountRepository.walletAccountFlow(),
-            contactsRepository.subscribeContactsWithChatRequests(),
-            contactDevicesRepository.subscribeAllDevices(),
-        ) { enabledIds, walletAccount, contacts, devicesByContact ->
-            val byAccountId = contacts
-                .associateBy { it.contact.accountId }
-            enabledIds.mapNotNull { accountId -> byAccountId[accountId]?.contact }
-                .map { contact ->
-                    ContactWithSessionType(
-                        contact = contact,
-                        sessionType = determineSessionType(walletAccount, contact, devicesByContact),
-                    )
-                }
+            contactsRepository.subscribeContactsWithDevicePresence(),
+        ) { enabledIds, walletAccount, contacts ->
+            val byAccountId = contacts.associateBy { it.contact.accountId }
+            enabledIds.mapNotNull { accountId -> byAccountId[accountId] }
+                .map { ContactWithSessionType(it.contact, determineSessionType(walletAccount, it)) }
         }
             .diffed()
             .onEach { diff ->
-                applyContactsDiff(diff)
+                sessionsMutex.withLock { applyContactsDiff(diff) }
                 syncPushRules()
             }
             .launchIn(this)
     }
 
-    private fun determineSessionType(
-        walletMetaAccount: MetaAccount,
-        contact: Contact,
-        devicesByContact: Map<ContactAccountId, List<ContactDevice>>,
-    ): SessionType {
-        val isMultiDeviceChatSupported = contact.isMultiDeviceChatSupported(walletMetaAccount)
-        val devices = devicesByContact[contact.accountId].orEmpty()
-        return if (devices.isNotEmpty() && isMultiDeviceChatSupported) {
+    private fun determineSessionType(walletMetaAccount: MetaAccount, contact: ContactWithDevicePresence): SessionType {
+        val isMultiDeviceChatSupported = contact.contact.isMultiDeviceChatSupported(walletMetaAccount)
+        return if (contact.hasDevices && isMultiDeviceChatSupported) {
             SessionType.MultiDevice
         } else {
             SessionType.Pairwise
@@ -210,26 +243,26 @@ internal class RealContactChatSessionManager @Inject constructor(
     }
 
     private suspend fun syncPushRules() {
-        val rules = sessionsFlow.value.values.flatMap(RealContactChatSession::pushRules)
+        val rules = sessionsFlow.value.values.flatMap { it.session.pushRules }
         pushSubscriptionSynchronizer.syncRules(rules)
     }
 
+    // An updated contact keeps its running session; only a new contact or session type gets a new one.
     private suspend fun applyContactsDiff(diff: CollectionDiffer.Diff<ContactWithSessionType>) {
-        val addedSessions = buildList {
-            diff.added.forEach {
-                createSession(it.contact, it.sessionType)
-                    .onSuccess { session ->
-                        add(it.contact.accountId to session)
-                    }
+        val added = buildList {
+            diff.added.forEach { new ->
+                createSession(new.contact, new.sessionType)
+                    .onSuccess { session -> add(RunningSession(new.contact, new.sessionType, session)) }
             }
         }
         val removedIds = diff.removed.map { it.contact.accountId }
 
-        val replacedIds = addedSessions.map { it.first } + removedIds
-        replacedIds.forEach { sessionsFlow.value[it]?.dispose() }
+        val replacedIds = added.map { it.contact.accountId } + removedIds
+        replacedIds.forEach { sessionsFlow.value[it]?.session?.dispose() }
 
         sessionsFlow.update { current ->
-            (current - replacedIds.toSet()) + addedSessions.toMap()
+            val updated = diff.updated.mapNotNull { new -> current[new.contact.accountId]?.withContact(new.contact) }
+            (current - replacedIds.toSet()) + (updated + added).associateBy { it.contact.accountId }
         }
     }
 
@@ -237,6 +270,7 @@ internal class RealContactChatSessionManager @Inject constructor(
         Timber.d("createSession: contact=${contact.username}, sessionType=$sessionType, hasPushToken=${contact.pushToken != null}, hasLastShared=${contact.lastSharedPushToken != null}")
 
         val sessionCreatorWithAccount = sessionCreatorsCache.getOrCompute(contact.ourMetaAccountId)
+        val chatSessionCreator = createChatSessionCreator(contact)
 
         val scope = childScope(supervised = true)
 
@@ -244,6 +278,7 @@ internal class RealContactChatSessionManager @Inject constructor(
             contact = contact,
             sessionType = sessionType,
             sessionCreatorWithAccount = sessionCreatorWithAccount,
+            chatSessionCreator = chatSessionCreator,
             scope = scope,
         )
 
@@ -259,37 +294,51 @@ internal class RealContactChatSessionManager @Inject constructor(
             notificationPayloadEncoder = notificationPayloadEncoder,
         )
 
-        invalidateContact(chatSession, contact)
+        syncIncomingPushId(chatSession, contact)
 
         chatSession
     }.logFailure("ContactChatSessionManager: failed to create session for contact ${contact.username}")
 
+    private fun createChatSessionCreator(contact: Contact): CommunicationSessionCreator {
+        val chatProver = proverFactory.createLazyKeyPairProver { chatSigners.keypairFor(contact) }
+        return sessionCreatorFactory.create(prover = chatProver)
+    }
+
+    // Pending chats sign nothing until accepted, so an unanswered request never claims a chat slot.
+    private fun subscribeToEstablishedChats() {
+        sessionsFlow
+            .map { sessions -> sessions.values.filter { it.contact.establishedAt != null } }
+            .diffed()
+            .onEach { diff -> diff.added.forEach { onChatEstablished(it) } }
+            .launchIn(this)
+    }
+
+    private suspend fun onChatEstablished(chat: RunningSession) {
+        chatSigners.warmUp(chat.contact)
+        runCancellableCatching { shareOwnPushTokenIfChanged(chat.session, chat.contact) }
+            .logFailure("ContactChatSessionManager: failed to share push token with ${chat.contact.username}")
+    }
+
     // TODO: should be removed when fully migrated to push-notifications v2
-    private suspend fun invalidateContact(
-        chatSession: RealContactChatSession,
-        currentContact: Contact
-    ) {
-        val ownPushToken = pushNotificationsHelper.getCurrentToken()
+    private suspend fun shareOwnPushTokenIfChanged(chatSession: RealContactChatSession, contact: Contact) {
+        val ownPushToken = pushNotificationsHelper.getCurrentToken() ?: return
+        if (ownPushToken == contact.lastSharedPushToken) return
 
-        Timber.d("invalidateContact: contact=${currentContact.username}, ownToken=${if (ownPushToken != null) "present" else "null"}, lastShared=${currentContact.lastSharedPushToken != null}")
+        Timber.d("shareOwnPushTokenIfChanged: sending own token to ${contact.username}")
+        chatSession.sendToken(ownPushToken)
+        contactsRepository.updateLastSharedPushTokenFor(listOf(contact.accountId), ownPushToken)
+    }
 
-        if (ownPushToken != null && ownPushToken != currentContact.lastSharedPushToken) {
-            Timber.d("invalidateContact: sending own token to ${currentContact.username}")
-            chatSession.sendToken(ownPushToken)
-        }
+    private suspend fun syncIncomingPushId(chatSession: RealContactChatSession, contact: Contact) {
+        if (chatSession.incomingPushId == contact.pushId) return
 
-        if (chatSession.incomingPushId != currentContact.pushId) {
-            contactsRepository.updatePushId(currentContact.accountId, chatSession.incomingPushId)
-        }
-        if (ownPushToken != null && ownPushToken != currentContact.lastSharedPushToken) {
-            contactsRepository.updateLastSharedPushTokenFor(listOf(currentContact.accountId), ownPushToken)
-        }
+        contactsRepository.updatePushId(contact.accountId, chatSession.incomingPushId)
     }
 
     // TODO: should be removed when fully migrated to push-notifications v2
     private suspend fun invalidateOwnPushToken(newToken: String) {
         val contactsToUpdate = contactsRepository.getContacts()
-            .filter { it.lastSharedPushToken != newToken }
+            .filter { it.establishedAt != null && it.lastSharedPushToken != newToken }
         if (contactsToUpdate.isEmpty()) return
 
         val accountIds = contactsToUpdate.mapToSet { it.accountId }
@@ -324,6 +373,7 @@ internal class RealContactChatSessionManager @Inject constructor(
         contact: Contact,
         sessionType: SessionType,
         sessionCreatorWithAccount: SessionCreatorWithAccount,
+        chatSessionCreator: CommunicationSessionCreator,
         scope: CoroutineScope,
     ): CommunicationSessions {
         val localAccount = sessionCreatorWithAccount.localSessionAccount
@@ -337,7 +387,7 @@ internal class RealContactChatSessionManager @Inject constructor(
             SessionType.MultiDevice -> {
                 val perDeviceEncryption = encryptionFactory.createWithDeviceKeypair(contact.chatKey)
 
-                val mainSession = sessionCreatorWithAccount.creator.createMultiDeviceSession(
+                val mainSession = chatSessionCreator.createMultiDeviceSession(
                     scope = scope,
                     localAccount = localAccount,
                     remoteAccount = remoteAccount,
@@ -347,6 +397,7 @@ internal class RealContactChatSessionManager @Inject constructor(
                     compactor = chatMessageCompactor,
                 )
 
+                // Never signs an acceptance: ours go out as one-shot statements and incoming ones are not acknowledged.
                 val identitySession = sessionCreatorWithAccount.creator.createSession(
                     scope = scope,
                     localAccount = localAccount,
@@ -354,19 +405,21 @@ internal class RealContactChatSessionManager @Inject constructor(
                     encryption = identityEncryption,
                     maxStatementSize = MAX_STATEMENT_SIZE,
                     compactor = chatMessageCompactor,
+                    responsePolicy = ACCEPTANCES_UNACKNOWLEDGED,
                 )
 
                 CommunicationSessions.MultiDevice(main = mainSession, identity = identitySession)
             }
 
             SessionType.Pairwise -> {
-                val session = sessionCreatorWithAccount.creator.createSession(
+                val session = chatSessionCreator.createSession(
                     scope = scope,
                     localAccount = localAccount,
                     remoteAccount = remoteAccount,
                     encryption = identityEncryption,
                     maxStatementSize = MAX_STATEMENT_SIZE,
                     compactor = chatMessageCompactor,
+                    responsePolicy = ACCEPTANCES_UNACKNOWLEDGED,
                 )
                 CommunicationSessions.Pairwise(session)
             }

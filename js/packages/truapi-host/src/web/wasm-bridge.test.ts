@@ -1,8 +1,26 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
+import type {
+  StackCallbacks,
+  StackFetchRequest,
+  StackFetchResponse,
+  StackStatus,
+} from "../runtime.js";
+import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
+
+/**
+ * {@link mockRuntimeConfig} with the bundled previewnet stack in place of its
+ * test stack: the production bundle reads only a signed `stack`.
+ */
+function bundledRuntimeConfig() {
+  const { testStack: _testStack, ...config } = mockRuntimeConfig();
+  return { ...config, stack: bundledTestStack() };
+}
 
 // Drives the REAL truapi WASM core against createMockHost's callbacks —
 // headless, no browser, no worker — to prove the JS↔SCALE↔WASM callback bridge.
@@ -23,9 +41,52 @@ const glueUrl = new URL(
 );
 // The gate lives in `require-wasm.ts` so rewriting any one suite cannot
 // quietly disable it for the others.
-const suite = wasmIsBuilt("web/truapi_server_bg.wasm") ? describe : describe.skip;
+const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
+  ? describe
+  : describe.skip;
 
 suite("real WASM core ↔ createMockHost bridge", () => {
+  it("constructs normalized product IDs through the existing Rust core", async () => {
+    const { initSync, parseProductId } = await import(glueUrl.href);
+    initSync({ module: readFileSync(wasmUrl) });
+    expect([
+      parseProductId(" PEOPL.DOT "),
+      parseProductId("localhost:3000"),
+      parseProductId("worker.truapi-playground.paseo"),
+    ]).toEqual([
+      "peopl.dot",
+      "localhost:3000",
+      "worker.truapi-playground.paseo",
+    ]);
+    expect(() => parseProductId("not a product")).toThrow();
+  });
+
+  it("distinguishes product IDs from shared labels in persisted storage keys", async () => {
+    const { initSync, describeCoreStorageKey } = await import(glueUrl.href);
+    initSync({ module: readFileSync(wasmUrl) });
+    const keys: CoreStorageKey[] = [
+      { tag: "ProductManifest", value: { productLabel: "peopl" } },
+      { tag: "AutoSigningKey", value: { productId: asProductId("peopl.dot") } },
+      {
+        tag: "PermissionAuthorization",
+        value: {
+          scope: "caller",
+          request: {
+            tag: "CrossProductSignature",
+            value: { target: "target", kind: "Raw" },
+          },
+        },
+      },
+    ];
+    expect(
+      keys.map((key) => describeCoreStorageKey(CoreStorageKey.enc(key))),
+    ).toEqual([
+      { kind: "ProductManifest", productLabel: "peopl" },
+      { kind: "AutoSigningKey", productId: "peopl.dot" },
+      { kind: "PermissionAuthorization", productLabel: "caller" },
+    ]);
+  });
+
   it("the core invokes createMockHost callbacks across the JS↔SCALE↔WASM boundary", async () => {
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
     const { createWasmRawCallbacks } =
@@ -43,15 +104,15 @@ suite("real WASM core ↔ createMockHost bridge", () => {
 
     // The pairing-host runtime takes the platform callbacks and host config;
     // the per-product core is derived from it with its own frame sink.
-    // `workerDemandChanged` is a raw bridge callback rather than a generated
+    // `requestWorkerTransition` is a raw bridge callback rather than a generated
     // host callback, so the worker runtime supplies it outside the adapter and
     // a harness has to do the same.
     const raw = {
       ...createWasmRawCallbacks(mock.callbacks),
-      workerDemandChanged: () => {},
+      requestWorkerTransition: () => {},
     };
-    const { productId, ...hostConfig } = mockRuntimeConfig();
-    const runtime = new WasmPairingHostRuntime(raw, hostConfig);
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
+    const runtime = await WasmPairingHostRuntime.create(raw, hostConfig);
     // The core emits response frames through `emitFrame`; the worker supplies
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
@@ -59,11 +120,163 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
-    expect(invoked.some((c) => c.startsWith("readCoreStorage:"))).toBe(true);
+    // Building the runtime also reads the stack record, so the auth session
+    // read is named: it is the one that proves the startup traffic crossed.
+    expect(invoked).toContain("readCoreStorage:AuthSession");
 
     // The same traffic must be visible through the control surface, because
     // that count is what a harness waits on to decide the wire is live.
-    expect(mock.getHostCallCount()).toBeGreaterThan(0);
+    expect(mock.getHostCallCount()).toBeGreaterThan(
+      invoked.filter((call) => call === "readCoreStorage:StackRecord").length,
+    );
+  });
+
+  it("refuses a stack pointer without a key", async () => {
+    // A copy the host fetches later is checked against the pointer's key, so
+    // the production bundle refuses a pointer without one.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const pointer = new URL(hostConfig.stack.pointer);
+    pointer.searchParams.delete("key");
+
+    await expect(
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(createMockHost().callbacks),
+          requestWorkerTransition: () => {},
+        },
+        {
+          ...hostConfig,
+          stack: { ...hostConfig.stack, pointer: pointer.href },
+        },
+      ),
+    ).rejects.toThrow("runtimeConfig.stack: stack pointer has no key");
+  });
+
+  it("refreshes the stack through the host's fetch and reports each change", async () => {
+    // The published descriptor moves when a stack restarts its chains. The
+    // core has no HTTP client, so a web host follows it only if the request,
+    // the answer, the status and the record all cross the bridge intact.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const requests: StackFetchRequest[] = [];
+    const statuses: StackStatus[] = [];
+    const answers: StackFetchResponse[] = [
+      { status: "document", bytes: hostConfig.stack.descriptor, etag: '"v1"' },
+    ];
+    let online = false;
+    const stackCallbacks: StackCallbacks = {
+      fetchStackDescriptor: async (request) => {
+        requests.push(request);
+        const answer = online ? answers.shift() : undefined;
+        if (!answer) throw new Error("offline");
+        return answer;
+      },
+      stackChanged: (status) => statuses.push(status),
+    };
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 200));
+    // One host, so the core storage the first runtime writes is what the
+    // second one reads.
+    const mock = createMockHost();
+    const start = () =>
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(mock.callbacks),
+          requestWorkerTransition: () => {},
+          ...stackCallbacks,
+        },
+        hostConfig,
+      );
+
+    const runtime = await start();
+    await settled();
+    online = true;
+    runtime.refreshStack();
+    await settled();
+
+    const pointer = new URL(hostConfig.stack.pointer);
+    const request = {
+      url: pointer.searchParams.get("url"),
+      maxBytes: 1024 * 1024,
+    };
+    expect(requests).toEqual([request, request]);
+    expect(statuses.map((status) => status.lastRefresh)).toEqual([
+      undefined,
+      { outcome: "unreachable", reason: "offline" },
+      { outcome: "current" },
+    ]);
+    expect(runtime.stackStatus()).toEqual(statuses[2]);
+    const descriptor = JSON.parse(statuses[2].descriptor);
+    expect([descriptor.id, statuses[2].generation]).toEqual([
+      "previewnet",
+      descriptor.generation,
+    ]);
+
+    // The record went to core storage. A core built from the bundled copy
+    // alone would fetch at once; one that read the record knows its copy was
+    // fetched moments ago and waits for the hour.
+    const restarted = await start();
+    await settled();
+    expect([requests.length, restarted.stackStatus().descriptor]).toEqual([
+      2,
+      statuses[2].descriptor,
+    ]);
+  });
+
+  it("tells a host without fetchStackDescriptor the status at start", async () => {
+    // stackChanged is documented to report the status at start. A host that
+    // does not fetch the descriptor still shows which stack it runs.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+        stackChanged: (status: StackStatus) => statuses.push(status),
+      },
+      hostConfig,
+    );
+
+    expect(statuses).toEqual([runtime.stackStatus()]);
+    expect(statuses[0].lastRefresh).toBeUndefined();
+  });
+
+  it("tells a host of its stack only once the runtime exists", async () => {
+    // A config the core refuses must not leave the host holding the status of
+    // a runtime that was never built.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const {
+      productId: _productId,
+      pairing: _pairing,
+      ...withoutPairing
+    } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+
+    await expect(
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(createMockHost().callbacks),
+          requestWorkerTransition: () => {},
+          stackChanged: (status: StackStatus) => statuses.push(status),
+        },
+        withoutPairing,
+      ),
+    ).rejects.toThrow("runtimeConfig.pairing");
+    expect(statuses).toEqual([]);
   });
 
   it("isolates one real-core boot from the next through reset()", async () => {
@@ -72,18 +285,17 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // Test isolation is the property a product suite actually depends on: a
     // recording made while one core ran must not leak into the next case.
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     initSync({ module: readFileSync(wasmUrl) });
 
     const mock = createMockHost();
-    const { productId, ...hostConfig } = mockRuntimeConfig();
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
     const boot = async () => {
-      const runtime = new WasmPairingHostRuntime(
+      const runtime = await WasmPairingHostRuntime.create(
         {
           ...createWasmRawCallbacks(mock.callbacks),
-          workerDemandChanged: () => {},
+          requestWorkerTransition: () => {},
         },
         hostConfig,
       );

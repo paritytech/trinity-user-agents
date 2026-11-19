@@ -18,12 +18,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.LifecycleOwner
+import io.paritytech.polkadotapp.common.presentation.camera.compose.QrViewfinder
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_scan_impl.R
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -58,7 +58,7 @@ internal fun QrScannerScreen(
 
         Image(
             modifier = Modifier.fillMaxSize(),
-            painter = painterResource(R.drawable.img_scanner_frame),
+            painter = painterResource(RCommon.drawable.img_scanner_frame),
             contentScale = ContentScale.Crop,
             contentDescription = "image_overlay"
         )

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import NovaCrypto
@@ -29,6 +30,7 @@ public extension ContainerBridge {
         registerAccountGet(nativeApi: nativeApi)
         registerAccountGetAlias(nativeApi: nativeApi)
         registerAccountCreateProof(nativeApi: nativeApi)
+        registerAccountListRingVrfKeys(nativeApi: nativeApi)
         registerAccountSignVrf(nativeApi: nativeApi)
         registerGetUserId(nativeApi: nativeApi)
         registerChainNodes(nativeApi: nativeApi)
@@ -159,6 +161,7 @@ private extension ContainerBridge {
             let request = try params.map(to: AccountGetAliasRequest.self)
 
             let result = try await nativeApi.accountGetAlias(
+                keyHandle: request.keyHandle,
                 context: request.context,
                 ring: request.ring
             )
@@ -172,12 +175,26 @@ private extension ContainerBridge {
             let request = try params.map(to: AccountCreateProofRequest.self)
 
             let result = try await nativeApi.accountCreateProof(
+                keyHandle: request.keyHandle,
                 context: request.context,
                 ring: request.ring,
                 message: request.message
             )
 
             return try result.toScaleCompatibleJSON()
+        }
+    }
+
+    func registerAccountListRingVrfKeys(nativeApi: ProductsNativeApiProtocol) {
+        registerRequestHandler(method: "listRingVrfKeys") { params in
+            let request = try params.map(to: AccountListRingVrfKeysRequest.self)
+
+            let keys = try await nativeApi.listRingVrfKeys(
+                owner: request.owner,
+                disclosure: request.disclosure
+            )
+
+            return try keys.toScaleCompatibleJSON()
         }
     }
 
@@ -193,14 +210,21 @@ private extension ContainerBridge {
 }
 
 private struct AccountGetAliasRequest: Decodable {
+    let keyHandle: RingVrfKeyHandle
     let context: ProductProofContext
     let ring: RingLocation
 }
 
 private struct AccountCreateProofRequest: Decodable {
+    let keyHandle: RingVrfKeyHandle
     let context: ProductProofContext
     let ring: RingLocation
     @HexCodable var message: Data
+}
+
+private struct AccountListRingVrfKeysRequest: Decodable {
+    let owner: ProductId
+    let disclosure: RingVrfKeyDisclosure
 }
 
 // MARK: - Chain
@@ -246,7 +270,7 @@ private extension ContainerBridge {
 
             let data = try Data(hexString: payloadHex)
             let messageId = try await nativeApi.sendMessage(
-                .custom(messageType: messageType, data: data),
+                .custom(messageType: messageType, data: data, alt: nil),
                 roomId: roomId
             )
             return JSON.dictionaryValue(["messageId": JSON.stringValue(messageId)])

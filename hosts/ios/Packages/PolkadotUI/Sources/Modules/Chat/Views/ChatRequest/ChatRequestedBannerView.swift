@@ -10,27 +10,37 @@ public struct ChatRequestedBannerView: View {
     }
 
     public var body: some View {
-        Text(
-            getMessage(for: viewModel.username)
-        )
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 16)
-        .padding(.top, 0)
-        .padding(.bottom, 24)
+        VStack(alignment: .center, spacing: DSSpacings.mediumIncreased) {
+            Text(
+                getMessage(for: viewModel.username)
+            )
+            .multilineTextAlignment(.center)
+
+            Button(action: viewModel.onCancel) {
+                Text(.chatRequestedBannerCancel)
+                    .typography(.titleSmall)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.destructiveDark44)
+        }
+        .padding(.horizontal, DSSpacings.mediumIncreased)
+        .padding(.top, DSSpacings.mediumIncreased)
+        .padding(.bottom, DSSpacings.large)
+        .background(Color.bgSurfaceContainer)
     }
 }
 
 public extension ChatRequestedBannerView {
     struct ViewModel {
         let username: String
-        let isFromGame: Bool
+        let onCancel: () -> Void
 
         public init(
             username: String,
-            isFromGame: Bool
+            onCancel: @escaping () -> Void
         ) {
             self.username = username
-            self.isFromGame = isFromGame
+            self.onCancel = onCancel
         }
     }
 }
@@ -41,14 +51,6 @@ private extension ChatRequestedBannerView {
             for: .center,
             textColor: UIColor.fgTertiary
         )
-
-        guard !viewModel.isFromGame else {
-            return NSAttributedString(
-                string: String(localized: .chatRequestedBannerGameMessage),
-                attributes: defaultAttributes
-            )
-            .toAttributedStringOrEmpty()
-        }
 
         let highlightingAttributes = LabelStyle.body14SemiBold().attributes(
             for: .center,
@@ -70,7 +72,7 @@ private extension ChatRequestedBannerView {
 #Preview(traits: .sizeThatFitsLayout) {
     UIHostingConfiguration {
         ChatRequestedBannerView(
-            viewModel: .init(username: "Maxwell.42", isFromGame: false)
+            viewModel: .init(username: "Maxwell.42", onCancel: {})
         )
         .background(Color.bgSurfaceContainer)
     }

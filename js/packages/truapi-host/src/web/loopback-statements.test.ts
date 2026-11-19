@@ -20,11 +20,19 @@ function statement(topics: string[]): string {
   return encodeStatement({ topics });
 }
 
-function subscribe(store: ReturnType<typeof createLoopbackStatements>, filter: unknown) {
+function subscribe(
+  store: ReturnType<typeof createLoopbackStatements>,
+  filter: unknown,
+) {
   const frames: string[] = [];
   const respond = (frame: string) => frames.push(frame);
   store.handle(
-    JSON.stringify({ jsonrpc: "2.0", id: "s1", method: "statement_subscribeStatement", params: [filter] }),
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "s1",
+      method: "statement_subscribeStatement",
+      params: [filter],
+    }),
     respond,
   );
   return { frames, respond };
@@ -39,7 +47,12 @@ describe("the in-page statement store", () => {
     const store = createLoopbackStatements();
     const replies: string[] = [];
     const handled = store.handle(
-      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "statement_submit", params: [statement([])] }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "statement_submit",
+        params: [statement([])],
+      }),
       (f) => replies.push(f),
     );
     expect(handled).toBe(true);
@@ -52,7 +65,11 @@ describe("the in-page statement store", () => {
     const store = createLoopbackStatements();
     const { frames, respond } = subscribe(store, { matchAll: [TOPIC_A] });
     store.handle(
-      JSON.stringify({ id: 2, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 2,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       respond,
     );
     expect(delivered(frames)).toBe(1);
@@ -63,7 +80,11 @@ describe("the in-page statement store", () => {
     const store = createLoopbackStatements();
     const { frames, respond } = subscribe(store, { matchAll: [TOPIC_B] });
     store.handle(
-      JSON.stringify({ id: 3, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 3,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       respond,
     );
     expect(delivered(frames)).toBe(0);
@@ -74,7 +95,11 @@ describe("the in-page statement store", () => {
     const any = subscribe(store, { matchAny: [TOPIC_A, TOPIC_B] });
     const all = subscribe(store, { matchAll: [TOPIC_A, TOPIC_B] });
     store.handle(
-      JSON.stringify({ id: 4, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 4,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       any.respond,
     );
     expect(delivered(any.frames)).toBe(1);
@@ -86,11 +111,19 @@ describe("the in-page statement store", () => {
     const { frames, respond } = subscribe(store, { matchAll: [] });
     const id = JSON.parse(frames[0]!).result as string;
     store.handle(
-      JSON.stringify({ id: 5, method: "statement_unsubscribeStatement", params: [id] }),
+      JSON.stringify({
+        id: 5,
+        method: "statement_unsubscribeStatement",
+        params: [id],
+      }),
       respond,
     );
     store.handle(
-      JSON.stringify({ id: 6, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 6,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       respond,
     );
     expect(delivered(frames)).toBe(0);
@@ -220,6 +253,88 @@ describe("the statement encoding the store actually sees", () => {
         .map((field) => String(field.value)),
     ).toEqual(topics);
     expect(fields!.find((field) => field.tag === "Data")?.value).toBe("0x6869");
+  });
+
+  it("reads the expiry a product really submitted, before its topics", () => {
+    const fields = decodeStatement(REAL_SUBMISSION)!;
+    expect(fields.map((field) => field.tag)).toEqual([
+      "Proof",
+      "Expiry",
+      "Topic1",
+      "Topic2",
+      "Data",
+    ]);
+    // Past 2^53, so only a bigint carries it exactly.
+    expect(fields.find((field) => field.tag === "Expiry")?.value).toBe(
+      7688681351006057567n,
+    );
+  });
+
+  it("encodes channel, expiry and decryption key in the order a store decodes", () => {
+    const channel = `0x${"cc".repeat(32)}`;
+    const decryptionKey = `0x${"dd".repeat(32)}`;
+    const fields = decodeStatement(
+      encodeStatement({
+        topics: [TOPIC_A],
+        data: "0x6869",
+        channel,
+        expiry: 7688681351006057567n,
+        decryptionKey,
+      }),
+    )!;
+    expect(fields.map((field) => field.tag)).toEqual([
+      "Proof",
+      "DecryptionKey",
+      "Expiry",
+      "Channel",
+      "Topic1",
+      "Data",
+    ]);
+    const value = (tag: string) =>
+      fields.find((field) => field.tag === tag)?.value;
+    expect(value("Channel")).toBe(channel);
+    expect(value("Expiry")).toBe(7688681351006057567n);
+    expect(value("DecryptionKey")).toBe(decryptionKey);
+  });
+
+  it("takes an expiry given as a number", () => {
+    const fields = decodeStatement(
+      encodeStatement({ topics: [], expiry: 42 }),
+    )!;
+    expect(fields.find((field) => field.tag === "Expiry")?.value).toBe(42n);
+  });
+
+  it("refuses a field that is not 32 bytes rather than mangling it", () => {
+    // Longer would be truncated, and shorter misaligns every later field so
+    // the statement decodes as nothing.
+    for (const value of ["0xabcd", `0x${"cc".repeat(33)}`, "cc".repeat(32)]) {
+      expect(() => encodeStatement({ topics: [], channel: value })).toThrow(
+        /`channel` must be 32 bytes/,
+      );
+      expect(() =>
+        encodeStatement({ topics: [], decryptionKey: value }),
+      ).toThrow(/`decryptionKey` must be 32 bytes/);
+      expect(() => encodeStatement({ topics: [value] })).toThrow(
+        /`topics\[0\]` must be 32 bytes/,
+      );
+    }
+  });
+
+  it("refuses an expiry the store would wrap or a number has already rounded", () => {
+    for (const expiry of [-1, -1n, 2n ** 64n]) {
+      expect(() => encodeStatement({ topics: [], expiry })).toThrow(
+        /outside a u64/,
+      );
+    }
+    expect(() =>
+      encodeStatement({ topics: [], expiry: 1_700_000_000 * 2 ** 32 + 7 }),
+    ).toThrow(/not a safe integer/);
+    const max = decodeStatement(
+      encodeStatement({ topics: [], expiry: 2n ** 64n - 1n }),
+    )!;
+    expect(max.find((field) => field.tag === "Expiry")?.value).toBe(
+      2n ** 64n - 1n,
+    );
   });
 
   it("refuses a fifth topic rather than dropping it", () => {

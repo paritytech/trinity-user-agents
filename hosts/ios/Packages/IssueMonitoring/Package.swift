@@ -22,7 +22,7 @@ let package = Package(
         )
     ],
     dependencies: sentryEnabled
-        ? [.package(url: "https://github.com/getsentry/sentry-cocoa", from: "9.0.0")]
+        ? [.package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.29.2")]
         : [],
     targets: [
         .target(
@@ -31,6 +31,10 @@ let package = Package(
                 ? [.product(name: "Sentry", package: "sentry-cocoa")]
                 : [],
             swiftSettings: sentryEnabled ? [.define("SENTRY_ENABLED")] : []
+        ),
+        .testTarget(
+            name: "IssueMonitoringTests",
+            dependencies: ["IssueMonitoring"]
         )
     ]
 )

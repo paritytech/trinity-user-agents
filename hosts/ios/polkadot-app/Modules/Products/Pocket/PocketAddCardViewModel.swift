@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Observation
 import PolkadotUI
@@ -33,7 +34,7 @@ final class PocketAddCardViewModel {
         productId: ProductId,
         cardId: PocketCardId,
         interactor: PocketAddCardInteractor,
-        images: (ProductId) -> PocketImageResolver?,
+        images: (ProductId) -> ProductImageResolver?,
         resolver: any WidgetDesignTokenResolving = WidgetDesignTokenResolver()
     ) {
         self.productId = productId
@@ -41,7 +42,7 @@ final class PocketAddCardViewModel {
         self.interactor = interactor
         self.resolver = resolver
         resolveImage = images(productId).map { images in
-            WidgetImageResolver { await images.resolve($0) }
+            WidgetImageResolver.cached { await images.resolve($0) }
         }
     }
 

@@ -291,7 +291,7 @@ extension ChainStatusProvider {
 
         return ChainConnectionStatusViewModel(
             id: Self.statementStoreRowId,
-            title: "Statement Store",
+            title: String(localized: .Common.chainConnectionStatusStatementStore),
             state: state,
             stateTitle: status.localizedTitle,
             icon: .statementStore,

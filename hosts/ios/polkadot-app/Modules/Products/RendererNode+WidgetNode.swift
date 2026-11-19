@@ -16,16 +16,18 @@ extension RendererNode {
              .textField:
             return leafWidgetNode(resolver: resolver)
 
-        case let .effect(props, children):
+        case let .materials(_, children):
             return CustomMessageWidgetNode(
-                content: .effect(props.nodeProps, children: children.widgetNodes(resolver: resolver)),
+                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
                 modifiers: .empty
             )
 
         case let .box(modifiers, props, children):
-            let alignment = props.contentAlignment.map { $0.toScale().swiftUIAlignment } ?? .center
+            let boxProps = props.contentAlignment.map {
+                CustomMessageWidgetNode.BoxProps(alignment: $0.toScale().swiftUIAlignment)
+            }
             return CustomMessageWidgetNode(
-                content: .box(.init(alignment: alignment), children: children.widgetNodes(resolver: resolver)),
+                content: .box(boxProps ?? .init(), children: children.widgetNodes(resolver: resolver)),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -63,8 +65,9 @@ private extension RendererNode {
             return nil
 
         case let .image(modifiers, props):
+            // An image this host cannot draw keeps the size its modifiers give it.
             return CustomMessageWidgetNode(
-                content: .image(props.nodeProps),
+                content: props.nodeProps.map { .image($0) } ?? .box(.init(), children: []),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -114,7 +117,7 @@ private extension RendererNode {
         case .box,
              .column,
              .row,
-             .effect:
+             .materials:
             return nil
         }
     }
@@ -331,12 +334,13 @@ private extension Arrangement {
 }
 
 private extension ImageProps {
-    var nodeProps: CustomMessageWidgetNode.ImageProps {
-        let nodeSource: CustomMessageWidgetNode.ImageSource =
-            switch source {
-            case let .bulletin(cid): .bulletin(cid: cid)
-            case let .archive(path): .archive(path: path)
-            }
+    var nodeProps: CustomMessageWidgetNode.ImageProps? {
+        let nodeSource: CustomMessageWidgetNode.ImageSource
+        switch source {
+        case let .bulletin(cid): nodeSource = .bulletin(cid: cid)
+        case let .archive(path): nodeSource = .archive(path: path)
+        case .inline: return nil
+        }
         // Unwrapped first on purpose: in a switch over an optional fit, `.none`
         // binds to `Optional.none` and the fit of that same name is never
         // matched, which the compiler reports as a non-exhaustive switch.
@@ -353,16 +357,6 @@ private extension ImageProps {
                 .fill
             }
         return .init(source: nodeSource, fit: nodeFit)
-    }
-}
-
-private extension EffectProps {
-    var nodeProps: CustomMessageWidgetNode.EffectProps {
-        let nodeEffect: CustomMessageWidgetNode.Effect =
-            switch effect {
-            case .rainbow: .rainbow
-            }
-        return .init(effect: nodeEffect)
     }
 }
 

@@ -1,21 +1,10 @@
 // Compile-time contracts consumed by generated dispatch; runtime behavior is tested in the server.
-#[allow(dead_code)]
 mod runtime {
-    pub mod authority {
-        pub struct AuthoritySession;
-    }
-
     pub mod sso_service {
         use crate::host_internal::sso_messages::{Response, v1};
         use crate::host_internal::sso_wire::ResponseOutcome;
 
         pub struct SsoRequestContext;
-
-        impl SsoRequestContext {
-            pub fn new(_: &str, _: super::authority::AuthoritySession) -> Self {
-                Self
-            }
-        }
 
         pub enum Dispatch {
             Response(Box<Answer>),

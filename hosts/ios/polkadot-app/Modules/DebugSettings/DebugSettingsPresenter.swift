@@ -134,6 +134,12 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         wireframe.showTrUAPIPlayground(from: view)
     }
 
+    #if DEBUG
+        func openDevServer() {
+            wireframe.showDevServer(from: view)
+        }
+    #endif
+
     func resetTips() {
         interactor.resetTips()
 

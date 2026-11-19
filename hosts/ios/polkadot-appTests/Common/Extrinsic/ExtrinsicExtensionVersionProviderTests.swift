@@ -22,14 +22,14 @@ struct ExtrinsicExtensionVersionProviderTests {
 
     @Test("V4 request resolves to V4 and ignores remote config")
     func v4IgnoresRemoteConfig() {
-        let chain = AppConfig.Chains.usernameChain
+        let chain = AppConfig.Chains.peopleChain
 
         #expect(isV4(makeProvider(versions: [chain: 7]).getExtensionVersion(for: .V4, chainId: chain)))
     }
 
     @Test("V5 request reads the per-chain remote-config extension version")
     func v5ReadsRemoteConfig() {
-        let chain = AppConfig.Chains.usernameChain
+        let chain = AppConfig.Chains.peopleChain
 
         #expect(isV5(
             makeProvider(versions: [chain: 7]).getExtensionVersion(for: .V5, chainId: chain),
@@ -39,7 +39,7 @@ struct ExtrinsicExtensionVersionProviderTests {
 
     @Test("V5 request defaults to extension version 0 when absent from remote config")
     func v5DefaultsToZero() {
-        let chain = AppConfig.Chains.usernameChain
+        let chain = AppConfig.Chains.peopleChain
 
         #expect(isV5(makeProvider().getExtensionVersion(for: .V5, chainId: chain), extensionVersion: 0))
     }

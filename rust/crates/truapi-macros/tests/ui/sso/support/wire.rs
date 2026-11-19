@@ -1,5 +1,4 @@
 // Minimal server wire contract for testing macro expansions independently of runtime I/O.
-#[allow(dead_code)]
 mod host_internal {
     pub mod sso_wire {
         use super::sso_messages::{Response, v1::RemoteMessage};

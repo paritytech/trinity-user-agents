@@ -2,23 +2,10 @@ package io.paritytech.polkadotapp.common.utils
 
 import java.io.ByteArrayOutputStream
 
-fun ByteArray.chunked(chunkSize: Int): List<ByteArray> {
-    val result = mutableListOf<ByteArray>()
-
-    var i = 0
-
-    while (i < size) {
-        val end = (i + chunkSize).coerceAtMost(size)
-
-        result.add(copyOfRange(i, end))
-
-        i += chunkSize
-    }
-
-    return result
-}
-
 fun ByteArray.dropBytes(count: Int) = copyOfRange(count, size)
+
+fun ByteArray.chunkedSequence(chunkSize: Int): Sequence<ByteArray> =
+    (indices step chunkSize).asSequence().map { start -> copyOfRange(start, minOf(start + chunkSize, size)) }
 
 fun ByteArray.compareTo(other: ByteArray, unsigned: Boolean): Int {
     if (size != other.size) {

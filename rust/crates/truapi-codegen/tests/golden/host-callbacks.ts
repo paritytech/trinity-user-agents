@@ -9,7 +9,11 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
-  ChainIdentifier,
+  CodeFormat,
+  ExecutableKind,
+  FundingDirection,
+  FundingQuote,
+  FundingQuoteRefusal,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -17,14 +21,18 @@ import {
   HostSignRawRequest,
   HostSignRawWithLegacyAccountRequest,
   LegacyAccountTxPayload,
+  NftPurseOwner,
   ProductAccountId,
   ProductAccountTxPayload,
+  ProductId,
   ProductProofContext,
   RemotePermissionRequest,
   RingLocation,
 } from "@parity/truapi";
 
 import type {
+  FundingFrameOutcome,
+  FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -33,14 +41,25 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
+  HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
+  HostPaymentBalanceSubscribeError,
+  HostPaymentBalanceSubscribeItem,
+  HostPaymentRequest,
+  HostPaymentStatusSubscribeError,
+  HostPaymentStatusSubscribeItem,
+  HostPaymentTopUpRequest,
+  HostPaymentTopUpStatusSubscribeError,
+  HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -53,12 +72,12 @@ export interface AccountAccessReview {
   /**
    * Product currently handling the request.
    */
-  requestingProductId: string;
+  requestingProductId: ProductId;
 
   /**
    * Product whose account is being requested.
    */
-  targetProductId: string;
+  targetProductId: ProductId;
 }
 
 /**
@@ -68,7 +87,7 @@ export interface AccountAliasReview {
   /**
    * Product requesting the alias.
    */
-  callingProductId: string;
+  callingProductId: ProductId;
 
   /**
    * Product-scoped context the alias is bound to.
@@ -113,6 +132,22 @@ export type AuthState =
   | { tag: "Authenticating"; value?: undefined };
 
 /**
+ * A chain the host builds as V5 general transactions, and the transaction
+ * extension pipeline it uses there.
+ */
+export interface ChainExtensionVersion {
+  /**
+   * Genesis hash of the chain.
+   */
+  genesisHash: Bytes32;
+
+  /**
+   * The pipeline's number in the chain's metadata.
+   */
+  extensionVersion: number;
+}
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -133,7 +168,7 @@ export type CoreStorageKey =
    */
   | {
       tag: "PermissionAuthorization";
-      value: { productId: string; request: PermissionAuthorizationRequest };
+      value: { scope: string; request: StoredPermissionRequest };
     }
   /**
    * Persisted allowance-slot keys for one paired SSO session.
@@ -147,7 +182,7 @@ export type CoreStorageKey =
    * Legacy unscoped RFC-0010 AutoSigning secret. Core only addresses this
    * slot to reject and erase pre-scoping entries.
    */
-  | { tag: "AutoSigningKey"; value: { productId: string } }
+  | { tag: "AutoSigningKey"; value: { productId: ProductId } }
   /**
    * Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
    */
@@ -181,7 +216,10 @@ export type CoreStorageKey =
    * public keys: every address derived from them already appears on the
    * reviews the host draws.
    */
-  | { tag: "ProductSubtree"; value: { sessionId: string; productId: string } }
+  | {
+      tag: "ProductSubtree";
+      value: { sessionId: string; productId: ProductId };
+    }
   /**
    * Signing-host request replay state for one wallet and pairing peer.
    *
@@ -202,7 +240,28 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productLabel: string } }
+  /**
+   * A product's Worker executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "WorkerManifest"; value: { productLabel: string } }
+  /**
+   * What funding providers' quote answers showed about what they serve,
+   * each record trusted for twelve hours.
+   */
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The last descriptor a browser core verified for a stack, so its next
+   * start does not go back to the bundled copy. A native core keeps this
+   * record in its own database instead.
+   */
+  | { tag: "StackRecord"; value: { stackId: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -211,7 +270,7 @@ export interface CreateProofReview {
   /**
    * Product requesting the proof.
    */
-  callingProductId: string;
+  callingProductId: ProductId;
 
   /**
    * Product-scoped context the proof's alias is bound to.
@@ -238,12 +297,27 @@ export type CreateTransactionReview =
    */
   | {
       tag: "Product";
-      value: { callingProductId?: string; payload: ProductAccountTxPayload };
+      value: { callingProductId?: ProductId; payload: ProductAccountTxPayload };
     }
   /**
    * Legacy-account transaction request.
    */
-  | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
+  | {
+      tag: "LegacyAccount";
+      value: { account: LegacySigningAccount; payload: LegacyAccountTxPayload };
+    };
+
+/**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export type CrossProductSignatureKind =
+  | "Payload"
+  | "Transaction"
+  | "Raw"
+  | "StatementProof";
 
 /**
  * What the operating system currently says about a device capability.
@@ -260,35 +334,177 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
-export interface HostChainEntry {
-  /**
-   * Protocol role this entry answers for.
-   */
-  identifier: ChainIdentifier;
+export type ExpandedCardFaceOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported";
 
+/**
+ * What the host did with a request to turn the expanded card.
+ */
+export type ExpandedCardTurnOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported"
+  | "NoBack";
+
+/**
+ * The chains a host builds as V5 general transactions. A chain not listed is
+ * built as V4.
+ */
+export interface ExtensionVersionMap {
   /**
-   * Genesis hash identifying the chain in all chain-scoped calls.
+   * One entry per V5 chain.
    */
-  genesisHash: Bytes32;
+  chains: Array<ChainExtensionVersion>;
 }
 
 /**
- * The chain set a host serves: its environment plus one entry per chain role.
+ * Why an amount cannot go ahead.
  */
-export interface HostChainSet {
+export type FundingAmountIssue =
   /**
-   * Ecosystem the host is configured for, e.g. "polkadot", "paseo".
+   * A withdrawal of more than the user can spend.
    */
-  network: string;
+  | { tag: "NotEnoughBalance"; value?: undefined }
+  /**
+   * Below the smallest amount any provider takes.
+   */
+  | { tag: "BelowMinimum"; value: { min: bigint } }
+  /**
+   * Above the largest amount any provider takes.
+   */
+  | { tag: "AboveMaximum"; value: { max: bigint } };
+
+/**
+ * How the user left the funding overlay.
+ */
+export type FundingPresentOutcome = "Started" | "Dismissed";
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export interface FundingPresentation {
+  /**
+   * Session id.
+   */
+  intent: string;
 
   /**
-   * Chains this host serves, keyed by protocol role.
+   * Which way value moves, which decides the screen the overlay opens on.
    */
-  chains: Array<HostChainEntry>;
+  direction: FundingDirection;
+
+  /**
+   * Amount the caller asked for, or ``undefined`` to let the user choose.
+   */
+  amount?: bigint;
 }
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
+   */
+  requestId: bigint;
+
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: ProductId;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. Each
+   * row keeps its answer until the provider answers again.
+   */
+  refreshAtMs: bigint;
+
+  /**
+   * The amount the list prices, in balance units, which `issue` is
+   * about.
+   */
+  amount: bigint;
+
+  /**
+   * Once every provider answered and none quoted, the reason they all
+   * gave. ``undefined`` while any is pending or quoted, or when they gave
+   * different reasons.
+   */
+  refusal?: FundingQuoteUnavailable;
+
+  /**
+   * Once every provider answered and none quoted, what their refusals
+   * say about the amount: the lowest minimum any showed, otherwise the
+   * highest maximum.
+   */
+  issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
+}
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export interface FundingQuoteRow {
+  /**
+   * The provider.
+   */
+  providerId: ProductId;
+
+  /**
+   * Where its quote stands.
+   */
+  state: FundingQuoteState;
+}
+
+/**
+ * Where a provider's quote stands.
+ */
+export type FundingQuoteState =
+  /**
+   * Asked, not answered yet.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * The provider's price.
+   */
+  | { tag: "Quoted"; value: { quote: FundingQuote } }
+  /**
+   * The provider cannot be offered for this ask; the host shows it
+   * disabled.
+   */
+  | { tag: "Unavailable"; value: { reason: FundingQuoteUnavailable } };
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export type FundingQuoteUnavailable =
+  /**
+   * The provider refused to price it.
+   */
+  | { tag: "Refused"; value: { reason: FundingQuoteRefusal } }
+  /**
+   * The provider did not answer in time.
+   */
+  | { tag: "Timeout"; value?: undefined };
 
 /**
  * Contact handles the core needs turned back into accounts, and the key they
@@ -353,20 +569,109 @@ export type HostContactPick =
   | { tag: "Unsupported"; value?: undefined };
 
 /**
+ * How the host's scanner ended.
+ */
+export type HostScan =
+  /**
+   * The user scanned a code the request accepts.
+   */
+  | { tag: "Scanned"; value: { text: string; format: CodeFormat } }
+  /**
+   * The user closed the viewfinder without scanning.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * The device has no camera, or the user refused the host application one.
+   * The host has already told the user how to turn it on.
+   */
+  | { tag: "CameraUnavailable"; value?: undefined }
+  /**
+   * The requesting App or Widget is not the screen the user sees, or the
+   * host application is not in front, so the host opened nothing.
+   */
+  | { tag: "NotVisible"; value?: undefined };
+
+/**
  * Review shown before a product learns the user's primary identity.
  */
 export interface IdentityDisclosureReview {
   /**
    * Product currently handling the request.
    */
-  productId: string;
+  productId: ProductId;
 }
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export type LegacySigningAccount =
+  /**
+   * The wallet's identity account.
+   */
+  | { tag: "Identity"; value?: undefined }
+  /**
+   * The requesting product's account at derivation index 0.
+   */
+  | { tag: "Product"; value: ProductAccountId };
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
  * than only display it.
  */
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
+
+/**
+ * Where items drained from a purse go.
+ */
+export type NftPurseDrainDestination =
+  /**
+   * Fresh keys of this purse.
+   */
+  | { tag: "Purse"; value: { purse: number } }
+  /**
+   * This key, outside every purse.
+   */
+  | { tag: "ExternalKey"; value: { key: Bytes32 } }
+  /**
+   * A cheque the product delivers to its recipient.
+   */
+  | { tag: "Cheque"; value?: undefined }
+  /**
+   * The keys of a deposited cheque, back to its sender.
+   */
+  | { tag: "Refund"; value?: undefined };
+
+/**
+ * Review shown before a product moves items out of an NFT purse it does
+ * not own: Root's, or another product's.
+ */
+export interface NftPurseDrainReview {
+  /**
+   * Product making the request.
+   */
+  callingProductId: ProductId;
+
+  /**
+   * Purse the items leave.
+   */
+  fromPurse: number;
+
+  /**
+   * Who owns that purse.
+   */
+  owner: NftPurseOwner;
+
+  /**
+   * How many items leave it.
+   */
+  itemCount: number;
+
+  /**
+   * Where they go.
+   */
+  destination: NftPurseDrainDestination;
+}
 
 /**
  * Permission request whose authorization status can be inspected or updated
@@ -388,7 +693,16 @@ export type PermissionAuthorizationRequest =
   /**
    * Product-scoped permission to access another product's account context.
    */
-  | { tag: "AccountAccess"; value: { targetProductId: string } };
+  | { tag: "AccountAccess"; value: { targetProductId: ProductId } }
+  /**
+   * Product-scoped approval to make one kind of signature with another
+   * product's accounts. It is held in memory only and ends when the product
+   * execution closes.
+   */
+  | {
+      tag: "CrossProductSignature";
+      value: { targetProductId: ProductId; kind: CrossProductSignatureKind };
+    };
 
 /**
  * Authorization status for a permission request.
@@ -407,16 +721,6 @@ export type PermissionAuthorizationStatus =
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
 
 /**
- * Review shown before a preimage is submitted.
- */
-export interface PreimageSubmitReview {
-  /**
-   * Size of the preimage in bytes.
-   */
-  size: bigint;
-}
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -430,24 +734,13 @@ export interface ProductContext {
    * Host-spec C.7 defines accepted product id forms:
    * <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
    */
-  productId: string;
+  productId: ProductId;
 
   /**
    * Trusted kind of executable attached to this connection by the host.
    */
-  executionKind: ProductExecutionKind;
+  executionKind: ExecutableKind;
 }
-
-/**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ProductExecutionKind = "App" | "Widget" | "Worker";
 
 /**
  * Review shown before a product resolves its own account subtree over SSO,
@@ -457,7 +750,7 @@ export interface ProductSubtreeReview {
   /**
    * Product resolving its own account.
    */
-  productId: string;
+  productId: ProductId;
 }
 
 /**
@@ -469,7 +762,7 @@ export interface ResourceAllocationReview {
   /**
    * Product the allocation is requested for.
    */
-  callingProductId: string;
+  callingProductId: ProductId;
 
   /**
    * Resources to allocate.
@@ -501,14 +794,15 @@ export interface SessionUiInfo {
   /**
    * X25519 public key of the wallet device that answered pairing. Hosts
    * running their own encrypted device-sync channel key it against this.
+   * ``undefined`` on a signing host, which has no paired wallet device.
    */
-  deviceEncPublicKey?: Bytes32;
+  peerDeviceEncPublicKey?: Bytes32;
 
   /**
    * Statement-store account id the paired wallet signs every session-channel
    * statement with. Whether it is scoped to the wallet device or to the
    * wallet identity is the wallet's choice, so hosts must not treat it as a
-   * device discriminator; use `Self::device_enc_public_key` for that.
+   * device discriminator; use `Self::peer_device_enc_public_key` for that.
    */
   peerStatementAccountId?: Bytes32;
 
@@ -519,6 +813,16 @@ export interface SessionUiInfo {
    * login. Secret at `CoreAdmin::get_device_statement_key`.
    */
   deviceStatementAccountId?: Bytes32;
+
+  /**
+   * X25519 public key of this device, which the user's other devices and
+   * contacts encrypt to. A signing host's is its install-wide key; a pairing
+   * host's is the key it advertised next to
+   * `Self::device_statement_account_id`, which the wallet registered and
+   * announces, rotated per login. Secret at
+   * `CoreAdmin::get_device_encryption_key`.
+   */
+  deviceEncPublicKey?: Bytes32;
 
   /**
    * Short username from the dotNS identity record on Asset Hub.
@@ -540,12 +844,19 @@ export type SignPayloadReview =
    */
   | {
       tag: "Product";
-      value: { callingProductId?: string; request: HostSignPayloadRequest };
+      value: { callingProductId?: ProductId; request: HostSignPayloadRequest };
     }
   /**
-   * Legacy-account signing request.
+   * Legacy-account signing request, which only the product's account at
+   * index 0 may sign.
    */
-  | { tag: "LegacyAccount"; value: HostSignPayloadWithLegacyAccountRequest };
+  | {
+      tag: "LegacyAccount";
+      value: {
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      };
+    };
 
 /**
  * Review shown before a sign-raw request is sent to the paired wallet.
@@ -559,7 +870,7 @@ export type SignRawReview =
   | {
       tag: "Product";
       value: {
-        callingProductId?: string;
+        callingProductId?: ProductId;
         request: HostSignRawRequest;
         watermarked: boolean;
       };
@@ -570,6 +881,7 @@ export type SignRawReview =
   | {
       tag: "LegacyAccount";
       value: {
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       };
@@ -582,7 +894,7 @@ export interface SignVrfReview {
   /**
    * Product making the request.
    */
-  callingProductId: string;
+  callingProductId: ProductId;
 
   /**
    * Product account and exact ordered transcript.
@@ -601,7 +913,7 @@ export interface StatementStoreProductSignReview {
    * Product that asked, when the request carries a caller. See
    * `SignPayloadReview::Product`.
    */
-  callingProductId?: string;
+  callingProductId?: ProductId;
 
   /**
    * Product account that will sign the statement payload.
@@ -613,6 +925,34 @@ export interface StatementStoreProductSignReview {
    */
   payload: Uint8Array;
 }
+
+/**
+ * Permission storage payload, whose targets can be bare manifest labels.
+ */
+export type StoredPermissionRequest =
+  /**
+   * Device permission decision.
+   */
+  | { tag: "Device"; value: HostDevicePermissionRequest }
+  /**
+   * Remote permission decision.
+   */
+  | { tag: "Remote"; value: RemotePermissionRequest }
+  /**
+   * Identity disclosure decision.
+   */
+  | { tag: "IdentityDisclosure"; value?: undefined }
+  /**
+   * Account access decision.
+   */
+  | { tag: "AccountAccess"; value: { target: string } }
+  /**
+   * Execution-local approval for one signature kind.
+   */
+  | {
+      tag: "CrossProductSignature";
+      value: { target: string; kind: CrossProductSignatureKind };
+    };
 
 /**
  * Review shown before a user-confirmed core action continues.
@@ -651,10 +991,6 @@ export type UserConfirmationReview =
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
   /**
-   * Submit a preimage to the host-selected backend.
-   */
-  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
-  /**
    * Allow a product to access another product account.
    */
   | { tag: "AccountAccess"; value: AccountAccessReview }
@@ -665,7 +1001,11 @@ export type UserConfirmationReview =
   /**
    * Resolve a product's own account subtree over SSO.
    */
-  | { tag: "ProductSubtree"; value: ProductSubtreeReview };
+  | { tag: "ProductSubtree"; value: ProductSubtreeReview }
+  /**
+   * Move items out of an NFT purse the product does not own.
+   */
+  | { tag: "NftPurseDrain"; value: NftPurseDrainReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -673,8 +1013,8 @@ export type UserConfirmationReview =
 export const AccountAccessReview: S.Codec<AccountAccessReview> = S.lazy(
   (): S.Codec<AccountAccessReview> =>
     S.Struct({
-      requestingProductId: S.str,
-      targetProductId: S.str,
+      requestingProductId: ProductId,
+      targetProductId: ProductId,
     }) as S.Codec<AccountAccessReview>,
 );
 
@@ -684,7 +1024,7 @@ export const AccountAccessReview: S.Codec<AccountAccessReview> = S.lazy(
 export const AccountAliasReview: S.Codec<AccountAliasReview> = S.lazy(
   (): S.Codec<AccountAliasReview> =>
     S.Struct({
-      callingProductId: S.str,
+      callingProductId: ProductId,
       context: ProductProofContext,
       ringLocation: RingLocation,
     }) as S.Codec<AccountAliasReview>,
@@ -710,6 +1050,18 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
 );
 
 /**
+ * A chain the host builds as V5 general transactions, and the transaction
+ * extension pipeline it uses there.
+ */
+export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
+  (): S.Codec<ChainExtensionVersion> =>
+    S.Struct({
+      genesisHash: Bytes32,
+      extensionVersion: S.u8,
+    }) as S.Codec<ChainExtensionVersion>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -718,45 +1070,70 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        productId: S.str,
-        request: PermissionAuthorizationRequest,
-      }) as S.Codec<{
-        productId: string;
-        request: PermissionAuthorizationRequest;
-      }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: S.str,
-      }) as S.Codec<{ sessionId: string; productId: string }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
+    S.indexedTaggedUnion({
+      AuthSession: [0, S._void] as const,
+      PairingDeviceIdentity: [1, S._void] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          scope: S.str,
+          request: StoredPermissionRequest,
+        }) as S.Codec<{ scope: string; request: StoredPermissionRequest }>,
+      ] as const,
+      AllowanceKeys: [
+        3,
+        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      AutoSigningKey: [
+        5,
+        S.Struct({ productId: ProductId }) as S.Codec<{ productId: ProductId }>,
+      ] as const,
+      AutoSigningKeys: [6, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      DeviceEncryptionKey: [9, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: ProductId }) as S.Codec<{
+          sessionId: string;
+          productId: ProductId;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      WorkerManifest: [
+        14,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      StackRecord: [
+        17,
+        S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
+      ] as const,
     }),
 );
 
@@ -766,7 +1143,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
 export const CreateProofReview: S.Codec<CreateProofReview> = S.lazy(
   (): S.Codec<CreateProofReview> =>
     S.Struct({
-      callingProductId: S.str,
+      callingProductId: ProductId,
       context: ProductProofContext,
       ringLocation: RingLocation,
       message: S.Bytes(),
@@ -780,15 +1157,33 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
   (): S.Codec<CreateTransactionReview> =>
     S.TaggedUnion({
       Product: S.Struct({
-        callingProductId: S.Option(S.str),
+        callingProductId: S.Option(ProductId),
         payload: ProductAccountTxPayload,
       }) as S.Codec<{
-        callingProductId?: string;
+        callingProductId?: ProductId;
         payload: ProductAccountTxPayload;
       }>,
-      LegacyAccount: LegacyAccountTxPayload,
+      LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
+        payload: LegacyAccountTxPayload,
+      }) as S.Codec<{
+        account: LegacySigningAccount;
+        payload: LegacyAccountTxPayload;
+      }>,
     }),
 );
+
+/**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export const CrossProductSignatureKind: S.Codec<CrossProductSignatureKind> =
+  S.lazy(
+    (): S.Codec<CrossProductSignatureKind> =>
+      S.Status("Payload", "Transaction", "Raw", "StatementProof"),
+  );
 
 /**
  * What the operating system currently says about a device capability.
@@ -804,26 +1199,118 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
+ * What the host did with a request to cover or uncover the expanded card face.
  */
-export const HostChainEntry: S.Codec<HostChainEntry> = S.lazy(
-  (): S.Codec<HostChainEntry> =>
-    S.Struct({
-      identifier: ChainIdentifier,
-      genesisHash: Bytes32,
-    }) as S.Codec<HostChainEntry>,
+export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardFaceOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
 );
 
 /**
- * The chain set a host serves: its environment plus one entry per chain role.
+ * What the host did with a request to turn the expanded card.
  */
-export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
-  (): S.Codec<HostChainSet> =>
+export const ExpandedCardTurnOutcome: S.Codec<ExpandedCardTurnOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardTurnOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported", "NoBack"),
+);
+
+/**
+ * The chains a host builds as V5 general transactions. A chain not listed is
+ * built as V4.
+ */
+export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
+  (): S.Codec<ExtensionVersionMap> =>
     S.Struct({
-      network: S.str,
-      chains: S.Vector(HostChainEntry),
-    }) as S.Codec<HostChainSet>,
+      chains: S.Vector(ChainExtensionVersion),
+    }) as S.Codec<ExtensionVersionMap>,
+);
+
+/**
+ * Why an amount cannot go ahead.
+ */
+export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
+  (): S.Codec<FundingAmountIssue> =>
+    S.TaggedUnion({
+      NotEnoughBalance: S._void,
+      BelowMinimum: S.Struct({ min: S.u128 }) as S.Codec<{ min: bigint }>,
+      AboveMaximum: S.Struct({ max: S.u128 }) as S.Codec<{ max: bigint }>,
+    }),
+);
+
+/**
+ * How the user left the funding overlay.
+ */
+export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
+  (): S.Codec<FundingPresentOutcome> => S.Status("Started", "Dismissed"),
+);
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
+  (): S.Codec<FundingPresentation> =>
+    S.Struct({
+      intent: S.str,
+      direction: FundingDirection,
+      amount: S.Option(S.u128),
+    }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      requestId: S.u64,
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(ProductId),
+      refreshAtMs: S.u64,
+      amount: S.u128,
+      refusal: S.Option(FundingQuoteUnavailable),
+      issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
+    }) as S.Codec<FundingQuoteList>,
+);
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
+  (): S.Codec<FundingQuoteRow> =>
+    S.Struct({
+      providerId: ProductId,
+      state: FundingQuoteState,
+    }) as S.Codec<FundingQuoteRow>,
+);
+
+/**
+ * Where a provider's quote stands.
+ */
+export const FundingQuoteState: S.Codec<FundingQuoteState> = S.lazy(
+  (): S.Codec<FundingQuoteState> =>
+    S.TaggedUnion({
+      Pending: S._void,
+      Quoted: S.Struct({ quote: FundingQuote }) as S.Codec<{
+        quote: FundingQuote;
+      }>,
+      Unavailable: S.Struct({ reason: FundingQuoteUnavailable }) as S.Codec<{
+        reason: FundingQuoteUnavailable;
+      }>,
+    }),
+);
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
+  (): S.Codec<FundingQuoteUnavailable> =>
+    S.TaggedUnion({
+      Refused: S.Struct({ reason: FundingQuoteRefusal }) as S.Codec<{
+        reason: FundingQuoteRefusal;
+      }>,
+      Timeout: S._void,
+    }),
 );
 
 /**
@@ -869,13 +1356,38 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
 );
 
 /**
+ * How the host's scanner ended.
+ */
+export const HostScan: S.Codec<HostScan> = S.lazy(
+  (): S.Codec<HostScan> =>
+    S.TaggedUnion({
+      Scanned: S.Struct({ text: S.str, format: CodeFormat }) as S.Codec<{
+        text: string;
+        format: CodeFormat;
+      }>,
+      Dismissed: S._void,
+      CameraUnavailable: S._void,
+      NotVisible: S._void,
+    }),
+);
+
+/**
  * Review shown before a product learns the user's primary identity.
  */
 export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
   S.lazy(
     (): S.Codec<IdentityDisclosureReview> =>
-      S.Struct({ productId: S.str }) as S.Codec<IdentityDisclosureReview>,
+      S.Struct({ productId: ProductId }) as S.Codec<IdentityDisclosureReview>,
   );
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export const LegacySigningAccount: S.Codec<LegacySigningAccount> = S.lazy(
+  (): S.Codec<LegacySigningAccount> =>
+    S.TaggedUnion({ Identity: S._void, Product: ProductAccountId }),
+);
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -883,6 +1395,35 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
  */
 export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
   (): S.Codec<LoginFailureKind> => S.Status("NoFreeAllowanceSlots", "Other"),
+);
+
+/**
+ * Where items drained from a purse go.
+ */
+export const NftPurseDrainDestination: S.Codec<NftPurseDrainDestination> =
+  S.lazy(
+    (): S.Codec<NftPurseDrainDestination> =>
+      S.TaggedUnion({
+        Purse: S.Struct({ purse: S.u32 }) as S.Codec<{ purse: number }>,
+        ExternalKey: S.Struct({ key: Bytes32 }) as S.Codec<{ key: Bytes32 }>,
+        Cheque: S._void,
+        Refund: S._void,
+      }),
+  );
+
+/**
+ * Review shown before a product moves items out of an NFT purse it does
+ * not own: Root's, or another product's.
+ */
+export const NftPurseDrainReview: S.Codec<NftPurseDrainReview> = S.lazy(
+  (): S.Codec<NftPurseDrainReview> =>
+    S.Struct({
+      callingProductId: ProductId,
+      fromPurse: S.u32,
+      owner: NftPurseOwner,
+      itemCount: S.u32,
+      destination: NftPurseDrainDestination,
+    }) as S.Codec<NftPurseDrainReview>,
 );
 
 /**
@@ -896,8 +1437,15 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         Device: HostDevicePermissionRequest,
         Remote: RemotePermissionRequest,
         IdentityDisclosure: S._void,
-        AccountAccess: S.Struct({ targetProductId: S.str }) as S.Codec<{
-          targetProductId: string;
+        AccountAccess: S.Struct({ targetProductId: ProductId }) as S.Codec<{
+          targetProductId: ProductId;
+        }>,
+        CrossProductSignature: S.Struct({
+          targetProductId: ProductId,
+          kind: CrossProductSignatureKind,
+        }) as S.Codec<{
+          targetProductId: ProductId;
+          kind: CrossProductSignatureKind;
         }>,
       }),
   );
@@ -923,14 +1471,6 @@ export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
 );
 
 /**
- * Review shown before a preimage is submitted.
- */
-export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
-  (): S.Codec<PreimageSubmitReview> =>
-    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
-);
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -939,22 +1479,9 @@ export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
 export const ProductContext: S.Codec<ProductContext> = S.lazy(
   (): S.Codec<ProductContext> =>
     S.Struct({
-      productId: S.str,
-      executionKind: ProductExecutionKind,
+      productId: ProductId,
+      executionKind: ExecutableKind,
     }) as S.Codec<ProductContext>,
-);
-
-/**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ProductExecutionKind: S.Codec<ProductExecutionKind> = S.lazy(
-  (): S.Codec<ProductExecutionKind> => S.Status("App", "Widget", "Worker"),
 );
 
 /**
@@ -963,7 +1490,7 @@ export const ProductExecutionKind: S.Codec<ProductExecutionKind> = S.lazy(
  */
 export const ProductSubtreeReview: S.Codec<ProductSubtreeReview> = S.lazy(
   (): S.Codec<ProductSubtreeReview> =>
-    S.Struct({ productId: S.str }) as S.Codec<ProductSubtreeReview>,
+    S.Struct({ productId: ProductId }) as S.Codec<ProductSubtreeReview>,
 );
 
 /**
@@ -975,7 +1502,7 @@ export const ResourceAllocationReview: S.Codec<ResourceAllocationReview> =
   S.lazy(
     (): S.Codec<ResourceAllocationReview> =>
       S.Struct({
-        callingProductId: S.str,
+        callingProductId: ProductId,
         resources: S.Vector(AllocatableResource),
       }) as S.Codec<ResourceAllocationReview>,
   );
@@ -990,9 +1517,10 @@ export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
       publicKey: Bytes32,
       identityAccountId: S.Option(Bytes32),
       chatPublicKey: S.Option(Bytes32),
-      deviceEncPublicKey: S.Option(Bytes32),
+      peerDeviceEncPublicKey: S.Option(Bytes32),
       peerStatementAccountId: S.Option(Bytes32),
       deviceStatementAccountId: S.Option(Bytes32),
+      deviceEncPublicKey: S.Option(Bytes32),
       liteUsername: S.Option(S.str),
       fullUsername: S.Option(S.str),
     }) as S.Codec<SessionUiInfo>,
@@ -1005,13 +1533,19 @@ export const SignPayloadReview: S.Codec<SignPayloadReview> = S.lazy(
   (): S.Codec<SignPayloadReview> =>
     S.TaggedUnion({
       Product: S.Struct({
-        callingProductId: S.Option(S.str),
+        callingProductId: S.Option(ProductId),
         request: HostSignPayloadRequest,
       }) as S.Codec<{
-        callingProductId?: string;
+        callingProductId?: ProductId;
         request: HostSignPayloadRequest;
       }>,
-      LegacyAccount: HostSignPayloadWithLegacyAccountRequest,
+      LegacyAccount: S.Struct({
+        account: ProductAccountId,
+        request: HostSignPayloadWithLegacyAccountRequest,
+      }) as S.Codec<{
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      }>,
     }),
 );
 
@@ -1024,18 +1558,20 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
   (): S.Codec<SignRawReview> =>
     S.TaggedUnion({
       Product: S.Struct({
-        callingProductId: S.Option(S.str),
+        callingProductId: S.Option(ProductId),
         request: HostSignRawRequest,
         watermarked: S.bool,
       }) as S.Codec<{
-        callingProductId?: string;
+        callingProductId?: ProductId;
         request: HostSignRawRequest;
         watermarked: boolean;
       }>,
       LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
         request: HostSignRawWithLegacyAccountRequest,
         watermarked: S.bool,
       }) as S.Codec<{
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       }>,
@@ -1048,7 +1584,7 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
 export const SignVrfReview: S.Codec<SignVrfReview> = S.lazy(
   (): S.Codec<SignVrfReview> =>
     S.Struct({
-      callingProductId: S.str,
+      callingProductId: ProductId,
       request: HostAccountSignVrfRequest,
     }) as S.Codec<SignVrfReview>,
 );
@@ -1063,30 +1599,47 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
   S.lazy(
     (): S.Codec<StatementStoreProductSignReview> =>
       S.Struct({
-        callingProductId: S.Option(S.str),
+        callingProductId: S.Option(ProductId),
         account: ProductAccountId,
         payload: S.Bytes(),
       }) as S.Codec<StatementStoreProductSignReview>,
   );
 
 /**
+ * Permission storage payload, whose targets can be bare manifest labels.
+ */
+export const StoredPermissionRequest: S.Codec<StoredPermissionRequest> = S.lazy(
+  (): S.Codec<StoredPermissionRequest> =>
+    S.TaggedUnion({
+      Device: HostDevicePermissionRequest,
+      Remote: RemotePermissionRequest,
+      IdentityDisclosure: S._void,
+      AccountAccess: S.Struct({ target: S.str }) as S.Codec<{ target: string }>,
+      CrossProductSignature: S.Struct({
+        target: S.str,
+        kind: CrossProductSignatureKind,
+      }) as S.Codec<{ target: string; kind: CrossProductSignatureKind }>,
+    }),
+);
+
+/**
  * Review shown before a user-confirmed core action continues.
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.TaggedUnion({
-      SignPayload: SignPayloadReview,
-      SignRaw: SignRawReview,
-      StatementStoreProductSign: StatementStoreProductSignReview,
-      CreateTransaction: CreateTransactionReview,
-      AccountAlias: AccountAliasReview,
-      CreateProof: CreateProofReview,
-      IdentityDisclosure: IdentityDisclosureReview,
-      ResourceAllocation: ResourceAllocationReview,
-      PreimageSubmit: PreimageSubmitReview,
-      AccountAccess: AccountAccessReview,
-      SignVrf: SignVrfReview,
-      ProductSubtree: ProductSubtreeReview,
+    S.indexedTaggedUnion({
+      SignPayload: [0, SignPayloadReview] as const,
+      SignRaw: [1, SignRawReview] as const,
+      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
+      CreateTransaction: [3, CreateTransactionReview] as const,
+      AccountAlias: [4, AccountAliasReview] as const,
+      CreateProof: [5, CreateProofReview] as const,
+      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
+      ResourceAllocation: [7, ResourceAllocationReview] as const,
+      AccountAccess: [9, AccountAccessReview] as const,
+      SignVrf: [10, SignVrfReview] as const,
+      ProductSubtree: [11, ProductSubtreeReview] as const,
+      NftPurseDrain: [12, NftPurseDrainReview] as const,
     }),
 );
 
@@ -1102,6 +1655,30 @@ export interface AuthPresenter {
    * no auth UI.
    */
   authStateChanged?(state: AuthState): void;
+}
+
+/**
+ * Host-implemented balance view: what a payment request can spend right now,
+ * the figure the host checks a payment against. Optional: a host that omits
+ * it leaves balance subscriptions answered `Unsupported`.
+ *
+ * The balance is the user's, per purse, not the product's: every product
+ * following a purse sees the same figure. The core asks for the product's
+ * balance access before calling here, and checks it again before passing on
+ * each balance the stream emits, so a revoked grant ends the stream with
+ * `PermissionDenied`.
+ */
+export interface BalancePlatform {
+  /**
+   * Emit the balance of `purse` (``undefined`` for the main purse) now and on
+   * every change.
+   */
+  subscribeBalance(
+    product: ProductContext,
+    purse: number | undefined,
+  ): AsyncIterable<
+    Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
+  >;
 }
 
 /**
@@ -1127,9 +1704,9 @@ export interface ChainProvider {
  * answered `Unsupported`. See `OptionalPlatform`.
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
- * names and icons on `create_chat_room`, `register_chat_bot` and
- * `post_chat_message` are NFC-normalized and rejected for control and bidi
- * characters. Message bodies are bounded and screened but pass through
+ * names and icons on `create_chat_room`, `register_chat_bot`,
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and
+ * bidi characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
@@ -1173,6 +1750,17 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatPostMessageRequest,
   ): Promise<HostChatPostMessageResponse>;
+
+  /**
+   * Set what a product-scoped room shows below its messages, for the room
+   * as it is now and every later time it is shown. The core has already
+   * checked the product created the room. A room the product never set a
+   * footer on shows the text input.
+   */
+  setChatRoomFooter(
+    product: ProductContext,
+    request: HostChatSetRoomFooterRequest,
+  ): Promise<void>;
 
   /**
    * Emit the current product-scoped room list and later replacements.
@@ -1304,13 +1892,20 @@ export interface CoreAdmin {
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
 
   /**
-   * Read this device's X25519 encryption secret, for hosts that run device
-   * sync against the peer's `SessionUiInfo::device_enc_public_key`.
+   * Read this device's X25519 encryption secret, for hosts that encrypt
+   * their own chat and device-sync traffic.
    *
-   * Generated and persisted on first read, so the returned key is stable for
-   * the install and matches the public key peers were told to address.
+   * The key behind `SessionUiInfo::device_enc_public_key`: decrypting with
+   * anything else misses what contacts send. The account holder decides
+   * which key that is. A signing host serves its install-wide key,
+   * generated and persisted on first read. A pairing host serves the key
+   * the wallet registered for it at pairing, ``undefined`` before pairing and
+   * rotated per login like `Self::get_device_statement_key`.
+   *
+   * Deliberately not on `SessionUiInfo`, for the reason given on
+   * `Self::get_session_chat_identity_key`.
    */
-  getDeviceEncryptionKey(): Promise<Bytes32>;
+  getDeviceEncryptionKey(): Promise<Bytes32 | undefined>;
 
   /**
    * Read `product_id`'s hard-subtree public key, so a host can name the
@@ -1332,7 +1927,7 @@ export interface CoreAdmin {
    * answer with `deriveProductAccountPublicKey`.
    */
   getProductSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs: number | undefined,
   ): Promise<Bytes32 | undefined>;
 }
@@ -1347,7 +1942,7 @@ export interface CoreAdmin {
  * they accumulate for the life of the install.
  *
  * `describe_core_storage_key` names the product owning a slot:
- * `CoreStorageKeyDescription::product_id` is `Some` exactly for the
+ * `CoreStorageKeyDescription::owner` names a full product for the
  * product-indexed variants, which are `PermissionAuthorization`,
  * `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
  * makes the sweep a prefix delete rather than a scan.
@@ -1370,6 +1965,38 @@ export interface CoreStorage {
 }
 
 /**
+ * Host control of the card face drawn under an opened card's Widget.
+ *
+ * Carried per connection on `ConnectionAdapters`, because the host owns one
+ * drawer per product execution. A connection without one tells products
+ * `Unsupported`.
+ */
+export interface ExpandedCardHost {
+  /**
+   * Uncover (`true`) or cover (`false`) the face under the calling Widget.
+   */
+  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+
+  /**
+   * Turn the card above the calling Widget so its back (`true`) or its
+   * front (`false`) is up.
+   */
+  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardTurnOutcome>;
+}
+
+/**
+ * Which chains the host builds as V5 general transactions. The core builds
+ * its own extrinsics the same way, so both agree on every chain.
+ */
+export interface ExtrinsicVersionHost {
+  /**
+   * The chains the host builds as V5, each with its pipeline. A host that
+   * never builds V5 lists none.
+   */
+  transactionExtensionVersions?(): Promise<ExtensionVersionMap>;
+}
+
+/**
  * Feature-support probing. The host answers whether it can service a given
  * capability (currently scoped to per-chain support).
  */
@@ -1380,12 +2007,82 @@ export interface Features {
   featureSupported(
     request: HostFeatureSupportedRequest,
   ): Promise<HostFeatureSupportedResponse>;
+}
+
+/**
+ * Host-implemented funding surface: the native overlay a funding session
+ * runs in. Optional: a host that omits it leaves funding requests answered
+ * `Unsupported`.
+ */
+export interface FundingPlatform {
+  /**
+   * Show the funding overlay for a session that `product` opened, or the
+   * host itself when `product` is ``undefined``.
+   */
+  presentFunding(
+    product: ProductContext | undefined,
+    session: FundingPresentation,
+  ): Promise<FundingPresentOutcome>;
 
   /**
-   * Enumerate the chains this host serves (RFC 0026). The core resolves
-   * `get_chain_info` requests against the returned set.
+   * `provider` asked to show a screen for session `intent`. The core
+   * holds it until the host calls `open_provider_frame(intent)`, which
+   * the host does at once while the user looks at the session, or once
+   * the user taps a notice that the provider wants to show something.
+   * A worker never puts a screen in front of the user on its own.
    */
-  supportedChains(): Promise<HostChainSet>;
+  providerFrameRequested(provider: ProductContext, intent: string): void;
+
+  /**
+   * Show `target` for `provider`'s session `intent` in a frame the host
+   * owns, and answer once it closes. Called only once the host opened the
+   * request `Self::provider_frame_requested` announced. A page is an
+   * https URL the core has checked: the host shows its origin, and closes
+   * the frame with `Returned` when the page reaches its return URL. The
+   * core closes the frame itself, through `Self::close_provider_frame`,
+   * once the session's payment moved.
+   */
+  presentProviderFrame(
+    provider: ProductContext,
+    intent: string,
+    target: FundingFrameTarget,
+  ): Promise<FundingFrameOutcome>;
+
+  /**
+   * Close the frame `present_provider_frame` shows for `provider`'s
+   * session `intent`, answering that call `Closed`, and show the
+   * session's progress in its place. Does nothing when no frame is
+   * open for it.
+   */
+  closeProviderFrame(provider: ProductContext, intent: string): void;
+
+  /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
+
+  /**
+   * Observe a session's status change, for host UI such as the in-flight
+   * pill.
+   */
+  fundingSessionChanged?(
+    intent: string,
+    status: HostFundingStatusSubscribeItem,
+  ): void;
+
+  /**
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again. ``undefined`` once a selection on another route withdrew it.
+   */
+  fundingQuotesChanged?(
+    intent: string,
+    quotes: FundingQuoteList | undefined,
+  ): void;
 }
 
 /**
@@ -1504,6 +2201,38 @@ export interface PairingHostAdmin {
 }
 
 /**
+ * Host-implemented payment engine: pays from the user's balance to an
+ * account, once the user approves. Optional: a host that omits it leaves
+ * payment requests answered `Unsupported`.
+ *
+ * The core hashes the product into the id before calling, so ids never
+ * collide across products. The host owns the approval sheet, the transfer
+ * and its persistence.
+ */
+export interface PaymentPlatform {
+  /**
+   * Ask the user to approve `request`. Returns once the user has decided:
+   * `Ok` when they authorized it and the host took it on; the payment's
+   * outcome arrives through its status.
+   */
+  requestPayment(
+    product: ProductContext,
+    request: HostPaymentRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a payment's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribePaymentStatus(
+    product: ProductContext,
+    id: Bytes32,
+  ): AsyncIterable<
+    Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
+  >;
+}
+
+/**
  * Live OS permission state, read without prompting.
  *
  * A product-scoped grant is persisted once and never expires, but the OS
@@ -1550,12 +2279,10 @@ export interface Permissions {
 }
 
 /**
- * Host-implemented adapter through which product Pocket calls reach the
- * host's card collection. Optional: a host that omits it leaves Pocket
- * requests answered `Unsupported`. See `OptionalPlatform`.
- *
- * The host owns the collection: it decides which cards are privileged and
- * keeps each card's newest face. A face does not cross this boundary.
+ * Adapter through which product Pocket calls reach the card collection.
+ * Optional: a host that omits it leaves Pocket requests answered
+ * `Unsupported`. See `OptionalPlatform`. Native hosts are served by the
+ * core's own collection in its database.
  */
 export interface PocketPlatform {
   /**
@@ -1582,7 +2309,8 @@ export interface PocketPlatform {
  */
 export interface PreimageHost {
   /**
-   * Emits current value/miss immediately, then future updates.
+   * Emits current value/miss immediately, then future updates. `key` is
+   * the blake2b-256 digest of the preimage.
    */
   lookupPreimage(
     key: Uint8Array,
@@ -1667,6 +2395,29 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+ * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+ *
+ * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
+ *   scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen, or for any product
+ *   while the host application is not in front. A Worker reaching the host already passed the
+ *   core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still open before opening
+ *   another. A JS host is not told about a drop.
+ */
+export interface ScannerPlatform {
+  /**
+   * Open the viewfinder on behalf of `product` and wait for the user.
+   */
+  scanCode(
+    product: ProductContext,
+    request: HostScannerScanRequest,
+  ): Promise<HostScan>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1675,6 +2426,39 @@ export interface ThemeHost {
    * named themes report `ThemeName::Default`.
    */
   subscribeTheme(): AsyncIterable<Result<HostThemeSubscribeItem, GenericError>>;
+}
+
+/**
+ * Host-implemented top-up engine: claims a source's funds into the user's
+ * balance through the host's coinage onboarding. Optional: a host that omits
+ * it leaves top-ups answered `Unsupported`.
+ *
+ * The core validates the source keys and hashes the product into the id
+ * before calling, so ids never collide across products. The host owns
+ * retries, partial claims and persistence.
+ */
+export interface TopUpPlatform {
+  /**
+   * Start a top-up. Returns once the host has accepted it.
+   */
+  topUp(
+    product: ProductContext,
+    request: HostPaymentTopUpRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a top-up's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribeTopUpStatus(
+    product: ProductContext,
+    id: Bytes32,
+  ): AsyncIterable<
+    Result<
+      HostPaymentTopUpStatusSubscribeItem,
+      HostPaymentTopUpStatusSubscribeError
+    >
+  >;
 }
 
 /**
@@ -1708,6 +2492,7 @@ export interface HostCallbacks {
   notifications: Notifications;
   permissions: Permissions;
   features: Features;
+  extrinsicVersion: ExtrinsicVersionHost;
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
   chain: ChainProvider;
@@ -1722,6 +2507,7 @@ export interface HostCallbacks {
   game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -1729,6 +2515,7 @@ export interface RequiredHostCallbacks {
   notifications: Required<Notifications>;
   permissions: Required<Permissions>;
   features: Required<Features>;
+  extrinsicVersion: Required<ExtrinsicVersionHost>;
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
   chain: Required<ChainProvider>;
@@ -1743,4 +2530,5 @@ export interface RequiredHostCallbacks {
   game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  scanner?: Required<ScannerPlatform>;
 }

@@ -8,9 +8,9 @@ enum IdentityServiceError: Error {
 }
 
 protocol IdentityServiceProtocol {
-    /// Creates a subscription to **Identity.UsernameOf** storage
+    /// Creates a subscription to **DotnsGateway.AccountNames** storage
     func subscribe(to accountId: AccountId) -> AnyPublisher<Username?, Error>
-    /// Creates a one-time query to **Identity.UsernameOf** storage
+    /// Creates a one-time query to **DotnsGateway.AccountNames** storage
     func username(for accountId: AccountId) -> AnyPublisher<Username?, Error>
 }
 
@@ -20,41 +20,32 @@ extension IdentityService: IdentityServiceProtocol {
     func subscribe(
         to accountId: AccountId
     ) -> AnyPublisher<Username?, any Error> {
-        let path = ResourcesPallet.Storage.consumers(accountId)
-        let username: AnyPublisher<ResourcesPallet.ConsumerInfo?, Error> = subscription(
+        let path = DotnsGatewayPallet.Storage.accountNames(accountId)
+        let record: AnyPublisher<DotnsGatewayPallet.AccountNameRecord?, Error> = subscription(
             request: path.batchStorageRequest(mapping: nil)
         )
-        let retVal: AnyPublisher<Data?, Error> = username
-            .compactMap { $0 }
-            .map(\.username)
-            .eraseToAnyPublisher()
 
-        return retVal
-            .map {
-                $0.flatMap { Username(rawData: $0) }
-            }
+        return record
+            .map { $0?.username.flatMap(Username.init(rawData:)) }
             .eraseToAnyPublisher()
     }
 
     func username(
         for accountId: AccountId
     ) -> AnyPublisher<Username?, any Error> {
-        let username: AnyPublisher<ResourcesPallet.ConsumerInfo?, Error> = queryStorage(
-            at: ResourcesPallet.Storage.consumers(accountId),
+        let record: AnyPublisher<DotnsGatewayPallet.AccountNameRecord?, Error> = queryStorage(
+            at: DotnsGatewayPallet.Storage.accountNames(accountId),
             params: [BytesCodable(wrappedValue: accountId)]
         )
-        let retVal: AnyPublisher<Data?, Error> = username
+
+        return record
             .tryCatch { error in
                 guard case SubscriptionServiceError.noData = error else {
                     throw error
                 }
-                return Just<ResourcesPallet.ConsumerInfo?>(nil).setFailureType(to: Error.self)
+                return Just<DotnsGatewayPallet.AccountNameRecord?>(nil).setFailureType(to: Error.self)
             }
-            .map { $0?.username }
-            .eraseToAnyPublisher()
-
-        return retVal
-            .map { $0.flatMap { Username(rawData: $0) } }
+            .map { $0?.username.flatMap(Username.init(rawData:)) }
             .eraseToAnyPublisher()
     }
 }

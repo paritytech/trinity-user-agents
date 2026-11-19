@@ -29,7 +29,13 @@ protocol VoIPCallKitManaging: AnyObject {
 }
 
 final class VoIPCallKitManager: NSObject {
-    static let shared = VoIPCallKitManager()
+    static let shared: VoIPCallKitManaging = {
+        #if targetEnvironment(simulator)
+            SimulatorCallKitManager()
+        #else
+            VoIPCallKitManager()
+        #endif
+    }()
 
     private let provider: CXProvider
     private let callController: CXCallController

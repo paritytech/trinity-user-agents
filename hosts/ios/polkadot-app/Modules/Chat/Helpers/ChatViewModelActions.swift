@@ -9,6 +9,7 @@ struct ChatViewModelActions {
     let showReactionDetails: (_ messageId: String) -> Void
     let acceptChatRequest: () -> Void
     let declineChatRequest: () -> Void
+    let cancelChatRequest: () -> Void
     let showEditHistory: (_ messageId: String) -> Void
     let showFile: (URL) -> Void
     let processAction: (_ action: Chat.Action) -> Void

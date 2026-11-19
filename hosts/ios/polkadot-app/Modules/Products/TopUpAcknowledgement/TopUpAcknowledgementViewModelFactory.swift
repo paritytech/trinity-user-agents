@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import SubstrateSdk
@@ -41,7 +42,7 @@ extension TopUpAcknowledgementViewModelFactory: TopUpAcknowledgementViewModelMak
     }
 
     func amountMismatchTitle(productId: ProductId) -> String {
-        String(localized: .Products.topUpMismatchTitle(product: productId))
+        String(localized: .Products.topUpMismatchTitle(product: productId.rawValue))
     }
 
     func amountMismatchWarning() -> String {
@@ -49,7 +50,7 @@ extension TopUpAcknowledgementViewModelFactory: TopUpAcknowledgementViewModelMak
     }
 
     func errorTitle(productId: ProductId) -> String {
-        String(localized: .Products.topUpErrorTitle(product: productId))
+        String(localized: .Products.topUpErrorTitle(product: productId.rawValue))
     }
 
     func errorMessage() -> String {

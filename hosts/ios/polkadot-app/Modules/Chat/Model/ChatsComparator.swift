@@ -1,4 +1,5 @@
 import Foundation
+import struct TrUAPIHost.ProductId
 
 enum ChatsComparator {
     static func lastMessageComparator(
@@ -35,15 +36,15 @@ enum ChatsComparator {
 }
 
 extension Chat.Peer {
-    /// A host-placed bot is pinned for the same reason the native DIM2 extension is: the host put
-    /// it there, so it does not compete on recency. A product bot's extension id is its product id.
+    /// A host-placed bot is pinned because the host put it there, so it does not compete on
+    /// recency. A product bot's extension id is its product id.
     ///
     /// Not gated on the host-placement switch: with it off there is no placed bot to pin anyway,
     /// so reading it would only make sorting depend on a singleton.
     var isPinnedToTop: Bool {
-        if case let .chatExtension(extensionId, _) = self {
-            return extensionId == DIM2ChatExtension.identifier
-                || HostPlacedProducts.contains(productId: extensionId)
+        if case let .chatExtension(extensionId, _) = self,
+           let productId = try? ProductId(extensionId) {
+            return HostPlacedProducts.contains(productId: productId)
         }
         return false
     }

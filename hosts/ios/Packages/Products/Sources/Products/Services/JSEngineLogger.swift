@@ -28,9 +28,9 @@ extension JSEngineLogger: JSEngineScriptHandling {
 
         switch level {
         case "error":
-            logger.error("JS: \(message)")
+            logger.error(Self.sentLine(message))
         case "warn":
-            logger.warning("JS: \(message)")
+            logger.warning(Self.sentLine(message))
         default:
             logger.debug("JS: \(message)")
         }
@@ -39,6 +39,13 @@ extension JSEngineLogger: JSEngineScriptHandling {
 
 private extension JSEngineLogger {
     static let handlerName = "__console__"
+
+    /// The same cap the core puts on the details it sends, since these lines leave the device.
+    static let sentMessageMaxCharacters = 512
+
+    static func sentLine(_ message: String) -> String {
+        "[truapi.product] \(message.prefix(sentMessageMaxCharacters))"
+    }
 
     static func consoleOverrideScript() -> String {
         """
@@ -60,7 +67,7 @@ private extension JSEngineLogger {
             console.error = function() { send('error', arguments); origError.apply(console, arguments); };
 
             window.addEventListener('error', function(e) {
-                send('error', ['Uncaught error: ' + e.message + ' at ' + e.filename + ':' + e.lineno]);
+                send('error', ['Uncaught error: ' + e.message]);
             });
 
             window.addEventListener('unhandledrejection', function(e) {

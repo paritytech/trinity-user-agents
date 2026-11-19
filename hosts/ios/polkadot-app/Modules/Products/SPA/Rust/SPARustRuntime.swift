@@ -1,46 +1,55 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 import UIKitExt
 
-/// Rust SPA runtime: resolves the product content, publishes the scheme
+/// Rust SPA runtime: opens the product content its strategy names, publishes the scheme
 /// handler, injects the bootstrap + container scripts into the engine, and
 /// returns the page URL. The TrUAPI core serves product requests over its
 /// localhost ws-bridge; no ContainerBridge is installed in rust mode. Camera/mic
-/// media capture (getUserMedia) is answered by a `JSDeviceCapabilityHandler`
-/// registered on the engine.
+/// media capture (getUserMedia) and WebKit's motion request are answered by a
+/// `JSDeviceCapabilityHandler` registered on the engine.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
 /// `dispose` flips `disposed` before its first await and `start` re-checks
 /// it after every await, destroying anything it created in the gap.
 actor SPARustRuntime {
+    struct ProductOpening {
+        let loader: ProductContentLoading
+        let strategy: ExecutableKindStrategy
+        let resolver: ProductResolving
+    }
+
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
     private let configuration: SPAConfiguration
-    private let dotNsResolver: DotNsResolverProtocol
-    private let productResolver: ProductResolving
+    private let productOpening: ProductOpening
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostEventRecorder: HostEventRecording
+    private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
+    private var servedContent: ProductContent?
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
         configuration: SPAConfiguration,
-        dotNsResolver: DotNsResolverProtocol,
-        productResolver: ProductResolving,
+        productOpening: ProductOpening,
         schemeHandlerProxy: SchemeHandlerProxy,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
-        self.dotNsResolver = dotNsResolver
-        self.productResolver = productResolver
+        self.productOpening = productOpening
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
+        self.hostEventRecorder = hostEventRecorder
     }
 
     deinit {
@@ -54,7 +63,10 @@ actor SPARustRuntime {
 }
 
 extension SPARustRuntime: SPARuntimeProtocol {
-    func start(with engine: JSEngineProtocol) async throws -> URL {
+    func start(
+        with engine: JSEngineProtocol,
+        onPhase: @escaping ProductLoadPhaseHandler
+    ) async throws -> SPARuntimeStart {
         // Single-shot: a second start would re-activate the session with no
         // matching teardown; a post-dispose start must not run at all.
         guard !started, !disposed else { throw CancellationError() }
@@ -63,20 +75,43 @@ extension SPARustRuntime: SPARuntimeProtocol {
         let initialURL: URL =
             switch configuration.contentSource {
             case .dotNs:
-                try await prepareDotNsContent()
+                try await serveDotNsContent(onPhase: onPhase)
             case let .directURL(url):
                 url
+            case let .bundled(directory):
+                try await configuration.page.applied(to: serveFiles(at: directory))
+            #if DEBUG
+                case let .devServer(url, _):
+                    url
+            #endif
             }
+
+        let resolution = await productResolution()
 
         try checkNotDisposed()
         let bootstrapScript = try executionModel.startBridge()
-        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let scriptsFactory = RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrapScript,
+            hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
+                hostSessionID: hostSessionId,
+                truapiHostVersion: truapiHostVersion()
+            )
+        )
 
         await engine.registerJSDeviceCapabilityHandler(
-            executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
+            executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
+                execution: executionModel.execution
+            )
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
+
+        hostEventRecorder.record(.webViewCreated(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -92,7 +127,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): runtime started for \(configuration.page.host.name)")
 
-        return initialURL
+        return SPARuntimeStart(url: initialURL, resolution: resolution)
     }
 
     func dispose() async {
@@ -114,17 +149,64 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }
+
+    func useLatestBuild() async throws -> ProductContent? {
+        try checkNotDisposed()
+
+        guard let servedContent else { return nil }
+
+        let latest = try await productOpening.loader.open(
+            configuration.productDomain,
+            strategy: .fixed(servedContent.kind),
+            policy: .untilCancelled
+        )
+        try checkNotDisposed()
+
+        guard latest.archive != servedContent.archive else { return servedContent }
+
+        _ = try await serve(latest)
+        return latest
+    }
 }
 
 private extension SPARustRuntime {
-    func prepareDotNsContent() async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+    /// Bytes come from the executable's own subname; the origin stays the base domain, which is
+    /// what permission grants and web storage are keyed by.
+    func serveDotNsContent(onPhase: @escaping ProductLoadPhaseHandler) async throws -> URL {
+        let content = try await productOpening.loader.open(
+            configuration.productDomain,
+            strategy: productOpening.strategy,
+            policy: .untilCancelled,
+            onPhase: onPhase
+        )
 
-        // Bytes come from the executable's own subname; the origin stays the base domain, which
-        // is what permission grants and web storage are keyed by.
-        let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
-        let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        logger.debug("SPA(rust): '\(configuration.productDomain)' serves \(content.archive.localURL.path)")
 
+        let productURL = try await serve(content)
+        return configuration.page.applied(to: productURL)
+    }
+
+    /// A direct URL is only named by its manifest, so a label without records still opens, unnamed.
+    func productResolution() async -> RuntimeProductResolution {
+        if let servedContent {
+            return .dotNs(servedContent)
+        }
+
+        guard case .directURL = configuration.contentSource else { return .unserved(nil) }
+
+        return await .unserved(try? productOpening.resolver.resolve(configuration.productDomain))
+    }
+
+    func serve(_ content: ProductContent) async throws -> URL {
+        let productURL = try await serveFiles(at: content.archive.localURL)
+        servedContent = content
+        return productURL
+    }
+
+    /// Serves the App's files at `contentURL` under the page's base domain,
+    /// which is what permission grants and web storage are keyed by.
+    func serveFiles(at contentURL: URL) async throws -> URL {
+        let domain = configuration.productDomain
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,
@@ -135,13 +217,11 @@ private extension SPARustRuntime {
             throw ScriptExecutorError.scriptNotFound(productId: domain)
         }
 
-        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
-
         // Don't publish a handler to the shared proxy after dispose ran.
         try checkNotDisposed()
         await schemeHandlerProxy.setHandler(schemeHandler)
 
-        return configuration.page.applied(to: productURL)
+        return productURL
     }
 
     func checkNotDisposed() throws {

@@ -2,48 +2,42 @@ import Foundation
 import Products
 import UIKit
 
-/// The product hosted under an opened card.
+/// The product hosted under the opened card.
 ///
-/// A web view and a page load are what a card costs to open, so a card opened
-/// again is worth not paying twice.
-///
-/// One at a time: opening another card takes the previous one down. A Pocket
-/// can hold many cards, and one live web view each is not a cost worth carrying
-/// for taps that may never come.
-///
-/// Held for one session only. The product is wired to the runtime provider of
-/// the session that opened it, so one carried across a sign-out would be
-/// handed to the next session still talking to the last one's core.
+/// Held weakly: the navigation stack owns the screen, so closing the card frees its web view and runtime, and
+/// the next open builds them again from the cached archive.
 @MainActor
 final class PocketCardHosts {
-    private struct Held {
+    private struct Opened {
         let key: PocketCardKey
-        let view: SPAViewProtocol
+        let pageQuery: String
+        weak var view: ExpandedPocketCardViewProtocol?
     }
 
-    private var held: Held?
+    private var opened: Opened?
 
-    /// The product for `key`, built by `make` unless the one already held is it.
-    func view(for key: PocketCardKey, make: () -> SPAViewProtocol?) -> SPAViewProtocol? {
-        if let held, held.key == key { return held.view }
-
-        release()
-
+    func open(
+        _ key: PocketCardKey,
+        pageQuery: String = "",
+        make: () -> ExpandedPocketCardViewProtocol?
+    ) -> ExpandedPocketCardViewProtocol? {
         guard let view = make() else { return nil }
 
-        held = Held(key: key, view: view)
+        opened = Opened(key: key, pageQuery: pageQuery, view: view)
         return view
     }
 
-    /// Gives up a product held for a card the collection no longer has, since a
-    /// card that is gone has no next tap.
-    func keepOnly(_ isStillHeld: (PocketCardKey) -> Bool) {
-        guard let held, !isStillHeld(held.key) else { return }
+    /// Has `load` take the card on screen to `pageQuery`, unless its page already shows it.
+    func reload(_ key: PocketCardKey, at pageQuery: String, using load: (ExpandedPocketCardViewProtocol) -> Void) {
+        guard let opened, opened.key == key, opened.pageQuery != pageQuery, let view = opened.view else { return }
 
-        release()
+        load(view)
+        self.opened = Opened(key: key, pageQuery: pageQuery, view: view)
     }
 
-    func release() {
-        held = nil
+    func isOnDisplay(_ key: PocketCardKey) -> Bool {
+        guard let opened, opened.key == key else { return false }
+
+        return opened.view?.isOnDisplay ?? false
     }
 }

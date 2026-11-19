@@ -4,14 +4,23 @@ import UIKitExt
 
 @MainActor
 final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
+    private let deepLinkHandler: DeferredLinkHandling
+
+    init(deepLinkHandler: DeferredLinkHandling = DeferredLinkHandler.shared) {
+        self.deepLinkHandler = deepLinkHandler
+    }
+
     func openChat(
         from view: ControllerBackedProtocol?,
         chatId: Chat.Id
     ) {
-        if let presentingController = view?.controller.navigationController?.presentingViewController {
+        let controller = view?.controller
+        let navigation = controller?.navigationController
+        // A page inside an open Pocket card is not on the stack itself, so the card stays open.
+        if let presentingController = navigation?.presentingViewController {
             presentingController.dismiss(animated: true)
-        } else {
-            view?.controller.navigationController?.popToRootViewController(animated: true)
+        } else if let controller, navigation?.viewControllers.contains(controller) == true {
+            navigation?.popToRootViewController(animated: true)
         }
 
         navigateToChat(with: chatId, force: false)
@@ -19,6 +28,10 @@ final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
 
     func showProductSPA(from _: ControllerBackedProtocol?, productHost: ProductHost) {
         UIApplication.shared.mainTabBarController?.openProduct(page: ProductPage(host: productHost))
+    }
+
+    func openDeeplink(_ url: URL) {
+        deepLinkHandler.handle(with: url)
     }
 
     func showMoreActions(
@@ -42,11 +55,11 @@ final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
         view.controller.present(sheet.controller, animated: true)
     }
 
-    func minimize() {
-        UIApplication.shared.mainTabBarController?.minimizeSPA()
-    }
-
     func close(tabId: UUID) {
         UIApplication.shared.mainTabBarController?.closeSPA(tabId: tabId)
+    }
+
+    func dismiss(view: ControllerBackedProtocol?) {
+        view?.controller.presentingViewController?.dismiss(animated: true)
     }
 }

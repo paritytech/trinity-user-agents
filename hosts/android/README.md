@@ -21,7 +21,6 @@
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.
-- **Personhood** — Upgrade your username to a higher allowance via Proof-of-Personhood by playing the DIM2 videocall gesture game, and earn prizes and collectables.
 - **Chat** — End-to-end p2p encrypted text messaging with media (images/video) and encrypted video/audio calls.
 - **Payments** — Send and receive payments by username or QR code, and directly in chat.
 - **Auto-conversion** — Top up your wallet and auto-convert it into the tokens you want.
@@ -147,12 +146,18 @@ ignores the Google values at runtime.
 
 ## How it works
 
+Product identities use the host SDK
+[`ProductId`](../../android/truapi-host/README.md#public-surface), constructed
+through Rust and held as Kotlin values. Navigation applies the active dotNS
+network and executable-owner rules separately. Room and protocol serializers
+keep the identifier string representation on disk and on the wire.
+
 Polkadot Android is a self-custodial superapp: your keys are created on your phone, stay on your phone, and everything else — identity, chat, payments, apps — is built on top of them using Polkadot's public chains instead of company servers.
 
 ### What it does
 
 1. **Keeps your keys on your device.** Your account is generated locally and encrypted with Android's hardware-backed keystore. You choose how to back it up: an encrypted backup in your own Google Drive, or no backup at all — keys stored only on the device.
-2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start. Prove personhood by playing the DIM2 videocall gesture game to raise that allowance.
+2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start.
 3. **Lets you chat without a messaging server.** Messages are end-to-end encrypted and delivered through the People Chain statement store, so there is no company inbox holding your conversations. Voice and video calls are encrypted and go directly peer-to-peer over WebRTC.
 4. **Sends money to names, not addresses.** Pick a username (or scan a QR code, or pay right inside a chat) — the app resolves it to an account on-chain and sends the payment. Swaps and auto-conversion run on [Asset Hub](https://wiki.polkadot.com/learn/learn-assets/)'s liquidity pools.
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
@@ -163,6 +168,10 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 - It does **not** act as a custodian of your keys or your money — the keys are stored only on your device, and nobody (including the developers) can freeze, recover, or move your funds. If you lose your device and have no cloud/written backup, the associated accounts are gone.
 - It does **not** route your chats and calls through company messaging servers — messages travel through the public chain, calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
+
+### Centralised dependencies
+
+- **Runtime configuration (Firebase Remote Config).** The chain list and RPC nodes, the identity-backend URL, DotNS and other contract addresses, the IPFS gateway and the on/off-ramp URLs are fetched from Firebase Remote Config. This repository ships no defaults, and the app waits for a successful fetch on every start, so the owner of the Firebase project can change these values without an app update, and the app cannot start without Firebase. Forks point the same build at their own project ([docs/DEPLOYMENT.md §4.1](./docs/DEPLOYMENT.md#41-remote-config-keys)). This is a known trade-off, tracked in [#306](https://github.com/paritytech/polkadot-android-community/issues/306).
 
 ### Under the hood
 

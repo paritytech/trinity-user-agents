@@ -59,37 +59,42 @@ extension NSManagedObjectContext {
         return message
     }
 
+    /// The notification extension may have saved it already, and a missing chat must not fail the accept.
+    func setupPeerAcceptanceMessage(_ acceptance: Chat.RemoteMessage, from contact: CDChatContact) throws {
+        let existing: CDChatMessage? = try first(for: .chatMessage(with: acceptance.messageId))
+
+        guard
+            existing == nil,
+            contact.chat != nil,
+            let peerAccountId = try contact.identifier?.fromHex(),
+            let localMessage = Chat.LocalMessage(
+                remote: acceptance,
+                creationSource: .localDevice,
+                status: .incoming(.new),
+                contactId: peerAccountId
+            )
+        else {
+            return
+        }
+
+        try ChatMessageEntityMapper().populate(
+            entity: CDChatMessage(context: self),
+            from: localMessage,
+            using: self
+        )
+    }
+
     @discardableResult
     func setupAcceptMessage(
         for requestId: String,
         peerAccountId: AccountId,
-        messageExchangeMode: MessageExchangeMode,
-        acceptorDevice: Chat.PeerDevice?
+        acceptorDevice: Chat.PeerDevice
     ) throws -> CDChatMessage {
         let acceptMessageEntity = CDChatMessage(context: self)
 
-        let content: Chat.LocalMessage.Content
-
-        switch messageExchangeMode {
-        case .identity:
-            let acceptContent = ChatRemoteMessageContent.ChatAccepted(
-                messageId: requestId
-            )
-            content = .chatAccepted(acceptContent)
-        case .multidevice:
-            guard let acceptorDevice else {
-                throw CoreDataMapperError.unexpected("acceptorDevice is required for DeviceChatAccepted")
-            }
-            let acceptContent = ChatRemoteMessageContent.DeviceChatAccepted(
-                requestId: requestId,
-                device: acceptorDevice
-            )
-            content = .multiChatAccepted(acceptContent)
-        }
-
         let acceptMessageModel = Chat.LocalMessage.newMessageToPerson(
             peerAccountId,
-            content: content
+            content: .multiChatAccepted(.init(requestId: requestId, device: acceptorDevice))
         )
 
         try ChatMessageEntityMapper().populate(

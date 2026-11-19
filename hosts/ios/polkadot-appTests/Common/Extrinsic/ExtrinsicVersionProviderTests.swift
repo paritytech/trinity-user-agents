@@ -29,9 +29,9 @@ struct ExtrinsicVersionProviderTests {
         if case let .V5(value) = version { value == extensionVersion } else { false }
     }
 
-    @Test("a general transaction on the username chain is V5 with the remote-config extension version")
-    func usernameChainUnsigned() async throws {
-        let chain = AppConfig.Chains.usernameChain
+    @Test("a general transaction on the people chain is V5 with the remote-config extension version")
+    func peopleChainUnsigned() async throws {
+        let chain = AppConfig.Chains.peopleChain
         let provider = makeProvider(versions: [chain: 3])
 
         #expect(try await isV5(provider.getExtrinsicVersion(for: chain, isSigned: false), extensionVersion: 3))
@@ -40,7 +40,7 @@ struct ExtrinsicVersionProviderTests {
 
     @Test("the extension version defaults to 0 when absent from remote config")
     func defaultsToZero() async throws {
-        let chain = AppConfig.Chains.usernameChain
+        let chain = AppConfig.Chains.peopleChain
 
         #expect(try await isV5(makeProvider().getExtrinsicVersion(for: chain, isSigned: false), extensionVersion: 0))
     }
@@ -81,6 +81,16 @@ struct ExtrinsicVersionProviderTests {
 
         #expect(try await isV4(provider.getExtrinsicVersion(for: Self.unknownChain, isSigned: true)))
         #expect(try await isV4(provider.getExtrinsicVersion(for: Self.unknownChain, isSigned: false)))
+        #expect(pipelines.reads.isEmpty)
+    }
+
+    @Test("general transaction chains list their remote-config extension versions without reading the runtime")
+    func generalTransactionExtensionVersions() {
+        let people = AppConfig.Chains.peopleChain
+        let assetHub = AppConfig.Chains.assethubChain
+        let provider = makeProvider(versions: [people: 3, Self.unknownChain: 5])
+
+        #expect(provider.generalTransactionExtensionVersions() == [people: 3, assetHub: 0])
         #expect(pipelines.reads.isEmpty)
     }
 }

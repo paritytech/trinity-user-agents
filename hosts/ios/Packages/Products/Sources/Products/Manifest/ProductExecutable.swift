@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// One deployable artifact. `identifier` is the subname the executable was read from, which is

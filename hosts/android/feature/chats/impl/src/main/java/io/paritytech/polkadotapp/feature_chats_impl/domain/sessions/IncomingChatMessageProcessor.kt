@@ -31,6 +31,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveConflictStrategy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileDownload
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.ContactChatSigners
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.EncodedMessage
 import timber.log.Timber
 import javax.inject.Inject
@@ -44,7 +45,8 @@ class IncomingChatMessageProcessor @Inject constructor(
     private val fileDownloadRepository: FileDownloadRepository,
     private val fileDownloadStarter: FileDownloadStarter,
     private val compactionExpansionStarter: CompactionExpansionStarter,
-    private val fallbackUsernameGenerator: FallbackUsernameGenerator
+    private val fallbackUsernameGenerator: FallbackUsernameGenerator,
+    private val chatSigners: ContactChatSigners,
 ) {
     suspend fun processRaw(
         contactAccountId: AccountId,
@@ -121,7 +123,7 @@ class IncomingChatMessageProcessor @Inject constructor(
         }.onLeftChat {
             // Ignore a stale LEFT_CHAT from a prior session (reused topic) that predates this re-add.
             if (chatMessage.timestamp >= contact.addedAt.toEpochMilliseconds()) {
-                contactsRepository.setPeerLeft(contactAccountId, true)
+                markPeerLeft(contactAccountId)
             }
         }.onContactAdded {
             contactsRepository.setPeerLeft(contactAccountId, false)
@@ -169,5 +171,10 @@ class IncomingChatMessageProcessor @Inject constructor(
             origin = ChatMessageOrigin.Contact(contactAccountId),
             timestamp = timestamp
         )
+    }
+
+    private suspend fun markPeerLeft(contactAccountId: AccountId) {
+        contactsRepository.setPeerLeft(contactAccountId, true)
+        chatSigners.release(contactAccountId).logFailure("Failed to release chat signer slot after peer left")
     }
 }

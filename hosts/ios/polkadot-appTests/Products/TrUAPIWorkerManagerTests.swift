@@ -1,9 +1,14 @@
 import Foundation
-import os
 import Products
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
+
+private let gameProductId = try! ProductId("game.paseo")
+private let barrierProductId = try! ProductId("barrier.paseo")
+private let stalledProductId = try! ProductId("stalled.paseo")
 
 /// The core counts worker references and reports only the transitions across
 /// zero, so the manager must be exact: a worker left running burns a web
@@ -11,14 +16,13 @@ import TrUAPIHost
 struct TrUAPIWorkerManagerTests {
     @Test
     func startsTheWorkerOnTheFirstDemand() async throws {
-        let builder = StubBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
 
-        #expect(builder.built == ["game.paseo"])
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
+        #expect(builder.built == [gameProductId])
     }
 
     /// The core reports only transitions across zero, but a stop and a start can
@@ -26,28 +30,145 @@ struct TrUAPIWorkerManagerTests {
     /// second execution for the same product.
     @Test
     func doesNotStartASecondWorkerForTheSameProduct() async throws {
-        let builder = StubBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await barrier(manager)
 
-        #expect(builder.built == ["game.paseo"])
+        #expect(builder.built == [gameProductId, barrierProductId])
     }
 
     @Test
     func stopsTheWorkerAndForgetsItsExecution() async throws {
-        let builder = StubBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-        manager.demandChanged(productId: "game.paseo", transition: .stop)
-        try await settle()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .stop)
 
-        #expect(manager.currentExecution(of: "game.paseo") == nil)
+        try await noExecution(of: gameProductId, in: manager)
+    }
+
+    /// A worker that is only forgotten keeps its headless web view and chain
+    /// connections running for the rest of the session.
+    @Test
+    func disposesTheWorkerItStops() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let running = try #require(builder.executions[gameProductId])
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        try await withTimeout(.hangGuard) { await running.awaitClose() }
+
+        #expect(running.closeCallCount == 1)
+        #expect(running.stopWsBridgeCallCount == 1)
+    }
+
+    /// iOS kills a worker's content process while the app is in the background,
+    /// and the script dies with it. The core keeps counting the references that
+    /// wanted the worker, so it never sends another start: unless the manager
+    /// boots a fresh worker itself, chat and Pocket faces for the product stay
+    /// dead until the app restarts.
+    @Test
+    func bootsAFreshWorkerWhenItsEngineDies() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let dead = try #require(builder.executions[gameProductId])
+        try #require(builder.engines[gameProductId]).terminate()
+        try await withTimeout(.hangGuard) { await dead.awaitClose() }
+        let rebooted = try await execution(of: gameProductId, in: manager)
+
+        #expect(rebooted !== dead)
+        #expect(builder.built == [gameProductId, gameProductId])
+    }
+
+    /// An engine of a worker that was already stopped can still die afterwards.
+    /// Rebooting it would run a worker nobody holds a reference to, and the core
+    /// would never send the stop that clears it.
+    @Test
+    func doesNotRebootAWorkerThatWasStopped() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let engine = try #require(builder.engines[gameProductId])
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        try await noExecution(of: gameProductId, in: manager)
+        engine.terminate()
+        try await barrier(manager)
+
+        #expect(builder.built == [gameProductId, barrierProductId])
+        #expect(manager.currentExecution(of: gameProductId) == nil)
+    }
+
+    /// A release of the worker's archive restarts it, so the next boot reads
+    /// the newly applied archive.
+    @Test
+    func reloadBootsAFreshWorker() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let previous = try #require(builder.executions[gameProductId])
+        await manager.reload(productId: gameProductId)
+        try await withTimeout(.hangGuard) { await previous.awaitClose() }
+        let reloaded = try await execution(of: gameProductId, in: manager)
+
+        #expect(reloaded !== previous)
+        #expect(builder.built == [gameProductId, gameProductId])
+    }
+
+    /// A stop the ledger sends while a reload is disposing the worker must
+    /// still land: a restart that overtook it would run a worker nobody holds,
+    /// and the core never sends another stop to clear it.
+    @Test
+    func aStopSentDuringAReloadLeavesNoWorker() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
+        let disposing = AsyncStream<Void>.makeStream()
+        let releaseDispose = AsyncStream<Void>.makeStream()
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        try #require(builder.engines[gameProductId]).onDestroy = {
+            disposing.continuation.yield()
+            for await _ in releaseDispose.stream {}
+        }
+        let reloading = Task { await manager.reload(productId: gameProductId) }
+        try await withTimeout(.hangGuard) {
+            for await _ in disposing.stream {
+                return
+            }
+        }
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        releaseDispose.continuation.finish()
+        await reloading.value
+        try await barrier(manager)
+
+        try await noExecution(of: gameProductId, in: manager)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
+    }
+
+    @Test
+    func reloadDoesNotStartAWorkerThatIsNotRunning() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
+
+        await manager.reload(productId: gameProductId)
+        try await barrier(manager)
+
+        #expect(builder.built == [barrierProductId])
     }
 
     /// A worker whose engine fails once it is already in the running map must
@@ -56,82 +177,51 @@ struct TrUAPIWorkerManagerTests {
     /// every later start would be swallowed by the entry that is still there.
     @Test
     func leavesNothingBehindWhenTheEngineFailsToBoot() async throws {
-        let builder = StubBuilder(engineFails: true)
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let logger = MockLogger()
+        let builder = StubWorkerBuilder(engineFails: true)
+        let manager = makeManager(builder: builder, logger: logger)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await logger.waitForError(containing: "failed to start")
 
-        #expect(manager.currentExecution(of: "game.paseo") == nil)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
 
         builder.engineFails = false
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
     }
 
     /// A product with no worker cannot be built at all, which must be as clean
     /// a failure as one that breaks while booting.
     @Test
     func leavesNothingBehindWhenTheWorkerCannotBeBuilt() async throws {
-        let builder = StubBuilder(cannotBuild: true)
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let logger = MockLogger()
+        let builder = StubWorkerBuilder(cannotBuild: true)
+        let manager = makeManager(builder: builder, logger: logger)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await logger.waitForError(containing: "failed to start")
 
-        #expect(manager.currentExecution(of: "game.paseo") == nil)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
 
         builder.cannotBuild = false
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
     }
 
     /// A stop for a product that never started is what the core sends when a
     /// card's worker was refused, and it must not tear anything else down.
     @Test
     func ignoresAStopForAWorkerThatNeverStarted() async throws {
-        let builder = StubBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-        manager.demandChanged(productId: "other.paseo", transition: .stop)
-        try await settle()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        manager.demandChanged(productId: try! ProductId("other.paseo"), transition: .stop)
+        try await barrier(manager)
 
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
-    }
-
-    /// The worker's card list is served from the bridge's snapshot, and the
-    /// script that subscribes to it comes up inside `runtime.start()`. A
-    /// snapshot filled after that point leaves the product reading an empty
-    /// Pocket for the whole life of its worker.
-    @Test
-    func fillsTheCardListBeforeTheWorkersScriptComesUp() async throws {
-        let builder = StubBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
-
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-
-        #expect(builder.cardsWhenTheEngineBooted.map(\.cardId) == ["loyalty"])
-    }
-
-    /// Republishing reads the execution back out of the published map, so a
-    /// republish that ran before the execution was published reached nobody,
-    /// and the bridge, whose snapshot had already moved, never sent another.
-    @Test
-    func tellsTheCoreWhatTheWorkerHoldsOnceItsExecutionIsPublished() async throws {
-        let builder = StubBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
-
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-
-        #expect(builder.execution?.pocketCardNotifications.last?.map(\.cardId) == ["loyalty"])
+        #expect(manager.currentExecution(of: gameProductId) != nil)
     }
 
     /// Building a worker fetches its archive, which is exactly when two cards
@@ -141,15 +231,17 @@ struct TrUAPIWorkerManagerTests {
     /// ever stopped.
     @Test
     func doesNotStartASecondWorkerWhenTwoDemandsOverlap() async throws {
-        let builder = StubBuilder(buildDelay: .milliseconds(30))
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder(buildDelay: .milliseconds(30))
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-        try await Task.sleep(for: .milliseconds(200))
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        await builder.clock.waitForSleep(for: .milliseconds(30))
+        try await barrier(manager)
+        await builder.clock.resumeSleep(for: .milliseconds(30))
+        try await execution(of: gameProductId, in: manager)
 
-        #expect(builder.built == ["game.paseo"])
+        #expect(builder.built.filter { $0 == gameProductId }.count == 1)
     }
 
     /// A stop that lands while the worker is still being built finds nothing to
@@ -157,17 +249,19 @@ struct TrUAPIWorkerManagerTests {
     /// web view and its chain connections run for the rest of the session.
     @Test
     func disposesAWorkerThatWasStoppedWhileItWasStillBooting() async throws {
-        let builder = StubBuilder(buildDelay: .milliseconds(80))
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder(buildDelay: .milliseconds(80))
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await Task.sleep(for: .milliseconds(20))
-        manager.demandChanged(productId: "game.paseo", transition: .stop)
-        try await settle()
-        try await Task.sleep(for: .milliseconds(300))
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        await builder.clock.waitForSleep(for: .milliseconds(80))
+        let booting = try #require(builder.executions[gameProductId])
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        try await barrier(manager)
+        await builder.clock.resumeSleep(for: .milliseconds(80))
+        try await withTimeout(.hangGuard) { await booting.awaitClose() }
 
-        #expect(manager.currentExecution(of: "game.paseo") == nil)
-        #expect(builder.execution?.closeCallCount == 1)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
+        #expect(booting.closeCallCount == 1)
     }
 
     /// The ledger delivers its transitions in order, so the manager has to
@@ -176,17 +270,17 @@ struct TrUAPIWorkerManagerTests {
     /// the stop lands last, leaving the card with no worker at all.
     @Test
     func appliesABurstOfTransitionsInTheOrderTheyArrive() async throws {
-        let builder = StubBuilder(buildDelay: .milliseconds(40))
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder(buildDelay: .milliseconds(40))
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        manager.demandChanged(productId: "game.paseo", transition: .stop)
-        manager.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        manager.demandChanged(productId: gameProductId, transition: .start)
 
-        try await settle()
-        try await Task.sleep(for: .milliseconds(300))
+        await builder.clock.waitForSleeps(for: .milliseconds(40), count: 2)
+        await builder.clock.resumeSleeps(for: .milliseconds(40), count: 2)
 
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
+        try await execution(of: gameProductId, in: manager)
     }
 
     /// A boot that fails after a stop has already cleared it must not take the
@@ -195,20 +289,25 @@ struct TrUAPIWorkerManagerTests {
     /// comes again and the card is left on whatever it last drew.
     @Test
     func aFailedBootDoesNotClearTheBootThatReplacedIt() async throws {
-        let builder = StubBuilder(firstStartFailsAfter: .milliseconds(300))
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder(firstStartFailsAfter: .milliseconds(300))
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await Task.sleep(for: .milliseconds(50))
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        await builder.clock.waitForSleep(for: .milliseconds(300))
+        let first = try #require(builder.executions[gameProductId])
 
-        manager.demandChanged(productId: "game.paseo", transition: .stop)
-        try await Task.sleep(for: .milliseconds(20))
-        manager.demandChanged(productId: "game.paseo", transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        let booted = try await execution(of: gameProductId, in: manager)
+        let published = try #require(booted as? MockProductExecution)
+        #expect(published !== first)
 
-        try await settle()
-        try await Task.sleep(for: .milliseconds(400))
+        await builder.clock.resumeSleep(for: .milliseconds(300))
+        try await barrier(manager)
 
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
+        let current = manager.currentExecution(of: gameProductId) as? MockProductExecution
+        #expect(current === published)
+        #expect(published.closeCallCount == 0)
     }
 
     /// Every product's transitions arrive down one queue, and building a worker
@@ -217,193 +316,62 @@ struct TrUAPIWorkerManagerTests {
     /// for as long as the fetch hangs.
     @Test
     func aStalledBootDoesNotHoldUpAnotherProduct() async throws {
-        let builder = StubBuilder(stalledProduct: "stalled.paseo")
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let builder = StubWorkerBuilder(stalledProduct: stalledProductId)
+        defer { builder.releaseTheStalledBoot() }
+        let manager = makeManager(builder: builder)
 
-        manager.demandChanged(productId: "stalled.paseo", transition: .start)
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        manager.demandChanged(productId: stalledProductId, transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
 
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
-        #expect(manager.currentExecution(of: "stalled.paseo") == nil)
-
-        builder.releaseTheStalledBoot()
-    }
-
-    /// A worker already running is told about a card added later because its
-    /// bridge follows storage. Nothing announces the write, so a writer that
-    /// forgot to say it wrote cannot leave a product's own list stale.
-    @Test
-    func tellsARunningWorkerAboutACardAddedLater() async throws {
-        let builder = StubBuilder()
-        let collection = InMemoryPocketCardStore([loyalty])
-        let manager = makeManager(builder: builder, collection: collection)
-
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
-        #expect(try builder.bridge?.listCards().map(\.cardId) == ["loyalty"])
-
-        try await collection.add(streak, face: .nil)
-        try await settle()
-
-        #expect(try builder.bridge?.listCards().map(\.cardId).sorted() == ["loyalty", "streak"])
+        #expect(manager.currentExecution(of: stalledProductId) == nil)
     }
 }
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
-    title: "Loyalty",
-    privileged: false
-)
-
-private let streak = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "streak")),
-    title: "Streak",
-    privileged: false
-)
-
-/// The manager hands its work to a task, so the assertions wait for it
-/// rather than for a fixed time.
-private func settle() async throws {
-    for _ in 0 ..< 20 {
-        await Task.yield()
+/// Waits for the product's worker to be published, failing rather than hanging if it never is.
+@discardableResult
+private func execution(
+    of productId: ProductId,
+    in manager: TrUAPIWorkerManager
+) async throws -> TrUAPIProductExecutionProtocol {
+    try await withTimeout(.hangGuard) {
+        for try await execution in manager.executions(of: productId) {
+            if let execution { return execution }
+        }
+        throw TrUAPIWorkerError.noWorker(productId)
     }
-    try await Task.sleep(for: .milliseconds(20))
 }
 
-private func collectionHolding(_ cards: [PocketCardEntry]) -> any PocketCardStore {
-    InMemoryPocketCardStore(cards)
+/// Waits for the product's worker to be cleared, failing rather than hanging if it never is.
+private func noExecution(of productId: ProductId, in manager: TrUAPIWorkerManager) async throws {
+    struct StreamEnded: Error {}
+    try await withTimeout(.hangGuard) {
+        for try await execution in manager.executions(of: productId) where execution == nil {
+            return
+        }
+        throw StreamEnded()
+    }
+}
+
+/// Transitions apply in order, so once the barrier's worker is up every
+/// transition sent before it has been applied.
+private func barrier(_ manager: TrUAPIWorkerManager) async throws {
+    manager.demandChanged(productId: barrierProductId, transition: .start)
+    try await execution(of: barrierProductId, in: manager)
 }
 
 private func makeManager(
     builder: any TrUAPIWorkerBuilding,
-    collection: any PocketCardStore,
     references: StubWorkerReferences = StubWorkerReferences(),
-    startupWindow: Duration = .seconds(30)
+    startupWindow: Duration = .seconds(30),
+    logger: MockLogger = MockLogger()
 ) -> TrUAPIWorkerManager {
     TrUAPIWorkerManager(
         builder: builder,
-        collection: collection,
         references: { references },
-        startupWindow: startupWindow
+        startupWindow: startupWindow,
+        logger: logger
     )
-}
-
-private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
-    private(set) var built: [ProductId] = []
-    /// The execution of the worker built last, so a test can read what the core
-    /// was told through it.
-    private(set) var execution: MockProductExecution?
-    /// What the bridge would have answered the moment the worker's engine came
-    /// up, which is when its script subscribes to the card list.
-    private(set) var cardsWhenTheEngineBooted: [PocketCard] = []
-    /// The bridge of the worker built last, so a test can read the slice the
-    /// core is being served after the collection moves.
-    private(set) var bridge: ProductPocketHostBridge?
-
-    var cannotBuild: Bool
-    var engineFails: Bool
-    private let buildDelay: Duration
-    /// How long the first worker sits inside `start()` before failing. The
-    /// window a stop and a restart have to land in.
-    private let firstStartFailsAfter: Duration?
-    /// The product whose build hangs until `releaseTheStalledBoot()`, standing
-    /// in for an archive fetch that never comes back.
-    private let stalledProduct: ProductId?
-    private let stall = AsyncStream<Void>.makeStream()
-    private var buildCount = 0
-
-    init(
-        cannotBuild: Bool = false,
-        engineFails: Bool = false,
-        buildDelay: Duration = .zero,
-        firstStartFailsAfter: Duration? = nil,
-        stalledProduct: ProductId? = nil
-    ) {
-        self.cannotBuild = cannotBuild
-        self.engineFails = engineFails
-        self.buildDelay = buildDelay
-        self.firstStartFailsAfter = firstStartFailsAfter
-        self.stalledProduct = stalledProduct
-    }
-
-    /// Lets the stalled build finish, so the test leaves no task parked on it.
-    func releaseTheStalledBoot() {
-        stall.continuation.finish()
-    }
-
-    func makeRuntime(
-        productId: ProductId,
-        context _: ProductWorkerContext,
-        pocket: ProductPocketHostBridge
-    ) async throws -> TrUAPIWorkerRuntime {
-        if cannotBuild { throw TrUAPIWorkerError.noWorker(productId) }
-        if buildDelay > .zero { try await Task.sleep(for: buildDelay) }
-        if productId == stalledProduct {
-            for await _ in stall.stream {}
-        }
-
-        bridge = pocket
-
-        built.append(productId)
-        let execution = MockProductExecution()
-        self.execution = execution
-
-        buildCount += 1
-        let isFirstBuild = buildCount == 1
-        let firstStartFailsAfter = firstStartFailsAfter
-        let engineFails = engineFails
-        return TrUAPIWorkerRuntime(
-            productUrl: URL(string: "https://product.invalid/worker.js")!,
-            executionModel: RustRuntimeEnvironment.ExecutionModel(
-                execution: execution,
-                chainConnections: MockChainConnections(),
-                osPermissionAsker: OSPermissionAsker()
-            ),
-            engineFactory: { [weak self] in
-                self?.cardsWhenTheEngineBooted = (try? pocket.listCards()) ?? []
-                if engineFails { return FailingJSEngine() }
-                if isFirstBuild, let firstStartFailsAfter {
-                    return SlowFailingJSEngine(after: firstStartFailsAfter)
-                }
-                return MockJSEngine()
-            }
-        )
-    }
-}
-
-/// An engine that hangs and then fails, which is what a worker whose page is
-/// still loading when its execution is closed underneath it looks like.
-private final class SlowFailingJSEngine: JSEngineProtocol, @unchecked Sendable {
-    private let delay: Duration
-
-    init(after delay: Duration) {
-        self.delay = delay
-    }
-
-    func getState() async -> JSEngineState { .error("no page") }
-    func initialize(with _: [JSEngineScript]) async throws {
-        try? await Task.sleep(for: delay)
-        throw ScriptExecutorError.engineInitFailed
-    }
-
-    func evaluate(_: String) async throws -> Any? { nil }
-    func registerFunction(name _: String, handler _: @escaping JSNativeHandler) async {}
-    func dispatchEvent(actionId _: String, payload _: String) async throws {}
-    func destroy() async {}
-    func registerJSDeviceCapabilityHandler(_: @escaping JSDeviceCapabilityHandler) async {}
-}
-
-/// An engine whose page never comes up, which is what a worker archive that
-/// cannot be loaded looks like from here.
-private final class FailingJSEngine: JSEngineProtocol, @unchecked Sendable {
-    func getState() async -> JSEngineState { .error("no page") }
-    func initialize(with _: [JSEngineScript]) async throws { throw ScriptExecutorError.engineInitFailed }
-    func evaluate(_: String) async throws -> Any? { nil }
-    func registerFunction(name _: String, handler _: @escaping JSNativeHandler) async {}
-    func dispatchEvent(actionId _: String, payload _: String) async throws {}
-    func destroy() async {}
-    func registerJSDeviceCapabilityHandler(_: @escaping JSDeviceCapabilityHandler) async {}
 }

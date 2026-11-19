@@ -5,6 +5,7 @@ import androidx.annotation.IdRes
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph
 import androidx.navigation.NavOptions
+import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.common.presentation.navigation.ReturnableRouter
 import io.paritytech.polkadotapp.common.presentation.navigation.TabRouter
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
@@ -48,20 +49,18 @@ abstract class BaseNavigator(private val navigationHolder: NavigationHolder) : R
         }
     }
 
-    override fun openChatsTab() {
-        navigationHolder.requestTab(BottomTab.CHATS)
-    }
+    override fun openChatsTab() = openTab(BottomTab.CHATS)
 
-    override fun openWalletTab() {
-        navigationHolder.requestTab(BottomTab.WALLET)
-    }
+    override fun openWalletTab() = openTab(BottomTab.WALLET)
 
-    override fun openExploreTab() {
-        navigationHolder.requestTab(BottomTab.EXPLORE)
-    }
+    override fun openExploreTab() = openTab(BottomTab.EXPLORE)
 
-    override fun openSettingsTab() {
-        navigationHolder.requestTab(BottomTab.SETTINGS)
+    override fun openSettingsTab() = openTab(BottomTab.SETTINGS)
+
+    // The tabs live on the main screen; switched from a screen above it, the tab would change out of sight.
+    private fun openTab(tab: BottomTab) {
+        popBackstack(R.id.mainFragment)
+        navigationHolder.requestTab(tab)
     }
 
     protected fun performNavigation(

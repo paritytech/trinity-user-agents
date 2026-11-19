@@ -1,5 +1,6 @@
 import SwiftUI
 import PolkadotUI
+import DesignSystem
 
 struct DepositViewLayout: View {
     @State var viewModel = DepositViewModel()
@@ -29,7 +30,7 @@ struct DepositViewLayout: View {
                 if viewModel.isLoading {
                     ProgressView()
                         .scaleEffect(1.3)
-                        .tint(.white100)
+                        .tint(.fgStaticWhite)
                 }
             }
         }

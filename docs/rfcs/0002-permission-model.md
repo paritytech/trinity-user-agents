@@ -17,6 +17,9 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
+> **NOTE (2026-10-20): first-party products get device permissions without a prompt.**
+> Products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` get device permissions without a prompt. They still need the OS grant. Stored device decisions are not read or written for them.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.
@@ -67,7 +70,7 @@ That means that fetch requests, WebSockets, WebRTC, and device permissions shoul
 `#[wire(internal)]` hides the consuming authorization methods from the product
 SDK; it does not authenticate callers. Rust still accepts those calls and
 checks permissions for the calling product execution. A direct product call
-can consume that execution's one-use grant. `ProductExecutionKind` describes
+can consume that execution's one-use grant. `ExecutableKind` describes
 App, Widget or Worker entrypoints, not whether the caller is the container.
 
 The shared container authorizes operations through generated internal SDK
@@ -188,7 +191,7 @@ later request for one of those domains alone still gets its own prompt.
 ### Permission Lifecycle
 
 1. **First request** — When a permission is requested for the first time (either via an explicit permission API call or implicitly by a business method), the Host prompts the user with an approval dialog.
-2. **Decision lifetime**: `AllowAlways` and `Deny` are stored for the product and survive restarts. `AllowOnce` stays in memory for the execution and authorizes one operation. It is never converted into a durable grant.
+2. **Decision lifetime**: `AllowAlways` and `Deny` are stored for the product and survive restarts. `AllowOnce` stays in memory for the execution and authorizes one operation. It is never converted into a durable grant. For cross-product account access, `AllowOnce` answers the same requester and target until the runtime restarts, the wallet locks or changes, the paired session ends, the requesting product is reset, or the requesting product's account access is changed in settings. A stored decision for the same requester and target takes precedence over it.
 3. **Subsequent requests**: Saved decisions resolve without another prompt. An upfront permission request can observe a one-use grant without consuming it; the operation atomically consumes it. After consumption, the next operation needs another decision unless a lasting grant or an automatic exemption covers it.
 4. **Device capabilities are also gated by the OS** — A device permission has a second gate the persisted decision does not describe: the OS grant held by the host application, which the user can revoke in system settings, device policy can suspend, and the platform can reset on its own. A host that can read that state serves `PermissionStatusHost`, and a device capability then resolves as usable only while both gates are open. An OS refusal denies the request without a prompt, since only system settings can reach it, and leaves the persisted product decision in place for when the user restores the OS grant. An OS grant that is merely undetermined does not change the answer: the OS puts its own dialog up when the capability is used, and the core cannot reach that dialog without also re-asking the product's question, which step 3 forbids. Reading a status without prompting resolves the same two gates, so a host settings screen and a request cannot disagree about whether a capability is usable. A host that cannot report OS state resolves from the persisted decision alone.
 5. **Revocation** — Revocation of the product-scoped decision is out of scope for this RFC. Hosts MAY provide a settings interface for users to revoke permissions, but the protocol does not define a revocation notification to the product.
@@ -239,9 +242,9 @@ The following business methods gate on a specific permission and MUST internally
 | `send_push_notification`             | `DevicePermission::Notifications`         |
 
 `host_navigate_to` consumes `OpenUrl` for external HTTP(S) destinations and
-allowed application schemes (`mailto:`, `tel:`, `sms:`, `maps:`, `polkadot:`,
-`dot:`). Internal dotNS, localhost and host-handled Pocket navigation consume
-no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
+allowed application schemes (`mailto:`, `tel:`, `sms:`, `maps:`, `polkadotapp:`).
+Internal dotNS, localhost and host-handled Pocket
+navigation consume no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
 
 The following business methods relate to signing and require the user's active consent via their own approval flow (e.g. a signing confirmation dialog). They return `PermissionDenied` when the user cancels or denies that confirmation — this is distinct from the remote permission system but is documented here for completeness:
 

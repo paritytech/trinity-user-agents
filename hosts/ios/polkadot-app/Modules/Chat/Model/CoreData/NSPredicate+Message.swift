@@ -45,6 +45,21 @@ extension NSPredicate {
         return NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
     }
 
+    static func localDeviceChatAcceptances() -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            messageByContentType(.multiChatAccepted),
+            messageByChatType(.person),
+            byCreationSource(.localDevice)
+        ])
+    }
+
+    static func newLocalDeviceChatAcceptances() -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localDeviceChatAcceptances(),
+            byStatus(Chat.LocalMessage.Status.outgoing(.new))
+        ])
+    }
+
     static func incomingCoinageSendMessages() -> NSPredicate {
         let incomingNewPredicate = byStatus(Chat.LocalMessage.Status.incoming(.new))
         let incomingSeenPredicate = byStatus(Chat.LocalMessage.Status.incoming(.seen))
@@ -60,7 +75,10 @@ extension NSPredicate {
             statusPredicate,
             chatTypePredicate,
             contentTypePredicate,
-            withoutTerminalTransferState(#keyPath(CDChatMessage.incomingTransferState))
+            withoutTerminalTransferState(
+                #keyPath(CDChatMessage.incomingTransferState),
+                terminal: IncomingTransferState.Status.terminalRawValues
+            )
         ])
     }
 
@@ -83,7 +101,10 @@ extension NSPredicate {
             chatTypePredicate,
             contentTypePredicate,
             creationSourcePredicate,
-            withoutTerminalTransferState(#keyPath(CDChatMessage.outgoingTransferState))
+            withoutTerminalTransferState(
+                #keyPath(CDChatMessage.outgoingTransferState),
+                terminal: OutgoingTransferState.Status.terminalRawValues
+            )
         ])
     }
 
@@ -145,19 +166,34 @@ extension NSPredicate {
         return NSCompoundPredicate(andPredicateWithSubpredicates: [byContactId, byStatus])
     }
 
+    /// The acceptance is excluded: it stays new while its renewer keeps publishing it.
+    static func newLocalDeviceMessages(to chatId: Chat.Id) -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localMessages(from: chatId),
+            byStatus(Chat.LocalMessage.Status.outgoing(.new)),
+            byCreationSource(.localDevice),
+            NSCompoundPredicate(notPredicateWithSubpredicate: messageByContentType(.multiChatAccepted))
+        ])
+    }
+
     /// Messages compacted into a blob are excluded: their delivery is tracked
     /// through the compacted parent, so they must not re-enter sync logic.
+    /// The acceptance is excluded too: it is published on the identity route, so the session never lists it.
     static func sentLocalDeviceMessages(to chatId: Chat.Id) -> NSPredicate {
         let byStatus = byStatus(Chat.LocalMessage.Status.outgoing(.sent))
         let byContactId = localMessages(from: chatId)
         let byCreationSource = byCreationSource(.localDevice)
         let withoutCompaction = withoutCompaction()
+        let withoutAcceptance = NSCompoundPredicate(
+            notPredicateWithSubpredicate: messageByContentType(.multiChatAccepted)
+        )
 
         return NSCompoundPredicate(andPredicateWithSubpredicates: [
             byContactId,
             byStatus,
             byCreationSource,
-            withoutCompaction
+            withoutCompaction,
+            withoutAcceptance
         ])
     }
 
@@ -192,13 +228,13 @@ extension NSPredicate {
         )
     }
 
-    /// A claimed or failed transfer never re-enters the monitor.
-    static func withoutTerminalTransferState(_ relationship: String) -> NSPredicate {
+    /// A finalized or failed transfer never re-enters the monitor; a best-head `claimed` still does.
+    static func withoutTerminalTransferState(_ relationship: String, terminal: [Int16]) -> NSPredicate {
         NSPredicate(
-            format: "%K == nil OR %K < %d",
+            format: "%K == nil OR NOT (%K IN %@)",
             relationship,
             "\(relationship).status",
-            TransferStateStatus.firstTerminalRawValue
+            terminal.map { NSNumber(value: $0) }
         )
     }
 
@@ -271,5 +307,31 @@ extension NSPredicate {
             #keyPath(CDChatMessage.compactionId),
             compactionIds
         )
+    }
+
+    static func lastSeenMessageCandidates(in chatId: Chat.Id) -> NSPredicate {
+        let countedContentTypes = Chat.LocalMessage.Content.ContentType.allCases
+            .filter(\.canBeLastSeenMessage)
+            .map { Int16($0.rawValue) }
+
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localMessages(from: chatId),
+            byStatus(Chat.LocalMessage.Status.incoming(.seen)),
+            NSPredicate(format: "%K IN %@", #keyPath(CDChatMessage.contentType), countedContentTypes)
+        ])
+    }
+
+    /// Only posted messages can be seen by the peer; new and failed ones never reached them.
+    static func postedOutgoingMessages(in chatId: Chat.Id, timestampAtOrBefore timestamp: Int64) -> NSPredicate {
+        let outgoingStatuses: [Chat.LocalMessage.Status.OutgoingStatus] = [.sent, .delivered]
+        let statusPredicate = NSCompoundPredicate(
+            orPredicateWithSubpredicates: outgoingStatuses.map { byStatus(.outgoing($0)) }
+        )
+
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localMessages(from: chatId),
+            statusPredicate,
+            NSPredicate(format: "%K <= %lld", #keyPath(CDChatMessage.timestamp), timestamp)
+        ])
     }
 }

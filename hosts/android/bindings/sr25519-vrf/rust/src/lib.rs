@@ -120,8 +120,7 @@ mod tests {
     use schnorrkel::{ExpansionMode, Keypair, MiniSecretKey};
 
     /// Merlin domain-separation label of the People Chain airdrop, matching the runtime's
-    /// `indiv_pallet_airdrop::vrf::VRF_TRANSCRIPT_LABEL`. Production assembles this recipe in
-    /// `feature/videogame/impl`; the tests keep it here as the regression fixture.
+    /// `indiv_pallet_airdrop::vrf::VRF_TRANSCRIPT_LABEL`, kept here as the regression fixture.
     const AIRDROP_TRANSCRIPT_LABEL: &[u8] = b"pop:airdrop";
 
     /// `event_id(game_index)` = `"pop:game:airdrop:" ++ 11 spaces ++ game_index.to_be_bytes()`

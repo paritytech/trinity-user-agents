@@ -10,14 +10,12 @@ extension ServiceCoordinator {
     ) throws -> DeviceSyncServicing {
         do {
             let signerManager = ChatSignerManager()
-            let signer = try signerManager.makeSigner(for: Chat.Contact.Own.main().signKeyId)
-            let messageExchangeModeProvider = try ChatMessageExchangeModeProvider(
-                tld: DotNsTldProviderFacade.shared.currentTldOrError()
-            )
+            let ownSignKeyId = try Chat.Contact.Own.main().signKeyId
+            let signer = try signerManager.makeSigner(for: ownSignKeyId)
 
             return DeviceSyncService(
                 ownStatementAccountId: signer.accountId,
-                messageExchangeModeProvider: messageExchangeModeProvider,
+                ownSignKeyIds: [ownSignKeyId],
                 configFactory: WebRTCConfigFactory(turnService: turnService),
                 logger: logger
             )

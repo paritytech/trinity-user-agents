@@ -8,7 +8,7 @@ public final class AppDetailViewModel {
     public var subtitle: String?
     /// Shown until ``icon`` loads, and for products that never resolve one.
     public var avatar: AvatarViewModel = .colored(text: "", colorSeed: "")
-    public var icon: (any ImageViewModelProtocol)?
+    public var icon: AnyImageViewModel?
     public var onPermissionsTap: (() -> Void)?
 
     public init() {}

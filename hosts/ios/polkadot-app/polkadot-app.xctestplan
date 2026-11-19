@@ -129,6 +129,13 @@
     },
     {
       "target" : {
+        "containerPath" : "container:Packages\/StatementDelivery",
+        "identifier" : "StatementDeliveryTests",
+        "name" : "StatementDeliveryTests"
+      }
+    },
+    {
+      "target" : {
         "containerPath" : "container:Packages\/ChainRegistry",
         "identifier" : "ChainRegistryTests",
         "name" : "ChainRegistryTests"
@@ -160,6 +167,13 @@
         "containerPath" : "container:Packages\/ExtrinsicServiceExt",
         "identifier" : "ExtrinsicServiceExtTests",
         "name" : "ExtrinsicServiceExtTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/IssueMonitoring",
+        "identifier" : "IssueMonitoringTests",
+        "name" : "IssueMonitoringTests"
       }
     }
   ],

@@ -16,7 +16,8 @@ struct DeviceSyncExchangeDependencies {
     let outgoingUpdateTimeRepositoryFactory: OutgoingUpdateTimeRepositoryMaking
     let contactDataProviderFactory: ChatContactDataProviderMaking
     let messageDataProviderFactory: ChatMessageDataProviderMaking
-    let messageExchangeModeProvider: any MessageExchangeModeProviding
+    /// Own identities whose chats are synced to other devices.
+    let ownSignKeyIds: Set<String>
     let contactsStorageService: ContactsLocalStorageServicing
     let storageFacade: StorageFacadeProtocol
     let updateIdProvider: DeviceSyncUpdateIdProviding
@@ -34,7 +35,6 @@ extension DeviceSyncExchangeDependencies {
             messageRepositoryFactory: messageRepositoryFactory,
             removedChatRepositoryFactory: removedChatRepositoryFactory,
             flow: flow,
-            messageExchangeModeProvider: messageExchangeModeProvider,
             contactsStorageService: contactsStorageService,
             storageFacade: storageFacade,
             peerLogger: peerLogger
@@ -47,7 +47,7 @@ extension DeviceSyncExchangeDependencies {
             contactRepositoryFactory: contactRepositoryFactory,
             messageRepositoryFactory: messageRepositoryFactory,
             removedChatRepositoryFactory: removedChatRepositoryFactory,
-            messageExchangeModeProvider: messageExchangeModeProvider
+            ownSignKeyIds: ownSignKeyIds
         )
     }
 }

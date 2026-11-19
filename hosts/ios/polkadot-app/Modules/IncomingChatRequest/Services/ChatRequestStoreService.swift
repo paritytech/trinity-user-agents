@@ -9,8 +9,6 @@ import Keystore_iOS
 protocol ChatRequestStoreServicing {
     func fetchByRequestId(_ requestId: String) async throws -> Chat.Request?
 
-    func fetchPeerDeviceByRequestId(_ requestId: String) async throws -> Chat.PeerDevice?
-
     func newIncomingRequestFromRemote(
         _ remote: ChatRequest.ValidatedRemoteModel,
         contact: Chat.RemoteContact,
@@ -32,40 +30,51 @@ protocol ChatRequestStoreServicing {
 
     func acceptOutgoingRequest(
         _ requestId: String,
-        messageExchangeMode: MessageExchangeMode,
         remoteIncoming: ChatRequest.ValidatedRemoteModel?,
-        acceptorDevice: Chat.PeerDevice?
+        acceptorDevice: Chat.PeerDevice?,
+        peerAcceptance: ChatRequest.PeerAcceptance?
     ) async throws
 
     func declineIncomingRequest(_ requestId: String) async throws
 
-    func buildLocalAcceptorDevice(for ownKeyId: Chat.Contact.Own) throws -> Chat.PeerDevice?
+    func cancelIncomingRequest(_ requestId: String) async throws -> Bool
+
+    func storeCancelledRequest(_ remote: ChatRequest.ValidatedRemoteModel) async throws
+
+    func buildLocalAcceptorDevice() throws -> Chat.PeerDevice
+
+    func makeOutgoingIdentityProof(
+        peerEncryptionPubKey: Data,
+        ownEncryptionKeyId: String
+    ) throws -> Chat.IdentityProof
+
+    func makeOutgoingCancelProof(
+        requestId: String,
+        peerEncryptionPubKey: Data,
+        ownEncryptionKeyId: String
+    ) throws -> Chat.IdentityProof
+
+    func markOutgoingRequestCancelled(_ requestId: String) async throws
 }
 
 final class ChatRequestStoreService {
     let storageFacade: StorageFacadeProtocol
     let pushIdFactory: ChatPushIdMaking
     let deviceEncryptionKeyManager: DeviceEncryptionKeyManaging
-    let messageExchangeModeProvider: MessageExchangeModeProviding
     let encryptionManager: MessageExchangeEncryptionManaging
-    let signManager: StatementStoreSignerManaging
     let walletRepo: WalletManagerRepositoryProtocol
 
     init(
-        messageExchangeModeProvider: MessageExchangeModeProviding,
         storageFacade: StorageFacadeProtocol,
         pushIdFactory: ChatPushIdMaking,
         deviceEncryptionKeyManager: DeviceEncryptionKeyManaging,
         encryptionManager: MessageExchangeEncryptionManaging = ChatEncryptionManager(),
-        signManager: StatementStoreSignerManaging = ChatSignerManager(),
         walletRepo: WalletManagerRepositoryProtocol = .shared
     ) {
         self.storageFacade = storageFacade
         self.pushIdFactory = pushIdFactory
         self.deviceEncryptionKeyManager = deviceEncryptionKeyManager
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.encryptionManager = encryptionManager
-        self.signManager = signManager
         self.walletRepo = walletRepo
     }
 }
@@ -80,18 +89,6 @@ extension ChatRequestStoreService: ChatRequestStoreServicing {
             options: RepositoryFetchOptions()
         )
         .asyncExecute()
-    }
-
-    func fetchPeerDeviceByRequestId(_ requestId: String) async throws -> Chat.PeerDevice? {
-        try await storageFacade.createRepository(
-            mapper: AnyCoreDataMapper(ChatRequestPeerDeviceMapper())
-        )
-        .fetchOperation(
-            by: { requestId },
-            options: RepositoryFetchOptions()
-        )
-        .asyncExecute()?
-        .peerDevice
     }
 
     func newIncomingRequestFromRemote(
@@ -134,33 +131,19 @@ extension ChatRequestStoreService: ChatRequestStoreServicing {
         }
         let textContent = ChatRemoteMessageContent.RichText(text: text, attachments: nil)
 
-        let requestContent: Chat.VersionedRequestContent
+        let devicePublicKey = try deviceEncryptionKeyManager.getPublicKey()
 
-        switch messageExchangeModeProvider.mode(for: ownKeyId) {
-        case .identity:
-            requestContent = .v1(Chat.RequestContentV1(
-                pushToken: pushTokenContent,
-                welcomeMessage: textContent
-            ))
-        case .multidevice:
-            let identityAccountId = try walletRepo.main().getRawPublicKey()
-            let devicePublicKey = try deviceEncryptionKeyManager.getPublicKey()
+        let identityProof = try makeOutgoingIdentityProof(
+            peerEncryptionPubKey: contact.chatPublicKey.rawData,
+            ownEncryptionKeyId: ownKeyId.encryptionKeyId
+        )
 
-            let signer = try signManager.makeSigner(for: ownKeyId.signKeyId)
-            let identityProof = try makeIdentityProof(
-                identityAccountId: identityAccountId,
-                deviceAccountId: signer.accountId,
-                peerEncryptionPubKey: contact.chatPublicKey.rawData,
-                ownEncryptionKeyId: ownKeyId.encryptionKeyId
-            )
-
-            requestContent = .v2(Chat.RequestContentV2(
-                identityProof: identityProof,
-                deviceEncPubKey: devicePublicKey,
-                pushToken: pushTokenContent,
-                welcomeMessage: textContent
-            ))
-        }
+        let requestContent = Chat.VersionedRequestContent.v2(Chat.RequestContentV2(
+            identityProof: identityProof,
+            deviceEncPubKey: devicePublicKey,
+            pushToken: pushTokenContent,
+            welcomeMessage: textContent
+        ))
 
         let newOutgoing = ChatRequest.NewOutgoing(
             message: Chat.RequestMessage(
@@ -210,15 +193,15 @@ extension ChatRequestStoreService: ChatRequestStoreServicing {
 
     func acceptOutgoingRequest(
         _ requestId: String,
-        messageExchangeMode: MessageExchangeMode,
         remoteIncoming: ChatRequest.ValidatedRemoteModel?,
-        acceptorDevice: Chat.PeerDevice?
+        acceptorDevice: Chat.PeerDevice?,
+        peerAcceptance: ChatRequest.PeerAcceptance?
     ) async throws {
         let acceptOutgoing = ChatRequest.AcceptOutgoing(
             requestId: requestId,
-            messageExchangeMode: messageExchangeMode,
             incomingRequest: remoteIncoming,
-            acceptorDevice: acceptorDevice
+            acceptorDevice: acceptorDevice,
+            peerAcceptance: peerAcceptance
         )
 
         try await storageFacade.createRepository(
@@ -238,19 +221,84 @@ extension ChatRequestStoreService: ChatRequestStoreServicing {
         .asyncExecute()
     }
 
-    func buildLocalAcceptorDevice(for ownKeyId: Chat.Contact.Own) throws -> Chat.PeerDevice? {
-        switch messageExchangeModeProvider.mode(for: ownKeyId) {
-        case .identity:
-            return nil
-        case .multidevice:
-            let identityAccountId = try walletRepo.main().getRawPublicKey()
-            let devicePublicKey = try deviceEncryptionKeyManager.getPublicKey()
+    func cancelIncomingRequest(_ requestId: String) async throws -> Bool {
+        let cancelIncoming = ChatRequest.CancelIncoming(requestId: requestId)
 
-            return Chat.PeerDevice(
-                statementAccountId: identityAccountId,
-                encryptionPublicKey: devicePublicKey
+        do {
+            try await storageFacade.createRepository(
+                mapper: AnyCoreDataMapper(CancelIncomingChatRequestMapper())
             )
+            .saveOperation({ [cancelIncoming] }, { [] })
+            .asyncExecute()
+
+            return true
+        } catch CancelIncomingChatRequestMapper.MappingError.chatHasConversation,
+            CancelIncomingChatRequestMapper.MappingError.contactBlocked {
+            return false
         }
+    }
+
+    func storeCancelledRequest(_ remote: ChatRequest.ValidatedRemoteModel) async throws {
+        let cancelledRequest = Chat.Request(
+            requestId: remote.requestId,
+            contactAccountId: remote.peerAccountId,
+            timestamp: remote.message.timestamp,
+            status: .incoming(.cancelled),
+            message: nil
+        )
+
+        try await storageFacade.createRepository(
+            mapper: AnyCoreDataMapper(ChatRequestMapper())
+        )
+        .saveOperation({ [cancelledRequest] }, { [] })
+        .asyncExecute()
+    }
+
+    func buildLocalAcceptorDevice() throws -> Chat.PeerDevice {
+        try Chat.PeerDevice(
+            statementAccountId: walletRepo.main().getRawPublicKey(),
+            encryptionPublicKey: deviceEncryptionKeyManager.getPublicKey()
+        )
+    }
+
+    func makeOutgoingIdentityProof(
+        peerEncryptionPubKey: Data,
+        ownEncryptionKeyId: String
+    ) throws -> Chat.IdentityProof {
+        let identityAccountId = try walletRepo.main().getRawPublicKey()
+
+        return try makeIdentityProof(
+            identityAccountId: identityAccountId,
+            deviceAccountId: identityAccountId,
+            peerEncryptionPubKey: peerEncryptionPubKey,
+            ownEncryptionKeyId: ownEncryptionKeyId
+        )
+    }
+
+    func makeOutgoingCancelProof(
+        requestId: String,
+        peerEncryptionPubKey: Data,
+        ownEncryptionKeyId: String
+    ) throws -> Chat.IdentityProof {
+        let identityAccountId = try walletRepo.main().getRawPublicKey()
+        let sharedSecret = try makeSharedSecret(
+            peerEncryptionPubKey: peerEncryptionPubKey,
+            ownEncryptionKeyId: ownEncryptionKeyId
+        )
+
+        return try IdentityProofFactory.makeCancelProof(
+            identityAccountId: identityAccountId,
+            requestId: requestId,
+            sharedSecret: sharedSecret
+        )
+    }
+
+    func markOutgoingRequestCancelled(_ requestId: String) async throws {
+        let cancelled = try await storageFacade.databaseService.performWrite { context in
+            try context.cancelOutgoingChatRequest(requestId)
+        }
+
+        guard cancelled else { throw ChatRequestCancelError.notPending }
     }
 }
 
@@ -261,14 +309,22 @@ private extension ChatRequestStoreService {
         peerEncryptionPubKey: Data,
         ownEncryptionKeyId: String
     ) throws -> Chat.IdentityProof {
-        let encryptor = try encryptionManager
-            .makeEncryptorFactory(ownEncryptionKeyId: ownEncryptionKeyId)
-            .makeEncryptor(remotePublicKey: peerEncryptionPubKey)
+        let sharedSecret = try makeSharedSecret(
+            peerEncryptionPubKey: peerEncryptionPubKey,
+            ownEncryptionKeyId: ownEncryptionKeyId
+        )
 
         return try IdentityProofFactory.makeProof(
             identityAccountId: identityAccountId,
             deviceAccountId: deviceAccountId,
-            sharedSecret: encryptor.sharedSecret
+            sharedSecret: sharedSecret
         )
+    }
+
+    func makeSharedSecret(peerEncryptionPubKey: Data, ownEncryptionKeyId: String) throws -> Data {
+        try encryptionManager
+            .makeEncryptorFactory(ownEncryptionKeyId: ownEncryptionKeyId)
+            .makeEncryptor(remotePublicKey: peerEncryptionPubKey)
+            .sharedSecret
     }
 }

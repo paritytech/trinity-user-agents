@@ -734,7 +734,6 @@ private func makeContact(
         chatRequest: nil,
         ownKeyId: Chat.Contact.Own(signKeyId: "", encryptionKeyId: ""),
         imageData: nil,
-        source: .chat,
         isBlocked: isBlocked,
         devices: [],
         pendingDevicesFanOut: false,
@@ -751,7 +750,6 @@ private func makeRemoteContact(
         accountId: accountId,
         username: username,
         chatPublicKey: Chat.PublicKey(rawData: Data(repeating: 0, count: 32)),
-        imageData: nil,
-        source: .chat
+        imageData: nil
     )
 }

@@ -1,78 +1,81 @@
-//! Native observation of renderer streams.
+//! Native observation of core streams: renderer trees, and the subscription
+//! handle every native observation is cancelled through.
 
 use std::sync::{Arc, Mutex};
 
-use futures::StreamExt;
-use futures::future::{AbortHandle, Abortable};
+use futures::{
+	StreamExt,
+	future::{AbortHandle, Abortable},
+};
 use truapi::{CallError, Subscription, latest::ProductRendererRenderItem};
 
-use crate::interrupt::interrupt_reason;
-use crate::subscription::Spawner;
+use crate::{Spawner, interrupt::interrupt_reason};
 
 /// Observer implemented by a native host to receive renderer tree replacements.
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait NativeRendererObserver: Send + Sync {
-    /// Deliver a complete replacement tree.
-    fn on_update(&self, node: ProductRendererRenderItem);
+	/// Deliver a complete replacement tree.
+	fn on_update(&self, node: ProductRendererRenderItem);
 
-    /// Report that the renderer stream ended without drawing further trees.
-    /// The last tree delivered stands.
-    fn on_complete(&self);
+	/// Report that the renderer stream ended without drawing further trees.
+	/// The last tree delivered stands.
+	fn on_complete(&self);
 
-    /// Report that the product could not serve this render. The last tree
-    /// delivered, if any, is partial and must not be treated as final.
-    fn on_error(&self, reason: String);
+	/// Report that the product could not serve this render. The last tree
+	/// delivered, if any, is partial and must not be treated as final.
+	fn on_error(&self, reason: String);
 }
 
-/// Cancellable native observation of one render instance.
+/// Cancellable native observation of one core stream.
 #[derive(uniffi::Object)]
-pub struct NativeRendererSubscription {
-    abort: Mutex<Option<AbortHandle>>,
+pub struct NativeSubscription {
+	abort: Mutex<Option<AbortHandle>>,
 }
 
 #[uniffi::export]
-impl NativeRendererSubscription {
-    /// Stop delivering renderer updates to the native observer.
-    pub fn cancel(&self) {
-        if let Some(abort) = self
-            .abort
-            .lock()
-            .expect("native renderer subscription mutex poisoned")
-            .take()
-        {
-            abort.abort();
-        }
-    }
+impl NativeSubscription {
+	/// Stop delivering updates to the native observer.
+	pub fn cancel(&self) {
+		if let Some(abort) = self.abort.lock().expect("native subscription mutex poisoned").take() {
+			abort.abort();
+		}
+	}
 }
 
-impl Drop for NativeRendererSubscription {
-    fn drop(&mut self) {
-        self.cancel();
-    }
+impl Drop for NativeSubscription {
+	fn drop(&mut self) {
+		self.cancel();
+	}
+}
+
+impl Spawner {
+	/// Runs `observation` until it ends or the returned subscription is cancelled.
+	///
+	/// Cancelling or dropping the subscription aborts this future without stopping other tasks.
+	pub fn spawn_observation(
+		&self,
+		observation: impl Future<Output = ()> + Send + 'static,
+	) -> Arc<NativeSubscription> {
+		let (abort, registration) = AbortHandle::new_pair();
+		self.spawn(async move {
+			let _ = Abortable::new(observation, registration).await;
+		});
+		Arc::new(NativeSubscription { abort: Mutex::new(Some(abort)) })
+	}
 }
 
 pub fn observe_renderer(
-    mut stream: Subscription<ProductRendererRenderItem, CallError<truapi::latest::GenericError>>,
-    observer: Arc<dyn NativeRendererObserver>,
-    spawner: Spawner,
-) -> Arc<NativeRendererSubscription> {
-    let (abort, registration) = AbortHandle::new_pair();
-    (spawner)(Box::pin(async move {
-        let _ = Abortable::new(
-            async move {
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(node) => observer.on_update(node),
-                        Err(error) => return observer.on_error(interrupt_reason(error)),
-                    }
-                }
-                observer.on_complete();
-            },
-            registration,
-        )
-        .await;
-    }));
-    Arc::new(NativeRendererSubscription {
-        abort: Mutex::new(Some(abort)),
-    })
+	mut stream: Subscription<ProductRendererRenderItem, CallError<truapi::latest::GenericError>>,
+	observer: Arc<dyn NativeRendererObserver>,
+	spawner: Spawner,
+) -> Arc<NativeSubscription> {
+	spawner.spawn_observation(async move {
+		while let Some(item) = stream.next().await {
+			match item {
+				Ok(node) => observer.on_update(node),
+				Err(error) => return observer.on_error(interrupt_reason(error)),
+			}
+		}
+		observer.on_complete();
+	})
 }

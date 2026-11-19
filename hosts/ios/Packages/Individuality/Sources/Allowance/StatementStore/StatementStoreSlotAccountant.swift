@@ -28,6 +28,7 @@ public final class StatementStoreSlotAccountant: StatementStoreSlotAccounting {
             accountId: record.accountId,
             allocatedAt: since,
             kind: record.kind,
+            domain: record.domain,
             priority: record.priority,
             latestRenewedPeriod: period
         )

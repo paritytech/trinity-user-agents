@@ -129,11 +129,12 @@ data class Active(
                 )
                 transition.emitSideEffect(
                     CommunicationSideEffect.SubmitResponse(
-                        StatementTransportEvent.Response(
+                        response = StatementTransportEvent.Response(
                             requestId = event.request.requestId,
                             expiry = newExpiry,
                             responseCode = PROTOCOL_ACK_CODE
-                        )
+                        ),
+                        request = event.request,
                     )
                 )
             }

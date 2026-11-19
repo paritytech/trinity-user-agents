@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.getProductIdOrNull
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
@@ -23,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductId
 
 class ProductWebChromeClient @AssistedInject constructor(
     private val permissionGuard: ProductPermissionGuard,
@@ -56,7 +56,7 @@ class ProductWebChromeClient @AssistedInject constructor(
             // embedded third-party iframe is indistinguishable from one in the product's own document.
             val source = it.sourceId().orEmpty().ifEmpty { UNKNOWN_CONSOLE_SOURCE }
             val message = "$logPrefix: ${it.message()} [$source:${it.lineNumber()}]"
-            it.messageLevel().timberLog(message)
+            it.messageLevel().timberLog(message, it.message())
         }
         return true
     }
@@ -132,13 +132,20 @@ private fun String.toDeviceCapability(): DeviceCapabilityType? = when (this) {
     else -> null
 }
 
-private fun ConsoleMessage.MessageLevel?.timberLog(message: String) {
+// The sent line is the console message alone, so neither the page URL in the prefix nor the script
+// URL leaves the device.
+private fun ConsoleMessage.MessageLevel?.timberLog(message: String, sentMessage: String) {
     when (this) {
         ConsoleMessage.MessageLevel.TIP -> Timber.v(message)
         ConsoleMessage.MessageLevel.LOG -> Timber.d(message)
-        ConsoleMessage.MessageLevel.WARNING -> Timber.w(message)
-        ConsoleMessage.MessageLevel.ERROR -> Timber.e(message)
+        ConsoleMessage.MessageLevel.WARNING -> Timber.tag(PRODUCT_LOG_TAG).w(sentMessage.take(SENT_MESSAGE_MAX_CHARS))
+        ConsoleMessage.MessageLevel.ERROR -> Timber.tag(PRODUCT_LOG_TAG).e(sentMessage.take(SENT_MESSAGE_MAX_CHARS))
         ConsoleMessage.MessageLevel.DEBUG -> Timber.d(message)
         null -> Timber.d(message)
     }
 }
+
+private const val PRODUCT_LOG_TAG = "truapi.product"
+
+// The same cap the core puts on the details it sends, since these lines leave the device.
+private const val SENT_MESSAGE_MAX_CHARS = 512

@@ -1,226 +1,312 @@
-//! Role-neutral account authority contracts used by product runtimes.
+//! Account calls and host grant contracts.
 //!
-//! Pairing and signing hosts implement these traits differently, but
-//! `ProductRuntimeHost` can use this module's shared request/session types
-//! without knowing where the key material lives.
-//! Alias, proof, and ring-VRF operations reuse the request payloads in
-//! `host_internal::sso_messages` for both local calls and SSO transport.
+//! Caller origin separates local host permissions from remote wallet consent.
 
-use crate::platform::ProductContext;
-use async_trait::async_trait;
-use std::sync::Arc;
-use truapi::latest::{
-    HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
-    HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
-    HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
-    HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
-    HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
-    HostCreateTransactionResponse, HostRequestResourceAllocationRequest,
-    HostRequestResourceAllocationResponse, HostSignPayloadRequest, HostSignPayloadResponse,
-    HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
-    ProductAccountTxPayload, VrfSignature,
+use super::allowances::AllowanceResource;
+use crate::platform::{ProductContext, ProductId};
+use truapi::{
+	CallContext, CancellationReason,
+	latest::{
+		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
+		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
+		HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
+		HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostCreateTransactionResponse, HostRequestResourceAllocationRequest,
+		HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountRequest,
+		HostSignRawRequest, HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload,
+		ProductAccountId, ProductAccountTxPayload, VrfSignature,
+	},
 };
-use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, CancellationReason};
 
-use crate::host_internal::extrinsic::LocalTransactionError;
-use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
-use crate::host_internal::transaction::ExtrinsicPayloadError;
-use crate::host_logic::raw_signing::RawPayloadError;
-use crate::host_logic::session::{SessionInfo, SessionState};
-use crate::host_logic::statement_store::statement_public_key_from_secret;
+use crate::{
+	host_internal::{
+		extrinsic::LocalTransactionError,
+		sso_messages::{OnExistingAllowancePolicy, RingVrfError},
+		transaction::ExtrinsicPayloadError,
+	},
+	host_logic::{
+		product_account::ProductAccountError,
+		raw_signing::RawPayloadError,
+		session::{SessionInfo, SessionState},
+		statement_store::statement_public_key_from_secret,
+	},
+};
 
-/// Secret key allocated for Bulletin preimage submission.
-///
-/// The core is the sole holder: the secret never crosses the host boundary.
-/// Zeroized on drop, and its `Debug` redacts the material.
+use super::sso_remote::{
+	SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError,
+};
+
+/// Wallet call bound to a session and the origin that supplied its caller.
+pub struct AccountInvocation<'a> {
+	/// Cancellation and deadline for this operation.
+	pub call: &'a CallContext,
+	/// Session selected before the operation began.
+	pub session: &'a AuthoritySession,
+	/// This host's product binding or a paired host's reported identity.
+	pub caller: AccountCaller<'a>,
+}
+
+/// Trust boundary for product identity and host permissions.
+#[derive(Clone)]
+pub enum AccountCaller<'a> {
+	/// Product identity bound by this host's runtime.
+	Local {
+		/// Product bound by the host runtime.
+		product: &'a ProductContext,
+	},
+	/// Product identity reported by an authenticated paired host.
+	Remote {
+		/// Some SSO operations carry no product identity.
+		product_id: Option<&'a ProductId>,
+	},
+}
+
+impl AccountCaller<'_> {
+	/// Product named by this invocation, when the transport supplied one.
+	pub fn product_id(&self) -> Option<&ProductId> {
+		match self {
+			Self::Local { product } => Some(&product.product_id),
+			Self::Remote { product_id } => *product_id,
+		}
+	}
+}
+
+/// Validated Bulletin signing material, redacted in diagnostics and zeroized on drop.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct BulletinAllowanceKey {
-    #[debug("\"<redacted>\"")]
-    secret: [u8; 64],
+	#[debug("\"<redacted>\"")]
+	secret: [u8; 64],
 }
 
 impl BulletinAllowanceKey {
-    /// Wrap a 64-byte sr25519 secret; other lengths are `Unavailable`.
-    pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
-        let secret: [u8; 64] =
-            secret
-                .try_into()
-                .map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
-                    reason: format!(
-                        "bulletin allowance key must be 64 bytes, got {}",
-                        secret.len()
-                    ),
-                })?;
-        Ok(Self { secret })
-    }
+	/// Reject invalid sr25519 material before it can be retained.
+	pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
+		let secret: [u8; 64] =
+			secret.try_into().map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
+				reason: format!("bulletin allowance key must be 64 bytes, got {}", secret.len()),
+			})?;
+		schnorrkel::SecretKey::from_bytes(&secret).map_err(|_| AuthorityError::Unavailable {
+			reason: "invalid bulletin allowance key".to_string(),
+		})?;
+		Ok(Self { secret })
+	}
 
-    /// Raw secret for the in-core Bulletin signer.
-    pub fn as_secret_bytes(&self) -> &[u8; 64] {
-        &self.secret
-    }
+	/// Raw secret for the in-core Bulletin signer.
+	pub fn as_secret_bytes(&self) -> &[u8; 64] {
+		&self.secret
+	}
 }
 
 /// Persisted AutoSigning capability for one hard product subtree.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct AutoSigningKey {
-    #[debug("\"<redacted>\"")]
-    secret: [u8; 64],
-    #[debug("\"<redacted>\"")]
-    ring_vrf_domain_entropy: [u8; 32],
+	#[debug("\"<redacted>\"")]
+	secret: [u8; 64],
+	#[debug("\"<redacted>\"")]
+	ring_vrf_domain_entropy: [u8; 32],
 }
 
 impl AutoSigningKey {
-    pub fn from_parts(secret: [u8; 64], ring_vrf_domain_entropy: [u8; 32]) -> Self {
-        Self {
-            secret,
-            ring_vrf_domain_entropy,
-        }
-    }
+	/// Keep both delegated secrets together for the same product subtree.
+	pub fn from_parts(secret: [u8; 64], ring_vrf_domain_entropy: [u8; 32]) -> Self {
+		Self { secret, ring_vrf_domain_entropy }
+	}
 
-    pub fn as_secret_bytes(&self) -> &[u8; 64] {
-        &self.secret
-    }
+	/// Retained subtree secret for delegated account signing.
+	pub fn as_secret_bytes(&self) -> &[u8; 64] {
+		&self.secret
+	}
 
-    pub fn ring_vrf_domain_entropy(&self) -> &[u8; 32] {
-        &self.ring_vrf_domain_entropy
-    }
+	/// Product-scoped entropy for delegated ring signing.
+	pub fn ring_vrf_domain_entropy(&self) -> &[u8; 32] {
+		&self.ring_vrf_domain_entropy
+	}
 }
 /// Snapshot of an account-authority session selected by the authority.
 ///
 /// This is the neutral session projection product runtimes can use while
 /// preserving authority-private material inside the concrete authority
 /// implementation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AuthoritySession {
-    /// Root account public key for the active authority session.
-    pub public_key: [u8; 32],
-    /// Identity account resolved from the signing host, when available.
-    pub identity_account_id: Option<[u8; 32]>,
-    /// Lightweight username resolved from the dotNS contracts on Asset Hub, when available.
-    pub lite_username: Option<String>,
-    /// Fully qualified username resolved from the dotNS contracts on Asset Hub, when available.
-    pub full_username: Option<String>,
-    /// Opaque session token used to reject stale pre-confirmation snapshots.
-    pub validation_id: Vec<u8>,
+	/// Root account public key for the active authority session.
+	pub public_key: [u8; 32],
+	/// Identity account resolved from the signing host, when available.
+	pub identity_account_id: Option<[u8; 32]>,
+	/// Lightweight username resolved from the dotNS contracts on Asset Hub, when available.
+	pub lite_username: Option<String>,
+	/// Fully qualified username resolved from the dotNS contracts on Asset Hub, when available.
+	pub full_username: Option<String>,
+	/// Opaque session token used to reject stale pre-confirmation snapshots.
+	pub validation_id: Vec<u8>,
 }
 
 impl AuthoritySession {
-    /// Project the neutral snapshot out of a concrete session.
-    pub fn from_session_info(info: &SessionInfo, validation_id: Vec<u8>) -> Self {
-        Self {
-            public_key: info.public_key,
-            identity_account_id: info.identity_account_id,
-            lite_username: info.lite_username.clone(),
-            full_username: info.full_username.clone(),
-            validation_id,
-        }
-    }
+	/// Project the neutral snapshot out of a concrete session.
+	pub fn from_session_info(info: &SessionInfo, validation_id: Vec<u8>) -> Self {
+		Self {
+			public_key: info.public_key,
+			identity_account_id: info.identity_account_id,
+			lite_username: info.lite_username.clone(),
+			full_username: info.full_username.clone(),
+			validation_id,
+		}
+	}
 
-    /// Preferred display username: full over lite, skipping empty values.
-    pub fn primary_username(&self) -> Option<&str> {
-        self.full_username
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                self.lite_username
-                    .as_deref()
-                    .filter(|value| !value.is_empty())
-            })
-    }
+	/// Preferred display username: full over lite, skipping empty values.
+	pub fn primary_username(&self) -> Option<&str> {
+		self.full_username
+			.as_deref()
+			.filter(|value| !value.is_empty())
+			.or_else(|| self.lite_username.as_deref().filter(|value| !value.is_empty()))
+	}
 }
 
 /// Typed account-authority failure before it is mapped to an API-specific error.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum AuthorityError {
-    /// User or authority rejected the request.
-    #[display("Rejected")]
-    Rejected,
-    /// The selected authority session is no longer active.
-    #[display("Disconnected")]
-    Disconnected,
-    /// The authority call was cancelled before completion.
-    #[display("{_0}")]
-    Cancelled(AuthorityCancelError),
-    /// The authority cannot service the request.
-    #[display("{reason}")]
-    Unavailable { reason: String },
-    /// The authority cannot service this request shape (e.g. an unsupported
-    /// transaction-extension version).
-    #[display("{reason}")]
-    NotSupported { reason: String },
-    /// Catch-all authority failure.
-    #[display("{reason}")]
-    Unknown { reason: String },
+	/// User or authority rejected the request.
+	#[display("Rejected")]
+	Rejected,
+	/// The platform could not present or complete a wallet review.
+	#[display("confirmation failed: {}", _0.reason)]
+	ConfirmationFailed(#[error(not(source))] crate::latest::GenericError),
+	/// The selected authority session is no longer active.
+	#[display("Disconnected")]
+	Disconnected,
+	/// The authority call was cancelled before completion.
+	#[display("{_0}")]
+	Cancelled(AuthorityCancelError),
+	/// The authority cannot service the request.
+	#[display("{reason}")]
+	Unavailable { reason: String },
+	/// The chain stayed unreachable, such as during a halt, so nothing was
+	/// signed. A later call can succeed.
+	#[display("{reason}")]
+	ChainUnavailable { reason: String },
+	/// The authority cannot service this request shape (e.g. an unsupported
+	/// transaction-extension version).
+	#[display("{reason}")]
+	NotSupported { reason: String },
+	/// Catch-all authority failure.
+	#[display("{reason}")]
+	Unknown { reason: String },
+}
+
+/// Starts the reason a signing host answers with when it could not reach the
+/// chain, since an SSO answer carries only a string.
+const SSO_CHAIN_UNAVAILABLE_PREFIX: &str = "ChainUnavailable: ";
+
+impl AuthorityError {
+	/// The reason a signing host answers a failed SSO request with. A chain it
+	/// could not reach is marked, so the pairing host reports it as
+	/// `ChainUnavailable` rather than `Unknown`.
+	pub fn into_sso_reason(self) -> String {
+		match self {
+			Self::ChainUnavailable { reason } => format!("{SSO_CHAIN_UNAVAILABLE_PREFIX}{reason}"),
+			failure => failure.to_string(),
+		}
+	}
+}
+
+impl From<ProductAccountError> for AuthorityError {
+	fn from(err: ProductAccountError) -> Self {
+		Self::Unavailable { reason: err.to_string() }
+	}
+}
+
+impl From<SsoRemoteResponseError> for AuthorityError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		match reason {
+			SsoRemoteResponseError::Cancelled(err) => {
+				Self::Cancelled(AuthorityCancelError::new(err.remote_message_id(), err.reason()))
+			},
+			SsoRemoteResponseError::LocalDisconnected |
+			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
+			SsoRemoteResponseError::ChainUnavailable(reason) => Self::ChainUnavailable { reason },
+			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
+				"Rejected" | "User rejected" => Self::Rejected,
+				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,
+				other => match other.strip_prefix(SSO_CHAIN_UNAVAILABLE_PREFIX) {
+					Some(cause) => Self::ChainUnavailable { reason: cause.to_string() },
+					None => Self::Unknown { reason },
+				},
+			},
+		}
+	}
+}
+
+impl From<SsoRemoteResponseError> for RingVrfError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		AuthorityError::from(reason).into()
+	}
 }
 
 /// A preimage this host cannot assemble is a shape failure, not a transport one.
 impl From<ExtrinsicPayloadError> for AuthorityError {
-    fn from(err: ExtrinsicPayloadError) -> Self {
-        match err {
-            ExtrinsicPayloadError::UnsupportedPayloadVersion { .. }
-            | ExtrinsicPayloadError::UnsupportedSignedExtension { .. } => Self::NotSupported {
-                reason: err.to_string(),
-            },
-            other => Self::Unknown {
-                reason: other.to_string(),
-            },
-        }
-    }
+	fn from(err: ExtrinsicPayloadError) -> Self {
+		match err {
+			ExtrinsicPayloadError::UnsupportedPayloadVersion { .. } |
+			ExtrinsicPayloadError::UnsupportedSignedExtension { .. } => {
+				Self::NotSupported { reason: err.to_string() }
+			},
+			other => Self::Unknown { reason: other.to_string() },
+		}
+	}
 }
 
-/// A chain the host cannot reach is `Unavailable`; a request shape it cannot
+/// A chain the host cannot connect to is `Unavailable`, and a connected node
+/// that cannot be asked is `ChainUnavailable`; a request shape it cannot
 /// assemble is `NotSupported`.
 impl From<LocalTransactionError> for AuthorityError {
-    fn from(err: LocalTransactionError) -> Self {
-        match err {
-            LocalTransactionError::UnsupportedTxExtVersion { .. }
-            | LocalTransactionError::UnsupportedExtensions(_) => Self::NotSupported {
-                reason: err.to_string(),
-            },
-            LocalTransactionError::ChainUnavailable(_) => Self::Unavailable {
-                reason: err.to_string(),
-            },
-            LocalTransactionError::Other(_) => Self::Unknown {
-                reason: err.to_string(),
-            },
-        }
-    }
+	fn from(err: LocalTransactionError) -> Self {
+		match err {
+			LocalTransactionError::UnsupportedTxExtVersion { .. } |
+			LocalTransactionError::UnsupportedExtensions(_) => {
+				Self::NotSupported { reason: err.to_string() }
+			},
+			LocalTransactionError::NoChainConnection(_) => {
+				Self::Unavailable { reason: err.to_string() }
+			},
+			LocalTransactionError::ChainUnavailable(_) => {
+				Self::ChainUnavailable { reason: err.to_string() }
+			},
+			LocalTransactionError::Other(_) => Self::Unknown { reason: err.to_string() },
+		}
+	}
 }
 
 impl From<RawPayloadError> for AuthorityError {
-    fn from(err: RawPayloadError) -> Self {
-        Self::Unknown {
-            reason: err.to_string(),
-        }
-    }
+	fn from(err: RawPayloadError) -> Self {
+		Self::Unknown { reason: err.to_string() }
+	}
 }
 
 impl From<AuthorityError> for RingVrfError {
-    fn from(err: AuthorityError) -> Self {
-        match err {
-            AuthorityError::Rejected => RingVrfError::Rejected,
-            other => RingVrfError::Unknown {
-                reason: other.to_string(),
-            },
-        }
-    }
+	fn from(err: AuthorityError) -> Self {
+		match err {
+			AuthorityError::Rejected => RingVrfError::Rejected,
+			other => RingVrfError::Unknown { reason: other.to_string() },
+		}
+	}
 }
 
 impl From<AuthorityError> for HostAccountSignVrfError {
-    fn from(err: AuthorityError) -> Self {
-        match err {
-            AuthorityError::Disconnected => Self::NotConnected,
-            AuthorityError::Rejected => Self::Rejected,
-            AuthorityError::Cancelled(err) => Self::Unknown {
-                reason: err.to_string(),
-            },
-            AuthorityError::Unavailable { reason }
-            | AuthorityError::NotSupported { reason }
-            | AuthorityError::Unknown { reason } => Self::Unknown { reason },
-        }
-    }
+	fn from(err: AuthorityError) -> Self {
+		match err {
+			AuthorityError::Disconnected => Self::NotConnected,
+			AuthorityError::Rejected => Self::Rejected,
+			AuthorityError::ConfirmationFailed(error) => {
+				Self::Unknown { reason: format!("VRF signing confirmation failed: {error:?}") }
+			},
+			AuthorityError::Cancelled(err) => Self::Unknown { reason: err.to_string() },
+			AuthorityError::Unavailable { reason } |
+			AuthorityError::ChainUnavailable { reason } |
+			AuthorityError::NotSupported { reason } |
+			AuthorityError::Unknown { reason } => Self::Unknown { reason },
+		}
+	}
 }
 
 /// Cancellation cause for an account-authority call.
@@ -230,379 +316,425 @@ impl From<AuthorityError> for HostAccountSignVrfError {
     if request_id.is_empty() { String::new() } else { format!(" for {request_id}") }
 )]
 pub struct AuthorityCancelError {
-    request_id: String,
-    reason: CancellationReason,
+	request_id: String,
+	reason: CancellationReason,
 }
 
 impl AuthorityCancelError {
-    /// Cancellation attributed to the request it interrupted.
-    pub fn new(request_id: &str, reason: CancellationReason) -> Self {
-        Self {
-            request_id: request_id.to_string(),
-            reason,
-        }
-    }
+	/// Cancellation attributed to the request it interrupted.
+	pub fn new(request_id: &str, reason: CancellationReason) -> Self {
+		Self { request_id: request_id.to_string(), reason }
+	}
 }
 
 /// Payload-signing request selected by the product API entrypoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum SignPayloadAuthorityRequest {
-    /// Sign a payload with a product-derived account.
-    Product(HostSignPayloadRequest),
-    /// Sign a payload through the legacy-account API.
-    LegacyAccount {
-        /// Product slot-zero account that backs the validated legacy signer.
-        product_account: ProductAccountId,
-        /// Original legacy-account request.
-        request: HostSignPayloadWithLegacyAccountRequest,
-    },
+	/// Sign a payload with a product-derived account.
+	Product(HostSignPayloadRequest),
+	/// Sign a payload through the legacy-account API.
+	LegacyAccount {
+		/// Product slot-zero account that backs the validated legacy signer.
+		product_account: ProductAccountId,
+		/// Original legacy-account request.
+		request: HostSignPayloadWithLegacyAccountRequest,
+	},
 }
 
 /// Raw-signing request selected by the product API entrypoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum SignRawAuthorityRequest {
-    /// Sign raw data with a product-derived account.
-    Product(HostSignRawRequest),
-    /// Sign raw data through the legacy-account API.
-    LegacyAccount {
-        /// Account selected by the product and validated against the session.
-        account: [u8; 32],
-        /// Original legacy-account request.
-        request: HostSignRawWithLegacyAccountRequest,
-    },
+	/// Sign raw data with a product-derived account.
+	Product(HostSignRawRequest),
+	/// Sign raw data through the legacy-account API.
+	LegacyAccount {
+		/// Product slot-zero account backing the validated legacy signer.
+		product_account: ProductAccountId,
+		/// Original legacy-account request.
+		request: HostSignRawWithLegacyAccountRequest,
+	},
+	/// Sign with the active identity through the legacy-account API.
+	IdentityAccount {
+		/// Account selected by the product and validated against the session.
+		account: [u8; 32],
+		/// Original legacy-account request.
+		request: HostSignRawWithLegacyAccountRequest,
+	},
 }
 
 /// Transaction-creation request selected by the product API entrypoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum CreateTransactionAuthorityRequest {
-    /// Create a transaction with a product-derived account.
-    Product(ProductAccountTxPayload),
-    /// Create a transaction through the legacy-account API using the product slot-zero account.
-    LegacyAccount {
-        /// Product slot-zero account that backs the validated legacy signer.
-        product_account: ProductAccountId,
-        /// Original legacy-account transaction request.
-        request: LegacyAccountTxPayload,
-    },
-    /// Create a transaction with the active wallet's identity account.
-    IdentityAccount(LegacyAccountTxPayload),
+	/// Create a transaction with a product-derived account.
+	Product(ProductAccountTxPayload),
+	/// Create a transaction through the legacy-account API using the product slot-zero account.
+	LegacyAccount {
+		/// Product slot-zero account that backs the validated legacy signer.
+		product_account: ProductAccountId,
+		/// Original legacy-account transaction request.
+		request: LegacyAccountTxPayload,
+	},
+	/// Create a transaction with the active wallet's identity account.
+	IdentityAccount(LegacyAccountTxPayload),
 }
 
-/// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
-    use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
-    normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
-        has_trusted_remote_permissions(&caller)
-            && normalize_product_identifier(owner).is_ok_and(|owner| owner == caller)
-    })
+impl SignPayloadAuthorityRequest {
+	/// Canonical review for this selected signing request.
+	pub fn review(&self, caller: &AccountCaller<'_>) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{SignPayloadReview, UserConfirmationReview};
+		UserConfirmationReview::SignPayload(match self {
+			Self::Product(request) => SignPayloadReview::Product {
+				calling_product_id: caller.product_id().cloned(),
+				request: request.clone(),
+			},
+			Self::LegacyAccount { product_account, request } => SignPayloadReview::LegacyAccount {
+				account: product_account.clone(),
+				request: request.clone(),
+			},
+		})
+	}
 }
 
-/// Whether a product-account call can be signed without a confirmation prompt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AutoSigningGrant {
-    /// Covered: the authority already holds the signing keys and raises no prompt.
-    Active,
-    /// Not covered: the caller must obtain user consent.
-    Absent,
+impl SignRawAuthorityRequest {
+	/// Canonical review, including the original legacy request and watermark.
+	pub fn review(
+		&self,
+		caller: &AccountCaller<'_>,
+		watermarked: bool,
+	) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{LegacySigningAccount, SignRawReview, UserConfirmationReview};
+		UserConfirmationReview::SignRaw(match self {
+			Self::Product(request) => SignRawReview::Product {
+				calling_product_id: caller.product_id().cloned(),
+				request: request.clone(),
+				watermarked,
+			},
+			Self::LegacyAccount { product_account, request } => SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Product(product_account.clone()),
+				request: request.clone(),
+				watermarked,
+			},
+			Self::IdentityAccount { request, .. } => SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				request: request.clone(),
+				watermarked,
+			},
+		})
+	}
+}
+
+impl CreateTransactionAuthorityRequest {
+	/// Canonical review for a transaction, including resolved contact data.
+	pub fn review(&self, caller: &AccountCaller<'_>) -> crate::platform::UserConfirmationReview {
+		use crate::platform::{
+			CreateTransactionReview, LegacySigningAccount, UserConfirmationReview,
+		};
+		UserConfirmationReview::CreateTransaction(match self {
+			Self::Product(payload) => CreateTransactionReview::Product {
+				calling_product_id: caller.product_id().cloned(),
+				payload: payload.clone(),
+			},
+			Self::LegacyAccount { product_account, request } => {
+				CreateTransactionReview::LegacyAccount {
+					account: LegacySigningAccount::Product(product_account.clone()),
+					payload: request.clone(),
+				}
+			},
+			Self::IdentityAccount(payload) => CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: payload.clone(),
+			},
+		})
+	}
 }
 
 /// Statement-store allowance signing material held by the authority layer.
 #[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
-    /// sr25519 secret used to sign allowance statements.
-    pub secret: [u8; 64],
-    /// Public key derived from `secret`.
-    pub public_key: [u8; 32],
+	secret: [u8; 64],
+	/// Public key derived from the secret.
+	pub public_key: [u8; 32],
 }
 
 impl StatementStoreAllowanceKey {
-    /// Wrap a 64-byte sr25519 secret and derive its public key; other lengths
-    /// are `Unavailable`.
-    pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
-        let secret: [u8; 64] =
-            secret
-                .try_into()
-                .map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
-                    reason: format!(
-                        "statement-store allowance key must be 64 bytes, got {}",
-                        secret.len()
-                    ),
-                })?;
-        let public_key = statement_public_key_from_secret(secret)
-            .map_err(|reason| AuthorityError::Unavailable { reason })?;
-        Ok(Self { secret, public_key })
-    }
+	/// Wrap a 64-byte sr25519 secret and derive its public key; other lengths
+	/// are `Unavailable`.
+	pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
+		let secret: [u8; 64] =
+			secret.try_into().map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
+				reason: format!(
+					"statement-store allowance key must be 64 bytes, got {}",
+					secret.len()
+				),
+			})?;
+		let public_key = statement_public_key_from_secret(secret)
+			.map_err(|reason| AuthorityError::Unavailable { reason })?;
+		Ok(Self { secret, public_key })
+	}
+
+	/// sr25519 secret used to sign allowance statements.
+	pub fn as_secret_bytes(&self) -> &[u8; 64] {
+		&self.secret
+	}
 }
 
-/// Host-level account authority used by product runtimes.
-///
-/// Pairing hosts implement this by forwarding authority requests to a paired
-/// signing host. A signing-host implementation can later provide the same
-/// surface from local keys without changing product runtime code.
-#[async_trait]
-pub trait ProductAuthority: Send + Sync {
-    /// Current account-authority session, if connected.
-    fn current_session(&self) -> Option<AuthoritySession>;
+/// Allowance key that gives a product access to one chain resource.
+pub enum Allowance {
+	/// Statement signing material and a known on-chain allocation period, if supplied.
+	StatementStore {
+		/// Validated statement signing key.
+		key: StatementStoreAllowanceKey,
+		/// Actual period returned by wallet issuance; SSO does not provide one.
+		period: Option<u32>,
+	},
+	/// Dedicated Bulletin allowance key.
+	Bulletin(BulletinAllowanceKey),
+}
 
-    /// Shared session holder owned by this authority.
-    ///
-    /// Product runtimes use it for connection-status subscriptions. The
-    /// concrete authority keeps ownership of the actual session material.
-    fn session_state(&self) -> Arc<SessionState>;
+impl Allowance {
+	/// Chain resource this key grants access to.
+	pub fn resource(&self) -> AllowanceResource {
+		match self {
+			Self::StatementStore { .. } => AllowanceResource::StatementStore,
+			Self::Bulletin(_) => AllowanceResource::Bulletin,
+		}
+	}
 
-    /// Seed a paired product subtree in unit tests that exercise later authority calls.
-    #[cfg(test)]
-    fn cache_product_subtree_for_test(
-        &self,
-        _session: &SessionInfo,
-        _product_id: &str,
-        _public_key: [u8; 32],
-    ) {
-    }
+	/// sr25519 secret of the allowance account.
+	pub fn as_secret_bytes(&self) -> &[u8; 64] {
+		match self {
+			Self::StatementStore { key, .. } => key.as_secret_bytes(),
+			Self::Bulletin(key) => key.as_secret_bytes(),
+		}
+	}
+}
 
-    /// Request account connection for the calling product.
-    async fn request_login(
-        &self,
-        product: &ProductContext,
-    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
+/// Issued capability material, ready for the host to validate and retain.
+pub enum AccountGrant {
+	/// Allowance key for one chain resource.
+	Allowance(Allowance),
+	/// Funded product account.
+	SmartContract,
+	/// Exported product signing material.
+	AutoSigning(AutoSigningKey),
+}
 
-    /// Disconnect the current account-authority session.
-    async fn disconnect(&self);
+/// One resource result in an otherwise valid allocation batch.
+pub enum AccountGrantOutcome {
+	/// Issued capability material.
+	Allocated(AccountGrant),
+	/// The holder declined this resource.
+	Rejected,
+	/// No grant is available; local issuers may supply diagnostic context.
+	NotAvailable {
+		/// Issuer detail absent from the existing SSO response.
+		reason: Option<String>,
+	},
+}
 
-    /// Refresh identity fields for the current session if the authority can do
-    /// so without user interaction.
-    async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-        self.current_session()
-    }
+/// Where a product's public subtree comes from.
+pub enum SubtreeResolution<'a> {
+	/// The holder derived it without asking anyone.
+	Known([u8; 32]),
+	/// A request to the account holder, sent only when awaited.
+	Ask(futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>),
+}
 
-    /// Return the public key of `//product//{product_id}`.
-    ///
-    /// Pairing hosts obtain this consent-free value from the Account Holder;
-    /// signing hosts derive it locally from root entropy.
-    async fn product_subtree_public_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<[u8; 32], AuthorityError>;
+impl SubtreeResolution<'_> {
+	/// The subtree, asking the account holder when it is not known.
+	pub async fn resolve(self) -> Result<[u8; 32], AuthorityError> {
+		match self {
+			Self::Known(public_key) => Ok(public_key),
+			Self::Ask(request) => request.await,
+		}
+	}
+}
 
-    /// Whether resolving `product_id`'s subtree would reach the Account Holder
-    /// over SSO rather than resolve locally. Gates a host consent prompt: a
-    /// pairing host returns `true` only on a cold cache; a signing host derives
-    /// locally and returns `false`. Required rather than defaulted, so a new
-    /// authority cannot skip the consent gate by omission.
-    async fn subtree_resolution_reaches_account_holder(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool;
+/// How a host keeps the grants its account holder issues.
+#[derive(PartialEq)]
+pub enum GrantKeeping {
+	/// The wallet's own host: grants last one wallet activation.
+	Wallet,
+	/// A host paired with a wallet on another device: grants persist under the pairing.
+	Paired,
+}
 
-    /// Whether `calling_product_id` may sign with `account` without confirmation.
-    ///
-    /// Only a product's own accounts are covered. Signing hosts trust
-    /// first-party products on the remote-permission allowlist; pairing hosts
-    /// require an explicitly allocated product subtree secret. Neither grants
-    /// access to legacy or identity accounts.
-    ///
-    /// [`AutoSigningGrant::Active`] is a promise, not a hint: the matching
-    /// `sign_*` call uses keys already held by this authority, without reaching
-    /// a paired host or raising a prompt on either side. The capability layer
-    /// skips its consent gate on that promise, so an authority that cannot keep
-    /// it answers `Absent`.
-    ///
-    /// `Err` is a hard failure - a broken or foreign grant slot, a stale
-    /// session, unreadable core storage - and is propagated rather than
-    /// downgraded into a prompt. A grant slot the authority has just decided to
-    /// erase must not produce a modal asking the user to approve it.
-    ///
-    /// Required rather than defaulted, so a new authority can neither skip the
-    /// consent gate nor silently claim a grant by omission.
-    async fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &ProductAccountId,
-    ) -> Result<AutoSigningGrant, AuthorityError>;
+/// Wallet account operations bound to a selected session.
+#[async_trait::async_trait]
+pub trait AccountHolder: Send + Sync + 'static {
+	/// How the host keeps the grants this holder issues.
+	const GRANT_KEEPING: GrantKeeping;
 
-    /// Sign an RFC-0023 Merlin transcript with a product account.
-    async fn sign_vrf(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: String,
-        request: HostAccountSignVrfRequest,
-    ) -> Result<VrfSignature, AuthorityError>;
+	/// Current account-authority session, if connected.
+	fn current_session(&self) -> Option<AuthoritySession>;
 
-    /// Sign a SCALE transaction payload for a product account.
-    ///
-    /// `calling_product_id` is the product making the call, which is not always
-    /// the product the account belongs to; an authority that can serve the
-    /// account locally must bind the two before it does. `None` is a path that
-    /// carries no caller identity — the SSO relay — and an authority that
-    /// cannot identify the caller must not serve the account locally.
-    async fn sign_payload(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: SignPayloadAuthorityRequest,
-    ) -> Result<HostSignPayloadResponse, AuthorityError>;
+	/// The session this holder's operations run under, which the host keeps
+	/// its grants by.
+	fn session_state(&self) -> std::sync::Arc<SessionState>;
 
-    /// Sign arbitrary bytes for a product account.
-    ///
-    /// `calling_product_id` carries the same binding obligation as
-    /// [`ProductAuthority::sign_payload`].
-    async fn sign_raw(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: SignRawAuthorityRequest,
-        watermarked: bool,
-    ) -> Result<HostSignPayloadResponse, AuthorityError>;
+	/// The selected session, still current.
+	///
+	/// Fails `Disconnected` once the originally selected wallet or paired
+	/// channel is replaced.
+	fn require_current_session(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError>;
 
-    /// Build a transaction for a product account, signed unless the request
-    /// supplies its own V5 `VerifyMultiSignature` extension.
-    /// `calling_product_id` carries the same binding obligation as
-    /// [`ProductAuthority::sign_payload`].
-    async fn create_transaction(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        request: CreateTransactionAuthorityRequest,
-    ) -> Result<HostCreateTransactionResponse, AuthorityError>;
+	/// This device's X25519 encryption secret, the key behind
+	/// [`crate::platform::SessionUiInfo::device_enc_public_key`] that the
+	/// user's other devices and contacts encrypt to.
+	///
+	/// `None` when the holder has no key for this device yet, such as a paired
+	/// host before pairing.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError>;
 
-    /// Derive a product-scoped contextual alias for an explicit registered key.
-    ///
-    /// The Account Holder resolves `key_handle` from the registry and derives
-    /// the alias bound to `context`; `create_proof` derives the same alias.
-    async fn account_alias(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountGetAliasRequest>,
-    ) -> Result<HostAccountGetAliasResponse, RingVrfError>;
+	/// Issue the grants of an explicit request the caller confirmed.
+	///
+	/// The stream yields their outcomes in request order. A holder that issues
+	/// grants one at a time issues each as the stream is polled.
+	async fn allocate_grants<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		request: HostRequestResourceAllocationRequest,
+		policy: OnExistingAllowancePolicy,
+	) -> Result<
+		futures::stream::BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>,
+		AuthorityError,
+	>;
 
-    /// Create a ring-VRF proof bound to a context and message.
-    ///
-    /// Uses the request's explicit registered key, so the returned
-    /// `contextual_alias` matches `account_alias` for the same inputs.
-    async fn create_proof(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountCreateProofRequest>,
-    ) -> Result<HostAccountCreateProofResponse, RingVrfError>;
+	/// Obtain one allowance when the host has no usable grant.
+	async fn ensure_allowance(
+		&self,
+		invocation: AccountInvocation<'_>,
+		resource: AllowanceResource,
+		policy: OnExistingAllowancePolicy,
+	) -> Result<AccountGrant, AuthorityError>;
 
-    /// Register a ring-VRF key owned by the calling product.
-    async fn register_ring_vrf_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
-    ) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
+	/// Resolve the public hard subtree under the selected account holder.
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError>;
 
-    /// List registered ring-VRF keys.
-    async fn list_ring_vrf_keys(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountListRingVrfKeysRequest>,
-    ) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError>;
+	/// Sign an RFC-0023 Merlin transcript with a product account.
+	async fn sign_vrf(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountSignVrfRequest,
+	) -> Result<VrfSignature, AuthorityError>;
 
-    /// Sign bytes directly with a registered ring-VRF key.
-    async fn ring_vrf_sign(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountRingVrfSignRequest>,
-    ) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
+	/// Sign a SCALE transaction payload for a product account.
+	///
+	/// The caller confirms the request with the user first.
+	async fn sign_payload(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: SignPayloadAuthorityRequest,
+	) -> Result<HostSignPayloadResponse, AuthorityError>;
 
-    /// Ask the account authority to allocate product-scoped resources.
-    async fn allocate_resources(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-        request: HostRequestResourceAllocationRequest,
-    ) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
+	/// Sign arbitrary bytes for a product account.
+	///
+	/// Confirmed by the caller like [`AccountHolder::sign_payload`].
+	async fn sign_raw(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: SignRawAuthorityRequest,
+		watermarked: bool,
+	) -> Result<HostSignPayloadResponse, AuthorityError>;
 
-    /// Return statement-store allowance key material for the calling product.
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError>;
+	/// Build a transaction for a product account, signed unless the request
+	/// supplies its own V5 `VerifyMultiSignature` extension.
+	/// Confirmed by the caller like [`AccountHolder::sign_payload`].
+	async fn create_transaction(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: CreateTransactionAuthorityRequest,
+	) -> Result<HostCreateTransactionResponse, AuthorityError>;
 
-    /// Drop the product's cached statement-store allowance key if it is
-    /// `public_key`. Only the local signing host caches that key; the default
-    /// does nothing.
-    fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
+	/// Derive a product-scoped contextual alias for an explicit registered key.
+	///
+	/// The Account Holder resolves `key_handle` from the registry and derives
+	/// the alias bound to `context`; `create_proof` derives the same alias.
+	async fn account_alias(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountGetAliasRequest,
+	) -> Result<HostAccountGetAliasResponse, RingVrfError>;
 
-    /// Whether a preimage submission is kept in the core instead of being sent
-    /// to the Bulletin chain.
-    ///
-    /// True only for a test host that answers allowances as granted without
-    /// performing them: the Bulletin allowance it hands out was never
-    /// authorized on chain, so a real `store` would always be refused.
-    #[cfg(feature = "test-host")]
-    fn submits_preimages_locally(&self) -> bool {
-        false
-    }
+	/// Create a ring-VRF proof bound to a context and message.
+	///
+	/// Uses the request's explicit registered key, so the returned
+	/// `contextual_alias` matches `account_alias` for the same inputs.
+	async fn create_proof(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountCreateProofRequest,
+	) -> Result<HostAccountCreateProofResponse, RingVrfError>;
 
-    /// Return Bulletin allowance key material for the calling product.
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError>;
+	/// Register a ring-VRF key owned by the calling product and record it in
+	/// the registry this host reads.
+	async fn register_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+	) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
 
-    /// Evict any cached Bulletin allowance key for the product and allocate a
-    /// fresh one, increasing the existing allowance.
-    ///
-    /// Called after a submission is rejected for an exhausted/missing
-    /// allowance, where reusing the cached key would loop forever.
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError>;
+	/// Record a key the host derived from the calling product's kept
+	/// AutoSigning key, so the holder stays the only writer of registered
+	/// keys. The host itself writes only its provider choice.
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError>;
 
-    /// Sign exact statement-store proof bytes with a product-derived account.
-    async fn sign_statement_store_product_payload(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        account: ProductAccountId,
-        payload: Vec<u8>,
-    ) -> Result<[u8; 64], AuthorityError>;
+	/// List an owner's registered ring-VRF keys, keeping the registry this host reads current.
+	async fn list_ring_vrf_keys(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountListRingVrfKeysRequest,
+	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError>;
 
-    /// Derive product-scoped entropy for a connected session.
-    fn derive_entropy(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-        context: &[u8],
-    ) -> Result<[u8; 32], AuthorityError>;
+	/// Sign bytes directly with a registered ring-VRF key.
+	async fn ring_vrf_sign(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRingVrfSignRequest,
+	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
-    /// Key material for minting contact handles.
-    ///
-    /// Product-independent by construction, unlike [`Self::derive_entropy`]: one
-    /// contact must hash to the same handle in every product. Derived from the
-    /// session's root entropy source, which both roles hold and which no product
-    /// can reach — a handle keyed on anything public would be recoverable by
-    /// hashing candidate accounts.
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+	/// Sign exact statement-store proof bytes with a product-derived account.
+	async fn sign_statement_store_product_payload(
+		&self,
+		invocation: AccountInvocation<'_>,
+		account: ProductAccountId,
+		payload: Vec<u8>,
+	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Derive product-scoped entropy for a connected session.
+	fn derive_entropy(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		context: &[u8],
+	) -> Result<[u8; 32], AuthorityError>;
+
+	/// Mint and resolve contact handles under the session's root entropy source.
+	///
+	/// Handles match across products and host roles. The key stays inside
+	/// `ContactHandles`, so no product can recover contacts by hashing
+	/// candidate accounts.
+	fn contact_handles(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<super::contacts::ContactHandles, AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.
 pub fn authority_session(session: &SessionInfo) -> AuthoritySession {
-    AuthoritySession::from_session_info(session, authority_session_validation_id(session))
+	AuthoritySession::from_session_info(session, authority_session_validation_id(session))
 }
 
 /// Revalidate a pre-confirmation snapshot against the live session, returning
@@ -612,29 +744,54 @@ pub fn authority_session(session: &SessionInfo) -> AuthoritySession {
 /// user confirmation must still be the current authority session when the
 /// signature or derivation happens, otherwise the request is rejected.
 pub fn require_current_session(
-    session_state: &SessionState,
-    session: &AuthoritySession,
+	session_state: &SessionState,
+	session: &AuthoritySession,
 ) -> Result<SessionInfo, AuthorityError> {
-    let current = session_state
-        .current()
-        .ok_or(AuthorityError::Disconnected)?;
-    if authority_session_validation_id(&current) == session.validation_id {
-        Ok(current)
-    } else {
-        Err(AuthorityError::Disconnected)
-    }
+	let current = session_state.current().ok_or(AuthorityError::Disconnected)?;
+	if authority_session_validation_id(&current) == session.validation_id {
+		Ok(current)
+	} else {
+		Err(AuthorityError::Disconnected)
+	}
 }
 
 /// Opaque token identifying which concrete session a snapshot was taken from.
 pub fn authority_session_validation_id(session: &SessionInfo) -> Vec<u8> {
-    let mut id = Vec::with_capacity(67);
-    if let Some(sso) = &session.sso {
-        id.extend_from_slice(b"sso");
-        id.extend_from_slice(&sso.session_id_own);
-        id.extend_from_slice(&sso.session_id_peer);
-    } else {
-        id.extend_from_slice(b"local");
-        id.extend_from_slice(&session.public_key);
-    }
-    id
+	let mut id = Vec::with_capacity(67);
+	if let Some(sso) = &session.sso {
+		id.extend_from_slice(b"sso");
+		id.extend_from_slice(&sso.session_id_own);
+		id.extend_from_slice(&sso.session_id_peer);
+	} else {
+		id.extend_from_slice(b"local");
+		id.extend_from_slice(&session.public_key);
+	}
+	id
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// An SSO answer is only a string, so a chain the signing host could not
+	/// reach must survive the trip to reach the product as `ChainUnavailable`,
+	/// while every other failure reads back as it was sent.
+	#[test]
+	fn a_signing_host_failure_keeps_its_kind_through_the_sso_answer() {
+		let failures = [
+			AuthorityError::ChainUnavailable {
+				reason: "cannot select a metadata block".to_string(),
+			},
+			AuthorityError::Rejected,
+			AuthorityError::Unknown { reason: "the payload did not decode".to_string() },
+		];
+
+		let relayed: Vec<AuthorityError> = failures
+			.iter()
+			.cloned()
+			.map(|failure| SsoRemoteResponseError::Failure(failure.into_sso_reason()).into())
+			.collect();
+
+		assert_eq!(relayed, failures);
+	}
 }

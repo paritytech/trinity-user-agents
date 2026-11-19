@@ -62,19 +62,20 @@ common cause of the codegen ↔ snapshot mismatch.
 
 GitHub Actions in `.github/workflows/ci.yml` runs the same chain on
 every PR. A green CI run is sufficient evidence for the static layers
-(rust, codegen-drift, ios-bindings, ios-swift, ts-client, playground);
+(rust, codegen-drift, ios-bindings, the iOS app's package check,
+ts-client, playground);
 the e2e job runs the Playwright suite from the `e2e-dotli` skill against
 a freshly built dotli host.
 
 The `ios-bindings` job regenerates the Swift bindings, which proves
 every UniFFI-exposed type still has a binding representation; nothing is
-committed to diff against. The `ios-swift` job generates the package's
-Swift sources and container resource, then compiles the package and its
-test target on macOS, which is what catches a hand-written conformer
-that misses a new protocol requirement. Both compile gates are
-path-filtered from one place: the `changes` job in `ci.yml` publishes
-`sdk_swift` and `sdk_kotlin`, and each gated job reads its output, so a
-job shows as skipped where it does not apply.
+committed to diff against. The `package` job in `ios-app.yml` compiles
+the package and its test target on macOS against the iOS core the app
+jobs share, which is what catches a hand-written conformer that misses a
+new protocol requirement. Both compile gates are path-filtered from one
+place: the `changes` job in `ci.yml` evaluates `.github/hosts.json` into
+`package_swift` and `package_kotlin`, and each gated job reads its
+output, so a job shows as skipped where it does not apply.
 
 The Kotlin side is covered too: `android-bindings` compiles
 `TrUAPIHost.kt` against freshly generated bindings. Still uncovered:

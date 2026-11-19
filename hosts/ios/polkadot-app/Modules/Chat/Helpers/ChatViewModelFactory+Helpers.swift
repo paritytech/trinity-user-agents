@@ -4,7 +4,7 @@ import SubstrateSdk
 import UIKit.UIImage
 
 extension ChatMetadata {
-    var chatContactInfo: ChatHeaderConfiguration {
+    func chatContactInfo(icon: AnyImageViewModel?) -> ChatHeaderConfiguration {
         let avatarViewModel: AvatarViewModel = {
             if let image = peerMetadata.icon.image {
                 return .image(image)
@@ -14,18 +14,11 @@ extension ChatMetadata {
             return .colored(text: prefix, colorSeed: chatId.colorSeed)
         }()
 
-        let info: String? =
-            switch peerMetadata.contactSource {
-            case .chat:
-                nil
-            case .game(_, nil):
-                String(localized: .contactSourceDescriptionGameGeneric)
-            case let .game(_, date):
-                date?.formatted(.gameConnectionInfo)
-            }
+        let info: String? = nil
 
         return ChatHeaderConfiguration(
             avatarViewModel: avatarViewModel,
+            icon: icon,
             username: peerMetadata.name,
             additionalInfo: info
         )
@@ -71,7 +64,8 @@ private extension IncomingTransferState.Status {
         switch self {
         case .detecting: .detecting
         case .claiming: .claiming
-        case .claimed: .claimed
+        case .claimed,
+             .claimedFinalized: .claimed
         case .failed: .failed
         }
     }
@@ -81,8 +75,10 @@ private extension OutgoingTransferState.Status {
     var viewState: ChatTransferMessageConfiguration.OutgoingState {
         switch self {
         case .sending: .sending
-        case .sent: .sent
-        case .claimed: .claimed
+        case .sent,
+             .sentFinalized: .sent
+        case .claimed,
+             .claimedFinalized: .claimed
         case .failed: .failed
         }
     }

@@ -33,6 +33,9 @@ ws = [
     "dep:jsonrpsee-client-transport",
     "dep:jsonrpsee-core",
     "dep:tokio",
+    # `wss` on native targets, with the same roots the light client's tunnel uses; see `tls`.
+    "dep:tokio-rustls",
+    "dep:webpki-roots",
     "dep:js-sys",
     "dep:send_wrapper",
     "dep:wasm-bindgen",
@@ -50,6 +53,7 @@ smoldot = [
     "dep:smoldot",
     "dep:smoldot-light",
     "dep:thiserror",
+    "dep:trinity-stack",
     "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:web-sys",
@@ -69,11 +73,13 @@ cli = ["uniffi", "uniffi/cli"]
 
 [dependencies]
 async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["display", "error"] }
+derive_more = { workspace = true, features = ["display", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+# Opens a stack's descriptor and checks the light specs handed with it; see `stack`.
+trinity-stack = { path = "../trinity-stack", optional = true }
 tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
 url = { workspace = true }
 
@@ -82,7 +88,9 @@ url = { workspace = true }
 # copy of that global, so the sink lives here (see logging_native). Only that
 # module uses it, and only off wasm, so it arrives with the light client.
 log = { workspace = true, features = ["std"], optional = true }
-jsonrpsee-client-transport = { workspace = true, features = ["ws", "tls-rustls-platform-verifier"], optional = true }
+# `tls` although the TLS is this crate's own (see `ws`): the transport checks the
+# URL it is handed and accepts `wss` only with that feature on.
+jsonrpsee-client-transport = { workspace = true, features = ["ws", "tls"], optional = true }
 jsonrpsee-core = { workspace = true, features = ["client"], optional = true }
 tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"], optional = true }
 # Portable timer: `snapshot` deadlines the same way on native and on wasm.
@@ -123,8 +131,8 @@ web-sys = { workspace = true, features = [
 web-time = { workspace = true, optional = true }
 
 [dev-dependencies]
-# Derives a bundled spec's genesis hash so the catalog cannot drift off it.
-blake2b_simd = { workspace = true }
+# Computes the digest a test descriptor names for a spec.
+sha2 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 jsonrpsee = { workspace = true, features = ["server"] }
@@ -141,4 +149,9 @@ required-features = ["ws", "networks"]
 # `deny` rather than `forbid`: the `uniffi` feature scopes an `allow(unsafe_code)`
 # for UniFFI's generated FFI glue (see src/lib.rs). Every other build has no unsafe.
 [lints.rust]
+missing_docs = "warn"
 unsafe_code = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"

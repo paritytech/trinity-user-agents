@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Si
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfSignature
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfTranscriptItem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.ProductSigningScreenLauncher
 import io.paritytech.polkadotapp.test_shared.any
@@ -16,6 +15,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 
 class RealAccountsProtocolSignVrfTest {
     private val signingScreenLauncher: ProductSigningScreenLauncher = mock()
@@ -33,8 +33,8 @@ class RealAccountsProtocolSignVrfTest {
         productSigningScreenLauncher = signingScreenLauncher,
     )
 
-    private val callingProduct = ProductId.fromStoredValue("lottery.dot")
-    private val account = ProductAccountId("lottery.dot", DerivationIndex32.default())
+    private val callingProduct = ProductId.parse("lottery.dot").getOrThrow()
+    private val account = ProductAccountId(ProductId.parse("lottery.dot").getOrThrow(), DerivationIndex32.default())
     private val label = "pop:airdrop".toByteArray()
 
     @Test

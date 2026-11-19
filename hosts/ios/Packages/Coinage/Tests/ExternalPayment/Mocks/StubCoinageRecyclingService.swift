@@ -5,6 +5,7 @@ import os
 
 /// Records recycle submissions per group and answers `observeRecycling` from a script per group.
 /// Groups listed in `existingGroups` behave as already registered: the submission is skipped.
+/// Once held, a recorded submission returns only on cancellation, as a mint waiting on the installation backup.
 actor StubCoinageRecyclingService: CoinageRecyclingServicing {
     struct Submission: Equatable {
         let coins: [Coin]
@@ -19,9 +20,20 @@ actor StubCoinageRecyclingService: CoinageRecyclingServicing {
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
+    private let submitted = AsyncCurrentValueSubject<[Submission]>([])
+    private let isHeld = AsyncCurrentValueSubject<Bool>(false)
 
     nonisolated var submissions: [Submission] {
         state.withLock { $0.submissions }
+    }
+
+    /// Every submission so far; replays the current list.
+    nonisolated func subscribeSubmissions() -> AnyAsyncSequence<[Submission]> {
+        submitted.eraseToAnyAsyncSequence()
+    }
+
+    nonisolated func hold() {
+        isHeld.send(true)
     }
 
     nonisolated func setError(_ error: Error?) {
@@ -39,13 +51,20 @@ actor StubCoinageRecyclingService: CoinageRecyclingServicing {
 
     @discardableResult
     func recycleCoins(_ coins: [Coin], groupId: CoinageTxGroupId?) async throws -> Int {
-        try state.withLock { state in
+        let recorded: [Submission]? = try state.withLock { state in
             if let error = state.error { throw error }
-            if let groupId, state.existingGroups.contains(groupId) { return 0 }
+            if let groupId, state.existingGroups.contains(groupId) { return nil }
             state.submissions.append(Submission(coins: coins, groupId: groupId))
             if let groupId { state.existingGroups.insert(groupId) }
-            return coins.count
+            return state.submissions
         }
+        guard let recorded else { return 0 }
+
+        submitted.send(recorded)
+        for await held in isHeld where !held {
+            break
+        }
+        return coins.count
     }
 
     nonisolated func observeRecycling(groupId: CoinageTxGroupId) -> AnyAsyncSequence<RecyclingStatus> {
