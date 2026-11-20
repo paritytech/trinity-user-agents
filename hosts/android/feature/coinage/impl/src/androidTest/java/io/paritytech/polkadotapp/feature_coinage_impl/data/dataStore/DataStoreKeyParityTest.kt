@@ -14,7 +14,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 // Pinned against @polkadot/util-crypto (mnemonicToMiniSecret → sr25519PairFromSeed → keyFromPath), which is what iOS
-// has to agree with. sr25519 needs its native library, so this runs on a device rather than the JVM.
+// has to agree with. polkadot-js returns the secret with the scalar multiplied by 8; DATA_STORE_SECRET is that scalar
+// divided by 8, followed by the nonce. sr25519 needs its native library, so this runs on a device rather than the JVM.
 @RunWith(AndroidJUnit4::class)
 class DataStoreKeyParityTest {
     @Test
@@ -43,9 +44,9 @@ class DataStoreKeyParityTest {
         const val MNEMONIC = "bottom drive obey lake curtain smoke basket hold race lonely fit walk"
 
         const val DATA_STORE_PUBLIC_KEY = "0x82fde43d07766255566803c486f9427cfb7026328a3d87cddd34b362acbdb54d"
-        const val DATA_STORE_SECRET = "0xf88810d0da504a86f719c0c85cac296eb9d5d0e3e51d54b53cf15d96f6084849" +
+        const val DATA_STORE_SECRET = "0x1f11025a1b4ac9f03e0318998b35c52db71a7abcbc83aa9627becbd21e012909" +
             "2dddcd798787957c4b5d3b960b4b78d0c925adeb662079c192c01ba13c4f9abe"
-        const val ENCRYPTION_KEY = "0xa217d0089ea2bc908772a8df8ab8f4aeb122eb1f41bbd26b6aff9c9386143f2a"
+        const val ENCRYPTION_KEY = "0xf7453a63782c0b1469c928ed8579a3c0dc32c9a9cc3449fe4ce85ed79b2777b6"
 
         const val COIN_PATH = "//coinage//4294967295//0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a/7"
         const val COIN_PUBLIC_KEY = "0x4eced11d18ac64e54559cc45eb79415ca66d9354e74394dc8729b69a0fbd9107"

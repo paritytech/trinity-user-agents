@@ -22,3 +22,18 @@ fun String.withBold(text: String): AnnotatedString = remember(this, text) {
         )
     }
 }
+
+@Composable
+fun String.withSpanStyle(style: SpanStyle, vararg parts: String): AnnotatedString = remember(this, style, *parts) {
+    buildAnnotatedString {
+        append(this@withSpanStyle)
+
+        parts.forEach { part ->
+            var start = indexOf(part)
+            while (start >= 0) {
+                addStyle(style, start, start + part.length)
+                start = indexOf(part, start + part.length)
+            }
+        }
+    }
+}
