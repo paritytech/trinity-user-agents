@@ -26,9 +26,16 @@ public struct WidgetImageResolver: Sendable {
         self.load = load
     }
 
+    /// Inline bytes are the picture itself, so they are decoded here rather than handed to `load`.
     public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> UIImage? {
-        await load(source)
+        if case let .inline(bytes) = source {
+            return await Task.detached { UIImage(downsampling: bytes) }.value
+        }
+        return await load(source)
     }
+
+    /// Draws inline images only, for a tree shown before anything can locate its other images.
+    public static let inlineOnly = WidgetImageResolver { _ in nil }
 }
 
 private struct WidgetImageResolverKey: EnvironmentKey {
@@ -121,12 +128,7 @@ private struct NodeImageView: View {
             // redrawn face with the same bytes does not decode them again.
             .task(id: props.source) {
                 picture = .loading
-                let image =
-                    if case let .inline(bytes) = props.source {
-                        await Task.detached { UIImage(downsampling: bytes) }.value
-                    } else {
-                        await resolveImage?(props.source)
-                    }
+                let image = await (resolveImage ?? .inlineOnly)(props.source)
                 // A load the source has moved on from must not draw over the new one.
                 guard !Task.isCancelled else { return }
 

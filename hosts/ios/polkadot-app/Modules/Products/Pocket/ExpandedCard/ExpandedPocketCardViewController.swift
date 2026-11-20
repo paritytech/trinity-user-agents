@@ -44,7 +44,12 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
 
         let turn = PocketCardTurn()
         self.turn = turn
-        let face = UIHostingController(rootView: PocketOpenedCardView(card: card, turn: turn))
+        let face = UIHostingController(rootView: PocketOpenedCardView(
+            card: card,
+            turn: turn,
+            onBackChanged: { turn.backChanged(available: $0) },
+            onTurnOver: { turn.turnOver() }
+        ))
         face.view.backgroundColor = .clear
         face.safeAreaRegions = []
         self.face = face

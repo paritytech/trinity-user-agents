@@ -13,7 +13,10 @@ struct PocketOpenedCardView: View {
     static var height: CGFloat { PocketCardSize.height + verticalInset * 2 }
 
     let card: PocketCardViewModel
+    /// Read only: the screen showing the card is the one that turns it.
     let turn: PocketCardTurn
+    let onBackChanged: @MainActor (_ available: Bool) -> Void
+    let onTurnOver: @MainActor () -> Void
     let pocket: ProductPocketService? = .current
 
     @State private var back: CustomMessageWidgetNode?
@@ -36,7 +39,7 @@ struct PocketOpenedCardView: View {
         .accessibilityElement(children: .contain)
         .accessibilityActions {
             if turn.canTurn {
-                Button(String(localized: .Products.pocketCardTurnOver)) { turn.turnOver() }
+                Button(String(localized: .Products.pocketCardTurnOver)) { onTurnOver() }
             }
         }
         .padding(.horizontal, PocketCardSize.sideMargin)
@@ -51,7 +54,7 @@ struct PocketOpenedCardView: View {
 
         for await node in pocket.backFaces(for: card.key) {
             back = node?.toWidgetNode(resolver: resolver)
-            turn.backChanged(available: back != nil)
+            onBackChanged(back != nil)
         }
     }
 }
