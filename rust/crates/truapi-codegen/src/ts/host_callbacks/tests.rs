@@ -167,3 +167,41 @@ fn wasm_adapter_answers_nothing_for_a_missing_method_whose_default_answers_nothi
 		]
 	);
 }
+
+#[test]
+fn host_callbacks_encode_and_decode_the_latest_registration_status() {
+	let status = "ChatRoomRegistrationStatus";
+	let status_type = |version: u8, kind| TypeDef {
+		name: format!("V{version:02}{status}"),
+		module_path: vec!["truapi".into(), format!("v{version:02}"), "chat".into()],
+		generic_params: Vec::new(),
+		kind,
+		docs: None,
+	};
+	let variants = ["New", "Exists"].map(|name| VariantDef {
+		name: name.into(),
+		fields: VariantFields::Unit,
+		codec_index: None,
+		docs: None,
+	});
+	let api = ApiDefinition {
+		types: vec![
+			status_type(2, TypeDefKind::Enum(variants.into())),
+			status_type(1, TypeDefKind::Alias(TypeRef::Primitive("u8".into()))),
+		],
+		traits: Vec::new(),
+		public_trait_order: Vec::new(),
+		framework_types: Vec::new(),
+	};
+	let mut method = method_with_return(named(status));
+	method.name = "create_chat_room".into();
+	method.params.clear();
+	let platform = platform_with_method(method);
+	let directory = tempfile::tempdir().unwrap();
+	let output = directory.path().to_str().unwrap();
+	generate(&platform, &api, output, output).unwrap();
+	let adapter = fs::read_to_string(directory.path().join("host-callbacks-adapter.ts")).unwrap();
+	assert!(adapter.contains("ChatRoomRegistrationStatus.enc(await "), "{adapter}");
+	let bridge = crate::rust::generate_wasm_bridge(&platform, &api).unwrap();
+	assert!(bridge.contains("decode_bytes::<latest::ChatRoomRegistrationStatus>"), "{bridge}");
+}

@@ -39,8 +39,10 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 			cache_grant(&platform, "peopl.dot", "{}");
 			let (_, authority) =
 				signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-			futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-				.unwrap();
+			futures::executor::block_on(
+				authority.activate_local_session(RootEntropy::new(ENTROPY)),
+			)
+			.unwrap();
 			let session = authority.accounts().current_session().unwrap();
 			register_full_person_key(&authority, &session, &full_person_ring_location());
 			let owner =
