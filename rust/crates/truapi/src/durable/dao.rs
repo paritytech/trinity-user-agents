@@ -11,7 +11,8 @@ use rusqlite::{
 use subxt::utils::H256;
 
 pub use dependency::{
-	CascadingFailure, abandon_cascading, cascading_failures, insert_dependency,
+	CascadingFailure, abandon_cascading, cascading_failures, has_unsettled_dependency,
+	insert_dependency,
 	observe_released_domains, registered_domain, released_submissions,
 };
 use dependency::released_dependencies;

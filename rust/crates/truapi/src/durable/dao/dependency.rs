@@ -127,6 +127,19 @@ fn dependency_record_from_row(
 	Ok(DependencyStatusRecord { id, status })
 }
 
+const HAS_UNSETTLED_DEPENDENCY: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx_dependency
+    JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
+    WHERE durable_tx_dependency.tx_id = :tx_id
+    AND dependency.status IN ('PENDING_SUBMISSION', 'PENDING'))";
+
+/// Whether some dependency of `dependent` has not taken effect yet: it
+/// waits to be built, or was submitted with no verdict.
+pub fn has_unsettled_dependency(conn: &Connection, dependent: DurableTxId) -> Result<bool, DbError> {
+	let mut stmt = conn.prepare_cached(HAS_UNSETTLED_DEPENDENCY)?;
+	let unsettled = stmt.query_row(named_params! { ":tx_id": dependent.0 }, |row| row.get(0))?;
+	Ok(unsettled)
+}
+
 /// A waiting row that a failed dependency marked `CASCADE` fails with it.
 pub struct CascadingFailure {
 	/// The waiting row.
