@@ -66,7 +66,7 @@ pub use funding_page::{
 };
 pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
-pub use product_archive::{ArchiveFile, ArchiveReader, archive_file};
+pub use product_archive::{ArchiveFile, archive_files};
 pub use product_source::{ProductSource, product_source};
 pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};

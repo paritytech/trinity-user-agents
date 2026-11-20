@@ -1,22 +1,14 @@
 //! Serving a published product's archive once the host has downloaded it:
-//! the host checks files through an [`ArchiveReader`], and the core decides
-//! which file answers a request and the MIME type it is served with.
+//! the core lists the files that may answer a request, in order, with the
+//! MIME type each is served with, and the host serves the first one it has.
 
 /// The page a directory is served by.
 const INDEX: &str = "index.html";
 
-/// Read access to a downloaded archive's files by `/`-separated path.
-#[uniffi::export(callback_interface)]
-pub trait ArchiveReader: Send + Sync {
-	/// Whether a regular file is at `path`: `false` for a directory, so a
-	/// directory is served by its `index.html` instead.
-	fn exists(&self, path: String) -> bool;
-}
-
-/// The file that answers a request into an archive.
+/// A file that may answer a request into an archive.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct ArchiveFile {
-	/// Its path, for the reader.
+	/// Its `/`-separated path.
 	pub path: String,
 	/// The MIME type it is served with.
 	pub mime: String,
@@ -30,91 +22,49 @@ fn join(root: &str, rest: &str) -> String {
 	}
 }
 
-/// The file in the archive at `root` that answers `request_path`.
+/// The files in the archive at `root` that may answer `request_path`, in
+/// order: the host serves the first that is a regular file, so a directory
+/// is skipped for its `index.html`, and answers a 404 when none is.
 ///
-/// A `root` that is itself a file is a single-file archive and answers
-/// everything. Otherwise the root's `index.html` for an empty path, the file
-/// itself, a directory's `index.html` for a last segment without an
-/// extension, and for a main-frame navigation the root's `index.html`, so an
-/// App's own routes load it. `None` for a path that climbs out with `..`, or
-/// when nothing matches, which the host answers with a 404.
+/// `root` itself comes first, as a single-file archive answers everything.
+/// Then the root's `index.html` for an empty path, the file itself, a
+/// directory's `index.html` for a last segment without an extension, and
+/// for a main-frame navigation the root's `index.html`, so an App's own
+/// routes load it. A path that climbs out with `..` gets `root` alone.
 #[uniffi::export]
-pub fn archive_file(
-	root: String,
-	request_path: String,
-	is_main_frame: bool,
-	reader: Box<dyn ArchiveReader>,
-) -> Option<ArchiveFile> {
-	let path = archive_path(&root, &request_path, is_main_frame, reader.as_ref())?;
-	Some(ArchiveFile { mime: mime_for(&path).to_string(), path })
+pub fn archive_files(root: String, request_path: String, is_main_frame: bool) -> Vec<ArchiveFile> {
+	archive_paths(&root, &request_path, is_main_frame)
+		.into_iter()
+		.map(|path| ArchiveFile { mime: mime_for(&path), path })
+		.collect()
 }
 
-fn archive_path(
-	root: &str,
-	request_path: &str,
-	is_main_frame: bool,
-	reader: &dyn ArchiveReader,
-) -> Option<String> {
-	if reader.exists(root.to_string()) {
-		return Some(root.to_string());
-	}
+fn archive_paths(root: &str, request_path: &str, is_main_frame: bool) -> Vec<String> {
+	let mut paths = vec![root.to_string()];
 	let path = request_path.trim_matches('/');
 	let index = join(root, INDEX);
 	if path.is_empty() {
-		return reader.exists(index.clone()).then_some(index);
+		paths.push(index);
+		return paths;
 	}
 	if path.split('/').any(|segment| segment == "..") {
-		return None;
+		return paths;
 	}
 	let exact = join(root, path);
-	if reader.exists(exact.clone()) {
-		return Some(exact);
-	}
 	let last = path.rsplit('/').next().unwrap_or(path);
-	if !last.contains('.') {
-		let directory_index = join(&exact, INDEX);
-		if reader.exists(directory_index.clone()) {
-			return Some(directory_index);
-		}
+	let directory_index = (!last.contains('.')).then(|| join(&exact, INDEX));
+	paths.push(exact);
+	paths.extend(directory_index);
+	if is_main_frame {
+		paths.push(index);
 	}
-	(is_main_frame && reader.exists(index.clone())).then_some(index)
+	paths
 }
 
 /// The MIME type a file at `path` is served with, by its extension in any
-/// case; `application/octet-stream` for one not listed.
-fn mime_for(path: &str) -> &'static str {
-	let name = path.rsplit('/').next().unwrap_or(path);
-	let extension = name.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase());
-	match extension.as_deref() {
-		Some("js" | "mjs") => "text/javascript",
-		Some("css") => "text/css",
-		Some("html" | "htm") => "text/html",
-		Some("json" | "map") => "application/json",
-		Some("webmanifest") => "application/manifest+json",
-		Some("wasm") => "application/wasm",
-		Some("xml") => "application/xml",
-		Some("pdf") => "application/pdf",
-		Some("txt") => "text/plain",
-		Some("csv") => "text/csv",
-		Some("svg") => "image/svg+xml",
-		Some("png") => "image/png",
-		Some("jpg" | "jpeg") => "image/jpeg",
-		Some("gif") => "image/gif",
-		Some("webp") => "image/webp",
-		Some("avif") => "image/avif",
-		Some("ico") => "image/x-icon",
-		Some("mp4") => "video/mp4",
-		Some("webm") => "video/webm",
-		Some("mp3") => "audio/mpeg",
-		Some("ogg") => "audio/ogg",
-		Some("wav") => "audio/wav",
-		Some("woff") => "font/woff",
-		Some("woff2") => "font/woff2",
-		Some("ttf") => "font/ttf",
-		Some("otf") => "font/otf",
-		Some("eot") => "application/vnd.ms-fontobject",
-		_ => "application/octet-stream",
-	}
+/// case; `application/octet-stream` for one `mime_guess` does not know.
+fn mime_for(path: &str) -> String {
+	mime_guess::from_path(path).first_or_octet_stream().to_string()
 }
 
 #[cfg(test)]

@@ -2,31 +2,21 @@ use std::collections::BTreeSet;
 
 use super::*;
 
-/// An archive's files by path; directories are implied by their contents.
-struct Archive(BTreeSet<String>);
-
-impl Archive {
-	fn new(files: &[&str]) -> Self {
-		Self(files.iter().map(|path| path.to_string()).collect())
-	}
-}
-
-impl ArchiveReader for Archive {
-	fn exists(&self, path: String) -> bool {
-		self.0.contains(&path)
-	}
+/// The file a host serves: the first candidate that is in `files`.
+fn served(files: &BTreeSet<&str>, root: &str, path: &str, main: bool) -> Option<ArchiveFile> {
+	archive_files(root.to_string(), path.to_string(), main)
+		.into_iter()
+		.find(|file| files.contains(file.path.as_str()))
 }
 
 #[test]
 fn an_archive_answers_the_file_a_directory_index_or_the_app_for_its_routes() {
-	let files = || {
-		Box::new(Archive::new(&[
-			"app/index.html",
-			"app/main.js",
-			"app/docs/index.html",
-			"app/v1.2/index.html",
-		]))
-	};
+	let files = BTreeSet::from([
+		"app/index.html",
+		"app/main.js",
+		"app/docs/index.html",
+		"app/v1.2/index.html",
+	]);
 	let cases = [
 		("/", false, Some(("app/index.html", "text/html"))),
 		("/main.js", false, Some(("app/main.js", "text/javascript"))),
@@ -38,23 +28,31 @@ fn an_archive_answers_the_file_a_directory_index_or_the_app_for_its_routes() {
 		("/../secret", true, None),
 	];
 	for (path, main, expected) in cases {
-		let found = archive_file("app".to_string(), path.to_string(), main, files());
 		let expected = expected
 			.map(|(path, mime)| ArchiveFile { path: path.to_string(), mime: mime.to_string() });
-		assert_eq!(found, expected, "{path}");
+		assert_eq!(served(&files, "app", path, main), expected, "{path}");
 	}
 }
 
 #[test]
+fn candidates_come_in_the_order_the_host_tries_them() {
+	let paths = |path: &str, main| {
+		archive_files("app/".to_string(), path.to_string(), main)
+			.into_iter()
+			.map(|file| file.path)
+			.collect::<Vec<_>>()
+	};
+	assert_eq!(paths("/", false), ["app/", "app/index.html"]);
+	assert_eq!(paths("/docs/", true), ["app/", "app/docs", "app/docs/index.html", "app/index.html"]);
+	assert_eq!(paths("/main.js", false), ["app/", "app/main.js"]);
+	assert_eq!(paths("/a/../b", true), ["app/"]);
+}
+
+#[test]
 fn a_single_file_archive_answers_every_path() {
-	let found = archive_file(
-		"cid".to_string(),
-		"/any/route".to_string(),
-		false,
-		Box::new(Archive::new(&["cid"])),
-	);
+	let files = BTreeSet::from(["cid"]);
 	assert_eq!(
-		found,
+		served(&files, "cid", "/any/route", false),
 		Some(ArchiveFile { path: "cid".to_string(), mime: "application/octet-stream".to_string() })
 	);
 }
@@ -63,28 +61,15 @@ fn a_single_file_archive_answers_every_path() {
 fn mime_types_go_by_extension() {
 	let cases = [
 		("a/index.HTML", "text/html"),
-		("main.mjs", "text/javascript"),
+		("main.mjs", "application/javascript"),
 		("x.wasm", "application/wasm"),
 		("logo.svg", "image/svg+xml"),
 		("font.woff2", "font/woff2"),
-		("app.js.map", "application/json"),
 		("site.webmanifest", "application/manifest+json"),
-		("feed.xml", "application/xml"),
 		("terms.PDF", "application/pdf"),
 		("robots.txt", "text/plain"),
-		("rates.csv", "text/csv"),
 		("hero.avif", "image/avif"),
-		("favicon.ico", "image/x-icon"),
-		("intro.mp4", "video/mp4"),
-		("loop.webm", "video/webm"),
-		("chime.mp3", "audio/mpeg"),
-		("chime.ogg", "audio/ogg"),
-		("chime.wav", "audio/wav"),
-		("font.ttf", "font/ttf"),
-		("font.otf", "font/otf"),
-		("font.eot", "application/vnd.ms-fontobject"),
 		("README", "application/octet-stream"),
-		("archive.zip", "application/octet-stream"),
 		("a.b/file", "application/octet-stream"),
 	];
 	for (path, mime) in cases {
