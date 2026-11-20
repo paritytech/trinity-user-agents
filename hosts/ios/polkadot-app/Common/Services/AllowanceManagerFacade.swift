@@ -3,15 +3,16 @@ import Individuality
 import ChainRegistry
 import KeyDerivation
 import Products
+import SubstrateSdk
 
 // Immutable references to managers that guard their own state.
 struct AllowanceManagerFacade: @unchecked Sendable {
-    let bulletInManager: AllowanceManaging
-    let sssManager: AllowanceManaging & StatementAccountFunding
-    let smartContractManager: AllowanceManaging
+    let bulletInManager: any AllowanceManaging<AccountId>
+    let sssManager: any AllowanceManaging<StatementStoreAllowanceHolder> & StatementAccountFunding
+    let smartContractManager: any AllowanceManaging<AccountId>
     let cleanupService: AllowanceCleanupServicing
 
-    var allManagers: [AllowanceManaging] {
+    var allManagers: [any AllowanceManaging] {
         [bulletInManager, sssManager, smartContractManager]
     }
 }
@@ -37,7 +38,7 @@ extension AllowanceManagerFacade {
     }
 
     private static func makeCleanupService(
-        sssManager: AllowanceManaging,
+        sssManager: any AllowanceManaging,
         entropyManager: RootEntropyManaging = RootEntropyManager.shared,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared
     ) -> AllowanceCleanupServicing {

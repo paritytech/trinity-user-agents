@@ -540,9 +540,12 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 /// side of one SSO session.
 pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	use crate::{
-		host_logic::sso::pairing::{
-			ResponderIdentity, create_pairing_bootstrap, derive_x25519_keypair_from_entropy,
-			establish_responder_session_info, establish_sso_session_info,
+		host_logic::{
+			root_entropy::RootEntropy,
+			sso::pairing::{
+				ResponderIdentity, create_pairing_bootstrap, establish_responder_session_info,
+				establish_sso_session_info,
+			},
 		},
 		platform::{HostInfo, PairingHostConfig, PlatformInfo},
 	};
@@ -564,7 +567,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 		.unwrap()
 		.expand_to_keypair(ExpansionMode::Ed25519);
 	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso");
+		RootEntropy::new([0xAB; 16]).derive_x25519_keypair(b"sso");
 	let responder = ResponderIdentity {
 		statement_secret: statement_keypair.secret.to_bytes(),
 		statement_public_key: statement_keypair.public.to_bytes(),
