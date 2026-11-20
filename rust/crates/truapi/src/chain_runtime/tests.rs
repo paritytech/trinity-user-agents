@@ -1,5 +1,7 @@
 use super::*;
-use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+use crate::test_support::{
+	HeardAnswers, ScriptedProvider, extract_id, notification_sender, wait_for_sent,
+};
 use core::time::Duration;
 use futures::pin_mut;
 use parity_scale_codec::Encode;
@@ -2682,22 +2684,6 @@ fn a_budget_line_of_day_old_follows_keeps_every_activity() {
 	assert!(line.contains(&format!("c1003:product {activity}")), "{line}");
 }
 
-/// What a [`GenesisCheck`] heard, in order.
-#[derive(Default)]
-struct HeardAnswers(Mutex<Vec<([u8; 32], [u8; 32])>>);
-
-impl GenesisCheck for HeardAnswers {
-	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
-		self.0.lock().unwrap().push((named, answered));
-	}
-}
-
-impl HeardAnswers {
-	fn heard(&self) -> Vec<([u8; 32], [u8; 32])> {
-		self.0.lock().unwrap().clone()
-	}
-}
-
 /// A node that answers the genesis hash request with `reply`, the JSON-RPC
 /// member that follows `"id"`, and nothing else.
 fn node_answering_its_genesis_with(reply: String) -> Arc<ScriptedProvider> {
@@ -2774,6 +2760,36 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 		(heard.heard(), provider.connect_calls.load(Ordering::SeqCst)),
 		(vec![(named, named)], 1)
 	);
+}
+
+/// A host may keep a connection it leased earlier and redial underneath it, as
+/// dotli does, so a connection that passed the check can come to reach a
+/// chain that restarted. A newer connection that finds the chain wrong is the
+/// only sign of it. The earlier ones are closed, and their next user dials
+/// again and is asked.
+#[test]
+fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let asked = AtomicUsize::new(0);
+	let provider = Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		let genesis = match asked.fetch_add(1, Ordering::SeqCst) {
+			0 => named,
+			_ => answered,
+		};
+		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{}"}}"#, encode_hex(&genesis)))
+	}));
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.expect("the first connection reaches the chain");
+
+	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let earlier_closed = earlier.is_closed();
+	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert!(newer.is_err() && again.is_err(), "the restarted chain is handed out to nobody");
+	assert_eq!((earlier_closed, provider.connect_calls.load(Ordering::SeqCst)), (true, 3));
 }
 
 /// A product's runtime opens its own connections, apart from the core's. A

@@ -73,11 +73,12 @@ refresh it.
 The core asks every chain connection it opens for the chain's genesis hash
 before anything else uses the connection. A chain that gives a different hash
 from the descriptor's, as after it restarted from genesis, gets no connection:
-calls to it fail, and `stackStatus()` lists it in `mismatches`. While it is
-listed, a host with `fetchStackDescriptor` is asked for the descriptor every
-five minutes instead of every hour. A chain that cannot be reached is only
-unavailable, and so is one a light client runs: it answers from its chain
-spec, so a chain that restarted is out of its reach, not a mismatch. A
+calls to it fail, connections opened earlier for it are closed, and
+`stackStatus()` lists it in `mismatches`. While it is listed, a host with
+`fetchStackDescriptor` is asked for the descriptor every five minutes instead
+of every hour, until `restartRequired` is set. A chain that cannot be reached
+is only unavailable, and so is one a light client runs: it answers from its
+chain spec, so a chain that restarted is out of its reach, not a mismatch. A
 `WasmProductRuntime` built on its own refuses a chain with a different hash
 too, and has no status to report it in.
 

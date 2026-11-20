@@ -68,10 +68,17 @@ pub enum StatementStoreRpcClientError {
 }
 
 impl StatementStoreRpcClientError {
-	/// Whether the People chain could not be reached, so opening the client
-	/// may be tried again.
+	/// Whether the People chain could not be reached.
+	///
+	/// Opening the client may then be tried again: the node could not be
+	/// dialled, hung up, stayed silent or stayed halted.
 	pub fn is_unreachable(&self) -> bool {
-		matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
+		match self {
+			Self::Connect { error, .. } => {
+				matches!(error, ProviderError::Handshake { .. } | ProviderError::Transport { .. })
+			},
+			Self::Chain(failure) => failure.kind() == RuntimeFailureKind::Unavailable,
+		}
 	}
 }
 

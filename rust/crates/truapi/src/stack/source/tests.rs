@@ -454,23 +454,30 @@ fn a_chain_that_gives_its_own_genesis_hash_again_is_no_longer_reported() {
 
 /// The published descriptor follows the wipe, so the host is told to restart.
 /// Until it does, the core still runs the old chain, which still answers
-/// wrong.
+/// wrong. The sooner fetches have brought what they were for, so the
+/// descriptor's server is asked hourly again.
 #[test]
 fn a_mismatch_stays_reported_until_the_restart_the_newer_copy_asks_for() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	source.due_fetch(START).expect("a build copy is due at once");
 
 	serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE), START)
 		.expect("the newer copy is stored");
+	let before_it_is_stored = source.next_fetch_in(START);
 	source.record_stored();
 
 	assert_eq!(
-		source.status(),
-		StackStatus {
-			restart_required: true,
-			mismatches: vec![people_gave(TEST_STACK_WIPED_PEOPLE)],
-			..status(&bundled, Some(StackRefreshOutcome::Current))
-		}
+		(source.status(), before_it_is_stored, source.next_fetch_in(START)),
+		(
+			StackStatus {
+				restart_required: true,
+				mismatches: vec![people_gave(TEST_STACK_WIPED_PEOPLE)],
+				..status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			Some(Duration::from_secs(300)),
+			Some(Duration::from_secs(3600)),
+		)
 	);
 }

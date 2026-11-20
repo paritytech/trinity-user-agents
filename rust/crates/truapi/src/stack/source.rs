@@ -18,9 +18,9 @@ use super::{ReplaceCheck, Stack, StackError};
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
 
 /// How old a copy gets before the core fetches the descriptor again while a
-/// chain gives a different genesis hash from the one the copy names. After a
-/// wipe the operator publishes the new hashes, and until the core has them
-/// the chain is out of use.
+/// chain gives a different genesis hash from the one the copy names. An
+/// operator publishes the new hashes when the chains restart from genesis,
+/// and until the core has them the chain is out of use.
 const MISMATCH_REFRESH_MAX_AGE_SECS: u64 = 5 * 60;
 
 /// A fetch of the stack's descriptor for the host to make.
@@ -126,8 +126,8 @@ pub struct StackStatus {
 	/// Where the chains last answered differently from the descriptor the
 	/// core runs, in the descriptor's order. While there is one, a refresh
 	/// that was started fetches the descriptor every five minutes instead of
-	/// every hour. A published copy that changes a chain sets
-	/// `restart_required` as usual.
+	/// every hour, until a published copy that changes a chain sets
+	/// `restart_required`.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -282,8 +282,8 @@ impl StackSource {
 	///
 	/// Returns whether that changed [`Self::status`]. A chain the running
 	/// copy does not name changes nothing. While a chain's last answer is
-	/// wrong, [`Self::next_fetch_in`] counts to five minutes instead of an
-	/// hour.
+	/// wrong and no newer copy waits for the next start,
+	/// [`Self::next_fetch_in`] counts to five minutes instead of an hour.
 	pub fn chain_answered(&mut self, named: [u8; 32], answered: [u8; 32]) -> bool {
 		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;
@@ -317,7 +317,9 @@ impl StackSource {
 			return Some(Duration::ZERO);
 		}
 		let hourly = self.reader.due_in(&self.pointer, now_unix_seconds)?;
-		let sooner = match self.mismatches().is_empty() {
+		// A newer copy that waits for the next start is what the sooner fetch
+		// was for.
+		let sooner = match self.mismatches().is_empty() || self.next_start.is_some() {
 			true => 0,
 			false => REFRESH_MAX_AGE_SECS - MISMATCH_REFRESH_MAX_AGE_SECS,
 		};

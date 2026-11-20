@@ -236,8 +236,9 @@ impl Shared {
 		host.stack_changed(reported.clone());
 		let mut force = false;
 		loop {
-			// What a chain answered is told before the fetch it brings forward,
-			// which a host may take half a minute to answer.
+			// What a chain answered is told before the fetch it brings forward
+			// and while a fetch is out, since a host may take half a minute to
+			// answer one.
 			self.report_change(host.as_ref(), &mut reported);
 			let request = if force {
 				self.source().forced_fetch(self.now())
@@ -245,7 +246,10 @@ impl Shared {
 				self.source().due_fetch(self.now())
 			};
 			if let Some(request) = request {
-				self.fetch(host.as_ref(), request).await;
+				let mut fetch = core::pin::pin!(self.fetch(host.as_ref(), request));
+				while let Either::Right(_) = select(fetch.as_mut(), chain_answers.next()).await {
+					self.report_change(host.as_ref(), &mut reported);
+				}
 				self.report_change(host.as_ref(), &mut reported);
 			}
 			let next_fetch_in = self.source().next_fetch_in(self.now());

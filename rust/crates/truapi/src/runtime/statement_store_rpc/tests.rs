@@ -17,15 +17,13 @@ use super::{
 };
 use crate::{
 	Spawner,
-	chain_runtime::{
-		ChainRuntime, GenesisCheck, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind,
-	},
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
 	host_logic::statement_store::{
 		MAX_MATCH_ALL_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD, StatementStoreApi,
 		StatementWatchError, TopicFilter, hex_topic,
 	},
 	platform::JsonRpcConnection,
-	test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame},
+	test_support::{HeardAnswers, StubPlatform, statement_page_frame, subscribe_ack_frame},
 };
 
 const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -394,16 +392,6 @@ fn errors_pass_on_before_and_after_the_backlog() {
 	assert_eq!(batches_of(pages), expected);
 }
 
-/// What the genesis check heard, in order.
-#[derive(Default)]
-struct HeardAnswers(Mutex<Vec<([u8; 32], [u8; 32])>>);
-
-impl GenesisCheck for HeardAnswers {
-	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
-		self.0.lock().unwrap().push((named, answered));
-	}
-}
-
 /// A People node whose chain has `genesis`, and a statement store that opens
 /// its subscription connections to it with the genesis check on.
 fn checked_statement_store(
@@ -437,7 +425,7 @@ fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 	let client = block_on(statement_store.client("test"));
 
 	assert!(client.is_ok(), "{:?}", client.err());
-	assert_eq!(heard.0.lock().unwrap().clone(), vec![(PEOPLE_GENESIS, PEOPLE_GENESIS)]);
+	assert_eq!(heard.heard(), vec![(PEOPLE_GENESIS, PEOPLE_GENESIS)]);
 }
 
 /// Statement subscriptions run on connections the store opens itself, apart
@@ -464,7 +452,7 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 		.map(|request| serde_json::from_str::<serde_json::Value>(request).unwrap()["method"].take())
 		.collect();
 	assert_eq!(
-		(kind, heard.0.lock().unwrap().clone(), asked, pooled.connects()),
+		(kind, heard.heard(), asked, pooled.connects()),
 		(
 			Some(RuntimeFailureKind::HostFailure),
 			vec![(PEOPLE_GENESIS, WIPED_PEOPLE)],

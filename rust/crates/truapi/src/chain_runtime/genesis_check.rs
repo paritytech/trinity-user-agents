@@ -7,8 +7,9 @@
 /// connection, and hands out only a connection whose chain gives the hash it
 /// was opened for.
 pub trait GenesisCheck: Send + Sync {
-	/// A connection opened for the chain `named` reached a chain whose
-	/// genesis hash is `answered`. Not called for a chain that gave no hash,
-	/// and may be called from several connections at once.
+	/// A connection opened for `named` reached a chain with genesis hash `answered`.
+	///
+	/// Not called for a chain that gave no hash, and may be called from
+	/// several connections at once.
 	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]);
 }

@@ -139,6 +139,15 @@ impl Started {
 		self.timer.advance(by);
 	}
 
+	/// Waits until the host was asked for its `fetches`-th fetch.
+	fn wait_for_fetches(&self, fetches: usize) {
+		let deadline = Instant::now() + ANSWER_WAIT;
+		while self.fetches.load(Ordering::SeqCst) < fetches {
+			assert!(Instant::now() < deadline, "the host was not asked for fetch {fetches}");
+			std::thread::yield_now();
+		}
+	}
+
 	/// Waits until the refresh loop has started its `sleeps`-th wait.
 	fn wait_for_sleeps(&self, sleeps: usize) {
 		let deadline = Instant::now() + ANSWER_WAIT;
@@ -549,15 +558,30 @@ fn a_chain_that_restarted_is_reported_before_the_fetch_it_brings_forward() {
 	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
 	let once_told = started.next_status();
 	// The host never answers this fetch, so its timeout is the next wait.
+	started.wait_for_fetches(2);
 	started.wait_for_sleeps(4);
 
 	assert_eq!(
-		(
-			once_told.mismatches,
-			started.fetches.load(Ordering::SeqCst),
-			started.timer.remaining().last(),
-		),
-		(people_gave(TEST_STACK_WIPED_PEOPLE), 2, Some(&FETCH_TIMEOUT))
+		(once_told.mismatches, started.timer.remaining().last()),
+		(people_gave(TEST_STACK_WIPED_PEOPLE), Some(&FETCH_TIMEOUT))
+	);
+}
+
+/// At start the loop is fetching while the core's services open their first
+/// connections. A chain found wrong then is told while the fetch is still
+/// out, not once a hung fetch has timed out.
+#[test]
+fn a_chain_found_wrong_during_a_fetch_is_reported_while_it_is_out() {
+	let started = start(Arc::default(), vec![]);
+	let _at_start = started.next_status();
+	started.wait_for_fetches(1);
+
+	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
+	let during_the_fetch = started.next_status();
+
+	assert_eq!(
+		(during_the_fetch.mismatches, during_the_fetch.last_refresh),
+		(people_gave(TEST_STACK_WIPED_PEOPLE), None)
 	);
 }
 
