@@ -23,9 +23,9 @@ pub struct ContactHandle {
 pub enum ContactPickOutcome {
 	/// The user chose someone.
 	///
-	/// `handle` is the same value for this person in every product, and on every
-	/// host of this user. It is not an address and cannot be turned into one:
-	/// the core resolves it when it builds a transaction, so a product can name
+	/// `handle` is the same value for this person on every host of this user,
+	/// and a different one in every other product. It is not an address and cannot be turned into
+	/// one: the core resolves it when it builds a transaction, so a product can name
 	/// a recipient it never learns the account of.
 	Picked {
 		/// Stable pseudonym for the chosen contact.

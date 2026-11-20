@@ -2495,13 +2495,14 @@ pub trait ProductOperations: Send + Sync {
 ///
 /// A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
 /// being its 32 raw bytes. The host holds the accounts, so it is the one that
-/// can match: hash each contact's account under `handle_key`, or keep that hash
-/// as an indexed column for the session, and look the handles up.
+/// can match: hash each contact's account under `handle_key` and look the
+/// handles up. The key differs per product and per session, so a host that
+/// keeps the hashes keeps them per key.
 #[derive(Clone, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostContactLookup {
-	/// The key every handle here was minted under. Per session, and never
-	/// given to a product.
+	/// The key every handle here was minted under. Per session and product,
+	/// and never given to a product.
 	pub handle_key: Bytes32,
 	/// The handles to resolve, in the order the answer must follow.
 	pub handles: Vec<Bytes32>,
