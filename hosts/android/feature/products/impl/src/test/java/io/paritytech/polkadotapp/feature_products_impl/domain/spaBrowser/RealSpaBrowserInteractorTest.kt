@@ -17,6 +17,8 @@ class RealSpaBrowserInteractorTest {
         chatRoomRepository = mockk(),
         sharingManager = sharingManager,
         dotNsTldProvider = mockk(),
+        productUpdater = mockk(),
+        servingHostResolver = mockk(),
     )
 
     @Test
