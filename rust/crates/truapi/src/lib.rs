@@ -485,8 +485,9 @@ cfg_select! {
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use chain::{
-			EvmContractCaller, EvmContractError, ExtrinsicBuilder, ExtrinsicService,
-			PreparedEvmTransaction, RuntimeApiCaller,
+			DispatchOutcome, EvmContractCaller, EvmContractError, ExtrinsicBuildError,
+			ExtrinsicBuilder, ExtrinsicService, MortalExtrinsic, Mortality, PreparedEvmTransaction,
+			RuntimeApiCaller, WatchEvent,
 		};
 		pub use host_core::{
 			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
