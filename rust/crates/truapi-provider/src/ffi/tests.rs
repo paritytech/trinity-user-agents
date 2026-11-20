@@ -478,6 +478,15 @@ impl RecordingStore {
 			None => Ok(()),
 		}
 	}
+
+	fn loads(&self) -> usize {
+		self.calls
+			.lock()
+			.expect("not poisoned")
+			.iter()
+			.filter(|(_, blob)| blob.is_none())
+			.count()
+	}
 }
 
 #[async_trait::async_trait]
@@ -521,6 +530,93 @@ fn an_undeclared_storage_error_converts_and_is_bounded() {
 
 	assert_eq!(reason.chars().count(), CLOSE_REASON_MAX_CHARS);
 	assert!(reason.starts_with("HEAD"), "the bound keeps the head");
+}
+
+/// smoldot stops a chain when its last connection closes, so a host that
+/// reconnects later, say on returning from background, must get the stored
+/// state again rather than a warp sync from the checkpoint.
+#[test]
+fn each_connect_to_a_stopped_chain_reads_the_store() {
+	let store = RecordingStore::new(None);
+	let provider = ChainProvider::with_storage(store.clone());
+
+	let mut loads_per_connect = Vec::new();
+	for _ in 0..2 {
+		let (listener, _messages, _closed) = Collector::new();
+		let connection = provider
+			.connect(CATALOG_RELAY.to_vec(), listener)
+			.expect("the catalog relay connects");
+		loads_per_connect.push(store.loads());
+		connection.disconnect();
+	}
+
+	assert_eq!(loads_per_connect, vec![1, 2]);
+}
+
+/// A chain the light client is running cannot take a blob, so a second
+/// connection to it reads nothing.
+#[test]
+fn a_connect_to_a_running_chain_reads_nothing() {
+	let store = RecordingStore::new(None);
+	let provider = ChainProvider::with_storage(store.clone());
+
+	let (first, _first_messages, _first_closed) = Collector::new();
+	let (second, _second_messages, _second_closed) = Collector::new();
+	let _first = provider.connect(CATALOG_RELAY.to_vec(), first).expect("connects");
+	let _second = provider.connect(CATALOG_RELAY.to_vec(), second).expect("connects");
+
+	assert_eq!(store.loads(), 1);
+}
+
+/// A store that fails costs the warm start, not the connection.
+#[test]
+fn a_failing_store_still_connects() {
+	let provider =
+		ChainProvider::with_storage(RecordingStore::new(Some("disk unavailable".into())));
+	let (listener, _messages, _closed) = Collector::new();
+
+	provider
+		.connect(CATALOG_RELAY.to_vec(), listener)
+		.expect("the chain connects cold");
+}
+
+/// `connect` blocks its calling thread while the store is read, so a store
+/// that waits on that thread never answers. The connect must give up on it
+/// rather than block forever.
+#[test]
+fn a_store_that_never_answers_delays_the_connect_instead_of_blocking_it() {
+	struct SilentStore;
+
+	#[async_trait::async_trait]
+	impl StorageClient for SilentStore {
+		async fn load(
+			&self,
+			_genesis_hash: [u8; 32],
+		) -> Result<Option<String>, StorageClientError> {
+			futures::future::pending().await
+		}
+
+		async fn save(
+			&self,
+			_genesis_hash: [u8; 32],
+			_blob: String,
+		) -> Result<(), StorageClientError> {
+			futures::future::pending().await
+		}
+	}
+
+	let provider = ChainProvider::with_storage(Arc::new(SilentStore));
+	let (listener, _messages, _closed) = Collector::new();
+
+	let (done, finished) = channel();
+	std::thread::spawn(move || {
+		let _ = done.send(provider.connect(CATALOG_RELAY.to_vec(), listener).map(|_| ()));
+	});
+
+	finished
+		.recv_timeout(Duration::from_secs(30))
+		.expect("connect returns once the store deadline passes")
+		.expect("the chain connects cold");
 }
 
 /// Foreign lifecycle listener stand-in.
