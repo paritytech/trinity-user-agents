@@ -10,7 +10,7 @@ extension ProductsRouting {
             return
         }
 
-        if !present(view: view) {
+        if !present(view: view, onUndelivered: { context.deliverRejected() }) {
             context.deliverRejected()
         }
     }

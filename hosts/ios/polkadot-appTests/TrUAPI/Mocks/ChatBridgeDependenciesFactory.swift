@@ -50,7 +50,4 @@ private struct InertHostProvider: ProductHostProviding {
     func page(navigationDestination _: String) -> ProductPage? { nil }
     func resolveHost(label _: String) async throws -> ProductHost? { nil }
     func resolveHost(rawString _: String) async throws -> ProductHost? { nil }
-    func resolvePage(destination: String) async throws -> ProductPage {
-        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
-    }
 }

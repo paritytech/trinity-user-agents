@@ -1,5 +1,6 @@
 import UIKit
 import PolkadotUI
+import TrUAPIHost
 
 @MainActor
 final class MainTabBarPresenter {
@@ -55,6 +56,25 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
+    func didReceive(fundingService: FundingServiceProtocol) {
+        wireframe.attachFunding(service: fundingService, view: view)
+    }
+
+    func didReceive(fundingEvent: FundingEvent) {
+        switch fundingEvent {
+        case let .presentationRequested(entry):
+            wireframe.presentFunding(entry)
+        case let .frameRequested(request):
+            openWhenOnScreen(request)
+        case let .presentFrame(frame):
+            wireframe.presentProviderFrame(frame)
+        case let .frameClosed(entryId):
+            wireframe.closeProviderFrames(entryId: entryId)
+        case let .providerNotWorking(providerId):
+            wireframe.showProviderNotWorking(providerId)
+        }
+    }
+
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool) {
         wireframe.showPaymentsSetupNotice(isVisible: isWaiting)
     }
@@ -104,5 +124,20 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
             )
         }
         view?.showProductGamePill(viewModel)
+    }
+}
+
+private extension MainTabBarPresenter {
+    /// Opens the screen a provider asked for at once while its session is on
+    /// screen, and otherwise after the user taps the notice about it. A
+    /// closed notice leaves the screen waiting in the core.
+    func openWhenOnScreen(_ request: FundingFrameRequest) {
+        if wireframe.isShowingFunding(entryId: request.entryId) {
+            interactor.openProviderFrame(request)
+        } else {
+            wireframe.showProviderFrameNotice(for: request) { [interactor] in
+                interactor.openProviderFrame(request)
+            }
+        }
     }
 }

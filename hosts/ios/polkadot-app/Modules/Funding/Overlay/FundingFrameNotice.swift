@@ -7,7 +7,9 @@ import UIKit
 /// that is not on screen, and opens it on Show.
 @MainActor
 protocol FundingFrameNoticePresenting: AnyObject {
-    func show(brand: FundingProviderBrand, onShow: @escaping () -> Void)
+    /// Shows the notice in place of any other; `onDismiss` runs when the user
+    /// closes it without Show.
+    func show(brand: FundingProviderBrand, onShow: @escaping () -> Void, onDismiss: @escaping () -> Void)
     func hide()
 }
 
@@ -20,7 +22,7 @@ final class FundingFrameNoticePresenter: FundingFrameNoticePresenting {
         self.application = application
     }
 
-    func show(brand: FundingProviderBrand, onShow: @escaping () -> Void) {
+    func show(brand: FundingProviderBrand, onShow: @escaping () -> Void, onDismiss: @escaping () -> Void) {
         guard let windowScene = foregroundWindowScene() else { return }
 
         let notice = window ?? TopNoticeWindow(windowScene: windowScene)
@@ -31,7 +33,10 @@ final class FundingFrameNoticePresenter: FundingFrameNoticePresenting {
                 self?.hide()
                 onShow()
             },
-            onDismiss: { [weak self] in self?.hide() }
+            onDismiss: { [weak self] in
+                self?.hide()
+                onDismiss()
+            }
         ))
     }
 

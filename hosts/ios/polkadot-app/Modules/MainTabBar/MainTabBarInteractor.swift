@@ -3,6 +3,8 @@ import Combine
 import Foundation
 import PushKit
 import PolkadotUI
+import os
+import TrUAPIHost
 
 final class MainTabBarInteractor {
     weak var presenter: MainTabBarInteractorOutputProtocol?
@@ -18,12 +20,15 @@ final class MainTabBarInteractor {
     private let productGamePills: ProductGamePillProviding?
     private let browserCoordinator: SPABrowserCoordinating
     private let tabBarLabelsStore: any TabBarLabelsProviding
+    private let fundingServiceProvider: FundingServiceProviding?
+    private let fundingService = OSAllocatedUnfairLock<FundingServiceProtocol?>(initialState: nil)
 
     private var extensionWidgetSubscription: Task<Void, Never>?
     private var productGamePillSubscription: Task<Void, Never>?
     private var chainStatusSubscription: Task<Void, Never>?
     private var tabBarLabelsSubscription: Task<Void, Never>?
     private var paymentsSetupSubscription: Task<Void, Never>?
+    private var fundingSubscription: Task<Void, Never>?
     private var restoredBalanceSubscription: Task<Void, Never>?
 
     init(
@@ -34,6 +39,7 @@ final class MainTabBarInteractor {
         deferredLinkHandler: DeferredLinkHandling,
         browserCoordinator: SPABrowserCoordinating,
         productGamePills: ProductGamePillProviding?,
+        fundingServiceProvider: FundingServiceProviding?,
         logger: LoggerProtocol = Logger.shared,
         extensionWidgetStreamProvider: ChatExtensionWidgetStreaming? = nil,
         tabBarLabelsStore: any TabBarLabelsProviding = TabBarLabelsStore.shared
@@ -46,6 +52,7 @@ final class MainTabBarInteractor {
         self.deferredLinkHandler = deferredLinkHandler
         self.browserCoordinator = browserCoordinator
         self.productGamePills = productGamePills
+        self.fundingServiceProvider = fundingServiceProvider
         self.extensionWidgetStreamProvider = extensionWidgetStreamProvider ?? ChatExtensionWidgetStreamProvider(
             registry: servicesLease.coordinator.chatExtensionsRegistry,
             logger: logger
@@ -60,6 +67,7 @@ final class MainTabBarInteractor {
         chainStatusSubscription?.cancel()
         tabBarLabelsSubscription?.cancel()
         paymentsSetupSubscription?.cancel()
+        fundingSubscription?.cancel()
         restoredBalanceSubscription?.cancel()
     }
 }
@@ -74,11 +82,42 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
         subscribeToChainStatus()
         subscribeToTabBarLabels()
         subscribeToPaymentsSetup()
+        subscribeToFunding()
         subscribeToRestoredBalance()
+    }
+
+    func openProviderFrame(_ request: FundingFrameRequest) {
+        fundingService.withLock { $0 }?.openProviderFrame(request)
     }
 }
 
 private extension MainTabBarInteractor {
+    /// Waits for the funding service, which comes with the runtime, then
+    /// hands on what the core asks of the app's screens for as long as the
+    /// tab bar is up.
+    func subscribeToFunding() {
+        guard let fundingServiceProvider else { return }
+
+        fundingSubscription = Task { [weak self, fundingServiceProvider, logger] in
+            for await service in fundingServiceProvider.builtFundingService() {
+                self?.fundingService.withLock { $0 = service }
+                await self?.presenter?.didReceive(fundingService: service)
+                // Screens providers asked for before the tab bar was drawn
+                // get their notice again.
+                for request in service.waitingFrames() {
+                    await self?.presenter?.didReceive(fundingEvent: .frameRequested(request))
+                }
+                do {
+                    for try await event in service.events {
+                        await self?.presenter?.didReceive(fundingEvent: event)
+                    }
+                } catch {
+                    logger.error("Funding events stream failed: \(error)")
+                }
+            }
+        }
+    }
+
     func subscribeToPaymentsSetup() {
         let coinageService = servicesLease.coordinator.coinageService
         paymentsSetupSubscription = Task { [weak self, coinageService, logger] in
