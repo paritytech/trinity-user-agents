@@ -699,21 +699,25 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatCreateRoomRequest,
-	) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
-		let status: v01::ChatRoomRegistrationStatus = self
+		room_id: String,
+		request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
+	{
+		let status: truapi::latest::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(request.room_id, request.name, request.icon)
+			.create_room(room_id, request.name, request.icon)
 			.await
-			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
+			.map_err(|error| truapi::latest::HostChatCreateRoomError::Unknown {
+				reason: error.to_string(),
+			})?;
 
-		if status == v01::ChatRoomRegistrationStatus::New &&
+		if status == truapi::latest::ChatRoomRegistrationStatus::New &&
 			let Ok(rooms) = self.chat.list_rooms().await
 		{
 			self.events.notify_chat_rooms_changed(rooms);
 		}
 
-		Ok(v01::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(
