@@ -234,13 +234,20 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, and `HostRuntime::<SigningHost>::set_core_db` on any other
+it on iOS and Android, and `HostRuntime::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
 `EncryptedStorage` that keeps NFT receive key and deposited item secrets with
 `set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
 the database. `core_database_status()` reports the SQLite version, schema
-version and path. Web hosts do not compile the store.
+version and path.
+
+The browser core compiles the store and the modules over it. There one
+connection runs in the core's own instance and each call runs in place, and
+only an in-memory database opens. The browser core opens one when it is built
+and installs it as its core database, so profile records and funding sessions
+last until the page reloads. It does not start the core services, so NFT purse
+calls answer `Unsupported`.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
 cards in the Pocket and the newest face of each side. The host lists the cards it
@@ -287,7 +294,7 @@ It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
 embedder calls `HostRuntime::<SigningHost>::set_encrypted_storage`. Web hosts do not
-compile it.
+install one.
 
 ### Durable transactions
 

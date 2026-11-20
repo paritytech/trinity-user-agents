@@ -196,6 +196,17 @@ impl<Role> HostRuntime<Role> {
 		Self { services, role, image_loader }
 	}
 
+	/// Install the core-owned database that profile records, funding sessions
+	/// and durable consumers share.
+	///
+	/// Set-once, so that state cannot move to another database under a running
+	/// consumer. Returns whether this call installed it. A signing host runs
+	/// nothing durable over it until `start_core_services`.
+	#[instrument(skip_all, fields(runtime.method = "host_runtime.set_core_db"))]
+	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
+		self.services.install_core_db(db)
+	}
+
 	/// The image `reference` names, checked against its CID and the image policy.
 	///
 	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
@@ -1007,20 +1018,8 @@ impl HostRuntime<SigningHost> {
 		self.services.install_device_pairing_observer(observer)
 	}
 
-	/// Install the core-owned database that durable consumers share.
-	///
-	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it. Nothing runs over it
-	/// until [`Self::start_core_services`].
-	#[cfg(not(target_arch = "wasm32"))]
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
-	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		self.services.install_core_db(db).is_some()
-	}
-
 	/// Install the provider of the installation id NFT purse item keys are
 	/// derived under. Set-once; returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn set_installation_provider(
 		&self,
 		provider: Arc<dyn crate::installation::InstallationIdProvider>,
@@ -1031,7 +1030,6 @@ impl HostRuntime<SigningHost> {
 	/// Install the host storage encrypted at rest, which keeps the secrets the
 	/// core database must not hold. Set-once; returns whether this call
 	/// installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn set_encrypted_storage(
 		&self,
 		storage: Arc<dyn crate::encrypted_storage::EncryptedStorage>,
@@ -1047,7 +1045,6 @@ impl HostRuntime<SigningHost> {
 	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
 	/// the encrypted storage. A part whose inputs are missing
 	/// is skipped and logged. A second call does nothing.
-	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
 		let Ok(db) = self.services.core_db() else {
@@ -1056,6 +1053,7 @@ impl HostRuntime<SigningHost> {
 			);
 			return;
 		};
+		#[cfg(not(target_arch = "wasm32"))]
 		start_materials(&self.services, db.clone());
 		let signer = Arc::new(Arc::downgrade(&self.role));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
@@ -1067,7 +1065,6 @@ impl HostRuntime<SigningHost> {
 	/// Installs the NFT ledger over `db` and `durable`, with the static receive
 	/// secret NFT purses open cheques with, and starts tracking its holdings,
 	/// when an installation provider and encrypted storage are set.
-	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
@@ -1085,7 +1082,6 @@ impl HostRuntime<SigningHost> {
 	/// The NFT ledger over `db` and `durable`, deriving item keys from the
 	/// signing host, or `None`, logged, without an installation provider or
 	/// encrypted storage.
-	#[cfg(not(target_arch = "wasm32"))]
 	fn nft_ledger(
 		&self,
 		db: crate::store::Db,
@@ -1109,7 +1105,6 @@ impl HostRuntime<SigningHost> {
 
 	/// Install the host observer told whether durable transactions are
 	/// pending. Set-once; returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn set_durable_work_observer(
 		&self,
 		observer: Arc<dyn crate::durable::DurableWorkObserver>,
@@ -1119,7 +1114,6 @@ impl HostRuntime<SigningHost> {
 
 	/// Runs durable recovery until no transaction is live, building scheduled
 	/// transactions meanwhile.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
 		self.services
 			.durable_engine()
@@ -1129,7 +1123,6 @@ impl HostRuntime<SigningHost> {
 	}
 
 	/// Reports the core database's state.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn core_database_status(
 		&self,
 	) -> Result<crate::store::DbStatus, crate::store::DbError> {
@@ -1138,7 +1131,7 @@ impl HostRuntime<SigningHost> {
 
 	/// Resolves public profile metadata with optional cached-first delivery.
 	///
-	/// Options control forced lookups and stale stored values; browsers resolve once.
+	/// Options control forced lookups and stale stored values.
 	/// At most two values precede completion or an error. Dropping the stream cancels resolution.
 	pub fn observe_public_profile(
 		&self,
@@ -1366,7 +1359,6 @@ fn materials(services: &Arc<RuntimeServices>, db: crate::store::Db) -> crate::ma
 /// Installs the durable transaction engine over `db`, reports its pending
 /// work and starts its submissions. `None` when an engine is already
 /// installed.
-#[cfg(not(target_arch = "wasm32"))]
 fn start_durable_engine(
 	services: &Arc<RuntimeServices>,
 	db: crate::store::Db,
@@ -1384,7 +1376,6 @@ fn start_durable_engine(
 /// The durable transaction engine over `db`, reading and submitting through
 /// the runtime's chain connections. It serves NFT transfers when an Asset Hub
 /// genesis is configured.
-#[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
@@ -1412,7 +1403,6 @@ fn durable_engine(
 /// The domains and policies the durable engine serves: NFT transfers, on the
 /// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
 /// keeps the secrets of imported item keys.
-#[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
 	signer: Arc<dyn crate::nft::ItemSigner>,
@@ -1438,7 +1428,6 @@ fn durable_registry(
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the
 /// Scarcity pallet.
-#[cfg(not(target_arch = "wasm32"))]
 fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
 	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
 
@@ -1453,7 +1442,6 @@ fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedg
 
 /// Reports every change of the engine's pending work to the host observer,
 /// for as long as the engine lives.
-#[cfg(not(target_arch = "wasm32"))]
 fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable::DurableTxEngine) {
 	let services = Arc::downgrade(services);
 	engine.report_work_to(move |pending| {

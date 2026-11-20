@@ -14,37 +14,11 @@
 //! hand-overs and timers must exist, and brings them in line one pass at a
 //! time.
 
-#[cfg(not(target_arch = "wasm32"))]
 mod store;
 #[cfg(test)]
 pub(crate) use store::put_session_row;
 #[cfg(test)]
 pub(crate) use store::{fail_writes, stored_sessions};
-
-/// A wasm core has no core database, so it holds no funding session: every
-/// commit fails before it changes anything.
-#[cfg(target_arch = "wasm32")]
-mod store {
-	use super::PackedSession;
-	use crate::host_logic::funding::{FundingSession, FundingSessionError};
-
-	pub(super) enum Db {}
-
-	pub(super) async fn load(
-		db: &Db,
-	) -> Result<(Vec<FundingSession>, Vec<PackedSession>), FundingSessionError> {
-		match *db {}
-	}
-
-	pub(super) async fn write(
-		db: &Db,
-		_sessions: &[&FundingSession],
-		_removed: Vec<String>,
-		_summaries: &[PackedSession],
-	) -> Result<(), FundingSessionError> {
-		match *db {}
-	}
-}
 
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
@@ -497,7 +471,6 @@ impl FundingRegistry {
 
 	/// Install the core database the sessions are stored in. Set-once;
 	/// returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_db(&self, db: crate::store::Db) -> bool {
 		self.db.set(db).is_ok()
 	}

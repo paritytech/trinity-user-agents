@@ -15,9 +15,11 @@ rust/crates/
                          bundles, its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
-                         on native targets, its `durable` module follows presigned
-                         transactions to a verdict over the core database and builds
-                         scheduled ones through their submission policies, and its
+                         its `store` module is the core's SQLite database, on connection
+                         threads natively and on one connection run in place on wasm32,
+                         where the browser core opens it in memory; its `durable` module
+                         follows presigned transactions to a verdict over the core database
+                         and builds scheduled ones through their submission policies, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, and the tracker of what they hold on
@@ -223,6 +225,11 @@ rust-toolchain.toml        pins every other cargo command in the repo to stable
   and runs the package's bun tests against them with `REQUIRE_WASM=1`, so a
   suite needing a bundle fails instead of skipping. `release.yml` rebuilds the
   bundles for a `@parity/truapi-host` release and publishes them in the package.
+- Building `truapi` for wasm32 compiles SQLite from C source (through
+  `sqlite-wasm-rs`), so it needs a clang that targets wasm32 and `llvm-ar`. CI
+  installs both with `.github/actions/wasm-c-toolchain`. Where the default
+  clang cannot target wasm32, set `CC_wasm32_unknown_unknown` and
+  `AR_wasm32_unknown_unknown`.
 - The UniFFI bindings and the container bundle are gitignored build outputs.
   After changing UniFFI-exposed types or native bindings, run
   `./ios/truapi-host/scripts/rebuild.sh` to refresh them locally; when only the

@@ -253,6 +253,9 @@ jobs:
         if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|') || contains(steps.version.outputs.packages, '@parity/trinity-stack|'))
         run: cargo install wasm-pack --version 0.14.0 --locked
 
+      - if: steps.version.outputs.proceed == 'true'
+        uses: ./.github/actions/wasm-c-toolchain
+
       - name: Build packages
         if: steps.version.outputs.proceed == 'true'
         run: |

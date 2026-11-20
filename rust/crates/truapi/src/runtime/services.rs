@@ -10,9 +10,7 @@ use std::{
 	sync::{Arc, Mutex, OnceLock},
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::durable::{DurableTxEngine, DurableWorkObserver};
-#[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
 	Spawner,
@@ -30,10 +28,10 @@ use crate::{
 	},
 };
 #[cfg(not(target_arch = "wasm32"))]
+use crate::materials::Materials;
 use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
-	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
@@ -125,14 +123,11 @@ pub struct RuntimeServices {
 	/// Core-owned database, installed once at startup by a host that
 	/// configured one. Unset makes every durable consumer report
 	/// [`DbError::NotConfigured`].
-	#[cfg(not(target_arch = "wasm32"))]
 	core_db: OnceLock<Db>,
 	/// Durable transaction engine over the core database, installed with it.
-	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
 	/// The NFT ledger (purse records and item keys) over the core database,
 	/// installed with it.
-	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
 	/// The materials on the device, over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -140,21 +135,16 @@ pub struct RuntimeServices {
 	/// Whether the host draws materials, from its configuration.
 	materials_enabled: AtomicBool,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
-	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
 	/// Keeps the ledger's holdings in step with the chain, installed with it.
-	#[cfg(not(target_arch = "wasm32"))]
 	holding_tracker: OnceLock<HoldingTracker>,
 	/// Provider of the installation id NFT purse item keys are derived under.
-	#[cfg(not(target_arch = "wasm32"))]
 	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
 	/// Host storage encrypted at rest, for secrets the core database must not
 	/// hold.
-	#[cfg(not(target_arch = "wasm32"))]
 	encrypted_storage: OnceLock<Arc<dyn EncryptedStorage>>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
-	#[cfg(not(target_arch = "wasm32"))]
 	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
 	/// The stack the host runs, fixed for the life of the runtime.
 	stack: Stack,
@@ -265,24 +255,16 @@ impl RuntimeServices {
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
 			device_pairing_observer: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			materials: OnceLock::new(),
 			materials_enabled: AtomicBool::new(false),
-			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			holding_tracker: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			installation_provider: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			encrypted_storage: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			stack,
 			worker_ledger: WorkerLedger::default(),
@@ -458,29 +440,25 @@ impl RuntimeServices {
 	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns `None` if a database was already installed.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub(crate) fn install_core_db(&self, db: Db) -> Option<()> {
-		self.core_db.set(db.clone()).ok()?;
-		self.public_profiles.install_db(db.clone())?;
-		self.funding.install_db(db).then_some(())
+	/// consumer. Returns whether this call installed it.
+	pub(crate) fn install_core_db(&self, db: Db) -> bool {
+		self.core_db.set(db.clone()).is_ok() &&
+			self.public_profiles.install_db(db.clone()) &&
+			self.funding.install_db(db)
 	}
 
 	/// The core database.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn core_db(&self) -> Result<Db, DbError> {
 		self.core_db.get().cloned().ok_or(DbError::NotConfigured)
 	}
 
 	/// Install the durable transaction engine. Set-once, like the database it
 	/// runs on. Returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_durable_engine(&self, engine: Arc<DurableTxEngine>) -> bool {
 		self.durable_engine.set(engine).is_ok()
 	}
 
 	/// The durable transaction engine, once the core database is installed.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
 	}
@@ -546,54 +524,46 @@ impl RuntimeServices {
 
 	/// Install the NFT ledger. Set-once, like the database it runs on.
 	/// Returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {
 		self.nft_ledger.set(ledger).is_ok()
 	}
 
 	/// Install the secret that opens `Static` NFT cheques. Set-once; returns
 	/// whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_static_receive_secret(&self, secret: Arc<dyn StaticReceiveSecret>) -> bool {
 		self.static_receive_secret.set(secret).is_ok()
 	}
 
 	/// Install the tracker of NFT holdings, which runs for as long as the
 	/// services live. Set-once; returns whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
 		self.holding_tracker.set(tracker).is_ok()
 	}
 
 	/// Install the provider of the installation id. Set-once; returns
 	/// whether this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_installation_provider(&self, provider: Arc<dyn InstallationIdProvider>) -> bool {
 		self.installation_provider.set(provider).is_ok()
 	}
 
 	/// The provider of the installation id, once installed.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn installation_provider(&self) -> Option<Arc<dyn InstallationIdProvider>> {
 		self.installation_provider.get().cloned()
 	}
 
 	/// Install the host storage encrypted at rest. Set-once; returns whether
 	/// this call installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_encrypted_storage(&self, storage: Arc<dyn EncryptedStorage>) -> bool {
 		self.encrypted_storage.set(storage).is_ok()
 	}
 
 	/// The host storage encrypted at rest, once installed.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn encrypted_storage(&self) -> Option<Arc<dyn EncryptedStorage>> {
 		self.encrypted_storage.get().cloned()
 	}
 
 	/// NFT purses, once their ledger, the encrypted storage and the static
 	/// receive secret are installed.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
 		let ledger = self.nft_ledger.get().cloned()?;
 		let db = self.core_db.get().cloned()?;
@@ -605,13 +575,11 @@ impl RuntimeServices {
 
 	/// Install the host's durable work observer. Returns whether this call
 	/// installed it.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_durable_work_observer(&self, observer: Arc<dyn DurableWorkObserver>) -> bool {
 		self.durable_work_observer.set(observer).is_ok()
 	}
 
 	/// The host's durable work observer, when one is installed.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
 		self.durable_work_observer.get().cloned()
 	}

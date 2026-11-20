@@ -48,7 +48,7 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now + expires_in))
 			.await
 			.unwrap();
-		assert!(services.install_core_db(db.clone()).is_some());
+		assert!(services.install_core_db(db.clone()));
 
 		let profiles: Vec<_> = services
 			.public_profiles
@@ -107,7 +107,7 @@ pub async fn cached_profiles(
 			.await
 			.unwrap();
 	}
-	assert!(services.install_core_db(db.clone()).is_some());
+	assert!(services.install_core_db(db.clone()));
 	(directory, services.public_profiles.clone(), db, platform)
 }
 
@@ -395,7 +395,7 @@ async fn a_failed_refresh_preserves_cached_metadata_and_respects_stale_delivery(
 		let platform =
 			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
 		let services = services_with_platform(platform.clone());
-		assert!(services.install_core_db(db.clone()).is_some());
+		assert!(services.install_core_db(db.clone()));
 
 		drop(profiles);
 		let mut stream = services.public_profiles.clone().observe(

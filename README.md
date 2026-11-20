@@ -448,8 +448,8 @@ again while the store holds them, and a dropped connection ends them with
 them. Underneath, `StatementStoreApi` watches any topic filter as its stored
 backlog in one batch, then each live page.
 
-A host without a core database, such as the browser core, answers
-`Unsupported` to the served calls.
+A host that does not start the core services, such as the browser core,
+answers `Unsupported` to the served calls.
 
 ### Images
 
