@@ -179,6 +179,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         return await cardFace.setFaceShown(shown)
     }
 
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
+        guard let cardFace else { return .notPresented }
+
+        return await cardFace.setBackShown(shown)
+    }
+
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
         switch request {
         case let .chain(genesisHash):

@@ -38,6 +38,9 @@ Images draw as they will on a published card:
 Pressing **Draw** again fetches the face and its images again, so an edited file
 shows without restarting the app.
 
+To work on a card's back, also fill **Back face URL**. The back is drawn below
+the front, and its archive images load from the back's own server.
+
 ### Loop A on a physical iPhone
 
 A phone cannot reach `127.0.0.1` on your Mac. Give the dev server a public HTTPS
@@ -62,7 +65,8 @@ A product with **no published worker**, driven by hand.
    worker bundle. A published worker always wins, so use a name that publishes
    none, or the hand-installed script is never reached.
 2. **Debug → Pocket Cards.** Add a card against that same name: card id, title
-   and the URL of its static face. The card id is screened here with the rules
+   and the URL of its static face, and the URL of its static back for a card
+   that turns over. The card id is screened here with the rules
    the core applies, so a bad one is refused with a message rather than reading
    as no card later.
 3. Open the add deeplink. The screen shows it, ready to copy:
@@ -118,6 +122,15 @@ when the page is sized wrong.
 | `NotPresented` | the card is closed and its page is still loaded |
 | `Denied` | the page is shown somewhere other than a card |
 
+A card with a back turns over by a sideways drag on the face, by the VoiceOver
+action **Turn over**, or by the page calling
+`truapi.expandedCard.setBackShown({ shown })`. With the sample, fill **Back face
+URL** with `http://127.0.0.1:5173/faces/loyalty-back.json`: its back reads
+"BACK · static" until the worker draws "BACK · live". The page's "Show back",
+"Show front" and "Show back in 2 s" buttons log each answer, as above, plus
+`NoBack` when the card has no back to show. A turn answers `UserMoving` while
+the user turns the card or pulls it down.
+
 A card's page stays loaded after the card closes. After editing a widget URL,
 open another card first or relaunch.
 
@@ -157,13 +170,23 @@ Declare the card in the worker's manifest:
   "entrypoint": "worker.js",
   "includes": { "chat": false, "pocket": true },
   "pocket": {
-    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": false }]
+    "cards": [{
+      "id": "loyalty",
+      "title": "Loyalty",
+      "preview": "faces/loyalty.json",
+      "back": "faces/loyalty-back.json",
+      "faceShown": false
+    }]
   }
 }
 ```
 
 `faceShown: false` opens the card with its face away. Left out or `null`, the
 face shows. A value that is not a boolean drops all of the product's cards.
+
+`back` names the static back in the archive, shown until the worker draws one
+under `PocketCardBack`. Left out or `null`, the card does not turn. A blank
+value or one that is not a string drops all of the product's cards.
 
 The card opens before its product answers. With no answer within five seconds
 the face stays shown, and an answer that comes after the user or the page has

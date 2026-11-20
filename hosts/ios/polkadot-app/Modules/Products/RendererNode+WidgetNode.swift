@@ -339,6 +339,7 @@ private extension ImageProps {
         switch source {
         case let .bulletin(cid): nodeSource = .bulletin(cid: cid)
         case let .archive(path): nodeSource = .archive(path: path)
+        case let .inline(bytes) where !bytes.isEmpty: nodeSource = .inline(bytes)
         case .inline: return nil
         }
         // Unwrapped first on purpose: in a switch over an optional fit, `.none`

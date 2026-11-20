@@ -24,6 +24,12 @@ struct DebugPocketCardsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        if let backFaceUrl = card.backFaceUrl {
+                            Text(backFaceUrl)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                         if let widgetUrl = card.widgetUrl {
                             Text(widgetUrl.absoluteString)
                                 .font(.caption)
@@ -49,6 +55,10 @@ struct DebugPocketCardsView: View {
                     .autocorrectionDisabled()
                 TextField("Title", text: $viewModel.title)
                 TextField("Face URL", text: $viewModel.faceUrl)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("Back face URL (optional)", text: $viewModel.backFaceUrl)
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()

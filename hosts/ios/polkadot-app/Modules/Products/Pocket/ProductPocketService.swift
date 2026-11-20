@@ -104,8 +104,16 @@ final class ProductPocketService: @unchecked Sendable {
         return faces.faces(for: key)
     }
 
-    func send(action: String, payload: Data, for key: PocketCardKey) {
-        running.withLock { $0.drawing?.faces }?.send(action: action, payload: payload, for: key)
+    /// The backs `key` turns over to, read like ``faces(for:)``. Nil once the
+    /// card's definition says it has no back.
+    func backFaces(for key: PocketCardKey) -> AsyncStream<RendererNode?> {
+        guard let faces = running.withLock({ $0.drawing?.faces }) else { return AsyncStream { $0.finish() } }
+
+        return faces.backFaces(for: key)
+    }
+
+    func send(action: String, payload: Data, for key: PocketCardKey, side: PocketCardSide) {
+        running.withLock { $0.drawing?.faces }?.send(action: action, payload: payload, for: key, side: side)
     }
 
     /// Resolves the images inside `productId`'s faces, out of that product's
@@ -166,16 +174,15 @@ final class ProductPocketService: @unchecked Sendable {
 
         runtimeProvider.attach(workerManager: manager)
 
-        let handlers = PocketHandlers(
-            workers: manager,
-            published: PublishedPocketCards.makeDefault(products: flowState.productResolver),
-            logger: logger
-        )
+        let published = PublishedPocketCards.makeDefault(products: flowState.productResolver)
+        let handlers = PocketHandlers(workers: manager, published: published, logger: logger)
 
         let drawing = Drawing(
             faces: RealPocketFaceSource(
                 store: { [collection] in collection },
                 streams: handlers,
+                published: published,
+                previews: PocketPreviewLoader(dotNsResolver: flowState.dotNsResolver),
                 logger: logger
             ),
             products: flowState.productResolver,

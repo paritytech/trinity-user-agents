@@ -6,12 +6,12 @@ import TrUAPIHost
 /// The live side of a face: the product's render stream, and the actions going
 /// back to it.
 protocol PocketFaceStreaming: Sendable {
-    /// Faces the product draws for `key`, each replacing the last. Iterating
-    /// holds one worker reference for the card's product, and the stream stays
-    /// silent while the worker is unavailable.
-    func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error>
+    /// Faces the product draws for one side of `key`, each replacing the last.
+    /// Iterating holds one worker reference for the card's product, and the
+    /// stream stays silent while the worker is unavailable.
+    func renderFaces(for key: PocketCardKey, side: PocketCardSide) -> AsyncThrowingStream<RendererNode, Error>
 
-    func send(action: String, payload: Data, for key: PocketCardKey)
+    func send(action: String, payload: Data, for key: PocketCardKey, side: PocketCardSide)
 }
 
 /// The Pocket half of one product's worker: the faces it draws for the cards
@@ -105,20 +105,20 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
         workers.releaseWorker(for: productId)
     }
 
-    func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
+    func renderFaces(for key: PocketCardKey, side: PocketCardSide) -> AsyncThrowingStream<RendererNode, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task { await stream(key, into: continuation) }
+            let task = Task { await stream(key, side: side, into: continuation) }
             continuation.onTermination = { _ in task.cancel() }
         }
     }
 
-    func send(action: String, payload: Data, for key: PocketCardKey) {
+    func send(action: String, payload: Data, for key: PocketCardKey, side: PocketCardSide) {
         guard let execution = workers.currentExecution(of: key.productId) else { return }
 
         do {
             try execution.publishRendererAction(
                 HostRendererActionSubscribeItem(
-                    context: .pocketCard(cardId: key.cardId.value),
+                    context: key.context(side),
                     actionId: action,
                     payload: payload
                 )
@@ -130,8 +130,12 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
 }
 
 private extension TrUAPIPocketHandler {
-    func stream(_ key: PocketCardKey, into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation) async {
-        await followExecutions(of: key, into: continuation)
+    func stream(
+        _ key: PocketCardKey,
+        side: PocketCardSide,
+        into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
+    ) async {
+        await followExecutions(of: key, side: side, into: continuation)
         continuation.finish()
     }
 
@@ -140,6 +144,7 @@ private extension TrUAPIPocketHandler {
     /// one before it.
     func followExecutions(
         of key: PocketCardKey,
+        side: PocketCardSide,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async {
         var opened: Task<Void, Never>?
@@ -158,7 +163,7 @@ private extension TrUAPIPocketHandler {
                 opened?.cancel()
                 guard let execution else { continue }
 
-                opened = Task { await reopening(execution, for: key, into: continuation) }
+                opened = Task { await reopening(execution, for: key, side: side, into: continuation) }
             }
         } catch {
             logger.error("[pocket] the worker stream for \(key.cardId.value) ended: \(error)")
@@ -172,12 +177,13 @@ private extension TrUAPIPocketHandler {
     func reopening(
         _ execution: TrUAPIProductExecutionProtocol,
         for key: PocketCardKey,
+        side: PocketCardSide,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async {
         var attempt = 0
         while !Task.isCancelled {
             do {
-                try await drain(execution, for: key, into: continuation)
+                try await drain(execution, for: key, side: side, into: continuation)
                 attempt = 0
             } catch is CancellationError {
                 return
@@ -193,9 +199,10 @@ private extension TrUAPIPocketHandler {
     func drain(
         _ execution: TrUAPIProductExecutionProtocol,
         for key: PocketCardKey,
+        side: PocketCardSide,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async throws {
-        for try await face in try await connect(execution, for: key) {
+        for try await face in try await connect(execution, for: key, side: side) {
             try Task.checkCancellation()
             continuation.yield(face)
         }
@@ -206,9 +213,10 @@ private extension TrUAPIPocketHandler {
     /// interval instead of backing off, because the wait is a boot, not a fault.
     func connect(
         _ execution: TrUAPIProductExecutionProtocol,
-        for key: PocketCardKey
+        for key: PocketCardKey,
+        side: PocketCardSide
     ) async throws -> AsyncThrowingStream<RendererNode, Error> {
-        let request = ProductRendererRenderRequest(context: .pocketCard(cardId: key.cardId.value), payload: Data())
+        let request = ProductRendererRenderRequest(context: key.context(side), payload: Data())
 
         return try await execution.renderWhenConnected(
             request,
@@ -225,4 +233,13 @@ func pocketReopenDelay(after attempt: Int) -> Duration {
     let doublings = min(attempt, 5)
 
     return min(.seconds(1) * (1 << doublings), .seconds(30))
+}
+
+private extension PocketCardKey {
+    func context(_ side: PocketCardSide) -> RenderContext {
+        switch side {
+        case .front: .pocketCard(cardId: cardId.value)
+        case .back: .pocketCardBack(cardId: cardId.value)
+        }
+    }
 }

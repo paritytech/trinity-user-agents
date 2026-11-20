@@ -2,6 +2,7 @@ import Foundation
 import PolkadotUI
 import Products
 import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardTurnOutcome
 import UIKitExt
 
 @MainActor
@@ -17,6 +18,7 @@ protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
     func showLoadFailure(_ content: ErrorContent)
     func updateLoadPhase(_ phase: ProductLoadPhase)
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
+    func setBackShown(_ shown: Bool) -> ExpandedCardTurnOutcome
     func applyOpeningFace(shown: Bool)
 }
 
@@ -41,6 +43,7 @@ protocol ExpandedPocketCardInteractorOutputProtocol: AnyObject {
     func didUpdateLoadPhase(_ phase: ProductLoadPhase)
     func didFail(error: Error)
     func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
+    func didRequestBackShown(_ shown: Bool) -> ExpandedCardTurnOutcome
 }
 
 @MainActor
