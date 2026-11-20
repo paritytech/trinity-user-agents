@@ -524,11 +524,12 @@ cfg_select! {
 			PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
 			PublicProfileError, PublicProfileResolutionOptions,
 		};
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use runtime::TrackedStatementRenewalTarget;
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, PairedSsoPeer, PairingHost,
 			PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-			SigningHost, SsoAccountHolderService, StatementRenewalTarget,
-			TrackedStatementRenewalTarget, contacts::contact_handle,
+			SigningHost, SsoAccountHolderService, StatementRenewalTarget, contacts::contact_handle,
 			login_failure::reports_exhausted_period, product_manifest::encode_cached_root_manifest,
 			statement_allowance,
 		};

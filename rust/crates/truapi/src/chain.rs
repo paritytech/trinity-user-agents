@@ -46,11 +46,12 @@ pub use extrinsic::{
 pub use extrinsic::DEFAULT_MORTALITY_PERIOD;
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
-pub use runtime_api::{RpcClientAtBlock, RuntimeApiCaller};
-pub use storage_watch::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageWatchError, WatchedHead,
-	WatchedStorage,
-};
+pub use runtime_api::RuntimeApiCaller;
+#[cfg(not(target_arch = "wasm32"))]
+pub use runtime_api::RpcClientAtBlock;
+pub use storage_watch::{DecodableAtBlock, RawStorageChanges, WatchedHead, WatchedStorage};
+#[cfg(not(target_arch = "wasm32"))]
+pub use storage_watch::{DecodedEntryChanges, StorageWatchError};
 #[cfg(test)]
 pub use storage_watch::StorageSnapshot;
 pub use tx_submitter::{TxSubmitter, WatchEvent};
