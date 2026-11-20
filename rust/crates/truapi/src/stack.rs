@@ -61,22 +61,26 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 	POLKADOT_BULLETIN_GENESIS,
 ];
 
+/// The `contracts` name of the contract each seed registers its installations in.
+const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
+
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
 /// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
-/// reports, the dotNS TLD, and the genesis hash of each chain role the core
-/// uses.
+/// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
+/// and the Asset Hub contracts the core reads.
 ///
-/// Two stacks are equal when they name the same stack and chains. What a run
-/// learned about the host's storage is not part of that.
+/// Two stacks are equal when they name the same stack, chains and contracts.
+/// What a run learned about the host's storage is not part of that.
 #[derive(Debug, Clone)]
 pub struct Stack {
 	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
+	account_data_store: Option<[u8; 20]>,
 	/// Whether this stack holds the values the host stored under a slot
 	/// alone, once [`StackStorage`] has asked. Clones share it.
 	holds_unscoped: Arc<Mutex<Option<bool>>>,
@@ -84,8 +88,14 @@ pub struct Stack {
 
 impl PartialEq for Stack {
 	fn eq(&self, other: &Self) -> bool {
-		(&self.identity, &self.network, &self.tld, &self.chains) ==
-			(&other.identity, &other.network, &other.tld, &other.chains)
+		(&self.identity, &self.network, &self.tld, &self.chains, &self.account_data_store) ==
+			(
+				&other.identity,
+				&other.network,
+				&other.tld,
+				&other.chains,
+				&other.account_data_store,
+			)
 	}
 }
 
@@ -288,17 +298,18 @@ impl Stack {
 		};
 		let identity =
 			StackIdentity { id: pointer.stack_id(), generation: descriptor.generation.clone() };
-		Self::new(
+		let stack = Self::new(
 			identity,
 			descriptor.network.clone(),
 			descriptor.tld.clone(),
 			chains,
 			allows_reserved_values,
-		)
+		)?;
+		Ok(Self { account_data_store: account_data_store_in(descriptor), ..stack })
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
-	/// bundled descriptor, such as the CLI's.
+	/// bundled descriptor, such as the CLI's. It names no contracts.
 	///
 	/// Applies the same TLD and reserved-value rules as
 	/// [`Self::from_descriptor`], and refuses an empty id or generation and an
@@ -330,7 +341,14 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { identity, network, tld, chains, holds_unscoped: Arc::default() })
+		Ok(Self {
+			identity,
+			network,
+			tld,
+			chains,
+			account_data_store: None,
+			holds_unscoped: Arc::default(),
+		})
 	}
 
 	/// The stack's id. Every storage key includes it. See
@@ -367,6 +385,13 @@ impl Stack {
 		&self.chains
 	}
 
+	/// The `AccountDataStore` contract on Asset Hub, where each seed registers
+	/// its installations. `None` when the descriptor names none, or names the
+	/// all-zero address.
+	pub fn account_data_store(&self) -> Option<[u8; 20]> {
+		self.account_data_store
+	}
+
 	/// The genesis hash of the chain with this role, or `None` when the stack
 	/// has no such chain.
 	fn genesis_hash(&self, chain: ChainIdentifier) -> Option<[u8; 32]> {
@@ -394,6 +419,14 @@ impl Stack {
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
 	}
+}
+
+/// The `AccountDataStore` address `descriptor` names, or `None` when it names
+/// none or the all-zero address, which no contract has.
+fn account_data_store_in(descriptor: &Descriptor) -> Option<[u8; 20]> {
+	descriptor
+		.contract_address(ACCOUNT_DATA_STORE_CONTRACT)
+		.filter(|address| *address != [0; 20])
 }
 
 /// The pointer a stack link carries. A host runs only a signed stack, so a

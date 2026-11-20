@@ -624,3 +624,24 @@ fn a_refresh_changes_the_run_exactly_when_it_restarts_the_chains() {
 		[(true, true), (false, false), (false, false)]
 	);
 }
+
+/// Installation recovery reads the registry at the stack's address, so a stack
+/// that names none, or names the all-zero address, leaves it off rather than
+/// reading the wrong contract.
+#[test]
+fn the_account_data_store_comes_from_the_descriptor() {
+	let account_data_store = |contracts: Option<serde_json::Value>| {
+		let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+		if let Some(contracts) = contracts {
+			descriptor["contracts"] = contracts;
+		}
+		bundled(&descriptor, false).expect("stack is valid").account_data_store()
+	};
+	let named = |address: String| Some(serde_json::json!({ "accountDataStore": address }));
+	let other_contract = serde_json::json!({ "other": format!("0x{}", "22".repeat(20)) });
+
+	assert_eq!(account_data_store(named(format!("0x{}", "22".repeat(20)))), Some([0x22; 20]));
+	assert_eq!(account_data_store(named(format!("0x{}", "00".repeat(20)))), None);
+	assert_eq!(account_data_store(Some(other_contract)), None);
+	assert_eq!(account_data_store(None), None);
+}
