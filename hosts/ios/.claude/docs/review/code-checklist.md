@@ -124,6 +124,12 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 
 **Ref:** code/navigation.md, code/error-handling.md
 
+## Device Authentication
+
+- [ ] New confirm controls for signing, payment, pairing or secret export carry a confirmation gate
+
+**Ref:** architecture/device-auth.md
+
 ## Testing
 
 - [ ] No private per-suite mocks — shared doubles in `Helpers/Mocks/` (universal) or `<Feature>/Mocks/` (feature), one type per file

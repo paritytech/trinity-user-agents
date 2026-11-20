@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import HandoffService
 import Individuality
 import SDKLogger
@@ -6,7 +7,7 @@ import ChainRegistry
 
 extension ServiceCoordinator {
     static func createAttachmentUploadService(
-        bulletInManager: AllowanceManaging
+        bulletInManager: any AllowanceManaging<AccountId>
     ) -> AttachmentUploadingServicing? {
         let chainRegistry = ChainRegistryFacade.sharedRegistry
         let hopNodeProvider = HOPNodeProvider(chainRegistry: chainRegistry)

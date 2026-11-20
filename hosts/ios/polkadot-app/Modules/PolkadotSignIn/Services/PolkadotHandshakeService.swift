@@ -43,7 +43,7 @@ final class PolkadotHandshakeService {
         identityWallet: WalletManaging,
         chatEncryptorFactory: MessageExchangeEncryptionMaking,
         ssoEncryptorFactory: MessageExchangeEncryptionMaking,
-        sssManager: AllowanceManaging,
+        sssManager: any AllowanceManaging<StatementStoreAllowanceHolder>,
         deviceEncryptionKeyManager: DeviceEncryptionKeyManaging = DeviceEncryptionKeyManager.shared,
         rootEntropySourceDeriver: any RootEntropySourceDeriving = RootEntropySourceDeriver(
             entropyManager: RootEntropyManager.shared
