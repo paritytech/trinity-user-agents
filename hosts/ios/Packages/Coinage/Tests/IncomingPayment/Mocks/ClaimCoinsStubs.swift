@@ -50,7 +50,7 @@ final class ScriptedCoinInfoQuery: CoinOnChainQuerying, @unchecked Sendable {
     struct Dropped: Error {}
 
     private let subscriptions = OSAllocatedUnfairLock(
-        initialState: [AsyncThrowingStream<[Data: ClaimableCoinInfo], Error>.Continuation]()
+        initialState: [AsyncThrowingStream<CoinInfosSnapshot, Error>.Continuation]()
     )
     private let opened = CountSignal()
 
@@ -60,9 +60,14 @@ final class ScriptedCoinInfoQuery: CoinOnChainQuerying, @unchecked Sendable {
         await opened.wait(for: count)
     }
 
-    /// Delivers `look` on the latest subscription.
+    /// Delivers `snapshot` on the latest subscription.
+    func send(_ snapshot: CoinInfosSnapshot) {
+        subscriptions.withLock { $0.last }?.yield(snapshot)
+    }
+
+    /// Delivers a look of only claimable coins on the latest subscription.
     func send(_ look: [Data: ClaimableCoinInfo]) {
-        subscriptions.withLock { $0.last }?.yield(look)
+        send(CoinInfosSnapshot(claimable: look))
     }
 
     /// Ends the latest subscription with an error.
@@ -70,15 +75,15 @@ final class ScriptedCoinInfoQuery: CoinOnChainQuerying, @unchecked Sendable {
         subscriptions.withLock { $0.last }?.finish(throwing: Dropped())
     }
 
-    func subscribeCoinInfos(for _: [Data]) -> AnyAsyncSequence<[Data: ClaimableCoinInfo]> {
-        let (stream, continuation) = AsyncThrowingStream<[Data: ClaimableCoinInfo], Error>.makeStream()
+    func subscribeCoinInfos(for _: [Data]) -> AnyAsyncSequence<CoinInfosSnapshot> {
+        let (stream, continuation) = AsyncThrowingStream<CoinInfosSnapshot, Error>.makeStream()
         subscriptions.withLock { $0.append(continuation) }
         opened.increment()
 
         return stream.eraseToAnyAsyncSequence()
     }
 
-    func fetchCoins(for _: [Data], atBlockHash _: Data?) async throws -> [CoinSyncResult.OnChainCoin?] {
+    func fetchCoinReads(for _: [Data], atBlockHash _: Data?) async throws -> [OnChainCoinRead] {
         throw Unsupported()
     }
 

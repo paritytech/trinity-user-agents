@@ -39,6 +39,16 @@ impl<K: Eq + core::hash::Hash, S: Clone> Subscribers<K, S> {
 		self.prune();
 	}
 
+	/// Send `value` to every stream following a key `matches` accepts.
+	pub fn send_matching(&mut self, matches: impl Fn(&K) -> bool, value: &S) {
+		for (key, subscribers) in &mut self.by_key {
+			if matches(key) {
+				subscribers.retain(|sender| sender.unbounded_send(value.clone()).is_ok());
+			}
+		}
+		self.prune();
+	}
+
 	/// How many streams are registered.
 	#[cfg(test)]
 	pub fn len(&self) -> usize {

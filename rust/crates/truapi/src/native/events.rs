@@ -112,6 +112,16 @@ impl NativeEventBus {
 			.send(key, &Ok(item));
 	}
 
+	/// Deliver `None` to the subscribers of every product storage key that
+	/// starts with `prefix`.
+	pub fn notify_storage_cleared_under(&self, prefix: &str) {
+		let item = v01::HostLocalStorageChangeItem { value: None };
+		self.storage_changes
+			.lock()
+			.expect("native storage subscribers mutex poisoned")
+			.send_matching(|key| key.starts_with(prefix), &Ok(item));
+	}
+
 	/// Count of host-reported closes, taken before a connect so a close that
 	/// lands during it is not missed.
 	pub fn chain_close_generation(&self) -> u64 {
