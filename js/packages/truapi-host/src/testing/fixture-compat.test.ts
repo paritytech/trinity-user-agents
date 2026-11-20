@@ -11,7 +11,7 @@ import {
 import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 import { PASEO_ASSET_HUB, LIVE_CHAINS } from "./dev-accounts.js";
-import { mockTestStack } from "../web/create-mock-host.js";
+import { MOCK_GENESIS, mockTestStack } from "../web/create-mock-host.js";
 
 const SAMPLE_CHAIN = {
   id: "paseo-asset-hub",
@@ -53,7 +53,8 @@ describe("host-api-test-sdk option compatibility", () => {
   it("expands `networks` into the settings that must agree", () => {
     // Unhashed on purpose: an unhashed proxy takes every request, so routing
     // survives a chain reset even when the declared hash goes stale. The test
-    // stack keeps the mock People and Bulletin, which the core needs to start.
+    // stack keeps the mock People and Bulletin, which the core needs to start,
+    // and its generation names the chains it runs, so it is not the mock's.
     expect(fromNetworks([SAMPLE_CHAIN])).toEqual({
       mock: {
         chainProxies: [{ rpcUrl: SAMPLE_CHAIN.rpcUrl }],
@@ -62,6 +63,7 @@ describe("host-api-test-sdk option compatibility", () => {
       runtimeConfig: {
         testStack: {
           ...mockTestStack(),
+          generation: `none:0x23e730eb:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`,
           network: "paseo",
           assetHub: { genesisHash: "0x23e730eb" },
         },
@@ -75,15 +77,38 @@ describe("host-api-test-sdk option compatibility", () => {
     expect([stackOf("paseo-people"), stackOf("previewnet")]).toEqual([
       {
         ...mockTestStack(),
+        generation: `none:${MOCK_GENESIS.assetHub}:0x23e730eb:${MOCK_GENESIS.bulletin}`,
         network: "paseo",
         people: { genesisHash: "0x23e730eb" },
       },
       {
         ...mockTestStack(),
+        generation: `0x23e730eb:${MOCK_GENESIS.assetHub}:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`,
         network: "previewnet",
         relay: { genesisHash: "0x23e730eb" },
       },
     ]);
+  });
+
+  it("names a stack's generation after its chains, in one case", () => {
+    // The generation tells one run of the chains from another, so the case a
+    // suite spells a hash in must not make it another run, and a suite on the
+    // mock chains runs the mock stack's generation.
+    const generationOf = (chains: (typeof SAMPLE_CHAIN)[]) =>
+      fromNetworks(chains).runtimeConfig.testStack.generation;
+    const hub = (genesisHash: string) => ({ ...SAMPLE_CHAIN, genesisHash });
+    const mockPeople = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-people",
+      genesisHash: MOCK_GENESIS.people,
+    };
+    const live = `none:0xabcd:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`;
+    expect([
+      generationOf([hub("0xABCD")]),
+      generationOf([hub("0xabcd")]),
+      generationOf([]),
+      generationOf([mockPeople]),
+    ]).toEqual([live, live, "mock", "mock"]);
   });
 
   it("rejects a pinned product account, and says why", () => {
