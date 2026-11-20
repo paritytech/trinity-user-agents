@@ -65,6 +65,7 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] Names descriptive of actual purpose
 - [ ] Method names reflect when/how called ("mark" for state, "save" for persistence)
 - [ ] Dead code removed (unused methods, properties, imports)
+- [ ] A feature gate is a `FEATURE_X` flag listed in `Configs/BuildFeatures.swift`, never an environment flag
 - [ ] Debug/preview leftovers cleaned up
 - [ ] TODO comments for pending integrations (with owner)
 - [ ] All user-visible strings localized

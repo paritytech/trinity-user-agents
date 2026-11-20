@@ -138,6 +138,10 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         func openDevServer() {
             wireframe.showDevServer(from: view)
         }
+
+        func showMaterialsCard() {
+            wireframe.showMaterialsCard(from: view)
+        }
     #endif
 
     func resetTips() {

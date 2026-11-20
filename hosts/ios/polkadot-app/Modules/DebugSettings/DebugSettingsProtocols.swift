@@ -27,6 +27,7 @@ protocol DebugSettingsPresenterProtocol: AnyObject {
     func openTrUAPIPlayground()
     #if DEBUG
         func openDevServer()
+        func showMaterialsCard()
     #endif
     func showPocketFacePreview()
     func showPocketCards()
@@ -65,6 +66,7 @@ protocol DebugSettingsWireframeProtocol: AnyObject, AlertPresentable {
     func showTrUAPIPlayground(from view: ControllerBackedProtocol?)
     #if DEBUG
         func showDevServer(from view: ControllerBackedProtocol?)
+        func showMaterialsCard(from view: ControllerBackedProtocol?)
     #endif
     func showPocketFacePreview(from view: ControllerBackedProtocol?)
     func showPocketCards(from view: ControllerBackedProtocol?)

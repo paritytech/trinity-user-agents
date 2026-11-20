@@ -5,7 +5,62 @@ import Products
 import SwiftUI
 
 extension RendererNode {
+    /// `Materials` nodes are numbered depth first, a parent before its children, across the whole tree,
+    /// the order of `ResolvedMaterials.nodes`.
     func toWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
+        toWidgetNode(resolver: resolver, counter: MaterialsCounter())
+    }
+
+    /// How many entries `ResolvedMaterials.nodes` has for this tree.
+    var materialsCount: Int {
+        let counter = MaterialsCounter()
+        counter.skip([self])
+        return counter.count
+    }
+}
+
+private final class MaterialsCounter {
+    private var next: UInt32 = 0
+
+    var count: Int { Int(next) }
+
+    func take() -> UInt32 {
+        defer { next += 1 }
+        return next
+    }
+
+    /// The core also numbers `Materials` nodes inside text and button children, which draw no widget.
+    func skip(_ nodes: [RendererNode]) {
+        for node in nodes {
+            if case .materials = node { _ = take() }
+            skip(node.children)
+        }
+    }
+}
+
+private extension RendererNode {
+    var children: [RendererNode] {
+        switch self {
+        case let .materials(_, children),
+             let .box(_, _, children),
+             let .column(_, _, children),
+             let .row(_, _, children),
+             let .text(_, _, children),
+             let .button(_, _, children):
+            children
+        case .nil,
+             .string,
+             .image,
+             .spacer,
+             .textField:
+            []
+        }
+    }
+
+    func toWidgetNode(
+        resolver: any WidgetDesignTokenResolving,
+        counter: MaterialsCounter
+    ) -> CustomMessageWidgetNode? {
         switch self {
         case .nil,
              .string,
@@ -14,11 +69,16 @@ extension RendererNode {
              .text,
              .button,
              .textField:
+            counter.skip(children)
             return leafWidgetNode(resolver: resolver)
 
         case let .materials(_, children):
+            let index = counter.take()
             return CustomMessageWidgetNode(
-                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
+                content: .materials(
+                    index: index,
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
                 modifiers: .empty
             )
 
@@ -27,7 +87,10 @@ extension RendererNode {
                 CustomMessageWidgetNode.BoxProps(alignment: $0.toScale().swiftUIAlignment)
             }
             return CustomMessageWidgetNode(
-                content: .box(boxProps ?? .init(), children: children.widgetNodes(resolver: resolver)),
+                content: .box(
+                    boxProps ?? .init(),
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -37,7 +100,7 @@ extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .column(
                     .init(alignment: alignment, arrangement: arrangement),
-                    children: children.widgetNodes(resolver: resolver)
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
                 ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
@@ -48,7 +111,7 @@ extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .row(
                     .init(alignment: alignment, arrangement: arrangement),
-                    children: children.widgetNodes(resolver: resolver)
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
                 ),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
@@ -126,14 +189,20 @@ private extension RendererNode {
 private extension RendererNode {
     /// The nodes this one contributes to its parent's children: its own, or
     /// none when it does not draw.
-    func widgetNodesInPlace(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
-        toWidgetNode(resolver: resolver).map { [$0] } ?? []
+    func widgetNodesInPlace(
+        resolver: any WidgetDesignTokenResolving,
+        counter: MaterialsCounter
+    ) -> [CustomMessageWidgetNode] {
+        toWidgetNode(resolver: resolver, counter: counter).map { [$0] } ?? []
     }
 }
 
 private extension [RendererNode] {
-    func widgetNodes(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
-        flatMap { $0.widgetNodesInPlace(resolver: resolver) }
+    func widgetNodes(
+        resolver: any WidgetDesignTokenResolving,
+        counter: MaterialsCounter
+    ) -> [CustomMessageWidgetNode] {
+        flatMap { $0.widgetNodesInPlace(resolver: resolver, counter: counter) }
     }
 }
 

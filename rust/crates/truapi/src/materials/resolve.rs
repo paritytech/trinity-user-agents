@@ -238,7 +238,9 @@ impl Resolver {
 		let drawn_here = settings.enabled &&
 			matches!(
 				context,
-				RenderContext::PocketCard { .. } | RenderContext::PocketCardBack { .. }
+				RenderContext::PocketCard { .. } |
+					RenderContext::PocketCardBack { .. } |
+					RenderContext::ChatMessage { .. }
 			);
 		let nodes = materials_nodes(tree)
 			.into_iter()
