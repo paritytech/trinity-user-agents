@@ -2857,3 +2857,67 @@ fn a_node_that_does_not_name_its_chain_is_not_used() {
 
 	assert_eq!(outcomes, [(RuntimeFailureKind::HostFailure, 0); 3]);
 }
+
+/// A node that answers the genesis question with dotli's halt error for the
+/// first `halts` times it is asked, then with `genesis`.
+fn node_halted_for(halts: usize, genesis: [u8; 32]) -> Arc<ScriptedProvider> {
+	let asked = AtomicUsize::new(0);
+	Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		Some(match asked.fetch_add(1, Ordering::SeqCst) < halts {
+			true => crate::test_support::chain_halted_frame(&id),
+			false => {
+				format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{}"}}"#, encode_hex(&genesis))
+			},
+		})
+	}))
+}
+
+/// How opening a connection to `provider`'s chain, named `[0xa1; 32]`, fails
+/// while each of the first `pauses` pauses the check takes is let pass.
+fn connect_through_halts(
+	provider: Arc<ScriptedProvider>,
+	pauses: usize,
+	heard: &Arc<HeardAnswers>,
+) -> Option<RuntimeFailureKind> {
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let runtime = ChainRuntime::new(provider, Spawner::for_test())
+		.with_timer(timer.clone())
+		.checking_genesis(heard.clone());
+	let connect = std::thread::spawn(move || {
+		futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+			.err()
+			.map(|failure| failure.kind())
+	});
+	for (sleep, pause) in chain_halt::halt_schedule().into_iter().take(pauses).enumerate() {
+		crate::test_support::wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
+		timer.advance(pause);
+	}
+	connect.join().unwrap()
+}
+
+/// dotli answers every request with a halt error while it redials a chain.
+/// The genesis question is the first request on a connection, so it has to
+/// wait the halt out as a follow does, or a short halt would fail whatever
+/// opened the connection.
+#[test]
+fn a_halted_chain_is_asked_for_its_genesis_hash_again() {
+	let named = [0xa1; 32];
+	let heard = Arc::<HeardAnswers>::default();
+
+	let failure = connect_through_halts(node_halted_for(2, named), 2, &heard);
+
+	assert_eq!((failure, heard.heard()), (None, vec![(named, named)]));
+}
+
+/// A chain that stays halted named no chain, so it is out of reach rather
+/// than wrong: a later attempt may find it redialled.
+#[test]
+fn a_chain_that_stays_halted_is_unavailable() {
+	let heard = Arc::<HeardAnswers>::default();
+	let halted = node_halted_for(usize::MAX, [0xa1; 32]);
+
+	let failure = connect_through_halts(halted, chain_halt::HALT_RETRIES, &heard);
+
+	assert_eq!((failure, heard.heard()), (Some(RuntimeFailureKind::Unavailable), Vec::new()));
+}

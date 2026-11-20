@@ -534,25 +534,27 @@ impl ChainRuntime {
 		self
 	}
 
-	/// This runtime, asking each chain it connects to for its genesis hash
-	/// and telling `check`. Set it before the first connection: one opened
-	/// earlier was not asked.
+	/// This runtime, asking each chain it connects to for its genesis hash.
+	///
+	/// Each answer goes to `check`. Set it before the first connection: one
+	/// opened earlier was not asked.
 	///
 	/// A connection fails with a host failure when its chain gives a
 	/// different hash from the one it was opened for, or answers the question
-	/// with an error. One that closes or stays silent fails as unavailable.
+	/// with an error. One that closes, stays silent or stays halted fails as
+	/// unavailable. A halted chain is asked again as a halted follow is.
 	#[must_use]
 	pub fn checking_genesis(mut self, check: Arc<dyn GenesisCheck>) -> Self {
 		self.genesis_check = Some(check);
 		self
 	}
 
-	/// Puts a connection the caller opened itself for the chain
-	/// `genesis_hash` through the check every connection of this runtime
-	/// passes. Does nothing for a runtime without one.
+	/// Checks a connection the caller opened itself for `genesis_hash`.
 	///
-	/// Fails as [`Self::checking_genesis`] describes. Drop the connection
-	/// then.
+	/// The connection passes the check every connection of this runtime
+	/// passes, and none for a runtime without one. Fails as
+	/// [`Self::checking_genesis`] describes; drop the connection then. Drop
+	/// the future to stop waiting.
 	pub async fn check_genesis(
 		&self,
 		genesis_hash: [u8; 32],
@@ -560,7 +562,7 @@ impl ChainRuntime {
 	) -> Result<(), RuntimeFailure> {
 		let Some(check) = &self.genesis_check else { return Ok(()) };
 		let methods = ChainHeadRpcMethods::new(RpcClient::new(rpc.clone()));
-		check_genesis(&methods, &genesis_hash, check.as_ref()).await
+		check_genesis(&methods, &genesis_hash, check.as_ref(), self.timer.as_ref()).await
 	}
 
 	/// This runtime seen as `scope`. Shares every map with the original, so a
@@ -1121,6 +1123,7 @@ impl ChainRuntime {
 								&connection.methods,
 								&connection.genesis_hash,
 								check.as_ref(),
+								connection.timer.as_ref(),
 							)
 							.await
 							.map(|()| connection),
@@ -2275,17 +2278,27 @@ fn transaction_operation_already_finished(error: &SubxtRpcError) -> bool {
 }
 
 /// Asks the chain behind `methods` for its genesis hash and tells `check`.
+///
 /// Fails when the chain gives a different hash from `named`, the one the
-/// connection was opened for, or none.
+/// connection was opened for, or none. A halted chain is asked again on
+/// `timer`, and is unavailable when the halt outlasts the retries.
 async fn check_genesis(
 	methods: &ChainHeadRpcMethods<TruapiRpcConfig>,
 	named: &[u8],
 	check: &dyn GenesisCheck,
+	timer: &dyn Timer,
 ) -> Result<(), RuntimeFailure> {
-	let answered = methods
-		.chainspec_v1_genesis_hash()
+	let ask = || methods.chainspec_v1_genesis_hash();
+	let never_cancelled = truapi::CancellationToken::default();
+	let answered = retry_while_halted(ask, says_chain_halted, timer, &never_cancelled)
 		.await
-		.map_err(|error| rpc_failure(CONNECT_METHOD, error).on_chain(named))?
+		.map_err(|error| {
+			let failure = match says_chain_halted(&error) {
+				true => RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, error.to_string()),
+				false => rpc_failure(CONNECT_METHOD, error),
+			};
+			failure.on_chain(named)
+		})?
 		.0;
 	if let Ok(named) = <[u8; 32]>::try_from(named) {
 		check.chain_answered(named, answered);

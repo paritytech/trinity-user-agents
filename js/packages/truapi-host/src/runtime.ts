@@ -162,9 +162,11 @@ export interface StackStatus {
   };
   /**
    * Where the chains last answered differently from the descriptor the core
-   * runs, in the descriptor's order. While there is one the core fetches the
-   * descriptor every five minutes instead of every hour. A published copy
-   * that changes a chain sets `restartRequired` as usual.
+   * runs, in the descriptor's order. While there is one, a host with
+   * `fetchStackDescriptor` is asked for the descriptor every five minutes
+   * instead of every hour. A published copy that changes a chain sets
+   * `restartRequired` as usual. A light client answers from its chain spec,
+   * so a chain that restarted is out of its reach and never listed here.
    */
   mismatches: StackMismatch[];
 }

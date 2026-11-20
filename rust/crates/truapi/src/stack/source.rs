@@ -124,9 +124,10 @@ pub struct StackStatus {
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
 	/// Where the chains last answered differently from the descriptor the
-	/// core runs, in the descriptor's order. While there is one the core
-	/// fetches the descriptor every five minutes instead of every hour. A
-	/// published copy that changes a chain sets `restart_required` as usual.
+	/// core runs, in the descriptor's order. While there is one, a refresh
+	/// that was started fetches the descriptor every five minutes instead of
+	/// every hour. A published copy that changes a chain sets
+	/// `restart_required` as usual.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -277,12 +278,12 @@ impl StackSource {
 			.collect()
 	}
 
-	/// Takes the genesis hash a connection opened for the chain `named` got
-	/// from it, and returns whether that changed [`Self::status`]. A chain
-	/// the running copy does not name changes nothing.
+	/// Takes the genesis hash a connection opened for `named` got from it.
 	///
-	/// While a chain's last answer is wrong, [`Self::next_fetch_in`] counts
-	/// to five minutes instead of an hour.
+	/// Returns whether that changed [`Self::status`]. A chain the running
+	/// copy does not name changes nothing. While a chain's last answer is
+	/// wrong, [`Self::next_fetch_in`] counts to five minutes instead of an
+	/// hour.
 	pub fn chain_answered(&mut self, named: [u8; 32], answered: [u8; 32]) -> bool {
 		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;

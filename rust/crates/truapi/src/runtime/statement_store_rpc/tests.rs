@@ -404,17 +404,15 @@ impl GenesisCheck for HeardAnswers {
 	}
 }
 
-/// Statement subscriptions run on connections the store opens itself, apart
-/// from the pooled one. A host that only listens, such as a paired one
-/// waiting for a request, has nothing else on People, so a wiped People
-/// chain has to be caught on these connections too.
-#[test]
-fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
-	const WIPED_PEOPLE: [u8; 32] = [0x19; 32];
-	let wiped_node = Arc::new(StubPlatform {
-		rpc_responder: Some(Arc::new(|request| {
+/// A People node whose chain has `genesis`, and a statement store that opens
+/// its subscription connections to it with the genesis check on.
+fn checked_statement_store(
+	genesis: [u8; 32],
+) -> (StatementStoreRpc, Arc<StubPlatform>, Arc<HeardAnswers>, Arc<PeopleChain>) {
+	let node = Arc::new(StubPlatform {
+		rpc_responder: Some(Arc::new(move |request| {
 			let request: serde_json::Value = serde_json::from_str(request).unwrap();
-			let genesis = format!("0x{}", hex::encode(WIPED_PEOPLE));
+			let genesis = format!("0x{}", hex::encode(genesis));
 			vec![json!({"jsonrpc": "2.0", "id": request["id"], "result": genesis}).to_string()]
 		})),
 		..Default::default()
@@ -422,11 +420,34 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 	let heard = Arc::<HeardAnswers>::default();
 	let pooled = PeopleChain::new(vec![Upstream::Drops]);
 	let statement_store = StatementStoreRpc::new(
-		wiped_node.clone(),
+		node.clone(),
 		ChainRuntime::new(pooled.clone(), Spawner::for_test()).checking_genesis(heard.clone()),
 		PEOPLE_GENESIS,
 		Spawner::for_test(),
 	);
+	(statement_store, node, heard, pooled)
+}
+
+/// The check asks every subscription connection one question. People naming
+/// itself has to leave the store as usable as without the check.
+#[test]
+fn a_subscription_connection_to_the_people_chain_is_handed_out() {
+	let (statement_store, _node, heard, _pooled) = checked_statement_store(PEOPLE_GENESIS);
+
+	let client = block_on(statement_store.client("test"));
+
+	assert!(client.is_ok(), "{:?}", client.err());
+	assert_eq!(heard.0.lock().unwrap().clone(), vec![(PEOPLE_GENESIS, PEOPLE_GENESIS)]);
+}
+
+/// Statement subscriptions run on connections the store opens itself, apart
+/// from the pooled one. A host that only listens, such as a paired one
+/// waiting for a request, has nothing else on People, so a wiped People
+/// chain has to be caught on these connections too.
+#[test]
+fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
+	const WIPED_PEOPLE: [u8; 32] = [0x19; 32];
+	let (statement_store, wiped_node, heard, pooled) = checked_statement_store(WIPED_PEOPLE);
 
 	let refused =
 		block_on(statement_store.client("test")).expect_err("the wiped People chain is refused");

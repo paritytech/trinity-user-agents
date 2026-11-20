@@ -534,6 +534,33 @@ fn a_chain_that_restarted_is_reported_at_once_and_brings_the_fetch_forward() {
 	);
 }
 
+/// A host's HTTP client may take half a minute to give up, and calls to the
+/// chain fail meanwhile. The host is told why before the fetch the wrong
+/// answer brings forward, not after it.
+#[test]
+fn a_chain_that_restarted_is_reported_before_the_fetch_it_brings_forward() {
+	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let started = start(Arc::default(), vec![published(&unchanged)]);
+	let _at_start = started.next_status();
+	let _before_the_wipe = started.next_status();
+	started.wait_for_sleeps(3);
+	started.clock.0.fetch_add(FIVE_MINUTES.as_secs(), Ordering::SeqCst);
+
+	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
+	let once_told = started.next_status();
+	// The host never answers this fetch, so its timeout is the next wait.
+	started.wait_for_sleeps(4);
+
+	assert_eq!(
+		(
+			once_told.mismatches,
+			started.fetches.load(Ordering::SeqCst),
+			started.timer.remaining().last(),
+		),
+		(people_gave(TEST_STACK_WIPED_PEOPLE), 2, Some(&FETCH_TIMEOUT))
+	);
+}
+
 /// An operator may publish the new descriptor some time after the wipe. The
 /// first fetch then brings nothing new. The loop keeps asking every five
 /// minutes, or the chain would stay out of use until the hourly fetch.

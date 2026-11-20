@@ -207,22 +207,28 @@ People.
   `StackStatus::mismatches` lists what the last connection got, until a
   connection reaches the chain the descriptor names.
 - A chain that cannot be reached, or stays silent for 30 seconds, is
-  unavailable and is asked again on the next connection. A node that answers
-  the question with an error is not used either, and is not a mismatch.
+  unavailable and is asked again on the next connection. A chain dotli reports
+  as halted is asked again for up to 47 seconds, as a halted follow is, and is
+  unavailable after that. A node that answers the question with any other
+  error is not used either, and is not a mismatch.
 
 While `mismatches` lists a chain, the core fetches the descriptor every five
 minutes instead of every hour, because an operator publishes the new genesis
 hashes with a wipe. A published descriptor that changes a chain sets
 `restart_required`, as it always does.
 
-The host hears of a mismatch through its stack callbacks and reads it from
-`stack_status` at any time. Without the callbacks the chain is still refused,
-and nothing is fetched. A host shows the listed chains as out of service and
-keeps its own features off them.
+A host that installed its stack callbacks hears of a mismatch through them,
+and any host reads it from `stack_status`. A browser host is told only when it
+passes `fetchStackDescriptor`. Without the callbacks the chain is still
+refused, and nothing is fetched. A host shows the listed chains as out of
+service and keeps its own features off them.
 
-A light client answers from its light spec, which `truapi-provider` checked
-against the descriptor when the host added it. A chain that restarted is out
-of its reach, not a mismatch, so there only the hourly fetch brings the new
+The check runs when the core opens a connection. A host whose connection
+outlives its transport, redialling underneath as dotli does, is asked again
+only when the core opens the next one.
+
+A light client answers from its chain spec. A chain that restarted is out of
+its reach, not a mismatch, so there only the hourly fetch brings the new
 descriptor.
 
 The core does not check the chains of a `Stack` built any other way, such as

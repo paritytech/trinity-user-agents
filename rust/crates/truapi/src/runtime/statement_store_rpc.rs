@@ -61,10 +61,18 @@ pub enum StatementStoreRpcClientError {
 		error: ProviderError,
 	},
 	/// The pooled People-chain connection could not be opened, or a
-	/// connection reached a chain with a different genesis hash from the
-	/// People chain's.
+	/// connection did not pass the genesis check. Kind `Unavailable` means
+	/// the People chain could not be reached or stayed halted.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
+}
+
+impl StatementStoreRpcClientError {
+	/// Whether the People chain could not be reached, so opening the client
+	/// may be tried again.
+	pub fn is_unreachable(&self) -> bool {
+		matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
+	}
 }
 
 /// Why a statement submission failed.
@@ -142,8 +150,10 @@ impl StatementStoreRpc {
 	}
 
 	/// Open a statement-store RPC client over its own host-provided
-	/// People-chain connection, for statement subscriptions. The connection
-	/// passes the pooled connections' genesis check first.
+	/// People-chain connection, for statement subscriptions.
+	///
+	/// The connection passes the pooled connections' genesis check first,
+	/// which waits out a halted chain. Drop the future to stop waiting.
 	pub async fn client(
 		&self,
 		label: &'static str,
