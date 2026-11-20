@@ -6,8 +6,8 @@ import type {
   RendererNode,
   WireProvider,
 } from "@parity/truapi";
-import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
-import type { CoreAdmin, CoreStorageKey } from "./generated/host-callbacks.js";
+import { StackStorageKey as GeneratedStackStorageKey } from "./generated/host-callbacks.js";
+import type { CoreAdmin, StackStorageKey } from "./generated/host-callbacks.js";
 
 // The typed capability interfaces below come straight from the
 // `truapi::platform` Rust module via `truapi-codegen --platform-ts-output`.
@@ -18,9 +18,12 @@ import type { CoreAdmin, CoreStorageKey } from "./generated/host-callbacks.js";
 export * from "./generated/host-callbacks.js";
 export type { JsonRpcConnection as PlatformJsonRpcConnection } from "./generated/host-callbacks.js";
 
-/** Encode a typed core-storage slot for hosts that need an opaque backing key. */
-export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
-  return GeneratedCoreStorageKey.enc(key);
+/**
+ * Encode a core-storage key, the slot together with its stack, for hosts that
+ * need an opaque backing key.
+ */
+export function encodeCoreStorageKey(key: StackStorageKey): Uint8Array {
+  return GeneratedStackStorageKey.enc(key);
 }
 
 /**

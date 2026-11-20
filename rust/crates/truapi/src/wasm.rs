@@ -1242,12 +1242,17 @@ pub fn has_trusted_remote_permissions_for_wasm(raw_product_id: String) -> bool {
 	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&raw_product_id)
 }
 
-/// Strictly decode a SCALE-encoded core-storage key for host storage policy.
+/// Strictly decode a SCALE-encoded core-storage key for host storage policy:
+/// its `stack`, absent for a slot stored alone, the slot's `kind`, and the
+/// `productId` or `productLabel` that owns the slot, when one does.
 #[wasm_bindgen(js_name = describeCoreStorageKey)]
 pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, JsValue> {
 	let description = crate::platform::describe_core_storage_key(&encoded)
 		.map_err(|error| JsValue::from_str(&error.to_string()))?;
 	let value = js_sys::Object::new();
+	if let Some(stack) = description.stack {
+		Reflect::set(&value, &JsValue::from_str("stack"), &JsValue::from_str(&stack))?;
+	}
 	Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(description.kind))?;
 	if let Some(owner) = description.owner {
 		let (name, owner) = match owner {

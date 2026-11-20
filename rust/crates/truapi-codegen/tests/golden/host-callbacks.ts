@@ -261,7 +261,15 @@ export type CoreStorageKey =
    * start does not go back to the bundled copy. A native core keeps this
    * record in its own database instead.
    */
-  | { tag: "StackRecord"; value: { stackId: string } };
+  | { tag: "StackRecord"; value: { stackId: string } }
+  /**
+   * Id of the stack that holds the values a host stored under a slot alone,
+   * before keys included a stack id.
+   *
+   * Kept under the slot alone itself, so every stack the host runs reads the
+   * same entry. See `StackStorage`.
+   */
+  | { tag: "UnscopedEntriesOwner"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -918,6 +926,26 @@ export interface SignVrfReview {
 }
 
 /**
+ * The key a host stores core-owned state under: a `CoreStorageKey` slot
+ * and the id of the stack it belongs to.
+ *
+ * `stack` is `Stack::id`. A fork has the same genesis hashes as its source
+ * and a different id, so the two never share a key. A host stores each value
+ * under the whole encoded key, never under the slot alone.
+ */
+export interface StackStorageKey {
+  /**
+   * Id of the stack the slot belongs to.
+   */
+  stack: string;
+
+  /**
+   * The slot.
+   */
+  slot: CoreStorageKey;
+}
+
+/**
  * Review shown before a product account signs a Statement Store proof
  * payload. Distinct from raw-message signing: the payload is the exact
  * unsigned statement, signed as-is (no `<Bytes>` envelope), so the host must
@@ -1149,6 +1177,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         17,
         S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
       ] as const,
+      UnscopedEntriesOwner: [18, S._void] as const,
     }),
 );
 
@@ -1618,6 +1647,22 @@ export const SignVrfReview: S.Codec<SignVrfReview> = S.lazy(
 );
 
 /**
+ * The key a host stores core-owned state under: a `CoreStorageKey` slot
+ * and the id of the stack it belongs to.
+ *
+ * `stack` is `Stack::id`. A fork has the same genesis hashes as its source
+ * and a different id, so the two never share a key. A host stores each value
+ * under the whole encoded key, never under the slot alone.
+ */
+export const StackStorageKey: S.Codec<StackStorageKey> = S.lazy(
+  (): S.Codec<StackStorageKey> =>
+    S.Struct({
+      stack: S.str,
+      slot: CoreStorageKey,
+    }) as S.Codec<StackStorageKey>,
+);
+
+/**
  * Review shown before a product account signs a Statement Store proof
  * payload. Distinct from raw-message signing: the payload is the exact
  * unsigned statement, signed as-is (no `<Bytes>` envelope), so the host must
@@ -1978,6 +2023,11 @@ export interface CoreAdmin {
 /**
  * Host-private persistence for core-owned state.
  *
+ * Every key includes the id of the stack it belongs to, and the core only
+ * uses keys of the stack it runs. Stacks therefore do not share entries. The
+ * `unscoped` methods reach the entries a host stored before keys included a
+ * stack id.
+ *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
  * has no entry to drop, so those slots outlive the disconnect. A host that
@@ -1994,17 +2044,48 @@ export interface CoreStorage {
   /**
    * Read a core-owned value by typed slot.
    */
-  readCoreStorage(key: CoreStorageKey): Promise<Uint8Array | undefined>;
+  readCoreStorage(key: StackStorageKey): Promise<Uint8Array | undefined>;
 
   /**
    * Write a core-owned value by typed slot.
    */
-  writeCoreStorage(key: CoreStorageKey, value: Uint8Array): Promise<void>;
+  writeCoreStorage(key: StackStorageKey, value: Uint8Array): Promise<void>;
 
   /**
    * Clear a core-owned value by typed slot.
    */
-  clearCoreStorage(key: CoreStorageKey): Promise<void>;
+  clearCoreStorage(key: StackStorageKey): Promise<void>;
+
+  /**
+   * Read a value the host holds under `slot` alone, with no stack id.
+   *
+   * A host that stored core state before keys included a stack id serves
+   * those entries here, by the key it stored them under: the SCALE-encoded
+   * slot. Only one stack reads them, see `StackStorage`. A host with no
+   * such entries has none to return.
+   */
+  readUnscopedCoreStorage?(
+    slot: CoreStorageKey,
+  ): Promise<Uint8Array | undefined>;
+
+  /**
+   * Write `value` under `slot` alone, with no stack id.
+   *
+   * The core writes only `CoreStorageKey::UnscopedEntriesOwner` here. A
+   * host that serves `Self::read_unscoped_core_storage` has to keep it, or
+   * no stack reads the entries. A host whose storage two processes share
+   * keeps the first value written instead of replacing it, so stacks that
+   * claim the entries at once agree on one owner.
+   */
+  writeUnscopedCoreStorage?(
+    slot: CoreStorageKey,
+    value: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Clear the value the host holds under `slot` alone, with no stack id.
+   */
+  clearUnscopedCoreStorage?(slot: CoreStorageKey): Promise<void>;
 }
 
 /**

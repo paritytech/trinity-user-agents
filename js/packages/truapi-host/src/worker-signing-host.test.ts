@@ -69,7 +69,7 @@ suite("worker serving a signing host", () => {
         coreStorage: {
           ...coreStorage,
           readCoreStorage: (key) => {
-            coreStorageReads.push(key.tag);
+            coreStorageReads.push(key.slot.tag);
             return coreStorage.readCoreStorage(key);
           },
         },

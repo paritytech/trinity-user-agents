@@ -95,6 +95,44 @@ describe("createHeadlessHostCallbacks", () => {
     ).rejects.toThrow(/headless host/);
   });
 
+  // The core asks every host for values kept under a slot alone. A host that
+  // never kept one must answer "nothing", not throw, or the first read would
+  // fail as a storage error.
+  it("has nothing under a slot alone unless the host serves it", async () => {
+    const slot = { tag: "AuthSession" } as const;
+    const touched: string[] = [];
+    const serving = createHeadlessHostCallbacks({
+      ...hostCallbacks,
+      coreStorage: {
+        ...hostCallbacks.coreStorage,
+        async readUnscopedCoreStorage() {
+          return new Uint8Array([7]);
+        },
+        async writeUnscopedCoreStorage(writtenSlot) {
+          touched.push(`write ${writtenSlot.tag}`);
+        },
+        async clearUnscopedCoreStorage(clearedSlot) {
+          touched.push(`clear ${clearedSlot.tag}`);
+        },
+      },
+    }).coreStorage;
+    const plain = createHeadlessHostCallbacks(hostCallbacks).coreStorage;
+    for (const storage of [serving, plain]) {
+      await storage.writeUnscopedCoreStorage(slot, new Uint8Array([1]));
+      await storage.clearUnscopedCoreStorage(slot);
+    }
+
+    expect({
+      plain: await plain.readUnscopedCoreStorage(slot),
+      serving: await serving.readUnscopedCoreStorage(slot),
+      touched,
+    }).toEqual({
+      plain: undefined,
+      serving: new Uint8Array([7]),
+      touched: ["write AuthSession", "clear AuthSession"],
+    });
+  });
+
   it("builds V4 everywhere unless the host lists its V5 chains", async () => {
     const v5 = {
       async transactionExtensionVersions() {

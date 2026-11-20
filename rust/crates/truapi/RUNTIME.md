@@ -482,7 +482,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
 
 - `ProductStorage`: product-scoped key-value storage.
 - `CoreStorage`: typed core-owned storage slots such as auth session, pairing
-  identity, and permission authorization state.
+  identity, and permission authorization state, keyed by stack. The core
+  reaches it only through [`StackStorage`](src/stack/storage.rs), whose docs
+  say how keys name the stack and which stack reads the values a host stored
+  before they did.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

@@ -25,6 +25,7 @@ import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import {
   AuthState,
   CoreStorageKey,
+  StackStorageKey,
   PermissionDecision,
   ProductContext,
   UserConfirmationReview,
@@ -225,7 +226,9 @@ describe("createWasmRawCallbacks", () => {
         },
         coreStorage: {
           readCoreStorage: async (key) =>
-            key.tag === "AuthSession" ? new Uint8Array([1, 2, 3]) : undefined,
+            key.slot.tag === "AuthSession"
+              ? new Uint8Array([1, 2, 3])
+              : undefined,
           writeCoreStorage: async (key, value) => {
             calls.push(["writeCoreStorage", key, [...value]]);
           },
@@ -310,7 +313,10 @@ describe("createWasmRawCallbacks", () => {
         value: { deeplink: "polkadotapp://example" },
       }),
     );
-    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
+    const authSessionKey = StackStorageKey.enc({
+      stack: "stack",
+      slot: { tag: "AuthSession" },
+    });
     expect(await raw.readCoreStorage!(authSessionKey)).toEqual(
       new Uint8Array([1, 2, 3]),
     );
@@ -432,11 +438,38 @@ describe("createWasmRawCallbacks", () => {
         "authStateChanged",
         { tag: "Pairing", value: { deeplink: "polkadotapp://example" } },
       ],
-      ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
-      ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+      [
+        "writeCoreStorage",
+        { stack: "stack", slot: { tag: "AuthSession", value: undefined } },
+        [3, 2, 1],
+      ],
+      [
+        "clearCoreStorage",
+        { stack: "stack", slot: { tag: "AuthSession", value: undefined } },
+      ],
     ]);
 
     disposePreimages?.();
+  });
+
+  // A JS host that never stored core state under a slot alone may leave the
+  // three callbacks for it out. The core asks for them on a miss and on every
+  // clear, sign-out included, so their absence must read as "nothing there".
+  it("treats missing slot-alone storage callbacks as holding nothing", async () => {
+    const host = makeHostCallbacks();
+    const { readCoreStorage, writeCoreStorage, clearCoreStorage } =
+      host.coreStorage;
+    const raw = createWasmRawCallbacks({
+      ...host,
+      coreStorage: { readCoreStorage, writeCoreStorage, clearCoreStorage },
+    } as typeof host);
+    const slot = CoreStorageKey.enc({ tag: "AuthSession" });
+
+    expect([
+      await raw.readUnscopedCoreStorage(slot),
+      await raw.writeUnscopedCoreStorage(slot, new Uint8Array([1])),
+      await raw.clearUnscopedCoreStorage(slot),
+    ]).toEqual([undefined, undefined, undefined]);
   });
 
   it("omits the chat callbacks when the host does not serve chat", () => {

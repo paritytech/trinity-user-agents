@@ -1530,7 +1530,7 @@ The layout may contain compatibility paths as well as identity-owned paths:
           <product-file>.json
 
     pairing-host/
-      current-user
+      current-user.<stack>            # user last paired on that stack
       session.json                    # bootstrap script metadata, when used
       core-storage.json               # bootstrap auth/core state
       scripts/
@@ -1570,10 +1570,21 @@ Before the first resolved user, pairing state uses
 - display identity prefers the full username and falls back to the Lite
   username;
 - the target is `<username>_pairing_host`; and
-- `pairing-host/current-user` is updated atomically.
+- `pairing-host/current-user.<stack>` is updated atomically. `<stack>` is the
+  first 16 hex digits of the SHA-256 of the stack's id, so a fork and its
+  source, which share the directory, each remember their own last user. A
+  `current-user` file with no suffix names the user for a stack that has no
+  file of its own yet.
 
-For the first bootstrap migration, in-memory bootstrap core and product values
-move into the resolved user's directory.
+For the first bootstrap migration, in-memory bootstrap product values and core
+values move into the resolved user's directory, and the core values leave the
+bootstrap `core-storage.json`. The core values are the stack's own, which
+replace the user's, and, when the stack is the recorded
+`UnscopedEntriesOwner`, those stored with no stack id as the bootstrap file
+holds them then, which do not replace an entry the user's directory already
+holds. Another stack's entries, and entries stored with no stack id that
+another stack holds or that no stack has claimed yet, stay in the bootstrap
+directory.
 
 When switching from one resolved user to another, only transient authentication
 keys move:
@@ -1665,10 +1676,25 @@ hex values are ignored with warnings.
 ```json
 {
   "values": {
-    "<SCALE-encoded CoreStorageKey hex>": "<value hex>"
+    "<SCALE-encoded StackStorageKey hex>": "<value hex>"
   }
 }
 ```
+
+A key is a slot together with the identity of the stack it belongs to, so a
+fork and its source keep separate entries in one file. A write replaces only
+the writing stack's entries and leaves the rest as the file has them. Every
+change of the file, and every read of an entry keyed by a slot alone, holds an
+exclusive lock on `core-storage.json.lock` beside it from its read to its
+write, so two hosts on a fork and its source can run at once without losing
+each other's writes. The copy loaded at start is read without the lock; a
+write replaces the file whole, so that read never sees half of one.
+
+An entry keyed by a slot alone was written before keys had a stack id. Those
+entries belong to the first stack that looks for one, which records its id
+under `UnscopedEntriesOwner` in the install's `device-storage.json`; other
+stacks never read them. A record already there is kept, so of two stacks
+claiming at once only the first takes the entries.
 
 Core state includes auth sessions, pairing bootstrap material, permission
 state, and other role-owned runtime data.

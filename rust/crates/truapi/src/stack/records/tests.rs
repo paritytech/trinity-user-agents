@@ -17,21 +17,21 @@ struct MemoryCoreStorage(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
 impl CoreStorage for MemoryCoreStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.0.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		self.0.lock().expect("storage mutex poisoned").insert(key.encode(), value);
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError> {
 		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
 		Ok(())
 	}

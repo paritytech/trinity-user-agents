@@ -115,8 +115,9 @@ pub struct ChainEndpoint {
 impl Stack {
 	/// The product namespace, where the CLI stores this network's state: the
 	/// descriptor's `id` without a trailing `-fork`, so a fork shares its
-	/// source's state, except that the `polkadot-fork` namespace is its full
-	/// `id`.
+	/// source's product storage and state directory, except that the
+	/// `polkadot-fork` namespace is its full `id`. The core's entries there
+	/// are still separate, because their keys include the stack's id.
 	pub fn namespace(&self) -> &str {
 		namespace_of(&self.descriptor.id)
 	}
@@ -159,8 +160,8 @@ impl Stack {
 		self.chain_backend
 	}
 
-	/// The identity of the pointer the descriptor was read from, and the
-	/// descriptor's `generation`.
+	/// The id of the pointer the descriptor was read from, and the descriptor's
+	/// `generation`. The core keys its storage by the id.
 	pub fn identity(&self) -> StackIdentity {
 		StackIdentity { id: self.stack_id.clone(), generation: self.descriptor.generation.clone() }
 	}

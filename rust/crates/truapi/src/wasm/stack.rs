@@ -102,6 +102,8 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 /// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
 /// `assetHub`, `people`, `bulletin` and the optional `relay`, each
 /// `{ genesisHash }`, and `allowsReservedValues`, which defaults to false.
+///
+/// Give two test stacks different `id`s to keep their stored state apart.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	let genesis = |role: &str| {

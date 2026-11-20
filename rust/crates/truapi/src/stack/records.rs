@@ -6,7 +6,7 @@ use std::sync::Arc;
 use trinity_stack::{Pointer, Refresh, StackReader};
 use truapi::latest::GenericError;
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, StackStorageKey};
 
 /// The store of each stack's descriptor record. A record is opaque to the
 /// store.
@@ -57,8 +57,9 @@ fn record_sequence(pointer: &Pointer, record: &[u8]) -> Option<u32> {
 	Some(reader.get(pointer, 0).current?.stack.descriptor.sequence)
 }
 
-/// The stack's record kept in a host's [`CoreStorage`], under
-/// [`CoreStorageKey::StackRecord`]. A browser core keeps it there with the
+/// The stack's record kept in a host's [`CoreStorage`], in the
+/// [`CoreStorageKey::StackRecord`] slot under the stack's own id, which for a
+/// bundled stack is its `stack_id`. A browser core keeps it there with the
 /// rest of its data; a native core uses its own database instead.
 pub struct CoreStorageRecords(Arc<dyn CoreStorage>);
 
@@ -72,9 +73,7 @@ impl CoreStorageRecords {
 #[async_trait::async_trait]
 impl StackRecords for CoreStorageRecords {
 	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
-		self.0
-			.read_core_storage(CoreStorageKey::StackRecord { stack_id: stack_id.to_string() })
-			.await
+		self.0.read_core_storage(record_key(stack_id)).await
 	}
 
 	/// Reads the stored record before it writes. The two steps are not one
@@ -86,12 +85,18 @@ impl StackRecords for CoreStorageRecords {
 		record: Vec<u8>,
 		check: ReplaceCheck,
 	) -> Result<(), GenericError> {
-		let key = CoreStorageKey::StackRecord { stack_id: stack_id.to_string() };
-		let stored = self.0.read_core_storage(key.clone()).await?;
+		let stored = self.0.read_core_storage(record_key(stack_id)).await?;
 		if stored.is_some_and(|stored| !check.replaces(&stored)) {
 			return Ok(());
 		}
-		self.0.write_core_storage(key, record).await
+		self.0.write_core_storage(record_key(stack_id), record).await
+	}
+}
+
+fn record_key(stack_id: &str) -> StackStorageKey {
+	StackStorageKey {
+		stack: stack_id.to_string(),
+		slot: CoreStorageKey::StackRecord { stack_id: stack_id.to_string() },
 	}
 }
 

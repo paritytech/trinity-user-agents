@@ -132,6 +132,42 @@ fn wasm_adapter_rejects_compound_codec_param_shapes() {
 	);
 }
 
+/// A JS host that leaves out a method with a default body must get that
+/// default, not a `TypeError` on every call. The adapter can only stand in for
+/// a default that answers nothing, so a method with a value to answer, or none
+/// to fall back on, is still called directly.
+#[test]
+fn wasm_adapter_answers_nothing_for_a_missing_method_whose_default_answers_nothing() {
+	let entry = |ok: TypeRef, has_default: bool| {
+		let method = PlatformMethod { has_default, ..method_with_return(ok) };
+		let adapter =
+			emit_wasm_adapter(&platform_with_method(method), &codec_types(), &BTreeSet::new())
+				.expect("adapter renders");
+		["features.featureSupported?.(", "features.featureSupported("]
+			.into_iter()
+			.find(|call| adapter.contains(call))
+			.expect("adapter calls the host method")
+	};
+
+	assert_eq!(
+		[
+			entry(TypeRef::Unit, true),
+			entry(
+				TypeRef::Option(Box::new(TypeRef::Vec(Box::new(TypeRef::Primitive("u8".into()))))),
+				true
+			),
+			entry(TypeRef::Unit, false),
+			entry(named("HostFeatureSupportedResponse"), true),
+		],
+		[
+			"features.featureSupported?.(",
+			"features.featureSupported?.(",
+			"features.featureSupported(",
+			"features.featureSupported(",
+		]
+	);
+}
+
 #[test]
 fn host_callbacks_encode_and_decode_the_latest_registration_status() {
 	let status = "ChatRoomRegistrationStatus";

@@ -85,6 +85,23 @@ A runtime built from it does not refresh: it calls neither stack callback, and
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 
+The `coreStorage` callbacks take a `StackStorageKey`. Store each value under
+the whole key, such as `encodeCoreStorageKey(key)`. A host that keeps a slot
+under a fixed key of its own, such as a session shared between origins, has to
+put `stack` in that key as well.
+
+A host that stored core state before keys had a stack implements
+`readUnscopedCoreStorage`, `writeUnscopedCoreStorage` and
+`clearUnscopedCoreStorage`. They take the slot alone, and the key the host
+stored a slot under before is `CoreStorageKey.enc(slot)`. The first stack to
+run after the update takes those values and records that through
+`writeUnscopedCoreStorage`; other stacks never see them.
+`describeCoreStorageKey` also describes such a key, without a `stack`, so a
+sweep of a product's state finds both. `createHeadlessHostCallbacks` and the
+web worker runtime treat a host without the three as holding nothing. A host
+that reads but drops what `writeUnscopedCoreStorage` writes cannot record
+which stack took those values, so no stack reads them.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

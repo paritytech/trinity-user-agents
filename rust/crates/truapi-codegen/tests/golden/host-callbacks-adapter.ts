@@ -41,6 +41,7 @@ import {
   HostScan,
   PermissionDecision,
   ProductContext,
+  StackStorageKey,
   UserConfirmationReview,
 } from "./host-callbacks.js";
 import type { RequiredHostCallbacks } from "./host-callbacks.js";
@@ -80,6 +81,11 @@ export interface RawCallbacks {
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
+  readUnscopedCoreStorage(
+    slot: Uint8Array,
+  ): Promise<Uint8Array | null | undefined>;
+  writeUnscopedCoreStorage(slot: Uint8Array, value: Uint8Array): Promise<void>;
+  clearUnscopedCoreStorage(slot: Uint8Array): Promise<void>;
   transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
   scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
@@ -143,7 +149,7 @@ export function createWasmRawCallbacks(
   const scanner = callbacks.scanner;
   return {
     authStateChanged: async (state) =>
-      await callbacks.auth.authStateChanged(AuthState.dec(state)),
+      await callbacks.auth.authStateChanged?.(AuthState.dec(state)),
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
@@ -198,14 +204,27 @@ export function createWasmRawCallbacks(
         }
       : {}),
     readCoreStorage: async (key) =>
-      await callbacks.coreStorage.readCoreStorage(CoreStorageKey.dec(key)),
+      await callbacks.coreStorage.readCoreStorage(StackStorageKey.dec(key)),
     writeCoreStorage: async (key, value) =>
       await callbacks.coreStorage.writeCoreStorage(
-        CoreStorageKey.dec(key),
+        StackStorageKey.dec(key),
         value,
       ),
     clearCoreStorage: async (key) =>
-      await callbacks.coreStorage.clearCoreStorage(CoreStorageKey.dec(key)),
+      await callbacks.coreStorage.clearCoreStorage(StackStorageKey.dec(key)),
+    readUnscopedCoreStorage: async (slot) =>
+      await callbacks.coreStorage.readUnscopedCoreStorage?.(
+        CoreStorageKey.dec(slot),
+      ),
+    writeUnscopedCoreStorage: async (slot, value) =>
+      await callbacks.coreStorage.writeUnscopedCoreStorage?.(
+        CoreStorageKey.dec(slot),
+        value,
+      ),
+    clearUnscopedCoreStorage: async (slot) =>
+      await callbacks.coreStorage.clearUnscopedCoreStorage?.(
+        CoreStorageKey.dec(slot),
+      ),
     transactionExtensionVersions: async () =>
       ExtensionVersionMap.enc(
         await callbacks.extrinsicVersion.transactionExtensionVersions(),
@@ -241,7 +260,7 @@ export function createWasmRawCallbacks(
         ),
       ),
     cancelNotification: async (id) =>
-      await callbacks.notifications.cancelNotification(id),
+      await callbacks.notifications.cancelNotification?.(id),
     ...(permissionStatus
       ? {
           devicePermissionStatus: async (request) =>
