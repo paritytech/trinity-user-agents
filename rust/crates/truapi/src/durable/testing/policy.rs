@@ -12,7 +12,7 @@ use super::{extrinsic, insert_with_plan};
 use crate::{
 	chain::{EncodedExtrinsic, MortalExtrinsic},
 	durable::{
-		engine::DurableSubmission,
+		engine::{DeferredSubmission, DurableSubmission},
 		model::{
 			DeferredDurableTx, DomainId, DurableTxEntry, DurableTxId, PolicyParams, SubmissionPlan,
 			VerdictFailureKind,
@@ -25,6 +25,11 @@ use crate::{
 /// A plan with `params`.
 pub fn test_plan(params: Vec<u8>) -> SubmissionPlan {
 	SubmissionPlan { params: PolicyParams(params) }
+}
+
+/// A deferred submission built from `params` that waits for nothing.
+pub fn test_submission(params: Vec<u8>) -> DeferredSubmission {
+	DeferredSubmission::independent(PolicyParams(params))
 }
 
 /// What a [`ScriptedPolicy`] answers for one batch.

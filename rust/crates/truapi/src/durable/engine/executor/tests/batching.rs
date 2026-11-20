@@ -10,7 +10,7 @@ use super::*;
 use crate::durable::{
 	engine::DurableRequest,
 	model::GroupId,
-	testing::{PrepareScript, ScriptedPolicy},
+	testing::{PrepareScript, ScriptedPolicy, test_submission},
 };
 
 /// Waits until `policy` was asked about exactly `batch`, built as `what`.
@@ -20,8 +20,8 @@ fn wait_for_batch(policy: &ScriptedPolicy, batch: Vec<DurableTxId>, what: &str) 
 
 /// `count` transactions of `domain` in `group`.
 fn deferred_in(domain: DomainId, group: &str, count: usize) -> DurableRequest {
-	let plan = SubmissionPlan { params: PolicyParams::default() };
-	DurableRequest::deferred(domain, Some(GroupId::new(group)), vec![plan; count]).unwrap()
+	let submissions = (0..count).map(|_| test_submission(vec![])).collect();
+	DurableRequest::deferred(domain, Some(GroupId::new(group)), submissions).unwrap()
 }
 
 /// A script whose first build waits until the returned sender fires, and

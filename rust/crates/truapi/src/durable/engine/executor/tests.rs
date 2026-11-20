@@ -12,7 +12,7 @@ use futures::{StreamExt, executor::block_on};
 use super::*;
 use crate::{
 	durable::{
-		model::{DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyParams, SubmissionPlan},
+		model::{DurableTxFailureKind, DurableTxId, DurableTxStatus, SubmissionPlan},
 		policy::{PolicyError, Preparation},
 		testing::{
 			DeferredTxHarness, PrepareAnswer, ScriptedPolicy, answer_all_with, extrinsic,

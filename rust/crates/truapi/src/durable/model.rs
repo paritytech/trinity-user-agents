@@ -24,6 +24,32 @@ impl DomainId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurableTxId(pub i64);
 
+/// A transaction a deferred one waits for, and what its failure does to it.
+pub struct TransactionDependency {
+	/// A transaction already registered, on the dependent's chain.
+	pub id: DurableTxId,
+	/// What a failure for good of `id` does to the dependent.
+	pub on_failure: OnDependencyFailure,
+}
+
+impl TransactionDependency {
+	/// A dependency on `id` whose failure leaves the dependent to its
+	/// policy, which is the default.
+	pub fn new(id: DurableTxId) -> Self {
+		Self { id, on_failure: OnDependencyFailure::Ignore }
+	}
+}
+
+/// What a dependency's failure for good does to its dependent.
+pub enum OnDependencyFailure {
+	/// The dependent is released to its policy, which decides from the chain
+	/// whether it can still be built.
+	Ignore,
+	/// The dependent fails as [`DurableTxFailureKind::Abandoned`] at the end
+	/// of a recovery pass, and so do the dependents that cascade from it.
+	Cascade,
+}
+
 /// What a policy stores with each transaction it builds. Opaque to the
 /// engine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

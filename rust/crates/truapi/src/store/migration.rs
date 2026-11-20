@@ -9,6 +9,7 @@ mod v14_to_v15_pocket_card_sides;
 mod v15_to_v16_nft_recovery;
 mod v16_to_v17_durable_domain_policies;
 mod v17_to_v18_durable_birth_hash;
+mod v18_to_v19_durable_tx_dependency;
 mod v1_to_v2_scheduled_submissions;
 mod v2_to_v3_nft_purses;
 mod v3_to_v4_nft_items;
@@ -43,5 +44,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v15_to_v16_nft_recovery::create_nft_recovery(),
 		v16_to_v17_durable_domain_policies::drop_durable_tx_policy_id(),
 		v17_to_v18_durable_birth_hash::drop_durable_tx_birth_hash(),
+		v18_to_v19_durable_tx_dependency::create_durable_tx_dependency(),
 	])
 }

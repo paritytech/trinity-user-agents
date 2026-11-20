@@ -7,7 +7,9 @@ use std::sync::Arc;
 use futures::{channel::mpsc, executor::block_on};
 use tempfile::TempDir;
 
-use super::{FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan};
+use super::{
+	FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan, test_submission,
+};
 use crate::{
 	chain::{EncodedExtrinsic, HeadEvent, MortalExtrinsic},
 	chain_runtime::RuntimeFailure,
@@ -96,8 +98,8 @@ impl DeferredTxHarness {
 	/// Defers `count` transactions of the test domain, in no group, in one
 	/// write.
 	pub fn defer_repeated(&self, count: usize) -> Vec<DurableTxId> {
-		let plans = vec![test_plan(vec![]); count];
-		let request = DurableRequest::deferred(test_domain(), None, plans).unwrap();
+		let submissions = (0..count).map(|_| test_submission(vec![])).collect();
+		let request = DurableRequest::deferred(test_domain(), None, submissions).unwrap();
 		self.defer(request)
 	}
 

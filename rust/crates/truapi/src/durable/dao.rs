@@ -1,12 +1,16 @@
 //! Queries over the `durable_tx` ledger, one SQL constant and one function
 //! each.
 
+mod dependency;
+
 use futures::stream::BoxStream;
 use rusqlite::{
 	Connection, Row, Transaction, named_params,
 	types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Type, ValueRef},
 };
 use subxt::utils::H256;
+
+pub use dependency::{insert_dependency, registered_domain};
 
 use super::model::{
 	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
