@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use crate::{
 	platform::{
-		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
-		RuntimeConfigValidationError, SigningHostConfig, Stack,
+		ExecutableKind, HostIdentity, HostInfo, PlatformInfo, ProductContext, ProductId,
+		RuntimeConfigValidationError, StackError,
 	},
 	pocket_cards::PinnedPocketCard,
 };
-use truapi::latest::HostPlatform;
+use truapi::{Bytes32, latest::HostPlatform};
 
 /// Process-owned native host configuration shared by every product execution.
 #[derive(Clone, uniffi::Record)]
@@ -38,12 +38,22 @@ pub struct HostRuntimeConfig {
 	/// user added it.
 	#[uniffi(default)]
 	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
+	/// Whether the host draws materials. Off by default, which draws every
+	/// `Materials` node plain and answers no to products that ask.
+	#[uniffi(default)]
+	pub materials_enabled: bool,
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
 	/// Optional lite username attached to the local signing-host session.
 	#[uniffi(default)]
 	pub local_session_lite_username: Option<String>,
+	/// X25519 secret this host announced as its device key before the core
+	/// kept one. The core adopts it before activating the local session, so
+	/// contacts already addressing it stay reachable; `None` keeps the key the
+	/// core holds, or generates one.
+	#[uniffi(default)]
+	pub device_encryption_key: Option<Bytes32>,
 }
 
 /// The stack a host build ships: its pointer, its signed descriptor, and
@@ -71,14 +81,20 @@ pub struct ProductExecutionConfig {
 }
 
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.
-#[derive(Debug)]
 pub struct NativeResolvedHostRuntimeConfig {
-	/// Configuration the signing-host runtime runs with.
-	pub signing: SigningHostConfig,
+	/// The host the wallet and products see.
+	pub host: HostIdentity,
+	/// The stack the host build ships. The runtime resolves it when it is
+	/// built, and refreshes it while it runs.
+	pub stack: BundledStack,
+	/// Whether the host draws materials.
+	pub materials_enabled: bool,
 	/// Entropy to activate a local signing session with at construction.
 	pub local_session_secret: Option<Vec<u8>>,
 	/// Lite username attached to that local session.
 	pub local_session_lite_username: Option<String>,
+	/// Device encryption secret to adopt before that session activates.
+	pub device_encryption_key: Option<Bytes32>,
 	/// Directory the core database lives in.
 	pub database_directory: PathBuf,
 	/// Cards the host pins in the Pocket.
@@ -112,10 +128,22 @@ pub enum NativeRuntimeConfigError {
 		/// Activation failure reason.
 		reason: String,
 	},
+	/// The device encryption key the host handed over could not be stored.
+	#[error("failed to adopt the device encryption key: {reason}")]
+	DeviceEncryptionKeyAdoption {
+		/// Why storing the key failed.
+		reason: String,
+	},
 }
 
 impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 	fn from(err: RuntimeConfigValidationError) -> Self {
+		Self::Invalid { reason: err.to_string() }
+	}
+}
+
+impl From<StackError> for NativeRuntimeConfigError {
+	fn from(err: StackError) -> Self {
 		Self::Invalid { reason: err.to_string() }
 	}
 }
@@ -136,10 +164,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let BundledStack { pointer, descriptor, allows_reserved_values } = config.stack;
-		let stack = Stack::bundled(&pointer, &descriptor, allows_reserved_values)
-			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
-		let signing = SigningHostConfig::new(
+		let host = HostIdentity::new(
 			HostInfo {
 				name: config.host_name,
 				icon: config.host_icon,
@@ -147,12 +172,14 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 				platform: native_host_platform(),
 			},
 			PlatformInfo { kind: config.platform_type, version: config.platform_version },
-			stack,
 		)?;
 		Ok(Self {
-			signing,
+			host,
+			stack: config.stack,
+			materials_enabled: config.materials_enabled,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
+			device_encryption_key: config.device_encryption_key,
 			database_directory: PathBuf::from(config.database_directory),
 			pinned_pocket_cards: config
 				.pinned_pocket_cards

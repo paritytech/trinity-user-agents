@@ -14,6 +14,9 @@ use crate::{
 
 const FROM: PurseId = PurseId(0);
 
+/// The creation time test cheques are created at, in Unix milliseconds.
+const CREATED_AT: u64 = 1_700_000_000_000;
+
 /// Purse calls over a fresh database whose purse 0 holds `count` items.
 fn purses_holding(count: u32) -> (TempDir, NftPurses, Vec<ItemKey>) {
 	let (dir, db) = open_temporary_core_db();
@@ -41,7 +44,7 @@ fn create_test_cheque(
 ) -> Result<NftPurseCheque, HandoffError<SealError>> {
 	let items = keys.iter().copied().collect();
 	let prepared = block_on(purses.prepare_cheque(&creator(product), FROM, to, items))?;
-	block_on(prepared.create())
+	block_on(prepared.create(CREATED_AT))
 }
 
 /// The keys `cheque` opens to with `secret`.
@@ -291,4 +294,88 @@ fn a_cheque_whose_secrets_sign_for_other_items_is_corrupted() {
 	assert!(
 		matches!(opened, Err(CorruptedCheque::KeyMismatch { listed, .. }) if listed == swapped.items[0])
 	);
+}
+
+fn listed_cheques(purses: &NftPurses, product: &str) -> Vec<NftPurseChequeRecord> {
+	block_on(purses.list_cheques(&creator(product))).unwrap()
+}
+
+fn listed_cheque_ids(purses: &NftPurses, product: &str) -> Vec<NftPurseChequeId> {
+	listed_cheques(purses, product)
+		.into_iter()
+		.map(|record| record.cheque.id)
+		.collect()
+}
+
+fn static_cheque_to_fresh_key(cheque_id: [u8; 32]) -> NftPurseChequeDestination {
+	let public = X25519Keypair::generate().unwrap().public_key().0;
+	NftPurseChequeDestination::Static {
+		encryption_key: X25519PublicKey(public),
+		cheque_id: NftPurseChequeId(cheque_id),
+	}
+}
+
+/// A product that lost a cheque delivers it again from the list, so the list
+/// must give back the very bytes it was handed, not a resealed copy.
+#[test]
+fn a_created_cheque_is_listed_as_it_was_returned() {
+	let (_dir, purses, keys) = purses_holding(1);
+	let to = static_cheque_to_fresh_key([9; 32]);
+
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys).unwrap();
+
+	let expected = NftPurseChequeRecord {
+		cheque,
+		from: NftPurseId(FROM.0),
+		destination: to,
+		created_at: CREATED_AT,
+	};
+	assert_eq!(listed_cheques(&purses, "tickets.dot"), vec![expected]);
+}
+
+/// Cheques come back in the order they were created, which is not the order
+/// of their ids, and only to the product that created them, so one product
+/// never sees another's, even under the same static cheque id.
+#[test]
+fn cheques_are_listed_oldest_first_to_their_creator_only() {
+	let (_dir, purses, keys) = purses_holding(3);
+	let first = create_test_cheque(
+		&purses,
+		"tickets.dot",
+		&static_cheque_to_fresh_key([9; 32]),
+		&keys[..1],
+	);
+	let foreign =
+		create_test_cheque(&purses, "other.dot", &static_cheque_to_fresh_key([9; 32]), &keys[1..2]);
+	let second = create_test_cheque(
+		&purses,
+		"tickets.dot",
+		&static_cheque_to_fresh_key([1; 32]),
+		&keys[2..],
+	);
+
+	let own = listed_cheque_ids(&purses, "tickets.dot");
+	let others = listed_cheque_ids(&purses, "other.dot");
+
+	assert_eq!(own, vec![first.unwrap().id, second.unwrap().id]);
+	assert_eq!(others, vec![foreign.unwrap().id]);
+}
+
+/// A cheque refused for reusing an id handed nothing off and reached nobody,
+/// so there is nothing to recover and it must not be listed.
+#[test]
+fn a_refused_cheque_is_not_listed() {
+	let (_dir, purses, keys) = purses_holding(2);
+	let to = static_cheque_to_fresh_key([9; 32]);
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys[..1]).unwrap();
+
+	let reused_id = create_test_cheque(
+		&purses,
+		"tickets.dot",
+		&static_cheque_to_fresh_key([9; 32]),
+		&keys[1..],
+	);
+
+	assert!(matches!(reused_id, Err(HandoffError::TagInUse(_))));
+	assert_eq!(listed_cheque_ids(&purses, "tickets.dot"), vec![cheque.id]);
 }

@@ -8,18 +8,11 @@ use futures::{
 	stream::StreamExt,
 };
 
-use crate::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
-
-/// Real relay-chain spec (checkpoint included) vendored from smoldot's
-/// demo specs: `add_chain` and spec-local JSON-RPC queries succeed without
-/// any network access.
-const RELAY_SPEC: &str = include_str!("../../tests/fixtures/paseo.json");
-
-/// Parachain of [`RELAY_SPEC`], used to exercise the relay-add path.
-const PARACHAIN_SPEC: &str = include_str!("../../tests/fixtures/paseo_people.json");
-
-const RELAY_GENESIS: [u8; 32] = [1; 32];
-const PARACHAIN_GENESIS: [u8; 32] = [2; 32];
+use crate::{
+	ChainSource, EmbeddedChainProvider,
+	platform::ChainProvider,
+	test_specs::{PARACHAIN_GENESIS, PARACHAIN_SPEC, RELAY_GENESIS, RELAY_SPEC},
+};
 
 fn frame_id(frame: &str) -> serde_json::Value {
 	let frame: serde_json::Value = serde_json::from_str(frame).expect("valid JSON");
@@ -202,7 +195,7 @@ fn unknown_relay_is_an_error() {
 	let error = block_on(provider.connect(RELAY_GENESIS))
 		.err()
 		.expect("an unregistered relay must fail to connect");
-	assert!(error.to_string().contains("not a registered light-client chain"));
+	assert!(error.to_string().contains("has no light-client source"));
 }
 
 #[test]

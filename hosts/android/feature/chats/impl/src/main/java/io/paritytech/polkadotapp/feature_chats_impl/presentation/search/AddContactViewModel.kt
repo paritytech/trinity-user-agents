@@ -152,7 +152,7 @@ internal class AddContactViewModel @Inject constructor(
         return UserSearchResultUiModel(
             contactAccountId = accountId,
             username = displayUsername,
-            avatarModel = ChatAvatar.publicProfile(displayUsername, accountId.value).toUi(),
+            avatarModel = ChatAvatar.publicProfile(displayUsername, accountId.value).toUi(forceFresh = false),
         )
     }
 

@@ -101,6 +101,7 @@ It also reports a new generation, so the caller drops its chain caches, and whet
   let refreshed = reader.fetched(&pointer, served, now)?; // Document { bytes, etag } | NotModified | Unreachable
   // refreshed: what accept decided, and the record to store when it changed
   reader.due(now);                       // stacks whose background refresh is due
+  reader.due_in(&pointer, now);          // seconds until this stack's refresh is due, for a caller that sleeps
   ```
 
   `get` returns no `current` for a stack the reader has no copy of, and under `"once"` until the stack's first fetch is
@@ -146,10 +147,11 @@ a fetch only refreshes it.
 The package ships a `trinity-stack` CLI, so a JavaScript project needs no `truapi-host` binary:
 
 ```
-npx trinity-stack add <name> <link | url> [--key 0x..]
+npx trinity-stack add <name> [<link | url>] [--key 0x..]
 npx trinity-stack update [<name>...]
 npx trinity-stack generate
 npx trinity-stack list
+npx trinity-stack known
 npx trinity-stack remove <name>
 ```
 
@@ -165,7 +167,8 @@ They write one directory in the project:
 ```
 
 - **`add`** does what `update` does for that stack, then records the link, so a stack that fails to add leaves nothing
-  behind.
+  behind. Without a link, `<name>` must be one of the signed known stacks the crate lists, and `add` uses its link;
+  `known` prints each known stack's name and link, and marks an unsigned one, which is listed for its link only.
 - **`update`** fetches each stack and runs `accept` with the committed copy as stored, so it refuses an unsigned stack,
   an expired one and anything that would lower `sequence`, as `truapi-host stack bundle` does. It then regenerates the
   module. It exits 0 when no committed file changed, 1 on an error and 2 when one did, so a scheduled CI job can open a

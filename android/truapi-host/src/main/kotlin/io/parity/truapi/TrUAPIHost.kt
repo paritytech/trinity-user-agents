@@ -21,7 +21,7 @@
 // localhost WebSocket bridge. Start it with `execution.startWsBridge()` and load
 // the product page after injecting `LocalhostBridgeBootstrap.script(...)` and
 // `ContainerScriptBundle.load(...)` at document start. The container publishes
-// `window.__HOST_API_CLIENT__` and a compatibility MessagePort for older SDKs.
+// `window.__HOST_API_TRANSPORT__`, and a MessagePort for SDKs that predate it.
 
 package io.parity.truapi
 
@@ -32,9 +32,18 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.RenderContext
+import uniffi.truapi.NativeMaterialsObserver
+import uniffi.truapi.NativeMaterialsResolution
+import uniffi.truapi.ResolvedMaterials
+import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
@@ -56,6 +65,7 @@ import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.DbStatus
+import uniffi.truapi.CoreAttribute
 import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
@@ -66,16 +76,20 @@ import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
 import uniffi.truapi.PublicProfile
 import uniffi.truapi.PublicProfileException
+import uniffi.truapi.PublicProfileResolutionOptions
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
+import uniffi.truapi.NativePublicProfileObserver
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.NativeSubscription
 import uniffi.truapi.PocketAddException
 import uniffi.truapi.PocketCardRemoval
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
@@ -100,6 +114,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.HostContactUsernames
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
@@ -181,6 +196,16 @@ interface HostBridge {
     fun onCoreLog(marker: String, detail: String) {}
 
     /**
+     * Structured lifecycle fact. Marker is the same stable slug [onCoreLog]
+     * carries, and each attribute is a key the core names with a label, a
+     * count or a condition under it. Hand these to the reporter as attributes,
+     * so a marker can be grouped and filtered by what it carries. Every
+     * marker here is listed in the table `coreMarkers()` returns, and its class
+     * decides what the host may do with it, exactly as for a log line.
+     */
+    fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {}
+
+    /**
      * Open a URL in the system browser, suspending for any approval on the main thread.
      */
     @Throws(HostNavigateToException::class)
@@ -239,6 +264,18 @@ interface HostBridge {
      */
     suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         ExpandedCardFaceOutcome.UNSUPPORTED
+
+    /**
+     * Turn this execution's expanded card so its back (`true`) or its front
+     * (`false`) is up. Answers [ExpandedCardTurnOutcome.NO_BACK] when the card
+     * has no back to show, and the face call's outcomes otherwise. Returns
+     * without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardTurnOutcome.UNSUPPORTED], so an app that cannot
+     * turn cards says so.
+     */
+    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+        ExpandedCardTurnOutcome.UNSUPPORTED
 
     /**
      * Prompt for a remote permission bundle [product] requested on the main
@@ -431,6 +468,20 @@ interface HostBridge {
     suspend fun encryptedStorageDelete(key: ByteArray): Unit =
         throw HostRejection.Rejected("this host keeps no encrypted storage")
 
+    /**
+     * Remove every value [productId] keeps in product storage. Idempotent.
+     * Runtime-wide, like [durableWorkChanged]: the core calls it from
+     * [TrUAPIHostRuntime.clearProductState], when the product may have no
+     * execution and so no bridge of its own. Every key the product owns starts
+     * with `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`,
+     * so a shared store removes keys with that prefix and a store kept per
+     * product drops that product's store. Defaults to a rejection, so clearing
+     * the product's state fails on a host that has not implemented it.
+     */
+    @Throws(HostLocalStorageReadException::class)
+    suspend fun clearProductStorage(productId: ProductId): Unit =
+        throw HostLocalStorageReadException.Unknown("this host does not clear product storage")
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -538,6 +589,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+        runCatching { bridge.onCoreEvent(marker, attributes) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         runCatching { bridge.requestWorkerTransition(productId, transition) }
     }
@@ -592,6 +648,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         withHostRejection { bridge.setExpandedCardFaceShown(shown) }
+
+    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+        withHostRejection { bridge.setExpandedCardBackShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -658,6 +717,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
+
+    override suspend fun clearProductStorage(productId: ProductId) =
+        withStorageException { bridge.clearProductStorage(productId) }
 
     override suspend fun beginOperation(productId: ProductId, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
@@ -745,9 +807,11 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
  * belongs to the host and not to any one product. A runtime without one
  * answers `contacts.pick` with `Unsupported`.
  *
- * Nothing here reaches a product, and the list never reaches the core: it
- * asks only about the handles a transaction names, and the picker returns the
- * one person the user chose. Omit the contacts the user has blocked, from both.
+ * No account reaches a product, and the accounts on the list never reach the
+ * core: it asks only about the handles a transaction names, and the picker
+ * returns the one person the user chose. Usernames reach the core only through
+ * [contactUsernames], for the game product. Omit the contacts the
+ * user has blocked, from all three.
  */
 interface ContactsHostBridge {
     /**
@@ -766,6 +830,16 @@ interface ContactsHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun pickContact(productId: ProductId): HostContactPick
+
+    /**
+     * List the dotNS usernames of the unblocked contacts the picker would
+     * offer, each the bare label with no top-level domain. The core asks only
+     * for the game product, so [productId] is not a filter. Runs inline, so
+     * answer from what is already in hand. Defaults to
+     * [HostContactUsernames.Unsupported].
+     */
+    @Throws(HostRejection::class)
+    fun contactUsernames(productId: ProductId): HostContactUsernames = HostContactUsernames.Unsupported
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
@@ -774,6 +848,9 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 
     override suspend fun pickContact(productId: ProductId): HostContactPick =
         withHostRejection { bridge.pickContact(productId) }
+
+    override fun contactUsernames(productId: ProductId): HostContactUsernames =
+        withHostRejection { bridge.contactUsernames(productId) }
 }
 
 /**
@@ -1098,6 +1175,18 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /**
+     * Forget one product: revoke its grants and Allow once answers, then
+     * remove its values from product storage through
+     * [HostBridge.clearProductStorage] on the bridge this runtime was built
+     * with. The wallet session and other products are kept. Stop the product's
+     * executions first: a value a running execution writes after the clear is
+     * kept.
+     */
+    suspend fun clearProductState(productId: ProductId) {
+        inner.clearProductState(productId)
+    }
+
+    /**
      * Tell the pairing host behind [deeplink] that allowance allocation is
      * under way, so it leaves its QR screen while the allocation runs.
      *
@@ -1180,10 +1269,36 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
 
-    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
-    @Throws(PublicProfileException::class)
-    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
-        inner.resolvePublicProfile(username, force)
+    /**
+     * Profile metadata using [options] to force a lookup or suppress stale cached values.
+     * Emits stored metadata when eligible, then a resolved value only when it differs or no
+     * stored value was emitted. At most two values precede completion or a
+     * [PublicProfileException]. Cancelling collection stops the core observation.
+     */
+    fun observePublicProfile(username: String, options: PublicProfileResolutionOptions): Flow<PublicProfile> =
+        callbackFlow {
+            val subscription = inner.observePublicProfile(
+                username,
+                options,
+                object : NativePublicProfileObserver {
+                    override fun onProfile(profile: PublicProfile) {
+                        runCatching { trySend(profile) }
+                    }
+
+                    override fun onComplete() {
+                        runCatching { close() }
+                    }
+
+                    override fun onError(error: PublicProfileException) {
+                        runCatching { close(error) }
+                    }
+                },
+            )
+            awaitClose {
+                subscription.cancel()
+                subscription.close()
+            }
+        }.buffer(2)
 
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and
@@ -1192,6 +1307,16 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     @Throws(ImageException::class)
     suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
+
+    /**
+     * The materials of [tree], a saved face or a preview, in [context]: for each
+     * `Materials` node, whether it loads, draws its layers or draws plain.
+     * Unless [floatFilterable], the shaders filter 32-bit float images
+     * themselves. To resolve a new tree for the same body, start its resolution
+     * before closing the old one.
+     */
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 
     /**
      * The Pocket collection, pinned cards first, now and after every change. A
@@ -1227,10 +1352,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
         inner.removePocketCard(productId, cardId)
 
-    /** The newest face kept for a card, if one is. */
+    /** The newest face kept for one side of a card, if one is. */
     @Throws(NativeCoreDatabaseException::class)
-    suspend fun pocketCardFace(productId: ProductId, cardId: String): RendererNode? =
-        inner.pocketCardFace(productId, cardId)
+    suspend fun pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = PocketCardSide.FRONT,
+    ): RendererNode? = inner.pocketCardFace(productId, cardId, side)
 
     /**
      * Decide durable transactions from the chain until none is live, then
@@ -1246,6 +1374,10 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
+
+    /** This device's 32-byte X25519 encryption secret, the key behind `SessionUiInfo.deviceEncPublicKey`. */
+    @Throws(HostRejection::class)
+    fun deviceEncryptionKey(): ByteArray = inner.deviceEncryptionKey()
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {
@@ -1340,6 +1472,48 @@ private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscriptio
         }
     }.conflate()
 
+/**
+ * The resolved materials of one tree, now and after each change, and the
+ * reports the app makes against them. Close it to stop.
+ */
+class MaterialsResolution internal constructor(
+    subscribe: (NativeMaterialsObserver) -> NativeMaterialsResolution,
+) : AutoCloseable {
+    private val latest = MutableStateFlow<ResolvedMaterials?>(null)
+    private var closed = false
+
+    /** The newest materials, `null` until the first. */
+    val resolved: StateFlow<ResolvedMaterials?> = latest.asStateFlow()
+
+    private val handle: NativeMaterialsResolution =
+        subscribe(
+            object : NativeMaterialsObserver {
+                // Declared infallible by the core, so a throw here would abort the process.
+                override fun onResolved(materials: ResolvedMaterials) {
+                    runCatching { latest.value = materials }
+                }
+            },
+        )
+
+    /**
+     * Draws node [node] plain for the rest of this resolution: its shader did not
+     * compile ([MaterialFailure.UNSUPPORTED]), or an image argument could not
+     * be used (`checkMaterialImage`'s reason, or [MaterialFailure.NOT_FOUND]).
+     */
+    @Synchronized
+    fun report(node: UInt, material: ByteArray?, reason: MaterialFailure) {
+        if (!closed) handle.report(node, material, reason)
+    }
+
+    @Synchronized
+    override fun close() {
+        if (closed) return
+        closed = true
+        handle.cancel()
+        handle.close()
+    }
+}
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1430,6 +1604,14 @@ class TrUAPIProductExecution internal constructor(
     fun publishRendererAction(item: HostRendererActionSubscribeItem) {
         inner.publishRendererAction(item)
     }
+
+    /**
+     * The materials of [tree], a body this execution's product rendered in
+     * [context], as [TrUAPIHostRuntime.resolveMaterials]. A node that falls back is
+     * also reported to the product.
+     */
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 
     /** Read the active session's X25519 chat identity private key, if any. */
     @Throws(HostRejection::class)

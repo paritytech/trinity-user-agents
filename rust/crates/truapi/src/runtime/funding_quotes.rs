@@ -36,10 +36,7 @@ use truapi::latest::{
 	FundingRail,
 };
 
-use super::{
-	funding::{lock, within},
-	services::RuntimeServices,
-};
+use super::{funding::lock, services::RuntimeServices};
 use crate::{
 	host_logic::{
 		funding::FundingChoice,
@@ -49,6 +46,7 @@ use crate::{
 	platform::{
 		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
 	},
+	time::within,
 	unix_time::current_unix_millis,
 };
 

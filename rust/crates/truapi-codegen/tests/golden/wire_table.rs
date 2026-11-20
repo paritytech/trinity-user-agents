@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "902ebc97af296f8b";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "7c6a3a324db0decd";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -560,6 +560,12 @@ pub const CONTACTS_PICK: MethodIds = MethodIds {
     method_id: 0,
 };
 
+/// Wire discriminants for `contacts_usernames`.
+pub const CONTACTS_USERNAMES: MethodIds = MethodIds {
+    trait_id: 20,
+    method_id: 1,
+};
+
 /// Wire discriminants for `game_remind_next_game`.
 pub const GAME_REMIND_NEXT_GAME: MethodIds = MethodIds {
     trait_id: 21,
@@ -732,6 +738,12 @@ pub const NFT_PURSE_STATIC_RECEIVE_KEY: MethodIds = MethodIds {
 pub const NFT_PURSE_LISTEN_PAYMENT_INBOX: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 14,
+};
+
+/// Wire discriminants for `nft_purse_list_cheques`.
+pub const NFT_PURSE_LIST_CHEQUES: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 15,
 };
 
 /// The full wire table. Trait ids and per-trait method ordering are
@@ -1083,6 +1095,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(CONTACTS_PICK),
     },
     WireEntry {
+        method: "contacts_usernames",
+        kind: WireKind::Request(CONTACTS_USERNAMES),
+    },
+    WireEntry {
         method: "game_remind_next_game",
         kind: WireKind::Request(GAME_REMIND_NEXT_GAME),
     },
@@ -1197,5 +1213,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_listen_payment_inbox",
         kind: WireKind::Subscription(NFT_PURSE_LISTEN_PAYMENT_INBOX),
+    },
+    WireEntry {
+        method: "nft_purse_list_cheques",
+        kind: WireKind::Request(NFT_PURSE_LIST_CHEQUES),
     },
 ];
