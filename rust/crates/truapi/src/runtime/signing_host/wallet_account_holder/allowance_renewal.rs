@@ -7,7 +7,7 @@
 
 use crate::{
 	host_logic::product_account::ProductAccountError,
-	platform::{CoreStorage, CoreStorageKey, ProductId},
+	platform::{CoreStorage, CoreStorageKey, ProductId, StackStorage},
 	runtime::{
 		authority::{AccountHolder, AuthorityError, AuthoritySession},
 		statement_allowance::StatementAllowanceError,
@@ -171,10 +171,10 @@ impl RenewalState {
 
 /// Discard unreadable entries; later allocations rebuild the ledger.
 async fn read_entries(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 ) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let Some(blob) = storage
-		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
+		.read(CoreStorageKey::StatementRenewalTargets)
 		.await
 		.map_err(StatementRenewalError::ReadLedger)?
 	else {
@@ -190,11 +190,11 @@ async fn read_entries(
 }
 
 async fn write_entries(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	entries: &[TrackedStatementRenewalTarget],
 ) -> Result<(), StatementRenewalError> {
 	storage
-		.write_core_storage(CoreStorageKey::StatementRenewalTargets, entries.encode())
+		.write(CoreStorageKey::StatementRenewalTargets, entries.encode())
 		.await
 		.map_err(StatementRenewalError::WriteLedger)
 }
@@ -252,7 +252,7 @@ impl WalletAccountHolder {
 	) -> Result<(), StatementRenewalError> {
 		let _guard = self.renewal.ledger_lock().lock().await;
 		self.require_current_session(session)?;
-		let mut entries = read_entries(self.services.platform.as_ref()).await?;
+		let mut entries = read_entries(&self.services.storage()).await?;
 		self.require_current_session(session)?;
 		let mut changed = false;
 		for target in targets {
@@ -263,7 +263,7 @@ impl WalletAccountHolder {
 			}
 		}
 		if changed {
-			write_entries(self.services.platform.as_ref(), &entries).await?;
+			write_entries(&self.services.storage(), &entries).await?;
 			self.require_current_session(session)?;
 		}
 		Ok(())
@@ -286,7 +286,7 @@ impl WalletAccountHolder {
 		&self,
 	) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 		let _guard = self.renewal.ledger_lock().lock().await;
-		read_entries(self.services.platform.as_ref()).await
+		read_entries(&self.services.storage()).await
 	}
 
 	/// Identify which fixed ledger entries belong to the active wallet.
@@ -302,7 +302,7 @@ impl WalletAccountHolder {
 		let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
 		let _guard = self.renewal.ledger_lock().lock().await;
 		self.require_current_session(&session)?;
-		let mut entries = read_entries(self.services.platform.as_ref()).await?;
+		let mut entries = read_entries(&self.services.storage()).await?;
 		self.require_current_session(&session)?;
 		let original_len = entries.len();
 		entries.retain(|entry| {
@@ -318,7 +318,7 @@ impl WalletAccountHolder {
 		if entries.len() == original_len {
 			return Ok(false);
 		}
-		write_entries(self.services.platform.as_ref(), &entries).await?;
+		write_entries(&self.services.storage(), &entries).await?;
 		self.require_current_session(&session)?;
 		Ok(true)
 	}
@@ -414,14 +414,14 @@ impl WalletAccountHolder {
 	) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), StatementRenewalError> {
 		let _guard = self.renewal.ledger_lock().lock().await;
 		self.require_current_session(session)?;
-		let entries = read_entries(self.services.platform.as_ref()).await?;
+		let entries = read_entries(&self.services.storage()).await?;
 		self.require_current_session(session)?;
 		let (owned, foreign): (Vec<_>, Vec<_>) =
 			entries.into_iter().partition(|entry| entry.is_owned_by(session.public_key));
 		let pruned: Vec<String> = foreign.iter().map(|entry| target_label(&entry.target)).collect();
 		if !foreign.is_empty() {
 			warn!(dropped = ?pruned, "pruning renewal targets promised by a previous identity");
-			write_entries(self.services.platform.as_ref(), &owned).await?;
+			write_entries(&self.services.storage(), &owned).await?;
 		}
 		Ok((owned.into_iter().map(|entry| entry.target).collect(), pruned))
 	}

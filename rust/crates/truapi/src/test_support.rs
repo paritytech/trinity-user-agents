@@ -3,7 +3,7 @@
 
 use std::{
 	sync::{
-		Arc, Mutex,
+		Arc, LazyLock, Mutex,
 		atomic::{AtomicBool, AtomicUsize, Ordering},
 	},
 	task::{Context, Poll},
@@ -30,9 +30,10 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StackStorage, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -350,6 +351,12 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 /// Identity of every [`test_stack`].
 pub const TEST_STACK_ID: &str = "test-stack";
 
+/// Core storage for the [`paseo_test_stack`], kept in `host`.
+pub fn test_storage<S: PlatformCoreStorage + ?Sized>(host: &S) -> StackStorage<'_, S> {
+	static STACK: LazyLock<crate::platform::Stack> = LazyLock::new(paseo_test_stack);
+	STACK.storage(host)
+}
+
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -465,6 +472,23 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 	trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", key.as_deref())
 		.expect("test pointer is valid")
 		.to_link(trinity_stack::DEFAULT_LINK_BASE)
+}
+
+/// Runtime services over `platform` on the [`paseo_test_stack`].
+pub fn test_services(
+	platform: Arc<dyn crate::platform::Platform>,
+) -> Arc<crate::runtime::RuntimeServices> {
+	crate::runtime::RuntimeServices::new(
+		platform,
+		HostInfo {
+			name: "Test Host".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		},
+		paseo_test_stack(),
+		crate::Spawner::for_test(),
+	)
 }
 
 /// Runtime configuration used by platform-backed runtime tests.

@@ -5,10 +5,14 @@
 //! the key in the stack's link, starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. It resolves the
 //! [`Stack`] the core runs on.
+//!
+//! The core reaches [`CoreStorage`](crate::platform::CoreStorage) only
+//! through the [`StackStorage`] that [`Stack::storage`] builds.
 
 mod records;
 mod refresh;
 mod source;
+mod storage;
 
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
@@ -20,6 +24,7 @@ use crate::dotns_name::DOTNS_TLDS;
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
 pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
+pub use storage::StackStorage;
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,

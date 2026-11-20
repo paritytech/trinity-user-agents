@@ -21,7 +21,8 @@ use crate::{
 	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
-		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, StackStorage,
+		TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
@@ -311,6 +312,11 @@ impl RuntimeServices {
 	/// The stack the host runs.
 	pub fn stack(&self) -> &Stack {
 		&self.stack
+	}
+
+	/// Core storage for the stack the host runs.
+	pub fn storage(&self) -> StackStorage<'_, dyn Platform> {
+		self.stack.storage(self.platform.as_ref())
 	}
 
 	/// The Asset Hub dotNS reads run against.

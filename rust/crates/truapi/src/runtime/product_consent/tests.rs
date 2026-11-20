@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::StubPlatform;
+use crate::test_support::{StubPlatform, test_services, test_storage};
 use PermissionAuthorizationStatus::{Authorized, Denied};
 
 fn consent_answering(
@@ -9,14 +9,14 @@ fn consent_answering(
 		permission_confirmation_decisions: Mutex::new(decisions.into_iter().collect()),
 		..StubPlatform::default()
 	});
-	(platform.clone(), ProductConsent::new(platform))
+	(platform.clone(), ProductConsent::new(test_services(platform)))
 }
 
 fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
 	futures::executor::block_on(consent.account_access(
 		&ProductId::for_test(requester),
 		&ProductId::for_test("peopl.dot"),
-		consent.platform.as_ref(),
+		consent.services.platform.as_ref(),
 	))
 	.expect("the stub answers every prompt")
 }
@@ -48,7 +48,7 @@ fn a_stored_decision_overrides_allow_once() {
 	let (platform, consent) = consent_answering([PermissionDecision::AllowOnce]);
 	access(&consent, "myapp.dot");
 	futures::executor::block_on(set_authorization_status(
-		platform.as_ref(),
+		&test_storage(platform.as_ref()),
 		CoreStorageKey::product_account_access_authorization(
 			&ProductId::for_test("myapp.dot"),
 			&ProductId::for_test("peopl.dot"),
@@ -71,7 +71,7 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 		account_access_confirmation_gate: Mutex::new(Some(gate)),
 		..StubPlatform::default()
 	});
-	let consent = ProductConsent::new(platform.clone());
+	let consent = ProductConsent::new(test_services(platform.clone()));
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let (first, second, ()) = futures::executor::block_on(async {
 		futures::join!(

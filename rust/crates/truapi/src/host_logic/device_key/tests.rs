@@ -1,17 +1,22 @@
 use super::*;
-use crate::{platform::Platform, test_support::StubPlatform};
+use crate::{
+	platform::Platform,
+	test_support::{StubPlatform, test_storage},
+};
 use std::sync::Arc;
 
 #[test]
 fn secret_is_generated_once_and_then_reused() {
 	let storage: Arc<dyn Platform> = Arc::new(StubPlatform::default());
 
-	let first =
-		futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref()))
-			.unwrap();
-	let second =
-		futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref()))
-			.unwrap();
+	let first = futures::executor::block_on(read_or_create_device_encryption_secret(
+		&test_storage(storage.as_ref()),
+	))
+	.unwrap();
+	let second = futures::executor::block_on(read_or_create_device_encryption_secret(
+		&test_storage(storage.as_ref()),
+	))
+	.unwrap();
 
 	// Peers address this device by the matching public key, so regenerating
 	// it would strand everyone still holding the old one.
@@ -21,14 +26,23 @@ fn secret_is_generated_once_and_then_reused() {
 #[test]
 fn a_stored_secret_replaces_the_generated_one() {
 	let storage: Arc<dyn Platform> = Arc::new(StubPlatform::default());
-	futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref())).unwrap();
+	futures::executor::block_on(read_or_create_device_encryption_secret(&test_storage(
+		storage.as_ref(),
+	)))
+	.unwrap();
 
-	futures::executor::block_on(store_device_encryption_secret(storage.as_ref(), [7; 32])).unwrap();
+	futures::executor::block_on(store_device_encryption_secret(
+		&test_storage(storage.as_ref()),
+		[7; 32],
+	))
+	.unwrap();
 
 	// A host that announced a key of its own before the core kept one hands
 	// it over; reading back anything else strands the peers addressing it.
 	assert_eq!(
-		futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref())),
+		futures::executor::block_on(read_or_create_device_encryption_secret(&test_storage(
+			storage.as_ref(),
+		))),
 		Ok([7; 32])
 	);
 }

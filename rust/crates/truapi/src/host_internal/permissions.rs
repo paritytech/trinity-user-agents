@@ -42,7 +42,7 @@ use parity_scale_codec::{Decode, Encode};
 use crate::platform::{
 	BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind,
 	DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	PermissionDecision, PermissionStatusHost, Permissions, ProductContext, ProductId,
+	PermissionDecision, PermissionStatusHost, Permissions, ProductContext, ProductId, StackStorage,
 	is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
 };
 use truapi::latest::{
@@ -164,7 +164,7 @@ impl TemporaryPermissions {
 
 /// Coordinates saved and one-use permissions with the platform's prompts.
 pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> {
-	storage: &'a S,
+	storage: StackStorage<'a, S>,
 	prompt: &'a P,
 	product: &'a ProductContext,
 	/// Live OS permission state, when the host serves that capability. Absent
@@ -182,7 +182,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	/// Device grants resolve without an OS check by default. Use
 	/// [`Self::with_status_host`] on paths that enforce a device capability, so
 	/// a grant the OS has since withdrawn stops reading as usable.
-	pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext) -> Self {
+	pub fn new(storage: StackStorage<'a, S>, prompt: &'a P, product: &'a ProductContext) -> Self {
 		Self {
 			storage,
 			prompt,
@@ -258,7 +258,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			// Nothing per-domain covers the rest, so the remaining question is
 			// whether this exact set has already been refused.
 			BundleResolution::Undecided(undecided) => {
-				authorization_status(self.storage, self.bundle_key(&undecided)).await
+				authorization_status(&self.storage, self.bundle_key(&undecided)).await
 			},
 		}
 	}
@@ -326,7 +326,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		};
 		for candidate in remote_domain_candidates(domain) {
 			let key = CoreStorageKey::remote_domain_authorization(self.product_id(), &candidate);
-			if let Some(stored) = peek_stored(self.storage, key.clone()).await? {
+			if let Some(stored) = peek_stored(&self.storage, key.clone()).await? {
 				fallback = stored.into();
 				break;
 			}
@@ -351,7 +351,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		if self.trusted_product {
 			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
-		if let Some(stored) = peek_stored(self.storage, key.clone()).await? {
+		if let Some(stored) = peek_stored(&self.storage, key.clone()).await? {
 			return Ok(stored.into());
 		}
 		Ok(if self.temporary_permissions.authorize(key, consume) {
@@ -382,14 +382,14 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
 			PermissionAuthorizationRequest::IdentityDisclosure => {
 				authorization_status(
-					self.storage,
+					&self.storage,
 					CoreStorageKey::identity_disclosure_authorization(self.product_id()),
 				)
 				.await
 			},
 			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
 				authorization_status(
-					self.storage,
+					&self.storage,
 					CoreStorageKey::account_access_authorization(
 						self.product_id(),
 						target_product_id,
@@ -446,10 +446,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 						let key =
 							CoreStorageKey::remote_domain_authorization(self.product_id(), domain);
 						self.temporary_permissions.revoke(&key);
-						set_authorization_status(self.storage, key, status).await?;
+						set_authorization_status(&self.storage, key, status).await?;
 					}
 					if domains.len() > 1 {
-						set_authorization_status(self.storage, self.bundle_key(domains), status)
+						set_authorization_status(&self.storage, self.bundle_key(domains), status)
 							.await?;
 					}
 					return Ok(());
@@ -476,7 +476,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			},
 		};
 		self.temporary_permissions.revoke(&key);
-		set_authorization_status(self.storage, key, status).await
+		set_authorization_status(&self.storage, key, status).await
 	}
 
 	/// Resolves a device capability against both the OS state and the stored
@@ -593,7 +593,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		};
 		// A refusal of this exact set is already an answer to this exact prompt.
 		let bundle_key = self.bundle_key(&undecided);
-		if let Some(cached) = peek_stored(self.storage, bundle_key.clone()).await? {
+		if let Some(cached) = peek_stored(&self.storage, bundle_key.clone()).await? {
 			return Ok(match cached {
 				StoredAuthorizationStatus::Authorized => authorize(),
 				StoredAuthorizationStatus::Denied => PermissionAuthorizationStatus::Denied,
@@ -657,14 +657,14 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		key: CoreStorageKey,
 		authorization: StoredAuthorizationStatus,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		self.storage.write_core_storage(key, authorization.encode()).await?;
+		self.storage.write(key, authorization.encode()).await?;
 		Ok(authorization.into())
 	}
 }
 
 /// Read the decision stored under an encoded permission scope.
 pub async fn authorization_status<S: CoreStorage + ?Sized>(
-	storage: &S,
+	storage: &StackStorage<'_, S>,
 	key: CoreStorageKey,
 ) -> Result<PermissionAuthorizationStatus, GenericError> {
 	Ok(peek_stored(storage, key)
@@ -674,10 +674,10 @@ pub async fn authorization_status<S: CoreStorage + ?Sized>(
 }
 
 async fn peek_stored<S: CoreStorage + ?Sized>(
-	storage: &S,
+	storage: &StackStorage<'_, S>,
 	key: CoreStorageKey,
 ) -> Result<Option<StoredAuthorizationStatus>, GenericError> {
-	let Some(raw) = storage.read_core_storage(key).await? else {
+	let Some(raw) = storage.read(key).await? else {
 		return Ok(None);
 	};
 	Ok(StoredAuthorizationStatus::decode(&mut &*raw).ok())
@@ -685,13 +685,13 @@ async fn peek_stored<S: CoreStorage + ?Sized>(
 
 /// Save or clear the decision stored under an encoded permission scope.
 pub async fn set_authorization_status<S: CoreStorage + ?Sized>(
-	storage: &S,
+	storage: &StackStorage<'_, S>,
 	key: CoreStorageKey,
 	status: PermissionAuthorizationStatus,
 ) -> Result<(), GenericError> {
 	match status_into_stored(status) {
-		Some(stored) => storage.write_core_storage(key, stored.encode()).await,
-		None => storage.clear_core_storage(key).await,
+		Some(stored) => storage.write(key, stored.encode()).await,
+		None => storage.clear(key).await,
 	}
 }
 
