@@ -6,12 +6,14 @@
 
 mod chat;
 mod local_storage;
+mod notifications;
 mod payment;
 mod renderer;
 mod transaction;
 
 pub use chat::*;
 pub use local_storage::*;
+pub use notifications::*;
 pub use payment::*;
 pub use renderer::*;
 pub use transaction::*;
