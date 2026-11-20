@@ -13,7 +13,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -74,8 +73,6 @@ private val RATE_LIMIT_ERROR_CODES =
         BLUST_RATE_LIMIT_ERROR_CODE
     )
 
-private const val NODE_SWITCH_ATTEMPT_THRESHOLD = 3
-
 private const val RECONNECT_JITTER_MAX_MILLIS = 750L
 
 private const val NETWORK_RECONNECT_DEBOUNCE_MILLIS = 1_000L
@@ -94,13 +91,13 @@ class ChainConnection internal constructor(
 
     private val responseRequiresNodeChangeFlow = MutableSharedFlow<Unit>(replay = 0, extraBufferCapacity = 1)
 
+    private val availableNodes = MutableStateFlow(chain.nodes)
+
     private val nodeChangeSignal = merge(
-        state.nodeChangeEvents(),
+        state.failedNodeSwitches { availableNodes.value.nodes.size },
         shortLivedConnectionDetector.nodeChangeEvents(state),
         responseRequiresNodeChangeFlow
     ).shareIn(scope = this, started = SharingStarted.Eagerly)
-
-    private val availableNodes = MutableStateFlow(chain.nodes)
 
     private val currentUrl =
         nodeAutobalancer.connectionUrlFlow(
@@ -171,24 +168,6 @@ class ChainConnection internal constructor(
             is State.Paused -> stateSnapshot.url
         }
     }
-
-    private fun Flow<State>.nodeChangeEvents(): Flow<Unit> {
-        return mapNotNull { stateValue ->
-            Unit.takeIf { stateValue.needsAutobalance() }
-        }
-    }
-
-    /**
-     * Trigger a node switch only after the SDK has retried the current node a few times.
-     *
-     * [SocketService.switchUrl] resets the SDK's reconnect attempt counter to 0, which pins the
-     * SDK's exponential backoff (300ms base, base-2) at its floor: if we rotate nodes on every
-     * reconnect the backoff never escalates and the socket fast-fail-loops. Switching only after
-     * [NODE_SWITCH_ATTEMPT_THRESHOLD] attempts lets the backoff grow a few steps on the same node
-     * before we rotate, so a flaky network produces far fewer reconnect attempts.
-     */
-    private fun State.needsAutobalance() =
-        this is State.WaitingForReconnect && attempt >= NODE_SWITCH_ATTEMPT_THRESHOLD
 
     override fun onRpcResponseReceived(rpcResponse: RpcResponse): ResponseDelivery {
         val error = rpcResponse.error
