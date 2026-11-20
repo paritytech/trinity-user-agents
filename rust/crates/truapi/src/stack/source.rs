@@ -6,6 +6,7 @@
 //! told.
 
 use core::time::Duration;
+use std::collections::HashMap;
 
 use trinity_stack::{
 	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
@@ -73,6 +74,23 @@ pub enum StackRefreshOutcome {
 	},
 }
 
+/// Where the stack's descriptor and what one of its chains answered disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum StackMismatch {
+	/// A chain gave another genesis hash than the descriptor names, as it
+	/// does once it restarted from genesis. The core opens no connection to
+	/// the chain while it does.
+	GenesisHash {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// The genesis hash the descriptor names.
+		named: [u8; 32],
+		/// The genesis hash the chain gave.
+		answered: [u8; 32],
+	},
+}
+
 /// The stack the core runs, and what the host shows and does about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -99,6 +117,12 @@ pub struct StackStatus {
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
+	/// The chains that answered otherwise than the descriptor the core runs
+	/// names, in the descriptor's order. The core opens no connection to
+	/// them. It fetches the descriptor again when one first appears, and
+	/// sets `restart_required` once the published copy names the chains as
+	/// they answer now.
+	pub mismatches: Vec<StackMismatch>,
 }
 
 /// One verified copy of the descriptor, and the stack it names.
@@ -169,6 +193,11 @@ pub struct StackSource {
 	stale: bool,
 	expired: bool,
 	last_refresh: Option<StackRefreshOutcome>,
+	/// The genesis hash each chain gave in place of the one the running copy
+	/// names, keyed by the named one.
+	wrong_genesis: HashMap<[u8; 32], [u8; 32]>,
+	/// Whether a chain gave a wrong answer that no fetch has followed yet.
+	refetch_owed: bool,
 }
 
 impl StackSource {
@@ -206,6 +235,8 @@ impl StackSource {
 			stale,
 			expired,
 			last_refresh: None,
+			wrong_genesis: HashMap::new(),
+			refetch_owed: false,
 		})
 	}
 
@@ -229,7 +260,61 @@ impl StackSource {
 			expired: self.expired,
 			restart_required: self.next_start.is_some(),
 			last_refresh: self.last_refresh.clone(),
+			mismatches: self.mismatches(),
 		}
+	}
+
+	fn mismatches(&self) -> Vec<StackMismatch> {
+		let chains = self.running.descriptor.chains.iter();
+		chains
+			.filter_map(|chain| {
+				let named = chain.genesis();
+				let answered = *self.wrong_genesis.get(&named)?;
+				Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
+			})
+			.collect()
+	}
+
+	/// Takes the genesis hash a connection opened for the chain `named` got
+	/// from it, and returns whether that changed [`Self::status`]. A chain
+	/// the running copy does not name changes nothing.
+	///
+	/// A wrong answer the chain had not given before owes a fetch, which
+	/// [`Self::take_owed_refetch`] hands out: after a wipe the published
+	/// descriptor names the new chains.
+	pub fn chain_answered(&mut self, named: [u8; 32], answered: [u8; 32]) -> bool {
+		let Some(chain) =
+			self.running.descriptor.chains.iter().find(|chain| chain.genesis() == named)
+		else {
+			return false;
+		};
+		let wrong = (answered != named).then_some(answered);
+		if self.wrong_genesis.get(&named).copied() == wrong {
+			return false;
+		}
+		match wrong {
+			Some(answered) => {
+				tracing::warn!(
+					"the stack's {} chain gave genesis hash 0x{}, not 0x{}",
+					chain.role,
+					hex::encode(answered),
+					hex::encode(named)
+				);
+				self.wrong_genesis.insert(named, answered);
+				self.refetch_owed = true;
+			},
+			None => {
+				self.wrong_genesis.remove(&named);
+			},
+		}
+		true
+	}
+
+	/// Whether a chain gave a wrong answer since this was last asked. The
+	/// caller then makes [`Self::forced_fetch`].
+	#[must_use = "an owed fetch is forgotten once it is taken"]
+	pub fn take_owed_refetch(&mut self) -> bool {
+		core::mem::take(&mut self.refetch_owed)
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is

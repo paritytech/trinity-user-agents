@@ -99,6 +99,22 @@ export type StackFetchResponse =
   /** `304 Not Modified`. */
   | { status: "notModified" };
 
+/** Where the stack's descriptor and what one of its chains answered disagree. */
+export interface StackMismatch {
+  /**
+   * `genesisHash`: a chain gave another genesis hash than the descriptor
+   * names, as it does once it restarted from genesis. The core opens no
+   * connection to the chain while it does.
+   */
+  kind: "genesisHash";
+  /** The chain's role in the descriptor. */
+  role: string;
+  /** The genesis hash the descriptor names, as `0x` hex. */
+  named: string;
+  /** The genesis hash the chain gave, as `0x` hex. */
+  answered: string;
+}
+
 /** The stack the core runs, and what the host shows and does about it. */
 export interface StackStatus {
   /**
@@ -144,6 +160,14 @@ export interface StackStatus {
      */
     reason?: string;
   };
+  /**
+   * The chains that answered otherwise than the descriptor the core runs
+   * names, in the descriptor's order. The core opens no connection to them.
+   * It fetches the descriptor again when one first appears, and sets
+   * `restartRequired` once the published copy names the chains as they
+   * answer now.
+   */
+  mismatches: StackMismatch[];
 }
 
 /**

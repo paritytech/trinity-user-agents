@@ -2681,3 +2681,131 @@ fn a_budget_line_of_day_old_follows_keeps_every_activity() {
 	assert_eq!(line.matches(activity).count(), FOLLOWS_A_NODE_BUDGETS, "{line}");
 	assert!(line.contains(&format!("c1003:product {activity}")), "{line}");
 }
+
+/// What a [`GenesisCheck`] heard, in order.
+#[derive(Default)]
+struct HeardAnswers(Mutex<Vec<([u8; 32], [u8; 32])>>);
+
+impl GenesisCheck for HeardAnswers {
+	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
+		self.0.lock().unwrap().push((named, answered));
+	}
+}
+
+impl HeardAnswers {
+	fn heard(&self) -> Vec<([u8; 32], [u8; 32])> {
+		self.0.lock().unwrap().clone()
+	}
+}
+
+/// A node that answers the genesis hash request with `reply`, the JSON-RPC
+/// member that follows `"id"`, and nothing else.
+fn node_answering_its_genesis_with(reply: String) -> Arc<ScriptedProvider> {
+	Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		request
+			.contains("chainSpec_v1_genesisHash")
+			.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}",{reply}}}"#))
+	}))
+}
+
+fn node_of(genesis: [u8; 32]) -> Arc<ScriptedProvider> {
+	node_answering_its_genesis_with(format!(r#""result":"{}""#, encode_hex(&genesis)))
+}
+
+/// After a wipe the node behind a chain's endpoint serves a new chain. What
+/// the core read from it would be cached as the old chain's, so the
+/// connection is not handed out and its socket is closed. The next caller
+/// dials again rather than being given the refused one.
+#[test]
+fn a_connection_to_a_chain_with_another_genesis_hash_is_refused() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let provider = node_of(answered);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let refused = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.err()
+		.expect("a chain with another genesis hash is refused");
+	let socket_closed = provider.sender.lock().unwrap().is_none();
+	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert!(socket_closed, "a refused connection's socket is closed");
+	assert!(again.is_err(), "the refused connection is not kept");
+	assert_eq!(
+		(
+			refused.kind(),
+			refused.reason(),
+			refused.chain(),
+			heard.heard(),
+			provider.connect_calls.load(Ordering::SeqCst),
+		),
+		(
+			RuntimeFailureKind::HostFailure,
+			format!(
+				"test: remote_chain_connect: the chain gave genesis hash {}, not {}",
+				encode_hex(&answered),
+				encode_hex(&named)
+			),
+			Some(named.as_slice()),
+			vec![(named, answered); 2],
+			2,
+		)
+	);
+}
+
+/// The check asks every connection one question. A chain that names itself
+/// has to come out as usable as without it: handed out, and kept for the
+/// next caller.
+#[test]
+fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
+	let named = [0xa1; 32];
+	let provider = node_of(named);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let first = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let second = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert!(first.is_ok() && second.is_ok(), "the chain is usable");
+	assert_eq!(
+		(heard.heard(), provider.connect_calls.load(Ordering::SeqCst)),
+		(vec![(named, named)], 1)
+	);
+}
+
+/// A chain that cannot be reached is not a wrong chain. Nothing is said about
+/// its genesis hash, so no descriptor is fetched for it, and a later attempt
+/// may reach it.
+#[test]
+fn an_unreachable_chain_gives_no_answer_to_check() {
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), Spawner::for_test())
+		.checking_genesis(heard.clone());
+
+	let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+		.err()
+		.expect("the chain cannot be reached");
+
+	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
+}
+
+/// A node that will not say which chain it serves cannot be told from one
+/// serving another chain, so nothing is read from it. It gave no wrong
+/// answer either, so the check hears nothing.
+#[test]
+fn a_node_that_does_not_name_its_chain_is_not_used() {
+	let provider = node_answering_its_genesis_with(
+		r#""error":{"code":-32601,"message":"Method not found"}"#.to_string(),
+	);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime = ChainRuntime::new(provider, Spawner::for_test()).checking_genesis(heard.clone());
+
+	let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+		.err()
+		.expect("a chain that gives no genesis hash is not used");
+
+	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::HostFailure, Vec::new()));
+}

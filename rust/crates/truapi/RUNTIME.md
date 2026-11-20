@@ -192,8 +192,31 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain and
-does not check genesis hashes against the live chains.
+derivation working offline. The core does not check it against the chain.
+
+#### Checks against the chains
+
+For a stack `StackRefresh::load` resolved, the core asks every chain connection
+it opens for the chain's genesis hash before anything else uses the
+connection, its own and each product's.
+
+- A chain that gives the hash the connection was opened for is used as before.
+- A chain that gives another hash, as one does once it restarted from genesis,
+  gets no connection: the call fails with a host failure. For a chain of the
+  stack, the core fetches the descriptor again at once and lists the chain in
+  `StackStatus::mismatches`. `restart_required` beside it means the published
+  descriptor follows the chains.
+- A chain that cannot be reached, or stays silent for 30 seconds, is
+  unavailable as before, and is asked again on the next connection. A node that
+  answers the question with an error is not used either, and is not a mismatch.
+
+The entry leaves `mismatches` once a connection reaches the chain the
+descriptor names. A host shows the listed chains as out of service, and keeps
+its own features off them.
+
+The light client answers from the light spec, which `truapi-provider` checked
+against the descriptor when the host added it. The core does not check the
+chains of a stack built with `Stack::new` or from `testStack`.
 
 #### Descriptor refresh
 
@@ -210,8 +233,9 @@ core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
 Without the callbacks the core stays on the descriptor it started from.
 
 The core fetches once the callbacks are installed, unless the last fetch was
-under an hour ago, then once an hour and whenever the host calls
-`refresh_stack`. A sleeping device can stretch that hour, so a host calls it
+under an hour ago, then once an hour, whenever the host calls `refresh_stack`,
+and when a chain first gives another genesis hash than the descriptor names. A
+sleeping device can stretch that hour, so a host calls it
 when its app returns to the foreground. `StackFetchRequest` says how to make
 the request.
 

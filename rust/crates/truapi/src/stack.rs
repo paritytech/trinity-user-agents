@@ -5,7 +5,9 @@
 //! the key in the stack's link, starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. The [`Stack`] it
 //! resolves holds the network, the dotNS TLD, each chain's genesis hash and
-//! the `AccountDataStore` contract address, and answers `get_chain_info`.
+//! the `AccountDataStore` contract address, and answers `get_chain_info`. It
+//! also carries the [`StackChecks`] that compare what the chains answer with
+//! the descriptor.
 
 mod records;
 mod refresh;
@@ -19,8 +21,10 @@ use truapi::latest::{
 use crate::dotns_name::DOTNS_TLDS;
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
-pub use refresh::{StackHost, StackRefresh};
-pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
+pub use refresh::{StackChecks, StackHost, StackRefresh};
+pub use source::{
+	StackFetchRequest, StackFetchResponse, StackMismatch, StackRefreshOutcome, StackStatus,
+};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -68,6 +72,7 @@ pub struct Stack {
 	tld: String,
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
+	checks: Option<StackChecks>,
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -213,7 +218,7 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { network, tld, chains, account_data_store: None })
+		Ok(Self { network, tld, chains, account_data_store: None, checks: None })
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
@@ -238,6 +243,13 @@ impl Stack {
 	/// all-zero address.
 	pub fn account_data_store(&self) -> Option<[u8; 20]> {
 		self.account_data_store
+	}
+
+	/// The checks of the stack's chains against its descriptor. `None` unless
+	/// a [`StackRefresh`] resolved the stack: the core does not check the
+	/// chains of a stack built any other way.
+	pub fn checks(&self) -> Option<&StackChecks> {
+		self.checks.as_ref()
 	}
 
 	/// The genesis hash of the chain with this role, or `None` when the stack

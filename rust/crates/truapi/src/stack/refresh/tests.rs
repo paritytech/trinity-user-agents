@@ -11,9 +11,12 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
-	stack::{ReplaceCheck, StackRefreshOutcome},
+	platform::HostInfo,
+	runtime::services::RuntimeServices,
+	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
-		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
+		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor,
+		sign_test_descriptor,
 	},
 	time::ManualTimer,
 };
@@ -176,6 +179,16 @@ fn start(
 	let timer = Arc::new(ManualTimer::default());
 	let clock = manual_clock();
 	let refresh = load(records, timer.clone(), clock.clone());
+	start_loaded(refresh, timer, clock, responses)
+}
+
+/// Starts `refresh` with a host that answers fetches with `responses`.
+fn start_loaded(
+	refresh: StackRefresh,
+	timer: Arc<ManualTimer>,
+	clock: Arc<ManualClock>,
+	responses: Vec<Result<StackFetchResponse, GenericError>>,
+) -> Started {
 	let (told, statuses) = channel();
 	let fetches = Arc::<AtomicUsize>::default();
 	let host = QueuedHost {
@@ -185,6 +198,22 @@ fn start(
 	};
 	assert!(refresh.start(Box::new(host), &Spawner::for_test()));
 	Started { refresh, fetches, timer, clock, statuses }
+}
+
+/// A connection opened for People reached a chain with the genesis hash
+/// `answered`.
+fn people_answers(refresh: &StackRefresh, answered: [u8; 32]) {
+	let stack = refresh.stack();
+	let checks = stack.checks().expect("a refreshed stack has its chains checked");
+	checks.genesis_check().chain_answered(TEST_STACK_PEOPLE, answered);
+}
+
+fn people_gave(answered: [u8; 32]) -> Vec<StackMismatch> {
+	vec![StackMismatch::GenesisHash {
+		role: "People".to_string(),
+		named: TEST_STACK_PEOPLE,
+		answered,
+	}]
 }
 
 /// A host that is offline at launch still runs: the stack comes from the
@@ -456,4 +485,154 @@ fn the_refresh_starts_once() {
 	};
 
 	assert!(!started.refresh.start(Box::new(second), &Spawner::for_test()));
+}
+
+/// A stack can be wiped while the app stays open, and the hour until the next
+/// fetch is a long time to run against a chain that is gone. The first wrong
+/// answer brings the fetch forward, and the host hears of the wrong chain and
+/// of the restart that follows it in one status.
+#[test]
+fn a_chain_that_restarted_brings_the_fetch_forward() {
+	let started = start(
+		Arc::default(),
+		vec![
+			published(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE)),
+			published(&published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE)),
+		],
+	);
+	let _at_start = started.next_status();
+	let before_the_wipe = started.next_status();
+	// The fetch's timeout, the store's timeout, then the wait for the hour.
+	started.wait_for_sleeps(3);
+
+	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
+	let after_the_wipe = started.next_status();
+
+	assert_eq!(
+		(
+			before_the_wipe.mismatches,
+			after_the_wipe.mismatches,
+			after_the_wipe.restart_required,
+			started.fetches.load(Ordering::SeqCst),
+		),
+		(Vec::new(), people_gave(TEST_STACK_WIPED_PEOPLE), true, 2)
+	);
+}
+
+/// An operator may publish the new descriptor some time after the wipe. The
+/// fetch then brings nothing new, and the host is told which chain is wrong
+/// with no restart that would help.
+#[test]
+fn a_restarted_chain_the_descriptor_does_not_follow_is_reported_without_a_restart() {
+	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let started = start(Arc::default(), vec![published(&unchanged), published(&unchanged)]);
+	let _at_start = started.next_status();
+	let _before_the_wipe = started.next_status();
+	started.wait_for_sleeps(3);
+
+	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
+	let after_the_wipe = started.next_status();
+
+	assert_eq!(
+		(
+			after_the_wipe.mismatches,
+			after_the_wipe.restart_required,
+			after_the_wipe.last_refresh,
+			started.fetches.load(Ordering::SeqCst),
+		),
+		(people_gave(TEST_STACK_WIPED_PEOPLE), false, Some(StackRefreshOutcome::Current), 2)
+	);
+}
+
+/// One node behind an endpoint may lag a wipe while the others do not. The
+/// host stops showing the chain as wrong once a connection reaches the one
+/// the descriptor names, and that costs the descriptor's server no request.
+#[test]
+fn the_host_is_told_when_a_chain_answers_as_named_again() {
+	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let started = start(Arc::default(), vec![published(&unchanged), published(&unchanged)]);
+	let _at_start = started.next_status();
+	let _before_the_wipe = started.next_status();
+	started.wait_for_sleeps(3);
+	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
+	let _after_the_wipe = started.next_status();
+
+	people_answers(&started.refresh, TEST_STACK_PEOPLE);
+	let once_right = started.next_status();
+
+	assert_eq!((once_right.mismatches, started.fetches.load(Ordering::SeqCst)), (Vec::new(), 2));
+}
+
+/// A host installs its callbacks after the runtime is built, and by then a
+/// service of the core may have reached a wiped chain. The stored copy is
+/// under an hour old, so only the wrong answer makes the refresh fetch as it
+/// starts.
+#[test]
+fn a_wrong_answer_before_the_refresh_starts_is_followed_at_start() {
+	let records = Arc::<MemoryRecords>::default();
+	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let first_run = start(records.clone(), vec![published(&unchanged)]);
+	let _at_start = first_run.next_status();
+	let _after_fetch = first_run.next_status();
+	first_run.wait_for_sleeps(3);
+	let Started { clock, .. } = first_run;
+	let timer = Arc::new(ManualTimer::default());
+	let refresh = load(records, timer.clone(), clock.clone());
+
+	people_answers(&refresh, TEST_STACK_WIPED_PEOPLE);
+	let second_run = start_loaded(
+		refresh,
+		timer,
+		clock,
+		vec![published(&published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE))],
+	);
+	let at_start = second_run.next_status();
+	let after_fetch = second_run.next_status();
+
+	assert_eq!(
+		(
+			at_start.mismatches,
+			at_start.restart_required,
+			after_fetch.restart_required,
+			second_run.fetches.load(Ordering::SeqCst),
+		),
+		(people_gave(TEST_STACK_WIPED_PEOPLE), false, true, 1)
+	);
+}
+
+/// The checks reach the chains only through the stack the refresh hands out.
+/// A runtime built on that stack has to put the connections it opens through
+/// them, or a wiped chain would be read as the one the descriptor names.
+#[test]
+fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let wiped_node = Arc::new(StubPlatform {
+		rpc_responder: Some(Arc::new(|request| {
+			let request: serde_json::Value =
+				serde_json::from_str(request).expect("the core sends JSON-RPC");
+			assert_eq!(request["method"], "chainSpec_v1_genesisHash");
+			let genesis = format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE));
+			vec![
+				serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": genesis})
+					.to_string(),
+			]
+		})),
+		..Default::default()
+	});
+	let services = RuntimeServices::new(
+		wiped_node,
+		HostInfo {
+			name: "Stack test".into(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		},
+		refresh.stack(),
+		Spawner::for_test(),
+	);
+
+	let people = futures::executor::block_on(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
+
+	assert!(people.is_err(), "the restarted chain is not handed out");
+	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));
 }

@@ -33,9 +33,9 @@ pub use crate::{
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
-		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
-		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
-		StackStatus,
+		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackChecks, StackError,
+		StackFetchRequest, StackFetchResponse, StackHost, StackMismatch, StackRecords,
+		StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 };
 

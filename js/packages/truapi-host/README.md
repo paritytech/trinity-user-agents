@@ -67,7 +67,14 @@ refresh it.
   `stackStatus()`. `restartRequired` means a newer copy
   changes a chain, the network, the TLD or the generation, and applies once
   the runtime is built again. `generation` changes when the stack restarts its
-  chains: key cached chain data by it.
+  chains: key cached chain data by it. `mismatches` lists each chain that gave
+  another genesis hash than the descriptor names.
+
+The core asks every chain connection it opens for the chain's genesis hash
+before anything else uses the connection. A chain that gives another hash, as
+one does once it restarted from genesis, gets no connection: calls to it fail,
+the core fetches the descriptor again at once, and `stackChanged` reports the
+chain in `mismatches`. A chain that cannot be reached is only unavailable.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key, and starts from it when it is newer than the bundled one.
