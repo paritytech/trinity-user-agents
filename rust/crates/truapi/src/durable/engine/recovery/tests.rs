@@ -12,11 +12,11 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	durable::{
 		model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus, HeadKind},
-		oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope},
+		oracle::{CompletionOracle, DurableRegistry, PassScope},
 		policy::Preparation,
 		testing::{
-			FakeChain, GENESIS, ScheduledTxHarness, ScriptedPolicy, answer_all_with, block,
-			engine_with, extrinsic, insert,
+			DeferredTxHarness, FakeChain, GENESIS, ScriptedPolicy, ServesTestDomains,
+			answer_all_with, block, engine_with, extrinsic, insert,
 		},
 	},
 	test_support::wait_until,
@@ -29,27 +29,21 @@ fn test_domain() -> DomainId {
 /// Counts the passes that reached the domain, and proves its
 /// transactions completed from the `complete_from`th one on.
 struct CountingOracle {
-	chain: H256,
 	opened: AtomicUsize,
 	complete_from: usize,
 }
 
 impl CountingOracle {
-	fn new(chain: H256, complete_from: usize) -> Arc<Self> {
-		Arc::new(Self { chain, opened: AtomicUsize::new(0), complete_from })
+	fn new(complete_from: usize) -> Arc<Self> {
+		Arc::new(Self { opened: AtomicUsize::new(0), complete_from })
 	}
 }
 
 #[async_trait::async_trait]
 impl CompletionOracle for CountingOracle {
-	fn chain(&self) -> H256 {
-		self.chain
-	}
-
 	async fn open_pass(
 		&self,
 		_transactions: &[DurableTxEntry],
-		_ledger: &LedgerView,
 		_heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
 		let opened = self.opened.fetch_add(1, Ordering::SeqCst) + 1;
@@ -75,9 +69,9 @@ struct Fixture {
 fn fixture(complete_from: usize) -> Fixture {
 	let chain = FakeChain::new(130, 140);
 	let heads = chain.script_heads();
-	let oracle = CountingOracle::new(GENESIS, complete_from);
+	let oracle = CountingOracle::new(complete_from);
 	let (dir, engine, _timer) =
-		engine_with(&chain, DurableRegistry::new().with_domain(test_domain(), oracle.clone()));
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), oracle.clone()));
 	insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 	Fixture { _dir: dir, engine, oracle, heads }
 }
@@ -194,10 +188,10 @@ fn a_lost_chain_does_not_stop_recovery_on_another_chain() {
 	let chain = FakeChain::new(130, 140);
 	let _other_heads = chain.script_heads();
 	let lost_heads = chain.script_heads();
-	let other_oracle = CountingOracle::new(OTHER_GENESIS, 2);
+	let other_oracle = CountingOracle::new(2);
 	let registry = DurableRegistry::new()
-		.with_domain(DomainId::new("lost"), CountingOracle::new(GENESIS, usize::MAX))
-		.with_domain(DomainId::new("other"), other_oracle.clone());
+		.serving(DomainId::new("lost"), CountingOracle::new(usize::MAX))
+		.serving_on(DomainId::new("other"), OTHER_GENESIS, other_oracle.clone());
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	insert(&engine.db, &DomainId::new("lost"), extrinsic(1, 100, 64));
 	let other = insert(&engine.db, &DomainId::new("other"), extrinsic(2, 100, 64));
@@ -223,10 +217,10 @@ fn a_lost_chain_with_nothing_live_does_not_fail_recovery() {
 	let chain = FakeChain::new(130, 140);
 	let _other_heads = chain.script_heads();
 	let lost_heads = chain.script_heads();
-	let other_oracle = CountingOracle::new(OTHER_GENESIS, 2);
+	let other_oracle = CountingOracle::new(2);
 	let registry = DurableRegistry::new()
-		.with_domain(DomainId::new("lost"), CountingOracle::new(GENESIS, usize::MAX))
-		.with_domain(DomainId::new("other"), other_oracle.clone());
+		.serving(DomainId::new("lost"), CountingOracle::new(usize::MAX))
+		.serving_on(DomainId::new("other"), OTHER_GENESIS, other_oracle.clone());
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	insert(&engine.db, &DomainId::new("other"), extrinsic(2, 100, 64));
 	let running = run_in_background(&engine);
@@ -243,7 +237,7 @@ fn a_head_subscription_that_cannot_open_fails_the_loop() {
 	let (_dir, engine, _timer) = engine_with(
 		&chain,
 		DurableRegistry::new()
-			.with_domain(test_domain(), Arc::new(crate::durable::oracle::Unobservable(GENESIS))),
+			.serving(test_domain(), Arc::new(crate::durable::oracle::Unobservable)),
 	);
 	insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 
@@ -263,18 +257,39 @@ fn an_unreadable_ledger_counts_as_live() {
 	);
 }
 
-/// Nothing could decide a domain without an oracle, so its rows must not
+/// Nothing could decide an unregistered domain, so its rows must not
 /// keep recovery running.
 #[test]
-fn live_rows_no_oracle_can_decide_do_not_keep_recovery_running() {
+fn live_rows_of_an_unregistered_domain_do_not_keep_recovery_running() {
 	let chain = FakeChain::new(130, 140);
 	chain.script_heads();
 	let (_dir, engine, _timer) = engine_with(
 		&chain,
 		DurableRegistry::new()
-			.with_domain(test_domain(), Arc::new(crate::durable::oracle::Unobservable(GENESIS))),
+			.serving(test_domain(), Arc::new(crate::durable::oracle::Unobservable)),
 	);
 	insert(&engine.db, &DomainId::new("orphan"), extrinsic(1, 100, 64));
+
+	let running = run_in_background(&engine);
+
+	wait_until(|| running.is_finished(), "recovery returns");
+	assert_eq!(running.join().unwrap(), Ok(()));
+}
+
+/// Nothing builds a row of an unregistered domain, so waiting for it would
+/// keep recovery running forever.
+#[test]
+fn rows_of_an_unregistered_domain_waiting_to_be_built_do_not_keep_recovery_running() {
+	let chain = FakeChain::new(130, 140);
+	chain.script_heads();
+	let (_dir, engine, _timer) = engine_with(
+		&chain,
+		DurableRegistry::new()
+			.serving(test_domain(), Arc::new(crate::durable::oracle::Unobservable)),
+	);
+	let orphan = DomainId::new("orphan");
+	let plan = crate::durable::testing::test_plan(vec![1]);
+	block_on(engine.db.write(move |tx| dao::defer(tx, &orphan, None, &plan))).unwrap();
 
 	let running = run_in_background(&engine);
 
@@ -291,7 +306,7 @@ fn a_settled_ledger_needs_no_head_subscription() {
 	let (_dir, engine, _timer) = engine_with(
 		&chain,
 		DurableRegistry::new()
-			.with_domain(test_domain(), Arc::new(crate::durable::oracle::Unobservable(GENESIS))),
+			.serving(test_domain(), Arc::new(crate::durable::oracle::Unobservable)),
 	);
 
 	assert_eq!(block_on(engine.run_until_settled()), Ok(()));
@@ -306,11 +321,11 @@ fn giving_up_once_set(give_up: Arc<AtomicBool>) -> ScriptedPolicy {
 	})
 }
 
-/// The app was killed before a scheduled transaction was built. Recovery
+/// The app was killed before a deferred transaction was built. Recovery
 /// is all that runs on the next launch, so it must build it.
 #[test]
 fn recovery_builds_what_a_previous_process_left_waiting() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let id = harness.leave_waiting_from_previous_process();
 
 	let _running = run_in_background(harness.engine());
@@ -325,7 +340,7 @@ fn recovery_builds_what_a_previous_process_left_waiting() {
 #[test]
 fn recovery_runs_until_waiting_transactions_are_decided() {
 	let give_up = Arc::new(AtomicBool::new(false));
-	let mut harness = ScheduledTxHarness::with_policy(giving_up_once_set(give_up.clone()));
+	let mut harness = DeferredTxHarness::with_policy(giving_up_once_set(give_up.clone()));
 	let id = harness.leave_waiting_from_previous_process();
 	let running = run_in_background(harness.engine());
 	wait_until(|| harness.policy().batches().len() == 1, "the row is asked about");
@@ -335,8 +350,8 @@ fn recovery_runs_until_waiting_transactions_are_decided() {
 	harness.settle();
 	assert!(!running.is_finished());
 	give_up.store(true, Ordering::SeqCst);
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
-	harness.timer().advance(Duration::from_secs(2));
+	// The policy is asked again once the worker's wait passes.
+	harness.timer().advance(Duration::from_secs(30));
 	let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
 	harness.wait_for(id, abandoned);
 
@@ -349,7 +364,7 @@ fn recovery_runs_until_waiting_transactions_are_decided() {
 /// it to resubscribe, however long another row waits to be built.
 #[test]
 fn a_lost_chain_fails_recovery_while_a_row_waits_to_be_built() {
-	let mut harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let mut harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	harness.insert_unwatched(extrinsic(1, 100, 64), None);
 	harness.leave_waiting_from_previous_process();
 	let running = run_in_background(harness.engine());

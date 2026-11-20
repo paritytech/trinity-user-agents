@@ -90,6 +90,23 @@ struct CoinageBackupRecoveryServiceTests {
         #expect(installations.previous(Self.previous)?.coinScanNextIndex == expectedNext)
     }
 
+    @Test("a run of foreign coins does not end the scan, and own coins after it are recovered")
+    func foreignRunKeepsScanning() async throws {
+        dataStore.listed([Self.previous])
+        // Batches 0 to 4 hold only foreign coins: more batches than the gap allows.
+        scanner.foreignCoinsOnChain = Set((0 ..< 5).map {
+            CoinageKeyIndex(installation: Self.previous, item: $0 * Self.batchSize)
+        })
+        let ownItem = 5 * Self.batchSize + 1
+        scanner.coinsOnChain = [CoinageKeyIndex(installation: Self.previous, item: ownItem)]
+
+        await service.runLaunchPass()
+
+        #expect(assetStore.savedCoins.map(\.derivationIndex.item) == [ownItem])
+        let expectedNext = (5 + 1 + Self.emptyBatches) * Self.batchSize
+        #expect(installations.previous(Self.previous)?.coinScanNextIndex == expectedNext)
+    }
+
     @Test("a scanned installation is not scanned again on the next launch")
     func scannedOnce() async throws {
         dataStore.listed([Self.previous])
@@ -290,16 +307,23 @@ private extension CoinageBackupRecoveryServiceTests {
 private final class StubScanner: InstallationAssetScanning, @unchecked Sendable {
     private let state = OSAllocatedUnfairLock<(
         coins: Set<CoinageKeyIndex>,
+        foreignCoins: Set<CoinageKeyIndex>,
         vouchers: Set<CoinageKeyIndex>,
         failing: Bool,
         scanned: [CoinageInstallationId]
     )>(
-        initialState: ([], [], false, [])
+        initialState: ([], [], [], false, [])
     )
 
     var coinsOnChain: Set<CoinageKeyIndex> {
         get { state.withLock { $0.coins } }
         set { state.withLock { $0.coins = newValue } }
+    }
+
+    /// Keys holding a coin of another Coinage instance: in use, never recovered.
+    var foreignCoinsOnChain: Set<CoinageKeyIndex> {
+        get { state.withLock { $0.foreignCoins } }
+        set { state.withLock { $0.foreignCoins = newValue } }
     }
 
     var vouchersOnChain: Set<CoinageKeyIndex> {
@@ -328,16 +352,16 @@ private final class StubScanner: InstallationAssetScanning, @unchecked Sendable 
         installation: CoinageInstallationId,
         startIndex: DerivationIndex,
         count: DerivationIndex
-    ) async throws -> [Coin] {
-        let (coins, failing) = state.withLock { state -> (Set<CoinageKeyIndex>, Bool) in
+    ) async throws -> CoinScanBatch {
+        let (onChain, foreign, failing) = state.withLock { state in
             state.scanned.append(installation)
-            return (state.coins, state.failing)
+            return (state.coins, state.foreignCoins, state.failing)
         }
         if failing { throw InstallationStubError.nodeWentAway }
 
-        return (startIndex ..< startIndex + count)
-            .map { CoinageKeyIndex(installation: installation, item: $0) }
-            .filter { coins.contains($0) }
+        let keys = (startIndex ..< startIndex + count).map { CoinageKeyIndex(installation: installation, item: $0) }
+        let coins = keys
+            .filter { onChain.contains($0) }
             .map { key in
                 Coin(
                     exponent: 1,
@@ -347,6 +371,8 @@ private final class StubScanner: InstallationAssetScanning, @unchecked Sendable 
                     publicKey: Data([UInt8(truncatingIfNeeded: key.item)])
                 )
             }
+        let foreignCount = keys.filter { foreign.contains($0) }.count
+        return CoinScanBatch(coins: coins, usedCount: coins.count + foreignCount)
     }
 
     func scanVouchers(

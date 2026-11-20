@@ -29,3 +29,31 @@ fn the_development_accounts_are_distinct() {
 	let contacts = development_contacts();
 	assert_ne!(contacts[0].account, contacts[1].account);
 }
+
+#[test]
+fn the_usernames_are_the_configured_names_in_order() {
+	// Given
+	let host = CliContactsHost {
+		contacts: parse_contacts(
+			"alice=0x0101010101010101010101010101010101010101010101010101010101010101;\
+			 bob.07=0x0202020202020202020202020202020202020202020202020202020202020202",
+		),
+		platform: CliPlatform::new(
+			&crate::network::Network::default().bundled_stack(crate::chain::ChainBackend::Rpc),
+			None,
+			crate::platform::ApprovalPolicy::AutoAccept,
+			None,
+		),
+	};
+
+	// When
+	let listing = futures::executor::block_on(host.contact_usernames(&ProductContext::new(
+		truapi::platform::ProductId::for_test("dim2.dot"),
+	)));
+
+	// Then
+	let Ok(HostContactUsernames::Listed { usernames }) = listing else {
+		panic!("the CLI host did not list usernames");
+	};
+	assert_eq!(usernames, ["alice", "bob.07"]);
+}

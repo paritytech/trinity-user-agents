@@ -93,11 +93,8 @@ private extension WalletMainInteractor {
     }
 
     func show(_ cards: [PocketCardViewModel]) async {
-        let held = Set(cards.map(\.key))
-
-        await MainActor.run { [pocket] in
+        await MainActor.run {
             presenter?.didReceive(pocketCards: cards)
-            pocket?.cardHosts.keepOnly { held.contains($0) }
         }
 
         prewarm(cards)

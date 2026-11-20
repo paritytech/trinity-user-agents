@@ -3,14 +3,14 @@
 use crate::{
 	CallContext, CallError,
 	versioned::signing::{
-		HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
-		HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
+		HostCreateTransactionError, HostCreateTransactionResponse,
+		HostCreateTransactionWithLegacyAccountError,
 		HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
 		HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
 		HostSignPayloadWithLegacyAccountRequest, HostSignPayloadWithLegacyAccountResponse,
 		HostSignRawError, HostSignRawRequest, HostSignRawResponse,
 		HostSignRawWithLegacyAccountError, HostSignRawWithLegacyAccountRequest,
-		HostSignRawWithLegacyAccountResponse,
+		HostSignRawWithLegacyAccountResponse, LegacyAccountTxPayload, ProductAccountTxPayload,
 	},
 	wire, wire_trait,
 };
@@ -73,7 +73,7 @@ pub trait Signing: Send + Sync {
 	async fn create_transaction(
 		&self,
 		_cx: &CallContext,
-		_request: HostCreateTransactionRequest,
+		_request: ProductAccountTxPayload,
 	) -> Result<HostCreateTransactionResponse, CallError<HostCreateTransactionError>> {
 		Err(CallError::unavailable())
 	}
@@ -120,7 +120,7 @@ pub trait Signing: Send + Sync {
 	async fn create_transaction_with_legacy_account(
 		&self,
 		_cx: &CallContext,
-		_request: HostCreateTransactionWithLegacyAccountRequest,
+		_request: LegacyAccountTxPayload,
 	) -> Result<
 		HostCreateTransactionWithLegacyAccountResponse,
 		CallError<HostCreateTransactionWithLegacyAccountError>,

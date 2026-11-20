@@ -30,17 +30,18 @@ public final class StatementStoreSlotAccountant: StatementStoreSlotAccounting {
             kind: record.kind,
             domain: record.domain,
             priority: record.priority,
-            latestRenewedPeriod: period
+            latestRenewedPeriod: period,
+            signerKeyId: record.signerKeyId
         )
         try await repository.saveOperation({ [updated] }, { [] }).asyncExecute()
     }
 
-    public func priorities(for accountIds: [AccountId]) async throws -> [AccountId: AllowanceRecord.Priority] {
+    public func records(for accountIds: [AccountId]) async throws -> [AccountId: AllowanceRecord] {
         let allRecords = try await repository.fetchAllOperation(with: RepositoryFetchOptions())
             .asyncExecute()
         let requestedIds = Set(accountIds)
         let filtered = allRecords.filter { requestedIds.contains($0.accountId) }
 
-        return filtered.reduce(into: [:]) { $0[$1.accountId] = $1.priority }
+        return filtered.reduce(into: [:]) { $0[$1.accountId] = $1 }
     }
 }

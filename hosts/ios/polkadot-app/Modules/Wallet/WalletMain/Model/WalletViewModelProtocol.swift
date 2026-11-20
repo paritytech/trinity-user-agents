@@ -23,6 +23,7 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
 
     var onBalance: (() -> Void)? { get set }
     var onCollectibles: (() -> Void)? { get set }
+    var onCollectiblesPress: ((Bool) -> Void)? { get set }
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)? { get set }
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)? { get set }
 }
@@ -51,6 +52,7 @@ class WalletViewModel: WalletViewModelProtocol {
 
     var onBalance: (() -> Void)?
     var onCollectibles: (() -> Void)?
+    var onCollectiblesPress: ((Bool) -> Void)?
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)?
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)?
 }

@@ -27,11 +27,11 @@
     },
     "NSAlarmKitUsageDescription" : {
       "comment" : "Privacy - Alarm Kit Usage Description",
-      "extractionState" : "extracted_with_value",
+      "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
-            "state" : "new",
+            "state" : "translated",
             "value" : "Polkadot uses alarms to notify you when a scheduled event is about to start."
           }
         }
@@ -80,7 +80,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Polkadot uses Face ID to confirm it's you before showing your account backup or restoring your account."
+            "value" : "Polkadot uses Face ID to confirm it's you before transfers, signing and backups."
           }
         }
       }

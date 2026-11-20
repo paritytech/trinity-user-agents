@@ -60,7 +60,7 @@ fn hand_off_rebuilding_keys(
 	keys: &[ItemKey],
 	tag: &[u8],
 ) -> Result<Vec<ItemKey>, HandoffError<schnorrkel::SignatureError>> {
-	block_on(items.ledger.hand_off(handoff_request(keys, tag), public_keys_of))
+	block_on(items.ledger.hand_off(handoff_request(keys, tag), public_keys_of, |_, _| Ok(())))
 }
 
 fn available_keys(items: &HeldItems) -> Vec<ItemKey> {
@@ -125,7 +125,11 @@ fn a_refused_seal_writes_nothing() {
 	let items = held_items(1);
 	let refuse = |_: &[ItemSecret]| Err::<(), _>("no recipient");
 
-	let refused = block_on(items.ledger.hand_off(handoff_request(&items.keys, b"cheque"), refuse));
+	let refused = block_on(items.ledger.hand_off(
+		handoff_request(&items.keys, b"cheque"),
+		refuse,
+		|_, _| Ok(()),
+	));
 
 	assert!(matches!(refused, Err(HandoffError::Seal("no recipient"))));
 	assert_eq!(available_keys(&items), items.keys);
@@ -140,11 +144,11 @@ fn a_key_not_held_in_the_purse_is_refused_before_sealing() {
 	let not_held = ItemKey([0x55; 32]);
 	let never_called = |_: &[ItemSecret]| -> Result<(), ()> { panic!("sealed a refused handoff") };
 
-	let refused = block_on(
-		items
-			.ledger
-			.hand_off(handoff_request(&[items.keys[0], not_held], b"cheque"), never_called),
-	);
+	let refused = block_on(items.ledger.hand_off(
+		handoff_request(&[items.keys[0], not_held], b"cheque"),
+		never_called,
+		|_, _| Ok(()),
+	));
 
 	assert!(
 		matches!(refused, Err(HandoffError::Item(ItemRefusal::NotFound(key))) if key == not_held)
@@ -189,11 +193,11 @@ fn a_key_spent_while_sealing_is_refused_by_the_write() {
 		Ok::<_, rusqlite::Error>(secrets.len())
 	};
 
-	let refused = block_on(
-		items
-			.ledger
-			.hand_off(handoff_request(&items.keys, b"cheque"), spend_while_sealing),
-	);
+	let refused = block_on(items.ledger.hand_off(
+		handoff_request(&items.keys, b"cheque"),
+		spend_while_sealing,
+		|_, _| Ok(()),
+	));
 
 	assert!(
 		matches!(refused, Err(HandoffError::Item(ItemRefusal::Unavailable(spent))) if spent == key)
@@ -216,7 +220,7 @@ fn a_tag_used_while_sealing_is_refused_by_the_write() {
 	};
 
 	let request = handoff_request(&items.keys[..1], b"cheque");
-	let refused = block_on(items.ledger.hand_off(request, use_tag_while_sealing));
+	let refused = block_on(items.ledger.hand_off(request, use_tag_while_sealing, |_, _| Ok(())));
 
 	assert!(matches!(refused, Err(HandoffError::TagInUse(_))));
 	assert_eq!(handoff_rows(&items), 1);
@@ -230,4 +234,20 @@ fn a_handoff_of_no_keys_is_refused() {
 	let refused = hand_off_rebuilding_keys(&items, &[], b"cheque");
 
 	assert!(matches!(refused, Err(HandoffError::NoItems)));
+}
+
+/// The caller records what it sealed in the handoff's own write, so a record
+/// that fails must leave the keys unspent rather than spent with no record.
+#[test]
+fn a_failed_record_writes_nothing() {
+	let items = held_items(1);
+	let request = handoff_request(&items.keys, b"cheque");
+
+	let refused = block_on(items.ledger.hand_off(request, public_keys_of, |_, _| {
+		Err(DbError::Connection("record failed".to_owned()))
+	}));
+
+	assert!(matches!(refused, Err(HandoffError::Db(DbError::Connection(_)))));
+	assert_eq!(available_keys(&items), items.keys);
+	assert_eq!(handoff_rows(&items), 0);
 }

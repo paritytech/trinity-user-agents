@@ -128,7 +128,7 @@ interface WorkerChainConnection {
  * Worker-side half of the host chain-connect bridge.
  *
  * The Rust core runs in this worker but owns no socket. When it needs chain
- * access (chainHead v1 for dotNS identity on Asset Hub / statement-store SSO) it
+ * access (Asset Hub reads for dotNS / statement-store SSO) it
  * calls this; the actual transport lives on the host main thread and is reached
  * over postMessage. The data crossing here is JSON-RPC strings, not SCALE: only
  * the product<->core wire is SCALE.
@@ -238,6 +238,8 @@ type HostRuntime =
   | { role: "signing"; runtime: WorkerSigningHostRuntime };
 
 let host: HostRuntime | null = null;
+/** Set while `init` builds the runtime. */
+let initializing = false;
 const cores = new Map<number, WorkerProductRuntime>();
 // Outstanding receiveFrame calls per core. wasm-bindgen holds a borrow of the
 // core for the whole duration of an async method, so `free()` throws while one
@@ -261,64 +263,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
   const msg = ev.data;
   switch (msg.kind) {
     case "init":
-      if (!wasm) {
-        postToMain({
-          kind: "fatalError",
-          error: "init received before WASM loaded",
-        });
-        break;
-      }
-      if (host) {
-        postToMain({
-          kind: "fatalError",
-          error: "init: runtime already initialized",
-        });
-        break;
-      }
-      wasm.setLogLevel?.(msg.logLevel);
-      if (msg.debuggerUrl && !debuggerLink) {
-        // The hash comes from the core that will encode the frames, not from this
-        // package's client constant: they are separate artifacts and the WASM
-        // bundle is built by hand.
-        debuggerLink = createDebuggerLink(msg.debuggerUrl, {
-          schema: coreWireSchemaHash(wasm),
-        });
-      }
-      try {
-        if (msg.role === "signing") {
-          // Only the `testing` bundle carries a signing host; the production
-          // `web` one is built without it, so say that rather than let an
-          // undefined constructor surface as a generic type error.
-          const SigningRuntime = wasm.WasmSigningHostRuntime;
-          if (!SigningRuntime) {
-            postToMain({
-              kind: "fatalError",
-              error:
-                "init: this WASM bundle has no signing host. Use the " +
-                "`testing` bundle, which is built with `wasm-signing-host`.",
-            });
-            break;
-          }
-          host = {
-            role: "signing",
-            runtime: new SigningRuntime(
-              buildRawCallbacks(msg.capabilities),
-              msg.hostConfig,
-            ),
-          };
-        } else {
-          host = {
-            role: "pairing",
-            runtime: new wasm.WasmPairingHostRuntime(
-              buildRawCallbacks(msg.capabilities),
-              msg.hostConfig,
-            ),
-          };
-        }
-        postToMain({ kind: "ready", schema: coreWireSchemaHash(wasm) });
-      } catch (err) {
-        postToMain({ kind: "fatalError", error: `init: ${errorMessage(err)}` });
-      }
+      void handleInit(msg);
       break;
     case "createCore":
       if (!host) {
@@ -521,6 +466,15 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           pairingRuntime(booted, "resetSessionState").resetSessionState(),
       );
       break;
+    case "clearProductState": {
+      const { productId } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "clearProductState",
+        (booted) => booted.runtime.clearProductState(productId),
+      );
+      break;
+    }
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
         host?.runtime ?? null,
@@ -695,6 +649,78 @@ function signingRuntime(
     );
   }
   return booted.runtime;
+}
+
+/**
+ * Builds the runtime `init` asks for. Creating it reads the core's stored
+ * stack record through the host, so it is asynchronous, and a second `init`
+ * while it runs is refused like one after it.
+ */
+async function handleInit(
+  msg: Extract<MainToWorker, { kind: "init" }>,
+): Promise<void> {
+  const glue = wasm;
+  if (!glue) {
+    postToMain({
+      kind: "fatalError",
+      error: "init received before WASM loaded",
+    });
+    return;
+  }
+  if (host || initializing) {
+    postToMain({
+      kind: "fatalError",
+      error: "init: runtime already initialized",
+    });
+    return;
+  }
+  initializing = true;
+  glue.setLogLevel?.(msg.logLevel);
+  if (msg.debuggerUrl && !debuggerLink) {
+    // The hash comes from the core that will encode the frames, not from this
+    // package's client constant: they are separate artifacts and the WASM
+    // bundle is built by hand.
+    debuggerLink = createDebuggerLink(msg.debuggerUrl, {
+      schema: coreWireSchemaHash(glue),
+    });
+  }
+  try {
+    if (msg.role === "signing") {
+      // Only the `testing` bundle carries a signing host; the production
+      // `web` one is built without it, so say that rather than let an
+      // undefined constructor surface as a generic type error.
+      const SigningRuntime = glue.WasmSigningHostRuntime;
+      if (!SigningRuntime) {
+        postToMain({
+          kind: "fatalError",
+          error:
+            "init: this WASM bundle has no signing host. Use the " +
+            "`testing` bundle, which is built with `wasm-signing-host`.",
+        });
+        return;
+      }
+      host = {
+        role: "signing",
+        runtime: await SigningRuntime.create(
+          buildRawCallbacks(msg.capabilities),
+          msg.hostConfig,
+        ),
+      };
+    } else {
+      host = {
+        role: "pairing",
+        runtime: await glue.WasmPairingHostRuntime.create(
+          buildRawCallbacks(msg.capabilities),
+          msg.hostConfig,
+        ),
+      };
+    }
+    postToMain({ kind: "ready", schema: coreWireSchemaHash(glue) });
+  } catch (err) {
+    postToMain({ kind: "fatalError", error: `init: ${errorMessage(err)}` });
+  } finally {
+    initializing = false;
+  }
 }
 
 async function handleSessionActivation(

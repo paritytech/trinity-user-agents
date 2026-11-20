@@ -418,8 +418,10 @@ fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
 		"FooterRequest",
 		&[(1, "V01FooterRequest"), (2, "V02FooterRequest")],
 	));
-	api.types.push(single_field_struct_of("V01FooterRequest", "V01Footer"));
-	api.types.push(single_field_struct_of("V02FooterRequest", "V02Footer"));
+	api.types
+		.push(single_field_struct_of("V01FooterRequest", "footer", "V01Footer"));
+	api.types
+		.push(single_field_struct_of("V02FooterRequest", "footer", "V02Footer"));
 	api.types.push(enum_type("V01Footer", vec![unit("Text"), unit("Empty")]));
 	api.types.push(enum_type(
 		"V02Footer",
@@ -448,7 +450,7 @@ fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
 		),
 		"{types}"
 	);
-	assert!(types.contains("export type V01Footer = \"Text\" | \"Empty\";"), "{types}");
+	assert!(!types.contains("V01Footer"), "{types}");
 }
 
 #[test]
@@ -945,13 +947,13 @@ fn call_error_framework_types() -> Vec<TypeDef> {
 	]
 }
 
-fn single_field_struct_of(name: &str, field_type: &str) -> TypeDef {
+fn single_field_struct_of(name: &str, field_name: &str, field_type: &str) -> TypeDef {
 	TypeDef {
 		name: name.to_string(),
 		module_path: Vec::new(),
 		generic_params: Vec::new(),
 		kind: TypeDefKind::Struct(vec![FieldDef {
-			name: "footer".to_string(),
+			name: field_name.to_string(),
 			type_ref: named_type(field_type),
 			docs: None,
 		}]),
@@ -1577,6 +1579,71 @@ fn generate_client_selects_highest_shared_wrapper_variant() {
 			.contains("payload: T.VersionedExampleRequest.enc({ tag: \"V2\", value: request }),")
 	);
 	assert!(client_source.contains("ResultAsync<T.LatestResponse, T.LatestError>"));
+}
+
+#[test]
+fn each_chat_client_only_exports_the_room_payloads_it_uses() {
+	let mut api = api(vec![
+		request_method_with_wrappers(
+			"create_room",
+			Some(0),
+			"CreateRoomRequest",
+			"CreateRoomResponse",
+			"CreateRoomError",
+		),
+		request_method_with_wrappers(
+			"register_bot",
+			Some(1),
+			"RegisterBotRequest",
+			"RegisterBotResponse",
+			"RegisterBotError",
+		),
+	]);
+	api.public_trait_order.push("Example".into());
+	for leg in ["Request", "Response", "Error"] {
+		let room = format!("CreateRoom{leg}");
+		let bot = format!("RegisterBot{leg}");
+		let bot_payload = format!("V01{bot}");
+		api.types.extend([
+			versioned_tuple_wrapper(&room, &format!("V01{room}"), &format!("V02{room}")),
+			versioned_tuple_wrapper_variants(&bot, &[(1, &bot_payload)]),
+			empty_struct(&bot_payload),
+		]);
+	}
+	for (version, id_field) in [("V01", "room_id"), ("V02", "room_id_source")] {
+		let status = format!("{version}RoomRegistrationStatus");
+		api.types.extend([
+			single_field_struct(&format!("{version}CreateRoomRequest"), id_field, "str"),
+			single_field_struct_of(&format!("{version}CreateRoomResponse"), "status", &status),
+			empty_struct(&format!("{version}CreateRoomError")),
+			TypeDef {
+				kind: TypeDefKind::Enum(vec![
+					unit_variant("New", None),
+					unit_variant("Exists", None),
+				]),
+				..empty_struct(&status)
+			},
+		]);
+	}
+
+	for (target, id_field) in [(2, "roomIdSource"), (1, "roomId")] {
+		let types = generate_types(&api, target).unwrap();
+		let client = generate_client(&api, target, 1).unwrap();
+		assert!(!types.contains("V01") && !types.contains("V02"), "{types}");
+		assert!(types.contains(&format!("{id_field}: string;")), "{types}");
+		assert!(types.contains("status: RoomRegistrationStatus;"), "{types}");
+		assert!(types.contains("export const RoomRegistrationStatus:"), "{types}");
+		assert!(
+			types.contains("S.indexedTaggedUnion({V1: [0, RegisterBotRequest] as const})"),
+			"{types}"
+		);
+		assert!(types.contains("export const RegisterBotRequest:"), "{types}");
+		assert!(
+			client.contains(&format!("VersionedCreateRoomRequest.enc({{ tag: \"V{target}\"")),
+			"{client}"
+		);
+		assert!(client.contains("VersionedRegisterBotRequest.enc({ tag: \"V1\""), "{client}");
+	}
 }
 
 #[test]

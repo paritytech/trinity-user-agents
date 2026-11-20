@@ -15,11 +15,12 @@ final class TabBarFoldController {
     private let outputs: Outputs
 
     private(set) var state: TabBarVisibilityState = .shown
-    private(set) var isTabRoot = true
     /// Set together with the offset, so it can lead `state` during an interactive transition.
     private(set) var isTucked = false
 
     private var foldDerived: TabBarFoldDerived = .none
+    /// The keyboard is up. It covers the bar's resting place, so a tucked bar shows no Edge glow or Grab zone.
+    private var isKeyboardUp = false
     private weak var navigationScreen: UIViewController?
     /// The user's tuck or restore. Only a tucked value carries across navigation.
     private var userOverride: TabBarFoldOverride = .none
@@ -71,7 +72,6 @@ final class TabBarFoldController {
         if context.screen !== navigationScreen {
             userOverride = state.carriedOverride
         }
-        isTabRoot = context.isTabRoot
         foldDerived = context.foldDerived
         navigationScreen = context.screen
     }
@@ -93,7 +93,7 @@ final class TabBarFoldController {
         let override = context.screen === navigationScreen
             ? userOverride
             : state.carriedOverride
-        return TabBarVisibilityPolicy.state(derived: context.foldDerived, override: override)
+        return TabBarVisibilityState(derived: context.foldDerived, override: override)
     }
 
     /// Moves the chrome toward `state` in sync with an interactive transition. Unlike `apply(state:)`
@@ -200,6 +200,19 @@ final class TabBarFoldController {
         autoHide.setBlocked(blocker, isBlocked, at: CACurrentMediaTime())
         rescheduleAutoHide()
     }
+
+    /// Records whether the keyboard is up, which blocks the auto-hide. A rising keyboard tucks a shown bar on the
+    /// quiet settle when `tucksShownBar` allows it, and the Edge glow and Grab zone stay away until it drops.
+    func setKeyboardUp(_ isUp: Bool, tucksShownBar: Bool) {
+        setAutoHideBlocked(.keyboardUp, isUp)
+        guard isUp != isKeyboardUp else { return }
+        isKeyboardUp = isUp
+        if isUp, tucksShownBar, state == .shown, !isDragging, !UIAccessibility.isVoiceOverRunning {
+            tuckQuietly(announcing: nil)
+        } else if state == .tucked, !isDragging, !motion.isSettling {
+            writeTransform(dockletTransform())
+        }
+    }
 }
 
 private extension TabBarFoldController {
@@ -208,7 +221,7 @@ private extension TabBarFoldController {
     }
 
     var policyState: TabBarVisibilityState {
-        TabBarVisibilityPolicy.state(derived: foldDerived, override: userOverride)
+        TabBarVisibilityState(derived: foldDerived, override: userOverride)
     }
 
     var geometry: DockletGeometry {
@@ -360,11 +373,13 @@ private extension TabBarFoldController {
         }
     }
 
-    /// The only writer of the chrome's transform. The Edge glow and Grab zone follow the same progress.
+    /// The only writer of the chrome's transform. The Edge glow and Grab zone follow the same progress. While the
+    /// keyboard is up, neither is shown.
     func writeTransform(_ transform: CGAffineTransform) {
         foldSurface.transform = transform
-        outputs.glow(motion.edgeGlowRect(geometry: geometry), glowOpacity)
-        outputs.grabZone(motion.destination == .tucked ? motion.grabZoneRect(geometry: geometry) : .zero)
+        outputs.glow(motion.edgeGlowRect(geometry: geometry), isKeyboardUp ? .fadeOut : glowOpacity)
+        let showsGrabZone = motion.destination == .tucked && !isKeyboardUp
+        outputs.grabZone(showsGrabZone ? motion.grabZoneRect(geometry: geometry) : .zero)
     }
 
     /// Sends the content fade target to the chrome when a transition has changed it. Called only from the transition
@@ -405,9 +420,10 @@ private extension TabBarFoldController {
     }
 
     /// Tucks the bar on the quiet settle, with no haptic. The tuck is recorded as the screen's override, as a swipe is.
-    func tuckQuietly() {
+    /// A tuck with no kind is not announced, so it shows no tip and arms no peek.
+    func tuckQuietly(announcing kind: DockletTuckKind?) {
         userOverride = .tucked
-        pendingTuckKind = .autoHide
+        pendingTuckKind = kind
         commit(.tucked)
         cancelFoldAnimator()
         motion.quietSettle(to: .tucked, now: CACurrentMediaTime(), reduceMotion: isReduceMotionEnabled)
@@ -466,7 +482,7 @@ private extension TabBarFoldController {
             rescheduleAutoHide()
             return
         }
-        tuckQuietly()
+        tuckQuietly(announcing: .autoHide)
     }
 
     /// The drag, settle and state blockers, which change inside this controller.
@@ -474,20 +490,5 @@ private extension TabBarFoldController {
         let now = CACurrentMediaTime()
         autoHide.setBlocked(.motionRunning, isDragging || motion.isSettling, at: now)
         autoHide.setBlocked(.notShown, state != .shown, at: now)
-    }
-}
-
-/// Relays display link frames to a closure. A display link retains its target, so the link is given this object
-/// rather than the controller.
-@MainActor
-final class DisplayLinkFrameTarget: NSObject {
-    private let onFrame: (CADisplayLink) -> Void
-
-    init(onFrame: @escaping (CADisplayLink) -> Void) {
-        self.onFrame = onFrame
-    }
-
-    @objc func frame(_ link: CADisplayLink) {
-        onFrame(link)
     }
 }

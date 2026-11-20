@@ -23,32 +23,37 @@ use crate::{
 		raw_callback_type_name, raw_callback_wire_name, stream_item, to_camel_case,
 		trait_object_return_name,
 	},
-	rustdoc::{FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields},
+	rustdoc::{ApiDefinition, FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields},
 	ts::ts_string_literal,
 };
 
 /// Write the typed host-callbacks TS file and its WASM adapter/worker bridge.
 ///
-/// `codec_types` is the set of `@parity/truapi` type names that carry a SCALE
-/// codec (structs and enums, not primitive aliases); the adapter crosses those
-/// as bytes and passes everything else through unchanged.
+/// Platform callbacks exchange SCALE-encoded structs and enums from the full
+/// protocol schema.
 pub fn generate(
 	definition: &PlatformDefinition,
-	codec_types: &BTreeSet<String>,
+	api: &ApiDefinition,
 	callbacks_output_dir: &str,
 	adapter_output_dir: &str,
 ) -> Result<()> {
 	fs::create_dir_all(callbacks_output_dir)?;
 	fs::create_dir_all(adapter_output_dir)?;
+	let codec_types = api
+		.platform_types()
+		.into_iter()
+		.filter(|(_, ty)| !matches!(ty.kind, TypeDefKind::Alias(_)))
+		.map(|(name, _)| name.to_owned())
+		.collect();
 	let local_codec_types = collect_local_bridge_payload_types(definition)
 		.into_iter()
 		.map(str::to_owned)
 		.collect();
 	let body = emit_host_callbacks(definition, &local_codec_types)?;
 	fs::write(Path::new(callbacks_output_dir).join("host-callbacks.ts"), body)?;
-	let adapter = emit_wasm_adapter(definition, codec_types, &local_codec_types)?;
+	let adapter = emit_wasm_adapter(definition, &codec_types, &local_codec_types)?;
 	fs::write(Path::new(adapter_output_dir).join("host-callbacks-adapter.ts"), adapter)?;
-	let worker_callbacks = emit_worker_callbacks(definition, codec_types, &local_codec_types)?;
+	let worker_callbacks = emit_worker_callbacks(definition, &codec_types, &local_codec_types)?;
 	fs::write(Path::new(adapter_output_dir).join("worker-callbacks.ts"), worker_callbacks)?;
 	Ok(())
 }

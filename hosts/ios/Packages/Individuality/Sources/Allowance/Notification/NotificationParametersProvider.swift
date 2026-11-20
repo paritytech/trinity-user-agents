@@ -1,7 +1,7 @@
 import ChainStore
 import Foundation
+import SDKLogger
 import SubstrateSdk
-import SubstrateStorageQuery
 
 public protocol NotificationParametersProviding: Sendable {
     func currentPeriod() async throws -> UInt32
@@ -16,11 +16,21 @@ public final class NotificationParametersProvider: @unchecked Sendable {
     private let chainId: ChainId
     private let chainRegistry: ChainResourceProtocol
     private let chainTimeProvider: ChainTimeProviding
+    private let statementStorageParameters: StatementStorageParametersProviding
+    private let logger: SDKLoggerProtocol
 
-    public init(chainId: ChainId, chainRegistry: ChainResourceProtocol, chainTimeProvider: ChainTimeProviding) {
+    public init(
+        chainId: ChainId,
+        chainRegistry: ChainResourceProtocol,
+        chainTimeProvider: ChainTimeProviding,
+        statementStorageParameters: StatementStorageParametersProviding,
+        logger: SDKLoggerProtocol
+    ) {
         self.chainId = chainId
         self.chainRegistry = chainRegistry
         self.chainTimeProvider = chainTimeProvider
+        self.statementStorageParameters = statementStorageParameters
+        self.logger = logger
     }
 }
 
@@ -32,7 +42,11 @@ extension NotificationParametersProvider: NotificationParametersProviding {
     }
 
     public func maxStatementSize() async throws -> Int {
-        let allowance: ResourcesPallet.StatementAllowance = try await constant(.notificationAllowance)
+        guard let allowance = try await statementStorageParameters.notificationAllowance() else {
+            logger.info("NotificationAllowance is not set on \(chainId); using the runtime default")
+
+            return Int(ResourcesPallet.StatementAllowance.notificationDefault.maxSize)
+        }
 
         return Int(allowance.maxSize)
     }
@@ -50,10 +64,6 @@ extension NotificationParametersProvider {
 
 private extension NotificationParametersProvider {
     func constant<T: Decodable>(_ path: ResourcesPallet.Constants) async throws -> T {
-        let runtimeProvider = try chainRegistry.getRuntimeCodingServiceOrError(for: chainId)
-        let operation = StorageConstantOperation<T>(path: path(), fallbackValue: nil)
-        operation.codingFactory = try await runtimeProvider.fetchCoderFactoryOperation().asyncExecute()
-
-        return try await operation.asyncExecute()
+        try await chainRegistry.getRuntimeCodingServiceOrError(for: chainId).fetchConstant(path: path())
     }
 }
