@@ -93,8 +93,9 @@ internal fun JsGesture(
             actionId,
             JsUiEvent.Type.Gesture(
                 phase = phase,
-                x = (x / density).roundToInt(),
-                y = (y / density).roundToInt(),
+                // Positions travel in hundredths of a dp, so a slow drag still reports every frame's move.
+                x = (x / density * 100).roundToInt(),
+                y = (y / density * 100).roundToInt(),
                 fractionPermille = GestureRules.permille(along, travel),
             ),
         )
@@ -311,8 +312,8 @@ internal fun JsGesture(
                     val travel = travelNow()
                     val position = workerPosition?.value
                     IntOffset(
-                        (placeX.value.coerceIn(0f, travel) + (position?.x ?: 0) * density).roundToInt(),
-                        (placeY.value.coerceIn(0f, travel) + (position?.y ?: 0) * density).roundToInt(),
+                        (placeX.value.coerceIn(0f, travel) + (position?.x ?: 0) / 100f * density).roundToInt(),
+                        (placeY.value.coerceIn(0f, travel) + (position?.y ?: 0) / 100f * density).roundToInt(),
                     )
                 },
         ) {
