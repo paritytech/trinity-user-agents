@@ -8,6 +8,7 @@ import SubstrateSdk
 
 protocol ChatPeerStatementSignerManaging: StatementStoreSignerManaging {
     func makeSigner(with peerAccountId: AccountId) throws -> StatementStoreSigning
+    func statementSignerKeyId(with peerAccountId: AccountId) throws -> String
 }
 
 /// One-shot notification-funded accounts: a fresh account per request (or acceptance) and period,
@@ -43,9 +44,11 @@ extension ChatSignerManager: ChatPeerStatementSignerManaging {
     }
 
     func makeSigner(with peerAccountId: AccountId) throws -> StatementStoreSigning {
-        let path = try ChatKeyPaths.statement(tld: tldProvider.currentTldOrError(), peerAccountId: peerAccountId)
+        try makeSigner(for: statementSignerKeyId(with: peerAccountId))
+    }
 
-        return try makeSigner(for: path)
+    func statementSignerKeyId(with peerAccountId: AccountId) throws -> String {
+        try ChatKeyPaths.statement(tld: tldProvider.currentTldOrError(), peerAccountId: peerAccountId)
     }
 }
 

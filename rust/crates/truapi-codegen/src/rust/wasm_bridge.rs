@@ -148,29 +148,24 @@ pub fn generate_wasm_bridge(
 
 struct BridgeCtx<'a> {
 	api_types: BTreeMap<&'a str, &'a TypeDef>,
-	codec_types: BTreeSet<&'a str>,
 	local_types: BTreeSet<&'a str>,
 	local_codec_types: BTreeSet<&'a str>,
 }
 
 impl<'a> BridgeCtx<'a> {
 	fn new(definition: &'a PlatformDefinition, api: &'a ApiDefinition) -> Self {
-		let api_types =
-			api.types.iter().map(|ty| (ty.name.as_str(), ty)).collect::<BTreeMap<_, _>>();
-		let codec_types = api
-			.types
-			.iter()
-			.filter(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
-			.map(|ty| ty.name.as_str())
-			.collect::<BTreeSet<_>>();
+		let api_types = api.platform_types();
 		let local_types =
 			definition.types.iter().map(|ty| ty.name.as_str()).collect::<BTreeSet<_>>();
 		let local_codec_types = collect_local_bridge_payload_types(definition);
-		Self { api_types, codec_types, local_types, local_codec_types }
+		Self { api_types, local_types, local_codec_types }
 	}
 
 	fn is_api_codec(&self, ty: &TypeRef) -> bool {
-		matches!(ty, TypeRef::Named { name, .. } if self.codec_types.contains(name.as_str()))
+		let TypeRef::Named { name, .. } = ty else { return false };
+		self.api_types
+			.get(name.as_str())
+			.is_some_and(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
 	}
 
 	fn is_local_codec(&self, ty: &TypeRef) -> bool {

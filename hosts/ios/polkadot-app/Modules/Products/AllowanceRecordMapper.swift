@@ -27,7 +27,8 @@ final class AllowanceRecordMapper: CoreDataMapperProtocol {
             kind: kind,
             domain: domain,
             priority: priority,
-            latestRenewedPeriod: latestRenewedPeriod
+            latestRenewedPeriod: latestRenewedPeriod,
+            signerKeyId: entity.signerKeyId
         )
     }
 
@@ -43,5 +44,6 @@ final class AllowanceRecordMapper: CoreDataMapperProtocol {
         entity.domain = model.domain.persistenceCode
         entity.priorityLevel = Int16(model.priority.rawValue)
         entity.latestRenewedPeriod = model.latestRenewedPeriod.map { Int64($0) } ?? -1
+        entity.signerKeyId = model.signerKeyId
     }
 }

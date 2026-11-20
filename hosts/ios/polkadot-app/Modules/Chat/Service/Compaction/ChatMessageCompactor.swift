@@ -12,7 +12,7 @@ final class ChatMessageCompactor: MessageCompacting, @unchecked Sendable {
     private let nodeProvider: HOPNodeProviding
     private let loaderFactory: HOPFileLoaderMaking
     private let signerProvider: AttachmentsSenderProviding
-    private let allowanceManager: AllowanceManaging
+    private let allowanceManager: any AllowanceManaging<AccountId>
     private let logger: LoggerProtocol
     private let maxAttempts: Int
     private let retryDelay: Duration
@@ -21,7 +21,7 @@ final class ChatMessageCompactor: MessageCompacting, @unchecked Sendable {
         nodeProvider: HOPNodeProviding,
         loaderFactory: HOPFileLoaderMaking,
         signerProvider: AttachmentsSenderProviding,
-        allowanceManager: AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         maxAttempts: Int = 3,
         retryDelay: Duration = .seconds(2),
         logger: LoggerProtocol

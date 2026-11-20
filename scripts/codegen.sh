@@ -76,6 +76,20 @@ rustfmt +"$NIGHTLY_TOOLCHAIN" --edition 2024 \
 
 node scripts/regen-explorer-versions.mjs
 
+# The codegen runs above build in the shared dev profile; drop the caches no
+# build has used for a week.
+./scripts/prune-incremental.sh target/debug 7
+
+# Each change to truapi-codegen also leaves another build of it, with its object
+# files, in target/debug/deps. Keep the one just run and any built this week.
+for binary in target/debug/deps/truapi_codegen-*; do
+  case "$binary" in *.*) continue ;; esac
+  if cmp -s "$binary" target/debug/truapi-codegen || [ -n "$(find "$binary" -mtime -7)" ]; then
+    continue
+  fi
+  rm -f "$binary" "$binary".*
+done
+
 # --no: use the installed prettier, never resolve or fetch one.
 npm exec --no -- prettier --write \
   "js/packages/truapi/src/generated/**/*.ts" \

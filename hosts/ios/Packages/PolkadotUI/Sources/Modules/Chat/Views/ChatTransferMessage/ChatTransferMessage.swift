@@ -5,7 +5,6 @@ internal import SnapKit
 
 public struct ChatTransferMessageConfiguration: HashableContentConfiguration {
     let title: String
-    let currencySymbol: String
     let amountText: String
     let tokenSymbol: String
     let originalAmountText: String?
@@ -18,6 +17,7 @@ public struct ChatTransferMessageConfiguration: HashableContentConfiguration {
     let tokenSymbolColor: UIColor
     let originalAmountTextColor: UIColor
     let side: ChatBubbleTailSide
+    var peerName: String?
 
     public func makeContentView() -> any UIView & UIContentView {
         ChatTransferMessageView(configuration: self)
@@ -144,7 +144,8 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
         bubbleView.addSubview(statusView)
 
         bubbleView.snp.makeConstraints {
-            $0.width.lessThanOrEqualToSuperview().multipliedBy(0.85)
+            $0.width.equalTo(Constants.bubbleWidth).priority(.high)
+            $0.width.lessThanOrEqualToSuperview()
             $0.top.equalToSuperview()
             bubbleLeadingConstraint = $0.leading.equalToSuperview().constraint
             bubbleTrailingConstraint = $0.trailing.equalToSuperview().constraint
@@ -187,11 +188,7 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
         appliedConfiguration = configuration
 
         titleLabel.text = configuration.title
-        amountView.bind(
-            currencySymbol: configuration.currencySymbol,
-            amount: configuration.amountText,
-            unit: configuration.tokenSymbol
-        )
+        amountView.bind(amount: configuration.amountText, unit: configuration.tokenSymbol)
         amountView.amountLabel.textColor = configuration.amountTextColor
         amountView.unitLabel.textColor = configuration.tokenSymbolColor
 
@@ -206,19 +203,19 @@ final class ChatTransferMessageView: UIView, UIContentView, ReactableContentView
             ).attributes(for: .left)
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             originalAmountLabel.attributedText = NSAttributedString(
-                string: configuration.currencySymbol + originalAmount,
+                string: originalAmount,
                 attributes: attributes
             )
             originalAmountLabel.isHidden = false
-            subtitleLabel.text = String(localized: .transferStatusAmountDiffers)
+            subtitleLabel.text = partialClaimText(configuration, originalAmount: originalAmount)
             subtitleLabel.textColor = .fgWarning
             subtitleIconView.isHidden = true
         } else {
             originalAmountLabel.attributedText = nil
             originalAmountLabel.isHidden = true
-            subtitleLabel.text = configuration.state.title
+            subtitleLabel.text = statusText(configuration)
             subtitleLabel.textColor = configuration.state.color
-            subtitleIconView.isHidden = false
+            subtitleIconView.isHidden = configuration.state.icon == nil
             subtitleIconView.image = configuration.state.icon
             subtitleIconView.tintColor = configuration.state.color
         }
@@ -257,7 +254,7 @@ private extension ChatTransferMessageConfiguration.DirectionalState {
             UIImage(resource: .iconTransferDone)
         case .incoming(.failed),
              .outgoing(.failed):
-            UIImage(resource: .iconTransferError)
+            nil
         }
     }
 
@@ -265,7 +262,7 @@ private extension ChatTransferMessageConfiguration.DirectionalState {
         switch self {
         case .incoming(.failed),
              .outgoing(.failed):
-            .fgError
+            .fgWarning
         case .incoming:
             .fgSecondary
         case .outgoing:
@@ -308,7 +305,7 @@ private extension ChatTransferMessageConfiguration.OutgoingState {
         case .claimed:
             String(localized: .transferStatusFinished)
         case .failed:
-            String(localized: .transferStatusError)
+            String(localized: .transferStatusNotSent)
         }
     }
 }
@@ -325,7 +322,37 @@ extension ChatTransferMessageView: AccessibilityBound {
 }
 
 private extension ChatTransferMessageView {
+    func statusText(_ configuration: ChatTransferMessageConfiguration) -> String {
+        if case .outgoing(.claimed) = configuration.state, let peerName = configuration.peerName {
+            return String(localized: .transferStatusReceivedBy(username: peerName))
+        }
+        return configuration.state.title
+    }
+
+    func partialClaimText(_ configuration: ChatTransferMessageConfiguration, originalAmount: String) -> String {
+        switch configuration.state {
+        case .incoming:
+            String(localized: .transferStatusAmountReceived(
+                received: configuration.amountText,
+                sent: originalAmount
+            ))
+        case .outgoing:
+            if let peerName = configuration.peerName {
+                String(localized: .transferStatusAmountReceivedBy(
+                    username: peerName,
+                    received: configuration.amountText,
+                    sent: originalAmount
+                ))
+            } else {
+                String(localized: .transferStatusAmountDiffers)
+            }
+        }
+    }
+}
+
+private extension ChatTransferMessageView {
     enum Constants {
+        static let bubbleWidth: CGFloat = 250
         static let bubbleLeadingInset = DSSpacings.medium
         static let bubbleTrailingInset = DSSpacings.small
         static let rowSpacing = DSSpacings.small

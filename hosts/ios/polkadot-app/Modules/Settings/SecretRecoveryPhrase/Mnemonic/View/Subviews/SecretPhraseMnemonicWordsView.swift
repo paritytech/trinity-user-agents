@@ -3,6 +3,7 @@ import UIKit_iOS
 import SnapKit
 import PolkadotUI
 import DesignSystem
+import UIKitExt
 
 protocol SecretPhraseMnemonicWordsDelegate: AnyObject {
     func didTapMnemonic(_ type: SecretPhraseMnemonicWordsView.ViewState)
@@ -48,6 +49,8 @@ final class SecretPhraseMnemonicWordsView: UIView {
     var subtitleLabel: UILabel {
         hintView.sView
     }
+
+    var sensitiveContentView: UIView { collectionView }
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: createLayout())
     private lazy var dataSource = configureDataSource()

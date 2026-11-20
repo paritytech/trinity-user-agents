@@ -5,7 +5,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import io.paritytech.polkadotapp.feature_dotns_api.domain.ArchiveFiles
 import uniffi.truapi.ArchiveFile
-import uniffi.truapi.archiveFile
+import uniffi.truapi.archiveFiles
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
@@ -15,8 +15,9 @@ class ArchiveContent(
     private val mainDocumentResponseHeaders: Map<String, String>,
 ) {
     fun respond(root: String, request: WebResourceRequest): WebResourceResponse {
-        val file = archiveFile(root, request.url.path.orEmpty(), request.isForMainFrame, files)
-        val stream = file?.let { files.open(it.path) } ?: return notFound()
+        val (file, stream) = archiveFiles(root, request.url.path.orEmpty(), request.isForMainFrame)
+            .firstNotNullOfOrNull { file -> files.open(file.path)?.let { file to it } }
+            ?: return notFound()
         val mime = mimeOf(file)
         return if (request.isForMainFrame && mainDocumentResponseHeaders.isNotEmpty()) {
             WebResourceResponse(mime, "UTF-8", 200, "OK", mainDocumentResponseHeaders, stream)
@@ -42,11 +43,5 @@ class ArchiveContent(
 }
 
 object DiskArchiveFiles : ArchiveFiles {
-    override fun list(dir: String): List<String> = File(dir).list()?.toList().orEmpty()
-
-    override fun exists(path: String): Boolean = File(path).isFile
-
-    override fun readText(path: String): String? = File(path).takeIf(File::isFile)?.readText()
-
     override fun open(path: String): InputStream? = File(path).takeIf(File::isFile)?.inputStream()
 }

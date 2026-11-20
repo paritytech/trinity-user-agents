@@ -22,6 +22,16 @@ public extension ResourcesPallet {
         /// Same proof inputs as the statement store allowance, under the notification slot context.
         case registerNotificationForCollection(AsRegisterStatementStoreAllowanceParams)
         case claimLongTermStorage(AsClaimLongTermStorageParams)
+        /// Plain signature of the account holding the slot over the same message the proofs sign.
+        case replaceStatementStoreAccount(AsReplaceStatementStoreAccountParams)
+    }
+
+    struct AsReplaceStatementStoreAccountParams {
+        public let signer: any TypedSigningProviding
+
+        public init(signer: any TypedSigningProviding) {
+            self.signer = signer
+        }
     }
 
     enum MembershipCollection {
@@ -84,6 +94,7 @@ public extension ResourcesPallet.AsResourcesTxExtension {
         case registerStatementStoreAllowance(RegisterStatementStoreAllowanceMode)
         case registerNotificationForCollection(RegisterStatementStoreAllowanceMode)
         case claimLongTermStorage(ClaimLongTermStorageMode)
+        case replaceStatementStoreAccount(MultiSignature)
 
         public init(from decoder: any Decoder) throws {
             var container = try decoder.unkeyedContainer()
@@ -97,6 +108,8 @@ public extension ResourcesPallet.AsResourcesTxExtension {
                 )
             case "ClaimLongTermStorage":
                 self = try .claimLongTermStorage(container.decode(ClaimLongTermStorageMode.self))
+            case "ReplaceStatementStoreAccount":
+                self = try .replaceStatementStoreAccount(container.decode(MultiSignature.self))
             default:
                 throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown type \(type)")
             }
@@ -114,6 +127,9 @@ public extension ResourcesPallet.AsResourcesTxExtension {
             case let .claimLongTermStorage(model):
                 try container.encode("ClaimLongTermStorage")
                 try container.encode(model)
+            case let .replaceStatementStoreAccount(signature):
+                try container.encode("ReplaceStatementStoreAccount")
+                try container.encode(signature)
             }
         }
     }
@@ -217,6 +233,8 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
                 try .registerNotificationForCollection(makeAllowanceMode(params: params, message: message))
             case let .claimLongTermStorage(params):
                 try makeClaimLongTermStorage(params: params, message: message)
+            case let .replaceStatementStoreAccount(params):
+                try .replaceStatementStoreAccount(params.signer.sign(data: message))
             }
 
         let json = try mode.toScaleCompatibleJSON(with: context?.toRawContext())

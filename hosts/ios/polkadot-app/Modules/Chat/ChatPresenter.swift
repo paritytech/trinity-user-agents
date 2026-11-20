@@ -197,7 +197,7 @@ private extension ChatPresenter {
                 self?.interactor.acceptChatRequest()
             },
             declineChatRequest: { [weak self] in
-                self?.interactor.declineChatRequest()
+                self?.handleDeclineChatRequest()
             },
             cancelChatRequest: { [weak self] in
                 self?.handleCancelChatRequest()
@@ -412,16 +412,33 @@ private extension ChatPresenter {
     }
 
     func handleCancelChatRequest() {
-        guard let username = metadata?.peerName else {
-            return
-        }
-
         MainActor.assumeIsolated {
-            wireframe.showCancelChatRequestConfirmation(
+            wireframe.showChatRequestConfirmation(
                 from: view,
-                username: username,
-                delegate: self
+                viewModel: .cancel(username: metadata?.peerName),
+                onConfirm: { [weak self] in
+                    self?.confirmCancelChatRequest()
+                }
             )
+        }
+    }
+
+    func handleDeclineChatRequest() {
+        MainActor.assumeIsolated {
+            wireframe.showChatRequestConfirmation(
+                from: view,
+                viewModel: .decline(username: metadata?.peerName),
+                onConfirm: { [weak self] in
+                    self?.interactor.declineChatRequest()
+                }
+            )
+        }
+    }
+
+    func confirmCancelChatRequest() {
+        interactor.cancelChatRequest()
+        MainActor.assumeIsolated {
+            wireframe.dismissChat(from: view)
         }
     }
 

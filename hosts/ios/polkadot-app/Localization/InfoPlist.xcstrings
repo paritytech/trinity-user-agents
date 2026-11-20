@@ -80,7 +80,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Polkadot uses Face ID to confirm it's you before showing your account backup or restoring your account."
+            "value" : "Polkadot uses Face ID to confirm it's you before transfers, signing and backups."
           }
         }
       }

@@ -50,7 +50,8 @@ extension PlainTransferAmountViewModelFactory: TransferAmountViewModelFactoryPro
                 integralFormatter
             }
 
-        return formatter.stringFromDecimal(amountDecimal) ?? ""
+        // The symbol is stripped but its separator is not, so the formatter leaves a trailing space.
+        return formatter.stringFromDecimal(amountDecimal)?.trimmingCharacters(in: .whitespaces) ?? ""
     }
 }
 
