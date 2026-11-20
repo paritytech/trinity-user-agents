@@ -1093,6 +1093,7 @@ impl HostRuntime<SigningHost> {
 			installation,
 			session_state: self.role.session_state(),
 			spawner: self.services.spawner.clone(),
+			scan_config: crate::nft::recovery_scan_config(),
 		})
 	}
 

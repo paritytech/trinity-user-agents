@@ -47,6 +47,7 @@ pub trait HoldingLookup: Send + Sync {
 }
 
 /// How a scan of one index space reads its keys and when it ends.
+#[derive(Clone, Copy)]
 pub struct GapScanConfig {
 	/// The scan ends once more than this many keys in a row have held nothing.
 	pub gap_size: u32,

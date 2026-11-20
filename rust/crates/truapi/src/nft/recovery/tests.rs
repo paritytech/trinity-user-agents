@@ -1,4 +1,4 @@
-use core::ops::Range;
+use core::{num::NonZeroU32, ops::Range};
 use std::sync::{
 	Mutex,
 	atomic::{AtomicUsize, Ordering},
@@ -102,6 +102,13 @@ impl RecoveryChain for TestChain {
 	}
 }
 
+/// Ends each purse after ten empty keys, read five at a time. The gap
+/// arithmetic is tested in `gap_scan`, so these tests only need a scan that
+/// is cheap to derive.
+fn shallow_scan_config() -> GapScanConfig {
+	GapScanConfig { gap_size: 10, batch_size: NonZeroU32::new(5).unwrap() }
+}
+
 /// Recovery over a fresh database, with the test seed and installation.
 struct Harness {
 	_dir: TempDir,
@@ -125,6 +132,7 @@ impl Harness {
 			installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 			session_state: SessionState::new(),
 			spawner: Spawner::for_test(),
+			scan_config: shallow_scan_config(),
 		};
 		Self { _dir: dir, deps, chain, seed }
 	}
@@ -139,6 +147,7 @@ impl Harness {
 			installation: self.deps.installation.clone(),
 			session_state: self.deps.session_state.clone(),
 			spawner: self.deps.spawner.clone(),
+			scan_config: self.deps.scan_config,
 		})
 	}
 
@@ -202,7 +211,7 @@ fn the_purse_walk_stops_after_ten_empty_purses() {
 fn a_failed_run_leaves_the_installation_pending_and_the_retry_finds_its_items() {
 	let in_main = item_key(PurseId::MAIN.0, EARLIER, 0);
 	let in_purse_0 = item_key(0, EARLIER, 2);
-	// The main purse takes three reads of 500 keys, so the fourth derivation
+	// The main purse takes three reads of 5 keys, so the fourth derivation
 	// is purse 0's first, after the main purse's key is recorded.
 	let seed = TestSeed { failing_derivation: Some(4), ..TestSeed::default() };
 	let harness = Harness::with_seed(TestChain::new(&[EARLIER], [in_main, in_purse_0]), seed);
@@ -334,10 +343,8 @@ async fn recovery_runs_once_a_session_connects() {
 		tokio::time::timeout(Duration::from_millis(100), recovery.wait_until_finished()).await;
 
 	harness.deps.session_state.set_session(session_info());
-	// The full scan derives thousands of keys, which takes seconds in a debug
-	// build on a loaded runner. The bound only has to catch a scan that never runs.
 	let after_session =
-		tokio::time::timeout(Duration::from_secs(60), recovery.wait_until_finished()).await;
+		tokio::time::timeout(Duration::from_secs(5), recovery.wait_until_finished()).await;
 
 	assert!(before_session.is_err(), "recovery ran before a session connected");
 	assert!(after_session.is_ok(), "recovery did not finish once a session connected");

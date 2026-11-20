@@ -17,14 +17,14 @@ use futures::StreamExt;
 use subxt::utils::H256;
 use truapi::latest::GenericError;
 
-pub use self::asset_hub::AssetHubRecoveryChain;
-use self::recovered_purses::{NftScannedPurses, recovery_passes, recovery_scan_config};
+pub use self::{asset_hub::AssetHubRecoveryChain, recovered_purses::recovery_scan_config};
+use self::recovered_purses::{NftScannedPurses, recovery_passes};
 use super::{HeldItem, ItemKey, ItemKeyDeriver, dao};
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
 	chain_runtime::RuntimeFailure,
-	gap_scan::{HoldingLookup, PurseScanError, PurseScanner},
+	gap_scan::{GapScanConfig, HoldingLookup, PurseScanError, PurseScanner},
 	host_logic::session::SessionState,
 	installation::{InstallationId, InstallationIdProvider},
 	installation_registry::RegistryReadError,
@@ -106,6 +106,8 @@ pub struct NftRecoveryDeps {
 	pub session_state: Arc<SessionState>,
 	/// Where the task runs.
 	pub spawner: Spawner,
+	/// How far each purse's keys are scanned, [`recovery_scan_config`] outside tests.
+	pub scan_config: GapScanConfig,
 }
 
 /// Backup recovery, running for as long as this handle lives.
@@ -248,7 +250,7 @@ async fn recover_installations(
 		holdings,
 		installations.clone(),
 		store,
-		recovery_scan_config(),
+		deps.scan_config,
 	);
 	scanner.scan_purse_passes(&recovery_passes()).await?;
 	mark_installations_done(&deps.db, installations).await?;
