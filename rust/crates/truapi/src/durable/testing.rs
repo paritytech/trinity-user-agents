@@ -283,6 +283,14 @@ impl ChainHeads for FakeChain {
 		Ok(Heads { finalized: state.head(state.finalized), best: state.head(state.best) })
 	}
 
+	async fn finalized_block(&self, _genesis: H256) -> Result<HashAndNumber, RuntimeFailure> {
+		let state = self.state.lock();
+		if state.heads_unavailable {
+			return Err(unavailable("finalized_block"));
+		}
+		Ok(state.head(state.finalized))
+	}
+
 	async fn head_events(
 		&self,
 		_genesis: H256,

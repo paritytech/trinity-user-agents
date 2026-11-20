@@ -54,6 +54,70 @@ pub fn insert_purse(
 	Ok(Some(PurseId(next)))
 }
 
+const INSERT_RECOVERED_PURSE: &str =
+	"INSERT INTO nft_purse (id, name, tag) VALUES (:id, :name, :tag) ON CONFLICT (id) DO NOTHING";
+
+/// Records purse `id` as backup recovery recreates it: claimed by no caller,
+/// with the empty tag, and named after its id. A purse already at `id` is
+/// kept as it is.
+pub fn insert_recovered_purse(tx: &Transaction<'_>, id: PurseId) -> Result<(), DbError> {
+	let name = format!("Recovered purse {}", id.0);
+	tx.prepare_cached(INSERT_RECOVERED_PURSE)?.execute(named_params! {
+		":id": id.0,
+		":name": name,
+		":tag": PurseTag::default().0,
+	})?;
+	Ok(())
+}
+
+const INSERT_PENDING_RECOVERY: &str =
+	"INSERT INTO nft_recovery (installation) VALUES (:installation) ON CONFLICT DO NOTHING";
+
+/// Records that backup recovery has to scan `installation`, unless it is
+/// already recorded, pending or finished.
+pub fn insert_pending_recovery(
+	tx: &Transaction<'_>,
+	installation: InstallationId,
+) -> Result<(), DbError> {
+	tx.prepare_cached(INSERT_PENDING_RECOVERY)?
+		.execute(named_params! { ":installation": installation.0 })?;
+	Ok(())
+}
+
+const MARK_RECOVERY_DONE: &str = "INSERT INTO nft_recovery (installation, done)
+	VALUES (:installation, 1) ON CONFLICT (installation) DO UPDATE SET done = 1";
+
+/// Records that backup recovery has nothing more to scan under
+/// `installation`.
+pub fn mark_recovery_done(
+	tx: &Transaction<'_>,
+	installation: InstallationId,
+) -> Result<(), DbError> {
+	tx.prepare_cached(MARK_RECOVERY_DONE)?
+		.execute(named_params! { ":installation": installation.0 })?;
+	Ok(())
+}
+
+const PENDING_RECOVERIES: &str =
+	"SELECT installation FROM nft_recovery WHERE done = 0 ORDER BY installation";
+
+/// The installations backup recovery has recorded but not finished.
+pub fn pending_recoveries(conn: &Connection) -> Result<Vec<InstallationId>, DbError> {
+	let mut statement = conn.prepare_cached(PENDING_RECOVERIES)?;
+	let rows = statement.query_map([], |row| Ok(InstallationId(row.get("installation")?)))?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
+const RECOVERY_FINISHED: &str = "SELECT EXISTS (SELECT 1 FROM nft_recovery)
+	AND NOT EXISTS (SELECT 1 FROM nft_recovery WHERE done = 0)";
+
+/// Whether backup recovery has read the installation registry on this
+/// install and finished every installation it found there, now and after
+/// each change.
+pub fn observe_recovery_finished(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
+	db.observe(RECOVERY_FINISHED, |statement| statement.query_row([], |row| row.get(0)))
+}
+
 const PURSES_TAGGED: &str = "SELECT id, name, tag FROM nft_purse WHERE tag = :tag ORDER BY id";
 
 /// Every purse carrying `tag`, by id.
@@ -90,7 +154,28 @@ const INSERT_ITEM: &str = "INSERT INTO nft_item (key, purse, installation, idx)
 
 /// Records each key at its slot.
 pub fn insert_items(tx: &Transaction<'_>, items: &[(ItemSlot, ItemKey)]) -> Result<(), DbError> {
-	let mut statement = tx.prepare_cached(INSERT_ITEM)?;
+	execute_for_each_item(tx, INSERT_ITEM, items)
+}
+
+const INSERT_RECOVERED_ITEM: &str = "INSERT INTO nft_item (key, purse, installation, idx)
+	VALUES (:key, :purse, :installation, :idx) ON CONFLICT DO NOTHING";
+
+/// Records each key backup recovery found at its slot, keeping any key or
+/// slot already recorded as it is.
+pub fn insert_recovered_items(
+	tx: &Transaction<'_>,
+	items: &[(ItemSlot, ItemKey)],
+) -> Result<(), DbError> {
+	execute_for_each_item(tx, INSERT_RECOVERED_ITEM, items)
+}
+
+/// Runs `sql` once for each item, with its key and slot as parameters.
+fn execute_for_each_item(
+	tx: &Transaction<'_>,
+	sql: &str,
+	items: &[(ItemSlot, ItemKey)],
+) -> Result<(), DbError> {
+	let mut statement = tx.prepare_cached(sql)?;
 	for (slot, key) in items {
 		statement.execute(named_params! {
 			":key": key.0,
