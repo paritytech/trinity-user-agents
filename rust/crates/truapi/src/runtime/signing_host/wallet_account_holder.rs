@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 
 use super::ring_vrf::RingResolver;
 use crate::{
-	host_internal::sso_messages::RingVrfError,
+	host_internal::{extrinsic::Sr25519Signer, sso_messages::RingVrfError},
 	host_logic::{
 		device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret},
 		product_account::{ProductAccountError, derivation_index_bytes},
@@ -305,6 +305,14 @@ impl WalletAccountHolder {
 	) -> Result<(), AuthorityError> {
 		self.with_keys(session, |keys| keys.identity_keypair_for(account).map(drop))
 	}
+
+	/// A signer for the identity account of the active session.
+	///
+	/// Fails with `Disconnected` without an active session.
+	pub fn identity_signer(&self) -> Result<Sr25519Signer, AuthorityError> {
+		let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.with_keys(&session, |keys| Ok(Sr25519Signer::from_keypair(&keys.identity_keypair()?)))
+	}
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -327,10 +335,7 @@ impl WalletAccountHolder {
 	}
 
 	/// The signer for one item slot.
-	pub fn item_signer(
-		&self,
-		slot: crate::nft::ItemSlot,
-	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
+	pub fn item_signer(&self, slot: crate::nft::ItemSlot) -> Result<Sr25519Signer, AuthorityError> {
 		self.with_installed_keys(|keys| {
 			keys.entropy.item_signer(slot).map_err(AuthorityError::from)
 		})

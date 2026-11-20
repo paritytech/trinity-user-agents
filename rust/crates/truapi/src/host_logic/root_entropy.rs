@@ -31,7 +31,6 @@ const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 const PRODUCT_ENTROPY_DOMAIN_SEPARATOR: &[u8] = b"product-entropy-derivation";
 
 /// The user's root BIP-39 entropy, wiped from memory when dropped.
-#[derive(Clone)]
 pub struct RootEntropy(Zeroizing<Vec<u8>>);
 
 impl RootEntropy {

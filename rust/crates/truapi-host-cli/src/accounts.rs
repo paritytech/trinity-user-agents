@@ -40,11 +40,19 @@ pub fn has_account_store(base_path: &std::path::Path) -> bool {
 const IMPORTED_ACCOUNT_NAME: &str = "imported";
 
 /// Signer material selected for a signing-host session.
-#[derive(Clone, derive_more::Debug)]
+#[derive(derive_more::Debug)]
 pub struct ResolvedSigner {
-	/// BIP-39 entropy backing the selected signer account.
+	/// BIP-39 entropy backing the selected signer account. Activating the
+	/// session hands it to the runtime.
 	#[debug("\"<redacted>\"")]
 	pub entropy: RootEntropy,
+	/// The account the entropy belongs to.
+	pub account: SignerAccount,
+}
+
+/// What a session keeps about its signer once the runtime holds the entropy.
+#[derive(Debug)]
+pub struct SignerAccount {
 	/// Stored account name when this came from `accounts.json`.
 	pub account_name: Option<String>,
 	/// Lite username attested for the signer, when managed by the CLI.
@@ -59,9 +67,6 @@ pub struct ResolvedSigner {
 pub struct ImportedSigner {
 	#[debug("\"<redacted>\"")]
 	mnemonic: String,
-	#[zeroize(skip)]
-	#[debug("\"<redacted>\"")]
-	entropy: RootEntropy,
 	#[zeroize(skip)]
 	username: Option<String>,
 	#[zeroize(skip)]
@@ -85,9 +90,9 @@ impl ImportedSigner {
 		&self.session_name
 	}
 
-	/// Borrow the already-derived entropy for off-side runtime activation.
-	pub fn entropy(&self) -> &RootEntropy {
-		&self.entropy
+	/// The entropy the runtime is activated with, derived from the mnemonic.
+	pub fn root_entropy(&self) -> Result<RootEntropy> {
+		root_entropy_from_mnemonic(&self.mnemonic)
 	}
 }
 
@@ -348,12 +353,9 @@ pub fn remove_managed_accounts(
 pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedSigner> {
 	if let Some(mnemonic) = config.mnemonic {
 		let entropy = root_entropy_from_mnemonic(&mnemonic)?;
-		return Ok(ResolvedSigner {
-			entropy,
-			account_name: None,
-			lite_username: None,
-			auto_managed: false,
-		});
+		let account =
+			SignerAccount { account_name: None, lite_username: None, auto_managed: false };
+		return Ok(ResolvedSigner { entropy, account });
 	}
 
 	let _lock = AccountStoreLock::acquire(config.base_path)?;
@@ -439,7 +441,6 @@ pub async fn inspect_imported_signer(network: &Stack, mnemonic: &str) -> Result<
 	let session_name = imported_session_name(username.as_deref(), &identity.public_key);
 	Ok(ImportedSigner {
 		mnemonic,
-		entropy: identity.entropy,
 		username,
 		session_name,
 		public_key: identity.public_key,
@@ -454,7 +455,7 @@ pub fn persist_imported_signer(
 	base_path: &Path,
 	network: &Stack,
 	imported: &ImportedSigner,
-) -> Result<ResolvedSigner> {
+) -> Result<SignerAccount> {
 	let network_id = network.namespace();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let mut store = AccountStore::load(base_path)?;
@@ -487,7 +488,7 @@ pub fn persist_imported_signer(
 	};
 	store.upsert(record.clone());
 	store.save()?;
-	resolved_from_record(record, false)
+	Ok(SignerAccount::from_record(record, false))
 }
 
 /// Resolve an already-provisioned signer from local state without network
@@ -778,8 +779,14 @@ async fn sleep_ring_poll(attempt: usize, max_attempts: usize, sleep: Duration) {
 
 fn resolved_from_record(record: AccountRecord, auto_managed: bool) -> Result<ResolvedSigner> {
 	let entropy = root_entropy_from_mnemonic(&record.mnemonic)?;
-	let lite_username = (!record.lite_username.is_empty()).then_some(record.lite_username);
-	Ok(ResolvedSigner { entropy, account_name: Some(record.name), lite_username, auto_managed })
+	Ok(ResolvedSigner { entropy, account: SignerAccount::from_record(record, auto_managed) })
+}
+
+impl SignerAccount {
+	fn from_record(record: AccountRecord, auto_managed: bool) -> Self {
+		let lite_username = (!record.lite_username.is_empty()).then_some(record.lite_username);
+		Self { account_name: Some(record.name), lite_username, auto_managed }
+	}
 }
 
 fn imported_session_name(username: Option<&str>, public_key: &[u8; 32]) -> String {

@@ -172,3 +172,21 @@ fn the_static_receive_secret_is_the_users_chat_key() {
 	assert_eq!(signed_in, chat_key.public_key());
 	assert!(matches!(signed_out, Err(AuthorityError::Disconnected)));
 }
+
+/// A host signs its own writes as the active identity through the runtime,
+/// so it keeps no entropy once the session is active.
+#[test]
+fn identity_signer_signs_as_the_active_identity_and_needs_a_session() {
+	use subxt::tx::Signer;
+
+	let (_, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+	let without_session = authority.identity_signer().ok().map(|signer| signer.account_id().0);
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
+	let identity = RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
+
+	assert_eq!(
+		(without_session, authority.identity_signer().unwrap().account_id().0),
+		(None, identity.public.to_bytes())
+	);
+}

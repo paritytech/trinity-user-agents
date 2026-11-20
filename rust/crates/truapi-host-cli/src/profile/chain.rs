@@ -12,7 +12,6 @@ use truapi::{
 	host_logic::{
 		dotns_gateway::{ContentResolver, DotnsRegistry, account_to_h160, read_view},
 		product_account::personhood_product_id,
-		root_entropy::RootEntropy,
 	},
 	latest,
 	platform::ProductContext,
@@ -40,10 +39,11 @@ impl ChainProfile {
 	pub async fn connect(
 		runtime: &HostRuntime<SigningHost>,
 		network: &Stack,
-		entropy: &RootEntropy,
 		username: &str,
 	) -> Result<Self> {
-		let signer = Sr25519Signer::from_keypair(&entropy.derive_identity_keypair(network.tld())?);
+		let signer = runtime
+			.identity_signer()
+			.map_err(|error| anyhow!("no identity to sign as: {}", error.reason))?;
 		let mut reader = AssetHubReader::connect(network).await?;
 		let location = ProfileRecordLocation::resolve(&mut reader, username)
 			.await?

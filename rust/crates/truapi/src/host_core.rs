@@ -1520,6 +1520,19 @@ impl HostRuntime<SigningHost> {
 		self.role.statement_renewal_targets().await.map_err(Into::into)
 	}
 
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails without an active session.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.identity_signer"))]
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, v01::GenericError> {
+		self.role
+			.identity_signer()
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
 	/// Root public key the active identity records its fixed ledger entries
 	/// under.
 	///
