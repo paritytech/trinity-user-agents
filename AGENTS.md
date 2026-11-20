@@ -495,6 +495,7 @@ one line and the start of the next, except where the repository formatter requir
   implementation only when deriving cannot express the behavior cleanly.
 ## Code style
 
+- Rust design follows [docs/rust-design.md](docs/rust-design.md), this repo's design rules. Run the `rust-design-reviewer` agent on any Rust diff before calling it done.
 - Every `pub` Rust item (functions, methods, types, traits, modules, constants) carries a doc comment (`///` or `//!`).
   Keep it short and focused on intent or invariants, not on what the signature already says.
 - Do not add code comments or doc comments that narrate migrations, compatibility shims, or historical changes. Comments should describe only the current code.
