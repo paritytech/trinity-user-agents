@@ -17,6 +17,7 @@ struct NodeGestureView<Content: View>: View {
     @State private var dragging = false
     @State private var held = false
     @State private var lastMove: TimeInterval = 0
+    @State private var catchUpStep = 0
     @State private var confirmations = 0
 
     var body: some View {
@@ -56,7 +57,7 @@ private extension NodeGestureView {
         actionHandler?(action, props.encodePayload(phase, position, fraction))
     }
 
-    func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: CGPoint) {
+    func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: PanTranslation) {
         guard props.isEnabled, !held, let pan = props.pan else { return }
         if case .started = phase {
             dragging = true
@@ -64,10 +65,21 @@ private extension NodeGestureView {
             origin = pan.drag == nil ? .zero : offset
             position = origin
             lastMove = 0
+            catchUpStep = 0
             emit(pan.startAction, .started)
         }
         guard dragging else { return }
-        position = GestureMotion.position(origin: origin, translation: translation, axis: pan.axis, travel: panTravel)
+        switch phase {
+        case .started,
+             .moved: catchUpStep += 1
+        default: catchUpStep = GestureMotion.catchUpSteps
+        }
+        position = GestureMotion.position(
+            origin: origin,
+            translation: GestureMotion.fromTouchDown(translation, step: catchUpStep),
+            axis: pan.axis,
+            travel: panTravel
+        )
         if pan.drag != nil { offset = position }
         switch phase {
         case .started,
@@ -131,6 +143,18 @@ private extension NodeGestureView {
 }
 
 enum GestureMotion {
+    static let catchUpSteps = 3
+
+    /// The translation from the touch-down point. The slop is fed in over the first `catchUpSteps` pan frames, so the
+    /// thumb catches up with the finger instead of jumping to it.
+    static func fromTouchDown(_ translation: PanTranslation, step: Int) -> CGPoint {
+        let share = CGFloat(min(max(step, 0), catchUpSteps)) / CGFloat(catchUpSteps)
+        return CGPoint(
+            x: translation.recognized.x + translation.slop.x * share,
+            y: translation.recognized.y + translation.slop.y * share
+        )
+    }
+
     static func position(
         origin: CGPoint, translation: CGPoint, axis: CustomMessageWidgetNode.PanAxis, travel: CGFloat
     ) -> CGPoint {
