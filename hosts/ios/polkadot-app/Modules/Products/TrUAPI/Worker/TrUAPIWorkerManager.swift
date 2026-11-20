@@ -86,12 +86,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private final class Boot: Sendable {}
 
     /// What the transition queue applies: the ledger's transitions, the
-    /// reboot of a worker whose engine died, and the reload of one whose
-    /// archive changed. Reboots and reloads share the queue so that neither
+    /// exit of a worker whose engine died, and the reload of one whose
+    /// archive changed. Exits and reloads share the queue so that neither
     /// overtakes a stop the ledger sent before it.
     private enum Command: Sendable {
         case transition(WorkerTransition)
-        case reboot(Boot)
+        case exited(Boot)
         case reload
     }
 
@@ -170,7 +170,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         for await (productId, command) in transitions.stream {
             switch command {
             case let .transition(transition): await apply(transition, to: productId)
-            case let .reboot(boot): await reboot(productId, after: boot)
+            case let .exited(boot): await exited(productId, after: boot)
             case .reload: await restart(productId)
             }
         }
@@ -254,7 +254,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             held[productId] = .running(Running(boot: boot, runtime: runtime))
 
             try await runtime.start { [weak self] in
-                self?.transitions.continuation.yield((productId, .reboot(boot)))
+                self?.transitions.continuation.yield((productId, .exited(boot)))
             }
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
@@ -269,10 +269,11 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             guard held[productId]?.belongsTo(boot) == true else { return }
 
             logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
-            // A failed boot left in the map would swallow every later start,
-            // while the core keeps counting the reference the holder took and
-            // so never sends another stop to clear it.
+            // A failed boot left in the map would swallow every later start.
+            // The core still counts the reference the holder took, so it is
+            // told, and starts the worker again after its backoff.
             await stop(productId)
+            reportExit(of: productId)
         }
     }
 
@@ -283,12 +284,22 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         start(productId)
     }
 
-    private func reboot(_ productId: ProductId, after boot: Boot) async {
+    /// The core still counts the references that wanted the worker, so it is
+    /// told the worker is gone and sends `.start` again if any remain.
+    private func exited(_ productId: ProductId, after boot: Boot) async {
         guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
-        logger.error("[truapi] \(productId)'s worker engine died, rebooting it")
+        logger.error("[truapi] \(productId)'s worker engine died")
         await stop(productId)
-        start(productId)
+        reportExit(of: productId)
+    }
+
+    private func reportExit(of productId: ProductId) {
+        do {
+            try references().workerExited(productId: productId)
+        } catch {
+            logger.error("[truapi] \(productId)'s worker exit could not be reported: \(error)")
+        }
     }
 
     private func stop(_ productId: ProductId) async {

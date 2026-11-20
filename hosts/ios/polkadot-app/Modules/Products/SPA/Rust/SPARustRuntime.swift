@@ -78,8 +78,6 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await serveDotNsContent(onPhase: onPhase)
             case let .directURL(url):
                 url
-            case let .bundled(directory):
-                try await configuration.page.applied(to: serveFiles(at: directory))
             #if DEBUG
                 case let .devServer(url, _):
                     url
@@ -207,13 +205,9 @@ private extension SPARustRuntime {
     /// which is what permission grants and web storage are keyed by.
     func serveFiles(at contentURL: URL) async throws -> URL {
         let domain = configuration.productDomain
-        let schemeHandler = ProductScriptSchemeHandler(
-            productId: domain,
-            entryRelativePath: ProductBundle.indexHTML,
-            productFileProvider: DotNsFileProvider(contentURL: contentURL)
-        )
+        let schemeHandler = ProductArchiveSchemeHandler(productId: domain, root: contentURL, fileManager: .default)
 
-        guard let productURL = schemeHandler.getProductUrl() else {
+        guard let productURL = schemeHandler.getBaseUrl() else {
             throw ScriptExecutorError.scriptNotFound(productId: domain)
         }
 

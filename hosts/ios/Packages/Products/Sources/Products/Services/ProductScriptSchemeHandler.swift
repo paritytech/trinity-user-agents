@@ -2,7 +2,6 @@ import struct TrUAPIHost.ProductId
 import func TrUAPIHost.productContentScheme
 import Foundation
 import WebKit
-import UniformTypeIdentifiers
 
 enum ProductScriptSchemeHandlerError: Error {
     case invalidUrl
@@ -37,8 +36,6 @@ public final class ProductScriptSchemeHandler: NSObject {
 }
 
 extension ProductScriptSchemeHandler: WKURLSchemeHandler {
-    static let defaultMimeType: String = "application/octet-stream"
-
     public func webView(_: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url else {
             urlSchemeTask.didFailWithError(ProductScriptSchemeHandlerError.invalidUrl)
@@ -53,8 +50,7 @@ extension ProductScriptSchemeHandler: WKURLSchemeHandler {
             return
         }
 
-        let pathExtension = (resolved.relativePath as NSString).pathExtension
-        let contentType = UTType(filenameExtension: pathExtension)?.preferredMIMEType ?? Self.defaultMimeType
+        let contentType = ProductContentType.of(path: resolved.relativePath)
         let data = resolved.data
 
         let response = HTTPURLResponse(
