@@ -192,7 +192,8 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain.
+derivation working offline. The core reads the chain's suffix later and
+reports a difference, as the next section describes.
 
 #### Checks against the chains
 
@@ -233,6 +234,14 @@ only when the core opens the next one for that chain, in any scope.
 A light client answers from its chain spec. A chain that restarted is out of
 its reach, not a mismatch, so there only the hourly fetch brings the new
 descriptor.
+
+A signing host's allowance work reads People's `NetworkSuffix.NetworkSuffix` to
+build its proofs, and the stack's checks hear each read. A suffix that is not
+the descriptor's `tld` is listed in `StackStatus::mismatches` until a later
+read gives the `tld`. The core keeps using People, and fetches the descriptor
+no sooner for it. The entry means the build's stack and its People chain
+disagree, so allowances fail until one of them is corrected. A host that does
+no allowance work, such as a pairing host, never lists it.
 
 The core does not check the chains of a `Stack` built any other way, such as
 with `Stack::new` or from `testStack`.

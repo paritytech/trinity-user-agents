@@ -10,6 +10,8 @@ use std::{
 use truapi::latest::GenericError;
 
 use super::*;
+use parity_scale_codec::Encode;
+
 use crate::{
 	platform::HostInfo,
 	runtime::services::RuntimeServices,
@@ -212,11 +214,9 @@ fn start_loaded(
 /// A connection opened for People reached a chain with the genesis hash
 /// `answered`.
 fn people_answers(refresh: &StackRefresh, answered: [u8; 32]) {
-	let check = refresh
-		.stack()
-		.genesis_check()
-		.expect("a refreshed stack has its chains checked");
-	check.chain_answered(TEST_STACK_PEOPLE, answered);
+	let stack = refresh.stack();
+	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
+	checks.genesis_check().chain_answered(TEST_STACK_PEOPLE, answered);
 }
 
 fn people_gave(answered: [u8; 32]) -> Vec<StackMismatch> {
@@ -676,27 +676,32 @@ fn a_wrong_answer_before_the_refresh_starts_brings_its_first_fetch_forward() {
 	);
 }
 
-/// The checks reach the chains only through the stack the refresh hands out.
-/// A runtime built on that stack has to put the connections it opens through
-/// them, or a wiped chain would be read as the one the descriptor names.
-#[test]
-fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
-	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let wiped_node = Arc::new(StubPlatform {
-		rpc_responder: Some(Arc::new(|request| {
+/// A runtime on the stack `refresh` hands out, over a People node that names
+/// `genesis` as its chain and gives `suffix` as its `NetworkSuffix`.
+fn runtime_on(
+	refresh: &StackRefresh,
+	genesis: [u8; 32],
+	suffix: &'static str,
+) -> (Arc<RuntimeServices>, Arc<StubPlatform>) {
+	let node = Arc::new(StubPlatform {
+		rpc_responder: Some(Arc::new(move |request| {
 			let request: serde_json::Value =
 				serde_json::from_str(request).expect("the core sends JSON-RPC");
-			assert_eq!(request["method"], "chainSpec_v1_genesisHash");
-			let genesis = format!("0x{}", hex::encode(TEST_STACK_WIPED_PEOPLE));
+			let answer = match request["method"].as_str() {
+				Some("chainSpec_v1_genesisHash") => hex::encode(genesis),
+				Some("state_getStorage") => hex::encode(suffix.as_bytes().to_vec().encode()),
+				method => panic!("the node was asked {method:?}"),
+			};
+			let answer = format!("0x{answer}");
 			vec![
-				serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": genesis})
+				serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": answer})
 					.to_string(),
 			]
 		})),
 		..Default::default()
 	});
 	let services = RuntimeServices::new(
-		wiped_node,
+		node.clone(),
 		HostInfo {
 			name: "Stack test".into(),
 			icon: None,
@@ -706,11 +711,75 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 		refresh.stack(),
 		Spawner::for_test(),
 	);
+	(services, node)
+}
+
+/// The checks reach the chains only through the stack the refresh hands out.
+/// A runtime built on that stack has to put the connections it opens through
+/// them, or a wiped chain would be read as the one the descriptor names.
+#[test]
+fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_WIPED_PEOPLE, "paseo");
 
 	let people = futures::executor::block_on(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
 
 	assert!(people.is_err(), "the restarted chain is not handed out");
 	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));
+}
+
+/// A signing host's allowance work is where a wrong `tld` bites: the proofs
+/// it builds are checked under People's suffix. The suffix that work reads
+/// is what the host is told about, at no extra request to People, and the
+/// work goes on with the suffix People gave.
+#[test]
+fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "testnet");
+
+	let read = futures::executor::block_on(async {
+		let people = services.statement_store.chain_client("test").await.ok()?;
+		services.people_network_suffix(people.rpc()).await.ok()
+	});
+
+	let reads = node
+		.sent_rpc
+		.lock()
+		.expect("sent rpc mutex poisoned")
+		.iter()
+		.filter(|request| request.contains("state_getStorage"))
+		.count();
+	assert_eq!(
+		(read, refresh.status().mismatches, reads),
+		(
+			Some(b"testnet".to_vec()),
+			vec![StackMismatch::NetworkSuffix {
+				named: "paseo".to_string(),
+				answered: "testnet".to_string(),
+			}],
+			1,
+		)
+	);
+}
+
+/// The host hears of a wrong suffix as it hears of a wrong chain, through the
+/// status its refresh reports.
+#[test]
+fn the_host_is_told_of_a_people_suffix_that_is_not_the_tld() {
+	let started = start(Arc::default(), vec![]);
+	let _at_start = started.next_status();
+	let stack = started.refresh.stack();
+	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
+
+	checks.people_suffix_answered(b"testnet");
+
+	assert_eq!(
+		started.next_status().mismatches,
+		vec![StackMismatch::NetworkSuffix {
+			named: "paseo".to_string(),
+			answered: "testnet".to_string(),
+		}]
+	);
 }
 
 /// Which stack a host runs is its chains, network and TLD. Whether a refresh

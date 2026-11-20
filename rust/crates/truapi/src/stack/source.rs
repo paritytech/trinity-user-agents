@@ -95,6 +95,17 @@ pub enum StackMismatch {
 		/// The genesis hash the chain gave.
 		answered: [u8; 32],
 	},
+	/// People's `NetworkSuffix.NetworkSuffix` is not the descriptor's `tld`.
+	///
+	/// Identities derive under `peopl.<tld>` and People scopes proof contexts
+	/// with its suffix, so what the core derives is not what People expects.
+	/// The core keeps using People.
+	NetworkSuffix {
+		/// The descriptor's `tld`.
+		named: String,
+		/// The suffix People gave, with any bytes that are not UTF-8 replaced.
+		answered: String,
+	},
 }
 
 /// The stack the core runs, and what the host shows and does about it.
@@ -124,10 +135,10 @@ pub struct StackStatus {
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
 	/// Where the chains last answered differently from the descriptor the
-	/// core runs, in the descriptor's order. While there is one, a refresh
-	/// that was started fetches the descriptor every five minutes instead of
-	/// every hour, until a published copy that changes a chain sets
-	/// `restart_required`.
+	/// core runs: its chains in the descriptor's order, then People's
+	/// `NetworkSuffix`. While a chain is listed, a refresh that was started
+	/// fetches the descriptor every five minutes instead of every hour, until
+	/// a published copy that changes a chain sets `restart_required`.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -202,6 +213,8 @@ pub struct StackSource {
 	/// The genesis hash each chain gave in place of the one the running copy
 	/// names, keyed by the named one.
 	wrong_genesis: HashMap<[u8; 32], [u8; 32]>,
+	/// People's `NetworkSuffix` as last read, once it was.
+	people_suffix: Option<Vec<u8>>,
 }
 
 impl StackSource {
@@ -240,6 +253,7 @@ impl StackSource {
 			expired,
 			last_refresh: None,
 			wrong_genesis: HashMap::new(),
+			people_suffix: None,
 		})
 	}
 
@@ -268,14 +282,38 @@ impl StackSource {
 	}
 
 	fn mismatches(&self) -> Vec<StackMismatch> {
-		let chains = self.running.descriptor.chains.iter();
-		chains
-			.filter_map(|chain| {
-				let named = chain.genesis();
-				let answered = *self.wrong_genesis.get(&named)?;
-				Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
-			})
-			.collect()
+		let tld = self.running.stack.tld();
+		let wrong_suffix = self
+			.people_suffix
+			.as_deref()
+			.filter(|answered| *answered != tld.as_bytes())
+			.map(|answered| StackMismatch::NetworkSuffix {
+				named: tld.to_owned(),
+				answered: String::from_utf8_lossy(answered).into_owned(),
+			});
+		self.wrong_chains().chain(wrong_suffix).collect()
+	}
+
+	/// The chains of the running copy whose last answer was a different
+	/// genesis hash from the one it names, in the copy's order.
+	fn wrong_chains(&self) -> impl Iterator<Item = StackMismatch> {
+		self.running.descriptor.chains.iter().filter_map(|chain| {
+			let named = chain.genesis();
+			let answered = *self.wrong_genesis.get(&named)?;
+			Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
+		})
+	}
+
+	/// Takes People's `NetworkSuffix.NetworkSuffix` as read from the chain.
+	///
+	/// Returns whether that changed [`Self::status`], which lists the last
+	/// suffix read when it is not the running copy's `tld`. A suffix does not
+	/// change when the descriptor is fetched: no published copy can follow it
+	/// without a restart.
+	pub fn people_suffix_answered(&mut self, answered: &[u8]) -> bool {
+		let listed = self.mismatches();
+		self.people_suffix = Some(answered.to_vec());
+		self.mismatches() != listed
 	}
 
 	/// Takes the genesis hash a connection opened for `named` got from it.
@@ -319,7 +357,7 @@ impl StackSource {
 		let hourly = self.reader.due_in(&self.pointer, now_unix_seconds)?;
 		// A newer copy that waits for the next start is what the sooner fetch
 		// was for.
-		let sooner = match self.mismatches().is_empty() || self.next_start.is_some() {
+		let sooner = match self.wrong_chains().next().is_none() || self.next_start.is_some() {
 			true => 0,
 			false => REFRESH_MAX_AGE_SECS - MISMATCH_REFRESH_MAX_AGE_SECS,
 		};

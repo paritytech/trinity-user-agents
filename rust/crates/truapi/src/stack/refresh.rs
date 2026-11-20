@@ -82,7 +82,8 @@ struct Shared {
 ///
 /// A chain that gives a different genesis hash from the one the descriptor
 /// names is reported in [`StackStatus::mismatches`], and the refresh fetches
-/// the descriptor sooner.
+/// the descriptor sooner. A People chain whose `NetworkSuffix` is not the
+/// descriptor's `tld` is reported there too.
 #[derive(Clone)]
 pub struct StackChecks {
 	shared: Arc<Shared>,
@@ -93,6 +94,25 @@ impl StackChecks {
 	/// `ChainRuntime` that opens them.
 	pub fn genesis_check(&self) -> Arc<dyn GenesisCheck> {
 		self.shared.clone()
+	}
+
+	/// Takes People's `NetworkSuffix.NetworkSuffix` as read from the chain.
+	///
+	/// A suffix that is not the stack's `tld` is reported in
+	/// [`StackStatus::mismatches`] until a later read gives the `tld`.
+	pub fn people_suffix_answered(&self, answered: &[u8]) {
+		let changed = self.shared.source().people_suffix_answered(answered);
+		if !changed {
+			return;
+		}
+		let tld = self.shared.source().stack().tld().to_owned();
+		if answered != tld.as_bytes() {
+			tracing::warn!(
+				"People's NetworkSuffix is {}, not the stack's tld {tld}",
+				String::from_utf8_lossy(answered)
+			);
+		}
+		self.shared.chain_answers.wake();
 	}
 }
 

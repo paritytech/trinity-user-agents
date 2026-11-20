@@ -230,8 +230,8 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let chain = match stack.genesis_check() {
-			Some(check) => chain.checking_genesis(check),
+		let chain = match crate::stack::checks(&stack) {
+			Some(checks) => chain.checking_genesis(checks.genesis_check()),
 			None => chain,
 		};
 		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
@@ -310,6 +310,22 @@ impl RuntimeServices {
 	/// product. Returns whether this call installed it.
 	pub fn install_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
 		self.permission_status.set(host).is_ok()
+	}
+
+	/// The stack the host runs.
+	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
+	///
+	/// The stack's checks hear the answer and report one that is not the
+	/// stack's `tld`. Fails when the suffix cannot be read.
+	pub async fn people_network_suffix(
+		&self,
+		people: &crate::runtime::statement_allowance::rpc::RpcClient,
+	) -> Result<Vec<u8>, crate::runtime::statement_allowance::StatementAllowanceError> {
+		let suffix = crate::runtime::statement_allowance::slot::read_network_suffix(people).await?;
+		if let Some(checks) = crate::stack::checks(&self.stack) {
+			checks.people_suffix_answered(&suffix);
+		}
+		Ok(suffix)
 	}
 
 	/// The stack the host runs.

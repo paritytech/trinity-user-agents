@@ -7,25 +7,23 @@
 //! resolves holds the network, the dotNS TLD, each chain's genesis hash and
 //! the `AccountDataStore` contract address, and answers `get_chain_info`. A
 //! runtime built on that [`Stack`] also asks each chain it connects to for
-//! its genesis hash, and the refresh reports a chain that gives a different
-//! one from the descriptor's.
+//! its genesis hash, and a signing host hands over People's `NetworkSuffix`
+//! as its allowance work reads it. The refresh reports what differs from the
+//! descriptor.
 
 mod records;
 mod refresh;
 mod source;
-
-use std::sync::Arc;
 
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::{chain_runtime::GenesisCheck, dotns_name::DOTNS_TLDS};
+use crate::dotns_name::DOTNS_TLDS;
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
-use refresh::StackChecks;
-pub use refresh::{StackHost, StackRefresh};
+pub use refresh::{StackChecks, StackHost, StackRefresh};
 pub use source::{
 	StackFetchRequest, StackFetchResponse, StackMismatch, StackRefreshOutcome, StackStatus,
 };
@@ -263,15 +261,6 @@ impl Stack {
 		self.account_data_store
 	}
 
-	/// What hears the genesis hash each chain connection's chain gives.
-	///
-	/// The runtime that opens the connections asks for it. `None` unless a
-	/// [`StackRefresh`] handed the stack out: the core does not check the
-	/// chains of a stack built any other way.
-	pub fn genesis_check(&self) -> Option<Arc<dyn GenesisCheck>> {
-		self.checks.as_ref().map(StackChecks::genesis_check)
-	}
-
 	/// The genesis hash of the chain with this role, or `None` when the stack
 	/// has no such chain.
 	fn genesis_hash(&self, chain: ChainIdentifier) -> Option<[u8; 32]> {
@@ -299,6 +288,15 @@ impl Stack {
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
 	}
+}
+
+/// The checks of `stack`'s chains against its descriptor.
+///
+/// The runtime built on the stack runs them. `None` unless a [`StackRefresh`]
+/// handed the stack out: the core does not check the chains of a stack built
+/// any other way.
+pub fn checks(stack: &Stack) -> Option<&StackChecks> {
+	stack.checks.as_ref()
 }
 
 /// The `AccountDataStore` address `descriptor` names, or `None` when it names

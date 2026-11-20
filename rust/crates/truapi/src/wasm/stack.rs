@@ -229,7 +229,7 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 /// lastRefresh?, mismatches }`, where `lastRefresh` is `{ outcome, reason? }`
 /// and `outcome` is `current`, `unreachable`, `refused` or `notStored`. Each
 /// of `mismatches` is `{ kind: "genesisHash", role, named, answered }`, with
-/// both hashes as `0x` hex.
+/// both hashes as `0x` hex, or `{ kind: "networkSuffix", named, answered }`.
 fn status_to_js(status: &StackStatus) -> JsValue {
 	let StackStatus {
 		descriptor,
@@ -257,6 +257,11 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 				("role", JsValue::from_str(role)),
 				("named", JsValue::from_str(&encode_hex(named))),
 				("answered", JsValue::from_str(&encode_hex(answered))),
+			]),
+			StackMismatch::NetworkSuffix { named, answered } => object(&[
+				("kind", JsValue::from_str("networkSuffix")),
+				("named", JsValue::from_str(named)),
+				("answered", JsValue::from_str(answered)),
 			]),
 		})
 		.collect();

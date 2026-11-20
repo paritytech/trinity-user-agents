@@ -100,20 +100,34 @@ export type StackFetchResponse =
   | { status: "notModified" };
 
 /** Where the stack's descriptor and what one of its chains answered disagree. */
-export interface StackMismatch {
-  /**
-   * `genesisHash`: the last connection opened for a chain reached one with a
-   * different genesis hash from the one the descriptor names, as after the
-   * chain restarted from genesis. The core refused that connection.
-   */
-  kind: "genesisHash";
-  /** The chain's role in the descriptor. */
-  role: string;
-  /** The genesis hash the descriptor names, as `0x` hex. */
-  named: string;
-  /** The genesis hash the chain gave, as `0x` hex. */
-  answered: string;
-}
+export type StackMismatch =
+  | {
+      /**
+       * The last connection opened for a chain reached one with a different
+       * genesis hash from the one the descriptor names, as after the chain
+       * restarted from genesis. The core refused that connection.
+       */
+      kind: "genesisHash";
+      /** The chain's role in the descriptor. */
+      role: string;
+      /** The genesis hash the descriptor names, as `0x` hex. */
+      named: string;
+      /** The genesis hash the chain gave, as `0x` hex. */
+      answered: string;
+    }
+  | {
+      /**
+       * People's `NetworkSuffix` is not the descriptor's `tld`. Identities
+       * derive under `peopl.<tld>` and People scopes proof contexts with its
+       * suffix, so what the core derives is not what People expects. The
+       * core keeps using People.
+       */
+      kind: "networkSuffix";
+      /** The descriptor's `tld`. */
+      named: string;
+      /** The suffix People gave, with any bytes that are not UTF-8 replaced. */
+      answered: string;
+    };
 
 /** The stack the core runs, and what the host shows and does about it. */
 export interface StackStatus {
@@ -162,7 +176,8 @@ export interface StackStatus {
   };
   /**
    * Where the chains last answered differently from the descriptor the core
-   * runs, in the descriptor's order. While there is one, a host with
+   * runs: its chains in the descriptor's order, then People's
+   * `NetworkSuffix`. While a chain is listed, a host with
    * `fetchStackDescriptor` is asked for the descriptor every five minutes
    * instead of every hour, until a published copy that changes a chain sets
    * `restartRequired`. A light client answers from its chain spec, so a

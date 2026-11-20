@@ -481,3 +481,71 @@ fn a_mismatch_stays_reported_until_the_restart_the_newer_copy_asks_for() {
 		)
 	);
 }
+
+fn suffix_is(answered: &str) -> StackMismatch {
+	StackMismatch::NetworkSuffix { named: "paseo".to_string(), answered: answered.to_string() }
+}
+
+/// Identities derive under `peopl.<tld>`, and People checks proofs under its
+/// own suffix. A descriptor whose `tld` is not that suffix makes every proof
+/// fail, and the host is told which of the two is wrong. No published copy
+/// can follow a suffix without a restart, so the descriptor's server is not
+/// asked any sooner.
+#[test]
+fn a_people_suffix_that_is_not_the_tld_is_reported() {
+	let (bundled, mut source) = fetched_at_start();
+
+	let changed = source.people_suffix_answered(b"testnet");
+
+	assert_eq!(
+		(changed, source.status(), source.next_fetch_in(START)),
+		(
+			true,
+			StackStatus {
+				mismatches: vec![suffix_is("testnet")],
+				..status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			Some(Duration::from_secs(3600)),
+		)
+	);
+}
+
+/// The usual answer is the stack's own `tld`, and it changes nothing the host
+/// is told.
+#[test]
+fn a_people_suffix_equal_to_the_tld_is_not_reported() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+
+	let changed = source.people_suffix_answered(b"paseo");
+
+	assert_eq!((changed, source.status()), (false, status(&bundled, None)));
+}
+
+/// Every allowance flow reads the suffix again. Once People gives the `tld`,
+/// as after its operator corrected it, the host stops showing it as wrong.
+#[test]
+fn a_people_suffix_read_as_the_tld_later_is_no_longer_reported() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+	source.people_suffix_answered(b"testnet");
+
+	let changed = source.people_suffix_answered(b"paseo");
+
+	assert_eq!((changed, source.status()), (true, status(&bundled, None)));
+}
+
+/// A host shows the chains it must keep off first, then the suffix, and the
+/// status crosses to hosts as text whatever bytes People stores.
+#[test]
+fn the_suffix_is_listed_after_the_chains_and_as_text() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+
+	source.people_suffix_answered(&[0xff, b'x']);
+	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+
+	assert_eq!(
+		source.status().mismatches,
+		vec![people_gave(TEST_STACK_WIPED_PEOPLE), suffix_is("\u{fffd}x")]
+	);
+}
