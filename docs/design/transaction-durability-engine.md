@@ -69,7 +69,7 @@ pub enum DurableTxFailureKind {
     DispatchFailed,
     /// The node refused it before it reached the pool.
     Rejected,
-    /// It waited to be built and will never be: its policy gave up, or a
+    /// It will never take effect: its policy gave up building it, or a
     /// dependency it cascades from failed.
     Abandoned,
 }
@@ -89,7 +89,8 @@ stateDiagram-v2
     PendingSuccess --> FinalizedSuccess: block finalized
     Pending --> FinalizedSuccess: found in a finalized block
     Pending --> PendingSubmission: failed, a dependency has not taken effect or policy retries
-    Pending --> Failure: expired, dispatch failed or rejected
+    Pending --> Failure: expired, dispatch failed or rejected, or a cascading dependency failed
+    PendingSuccess --> Failure: a cascading dependency failed
     FinalizedSuccess --> [*]
     Failure --> [*]
 ```
@@ -219,7 +220,7 @@ pub struct TransactionDependency {
 pub enum OnDependencyFailure {
     /// The default. The dependent is left to its policy.
     Ignore,
-    /// The dependent fails as `Abandoned`.
+    /// The dependent fails as `Abandoned`, unless it is already final.
     Cascade,
 }
 ```
@@ -228,7 +229,7 @@ A dependency names a transaction already registered, on the same chain, in a dom
 
 A dependent waits in `PendingSubmission` and is not handed to its policy while a dependency is `PendingSubmission` or `Pending`. It is released once every dependency is `PendingSuccess` or `FinalizedSuccess`, or failed with `Ignore`. A success at the best block is enough because the node checks a transaction against the best block, where the dependency already holds. On one chain, a block that includes the dependent also includes the dependency among its ancestors, so a reorg that drops the dependency drops the dependent too. Each row `prepare` is handed lists its dependencies as `Success` or `IgnoredFailure`, so a policy can give up at once when the one it needed failed.
 
-When a dependency fails with `Cascade`, the dependent stays blocked until the end of the next recovery pass, which fails it as `Abandoned`, together with everything that cascades from it. A dependent already submitted is decided from the chain like any other transaction.
+`Cascade` says the consumer is sure the dependent cannot take effect without its dependency. When such a dependency fails, the end of the next recovery pass fails the dependent as `Abandoned`, together with everything that cascades from it. This holds whether the dependent still waits to be built, was submitted, or took effect at a block that is not finalized: a block that includes it without its dependency will be reorged out, or the dependency was marked wrongly. Only a dependent that is already final keeps its status. Use `Ignore` whenever the dependent might still take effect without the dependency.
 
 A reorg can drop a dependency after its dependent was built. The dependent then goes back to `Pending`, and its attempt eventually expires. A failure written while a dependency is `PendingSubmission` or `Pending` sends the dependent back to `PendingSubmission` without asking `can_retry`, since the missing dependency caused it. It is built again, counting as an attempt, once the dependency takes effect again.
 

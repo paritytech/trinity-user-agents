@@ -7,7 +7,7 @@ use rusqlite::{
 	types::{ToSql, ToSqlOutput},
 };
 
-use super::{abandon_submission, domain_from_row, invalid_status, status_from_row};
+use super::{domain_from_row, invalid_status, status_from_row};
 use crate::{
 	durable::model::{
 		DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DomainId, DurableTxId,
@@ -147,9 +147,10 @@ pub fn has_unsettled_dependency(
 	Ok(unsettled)
 }
 
-/// A waiting row that a failed dependency marked `CASCADE` fails with it.
+/// An unfinished row that a failed dependency marked `CASCADE` fails with
+/// it.
 pub struct CascadingFailure {
-	/// The waiting row.
+	/// The unfinished row.
 	pub dependent: DurableTxId,
 	/// The dependency that failed.
 	pub dependency: DurableTxId,
@@ -158,13 +159,15 @@ pub struct CascadingFailure {
 const CASCADING_FAILURES: &str =
 	"SELECT durable_tx_dependency.tx_id, durable_tx_dependency.depends_on
     FROM durable_tx_dependency
-    JOIN durable_tx waiting ON waiting.id = durable_tx_dependency.tx_id
+    JOIN durable_tx dependent ON dependent.id = durable_tx_dependency.tx_id
     JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
-    WHERE waiting.status = 'PENDING_SUBMISSION' AND durable_tx_dependency.on_failure = 'CASCADE'
-    AND dependency.status = 'FAILURE' ORDER BY durable_tx_dependency.tx_id";
+    WHERE dependent.status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS')
+    AND durable_tx_dependency.on_failure = 'CASCADE' AND dependency.status = 'FAILURE'
+    ORDER BY durable_tx_dependency.tx_id";
 
-/// Every waiting row with a failed dependency marked `CASCADE`, once per
-/// such dependency.
+/// Every unfinished row with a failed dependency marked `CASCADE`, once per
+/// such dependency. A row is unfinished while it waits to be built, is
+/// submitted, or took effect at a block that is not finalized.
 pub fn cascading_failures(conn: &Connection) -> Result<Vec<CascadingFailure>, DbError> {
 	let mut stmt = conn.prepare_cached(CASCADING_FAILURES)?;
 	let failures = stmt.query_map([], |row| {
@@ -176,9 +179,9 @@ pub fn cascading_failures(conn: &Connection) -> Result<Vec<CascadingFailure>, Db
 	Ok(failures.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Fails every waiting row a failed `CASCADE` dependency blocks, then the
-/// rows that cascade from those, until none is left. Returns each row it
-/// failed, with the dependency that failed it.
+/// Fails every unfinished row whose dependency marked `CASCADE` failed,
+/// then the rows that cascade from those, until none is left. Returns each
+/// row it failed, with the dependency that failed it.
 pub fn abandon_cascading(tx: &Transaction<'_>) -> Result<Vec<CascadingFailure>, DbError> {
 	let mut applied = Vec::new();
 	loop {
@@ -190,7 +193,7 @@ pub fn abandon_cascading(tx: &Transaction<'_>) -> Result<Vec<CascadingFailure>, 
 	}
 }
 
-/// Fails the waiting row of each of `failures`. Returns those it failed,
+/// Fails the unfinished row of each of `failures`. Returns those it failed,
 /// once per row: a row with two failed dependencies is failed by the first.
 fn abandon_each(
 	tx: &Transaction<'_>,
@@ -198,11 +201,22 @@ fn abandon_each(
 ) -> Result<Vec<CascadingFailure>, DbError> {
 	let mut abandoned = Vec::new();
 	for failure in failures {
-		if abandon_submission(tx, failure.dependent)? {
+		if abandon_unfinished(tx, failure.dependent)? {
 			abandoned.push(failure);
 		}
 	}
 	Ok(abandoned)
+}
+
+const ABANDON_UNFINISHED: &str = "UPDATE durable_tx
+    SET status = 'FAILURE', failure_kind = 'ABANDONED', success_number = NULL, success_hash = NULL
+    WHERE id = :id AND status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS')";
+
+/// Fails row `id` while it is unfinished, dropping a success recorded at a
+/// block that is not finalized. Returns whether it was unfinished.
+fn abandon_unfinished(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool, DbError> {
+	let changed = tx.prepare_cached(ABANDON_UNFINISHED)?.execute(named_params! { ":id": id.0 })?;
+	Ok(changed == 1)
 }
 
 impl ToSql for OnDependencyFailure {

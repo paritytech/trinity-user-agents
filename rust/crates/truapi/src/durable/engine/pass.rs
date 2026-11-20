@@ -40,7 +40,7 @@ struct LiveDomain<'a> {
 
 impl DurableTxEngine {
 	/// Decides what it can of every live transaction, then fails every
-	/// waiting transaction whose dependency marked
+	/// unfinished transaction whose dependency marked
 	/// [`Cascade`](crate::durable::OnDependencyFailure::Cascade) failed. At
 	/// most one pass runs at a time; a call made while one runs returns at
 	/// once. The ladder runs outside any write, and each verdict is a
@@ -61,7 +61,7 @@ impl DurableTxEngine {
 		self.abandon_cascaded_dependents().await;
 	}
 
-	/// Fails every waiting row a failed `Cascade` dependency blocks, and the
+	/// Fails every unfinished row whose `Cascade` dependency failed, and the
 	/// rows that cascade from those. Passes run on every head, so it reads
 	/// first and writes only when there is something to fail.
 	async fn abandon_cascaded_dependents(&self) {

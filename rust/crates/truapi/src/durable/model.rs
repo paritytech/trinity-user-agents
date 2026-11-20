@@ -45,8 +45,11 @@ pub enum OnDependencyFailure {
 	/// The dependent is released to its policy, which decides from the chain
 	/// whether it can still be built.
 	Ignore,
-	/// The dependent fails as [`DurableTxFailureKind::Abandoned`] at the end
-	/// of a recovery pass, and so do the dependents that cascade from it.
+	/// The consumer is sure the dependent cannot take effect without it. The
+	/// dependent fails as [`DurableTxFailureKind::Abandoned`] at the end of a
+	/// recovery pass unless it is already final, even when it is submitted or
+	/// took effect at a block that is not finalized, and so do the
+	/// dependents that cascade from it.
 	Cascade,
 }
 
@@ -165,7 +168,7 @@ pub enum DurableTxFailureKind {
 	DispatchFailed,
 	/// The node refused it before it reached the pool.
 	Rejected,
-	/// It waited to be built and will never be: its policy gave up, or a
+	/// It will never take effect: its policy gave up building it, or a
 	/// dependency it cascades from failed.
 	Abandoned,
 }
