@@ -1,0 +1,174 @@
+//! [`PgasClaimPolicy`]: builds each claim when the engine submits it, in a
+//! slot no other claim of this process holds, as the identity that
+//! registered it.
+
+use std::{
+	collections::{BTreeSet, HashMap},
+	sync::Arc,
+};
+
+use parking_lot::Mutex;
+
+use super::{
+	builder::{ClaimBuildError, PgasClaimBuilder},
+	params::{ClaimAttempt, ClaimParams},
+};
+use crate::{
+	durable::{
+		DeferredDurableTx, DurableTxEntry, DurableTxId, PolicyError, PolicyParams, Preparation,
+		SubmissionPolicy, VerdictFailureKind,
+	},
+	runtime::statement_allowance::pgas::{BuiltClaim, ClaimSlot},
+	unix_time::current_unix_secs,
+};
+
+/// Attempts after which a claim is given up, so a refusal that repeats
+/// cannot loop forever.
+const MAX_ATTEMPTS: u32 = 5;
+
+/// How long a slot this process built a claim in stays off limits to its
+/// other claims, in seconds. Longer than the 64-block era an attempt is
+/// signed with, so a slot is handed out again only once its attempt landed
+/// or can no longer land.
+const RECENT_SLOT_SECS: u64 = 15 * 60;
+
+/// Builds PGAS claims: one fee-less `Pgas.claim_pgas` per claim, rebuilt with
+/// a fresh slot after a refused or expired attempt.
+pub struct PgasClaimPolicy {
+	builder: Arc<dyn PgasClaimBuilder>,
+	recent: Mutex<RecentSlots>,
+}
+
+/// The slots this process built claims in lately, with the unix time of
+/// each build. Held in memory only: after a restart, a slot reused too soon
+/// costs one refused attempt and a rebuild.
+#[derive(Default)]
+struct RecentSlots(HashMap<ClaimSlot, u64>);
+
+/// One deferred claim with everything needed to build it.
+struct PlannedClaim {
+	id: DurableTxId,
+	attempts: u32,
+	params: ClaimParams,
+}
+
+impl PgasClaimPolicy {
+	/// A policy building claims through `builder`.
+	pub fn new(builder: Arc<dyn PgasClaimBuilder>) -> Self {
+		Self { builder, recent: Mutex::default() }
+	}
+
+	/// The answer for `claim` at unix time `now`, or `None` while it waits.
+	/// The slot of a claim it builds joins `excluded` and the recent slots.
+	async fn prepare_claim(
+		&self,
+		claim: &PlannedClaim,
+		excluded: &mut BTreeSet<ClaimSlot>,
+		now: u64,
+	) -> Option<Preparation> {
+		if claim.attempts >= MAX_ATTEMPTS {
+			return Some(Preparation::GiveUp);
+		}
+		let ClaimParams { target, identity, .. } = &claim.params;
+		match self.builder.build_claim(*target, *identity, excluded).await {
+			Ok(built) => {
+				excluded.insert(built.slot);
+				self.recent.lock().remember(built.slot, now);
+				Some(ready_preparation(claim, built))
+			},
+			Err(error) => answer_unbuilt_claim(claim, &error, now),
+		}
+	}
+}
+
+#[async_trait::async_trait]
+impl SubmissionPolicy for PgasClaimPolicy {
+	/// A refused or expired attempt is built again in a fresh slot. A failed
+	/// dispatch is final: the pallet refused the claim itself.
+	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, failure: VerdictFailureKind) -> bool {
+		matches!(failure, VerdictFailureKind::Rejected | VerdictFailureKind::Expired)
+	}
+
+	/// Builds the claims one after another, so each one's slot is excluded
+	/// from the next.
+	async fn prepare(
+		&self,
+		batch: &[DeferredDurableTx],
+	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
+		let now = current_unix_secs();
+		let mut excluded = self.recent.lock().held_slots(now.saturating_sub(RECENT_SLOT_SECS));
+		let mut prepared = HashMap::new();
+		for claim in planned_claims(batch) {
+			if let Some(answer) = self.prepare_claim(&claim, &mut excluded, now).await {
+				prepared.insert(claim.id, answer);
+			}
+		}
+		Ok(prepared)
+	}
+}
+
+impl RecentSlots {
+	/// Records that a claim was built in `slot` at unix time `now`, and
+	/// forgets every slot built more than [`RECENT_SLOT_SECS`] before it.
+	fn remember(&mut self, slot: ClaimSlot, now: u64) {
+		let cutoff = now.saturating_sub(RECENT_SLOT_SECS);
+		self.0.retain(|_, built_at| *built_at >= cutoff);
+		self.0.insert(slot, now);
+	}
+
+	/// The slots built at unix time `cutoff` or later.
+	fn held_slots(&self, cutoff: u64) -> BTreeSet<ClaimSlot> {
+		self.0
+			.iter()
+			.filter(|(_, built_at)| **built_at >= cutoff)
+			.map(|(slot, _)| *slot)
+			.collect()
+	}
+}
+
+/// `claim` ready to submit as `built`, with the slot and alias it claims
+/// recorded in its params.
+fn ready_preparation(claim: &PlannedClaim, built: BuiltClaim) -> Preparation {
+	let attempt = Some(ClaimAttempt::from(&built));
+	let params = ClaimParams { attempt, ..claim.params.clone() };
+	Preparation::Ready { extrinsic: built.extrinsic, params: Some(params.into()) }
+}
+
+/// What `claim` answers at unix time `now` when it could not be built for
+/// `error`: a lost session waits until the claim's deadline, a transient
+/// failure waits, and anything else gives up at once.
+fn answer_unbuilt_claim(
+	claim: &PlannedClaim,
+	error: &ClaimBuildError,
+	now: u64,
+) -> Option<Preparation> {
+	tracing::warn!(id = claim.id.0, %error, "PGAS claim not built");
+	match error {
+		ClaimBuildError::NoSession => {
+			(now >= claim.params.give_up_after).then_some(Preparation::GiveUp)
+		},
+		ClaimBuildError::Transient(_) => None,
+		ClaimBuildError::OtherIdentity |
+		ClaimBuildError::NoPersonhood |
+		ClaimBuildError::NoFreeSlot { .. } => Some(Preparation::GiveUp),
+	}
+}
+
+/// The claims of `batch` whose params decode. Only registration writes
+/// these params, so a row that does not decode is left out rather than
+/// answered.
+fn planned_claims(batch: &[DeferredDurableTx]) -> Vec<PlannedClaim> {
+	batch.iter().filter_map(planned_claim).collect()
+}
+
+/// `deferred` as a claim, or `None` when its params do not decode.
+fn planned_claim(deferred: &DeferredDurableTx) -> Option<PlannedClaim> {
+	ClaimParams::try_from(&deferred.plan.params).ok().map(|params| PlannedClaim {
+		id: deferred.id,
+		attempts: deferred.attempts,
+		params,
+	})
+}
+
+#[cfg(test)]
+mod tests;

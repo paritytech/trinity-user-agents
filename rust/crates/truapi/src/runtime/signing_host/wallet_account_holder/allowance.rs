@@ -353,9 +353,7 @@ impl WalletAccountHolder {
 		derivation_index: api::DerivationIndex,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<(), AllowanceAllocationError> {
-		use crate::runtime::statement_allowance::{
-			self, ChainClient, collection::PersonhoodCollection, find_including_rings, pgas,
-		};
+		use crate::runtime::statement_allowance::pgas;
 
 		// PGAS credits the product account the caller named.
 		let target = self.with_keys(session, |keys| {
@@ -365,66 +363,25 @@ impl WalletAccountHolder {
 			})
 			.map(|key| key.public.to_bytes())
 		})?;
-
-		let asset_hub_genesis = self.services.asset_hub_chain_genesis_hash();
-		let asset_hub_client = ChainClient::new(
-			statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(
-				self.services
-					.chain
-					.rpc_client("PGAS allowance", &asset_hub_genesis)
-					.await
-					.map_err(|source| AllowanceAllocationError::ChainRpcClient {
-						context: "Asset Hub PGAS client",
-						source,
-					})?,
-			)),
-			asset_hub_genesis,
-		);
-		let asset_hub = self.services.chain_context.get(&asset_hub_client).await?;
+		let asset_hub = self.pgas_asset_hub().await?;
 
 		// Reusing a funded account preserves the person's daily claim slots.
 		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
-			pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target)
-				.await?
+			pgas::holds_a_full_claim(
+				asset_hub.client.rpc(),
+				&asset_hub.context.metadata,
+				&target,
+			)
+			.await?
 		{
 			debug!(%product_id, "PGAS allowance already funded; leaving it alone");
 			return Ok(());
 		}
-		let network_suffix =
-			statement_allowance::slot::read_network_suffix(asset_hub_client.rpc()).await?;
-
-		let people_client =
-			self.services.statement_store.chain_client("PGAS allowance ring").await?;
-		let people_rpc = people_client.rpc();
-		let people = self.services.chain_context.get(&people_client).await?;
-
 		let signer = self.personhood_signer(session).await?;
-		// A PGAS claim uses the strongest available membership.
-		let membership = find_including_rings(
-			people_rpc,
-			&people.metadata,
-			&signer,
-			&PersonhoodCollection::ALL,
-			u32::MAX,
-		)
-		.await?
-		.into_iter()
-		.next()
-		.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
-
+		let ring = self.strongest_personhood_ring(&signer).await?;
 		self.require_current_session(session)?;
-		let outcome = pgas::claim_pgas(pgas::PgasClaim {
-			asset_hub_rpc: asset_hub_client.rpc(),
-			asset_hub_metadata: &asset_hub.metadata,
-			asset_hub_target: asset_hub_client.extrinsic_target(&self.services.extrinsics),
-			people_rpc,
-			people_metadata: &people.metadata,
-			signer: &signer,
-			network_suffix: &network_suffix,
-			target: &target,
-			ring: &membership,
-		})
-		.await?;
+		let outcome =
+			pgas::claim_pgas(self.pgas_claim(&asset_hub, &ring, &signer, &target)).await?;
 		debug!(
 			%product_id,
 			day = outcome.day,

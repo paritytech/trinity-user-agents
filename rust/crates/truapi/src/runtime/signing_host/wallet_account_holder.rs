@@ -8,6 +8,7 @@ mod data_store;
 #[cfg(not(target_arch = "wasm32"))]
 mod item_key_range;
 mod pairing;
+mod pgas_claim;
 #[cfg(test)]
 mod tests;
 

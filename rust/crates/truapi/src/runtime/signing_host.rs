@@ -356,6 +356,19 @@ impl crate::nft::ItemSecrets for SigningHost {
 	}
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait::async_trait]
+impl crate::pgas_claims::PgasClaimBuilder for SigningHost {
+	async fn build_claim(
+		&self,
+		target: subxt::utils::AccountId32,
+		identity: crate::pgas_claims::ClaimIdentity,
+		excluded: &std::collections::BTreeSet<statement_allowance::pgas::ClaimSlot>,
+	) -> Result<statement_allowance::pgas::BuiltClaim, crate::pgas_claims::ClaimBuildError> {
+		self.wallet.build_pgas_claim_as(target.0, identity, excluded).await
+	}
+}
+
 /// The user's chat key, until the team settles which key products publish
 /// for `Static` cheques.
 #[cfg(not(target_arch = "wasm32"))]
