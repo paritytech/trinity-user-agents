@@ -1779,7 +1779,8 @@ through that controller without looking it up on chain; the signing host's
 core still discovers its controller on chain.
 
 The binary also ships real Polkadot's signed descriptor, from PCF's pointer, as
-`stacks/polkadot.json` with its link in `stacks/polkadot.link`. It is not a
+`stacks/polkadot.json` with the link of the known stack `polkadot` (see
+[the trinity-stack crate](../trinity-stack/README.md#known-stacks)). It is not a
 network `--network` selects: it lists Polkadot's chains, among them these, and
 the RPC nodes that tell a fork of Polkadot from Polkadot itself:
 
@@ -1811,7 +1812,7 @@ sessions of real Polkadot identities.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
 ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
-its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
+its pointer from the trinity-stack crate's known stack of the same name. A command that resolves a built-in fetches
 the published descriptor (3-second timeout) and runs the RFC's `accept` with the
 shipped copy as the stored one, then uses what it returns. A published descriptor
 that answers with a non-2xx HTTP status is logged as a warning with the status
@@ -1831,7 +1832,7 @@ light-client` on a built-in whose descriptor in use has genesis hashes other tha
 this build's light-client chain specs fails at start, since the stack restarted
 after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
 no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
-shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
+shipped copies, and the daily chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 `tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
 on.
@@ -1887,7 +1888,7 @@ and `genesis` for `people`, `asset_hub` and `bulletin`.
 #### `pcf-devnet`
 
 PCF's devnet: Paseo's relay and Asset Hub with PCF's own People and Bulletin
-chains, from the descriptor PCF signs (`stacks/pcf-devnet.link`). Reserved
+chains, from the descriptor PCF signs (the known stack `pcf-devnet`). Reserved
 identities derive under `.dot`. The identity backend is the descriptor's `dub`
 service.
 
