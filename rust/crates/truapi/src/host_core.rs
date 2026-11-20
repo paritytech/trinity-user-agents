@@ -1064,16 +1064,18 @@ impl HostRuntime<SigningHost> {
 		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and `durable`, with the static receive
-	/// secret NFT purses open cheques with, and starts tracking its holdings,
-	/// when an installation provider and encrypted storage are set.
+	/// Installs the NFT ledger over `db` and `durable`, whose new purses wait
+	/// for backup recovery, and the static receive secret NFT purses open
+	/// cheques with, then starts tracking its holdings. Does nothing without
+	/// an installation provider or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
-		let Some(ledger) = self.nft_ledger(db, durable) else {
+		let recovery = Arc::new(self.nft_recovery(db.clone()));
+		let Some(ledger) = self.nft_ledger(db, durable, recovery) else {
 			return;
 		};
 		let static_secret = Arc::new(Arc::downgrade(&self.role));
@@ -1082,14 +1084,53 @@ impl HostRuntime<SigningHost> {
 		start_holding_tracker(&self.services, ledger);
 	}
 
+	/// NFT backup recovery over `db`, started when the stack names the
+	/// installation registry and an installation provider is set. Otherwise
+	/// there is nothing to recover and recovery is off.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_recovery(&self, db: crate::store::Db) -> crate::nft::NftRecovery {
+		let registry = self.services.stack().account_data_store();
+		let installation = self.services.installation_provider();
+		let (Some(contract), Some(installation)) = (registry, installation) else {
+			tracing::info!("the stack names no AccountDataStore, NFT backup recovery is off");
+			return crate::nft::NftRecovery::off();
+		};
+		crate::nft::NftRecovery::start(crate::nft::NftRecoveryDeps {
+			db,
+			chain: Arc::new(self.nft_recovery_chain(contract)),
+			keys: Arc::new(Arc::downgrade(&self.role)),
+			installation,
+			session_state: self.role.session_state(),
+			spawner: self.services.spawner.clone(),
+			scan_config: crate::nft::recovery_scan_config(),
+		})
+	}
+
+	/// Recovery's reads on Asset Hub, with the installation registry at
+	/// `contract` decrypted by the signing host.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_recovery_chain(&self, contract: [u8; 20]) -> crate::nft::AssetHubRecoveryChain {
+		let genesis = self.services.asset_hub_chain_genesis_hash().into();
+		let asset_hub =
+			crate::chain_runtime::ChainAccess::new(self.services.chain.clone(), genesis);
+		let data_store_keys = Arc::downgrade(&self.role);
+		let registry = crate::installation_registry::RegisteredInstallations::new(
+			asset_hub.clone(),
+			contract,
+			data_store_keys,
+		);
+		crate::nft::AssetHubRecoveryChain::new(&asset_hub, registry)
+	}
+
 	/// The NFT ledger over `db` and `durable`, deriving item keys from the
-	/// signing host, or `None`, logged, without an installation provider or
-	/// encrypted storage.
+	/// signing host and creating purses once `recovery` has finished, or
+	/// `None`, logged, without an installation provider or encrypted storage.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn nft_ledger(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
+		recovery: Arc<crate::nft::NftRecovery>,
 	) -> Option<crate::nft::NftLedger> {
 		let Some(installation) = self.services.installation_provider() else {
 			tracing::warn!("no installation provider set, NFT purses are off");
@@ -1103,7 +1144,15 @@ impl HostRuntime<SigningHost> {
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		let deps = crate::nft::NftLedgerDeps {
+			db,
+			installation,
+			keys,
+			durable,
+			secrets,
+			imported,
+			recovery,
+		};
 		Some(crate::nft::NftLedger::new(deps))
 	}
 

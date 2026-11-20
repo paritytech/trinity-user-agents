@@ -3,6 +3,10 @@
 mod account;
 mod allowance;
 mod allowance_renewal;
+#[cfg(not(target_arch = "wasm32"))]
+mod data_store;
+#[cfg(not(target_arch = "wasm32"))]
+mod item_key_range;
 mod pairing;
 #[cfg(test)]
 mod tests;

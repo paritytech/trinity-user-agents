@@ -1,5 +1,18 @@
 # @parity/truapi-provider
 
+## 0.5.1
+
+### Patch Changes
+
+- b6c9e41: truapi-host ships refreshed stack descriptors for paseo-next-v2 (sequence 1794499750). truapi-provider and
+  truapi-host ship refreshed light-client chain specs.
+- 4b23681: The Rust crate can build a provider for a Trinity stack from its descriptor and the light specs a host hands
+  over, through `LightStack` and `EmbeddedChainProviderBuilder::stack`. Such a provider refuses to load or save
+  warm-start state with `ProviderError::StackStorage`. The JavaScript API is unchanged. The WebAssembly bundle grows by
+  about 3%, because it now carries the descriptor checks.
+- a01f5bd: A parachain connect that fails keeps the stored database of its relay for the next attempt, instead of
+  dropping it and leaving the relay to sync from its checkpoint.
+
 ## 0.5.0
 
 ### Minor Changes
