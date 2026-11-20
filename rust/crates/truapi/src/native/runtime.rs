@@ -159,11 +159,11 @@ impl NativeTrUApiHostRuntime {
 			runtime_config.pinned_pocket_cards,
 		))
 		.map_err(unavailable)?;
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &runtime_config.stack;
+		let BundledStack { pointer, descriptor, reserved_values } = runtime_config.stack;
 		let stack_refresh = futures::executor::block_on(StackRefresh::load(
-			pointer,
-			descriptor,
-			*allows_reserved_values,
+			&pointer,
+			&descriptor,
+			reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),

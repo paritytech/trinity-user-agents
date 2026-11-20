@@ -56,6 +56,34 @@ export interface ChainConnection {
  */
 export type LogLevel = string;
 
+/**
+ * A host build's policy on reserved values for its stack. The core reserves
+ * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
+ * and cannot reserve fewer. A stack that names a reserved value, the core's or
+ * the build's, under any chain role starts only when `allowed` is set.
+ *
+ * The core refuses a policy that would reserve less than it says: a field this
+ * type does not have, `allowed` together with extra values, which the allowed
+ * stack may name anyway, and an extra TLD that no stack can have. It refuses
+ * the policy before it reads the stack.
+ */
+export interface ReservedValuesPolicy {
+  /**
+   * Whether the stack may name reserved values. Only a Polkadot or
+   * Polkadot-fork build sets it, and then reserves no extra values. Defaults
+   * to `false`.
+   */
+  allowed?: boolean;
+  /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
+  extraGenesisHashes?: (string | Uint8Array)[];
+  /**
+   * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
+   * is, without the leading dot. The core's refusal of any other entry names
+   * the TLDs a stack can have.
+   */
+  extraTlds?: string[];
+}
+
 /** The Trinity stack a host build bundles. */
 export interface BundledStack {
   /**
@@ -68,12 +96,8 @@ export interface BundledStack {
    * under the pointer's key.
    */
   descriptor: Uint8Array;
-  /**
-   * Whether this build may run a stack that uses Polkadot's genesis hashes or
-   * the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it. Defaults to
-   * `false`.
-   */
-  allowsReservedValues?: boolean;
+  /** The build's policy on reserved values. Defaults to refusing the core's. */
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A fetch of the stack's descriptor for the host to make. */

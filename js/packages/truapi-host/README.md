@@ -43,12 +43,14 @@ the host build runs:
 - `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
 - `descriptor`: the bytes of the signed copy the build bundles. The core checks
   it against the pointer's key.
-- `allowsReservedValues`: set only by a Polkadot or Polkadot-fork build. Without
-  it the core refuses Polkadot's genesis hashes and the `dot` TLD.
+- `reservedValues`: the build's `ReservedValuesPolicy`. Its doc in
+  [`src/runtime.ts`](src/runtime.ts) says what the core reserves and which
+  policies it refuses.
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
-signing host's TLD from the descriptor. It refuses a pointer without a key and a
-descriptor without an Asset Hub, People or Bulletin chain.
+signing host's TLD from the descriptor. It refuses a pointer without a key, a
+descriptor without an Asset Hub, People or Bulletin chain, and a field `stack`
+does not have.
 
 A pairing or signing host runtime keeps the descriptor current when the host
 passes two raw callbacks to `create`, typed as `StackCallbacks`. A
@@ -78,9 +80,9 @@ Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.
 
 The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
-A runtime built from it does not refresh: it calls neither stack callback, and
-`stackStatus()` returns `undefined`.
+the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it,
+and refuses a field it does not have. A runtime built from it does not refresh:
+it calls neither stack callback, and `stackStatus()` returns `undefined`.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 

@@ -180,8 +180,9 @@ Relay, Asset Hub, People and Bulletin genesis hashes, the network
 `get_chain_info` reports, and the dotNS TLD.
 
 A native or browser shell puts three things in its runtime config: the stack's
-pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. The core resolves the `Stack` from them with
+pointer, the signed descriptor its build bundles, and the build's
+[`ReservedValuesPolicy`](src/stack.rs), whose doc says what the core reserves
+and which policies it refuses. The core resolves the `Stack` from them with
 `StackRefresh::load`.
 
 A Rust host that resolves its chains itself, such as the CLI, uses

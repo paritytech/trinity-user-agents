@@ -11,7 +11,7 @@ use trinity_stack::{
 	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
 };
 
-use super::{ReplaceCheck, Stack, StackError};
+use super::{ReplaceCheck, ReservedValuesPolicy, Stack, StackError};
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
@@ -108,8 +108,11 @@ struct HeldCopy {
 }
 
 impl HeldCopy {
-	fn try_new(verified: Verified, allows_reserved_values: bool) -> Result<Self, StackError> {
-		let stack = Stack::from_descriptor(&verified.descriptor, allows_reserved_values)?;
+	fn try_new(
+		verified: Verified,
+		reserved_values: &ReservedValuesPolicy,
+	) -> Result<Self, StackError> {
+		let stack = Stack::from_descriptor(&verified.descriptor, reserved_values)?;
 		Ok(Self { descriptor: verified.descriptor, stack })
 	}
 
@@ -135,7 +138,7 @@ impl Opened {
 		pointer: &Pointer,
 		bundled: &[u8],
 		stored: Option<&[u8]>,
-		allows_reserved_values: bool,
+		reserved_values: &ReservedValuesPolicy,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
 		let mut reader = StackReader::new(Refresh::MaxAge(REFRESH_MAX_AGE_SECS));
@@ -143,7 +146,7 @@ impl Opened {
 		let read = reader.get(pointer, now_unix_seconds);
 		let current = read.current.expect("a reader loaded with a build copy has a copy");
 		Ok(Self {
-			running: HeldCopy::try_new(current.stack, allows_reserved_values)?,
+			running: HeldCopy::try_new(current.stack, reserved_values)?,
 			reader,
 			first_fetch: read.fetch,
 			stale: current.stale,
@@ -156,7 +159,7 @@ impl Opened {
 /// newer copy a fetch brings.
 pub struct StackSource {
 	pointer: Pointer,
-	allows_reserved_values: bool,
+	reserved_values: ReservedValuesPolicy,
 	reader: StackReader,
 	/// The fetch the reader handed out when it was loaded.
 	first_fetch: Option<FetchRequest>,
@@ -174,6 +177,8 @@ pub struct StackSource {
 impl StackSource {
 	/// Starts from the newer of `bundled`, the signed copy the build ships,
 	/// and `stored`, the record the last [`Self::fetched`] returned.
+	/// `reserved_values` is the build's policy, already checked. Every copy,
+	/// bundled, stored or fetched, is held to it.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
 	/// a stack the core can run. A stored record that fails either is ignored.
@@ -181,12 +186,11 @@ impl StackSource {
 		pointer: Pointer,
 		bundled: &[u8],
 		stored: Option<&[u8]>,
-		allows_reserved_values: bool,
+		reserved_values: ReservedValuesPolicy,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
-		let open = |stored| {
-			Opened::try_new(&pointer, bundled, stored, allows_reserved_values, now_unix_seconds)
-		};
+		let open =
+			|stored| Opened::try_new(&pointer, bundled, stored, &reserved_values, now_unix_seconds);
 		let opened = match (open(stored), stored) {
 			(Err(error), Some(_)) => {
 				tracing::warn!("starting from the bundled stack descriptor: {error}");
@@ -197,7 +201,7 @@ impl StackSource {
 		let Opened { reader, running, first_fetch, stale, expired } = opened;
 		Ok(Self {
 			pointer,
-			allows_reserved_values,
+			reserved_values,
 			reader,
 			first_fetch,
 			running,
@@ -303,7 +307,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		});
-		let held = match HeldCopy::try_new(accepted.stack, self.allows_reserved_values) {
+		let held = match HeldCopy::try_new(accepted.stack, &self.reserved_values) {
 			Ok(held) => held,
 			Err(error) => {
 				self.last_refresh = Some(match outcome {
@@ -354,7 +358,7 @@ impl StackSource {
 	fn refusal(&self, served: Served) -> Option<String> {
 		let Served::Document { bytes, .. } = served else { return None };
 		let verified = open(bytes, &self.pointer).ok()?;
-		Stack::from_descriptor(&verified.descriptor, self.allows_reserved_values)
+		Stack::from_descriptor(&verified.descriptor, &self.reserved_values)
 			.err()
 			.map(|error| error.to_string())
 	}
