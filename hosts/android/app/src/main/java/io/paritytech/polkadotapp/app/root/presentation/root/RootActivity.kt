@@ -38,8 +38,10 @@ import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugSc
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.IdBar
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.ProductUpdateNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarRow
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.TopNoticeColumn
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
@@ -151,7 +153,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         setupAppNotificationOverlay()
 
         setupChatExtensionOverlay()
-        setupPaymentsSetupNotice()
+        setupTopNotices()
         setupChainHealthBar()
     }
 
@@ -359,16 +361,23 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
-    private fun setupPaymentsSetupNotice() {
+    private fun setupTopNotices() {
         val composeView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
-                val isVisible by viewModel.isPaymentsSetupNoticeVisible.collectAsStateWithLifecycle()
-                PaymentsSetupNotice(
-                    modifier = Modifier.fillMaxSize(),
-                    isVisible = isVisible,
-                    onDismissClick = viewModel::dismissPaymentsSetupNotice,
-                )
+                val isPaymentsSetupNoticeVisible by viewModel.isPaymentsSetupNoticeVisible.collectAsStateWithLifecycle()
+                val productUpdateNotice by viewModel.productUpdateNotice.collectAsStateWithLifecycle()
+                TopNoticeColumn(modifier = Modifier.fillMaxSize()) {
+                    PaymentsSetupNotice(
+                        isVisible = isPaymentsSetupNoticeVisible,
+                        onDismissClick = viewModel::dismissPaymentsSetupNotice,
+                    )
+                    ProductUpdateNotice(
+                        pendingUpdate = productUpdateNotice,
+                        onUpdateClick = viewModel::onProductUpdateClick,
+                        onDismissClick = viewModel::dismissProductUpdateNotice,
+                    )
+                }
             }
         }
         addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))

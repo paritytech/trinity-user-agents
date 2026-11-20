@@ -35,6 +35,10 @@ interface DebugMenuContract {
 
     fun onClearDotNsCacheClick()
 
+    fun onDotNsCacheClearConfirmed()
+
+    fun onDotNsCacheClearCancelled()
+
     fun onClearJWTTokenClick()
 
     fun onCoinageDebugWidgetsToggled(enabled: Boolean)
