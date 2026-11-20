@@ -12,7 +12,9 @@ use subxt_rpcs::Error as RpcError;
 use crate::chain::Heads;
 #[cfg(not(target_arch = "wasm32"))]
 use super::best_block;
-use super::{failure, finalized_block};
+#[cfg(not(target_arch = "wasm32"))]
+use super::finalized_block;
+use super::failure;
 use crate::{
 	chain::{ChainHeads, HashAndNumber, HeadEvent},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},

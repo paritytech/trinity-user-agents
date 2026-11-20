@@ -11,7 +11,9 @@ use subxt::{
 	utils::H256,
 };
 
-use super::{failure, finalized_block};
+#[cfg(not(target_arch = "wasm32"))]
+use super::finalized_block;
+use super::failure;
 use crate::{
 	chain::{BlockBackend, DispatchOutcome, HashAndNumber},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure, encode_hex},
