@@ -317,11 +317,11 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
 
     async fn contact_usernames(
         &self,
-        _product: &crate::platform::ProductContext,
+        product: &crate::platform::ProductContext,
     ) -> Result<crate::platform::HostContactUsernames, latest::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.contact_usernames,
-            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+            vec![Uint8Array::from(product.encode().as_slice()).into()],
         )
         .await?;
         Ok(decode_bytes::<crate::platform::HostContactUsernames>(
