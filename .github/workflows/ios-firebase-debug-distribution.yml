@@ -106,9 +106,25 @@ jobs:
 
       - name: Set Bundle ID and Profile if triggered by workflow_dispatch
         if: github.event_name == 'workflow_dispatch'
+        # The inputs reach the shell as data, never as script text. The notes
+        # are written with a delimiter so a newline in them cannot start a
+        # variable of its own.
+        env:
+          GROUPS_INPUT: ${{ inputs.groups }}
+          NOTES_INPUT: ${{ inputs.releaseNotes }}
         run: |
-          echo "FIREBASE_GROUPS=${{ inputs.groups }}" >> "$GITHUB_ENV"
-          echo "RELEASE_NOTES=${{ inputs.releaseNotes }}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          case "${GROUPS_INPUT}" in
+            *$'\n'* | *$'\r'*)
+              echo "::error::groups must be a single line."
+              exit 1
+              ;;
+          esac
+          delimiter="notes_$(openssl rand -hex 16)"
+          {
+            printf 'FIREBASE_GROUPS=%s\n' "${GROUPS_INPUT}"
+            printf 'RELEASE_NOTES<<%s\n%s\n%s\n' "${delimiter}" "${NOTES_INPUT}" "${delimiter}"
+          } >> "$GITHUB_ENV"
 
       - name: Calculate build number
         id: build_number

@@ -107,16 +107,17 @@ runs:
       with:
         node-version: "22"
 
-    # Skipped by jobs that only compile. Requiring them would make every such
-    # job carry credentials it has no use for.
     # Expressions have no arithmetic, so this is computed once here.
     - name: Compute the build number
       id: build
       shell: bash
       run: echo "id=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
 
+    # Skipped by jobs that only compile. Requiring them would make every such
+    # job carry credentials it has no use for. A job that sets require_inputs
+    # always runs it, so finding none of the values fails here.
     - name: Decode the build inputs
-      if: inputs.google_services_json_base64 != '' || inputs.keystore_base64 != ''
+      if: inputs.require_inputs == 'true' || inputs.google_services_json_base64 != '' || inputs.keystore_base64 != ''
       shell: bash
       working-directory: hosts/android
       env:
