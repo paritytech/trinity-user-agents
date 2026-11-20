@@ -4,7 +4,7 @@ mod races;
 
 use std::sync::{
 	Arc,
-	atomic::{AtomicU8, AtomicUsize, Ordering},
+	atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
 };
 
 use futures::{StreamExt, executor::block_on};

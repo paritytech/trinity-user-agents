@@ -2,7 +2,7 @@
 //! after round, until a round finds none.
 
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	sync::{Arc, Weak},
 };
 
@@ -45,7 +45,8 @@ pub struct DomainRun {
 	ownership: Arc<Ownership>,
 	/// Heard only while `held` is not empty.
 	releases: Receiver<()>,
-	/// Due rows the last round skipped because a watch still owned them.
+	/// Waiting rows a round skipped because a watch owned them, kept until
+	/// a round finds them no longer owned or no longer waiting.
 	held: Vec<DurableTxId>,
 }
 
@@ -121,14 +122,26 @@ impl DomainRun {
 	async fn decide_round(&mut self, waiting: Vec<DeferredDurableTx>) {
 		let now = self.timer.now();
 		self.schedule.track(&waiting, now);
-		let due: Vec<_> =
-			waiting.into_iter().filter(|row| self.schedule.is_due(row.id, now)).collect();
-		self.schedule.ask_later(due.iter().map(|row| row.id), now);
+		let due: HashSet<_> = waiting
+			.iter()
+			.map(|row| row.id)
+			.filter(|id| self.schedule.is_due(*id, now))
+			.collect();
+		self.schedule.ask_later(due.iter().copied(), now);
 		// A row whose previous attempt is still followed waits for that
-		// follower to stop, so a transaction never has two.
-		let (held, batch): (Vec<_>, Vec<_>) =
-			due.into_iter().partition(|row| self.ownership.is_owned(row.id));
-		self.held = held.into_iter().map(|row| row.id).collect();
+		// follower to stop, so a transaction never has two. It stays held,
+		// due or not, until the follower releases it.
+		let held_before = core::mem::take(&mut self.held);
+		self.held = waiting
+			.iter()
+			.map(|row| row.id)
+			.filter(|id| due.contains(id) || held_before.contains(id))
+			.filter(|id| self.ownership.is_owned(*id))
+			.collect();
+		let batch: Vec<_> = waiting
+			.into_iter()
+			.filter(|row| due.contains(&row.id) && !self.held.contains(&row.id))
+			.collect();
 		if !batch.is_empty() {
 			self.prepare_and_apply(batch).await;
 		}
