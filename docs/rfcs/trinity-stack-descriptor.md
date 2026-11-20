@@ -425,8 +425,10 @@ format rules.
 A pointer travels as a link, which is also what a QR code carries:
 
 ```
-polkadotapp://stack?key=0x3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json
+polkadotapp://stack?key=0x1111111111111111111111111111111111111111111111111111111111111111&url=https%3A%2F%2Fstack.example.com%2F.well-known%2Ftrinity-stack.json
 ```
+
+The links of the known stacks are in the trinity-stack crate's `known-stacks.json`.
 
 - The query has a `url` parameter, percent-encoded, and a `key` parameter when the descriptor is signed. Readers MUST
   ignore other parameters.
