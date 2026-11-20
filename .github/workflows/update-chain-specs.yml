@@ -116,6 +116,10 @@ jobs:
             the new genesis yet. Once both serve the new chain, run Refresh Chain Specs manually
             from the Actions tab.
 
+            If `paseo_chains_keep_their_genesis` fails, a refreshed public Paseo spec derives to
+            a chain other than Paseo: an endpoint in `scripts/update-chain-specs.sh` serves
+            another chain. Do not merge until that endpoint is replaced.
+
             If `test_built_in_network_hosts` fails, a stack moved an endpoint: confirm the new
             host is a test network before adding it to `TEST_NETWORK_HOSTS` in
             `rust/crates/truapi-host-cli/src/network/tests.rs`.

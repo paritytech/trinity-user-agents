@@ -37,6 +37,26 @@ fn paseo_next_v2_registers_four_chains_with_expected_hashes() {
 	assert_eq!((chains.relay, chains.people), (relay, people));
 }
 
+/// The public Paseo chains do not restart and have no stack descriptor to
+/// check a refreshed spec against, so a refresh that derives any other hash
+/// pulled its spec from a different chain.
+#[test]
+fn paseo_chains_keep_their_genesis() {
+	let (_, chains) = EmbeddedChainProviderBuilder::new()
+		.add_network("paseo")
+		.expect("bundled network registers");
+	let pinned = [
+		"374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
+		"d6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
+		"e101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
+		"e6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
+	];
+	assert_eq!(
+		[chains.relay, chains.assethub, chains.bulletin, chains.people].map(hex::encode),
+		pinned
+	);
+}
+
 #[test]
 fn unknown_network_lists_the_catalog() {
 	let error = EmbeddedChainProviderBuilder::new()
