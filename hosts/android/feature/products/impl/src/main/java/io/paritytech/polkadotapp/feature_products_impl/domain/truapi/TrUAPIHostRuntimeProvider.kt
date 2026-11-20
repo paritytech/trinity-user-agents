@@ -169,6 +169,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
+            materialsEnabled = true,
             deviceEncryptionKey = deviceEncryptionKey,
         )
     }

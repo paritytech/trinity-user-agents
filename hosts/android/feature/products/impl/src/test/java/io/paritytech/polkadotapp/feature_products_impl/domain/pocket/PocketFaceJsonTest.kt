@@ -82,9 +82,8 @@ class PocketFaceJsonTest {
             """.trimIndent()
         ).getOrThrow().toJsWidget()
 
-        // No material draws yet, so the node is its children, placed as a box places them.
-        val materials = face as JsWidget.Box
-        assertEquals(null, materials.contentAlignment)
+        val materials = face as JsWidget.Materials
+        assertEquals(0, materials.index)
 
         val stamp = materials.children[0] as JsWidget.Image
         assertEquals(JsImageSource.Archive("images/stamp.png"), stamp.source)

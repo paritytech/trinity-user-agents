@@ -92,4 +92,12 @@ sealed interface JsWidget {
         val fit: JsImageFit = JsImageFit.FILL,
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget
+
+    /** Content a host may draw material layers over. [index] counts the `Materials` nodes of the tree depth first. */
+    @Serializable
+    @SerialName("materials")
+    data class Materials(
+        val index: Int,
+        val children: List<JsWidget>,
+    ) : JsWidget
 }

@@ -17,12 +17,73 @@ import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
 import uniffi.truapi.Dimensions
 import uniffi.truapi.HorizontalAlignment
+import uniffi.truapi.MaterialsProps
 import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.TextProps
 
 class RendererNodeMappingTest {
+    @Test
+    fun `materials nodes are numbered depth first, as the core resolves them`() {
+        val nested = materialsNode(emptyList())
+        val tree = RendererNode.Column(
+            modifiers = emptyList(),
+            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
+            children = listOf(materialsNode(listOf(nested)), materialsNode(emptyList())),
+        )
+
+        val column = tree.toJsWidget() as JsWidget.Column
+
+        assertEquals(
+            listOf(
+                JsWidget.Materials(index = 0, children = listOf(JsWidget.Materials(index = 1, children = emptyList()))),
+                JsWidget.Materials(index = 2, children = emptyList()),
+            ),
+            column.children,
+        )
+    }
+
+    @Test
+    fun `materials nodes under a text or a button keep their numbers, though neither draws them`() {
+        val tree = RendererNode.Column(
+            modifiers = emptyList(),
+            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
+            children = listOf(
+                RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(materialsNode(emptyList()))),
+                RendererNode.Button(
+                    modifiers = emptyList(),
+                    props = ButtonProps(text = "Go", variant = null, enabled = null, loading = null, clickAction = null),
+                    children = listOf(materialsNode(emptyList())),
+                ),
+                materialsNode(emptyList()),
+            ),
+        )
+
+        val column = tree.toJsWidget() as JsWidget.Column
+
+        assertEquals(JsWidget.Materials(index = 2, children = emptyList()), column.children.last())
+    }
+
+    @Test
+    fun `materials nested under a text count toward the numbers after it`() {
+        val tree = RendererNode.Column(
+            modifiers = emptyList(),
+            props = ColumnProps(horizontalAlignment = null, verticalArrangement = null),
+            children = listOf(
+                RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(materialsNode(listOf(materialsNode(emptyList()))))),
+                materialsNode(emptyList()),
+            ),
+        )
+
+        val column = tree.toJsWidget() as JsWidget.Column
+
+        assertEquals(JsWidget.Materials(index = 2, children = emptyList()), column.children.last())
+    }
+
+    private fun materialsNode(children: List<RendererNode>) =
+        RendererNode.Materials(props = MaterialsProps(layers = emptyList()), children = children)
+
     @Test
     fun `a streamed tree maps like a decoded preview, so both faces draw alike`() {
         val node = RendererNode.Column(

@@ -31,43 +31,58 @@ import uniffi.truapi.VerticalAlignment
 
 /**
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
- * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
+ * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does. Each
+ * `Materials` node carries its depth-first position, the index its resolved materials have.
  */
-fun RendererNode.toJsWidget(): JsWidget = when (this) {
+fun RendererNode.toJsWidget(): JsWidget = toJsWidget(MaterialsCounter())
+
+private class MaterialsCounter {
+    private var next = 0
+
+    fun take(): Int = next++
+}
+
+private fun RendererNode.toJsWidget(materials: MaterialsCounter): JsWidget = when (this) {
     is RendererNode.Nil -> JsWidget.Spacer()
     is RendererNode.String -> JsWidget.Text(text = text)
     is RendererNode.Box -> JsWidget.Box(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(materials),
         contentAlignment = props.contentAlignment?.toJs(),
     )
     is RendererNode.Column -> JsWidget.Column(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(materials),
         horizontalAlignment = props.horizontalAlignment?.toJs(),
         verticalArrangement = props.verticalArrangement?.toJs(),
     )
     is RendererNode.Row -> JsWidget.Row(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(materials),
         verticalAlignment = props.verticalAlignment?.toJs(),
         horizontalArrangement = props.horizontalArrangement?.toJs(),
     )
     is RendererNode.Spacer -> JsWidget.Spacer(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Text -> JsWidget.Text(
-        text = children.filterIsInstance<RendererNode.String>().joinToString("") { it.text },
-        style = props.style?.toJs() ?: JsTypographyStyle.BODY_LARGE_REGULAR,
-        color = props.color?.toJs(),
-        modifiers = modifiers.toJsModifiers(),
-    )
-    is RendererNode.Button -> JsWidget.Button(
-        text = props.text,
-        onClick = props.clickAction,
-        variant = props.variant?.toJs() ?: JsButtonVariant.PRIMARY,
-        enabled = props.enabled ?: true,
-        loading = props.loading ?: false,
-        modifiers = modifiers.toJsModifiers(),
-    )
+    is RendererNode.Text -> {
+        children.skipMaterials(materials)
+        JsWidget.Text(
+            text = children.filterIsInstance<RendererNode.String>().joinToString("") { it.text },
+            style = props.style?.toJs() ?: JsTypographyStyle.BODY_LARGE_REGULAR,
+            color = props.color?.toJs(),
+            modifiers = modifiers.toJsModifiers(),
+        )
+    }
+    is RendererNode.Button -> {
+        children.skipMaterials(materials)
+        JsWidget.Button(
+            text = props.text,
+            onClick = props.clickAction,
+            variant = props.variant?.toJs() ?: JsButtonVariant.PRIMARY,
+            enabled = props.enabled ?: true,
+            loading = props.loading ?: false,
+            modifiers = modifiers.toJsModifiers(),
+        )
+    }
     is RendererNode.TextField -> JsWidget.TextField(
         value = props.text,
         onValueChange = props.valueChangeAction,
@@ -84,11 +99,34 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
+    is RendererNode.Materials -> {
+        val index = materials.take()
+        JsWidget.Materials(index = index, children = children.toJsChildren(materials))
+    }
 }
 
-private fun List<RendererNode>.toJsChildren(): List<JsWidget> =
-    filterNot { it is RendererNode.Nil || it is RendererNode.String }.map { it.toJsWidget() }
+// Text and Button draw no child nodes, but the core still numbers the Materials nodes under them.
+private fun List<RendererNode>.skipMaterials(materials: MaterialsCounter) {
+    forEach { node ->
+        if (node is RendererNode.Materials) materials.take()
+        node.childNodes().skipMaterials(materials)
+    }
+}
+
+fun RendererNode.holdsMaterials(): Boolean = this is RendererNode.Materials || childNodes().any { it.holdsMaterials() }
+
+private fun RendererNode.childNodes(): List<RendererNode> = when (this) {
+    is RendererNode.Materials -> children
+    is RendererNode.Box -> children
+    is RendererNode.Column -> children
+    is RendererNode.Row -> children
+    is RendererNode.Text -> children
+    is RendererNode.Button -> children
+    is RendererNode.Nil, is RendererNode.String, is RendererNode.Spacer, is RendererNode.TextField, is RendererNode.Image -> emptyList()
+}
+
+private fun List<RendererNode>.toJsChildren(materials: MaterialsCounter): List<JsWidget> =
+    filterNot { it is RendererNode.Nil || it is RendererNode.String }.map { it.toJsWidget(materials) }
 
 private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
     var width: Int? = null

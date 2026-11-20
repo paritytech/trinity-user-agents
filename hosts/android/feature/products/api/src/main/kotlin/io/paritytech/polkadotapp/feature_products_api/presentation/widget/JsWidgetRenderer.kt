@@ -91,6 +91,23 @@ private fun JsWidgetContent(
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
+        is JsWidget.Materials -> JsMaterialsRenderer(widget, modifier)
+    }
+}
+
+@Composable
+private fun JsMaterialsRenderer(
+    widget: JsWidget.Materials,
+    modifier: Modifier = Modifier,
+) {
+    val drawer = LocalJsMaterialsDrawer.current
+    val children = @Composable { widget.children.forEach { child -> JsWidgetContent(widget = child) } }
+    if (drawer == null) {
+        Box(modifier = modifier) { children() }
+    } else {
+        drawer.Draw(modifier = modifier, index = widget.index) {
+            Box { children() }
+        }
     }
 }
 
@@ -290,15 +307,18 @@ private fun List<JsModifier>.hasWidth() = fixedWidth() || any { it is JsModifier
 private fun List<JsModifier>.hasHeight() = fixedHeight() || any { it is JsModifier.FillMaxHeight }
 
 private fun JsWidget.fillsHeight(): Boolean = when (this) {
-    is JsWidget.Box -> modifiers
-    is JsWidget.Column -> modifiers
-    is JsWidget.Row -> modifiers
-    is JsWidget.Spacer -> modifiers
-    is JsWidget.Text -> modifiers
-    is JsWidget.Button -> modifiers
-    is JsWidget.TextField -> modifiers
-    is JsWidget.Image -> modifiers
-}.any { it is JsModifier.FillMaxHeight }
+    is JsWidget.Box -> modifiers.fillsHeight()
+    is JsWidget.Column -> modifiers.fillsHeight()
+    is JsWidget.Row -> modifiers.fillsHeight()
+    is JsWidget.Spacer -> modifiers.fillsHeight()
+    is JsWidget.Text -> modifiers.fillsHeight()
+    is JsWidget.Button -> modifiers.fillsHeight()
+    is JsWidget.TextField -> modifiers.fillsHeight()
+    is JsWidget.Image -> modifiers.fillsHeight()
+    is JsWidget.Materials -> children.any { it.fillsHeight() }
+}
+
+private fun List<JsModifier>.fillsHeight() = any { it is JsModifier.FillMaxHeight }
 
 @Composable
 private fun JsSpacerRenderer(

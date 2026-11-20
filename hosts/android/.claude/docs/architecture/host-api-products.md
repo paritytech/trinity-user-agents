@@ -386,6 +386,13 @@ the worker is not restarted over a resolved name. A placed product's chat extens
 and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
 (`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
 
+### Materials in chat cards
+
+A `Materials` node maps to `JsWidget.Materials` with its depth-first index, the index the core gives its resolved
+materials. `TrUAPIChatWorker` resolves the materials of a tree for `RenderContext.ChatMessage` only, and
+`ChatMaterialsDrawer` draws them through `LocalJsMaterialsDrawer`, one GL thread per visible node. Pocket faces and the
+footer card draw a `Materials` node as its children. Demo: `feature/products/product-sample/chat-materials-worker`.
+
 ---
 
 ## Where new things live
