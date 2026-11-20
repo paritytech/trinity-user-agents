@@ -20,10 +20,12 @@ import io.sentry.SentryAttributes
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.SentryLogLevel
+import io.sentry.logger.ILoggerApi
 import io.sentry.logger.SentryLogParameters
 import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
+import javax.inject.Provider
 
 internal fun interface HostTelemetryEnabledProvider {
     fun isEnabled(): Boolean
@@ -47,9 +49,12 @@ internal fun interface SentryLogCapture {
     fun log(level: SentryLogLevel, parameters: SentryLogParameters, body: String)
 }
 
-internal class RealSentryLogCapture @Inject constructor() : SentryLogCapture {
+// A Provider, so the logger is read once Sentry has started rather than when this is built.
+internal class RealSentryLogCapture @Inject constructor(
+    private val logger: Provider<ILoggerApi>,
+) : SentryLogCapture {
     override fun log(level: SentryLogLevel, parameters: SentryLogParameters, body: String) {
-        Sentry.logger().log(level, parameters, body)
+        logger.get().log(level, parameters, body)
     }
 }
 
