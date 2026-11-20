@@ -21,6 +21,7 @@ const DISPATCH_OUTCOME: &str = "dispatch_outcome";
 
 #[async_trait::async_trait]
 impl BlockBackend for ChainRuntime {
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn block_hash(&self, genesis: H256, number: u64) -> Result<Option<H256>, RuntimeFailure> {
 		const METHOD: &str = "block_hash";
 		let legacy = self.legacy(genesis).await?;
@@ -55,6 +56,7 @@ impl BlockBackend for ChainRuntime {
 		Ok(header.map(|header| header.number()))
 	}
 
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn extrinsic_hashes(
 		&self,
 		genesis: H256,

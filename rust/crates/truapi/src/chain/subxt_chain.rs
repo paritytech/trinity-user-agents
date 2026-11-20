@@ -15,6 +15,7 @@ mod account_nonces;
 mod block_backend;
 mod heads;
 mod tx_submitter;
+#[cfg(not(target_arch = "wasm32"))]
 mod tx_validator;
 mod watched_storage;
 
@@ -40,6 +41,7 @@ async fn numbered(
 }
 
 /// The best block, as the node sees it now.
+#[cfg(not(target_arch = "wasm32"))]
 async fn best_block(
 	legacy: &LegacyConnection,
 	method: &'static str,

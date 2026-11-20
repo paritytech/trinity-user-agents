@@ -23,12 +23,14 @@ pub enum DispatchOutcome {
 pub trait BlockBackend: Send + Sync {
 	/// Hash of the block at `number`, canonical up to the finalized height.
 	/// Above it, a reorg can change the hash returned for the same height.
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn block_hash(&self, genesis: H256, number: u64) -> Result<Option<H256>, RuntimeFailure>;
 
 	/// Number of the block with `hash`.
 	async fn block_number(&self, genesis: H256, hash: H256) -> Result<Option<u64>, RuntimeFailure>;
 
 	/// Hashes of the extrinsics in the block with hash `at`, in block order.
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn extrinsic_hashes(
 		&self,
 		genesis: H256,
