@@ -489,7 +489,7 @@ cfg_select! {
 			ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
 		};
 		pub use host_internal::{
-			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
+			bulletin::{BitswapError, BulletinCid, bitswap_get, preimage_key},
 			extrinsic::Sr25519Signer,
 		};
 		pub use host_logic::{session::SsoSessionInfo, worker::WorkerTransition};
@@ -507,12 +507,10 @@ cfg_select! {
 			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
-		pub use native_debug::{DebugSinkError, WsDebugSink};
+		pub use native_debug::WsDebugSink;
 		pub use platform::{
-			CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner,
 			HostIdentity, PairingHostConfig, PermissionAuthorizationRequest,
 			PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
-			describe_core_storage_key,
 		};
 		pub use public_profile::{
 			PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
@@ -521,10 +519,8 @@ cfg_select! {
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, PairedSsoPeer, PairingHost,
 			PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-			SigningHost, StatementRenewalTarget,
-			contacts::contact_handle,
-			login_failure::reports_exhausted_period,
-			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},
+			SigningHost, StatementRenewalTarget, contacts::contact_handle,
+			login_failure::reports_exhausted_period, product_manifest::encode_cached_root_manifest,
 			statement_allowance,
 		};
 		pub use unix_time::current_unix_millis;

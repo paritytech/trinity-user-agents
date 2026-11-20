@@ -11,7 +11,7 @@ use crate::{
 	runtime::BulletinAllowanceKey,
 };
 
-pub use cid::{BulletinCid, BulletinCidError};
+pub use cid::BulletinCid;
 pub use read::{BitswapError, bitswap_get};
 
 /// Pallet the store transaction targets.
