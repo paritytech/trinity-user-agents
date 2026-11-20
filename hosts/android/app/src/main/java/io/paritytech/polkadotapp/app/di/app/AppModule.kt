@@ -2,9 +2,11 @@ package io.paritytech.polkadotapp.app.di.app
 
 import dagger.Binds
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import io.paritytech.polkadotapp.app.logging.SentryCoreEventSink
 import io.paritytech.polkadotapp.app.monitoring.DeviceReadingsInitializer
 import io.paritytech.polkadotapp.app.monitoring.RealSentryMetricsCapture
 import io.paritytech.polkadotapp.app.monitoring.SentryMetricsCapture
@@ -24,17 +26,25 @@ import io.paritytech.polkadotapp.app.telemetry.RealSentryLogCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryEventCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryLogCapture
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
+import io.paritytech.polkadotapp.common.data.telemetry.CoreEventSink
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.presentation.ActivityIntentProvider
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.sentry.Sentry
+import io.sentry.logger.ILoggerApi
 import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 internal interface AppModule {
+    companion object {
+        @Provides
+        fun provideSentryLogger(): ILoggerApi = Sentry.logger()
+    }
+
     @Binds
     fun bindIssueReportApi(impl: RealIssueReportApi): IssueReportApi
 
@@ -59,6 +69,9 @@ internal interface AppModule {
 
     @Binds
     fun bindHostEventCapture(impl: RealHostEventCapture): HostEventCapture
+
+    @Binds
+    fun bindCoreEventSink(impl: SentryCoreEventSink): CoreEventSink
 
     @Binds
     fun bindSentryEventCapture(impl: RealSentryEventCapture): SentryEventCapture

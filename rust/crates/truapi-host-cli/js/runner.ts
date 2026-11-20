@@ -6,7 +6,8 @@ import {
   type ProductAccountId,
   type TrUApiClient,
 } from "../../../../js/packages/truapi/src/index.ts";
-import { createHostConnection } from "../../../../js/packages/truapi/src/internal.ts";
+import { getClientSync } from "../../../../js/packages/truapi/src/sandbox.ts";
+import { createHostConnection } from "../../../../js/container/src/host-connection.ts";
 import { createPermissionAuthorization } from "../../../../js/container/src/network-transport.ts";
 import { freezePermissionRuntime } from "../../../../js/container/src/permission-runtime.ts";
 import { installFetchGate } from "../../../../js/container/src/network.ts";
@@ -61,7 +62,6 @@ async function main() {
       derivationIndex: { tag: "Index", value: index },
     }),
   };
-  globalThis.truapi = connection.client;
   globalThis.host = context;
   globalThis.assert = (condition: unknown, ...message: unknown[]) => {
     if (condition) return;
@@ -81,13 +81,8 @@ async function main() {
   freezeValue(globalThis, "__HOST_WEBVIEW_MARK__", true);
   freezeValue(
     globalThis,
-    "__HOST_API_CLIENT__",
-    Object.freeze({
-      get client() {
-        return connection.client;
-      },
-      subscribeConnectionStatus: connection.subscribeConnectionStatus,
-    }),
+    "__HOST_API_TRANSPORT__",
+    Object.freeze(connection.transport),
   );
   Object.defineProperty(globalThis, "__HOST_API_PORT__", {
     get: () => connection.legacyPort,
@@ -103,13 +98,16 @@ async function main() {
   installWebSocketGate(globalThis, authorization.network);
   installXhrGate(globalThis, authorization.network);
   reportLockdownFailures();
+  const client = getClientSync();
+  if (!client) throw new Error("No client over the injected host transport");
+  globalThis.truapi = client;
 
   const timer = setTimeout(() => {
     console.error(`[runner] timed out connecting to ${frameUrl}`);
     process.exit(2);
   }, 15_000);
   try {
-    const handshake = await connection.client.system.handshake();
+    const handshake = await client.system.handshake();
     if (handshake.isErr())
       throw new Error("Host connection failed", { cause: handshake.error });
     clearTimeout(timer);

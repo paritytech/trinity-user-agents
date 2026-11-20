@@ -142,7 +142,8 @@ rust/crates/
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state,
-                         refresh policy; conformance vectors and JSON Schema
+                         refresh policy, the known stacks' links; conformance vectors and
+                         JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -158,7 +159,8 @@ js/packages/
                           reading with a store and publishing; `/reader` keeps stacks
                           current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
-                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
+                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js;
+                           owns the host connection whose frame channel products encode over
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
                            published to GitHub Packages as io.parity:truapi-host-android
                            (AAR with per-ABI cdylibs; see android/truapi-host/README.md)
@@ -171,8 +173,8 @@ hosts/android/             Android host app; resolves the core from this tree
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
-stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
-                           scripts/update-stacks.sh refreshes each descriptor from its link
+stacks/                    Generated link and signed descriptor of each signed known Trinity stack, which
+                           host builds bundle; scripts/update-stacks.sh writes them from the crate's list
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -682,11 +684,13 @@ reaches it through a development-only `<script>` tag:
 ```
 
 The host serves that script itself, with no imports or environment variables
-needed. It installs the shared client and browser container before product code
-runs. Keep the tag before application scripts, without `async` or `defer`.
-SDK calls and permission checks share one connection. Updated SDKs reuse the
-injected client across reconnects; older SDKs can still start through the
-MessagePort adapter but require a page reload after a disconnect.
+needed. It installs the shared host transport and browser container before
+product code runs. Keep the tag before application scripts, without `async` or
+`defer`. SDK calls and permission checks share one connection. Each product
+encodes its frames with its own `@parity/truapi`. Updated SDKs keep their
+client across reconnects. SDKs that predate the injected transport use the
+MessagePort adapter, which survives a reconnect too: what the lost connection
+carried ends with a `HostFailure` error.
 A visible page retries a failed reconnect after 250 ms, 1 s and 4 s; after that, the next API
 call or return to a visible page tries again.
 On iOS the host rebinds its localhost listener on the same port each time the app
