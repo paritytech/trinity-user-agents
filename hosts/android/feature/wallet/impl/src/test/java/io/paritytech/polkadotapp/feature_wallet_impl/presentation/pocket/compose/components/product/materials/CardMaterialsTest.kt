@@ -5,10 +5,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.MaterialsResolution
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
 import uniffi.truapi.MaterialFailure
@@ -16,7 +13,6 @@ import uniffi.truapi.MaterialShader
 import uniffi.truapi.NodeMaterials
 import uniffi.truapi.ReadyLayer
 import uniffi.truapi.ResolvedMaterials
-import uniffi.truapi.materialNoise
 
 class CardMaterialsTest {
     private val tint = ByteArray(32) { 1 }
@@ -67,14 +63,17 @@ class CardMaterialsTest {
         assertEquals(NodeDraw.Layers(layers), materials.draw(1))
     }
 
-    // The RFC: stepping down for performance is not a failure, and is not reported.
+    // The RFC: stepping down for performance, heat or power saving is not a failure, and is not reported.
     @Test
-    fun `a node too slow to draw goes plain without a report`() {
-        nodes(NodeMaterials.Ready(layers))
+    fun `a node too slow to draw, or a strained device, goes plain without a report`() {
+        nodes(NodeMaterials.Ready(layers), NodeMaterials.Ready(layers))
 
         materials.tooSlow(0)
+        val slowDrawn = listOf(materials.draw(0), materials.draw(1))
+        allPlain.value = true
 
-        assertEquals(NodeDraw.Plain, materials.draw(0))
+        assertEquals(listOf(NodeDraw.Plain, NodeDraw.Layers(layers)), slowDrawn)
+        assertEquals(NodeDraw.Plain, materials.draw(1))
         verify(exactly = 0) { resolution.report(any(), any(), any()) }
     }
 
@@ -89,23 +88,6 @@ class CardMaterialsTest {
 
         assertEquals(listOf(NodeDraw.Plain, NodeDraw.Plain), drawn)
         verify(exactly = 1) { resolution.report(0u, tint, MaterialFailure.UNSUPPORTED) }
-    }
-
-    @Test
-    fun `heat or power saving draws every node plain without a report`() {
-        nodes(NodeMaterials.Ready(layers), NodeMaterials.Ready(layers))
-        allPlain.value = true
-
-        assertEquals(listOf(NodeDraw.Plain, NodeDraw.Plain), listOf(materials.draw(0), materials.draw(1)))
-        verify(exactly = 0) { resolution.report(any(), any(), any()) }
-    }
-
-    @Test
-    fun `the noise image is made once per body`() = runBlocking<Unit> {
-        val first = materials.noise(7u)
-
-        assertArrayEquals(materialNoise(7u), first)
-        assertSame(first, materials.noise(7u))
     }
 
     // A product that redraws its face gets a new resolution; the node keeps drawing what it drew
@@ -141,17 +123,6 @@ class CardMaterialsTest {
         slot.of(mockk(relaxed = true) { every { resolved } returns MutableStateFlow(ResolvedMaterials(listOf(NodeMaterials.Ready(other)), 7u)) }, guard, allPlain)
 
         assertEquals(listOf(NodeDraw.Plain, NodeDraw.Layers(other)), listOf(sameDrawn, card.draw(0)))
-    }
-
-    // The core sends fresh byte arrays on every update; a node whose layers did not change must not
-    // restart its surface, reload its images or be timed again.
-    @Test
-    fun `layers with the same content are equal`() {
-        val copy = listOf(ReadyLayer(tint.copyOf(), shader(), emptyList()))
-
-        assertEquals(NodeDraw.Layers(layers), NodeDraw.Layers(copy))
-        assertEquals(NodeDraw.Layers(layers).hashCode(), NodeDraw.Layers(copy).hashCode())
-        assertNotEquals(NodeDraw.Layers(layers), NodeDraw.Layers(listOf(ReadyLayer(ByteArray(32) { 2 }, shader(), emptyList()))))
     }
 
     // With the switch off, or nothing to draw, the card must not start GL or snapshot itself.

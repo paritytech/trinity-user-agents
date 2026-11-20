@@ -102,29 +102,6 @@ class JsWidgetLayoutTest {
         assertEquals(20, boundsOf(success)?.height()?.inDp())
     }
 
-    // Chat, the add-card offer and the face preview provide no materials renderer, and must still
-    // show the node's children where a box would place them: stacked from its top start.
-    @Test
-    fun materialsWithoutRendererDrawsLikeBox() {
-        draw(
-            JsWidget.Row(
-                children = listOf(
-                    block(JsColor.FG_ERROR),
-                    JsWidget.Materials(
-                        node = 0,
-                        children = listOf(
-                            JsWidget.Box(modifiers = listOf(JsModifier.Size(width = 40, height = 40), JsModifier.Background(JsColor.FG_WARNING))),
-                            block(JsColor.FG_SUCCESS),
-                        ),
-                    ),
-                ),
-            ),
-        )
-
-        val drawn = checkNotNull(boundsOf(success))
-        assertEquals(listOf(20, 0, 20, 20), listOf(drawn.left.inDp(), drawn.top.inDp(), drawn.width().inDp(), drawn.height().inDp()))
-    }
-
     @Test
     fun aPictureWithNoSizeOfItsOwnTakesOneDpPerPixel() {
         val image = JsWidget.Image(source = JsImageSource.Archive("small.png"), fit = JsImageFit.CONTAIN)

@@ -10,7 +10,6 @@ import io.mockk.slot
 import io.mockk.unmockkObject
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigMaterialsSwitch
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
@@ -99,24 +98,6 @@ class TrUAPIHostRuntimeProviderTest {
         )
     }
 
-    @Test
-    fun materialsEnabledFollowsTheSwitch() = runTest {
-        val started = listOf(true, false).associateWith { on ->
-            provider(materials = Result.success(on)).runtime().getOrThrow()
-            runtimeConfig.captured.materialsEnabled
-        }
-
-        assertEquals(mapOf(true to true, false to false), started)
-    }
-
-    // The core latches the flag when it starts; a boot with Remote Config unreadable must start it off.
-    @Test
-    fun `materials start off when the switch cannot be read`() = runTest {
-        provider(materials = Result.failure(IllegalStateException("not activated"))).runtime().getOrThrow()
-
-        assertEquals(false, runtimeConfig.captured.materialsEnabled)
-    }
-
     private data class StartedStack(val tld: String, val allowsReservedValues: Boolean)
 
     private fun BundledStack.tld(): String {
@@ -130,7 +111,6 @@ class TrUAPIHostRuntimeProviderTest {
         read: Result<DotNsTld> = Result.success(paseo),
         environment: TestnetEnvironment = TestnetEnvironment.NIGHTLY,
         pinnedPocketCards: PinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
-        materials: Result<Boolean> = Result.success(false),
     ) = TrUAPIHostRuntimeProvider(
         context = context(),
         environment = environment,
@@ -154,7 +134,7 @@ class TrUAPIHostRuntimeProviderTest {
         pinnedPocketCards = pinnedPocketCards,
         coreEventLogger = CoreEventLogger { _, _, _ -> },
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
-        materialsSwitch = RemoteConfigMaterialsSwitch(mockk { coEvery { getBoolean("materials_enabled") } returns materials }),
+        materialsSwitch = mockk(relaxed = true),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

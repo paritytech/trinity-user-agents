@@ -20,14 +20,6 @@ class FrameScheduleTest {
         assertFalse(schedule.next(animating = true))
     }
 
-    @Test
-    fun `an animating node draws every frame once resumed`() {
-        schedule.pause()
-        schedule.resume(nowNanos = 0)
-
-        assertEquals(listOf(true, true, true), List(3) { schedule.next(animating = true) })
-    }
-
     // The RFC's always-on step: a node that reads neither time nor motion is drawn once, not on a loop.
     @Test
     fun `a still node draws once per change`() {

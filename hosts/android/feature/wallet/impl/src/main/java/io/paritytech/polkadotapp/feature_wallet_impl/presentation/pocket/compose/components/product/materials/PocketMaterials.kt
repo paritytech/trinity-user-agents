@@ -41,9 +41,6 @@ internal class PocketMaterials(
     private val materials: CardMaterials,
     private val cardPicture: State<ImageBitmap?>,
     private val cardCoordinates: State<LayoutCoordinates?>,
-    private val newSurface: (node: Int, onFirstFrame: () -> Unit) -> MaterialsSurface = { node, onFirstFrame ->
-        nodeSurface(materials, node, onFirstFrame)
-    },
 ) : JsMaterialsRenderer {
     // Per copy of the card: the list and the opened card each wait for their own surface's first frame.
     private val withSurface = mutableStateSetOf<Int>()
@@ -103,7 +100,7 @@ internal class PocketMaterials(
         val context = LocalContext.current
         val imageResolver = LocalJsImageResolver.current
         val lifecycleOwner = LocalLifecycleOwner.current
-        val surface = remember(this, node) { newSurface(node) { shown(node) } }
+        val surface = remember(this, node) { nodeSurface(materials, node) { shown(node) } }
 
         DisposableEffect(surface) {
             onDispose {
@@ -174,7 +171,7 @@ internal class PocketMaterials(
     }
 }
 
-internal fun nodeSurface(materials: CardMaterials, node: Int, onFirstFrame: () -> Unit): MaterialsSurface {
+private fun nodeSurface(materials: CardMaterials, node: Int, onFirstFrame: () -> Unit): MaterialsSurface {
     val main = Handler(Looper.getMainLooper())
     return MaterialsSurface(
         onFirstFrame = { main.post(onFirstFrame) },

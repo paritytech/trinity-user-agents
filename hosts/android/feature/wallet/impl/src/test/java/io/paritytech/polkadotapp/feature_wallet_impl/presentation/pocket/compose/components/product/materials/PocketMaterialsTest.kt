@@ -8,7 +8,7 @@ import org.junit.Test
 class PocketMaterialsTest {
     private val card = mockk<CardMaterials>()
 
-    private fun copy() = PocketMaterials(card, mutableStateOf(null), mutableStateOf(null)) { _, _ -> mockk() }
+    private fun copy() = PocketMaterials(card, mutableStateOf(null), mutableStateOf(null))
 
     // The list card and the opened card are two copies of one card. Each hides a node's children only
     // once its own surface drew, or the opened copy would show a blank node until its first frame.

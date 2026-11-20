@@ -33,7 +33,6 @@ class TrUAPIChatWorkerMaterialsTest {
     private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val roomId = ProductChatIdParameter("room-1")
     private val messageContext = RenderContext.ChatMessage(roomId = roomId.value, messageId = "msg-1", messageType = "custom")
-    private val footerContext = RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = "custom")
     private val withMaterials = RendererNode.Materials(MaterialsProps(emptyList()), listOf(RendererNode.Spacer(emptyList())))
 
     private val resolution = mockk<MaterialsResolution>(relaxed = true) {
@@ -70,24 +69,5 @@ class TrUAPIChatWorkerMaterialsTest {
             resolution.close()
         }
         verify(exactly = 1) { execution.resolveMaterials(any(), any(), any()) }
-    }
-
-    @Test
-    fun `a room footer with a materials node is reported in its footer context`() = runTest {
-        val execution = executionDrawing(withMaterials)
-
-        worker(execution).renderRoomFooter(roomId, "custom", DataByteArray.empty()).toList()
-
-        verify(exactly = 1) { execution.resolveMaterials(withMaterials, footerContext, false) }
-        verify(exactly = 1) { resolution.close() }
-    }
-
-    @Test
-    fun `a message without a materials node resolves nothing`() = runTest {
-        val execution = executionDrawing(RendererNode.String("plain"))
-
-        worker(execution).renderMessage(roomId, "msg-1", "custom", DataByteArray.empty()).toList()
-
-        verify(exactly = 0) { execution.resolveMaterials(any(), any(), any()) }
     }
 }

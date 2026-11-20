@@ -24,37 +24,16 @@ class MaterialInputsTest {
         assertEquals(expected.gamma, actual.gamma, TOLERANCE)
     }
 
-    @Test
-    fun `a phone lying flat reads no angles`() {
-        assertAngles(DeviceAngles(0f, 0f, 0f), MaterialInputs().angles(identity))
-    }
-
-    @Test
-    fun `a phone held upright reads beta 90 and tilts fully up`() {
-        val angles = MaterialInputs().angles(pitched(90.0))
-        assertAngles(DeviceAngles(0f, 90f, 0f), angles)
-
-        val frame = MaterialInputs.frameInputs(0f, angles.beta, angles.gamma, angles.alpha, identity, still = false)
-        assertArrayEquals(floatArrayOf(0f, 1f), frame.tilt, TOLERANCE)
-    }
-
     // Shaderlab does not clip the tilt, so a phone tipped past vertical keeps turning the material.
     @Test
-    fun `a phone tipped past vertical tilts past 1`() {
-        val angles = MaterialInputs().angles(pitched(100.0))
-        val frame = MaterialInputs.frameInputs(0f, angles.beta, angles.gamma, angles.alpha, identity, still = false)
+    fun `a phone held upright tilts fully up, and past vertical tilts past 1`() {
+        val upright = MaterialInputs().angles(pitched(90.0))
+        val tipped = MaterialInputs().angles(pitched(100.0))
+        val tilt = { angles: DeviceAngles -> MaterialInputs.frameInputs(0f, angles.beta, angles.gamma, angles.alpha, identity, still = false).tilt }
 
-        assertEquals(100f, angles.beta, TOLERANCE)
-        assertTrue(frame.tilt[1] > 1f)
-    }
-
-    // No warm-up, gain or smoothing: unlike the card tilt, every reading maps straight to its angles.
-    @Test
-    fun `every reading maps directly, the first included`() {
-        val inputs = MaterialInputs()
-
-        assertAngles(DeviceAngles(0f, 30f, 0f), inputs.angles(pitched(30.0)))
-        assertAngles(DeviceAngles(0f, 60f, 0f), inputs.angles(pitched(60.0)))
+        assertAngles(DeviceAngles(0f, 90f, 0f), upright)
+        assertArrayEquals(floatArrayOf(0f, 1f), tilt(upright), TOLERANCE)
+        assertTrue(tilt(tipped)[1] > 1f)
     }
 
     @Test

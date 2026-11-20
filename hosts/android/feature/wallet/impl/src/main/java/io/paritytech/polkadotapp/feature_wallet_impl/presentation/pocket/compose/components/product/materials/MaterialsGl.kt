@@ -81,7 +81,7 @@ internal object MaterialsGl {
     fun program(material: ByteArray, shader: MaterialShader): Result<Int> {
         if (!onGlThread()) return Result.failure(IllegalStateException("materials: GL called off its thread"))
         val linker = programs ?: return Result.failure(IllegalStateException("materials: no GL context"))
-        return linker.program(material, shader).map { it.id }
+        return linker.program(material, shader)
     }
 
     fun windowSurface(surface: Surface): EGLSurface? {
@@ -170,8 +170,6 @@ internal object MaterialsGl {
     }
 }
 
-internal class LinkedProgram(val id: Int, val fromDisk: Boolean)
-
 // GL thread only, with a context current.
 internal class GlPrograms(
     private val directory: File,
@@ -187,9 +185,9 @@ internal class GlPrograms(
         }
     }
 
-    fun program(material: ByteArray, shader: MaterialShader): Result<LinkedProgram> {
+    fun program(material: ByteArray, shader: MaterialShader): Result<Int> {
         val key = shader.vertex to shader.fragment
-        linked[key]?.let { return Result.success(LinkedProgram(it, fromDisk = false)) }
+        linked[key]?.let { return Result.success(it) }
         if (guard.crashed(material)) {
             val reason = "materials: ${material.toHexString()} crashed the app compiling"
             return Result.failure(IllegalStateException(reason))
@@ -206,7 +204,7 @@ internal class GlPrograms(
         val millis = SystemClock.elapsedRealtime() - started
         Timber.i("materials: program %s in %d ms (%s)", material.toHexString(), millis, source)
         linked[key] = program
-        return Result.success(LinkedProgram(program, fromDisk = fromDisk != null))
+        return Result.success(program)
     }
 
     private fun compile(shader: MaterialShader): Result<Int> = runCatching {

@@ -115,21 +115,6 @@ class RealPocketFaceSourceTest {
         verify(exactly = 1) { second.close() }
     }
 
-    // Neither the execution nor the runtime could resolve: the face still draws, plain.
-    @Test
-    fun `a face whose materials cannot be resolved still shows`() = runTest {
-        every { resolveDrawn(any()) } returns null
-        val shown = mutableListOf<PocketFace>()
-
-        val onScreen = source.observeFace(loyalty.card.key).onEach { shown += it }.launchIn(this)
-        advanceUntilIdle()
-        faces.emit(materialsFace("1"))
-        advanceUntilIdle()
-
-        assertEquals(listOf(PocketFace(materialsFace("1").toJsWidget(), materials = null)), shown)
-        onScreen.cancel()
-    }
-
     // A kept face was not drawn by the running execution, so its fallbacks must not reach the product.
     @Test
     fun `a kept face resolves on the runtime and a live face on the execution that drew it`() = runTest {

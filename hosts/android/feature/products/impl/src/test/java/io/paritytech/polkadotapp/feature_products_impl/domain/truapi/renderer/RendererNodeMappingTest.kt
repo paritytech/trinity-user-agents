@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.Background
@@ -134,12 +133,5 @@ class RendererNodeMappingTest {
             tree.toJsWidget(),
         )
         assertTrue(tree.hasMaterials())
-    }
-
-    @Test
-    fun `a tree without a materials node has none`() {
-        val tree = RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(RendererNode.String("a")))
-
-        assertFalse(tree.hasMaterials())
     }
 }

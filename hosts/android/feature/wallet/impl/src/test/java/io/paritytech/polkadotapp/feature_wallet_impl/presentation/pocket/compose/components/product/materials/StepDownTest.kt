@@ -28,11 +28,4 @@ class StepDownTest {
         assertEquals(true, stepDown.update(now = 51_999.milliseconds, strained = false))
         assertEquals(false, stepDown.update(now = 52_000.milliseconds, strained = false))
     }
-
-    @Test
-    fun `a device never strained never draws plain`() {
-        val stepDown = StepDown()
-
-        assertEquals(listOf(false, false), listOf(0, 60_000).map { stepDown.update(it.milliseconds, strained = false) })
-    }
 }

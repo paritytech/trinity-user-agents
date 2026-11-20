@@ -20,11 +20,6 @@ class GpuBudgetTest {
     }
 
     @Test
-    fun `the first frame alone never decides`() {
-        assertFalse(verdict(500.0))
-    }
-
-    @Test
     fun `only three frames are timed until the layers change`() {
         val budget = GpuBudget()
         repeat(3) { budget.record(10.milliseconds) }

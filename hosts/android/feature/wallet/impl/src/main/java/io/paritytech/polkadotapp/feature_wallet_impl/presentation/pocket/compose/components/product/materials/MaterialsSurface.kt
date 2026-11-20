@@ -17,7 +17,6 @@ import uniffi.truapi.UniformRole
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.nanoseconds
 
 // Callable from any thread: the work is posted to the GL thread, and the callbacks run there.
@@ -28,9 +27,6 @@ internal class MaterialsSurface(
 ) : Choreographer.FrameCallback {
     private val gl = MaterialsGl.handler
     private val released = AtomicBoolean(false)
-    private val drawn = AtomicInteger(0)
-
-    val framesDrawn: Int get() = drawn.get()
 
     private val schedule = FrameSchedule()
     private val budget = GpuBudget()
@@ -204,7 +200,6 @@ internal class MaterialsSurface(
 
         if (GLES30.glGetError() != GLES30.GL_NO_ERROR) return fail(null, MaterialFailure.UNSUPPORTED)
         if (!MaterialsGl.swap(surface)) return
-        drawn.incrementAndGet()
         if (!showedFirstFrame) {
             showedFirstFrame = true
             onFirstFrame()
