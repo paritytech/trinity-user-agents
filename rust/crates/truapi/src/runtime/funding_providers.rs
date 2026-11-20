@@ -32,7 +32,7 @@ use crate::{
 			provider_config,
 		},
 		funding_view,
-		worker_manifest::WorkerManifest,
+		WorkerManifest,
 	},
 	platform::{CoreStorageKey, ProductId},
 	unix_time::current_unix_millis,

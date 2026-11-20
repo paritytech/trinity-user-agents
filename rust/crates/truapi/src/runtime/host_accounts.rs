@@ -28,7 +28,7 @@ use crate::{
 			derive_product_keypair_from_subtree_secret, derive_product_public_key,
 			derive_ring_vrf_entropy_from_domain,
 		},
-		raw_signing::raw_payload_bytes,
+		raw_payload_bytes,
 		session::SessionInfo,
 	},
 	platform::{

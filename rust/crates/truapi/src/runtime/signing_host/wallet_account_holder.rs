@@ -19,7 +19,7 @@ use super::ring_vrf::RingResolver;
 use crate::{
 	host_internal::sso_messages::RingVrfError,
 	host_logic::{
-		device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret},
+		{read_or_create_device_encryption_secret, store_device_encryption_secret},
 		entropy::{derive_product_entropy, root_entropy_source},
 		product_account::{
 			ProductAccountError, derivation_index_bytes, derive_full_person_ring_vrf_entropy,

@@ -30,7 +30,7 @@ use crate::{
 			ContentResolver, DotnsCallError, DotnsError, DotnsRegistry, DotnsTransport,
 			namehash_under,
 		},
-		worker_manifest::{WorkerManifest, check_app_manifest},
+		{WorkerManifest, check_app_manifest},
 	},
 	runtime::{
 		dotns_lookup::DotnsLookup,

@@ -1010,7 +1010,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				}
 			}
 		}
-		crate::host_logic::contact_substitution::substitute(&call_data, &resolved)
+		crate::host_logic::substitute(&call_data, &resolved)
 			.map_err(|_| ContactResolutionError::UnknownContact)
 	}
 

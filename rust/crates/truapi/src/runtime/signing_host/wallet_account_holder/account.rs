@@ -11,7 +11,7 @@ use crate::{
 	},
 	host_logic::{
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
-		raw_signing::raw_payload_bytes,
+		raw_payload_bytes,
 		session::{SessionInfo, SessionState},
 	},
 	platform::{PermissionAuthorizationStatus, ProductId},
