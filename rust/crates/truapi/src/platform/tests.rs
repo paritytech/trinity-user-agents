@@ -595,6 +595,7 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
 		),
 		(CoreStorageKey::UnscopedEntriesOwner, "UnscopedEntriesOwner", None),
+		(CoreStorageKey::SessionUsernamesRun, "SessionUsernamesRun", None),
 	] {
 		// A host that sweeps a product's state by owner has to find what it
 		// stored under the slot alone, before keys included a stack id, too.

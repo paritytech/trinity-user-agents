@@ -483,7 +483,11 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 		r#"{{"$v":1,"displayName":"D","description":"d",
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
-	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
+	let entry = CachedManifest {
+		run: crate::test_support::paseo_test_stack().run(),
+		fetched_at_secs,
+		json: Some(json),
+	};
 	futures::executor::block_on(platform.write_core_storage(
 		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
@@ -493,8 +497,20 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
+	let run = crate::test_support::paseo_test_stack().run();
+	cache_manifest_entry_in(platform, run, owner, json, age_secs);
+}
+
+/// [`cache_manifest_entry`] for a host whose stack is in `run`.
+fn cache_manifest_entry_in(
+	platform: &StubPlatform,
+	run: crate::platform::StackRun,
+	owner: &str,
+	json: Option<String>,
+	age_secs: u64,
+) {
 	let entry =
-		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
+		CachedManifest { run, fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
 	futures::executor::block_on(platform.write_core_storage(
 		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
@@ -747,6 +763,7 @@ fn host_on_stack(
 fn store_grant_and_permission(host: &ProductRuntimeHost<RemoteAccountHolder>) {
 	let storage = host.connection.services.storage();
 	let entry = CachedManifest {
+		run: host.connection.services.stack().run(),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
 	};
@@ -782,6 +799,26 @@ fn stored_identity_disclosure(
 	.expect("stub core storage reads")
 }
 
+/// After a wipe the stack has a new generation and a new Asset Hub. A grant
+/// cached from the old one must not apply. The stored permission is kept.
+#[test]
+fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
+	let platform = stub_platform();
+	seed_owner_value(&platform, "wallet.dot");
+	let before_wipe = host_on_stack(platform.clone(), "stack", "first");
+	store_grant_and_permission(&before_wipe);
+	assert!(granted_value(&before_wipe, "wallet.dot").is_some());
+
+	let after_wipe = host_on_stack(platform, "stack", "second");
+	assert_eq!(
+		(
+			read_storage(&after_wipe, Some("wallet.dot"), "k").unwrap_err(),
+			stored_identity_disclosure(&after_wipe),
+		),
+		(access_not_granted(), PermissionAuthorizationStatus::Authorized)
+	);
+}
+
 /// A fork has the same genesis hashes as its source and a different id. After
 /// a host switches to the fork, a grant cached on the source and a permission
 /// stored there must not apply.
@@ -801,6 +838,20 @@ fn a_fork_honours_neither_grants_nor_permissions_stored_for_its_source() {
 		),
 		(access_not_granted(), PermissionAuthorizationStatus::NotDetermined)
 	);
+}
+
+/// An operator can wipe a stack and leave `generation` as it was. The genesis
+/// hashes still change, so a grant read from the old Asset Hub must not apply.
+#[test]
+fn a_grant_cached_from_another_asset_hub_is_not_honoured() {
+	let platform = stub_platform();
+	let manifest = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	let other_asset_hub = crate::test_support::test_run([0x99; 32]);
+	cache_manifest_entry_in(&platform, other_asset_hub, "wallet.dot", Some(manifest), 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
 }
 
 /// With no session, every proof refusal is the same refusal.
@@ -7791,7 +7842,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
-	let session = sso_session_info();
+	let session = external_sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
 	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
@@ -7905,7 +7956,7 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let first = sso_session_info();
+	let first = external_sso_session_info();
 	let mut replacement = first.clone();
 	replacement.public_key = [0x44; 32];
 	replacement.identity_account_id = Some([0x55; 32]);
@@ -7928,10 +7979,13 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 #[test]
 fn stored_session_activation_resolves_after_connected_installation() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	});
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -7973,8 +8027,10 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
 	let stored = sso_session_info();
 	let untagged = stored.encode();
-	let platform =
-		Arc::new(StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() });
+	let platform = Arc::new(
+		StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() }
+			.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 

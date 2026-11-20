@@ -269,7 +269,15 @@ export type CoreStorageKey =
    * Kept under the slot alone itself, so every stack the host runs reads the
    * same entry. See `StackStorage`.
    */
-  | { tag: "UnscopedEntriesOwner"; value?: undefined };
+  | { tag: "UnscopedEntriesOwner"; value?: undefined }
+  /**
+   * The `StackRun` the usernames in the `AuthSession` blob were read in,
+   * with a hash of that blob, so it vouches for that blob only. A host that
+   * keeps the `AuthSession` value under a key of its own keeps this one
+   * next to it. When it vouches for another run or another blob, the core
+   * installs the session and looks its usernames up again.
+   */
+  | { tag: "SessionUsernamesRun"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1178,6 +1186,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ stackId: S.str }) as S.Codec<{ stackId: string }>,
       ] as const,
       UnscopedEntriesOwner: [18, S._void] as const,
+      SessionUsernamesRun: [19, S._void] as const,
     }),
 );
 

@@ -1,6 +1,6 @@
 //! How a command's [`NetworkSource`] becomes the network it runs against.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Result, anyhow, bail, ensure};
 
@@ -18,10 +18,16 @@ impl NetworkSource {
 	/// `--chain-backend` with `--network` or the stack. Fails for `--network`
 	/// with a stack, and for the light client with a stack; each message
 	/// names where the stack came from.
+	///
+	/// `stack_copies` is a directory to keep the published descriptor a
+	/// built-in network last ran on, which it then starts from while the
+	/// published one is unreachable. Without one it starts from the bundled
+	/// copy.
 	pub fn new(
 		chain_backend: ChainBackend,
 		network: Option<Network>,
 		stack: Option<StackArg>,
+		stack_copies: Option<PathBuf>,
 	) -> Result<Self> {
 		let network = match (network, stack) {
 			(Some(_), Some(StackArg { source, .. })) => {
@@ -40,7 +46,7 @@ impl NetworkSource {
 			},
 			(network, None) => NetworkChoice::BuiltIn(network.unwrap_or_default()),
 		};
-		Ok(Self { chain_backend, network })
+		Ok(Self { chain_backend, network, stack_copies })
 	}
 
 	/// The network a command runs against, the built-in network or the stack,
@@ -92,8 +98,13 @@ impl NetworkSource {
 				(stack, None)
 			},
 			NetworkChoice::BuiltIn(network) => {
-				let (stack, origin) =
-					network.resolve_built_in(fetch_timeout, self.chain_backend).await?;
+				let (stack, origin) = network
+					.resolve_built_in(
+						fetch_timeout,
+						self.chain_backend,
+						self.stack_copies.as_deref(),
+					)
+					.await?;
 				(stack, Some(origin))
 			},
 		};

@@ -163,9 +163,10 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			(
 				None,
 				ManifestSource::LookupFailed {
-					reason: "Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
+					reason:
+						"Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
 					         reason: \"fixture serves no chain\" }"
-						.to_string(),
+							.to_string(),
 				},
 			),
 			(None, ManifestSource::TimedOut),
@@ -219,9 +220,9 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 		crate::Spawner::for_test(),
 	);
 	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
-	let storage = services.storage();
+	let (storage, run) = (services.storage(), services.stack().run());
 	let read = |policy: CachePolicy| {
-		cached_dotns_json(&storage, key.clone(), policy, || async {
+		cached_dotns_json(&storage, &run, key.clone(), policy, || async {
 			Ok::<_, String>(Some("republished".to_string()))
 		})
 	};
@@ -229,7 +230,14 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 	let (before, live, after) = futures::executor::block_on(async {
 		services
 			.storage()
-			.write(key.clone(), encode_cached_root_manifest(Some("published"), current_unix_secs()))
+			.write(
+				key.clone(),
+				encode_cached_root_manifest(
+					Some("published"),
+					current_unix_secs(),
+					&services.stack().run(),
+				),
+			)
 			.await
 			.expect("seeded");
 		let before = read(CachePolicy::UseCache).await.expect("cached");

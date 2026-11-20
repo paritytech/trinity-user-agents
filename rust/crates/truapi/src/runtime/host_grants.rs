@@ -400,6 +400,7 @@ impl HostGrantStore {
 		if self.keeping == GrantKeeping::Paired {
 			allowances::write_allowance_key(
 				&self.services.storage(),
+				&self.services.stack().run(),
 				session,
 				product_id,
 				resource,
@@ -412,6 +413,7 @@ impl HostGrantStore {
 			if self.keeping == GrantKeeping::Paired {
 				let _ = allowances::remove_allowance_key(
 					&self.services.storage(),
+					&self.services.stack().run(),
 					session,
 					product_id,
 					resource,
@@ -491,6 +493,7 @@ impl HostGrantStore {
 		let allowance = {
 			let Some(secret) = allowances::read_allowance_key(
 				&self.services.storage(),
+				&self.services.stack().run(),
 				session,
 				product_id,
 				resource,
@@ -870,6 +873,7 @@ impl HostGrantPersistence<'_> {
 			self.store.keeping == GrantKeeping::Paired &&
 			let Err(error) = allowances::clear_product_allowance_keys(
 				&self.store.services.storage(),
+				&self.store.services.stack().run(),
 				session,
 				product_id,
 			)

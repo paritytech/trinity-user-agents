@@ -606,7 +606,12 @@ async fn main() -> Result<()> {
 		None => normalized(std::env::var(STACK_ENV).ok())
 			.map(|value| StackArg { value, source: STACK_ENV }),
 	};
-	let source = NetworkSource::new(cli.chain_backend, cli.network, stack)?;
+	// Only a host keeps the descriptor it ran on: `stack` and the one-off
+	// commands have no state of their own to protect from an older copy.
+	let hosts =
+		matches!(cli.command, Command::PairingHost(_) | Command::Dev(_) | Command::SigningHost(_));
+	let stack_copies = hosts.then(|| command_base_path(&cli.command).join("stacks"));
+	let source = NetworkSource::new(cli.chain_backend, cli.network, stack, stack_copies)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript

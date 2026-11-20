@@ -123,14 +123,14 @@ pub async fn apply(
 	configs: &[LocalProductConfig],
 	now_secs: u64,
 ) -> Result<AppliedGrants> {
-	let storage = stack.storage(platform);
+	let (storage, run) = (stack.storage(platform), stack.run());
 	let mut lines = Vec::with_capacity(configs.len());
 	for config in configs {
 		let manifest = config.root_manifest_json();
 		storage
 			.write(
 				CoreStorageKey::product_manifest(&config.product_name),
-				encode_cached_root_manifest(Some(&manifest), now_secs),
+				encode_cached_root_manifest(Some(&manifest), now_secs, &run),
 			)
 			.await
 			.map_err(|error| anyhow::anyhow!("{error:?}"))

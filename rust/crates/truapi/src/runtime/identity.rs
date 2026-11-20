@@ -22,10 +22,7 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::{
-		dotns_lookup::DotnsLookup,
-		services::DotnsReads,
-	},
+	runtime::{dotns_lookup::DotnsLookup, services::DotnsReads},
 	session_usernames::SessionUsernames,
 };
 
@@ -50,24 +47,24 @@ pub async fn resolve_session_identity_with_chain(
 		return session;
 	}
 	match lookup_session_identity(reads, chain, asset_hub_chain_genesis_hash, &session).await {
-		Some(identity) => {
+		LookupOutcome::Found(identity) => {
 			let (lite_username, full_username) = identity.into_usernames();
 			SessionInfo { lite_username, full_username, ..session }
 		},
-		None => session,
+		LookupOutcome::NoRecord | LookupOutcome::Failed => session,
 	}
 }
 
 /// Reads `session`'s usernames from the dotNS contracts on Asset Hub, whatever
 /// usernames it already carries. The identity account is tried first, then the
-/// root key when the identity account holds no username. Returns `None` when
-/// neither account holds a username or the lookup fails.
+/// root key when the identity account holds no username. Running out of
+/// [`LOOKUP_BUDGET`] is a failed lookup.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup_session"))]
 async fn read_session_identity(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	session: &SessionInfo,
-) -> Option<DotnsIdentity> {
+) -> LookupOutcome {
 	let budget = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
 	pin_mut!(budget);
 	let lookup = async {
@@ -80,32 +77,25 @@ async fn read_session_identity(
 		)
 		.await
 		{
-			LookupOutcome::Found(identity) => Some(identity),
 			LookupOutcome::NoRecord if preferred_account != session.public_key => {
-				match lookup_with_retries(
+				lookup_with_retries(
 					chain,
 					asset_hub_chain_genesis_hash,
 					session.public_key,
 					"root identity",
 				)
 				.await
-				{
-					LookupOutcome::Found(identity) => Some(identity),
-					LookupOutcome::NoRecord | LookupOutcome::Failed => None,
-				}
 			},
-			LookupOutcome::NoRecord | LookupOutcome::Failed => None,
+			outcome => outcome,
 		}
 	}
 	.fuse();
 	pin_mut!(lookup);
 	futures::select! {
-		identity = lookup => identity,
+		outcome = lookup => outcome,
 		() = budget => {
-			warn!(
-				"dotNS username resolution ran out of budget; the session installs without one"
-			);
-			None
+			warn!("dotNS username resolution ran out of budget");
+			LookupOutcome::Failed
 		}
 	}
 }
@@ -133,7 +123,7 @@ pub async fn lookup_session_identity(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	session: &SessionInfo,
-) -> Option<DotnsIdentity> {
+) -> LookupOutcome {
 	let (chain, owned) = (chain.clone(), session.clone());
 	reads
 		.identities
@@ -141,7 +131,7 @@ pub async fn lookup_session_identity(
 			read_session_identity(&chain, asset_hub_chain_genesis_hash, &owned).await
 		})
 		.await
-		.flatten()
+		.unwrap_or(LookupOutcome::Failed)
 }
 
 /// Maximum lookup attempts per account on transient failure. The first attempt
@@ -149,8 +139,9 @@ pub async fn lookup_session_identity(
 /// timeout therefore usually resolves immediately.
 const IDENTITY_LOOKUP_MAX_ATTEMPTS: usize = 3;
 
+/// What a dotNS username lookup found.
 #[derive(Clone)]
-enum LookupOutcome {
+pub enum LookupOutcome {
 	/// A username record was found.
 	Found(DotnsIdentity),
 	/// The account has no dotNS username. Definitive, not worth a retry.

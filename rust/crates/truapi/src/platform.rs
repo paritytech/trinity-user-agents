@@ -35,7 +35,7 @@ pub use crate::{
 	stack::{
 		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
 		StackFetchResponse, StackHost, StackIdentity, StackRecords, StackRefresh,
-		StackRefreshOutcome, StackStatus, StackStorage,
+		StackRefreshOutcome, StackRun, StackStatus, StackStorage,
 	},
 };
 
@@ -1253,6 +1253,13 @@ pub enum CoreStorageKey {
 	/// same entry. See [`StackStorage`].
 	#[codec(index = 18)]
 	UnscopedEntriesOwner,
+	/// The [`StackRun`] the usernames in the `AuthSession` blob were read in,
+	/// with a hash of that blob, so it vouches for that blob only. A host that
+	/// keeps the `AuthSession` value under a key of its own keeps this one
+	/// next to it. When it vouches for another run or another blob, the core
+	/// installs the session and looks its usernames up again.
+	#[codec(index = 19)]
+	SessionUsernamesRun,
 }
 
 /// The key a host stores core-owned state under: a [`CoreStorageKey`] slot
@@ -1394,6 +1401,7 @@ pub fn describe_core_storage_key(
 		},
 		CoreStorageKey::UnscopedEntriesOwner => ("UnscopedEntriesOwner", None),
 		CoreStorageKey::StackRecord { .. } => ("StackRecord", None),
+		CoreStorageKey::SessionUsernamesRun => ("SessionUsernamesRun", None),
 	};
 	Ok(CoreStorageKeyDescription { stack, kind, owner })
 }
