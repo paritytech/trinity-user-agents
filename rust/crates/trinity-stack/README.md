@@ -88,8 +88,8 @@ Users get the stack with the next release of `@parity/trinity-stack` and the cra
 - `StackReader` refreshes each stack's copy by a `Refresh` policy: it serves the copy it has, decides when to fetch, and
   takes the answer, so a descriptor is never a live dependency.
 - `Descriptor::web_url` gives the URL a dotNS name opens at on the stack's `web-gateway`.
-- `Chain::genesis`, `Descriptor::service` and `Descriptor::dotns_address` return a chain's genesis hash, a service by kind
-  and a dotNS address as bytes. They decode hex that validation already checked, and panic only on a descriptor that
+- `Chain::genesis`, `Descriptor::service`, `Descriptor::dotns_address` and `Descriptor::contract_address` return a
+  chain's genesis hash, a service by kind, a dotNS address and a named contract's address as bytes. They decode hex that validation already checked, and panic only on a descriptor that
   skipped validation.
 
 Every error is one rule of the RFC, and `Error::code` is its stable name.
