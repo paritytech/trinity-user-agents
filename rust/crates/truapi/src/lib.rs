@@ -494,7 +494,9 @@ cfg_select! {
 		};
 		pub use host_logic::{session::SsoSessionInfo, worker::WorkerTransition};
 		pub use host_rpc_client::HostRpcClient;
-		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
+		pub use image_loader::{
+			ImageError, ImageFormat, ImageReference, LoadedImage, Rejection, check_image,
+		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use materials::{
 			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
