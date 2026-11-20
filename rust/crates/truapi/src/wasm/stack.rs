@@ -72,7 +72,7 @@ pub async fn stack_from_js(
 /// Starts keeping `refresh` current through the host's `fetchStackDescriptor`
 /// callback, and reports the status to `stackChanged` at start and on each
 /// change. A host without `fetchStackDescriptor` gets the status once, at
-/// start: nothing changes it after that.
+/// start, and reads a later one with `stackStatus`.
 pub fn start_refresh(
 	refresh: &StackRefresh,
 	callbacks: &JsValue,

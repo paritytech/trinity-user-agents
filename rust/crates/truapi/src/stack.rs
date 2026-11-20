@@ -5,23 +5,27 @@
 //! the key in the stack's link, starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. The [`Stack`] it
 //! resolves holds the network, the dotNS TLD, each chain's genesis hash and
-//! the `AccountDataStore` contract address, and answers `get_chain_info`. It
-//! also carries the [`StackChecks`] that compare what the chains answer with
-//! the descriptor.
+//! the `AccountDataStore` contract address, and answers `get_chain_info`. A
+//! runtime built on that [`Stack`] also asks each chain it connects to for
+//! its genesis hash, and the refresh reports a chain that gives a different
+//! one from the descriptor's.
 
 mod records;
 mod refresh;
 mod source;
+
+use std::sync::Arc;
 
 use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::{chain_runtime::GenesisCheck, dotns_name::DOTNS_TLDS};
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
-pub use refresh::{StackChecks, StackHost, StackRefresh};
+use refresh::StackChecks;
+pub use refresh::{StackHost, StackRefresh};
 pub use source::{
 	StackFetchRequest, StackFetchResponse, StackMismatch, StackRefreshOutcome, StackStatus,
 };
@@ -66,7 +70,11 @@ const RESERVED_TLD: &str = "dot";
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// the genesis hash of each chain role the core uses, and the Asset Hub
 /// contracts the core reads.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
+/// hands out also has its chains checked against the descriptor, and equality
+/// does not look at that.
+#[derive(Debug, Clone)]
 pub struct Stack {
 	network: String,
 	tld: String,
@@ -74,6 +82,16 @@ pub struct Stack {
 	account_data_store: Option<[u8; 20]>,
 	checks: Option<StackChecks>,
 }
+
+impl PartialEq for Stack {
+	fn eq(&self, other: &Self) -> bool {
+		let Self { network, tld, chains, account_data_store, checks: _ } = self;
+		(network, tld, chains, account_data_store) ==
+			(&other.network, &other.tld, &other.chains, &other.account_data_store)
+	}
+}
+
+impl Eq for Stack {}
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
 /// Bulletin are required: the core reads dotNS and runs SSO and its own
@@ -245,11 +263,12 @@ impl Stack {
 		self.account_data_store
 	}
 
-	/// The checks of the stack's chains against its descriptor. `None` unless
-	/// a [`StackRefresh`] resolved the stack: the core does not check the
-	/// chains of a stack built any other way.
-	pub fn checks(&self) -> Option<&StackChecks> {
-		self.checks.as_ref()
+	/// Hears the genesis hash each chain connection's chain gives, for the
+	/// runtime that opens them. `None` unless a [`StackRefresh`] handed the
+	/// stack out: the core does not check the chains of a stack built any
+	/// other way.
+	pub fn genesis_check(&self) -> Option<Arc<dyn GenesisCheck>> {
+		self.checks.as_ref().map(StackChecks::genesis_check)
 	}
 
 	/// The genesis hash of the chain with this role, or `None` when the stack

@@ -102,9 +102,9 @@ export type StackFetchResponse =
 /** Where the stack's descriptor and what one of its chains answered disagree. */
 export interface StackMismatch {
   /**
-   * `genesisHash`: a chain gave another genesis hash than the descriptor
-   * names, as it does once it restarted from genesis. The core opens no
-   * connection to the chain while it does.
+   * `genesisHash`: the last connection opened for a chain reached one with a
+   * different genesis hash from the one the descriptor names, as after the
+   * chain restarted from genesis. The core refused that connection.
    */
   kind: "genesisHash";
   /** The chain's role in the descriptor. */
@@ -161,11 +161,10 @@ export interface StackStatus {
     reason?: string;
   };
   /**
-   * The chains that answered otherwise than the descriptor the core runs
-   * names, in the descriptor's order. The core opens no connection to them.
-   * It fetches the descriptor again when one first appears, and sets
-   * `restartRequired` once the published copy names the chains as they
-   * answer now.
+   * Where the chains last answered differently from the descriptor the core
+   * runs, in the descriptor's order. While there is one the core fetches the
+   * descriptor every five minutes instead of every hour. A published copy
+   * that changes a chain sets `restartRequired` as usual.
    */
   mismatches: StackMismatch[];
 }

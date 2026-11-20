@@ -11,10 +11,15 @@ use serde_json::json;
 
 use futures::executor::{block_on, block_on_stream};
 
-use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, StatementSubmitError};
+use super::{
+	LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, StatementStoreRpcClientError,
+	StatementSubmitError,
+};
 use crate::{
 	Spawner,
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
+	chain_runtime::{
+		ChainRuntime, GenesisCheck, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind,
+	},
 	host_logic::statement_store::{
 		MAX_MATCH_ALL_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD, StatementStoreApi,
 		StatementWatchError, TopicFilter, hex_topic,
@@ -387,4 +392,63 @@ fn errors_pass_on_before_and_after_the_backlog() {
 
 	let expected = vec![Err(failure.clone()), Ok(vec![vec![1], vec![2]]), Err(failure)];
 	assert_eq!(batches_of(pages), expected);
+}
+
+/// What the genesis check heard, in order.
+#[derive(Default)]
+struct HeardAnswers(Mutex<Vec<([u8; 32], [u8; 32])>>);
+
+impl GenesisCheck for HeardAnswers {
+	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
+		self.0.lock().unwrap().push((named, answered));
+	}
+}
+
+/// Statement subscriptions run on connections the store opens itself, apart
+/// from the pooled one. A host that only listens, such as a paired one
+/// waiting for a request, has nothing else on People, so a wiped People
+/// chain has to be caught on these connections too.
+#[test]
+fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
+	const WIPED_PEOPLE: [u8; 32] = [0x19; 32];
+	let wiped_node = Arc::new(StubPlatform {
+		rpc_responder: Some(Arc::new(|request| {
+			let request: serde_json::Value = serde_json::from_str(request).unwrap();
+			let genesis = format!("0x{}", hex::encode(WIPED_PEOPLE));
+			vec![json!({"jsonrpc": "2.0", "id": request["id"], "result": genesis}).to_string()]
+		})),
+		..Default::default()
+	});
+	let heard = Arc::<HeardAnswers>::default();
+	let pooled = PeopleChain::new(vec![Upstream::Drops]);
+	let statement_store = StatementStoreRpc::new(
+		wiped_node.clone(),
+		ChainRuntime::new(pooled.clone(), Spawner::for_test()).checking_genesis(heard.clone()),
+		PEOPLE_GENESIS,
+		Spawner::for_test(),
+	);
+
+	let refused =
+		block_on(statement_store.client("test")).expect_err("the wiped People chain is refused");
+
+	let kind = match refused {
+		StatementStoreRpcClientError::Chain(failure) => Some(failure.kind()),
+		StatementStoreRpcClientError::Connect { .. } => None,
+	};
+	let asked: Vec<serde_json::Value> = wiped_node
+		.sent_rpc
+		.lock()
+		.unwrap()
+		.iter()
+		.map(|request| serde_json::from_str::<serde_json::Value>(request).unwrap()["method"].take())
+		.collect();
+	assert_eq!(
+		(kind, heard.0.lock().unwrap().clone(), asked, pooled.connects()),
+		(
+			Some(RuntimeFailureKind::HostFailure),
+			vec![(PEOPLE_GENESIS, WIPED_PEOPLE)],
+			vec![json!("chainSpec_v1_genesisHash")],
+			0,
+		)
+	);
 }

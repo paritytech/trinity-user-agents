@@ -17,6 +17,12 @@ use super::{ReplaceCheck, Stack, StackError};
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
 
+/// How old a copy gets before the core fetches the descriptor again while a
+/// chain gives a different genesis hash from the one the copy names. After a
+/// wipe the operator publishes the new hashes, and until the core has them
+/// the chain is out of use.
+const MISMATCH_REFRESH_MAX_AGE_SECS: u64 = 5 * 60;
+
 /// A fetch of the stack's descriptor for the host to make.
 ///
 /// Send a `GET` to `url`. Do not follow redirects: the descriptor's URL rules
@@ -78,9 +84,9 @@ pub enum StackRefreshOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StackMismatch {
-	/// A chain gave another genesis hash than the descriptor names, as it
-	/// does once it restarted from genesis. The core opens no connection to
-	/// the chain while it does.
+	/// The last connection opened for a chain reached one with a different
+	/// genesis hash from the one the descriptor names, as after the chain
+	/// restarted from genesis. The core refused that connection.
 	GenesisHash {
 		/// The chain's role in the descriptor.
 		role: String,
@@ -117,11 +123,10 @@ pub struct StackStatus {
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
-	/// The chains that answered otherwise than the descriptor the core runs
-	/// names, in the descriptor's order. The core opens no connection to
-	/// them. It fetches the descriptor again when one first appears, and
-	/// sets `restart_required` once the published copy names the chains as
-	/// they answer now.
+	/// Where the chains last answered differently from the descriptor the
+	/// core runs, in the descriptor's order. While there is one the core
+	/// fetches the descriptor every five minutes instead of every hour. A
+	/// published copy that changes a chain sets `restart_required` as usual.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -196,8 +201,6 @@ pub struct StackSource {
 	/// The genesis hash each chain gave in place of the one the running copy
 	/// names, keyed by the named one.
 	wrong_genesis: HashMap<[u8; 32], [u8; 32]>,
-	/// Whether a chain gave a wrong answer that no fetch has followed yet.
-	refetch_owed: bool,
 }
 
 impl StackSource {
@@ -236,7 +239,6 @@ impl StackSource {
 			expired,
 			last_refresh: None,
 			wrong_genesis: HashMap::new(),
-			refetch_owed: false,
 		})
 	}
 
@@ -279,61 +281,46 @@ impl StackSource {
 	/// from it, and returns whether that changed [`Self::status`]. A chain
 	/// the running copy does not name changes nothing.
 	///
-	/// A wrong answer the chain had not given before owes a fetch, which
-	/// [`Self::take_owed_refetch`] hands out: after a wipe the published
-	/// descriptor names the new chains.
+	/// While a chain's last answer is wrong, [`Self::next_fetch_in`] counts
+	/// to five minutes instead of an hour.
 	pub fn chain_answered(&mut self, named: [u8; 32], answered: [u8; 32]) -> bool {
-		let Some(chain) =
-			self.running.descriptor.chains.iter().find(|chain| chain.genesis() == named)
-		else {
+		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;
-		};
+		}
 		let wrong = (answered != named).then_some(answered);
 		if self.wrong_genesis.get(&named).copied() == wrong {
 			return false;
 		}
 		match wrong {
-			Some(answered) => {
-				tracing::warn!(
-					"the stack's {} chain gave genesis hash 0x{}, not 0x{}",
-					chain.role,
-					hex::encode(answered),
-					hex::encode(named)
-				);
-				self.wrong_genesis.insert(named, answered);
-				self.refetch_owed = true;
-			},
-			None => {
-				self.wrong_genesis.remove(&named);
-			},
-		}
+			Some(answered) => self.wrong_genesis.insert(named, answered),
+			None => self.wrong_genesis.remove(&named),
+		};
 		true
-	}
-
-	/// Whether a chain gave a wrong answer since this was last asked. The
-	/// caller then makes [`Self::forced_fetch`].
-	#[must_use = "an owed fetch is forgotten once it is taken"]
-	pub fn take_owed_refetch(&mut self) -> bool {
-		core::mem::take(&mut self.refetch_owed)
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
 	/// out. Answer it with [`Self::fetched`].
 	#[must_use = "a fetch handed out stays pending until `fetched` answers it"]
 	pub fn due_fetch(&mut self, now_unix_seconds: i64) -> Option<FetchRequest> {
-		self.first_fetch
-			.take()
-			.or_else(|| self.reader.get(&self.pointer, now_unix_seconds).fetch)
+		match self.next_fetch_in(now_unix_seconds) {
+			Some(Duration::ZERO) => self.forced_fetch(now_unix_seconds),
+			_ => None,
+		}
 	}
 
 	/// How long until [`Self::due_fetch`] has a fetch to make, or `None` while
 	/// one is out.
 	#[must_use]
 	pub fn next_fetch_in(&self, now_unix_seconds: i64) -> Option<Duration> {
-		match self.first_fetch {
-			Some(_) => Some(Duration::ZERO),
-			None => self.reader.due_in(&self.pointer, now_unix_seconds).map(Duration::from_secs),
+		if self.first_fetch.is_some() {
+			return Some(Duration::ZERO);
 		}
+		let hourly = self.reader.due_in(&self.pointer, now_unix_seconds)?;
+		let sooner = match self.mismatches().is_empty() {
+			true => 0,
+			false => REFRESH_MAX_AGE_SECS - MISMATCH_REFRESH_MAX_AGE_SECS,
+		};
+		Some(Duration::from_secs(hourly.saturating_sub(sooner)))
 	}
 
 	/// A fetch to make now whatever the copy's age, unless one is out. Answer

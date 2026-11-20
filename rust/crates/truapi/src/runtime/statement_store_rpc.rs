@@ -60,7 +60,9 @@ pub enum StatementStoreRpcClientError {
 		/// Chain provider error.
 		error: ProviderError,
 	},
-	/// The pooled People-chain connection could not be opened.
+	/// The pooled People-chain connection could not be opened, or a
+	/// connection reached a chain with a different genesis hash from the
+	/// People chain's.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
 }
@@ -140,13 +142,16 @@ impl StatementStoreRpc {
 	}
 
 	/// Open a statement-store RPC client over its own host-provided
-	/// People-chain connection, for statement subscriptions.
+	/// People-chain connection, for statement subscriptions. The connection
+	/// passes the pooled connections' genesis check first.
 	pub async fn client(
 		&self,
 		label: &'static str,
 	) -> Result<RpcClient, StatementStoreRpcClientError> {
 		let connection = self.connect(label).await?;
-		Ok(RpcClient::new(HostRpcClient::new(connection, self.spawner.clone())))
+		let rpc_client = HostRpcClient::new(connection, self.spawner.clone());
+		self.chain.check_genesis(self.people_chain_genesis_hash, &rpc_client).await?;
+		Ok(RpcClient::new(rpc_client))
 	}
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.

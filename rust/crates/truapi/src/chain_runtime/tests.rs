@@ -2718,7 +2718,7 @@ fn node_of(genesis: [u8; 32]) -> Arc<ScriptedProvider> {
 /// connection is not handed out and its socket is closed. The next caller
 /// dials again rather than being given the refused one.
 #[test]
-fn a_connection_to_a_chain_with_another_genesis_hash_is_refused() {
+fn a_connection_to_a_chain_with_a_different_genesis_hash_is_refused() {
 	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
 	let provider = node_of(answered);
 	let heard = Arc::<HeardAnswers>::default();
@@ -2727,7 +2727,7 @@ fn a_connection_to_a_chain_with_another_genesis_hash_is_refused() {
 
 	let refused = futures::executor::block_on(runtime.rpc_client("test", &named))
 		.err()
-		.expect("a chain with another genesis hash is refused");
+		.expect("a chain with a different genesis hash is refused");
 	let socket_closed = provider.sender.lock().unwrap().is_none();
 	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
 
@@ -2776,6 +2776,21 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 	);
 }
 
+/// A product's runtime opens its own connections, apart from the core's. A
+/// wiped chain must not reach a product through them.
+#[test]
+fn a_products_connection_is_checked_like_the_cores() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(node_of(answered), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let product = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+
+	assert!(product.is_err(), "the product is not given the wiped chain");
+	assert_eq!(heard.heard(), vec![(named, answered)]);
+}
+
 /// A chain that cannot be reached is not a wrong chain. Nothing is said about
 /// its genesis hash, so no descriptor is fetched for it, and a later attempt
 /// may reach it.
@@ -2792,20 +2807,53 @@ fn an_unreachable_chain_gives_no_answer_to_check() {
 	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
 }
 
-/// A node that will not say which chain it serves cannot be told from one
-/// serving another chain, so nothing is read from it. It gave no wrong
-/// answer either, so the check hears nothing.
+/// A node may accept the socket and hang up before it names its chain, as one
+/// does while it restarts. That is a chain out of reach, to be dialled again,
+/// not a chain that answered wrong.
 #[test]
-fn a_node_that_does_not_name_its_chain_is_not_used() {
-	let provider = node_answering_its_genesis_with(
-		r#""error":{"code":-32601,"message":"Method not found"}"#.to_string(),
-	);
+fn a_node_that_hangs_up_before_naming_its_chain_is_unavailable() {
+	let hung_up = Arc::new(Mutex::new(None::<Arc<ScriptedProvider>>));
+	let hangs_up = hung_up.clone();
+	let provider = Arc::new(ScriptedProvider::new(move |_request| {
+		let provider = hangs_up.lock().unwrap().clone().expect("the provider is set");
+		provider.sender.lock().unwrap().take();
+		None
+	}));
+	*hung_up.lock().unwrap() = Some(provider.clone());
 	let heard = Arc::<HeardAnswers>::default();
 	let runtime = ChainRuntime::new(provider, Spawner::for_test()).checking_genesis(heard.clone());
 
 	let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
 		.err()
-		.expect("a chain that gives no genesis hash is not used");
+		.expect("the chain hung up");
 
-	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::HostFailure, Vec::new()));
+	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
+}
+
+/// A node that will not say which chain it serves, or says something that is
+/// no genesis hash, cannot be told from one serving a different chain, so
+/// nothing is read from it. It named no other chain either, so the check
+/// hears nothing.
+#[test]
+fn a_node_that_does_not_name_its_chain_is_not_used() {
+	let replies = [
+		r#""error":{"code":-32601,"message":"Method not found"}"#,
+		r#""result":"0xa1a1""#,
+		r#""result":null"#,
+	];
+
+	let outcomes = replies.map(|reply| {
+		let heard = Arc::<HeardAnswers>::default();
+		let runtime = ChainRuntime::new(
+			node_answering_its_genesis_with(reply.to_string()),
+			Spawner::for_test(),
+		)
+		.checking_genesis(heard.clone());
+		let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+			.err()
+			.expect("a chain that gives no genesis hash is not used");
+		(failure.kind(), heard.heard().len())
+	});
+
+	assert_eq!(outcomes, [(RuntimeFailureKind::HostFailure, 0); 3]);
 }

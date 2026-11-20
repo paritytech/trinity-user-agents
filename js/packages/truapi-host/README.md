@@ -62,19 +62,22 @@ refresh it.
   copy it stored was fetched less than an hour ago, and on `refreshStack()`.
   A sleeping device can stretch that hour, so call `refreshStack()` when the
   page becomes visible again.
-- `stackChanged(status)`: the `StackStatus` at start and on each change, also
-  for a host without `fetchStackDescriptor`. The same value comes from
-  `stackStatus()`. `restartRequired` means a newer copy
+- `stackChanged(status)`: the `StackStatus` at start, and on each change for a
+  host with `fetchStackDescriptor`. A host without it gets the one at start and
+  reads later ones from `stackStatus()`. `restartRequired` means a newer copy
   changes a chain, the network, the TLD or the generation, and applies once
   the runtime is built again. `generation` changes when the stack restarts its
-  chains: key cached chain data by it. `mismatches` lists each chain that gave
-  another genesis hash than the descriptor names.
+  chains: key cached chain data by it. `mismatches` lists each chain whose last
+  connection reached one with a different genesis hash from the descriptor's.
 
 The core asks every chain connection it opens for the chain's genesis hash
-before anything else uses the connection. A chain that gives another hash, as
-one does once it restarted from genesis, gets no connection: calls to it fail,
-the core fetches the descriptor again at once, and `stackChanged` reports the
-chain in `mismatches`. A chain that cannot be reached is only unavailable.
+before anything else uses the connection. A chain that gives a different hash
+from the descriptor's, as after it restarted from genesis, gets no connection:
+calls to it fail, and `stackStatus()` lists it in `mismatches`. While it is
+listed, a host with `fetchStackDescriptor` is asked for the descriptor every
+five minutes instead of every hour. A chain that cannot be reached is only
+unavailable. A `WasmProductRuntime` built on its own refuses such a chain too,
+and has no status to report it in.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key, and starts from it when it is newer than the bundled one.
