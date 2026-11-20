@@ -41,6 +41,16 @@ class GestureRulesTest {
     }
 
     @Test
+    fun `the slop crossed before a claim is caught up in equal shares over three frames, in its own direction`() {
+        assertEquals(0f, GestureRules.caughtUp(slopPx = 21f, frame = 0))
+        assertEquals(7f, GestureRules.caughtUp(slopPx = 21f, frame = 1))
+        assertEquals(14f, GestureRules.caughtUp(slopPx = 21f, frame = 2))
+        assertEquals(21f, GestureRules.caughtUp(slopPx = 21f, frame = 3))
+        assertEquals(21f, GestureRules.caughtUp(slopPx = 21f, frame = 40))
+        assertEquals(-7f, GestureRules.caughtUp(slopPx = -21f, frame = 1))
+    }
+
+    @Test
     fun `a place stays inside the travel`() {
         assertEquals(150f, GestureRules.place(start = 100f, delta = 50f, travelPx = 200f))
         assertEquals(200f, GestureRules.place(start = 100f, delta = 500f, travelPx = 200f))

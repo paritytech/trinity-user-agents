@@ -15,6 +15,7 @@ internal enum class GestureSettle { COMPLETE, SNAP_BACK, STAY }
  */
 internal object GestureRules {
     const val PERMILLE = 1000
+    const val CATCH_UP_FRAMES = 3
 
     /**
      * Past the slop, a drag along the node's axis is the node's in either direction, so swipe to reply and the
@@ -37,6 +38,12 @@ internal object GestureRules {
 
     /** The child's place along the travel after moving [delta] from [start], clamped to the travel. */
     fun place(start: Float, delta: Float, travelPx: Float): Float = (start + delta).coerceIn(0f, travelPx.coerceAtLeast(0f))
+
+    /**
+     * How much of the [slopPx] crossed before a claim the children have caught up after [frame] moves: an equal share
+     * a frame, all of it from [CATCH_UP_FRAMES] on.
+     */
+    fun caughtUp(slopPx: Float, frame: Int): Float = slopPx * frame.coerceIn(0, CATCH_UP_FRAMES) / CATCH_UP_FRAMES
 
     /** How far along the travel [placePx] is, in thousandths; zero travel reads zero. */
     fun permille(placePx: Float, travelPx: Float): Int =

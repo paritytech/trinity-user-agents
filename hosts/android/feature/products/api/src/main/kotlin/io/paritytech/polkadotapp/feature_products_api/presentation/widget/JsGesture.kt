@@ -191,20 +191,39 @@ internal fun JsGesture(
                     }
 
                     var total = Offset.Zero
+                    var owed = Offset.Zero
+                    var catchUpFrame = 0
                     var claimed = false
                     var lifted = false
+
+                    fun catchUpStep(): Offset {
+                        val before = catchUpFrame
+                        catchUpFrame += 1
+                        return Offset(
+                            GestureRules.caughtUp(owed.x, catchUpFrame) - GestureRules.caughtUp(owed.x, before),
+                            GestureRules.caughtUp(owed.y, catchUpFrame) - GestureRules.caughtUp(owed.y, before),
+                        )
+                    }
                     try {
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (change.changedToUpIgnoreConsumed()) {
                                 lifted = true
-                                if (claimed) change.consume()
+                                if (claimed) {
+                                    val rest = Offset(
+                                        owed.x - GestureRules.caughtUp(owed.x, catchUpFrame),
+                                        owed.y - GestureRules.caughtUp(owed.y, catchUpFrame),
+                                    )
+                                    if (rest != Offset.Zero) track(rest.x, rest.y, change.uptimeMillis)
+                                    change.consume()
+                                }
                                 break
                             }
                             val delta = change.positionChangeIgnoreConsumed()
                             if (claimed) {
-                                track(delta.x, delta.y, change.uptimeMillis)
+                                val catchUp = catchUpStep()
+                                track(delta.x + catchUp.x, delta.y + catchUp.y, change.uptimeMillis)
                                 change.consume()
                                 continue
                             }
@@ -216,12 +235,15 @@ internal fun JsGesture(
                                 SlideDragDecision.CLAIM -> {
                                     claimed = true
                                     send(pan.startAction, JsGesturePhase.STARTED, x, y, travel)
-                                    // From where the claim was made, so the children don't jump by the slop.
-                                    when (pan.axis) {
-                                        JsPanAxis.HORIZONTAL -> track(total.x - sign(total.x) * slop, 0f, change.uptimeMillis)
-                                        JsPanAxis.VERTICAL -> track(0f, total.y - sign(total.y) * slop, change.uptimeMillis)
-                                        JsPanAxis.FREE -> track(total.x, total.y, change.uptimeMillis)
+                                    // From the touch-down point: the slop crossed before the claim is fed in over the
+                                    // first frames, so the children catch up with the finger instead of jumping to it.
+                                    owed = when (pan.axis) {
+                                        JsPanAxis.HORIZONTAL -> Offset(sign(total.x) * slop, 0f)
+                                        JsPanAxis.VERTICAL -> Offset(0f, sign(total.y) * slop)
+                                        JsPanAxis.FREE -> Offset.Zero
                                     }
+                                    val catchUp = catchUpStep()
+                                    track(total.x - owed.x + catchUp.x, total.y - owed.y + catchUp.y, change.uptimeMillis)
                                     change.consume()
                                 }
                                 SlideDragDecision.RELEASE -> break
