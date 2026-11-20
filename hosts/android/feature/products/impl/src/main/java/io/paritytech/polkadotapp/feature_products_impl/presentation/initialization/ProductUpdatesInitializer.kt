@@ -6,15 +6,18 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdateTriggers
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdateWorker
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.RealProductUpdateNotices
 import javax.inject.Inject
 
 class ProductUpdatesInitializer @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val productUpdateTriggers: ProductUpdateTriggers,
+    private val productUpdateNotices: RealProductUpdateNotices,
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
         productUpdateTriggers.start(scope)
+        productUpdateNotices.start(scope)
         ProductUpdateWorker.schedule(context)
     }
 }

@@ -28,6 +28,8 @@ class ProductsInUse @Inject constructor() {
             .distinctUntilChanged()
     }
 
+    fun observeShownPages(): Flow<List<ShownPage>> = shownPages.map { it.values.toList() }.distinctUntilChanged()
+
     fun observeShownNames(): Flow<Set<String>> {
         return shownPages.map { pages -> pages.values.mapTo(HashSet()) { it.dotNsName } }.distinctUntilChanged()
     }

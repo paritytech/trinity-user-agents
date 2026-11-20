@@ -31,6 +31,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFa
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
+import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductUpdateNotices
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
@@ -132,6 +133,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.RealProductUpdateNotices
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.profile.CorePublicProfileAvatarSource
@@ -189,6 +191,9 @@ internal interface ProductsModule {
     @Binds
     @Singleton
     fun bindProductSessionController(impl: RealProductSessionController): ProductSessionController
+
+    @Binds
+    fun bindProductUpdateNotices(impl: RealProductUpdateNotices): ProductUpdateNotices
 
     @Binds
     fun bindDevServerAddresses(impl: DevServers): DevServerAddresses

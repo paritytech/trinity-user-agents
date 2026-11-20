@@ -18,9 +18,9 @@ internal class RealDotNsUpdates @Inject constructor(
     private val builds: DotNsBuilds,
     private val dispatchers: CoroutineDispatchers,
 ) : DotNsUpdates {
-    override suspend fun fetchUpdates(dotNsNames: Collection<String>): Result<Unit> = withContext(dispatchers.computation) {
+    override suspend fun fetchUpdates(dotNsNames: Collection<String>): Result<Set<String>> = withContext(dispatchers.computation) {
         val served = dotNsNames.filterNot(builds::wasReadFromChainRecently).mapNotNull { name -> builds.served(name)?.let { name to it } }
-        if (served.isEmpty()) return@withContext Result.success(Unit)
+        if (served.isEmpty()) return@withContext Result.success(emptySet())
 
         val latest = served.mapAsync { (name, version) -> readLatest(name, version).map { name to it } }
 

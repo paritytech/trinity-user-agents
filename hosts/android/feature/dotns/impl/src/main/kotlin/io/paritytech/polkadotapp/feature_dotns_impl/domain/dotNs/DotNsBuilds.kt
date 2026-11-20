@@ -52,7 +52,7 @@ internal class DotNsBuilds @Inject constructor(
         buildStorage.putAll(mapOf(dotNsName to build.copy(served = change(build.served))))
     }
 
-    suspend fun recordLatest(latest: Map<String, DotNsNameChange>) = lock.withLock {
+    suspend fun recordLatest(latest: Map<String, DotNsNameChange>): Set<String> = lock.withLock {
         latest.keys.forEach(::markReadFromChain)
         val builds = latest.mapNotNull { (name, change) ->
             buildStorage.get(name)?.let { build -> name to build.copy(update = change.comparedTo(build.served)) }
@@ -61,6 +61,8 @@ internal class DotNsBuilds @Inject constructor(
 
         buildStorage.putAll(builds)
         (replacedUpdates + latest.values.mapNotNull { it.contentHash }).forEach { deleteUnlessReferenced(it) }
+
+        builds.filterValues { it.update != null }.keys
     }
 
     suspend fun applyUpdates(dotNsNames: Collection<String>): Set<String> = lock.withLock {

@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductMan
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import javax.inject.Inject
@@ -28,7 +29,11 @@ class ProductUpdater @Inject constructor(
 ) {
     private val checkLocks = KeyedMutex<String>()
 
+    private val foundUpdates = MutableSharedFlow<Set<String>>(extraBufferCapacity = FOUND_UPDATES_BUFFER_SIZE)
+
     fun observePendingNames(): Flow<Set<String>> = dotNsUpdates.observePendingUpdates()
+
+    fun observeFoundUpdates(): Flow<Set<String>> = foundUpdates
 
     suspend fun check(productId: ProductId): Result<Unit> = namesOnDeviceByProduct().flatMap { namesByProduct ->
         fetchUpdates(namesByProduct.filterKeys { it == productId.value })
@@ -61,13 +66,20 @@ class ProductUpdater @Inject constructor(
     }
 
     private suspend fun fetchUpdates(namesByProduct: Map<String, List<String>>): Result<Unit> {
-        return namesByProduct.entries
+        val results = namesByProduct.entries
             .mapAsync { (product, productNames) -> checkLocks.withLock(product) { dotNsUpdates.fetchUpdates(productNames) } }
-            .flattenResult()
-            .coerceToUnit()
+
+        val foundNames = results.flatMapTo(HashSet()) { it.getOrNull().orEmpty() }
+        if (foundNames.isNotEmpty()) foundUpdates.emit(foundNames)
+
+        return results.flattenResult().coerceToUnit()
     }
 
     private fun isWorkerName(productId: ProductId, dotNsName: String): Boolean {
         return dotNsName == productId.value || ProductManifest.hostOf(productId, ExecutableKind.WORKER).getOrNull()?.value == dotNsName
+    }
+
+    private companion object {
+        const val FOUND_UPDATES_BUFFER_SIZE = 16
     }
 }

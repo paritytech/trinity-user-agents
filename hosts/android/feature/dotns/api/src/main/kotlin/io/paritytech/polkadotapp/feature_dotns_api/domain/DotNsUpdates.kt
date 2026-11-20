@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_dotns_api.domain
 import kotlinx.coroutines.flow.Flow
 
 interface DotNsUpdates {
-    suspend fun fetchUpdates(dotNsNames: Collection<String>): Result<Unit>
+    suspend fun fetchUpdates(dotNsNames: Collection<String>): Result<Set<String>>
 
     suspend fun applyUpdates(dotNsNames: Collection<String>): Set<String>
 

@@ -38,6 +38,7 @@ import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugSc
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.IdBar
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.ProductUpdateNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarRow
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.TopNoticeColumn
@@ -365,10 +366,16 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val isPaymentsSetupNoticeVisible by viewModel.isPaymentsSetupNoticeVisible.collectAsStateWithLifecycle()
+                val productUpdateNotice by viewModel.productUpdateNotice.collectAsStateWithLifecycle()
                 TopNoticeColumn(modifier = Modifier.fillMaxSize()) {
                     PaymentsSetupNotice(
                         isVisible = isPaymentsSetupNoticeVisible,
                         onDismissClick = viewModel::dismissPaymentsSetupNotice,
+                    )
+                    ProductUpdateNotice(
+                        pendingUpdate = productUpdateNotice,
+                        onUpdateClick = viewModel::onProductUpdateClick,
+                        onDismissClick = viewModel::dismissProductUpdateNotice,
                     )
                 }
             }

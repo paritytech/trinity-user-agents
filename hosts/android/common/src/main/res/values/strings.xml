@@ -287,6 +287,8 @@
     <string name="spa_browser_menu_reload">Reload</string>
     <string name="spa_browser_menu_share">Share</string>
     <string name="spa_browser_menu_close_app">Close app</string>
+    <string name="product_update_notice_message">%1$s has an update</string>
+    <string name="product_update_notice_action">Update</string>
     <string name="spa_browser_page_no_app_surface">This product doesn\'t have an app on this device.</string>
     <string name="product_resolution_error_malformed_manifest">This product published a manifest this app can\'t read. Contact the product\'s developer.</string>
     <string name="product_resolution_error_unknown">Couldn\'t load this product.</string>
