@@ -7,6 +7,8 @@ public extension CustomMessageWidgetNode {
         public var accessibilityLabel: String?
         public var isEnabled = true
         public var hapticOnComplete = false
+        /// Names the gesture for offset updates; a keyed pan's moves are paced per display frame.
+        public var key: String?
         public let encodePayload: (GesturePhase, CGPoint, UInt16) -> Data
 
         public init(encodePayload: @escaping (GesturePhase, CGPoint, UInt16) -> Data) {

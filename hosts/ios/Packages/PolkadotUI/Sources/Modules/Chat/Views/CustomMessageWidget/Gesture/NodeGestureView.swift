@@ -6,6 +6,7 @@ struct NodeGestureView<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     @Environment(\.widgetActionHandler) private var actionHandler
+    @Environment(\.gestureOffsets) private var gestureOffsets
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var width: CGFloat = 0
@@ -19,11 +20,12 @@ struct NodeGestureView<Content: View>: View {
     @State private var lastMove: TimeInterval = 0
     @State private var catchUpStep = 0
     @State private var confirmations = 0
+    @State private var pacer = GestureMovePacer()
 
     var body: some View {
         content()
             .onGeometryChange(for: CGFloat.self, of: \.size.width) { childWidth = $0 }
-            .offset(x: offset.x * (layoutDirection == .rightToLeft ? -1 : 1), y: offset.y)
+            .offset(x: shown.x * (layoutDirection == .rightToLeft ? -1 : 1), y: shown.y)
             .frame(maxWidth: .infinity, alignment: .leading)
             .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
             .overlay {
@@ -39,6 +41,7 @@ struct NodeGestureView<Content: View>: View {
                 if !enabled, dragging { cancel() }
                 if enabled { held = false; offset = .zero }
             }
+            .onDisappear { pacer.stop() }
     }
 }
 
@@ -51,10 +54,38 @@ private extension NodeGestureView {
 
     var travel: CGFloat { max(props.pan?.drag?.travelPoints ?? (width - childWidth), 0) }
 
+    /// The worker's offset for this keyed gesture, read here alone so an update draws only this view.
+    var channel: GestureOffsetChannel? { props.key.flatMap { gestureOffsets?.channel(for: $0) } }
+
+    /// Where the children are drawn: the host's own drag offset plus any offset the worker set since its last tree.
+    var shown: CGPoint {
+        let set = channel?.offset ?? .zero
+        return CGPoint(x: offset.x + set.x, y: offset.y + set.y)
+    }
+
+    /// A keyed pan whose worker hears its moves: those are paced instead of sent one by one.
+    var pacesMoves: Bool { props.key != nil && props.pan?.moveAction != nil }
+
+    func payload(_ phase: CustomMessageWidgetNode.GesturePhase) -> Data {
+        let fraction = GestureMotion.fraction(position, axis: props.pan?.axis ?? .horizontal, travel: panTravel)
+        return props.encodePayload(phase, position, fraction)
+    }
+
     func emit(_ action: String?, _ phase: CustomMessageWidgetNode.GesturePhase) {
         guard let action else { return }
-        let fraction = GestureMotion.fraction(position, axis: props.pan?.axis ?? .horizontal, travel: panTravel)
-        actionHandler?(action, props.encodePayload(phase, position, fraction))
+        actionHandler?(action, payload(phase))
+    }
+
+    func startPacing(_ pan: CustomMessageWidgetNode.PanGesture) {
+        guard pacesMoves, let moveAction = pan.moveAction else { return }
+        let handler = actionHandler
+        pacer.start { handler?(moveAction, $0) }
+        channel?.onAnswer = { [pacer] in pacer.answered() }
+    }
+
+    func stopPacing() {
+        pacer.stop()
+        channel?.onAnswer = nil
     }
 
     func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: PanTranslation) {
@@ -66,6 +97,7 @@ private extension NodeGestureView {
             position = origin
             lastMove = 0
             catchUpStep = 0
+            startPacing(pan)
             emit(pan.startAction, .started)
         }
         guard dragging else { return }
@@ -84,6 +116,10 @@ private extension NodeGestureView {
         switch phase {
         case .started,
              .moved:
+            if pacesMoves {
+                pacer.offer(payload(.moved))
+                return
+            }
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastMove >= pan.moveInterval {
                 lastMove = now
@@ -98,6 +134,7 @@ private extension NodeGestureView {
     func release(cancelled: Bool) {
         guard let pan = props.pan else { return }
         dragging = false
+        stopPacing()
         let completed = !cancelled && GestureMotion.completes(
             position, axis: pan.axis, travel: panTravel, release: pan.drag?.release
         )

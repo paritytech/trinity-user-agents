@@ -71,6 +71,7 @@ private extension RendererNode {
         case .nil,
              .string,
              .setOffset:
+            // An offset update is a stream item, not part of a tree: inside one it draws nothing.
             return nil
 
         case let .image(modifiers, props):
@@ -446,6 +447,7 @@ private extension GestureProps {
         value.accessibilityLabel = accessibilityLabel
         value.isEnabled = enabled ?? true
         value.hapticOnComplete = hapticOnComplete ?? false
+        value.key = key
         return value
     }
 }

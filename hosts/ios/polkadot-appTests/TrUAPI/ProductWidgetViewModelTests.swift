@@ -157,4 +157,52 @@ struct ProductWidgetViewModelTests {
         let node = await MainActor.run { viewModel.node }
         #expect(node != nil)
     }
+
+    private func makeViewModel(serving outputs: [ChatRendererOutput]) -> ProductWidgetViewModel {
+        ProductWidgetViewModel(
+            messageId: "m1",
+            render: {
+                AsyncThrowingStream { continuation in
+                    outputs.forEach { continuation.yield($0) }
+                    continuation.finish()
+                }
+            },
+            tokenResolver: StubWidgetDesignTokenResolver(),
+            logger: Logger.shared,
+            retryDelay: .milliseconds(10)
+        )
+    }
+
+    /// An offset update moves its keyed gesture without replacing the tree.
+    @Test func anOffsetUpdateMovesItsGestureWithoutANewTree() async {
+        let viewModel = makeViewModel(serving: [
+            .native(.spacer(modifiers: [])),
+            .native(.setOffset(key: "thumb", x: 42, y: -1)),
+        ])
+
+        await viewModel.renderTask?.value
+
+        let (offset, node) = await MainActor.run {
+            (viewModel.gestureOffsets?.channel(for: "thumb").offset, viewModel.node)
+        }
+        #expect(offset == CGPoint(x: 42, y: -1))
+        guard case .spacer = node?.content else {
+            Issue.record("the tree was replaced by the offset update")
+            return
+        }
+    }
+
+    /// A tree that arrives after an offset update places the gesture itself.
+    @Test func aTreeAfterAnOffsetUpdateWins() async {
+        let viewModel = makeViewModel(serving: [
+            .native(.spacer(modifiers: [])),
+            .native(.setOffset(key: "thumb", x: 42, y: 0)),
+            .native(.spacer(modifiers: [])),
+        ])
+
+        await viewModel.renderTask?.value
+
+        let offset = await MainActor.run { viewModel.gestureOffsets?.channel(for: "thumb").offset }
+        #expect(offset == nil)
+    }
 }
