@@ -421,6 +421,24 @@ pub fn test_descriptor_chain(
 	chain
 }
 
+/// What a genesis check heard, in order: the hash each connection was
+/// opened for, and the hash its chain gave.
+#[derive(Default)]
+pub struct HeardAnswers(Mutex<Vec<([u8; 32], [u8; 32])>>);
+
+impl crate::chain_runtime::GenesisCheck for HeardAnswers {
+	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
+		self.0.lock().expect("heard answers mutex poisoned").push((named, answered));
+	}
+}
+
+impl HeardAnswers {
+	/// Every answer heard so far.
+	pub fn heard(&self) -> Vec<([u8; 32], [u8; 32])> {
+		self.0.lock().expect("heard answers mutex poisoned").clone()
+	}
+}
+
 /// The People chain the test stack is published on.
 pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
 

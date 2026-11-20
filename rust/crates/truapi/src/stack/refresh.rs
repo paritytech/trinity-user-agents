@@ -22,6 +22,7 @@ use super::{
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
+	chain_runtime::{GenesisCheck, encode_hex},
 	time::{Clock, Timer},
 	wake::WakeSignal,
 };
@@ -73,6 +74,51 @@ struct Shared {
 	records: Box<dyn StackRecords>,
 	timer: Arc<dyn Timer>,
 	clock: Box<dyn Clock>,
+	/// Wakes the loop when what a chain answered changed the status.
+	chain_answers: WakeSignal,
+}
+
+/// Checks the chains of a [`StackRefresh`]'s stack against its descriptor.
+///
+/// A chain that gives a different genesis hash from the one the descriptor
+/// names is reported in [`StackStatus::mismatches`], and the refresh fetches
+/// the descriptor sooner.
+#[derive(Clone)]
+pub struct StackChecks {
+	shared: Arc<Shared>,
+}
+
+impl StackChecks {
+	/// Hears the genesis hash each connection's chain gives, for the
+	/// `ChainRuntime` that opens them.
+	pub fn genesis_check(&self) -> Arc<dyn GenesisCheck> {
+		self.shared.clone()
+	}
+}
+
+impl core::fmt::Debug for StackChecks {
+	fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		formatter.debug_struct("StackChecks").finish_non_exhaustive()
+	}
+}
+
+impl GenesisCheck for Shared {
+	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
+		let changed = self.source().chain_answered(named, answered);
+		if !changed {
+			return;
+		}
+		// Logged with the source unlocked: a native host is handed each
+		// warning as it is made, and may read the stack's status from there.
+		if answered != named {
+			tracing::warn!(
+				"a chain of the stack gave genesis hash {}, not {}",
+				encode_hex(&answered),
+				encode_hex(&named)
+			);
+		}
+		self.chain_answers.wake();
+	}
 }
 
 impl StackRefresh {
@@ -123,16 +169,25 @@ impl StackRefresh {
 			unix_now(clock.as_ref()),
 		)?;
 		Ok(Self {
-			shared: Arc::new(Shared { source: Mutex::new(source), records, timer, clock }),
+			shared: Arc::new(Shared {
+				source: Mutex::new(source),
+				records,
+				timer,
+				clock,
+				chain_answers: WakeSignal::default(),
+			}),
 			task: OnceLock::new(),
 			refresh_requests: WakeSignal::default(),
 		})
 	}
 
-	/// The stack the core runs. It stays the same for the life of the
-	/// runtime: a newer copy that changes it applies at the next start.
+	/// The stack the core runs, with the checks of its chains: a runtime
+	/// built on it puts every chain connection it opens through them. The
+	/// stack stays the same for the life of the runtime: a newer copy that
+	/// changes it applies at the next start.
 	pub fn stack(&self) -> Stack {
-		self.shared.source().stack().clone()
+		let stack = self.shared.source().stack().clone();
+		Stack { checks: Some(StackChecks { shared: self.shared.clone() }), ..stack }
 	}
 
 	/// What the host is told about the stack.
@@ -158,10 +213,9 @@ impl StackRefresh {
 	/// Fetches the descriptor now instead of when the copy is old enough.
 	///
 	/// A host asks when its app returns to the foreground, because a sleeping
-	/// device can stretch the wait for the next fetch, and when a chain
-	/// answers with another genesis hash. Returns at once. Requests made
-	/// while a fetch is out lead to one more fetch, not one each. Does
-	/// nothing before [`Self::start`].
+	/// device can stretch the wait for the next fetch. Returns at once.
+	/// Requests made while a fetch is out lead to one more fetch, not one
+	/// each. Does nothing before [`Self::start`].
 	pub fn refresh_now(&self) {
 		self.refresh_requests.wake();
 	}
@@ -177,33 +231,47 @@ impl Shared {
 	}
 
 	async fn run(self: Arc<Self>, host: Box<dyn StackHost>, mut forced: mpsc::Receiver<()>) {
+		let mut chain_answers = self.chain_answers.subscribe();
 		let mut reported = self.source().status();
 		host.stack_changed(reported.clone());
 		let mut force = false;
 		loop {
+			// What a chain answered is told before the fetch it brings forward
+			// and while a fetch is out, since a host may take half a minute to
+			// answer one.
+			self.report_change(host.as_ref(), &mut reported);
 			let request = if force {
 				self.source().forced_fetch(self.now())
 			} else {
 				self.source().due_fetch(self.now())
 			};
 			if let Some(request) = request {
-				self.fetch(host.as_ref(), request).await;
-				let status = self.source().status();
-				if status != reported {
-					reported = status;
-					host.stack_changed(reported.clone());
+				let mut fetch = core::pin::pin!(self.fetch(host.as_ref(), request));
+				while let Either::Right(_) = select(fetch.as_mut(), chain_answers.next()).await {
+					self.report_change(host.as_ref(), &mut reported);
 				}
+				self.report_change(host.as_ref(), &mut reported);
 			}
 			let next_fetch_in = self.source().next_fetch_in(self.now());
 			let until_due = match next_fetch_in {
 				Some(wait) => self.timer.sleep(wait),
 				None => pending().boxed(),
 			};
-			force = match select(until_due, forced.next()).await {
-				Either::Left(_) => false,
-				Either::Right((Some(()), _)) => true,
-				Either::Right((None, _)) => return,
+			let asked = select(forced.next(), chain_answers.next());
+			force = match select(until_due, asked).await {
+				Either::Left(_) | Either::Right((Either::Right(_), _)) => false,
+				Either::Right((Either::Left((Some(()), _)), _)) => true,
+				Either::Right((Either::Left((None, _)), _)) => return,
 			};
+		}
+	}
+
+	/// Tells `host` the stack's status when it differs from `reported`.
+	fn report_change(&self, host: &dyn StackHost, reported: &mut StackStatus) {
+		let status = self.source().status();
+		if status != *reported {
+			*reported = status;
+			host.stack_changed(reported.clone());
 		}
 	}
 

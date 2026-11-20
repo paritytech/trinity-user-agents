@@ -12,7 +12,9 @@ use super::{
 			SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
 			statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 		},
-		statement_store_rpc::{self, StatementStoreRpc, StatementSubmitError},
+		statement_store_rpc::{
+			self, StatementStoreRpc, StatementStoreRpcClientError, StatementSubmitError,
+		},
 	},
 	SsoRequestService,
 };
@@ -34,7 +36,7 @@ use crate::{
 
 use futures::{
 	FutureExt,
-	future::{AbortHandle, Abortable},
+	future::{AbortHandle, Abortable, Either, select},
 };
 use tracing::{debug, instrument, warn};
 use truapi::{CallContext, CancellationReason, CancellationToken};
@@ -264,11 +266,16 @@ impl SsoRequestService {
 			RemoteMessage::request(message_id.clone(), request),
 			Some(message_id.clone()),
 		)?;
-		let rpc_client = self
-			.statement_store
-			.client("SSO statement-store")
-			.await
-			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
+		let connect = core::pin::pin!(self.statement_store.client("SSO statement-store"));
+		let rpc_client = match select(connect, cx.cancel().cancelled()).await {
+			Either::Left((connected, _)) => connected.map_err(|err| connect_error(&err))?,
+			Either::Right((reason, _)) => {
+				return Err(with_caller_request_id(
+					cx,
+					SsoRemoteResponseError::Cancelled(CancelError::new(reason, &message_id)),
+				));
+			},
+		};
 		let own_subscription =
 			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
 				.await
@@ -361,6 +368,15 @@ fn with_caller_request_id(
 	}
 }
 
+/// The error for a People connection that did not open: `ChainUnavailable`
+/// if the chain could not be reached or stayed halted, otherwise `Failure`.
+fn connect_error(err: &StatementStoreRpcClientError) -> SsoRemoteResponseError {
+	match err.is_unreachable() {
+		true => SsoRemoteResponseError::ChainUnavailable(err.to_string()),
+		false => SsoRemoteResponseError::Failure(err.to_string()),
+	}
+}
+
 /// The error for a failed `label` subscribe: `Cancelled` if the caller gave
 /// up, `ChainUnavailable` if the chain stayed halted, otherwise `Failure`.
 fn subscribe_error(
@@ -423,9 +439,42 @@ async fn wait_for_sso_peer_disconnect(
 mod tests {
 	use super::*;
 	use crate::{
+		chain_runtime::RuntimeFailure,
+		platform::ProviderError,
 		runtime::authority::AuthorityError,
 		test_support::{chain_halted_rpc_error, rpc_refusal},
 	};
+
+	/// A People chain that cannot be dialled, or stays halted while its
+	/// connection is checked, may answer a later request, so the product is
+	/// told it can retry. A People chain that restarted will not, and neither
+	/// will a host that refuses to serve the chain.
+	#[test]
+	fn only_an_unreachable_people_chain_is_reported_as_chain_unavailable() {
+		let connect = |error| StatementStoreRpcClientError::Connect { label: "test", error };
+		let offline = || ProviderError::Transport { reason: "network down".to_string() };
+		let unserved = || ProviderError::Host { reason: "no such chain".to_string() };
+		let halted = RuntimeFailure::unavailable_with_reason("remote_chain_connect", "halted");
+		let restarted = RuntimeFailure::host_failure("remote_chain_connect", "another chain");
+
+		let reported = [
+			connect(offline()),
+			halted.clone().into(),
+			connect(unserved()),
+			restarted.clone().into(),
+		]
+		.map(|error| AuthorityError::from(connect_error(&error)));
+
+		assert_eq!(
+			reported,
+			[
+				AuthorityError::ChainUnavailable { reason: connect(offline()).to_string() },
+				AuthorityError::ChainUnavailable { reason: halted.to_string() },
+				AuthorityError::Unknown { reason: connect(unserved()).to_string() },
+				AuthorityError::Unknown { reason: restarted.to_string() },
+			]
+		);
+	}
 
 	/// Only a lasting halt is retryable, since the request was never sent.
 	#[test]

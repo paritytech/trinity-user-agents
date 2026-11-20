@@ -250,6 +250,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
 
     expect(statuses).toEqual([runtime.stackStatus()]);
     expect(statuses[0].lastRefresh).toBeUndefined();
+    expect(statuses[0].mismatches).toEqual([]);
   });
 
   it("tells a host of its stack only once the runtime exists", async () => {

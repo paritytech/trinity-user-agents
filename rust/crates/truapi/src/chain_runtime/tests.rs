@@ -1,5 +1,7 @@
 use super::*;
-use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+use crate::test_support::{
+	HeardAnswers, ScriptedProvider, extract_id, notification_sender, wait_for_sent,
+};
 use core::time::Duration;
 use futures::pin_mut;
 use parity_scale_codec::Encode;
@@ -2680,4 +2682,258 @@ fn a_budget_line_of_day_old_follows_keeps_every_activity() {
 	);
 	assert_eq!(line.matches(activity).count(), FOLLOWS_A_NODE_BUDGETS, "{line}");
 	assert!(line.contains(&format!("c1003:product {activity}")), "{line}");
+}
+
+/// A node that answers the genesis hash request with `reply`, the JSON-RPC
+/// member that follows `"id"`, and nothing else.
+fn node_answering_its_genesis_with(reply: String) -> Arc<ScriptedProvider> {
+	Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		request
+			.contains("chainSpec_v1_genesisHash")
+			.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}",{reply}}}"#))
+	}))
+}
+
+fn node_of(genesis: [u8; 32]) -> Arc<ScriptedProvider> {
+	node_answering_its_genesis_with(format!(r#""result":"{}""#, encode_hex(&genesis)))
+}
+
+/// After a wipe the node behind a chain's endpoint serves a new chain. What
+/// the core read from it would be cached as the old chain's, so the
+/// connection is not handed out and its socket is closed. The next caller
+/// dials again rather than being given the refused one.
+#[test]
+fn a_connection_to_a_chain_with_a_different_genesis_hash_is_refused() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let provider = node_of(answered);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let refused = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.err()
+		.expect("a chain with a different genesis hash is refused");
+	let socket_closed = provider.sender.lock().unwrap().is_none();
+	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert!(socket_closed, "a refused connection's socket is closed");
+	assert!(again.is_err(), "the refused connection is not kept");
+	assert_eq!(
+		(
+			refused.kind(),
+			refused.reason(),
+			refused.chain(),
+			heard.heard(),
+			provider.connect_calls.load(Ordering::SeqCst),
+		),
+		(
+			RuntimeFailureKind::HostFailure,
+			format!(
+				"test: remote_chain_connect: the chain gave genesis hash {}, not {}",
+				encode_hex(&answered),
+				encode_hex(&named)
+			),
+			Some(named.as_slice()),
+			vec![(named, answered); 2],
+			2,
+		)
+	);
+}
+
+/// The check asks every connection one question. A chain that names itself
+/// has to come out as usable as without it: handed out, and kept for the
+/// next caller.
+#[test]
+fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
+	let named = [0xa1; 32];
+	let provider = node_of(named);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let first = futures::executor::block_on(runtime.rpc_client("test", &named));
+	let second = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert!(first.is_ok() && second.is_ok(), "the chain is usable");
+	assert_eq!(
+		(heard.heard(), provider.connect_calls.load(Ordering::SeqCst)),
+		(vec![(named, named)], 1)
+	);
+}
+
+/// A host may keep a connection it leased earlier and redial underneath it, as
+/// dotli does, so a connection that passed the check can come to reach a
+/// chain that restarted. A newer connection that finds the chain wrong is the
+/// only sign of it. The earlier ones are closed, and their next user dials
+/// again and is asked.
+#[test]
+fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let asked = AtomicUsize::new(0);
+	let provider = Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		let genesis = match asked.fetch_add(1, Ordering::SeqCst) {
+			0 => named,
+			_ => answered,
+		};
+		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{}"}}"#, encode_hex(&genesis)))
+	}));
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.expect("the first connection reaches the chain");
+
+	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+	let earlier_closed = earlier.is_closed();
+	let again = futures::executor::block_on(runtime.rpc_client("test", &named));
+
+	assert!(newer.is_err() && again.is_err(), "the restarted chain is handed out to nobody");
+	assert_eq!((earlier_closed, provider.connect_calls.load(Ordering::SeqCst)), (true, 3));
+}
+
+/// A product's runtime opens its own connections, apart from the core's. A
+/// wiped chain must not reach a product through them.
+#[test]
+fn a_products_connection_is_checked_like_the_cores() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(node_of(answered), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let product = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+
+	assert!(product.is_err(), "the product is not given the wiped chain");
+	assert_eq!(heard.heard(), vec![(named, answered)]);
+}
+
+/// A chain that cannot be reached is not a wrong chain. Nothing is said about
+/// its genesis hash, so no descriptor is fetched for it, and a later attempt
+/// may reach it.
+#[test]
+fn an_unreachable_chain_gives_no_answer_to_check() {
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), Spawner::for_test())
+		.checking_genesis(heard.clone());
+
+	let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+		.err()
+		.expect("the chain cannot be reached");
+
+	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
+}
+
+/// A node may accept the socket and hang up before it names its chain, as one
+/// does while it restarts. That is a chain out of reach, to be dialled again,
+/// not a chain that answered wrong.
+#[test]
+fn a_node_that_hangs_up_before_naming_its_chain_is_unavailable() {
+	let hung_up = Arc::new(Mutex::new(None::<Arc<ScriptedProvider>>));
+	let hangs_up = hung_up.clone();
+	let provider = Arc::new(ScriptedProvider::new(move |_request| {
+		let provider = hangs_up.lock().unwrap().clone().expect("the provider is set");
+		provider.sender.lock().unwrap().take();
+		None
+	}));
+	*hung_up.lock().unwrap() = Some(provider.clone());
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime = ChainRuntime::new(provider, Spawner::for_test()).checking_genesis(heard.clone());
+
+	let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+		.err()
+		.expect("the chain hung up");
+
+	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
+}
+
+/// A node that will not say which chain it serves, or says something that is
+/// no genesis hash, cannot be told from one serving a different chain, so
+/// nothing is read from it. It named no other chain either, so the check
+/// hears nothing.
+#[test]
+fn a_node_that_does_not_name_its_chain_is_not_used() {
+	let replies = [
+		r#""error":{"code":-32601,"message":"Method not found"}"#,
+		r#""result":"0xa1a1""#,
+		r#""result":null"#,
+	];
+
+	let outcomes = replies.map(|reply| {
+		let heard = Arc::<HeardAnswers>::default();
+		let runtime = ChainRuntime::new(
+			node_answering_its_genesis_with(reply.to_string()),
+			Spawner::for_test(),
+		)
+		.checking_genesis(heard.clone());
+		let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+			.err()
+			.expect("a chain that gives no genesis hash is not used");
+		(failure.kind(), heard.heard().len())
+	});
+
+	assert_eq!(outcomes, [(RuntimeFailureKind::HostFailure, 0); 3]);
+}
+
+/// A node that answers the genesis question with dotli's halt error for the
+/// first `halts` times it is asked, then with `genesis`.
+fn node_halted_for(halts: usize, genesis: [u8; 32]) -> Arc<ScriptedProvider> {
+	let asked = AtomicUsize::new(0);
+	Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		Some(match asked.fetch_add(1, Ordering::SeqCst) < halts {
+			true => crate::test_support::chain_halted_frame(&id),
+			false => {
+				format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{}"}}"#, encode_hex(&genesis))
+			},
+		})
+	}))
+}
+
+/// How opening a connection to `provider`'s chain, named `[0xa1; 32]`, fails
+/// while each of the first `pauses` pauses the check takes is let pass.
+fn connect_through_halts(
+	provider: Arc<ScriptedProvider>,
+	pauses: usize,
+	heard: &Arc<HeardAnswers>,
+) -> Option<RuntimeFailureKind> {
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let runtime = ChainRuntime::new(provider, Spawner::for_test())
+		.with_timer(timer.clone())
+		.checking_genesis(heard.clone());
+	let connect = std::thread::spawn(move || {
+		futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
+			.err()
+			.map(|failure| failure.kind())
+	});
+	for (sleep, pause) in chain_halt::halt_schedule().into_iter().take(pauses).enumerate() {
+		crate::test_support::wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
+		timer.advance(pause);
+	}
+	connect.join().unwrap()
+}
+
+/// dotli answers every request with a halt error while it redials a chain.
+/// The genesis question is the first request on a connection, so it has to
+/// wait the halt out as a follow does, or a short halt would fail whatever
+/// opened the connection.
+#[test]
+fn a_halted_chain_is_asked_for_its_genesis_hash_again() {
+	let named = [0xa1; 32];
+	let heard = Arc::<HeardAnswers>::default();
+
+	let failure = connect_through_halts(node_halted_for(2, named), 2, &heard);
+
+	assert_eq!((failure, heard.heard()), (None, vec![(named, named)]));
+}
+
+/// A chain that stays halted named no chain, so it is out of reach rather
+/// than wrong: a later attempt may find it redialled.
+#[test]
+fn a_chain_that_stays_halted_is_unavailable() {
+	let heard = Arc::<HeardAnswers>::default();
+	let halted = node_halted_for(usize::MAX, [0xa1; 32]);
+
+	let failure = connect_through_halts(halted, chain_halt::HALT_RETRIES, &heard);
+
+	assert_eq!((failure, heard.heard()), (Some(RuntimeFailureKind::Unavailable), Vec::new()));
 }

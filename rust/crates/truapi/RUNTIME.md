@@ -192,8 +192,50 @@ documents what it refuses.
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain and
-does not check genesis hashes against the live chains.
+derivation working offline. The core does not check it against the chain.
+
+#### Checks against the chains
+
+A runtime built on the stack `StackRefresh` hands out asks every chain
+connection it opens for the chain's genesis hash before anything else uses the
+connection: the core's own, each product's, and the statement subscriptions on
+People.
+
+- A chain that gives the hash the connection was opened for is used.
+- A chain that gives a different hash, as after it restarted from genesis, gets
+  no connection: the call fails with a host failure. The core also closes the
+  connections it handed out earlier for that chain, since a host may have
+  redialled underneath them, and their next user dials again and is asked. For
+  a chain of the stack, `StackStatus::mismatches` lists what the last
+  connection got, until a connection reaches the chain the descriptor names.
+- A chain that cannot be reached, or stays silent for 30 seconds, is
+  unavailable and is asked again on the next connection. A chain dotli reports
+  as halted is asked again for up to 47 seconds, as a halted follow is, and is
+  unavailable after that. A node that answers the question with any other
+  error is not used either, and is not a mismatch.
+
+While `mismatches` lists a chain, the core fetches the descriptor every five
+minutes instead of every hour, because an operator publishes the new genesis
+hashes when the chains restart from genesis. A published descriptor that
+changes a chain sets `restart_required`, and the fetches are hourly again from
+then on.
+
+A host that installed its stack callbacks hears of a mismatch through them,
+and any host reads it from `stack_status`. A browser host is told only when it
+passes `fetchStackDescriptor`. Without the callbacks the chain is still
+refused, and nothing is fetched. A host shows the listed chains as out of
+service and keeps its own features off them.
+
+The check runs when the core opens a connection. A host whose connection
+outlives its transport, redialling underneath as dotli does, is asked again
+only when the core opens the next one for that chain, in any scope.
+
+A light client answers from its chain spec. A chain that restarted is out of
+its reach, not a mismatch, so there only the hourly fetch brings the new
+descriptor.
+
+The core does not check the chains of a `Stack` built any other way, such as
+with `Stack::new` or from `testStack`.
 
 #### Descriptor refresh
 

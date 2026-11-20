@@ -52,7 +52,12 @@ fn status(
 		expired: false,
 		restart_required: false,
 		last_refresh,
+		mismatches: Vec::new(),
 	}
+}
+
+fn people_gave(answered: [u8; 32]) -> StackMismatch {
+	StackMismatch::GenesisHash { role: "People".to_string(), named: TEST_STACK_PEOPLE, answered }
 }
 
 /// A stack never waits on its descriptor's server: the bundled copy is enough
@@ -328,5 +333,151 @@ fn a_stale_or_expired_copy_is_reported() {
 			StackStatus { stale: true, ..status(&newer, Some(StackRefreshOutcome::Current)) },
 			StackStatus { stale: true, expired: true, ..status(&newer, Some(unreachable())) },
 		]
+	);
+}
+
+/// A copy the core fetched at [`START`], and the source that holds it.
+fn fetched_at_start() -> (serde_json::Value, StackSource) {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+	source.due_fetch(START).expect("a build copy is due at once");
+	serve(&mut source, &bundled, START);
+	(bundled, source)
+}
+
+/// After a wipe the node behind People's endpoint serves a new chain. The
+/// host is told which chain it is. The operator publishes the new genesis
+/// hashes with the wipe, so the descriptor is fetched once the copy is five
+/// minutes old rather than an hour.
+#[test]
+fn a_chain_that_gave_a_different_genesis_hash_is_reported_and_brings_the_fetch_forward() {
+	let (bundled, mut source) = fetched_at_start();
+	let hourly = source.next_fetch_in(START + 60);
+
+	let changed = source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+
+	assert_eq!(
+		(
+			changed,
+			source.status(),
+			hourly,
+			source.next_fetch_in(START + 60),
+			source.due_fetch(START + 299),
+			source.due_fetch(START + 300).is_some(),
+		),
+		(
+			true,
+			StackStatus {
+				mismatches: vec![people_gave(TEST_STACK_WIPED_PEOPLE)],
+				..status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			Some(Duration::from_secs(3540)),
+			Some(Duration::from_secs(240)),
+			None,
+			true,
+		)
+	);
+}
+
+/// An operator may publish the new descriptor some time after the wipe. A
+/// single fetch would leave the chain out of use until the hourly one, so
+/// the descriptor is asked for every five minutes while the chain is wrong.
+#[test]
+fn a_chain_that_stays_wrong_is_asked_about_every_five_minutes() {
+	let (bundled, mut source) = fetched_at_start();
+	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	source.due_fetch(START + 300).expect("the copy is five minutes old");
+
+	serve(&mut source, &bundled, START + 300);
+
+	assert_eq!(
+		[source.next_fetch_in(START + 300), source.next_fetch_in(START + 600)],
+		[Some(Duration::from_secs(300)), Some(Duration::ZERO)]
+	);
+}
+
+/// Every connection to a wiped chain gets a wrong answer, the core's services
+/// retry their connections, and a broken endpoint may give a new hash each
+/// time. None of that reaches the descriptor's server more than once in
+/// five minutes.
+#[test]
+fn wrong_answers_do_not_bring_a_fetch_sooner_than_five_minutes() {
+	let (_bundled, mut source) = fetched_at_start();
+
+	let answers = [TEST_STACK_WIPED_PEOPLE, TEST_STACK_WIPED_PEOPLE, TEST_STACK_PEOPLE, [0x55; 32]];
+	let changed = answers.map(|answered| source.chain_answered(TEST_STACK_PEOPLE, answered));
+
+	assert_eq!(
+		(changed, source.due_fetch(START + 299), source.status().mismatches),
+		([true, false, true, true], None, vec![people_gave([0x55; 32])])
+	);
+}
+
+/// A host may serve chains the stack does not name, such as another network
+/// a product asks for. Fetching the stack's descriptor again would tell
+/// nothing about them.
+#[test]
+fn a_chain_outside_the_stack_is_not_the_stacks_mismatch() {
+	let (bundled, mut source) = fetched_at_start();
+
+	let changed = source.chain_answered([0x77; 32], [0x78; 32]);
+
+	assert_eq!(
+		(changed, source.status(), source.next_fetch_in(START)),
+		(
+			false,
+			status(&bundled, Some(StackRefreshOutcome::Current)),
+			Some(Duration::from_secs(3600))
+		)
+	);
+}
+
+/// One node behind an endpoint may lag a wipe while the others do not. Once
+/// a connection reaches the chain the descriptor names, the host stops
+/// showing the chain as wrong and the descriptor is fetched hourly again.
+#[test]
+fn a_chain_that_gives_its_own_genesis_hash_again_is_no_longer_reported() {
+	let (bundled, mut source) = fetched_at_start();
+	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+
+	let changed = source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_PEOPLE);
+
+	assert_eq!(
+		(changed, source.status(), source.next_fetch_in(START)),
+		(
+			true,
+			status(&bundled, Some(StackRefreshOutcome::Current)),
+			Some(Duration::from_secs(3600))
+		)
+	);
+}
+
+/// The published descriptor follows the wipe, so the host is told to restart.
+/// Until it does, the core still runs the old chain, which still answers
+/// wrong. The sooner fetches have brought what they were for, so the
+/// descriptor's server is asked hourly again.
+#[test]
+fn a_mismatch_stays_reported_until_the_restart_the_newer_copy_asks_for() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	source.due_fetch(START).expect("a build copy is due at once");
+
+	serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE), START)
+		.expect("the newer copy is stored");
+	let before_it_is_stored = source.next_fetch_in(START);
+	source.record_stored();
+
+	assert_eq!(
+		(source.status(), before_it_is_stored, source.next_fetch_in(START)),
+		(
+			StackStatus {
+				restart_required: true,
+				mismatches: vec![people_gave(TEST_STACK_WIPED_PEOPLE)],
+				..status(&bundled, Some(StackRefreshOutcome::Current))
+			},
+			Some(Duration::from_secs(300)),
+			Some(Duration::from_secs(3600)),
+		)
 	);
 }

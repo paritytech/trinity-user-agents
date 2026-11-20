@@ -60,9 +60,26 @@ pub enum StatementStoreRpcClientError {
 		/// Chain provider error.
 		error: ProviderError,
 	},
-	/// The pooled People-chain connection could not be opened.
+	/// The pooled People-chain connection could not be opened, or a
+	/// connection did not pass the genesis check. Kind `Unavailable` means
+	/// the People chain could not be reached or stayed halted.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
+}
+
+impl StatementStoreRpcClientError {
+	/// Whether the People chain could not be reached.
+	///
+	/// Opening the client may then be tried again: the node could not be
+	/// dialled, hung up, stayed silent or stayed halted.
+	pub fn is_unreachable(&self) -> bool {
+		match self {
+			Self::Connect { error, .. } => {
+				matches!(error, ProviderError::Handshake { .. } | ProviderError::Transport { .. })
+			},
+			Self::Chain(failure) => failure.kind() == RuntimeFailureKind::Unavailable,
+		}
+	}
 }
 
 /// Why a statement submission failed.
@@ -141,12 +158,17 @@ impl StatementStoreRpc {
 
 	/// Open a statement-store RPC client over its own host-provided
 	/// People-chain connection, for statement subscriptions.
+	///
+	/// The connection passes the pooled connections' genesis check first,
+	/// which waits out a halted chain. Drop the future to stop waiting.
 	pub async fn client(
 		&self,
 		label: &'static str,
 	) -> Result<RpcClient, StatementStoreRpcClientError> {
 		let connection = self.connect(label).await?;
-		Ok(RpcClient::new(HostRpcClient::new(connection, self.spawner.clone())))
+		let rpc_client = HostRpcClient::new(connection, self.spawner.clone());
+		self.chain.check_genesis(self.people_chain_genesis_hash, &rpc_client).await?;
+		Ok(RpcClient::new(rpc_client))
 	}
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
