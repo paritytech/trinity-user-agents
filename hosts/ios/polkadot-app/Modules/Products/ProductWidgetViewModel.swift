@@ -128,7 +128,11 @@ private extension ProductWidgetViewModel {
                 // An offset update moves one keyed gesture: no tree to map, and nothing else draws again.
                 if case let .native(.setOffset(key, offsetX, offsetY)) = output {
                     await MainActor.run {
-                        self.gestureOffsets?.set(key: key, offset: CGPoint(x: Int(offsetX), y: Int(offsetY)))
+                        // Offsets travel in hundredths of a logical pixel.
+                        self.gestureOffsets?.set(
+                            key: key,
+                            offset: CGPoint(x: Double(offsetX) / 100, y: Double(offsetY) / 100)
+                        )
                     }
                     continue
                 }

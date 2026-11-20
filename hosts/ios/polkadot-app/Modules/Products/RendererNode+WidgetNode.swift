@@ -435,10 +435,11 @@ private extension GestureProps {
                 case .cancelled: .cancelled
                 case .completed: .completed
                 }
+            // Positions travel in hundredths of a logical pixel, so a slow drag still reports every frame's move.
             return Data(encodeGestureEvent(event: GestureEvent(
                 phase: nativePhase,
-                x: Int32(clamping: Int(position.x.rounded())),
-                y: Int32(clamping: Int(position.y.rounded())),
+                x: Int32(clamping: Int((position.x * 100).rounded())),
+                y: Int32(clamping: Int((position.y * 100).rounded())),
                 fractionPermille: fraction
             )))
         }

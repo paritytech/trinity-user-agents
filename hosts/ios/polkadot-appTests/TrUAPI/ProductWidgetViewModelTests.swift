@@ -177,7 +177,7 @@ struct ProductWidgetViewModelTests {
     @Test func anOffsetUpdateMovesItsGestureWithoutANewTree() async {
         let viewModel = makeViewModel(serving: [
             .native(.spacer(modifiers: [])),
-            .native(.setOffset(key: "thumb", x: 42, y: -1)),
+            .native(.setOffset(key: "thumb", x: 4_250, y: -100)),
         ])
 
         await viewModel.renderTask?.value
@@ -185,7 +185,7 @@ struct ProductWidgetViewModelTests {
         let (offset, node) = await MainActor.run {
             (viewModel.gestureOffsets?.channel(for: "thumb").offset, viewModel.node)
         }
-        #expect(offset == CGPoint(x: 42, y: -1))
+        #expect(offset == CGPoint(x: 42.5, y: -1))
         guard case .spacer = node?.content else {
             Issue.record("the tree was replaced by the offset update")
             return
