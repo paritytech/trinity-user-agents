@@ -151,6 +151,18 @@ impl Stack {
 		self.pop_controller
 	}
 
+	/// The `DotnsRegistry` address, the stack's `dotns.registry`, when it
+	/// names one.
+	pub fn dotns_registry(&self) -> Option<[u8; 20]> {
+		self.descriptor.dotns_address("registry")
+	}
+
+	/// The base URL of the stack's most preferred `ipfs-gateway`, which serves
+	/// a CID at `<base>/<cid>`.
+	pub fn ipfs_gateway(&self) -> Option<&str> {
+		self.descriptor.service("ipfs-gateway")?.urls.first().map(String::as_str)
+	}
+
 	/// How this run reaches the chains, from `--chain-backend`.
 	pub fn chain_backend(&self) -> ChainBackend {
 		self.chain_backend

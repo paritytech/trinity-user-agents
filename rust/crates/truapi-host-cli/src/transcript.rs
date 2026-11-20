@@ -1,4 +1,4 @@
-//! JSON-lines transcripts the scripted CLI hosts write, one object per line,
+//! JSON-lines transcripts the CLI hosts write, one object per line,
 //! so a battery can assert what a host saw rather than only what the product
 //! was told.
 
@@ -16,6 +16,13 @@ impl Transcript {
 	/// names, if it names one.
 	pub fn from_env(variable: &str, host: &'static str) -> Self {
 		Self::new(std::env::var_os(variable).map(PathBuf::from), host)
+	}
+
+	/// `host`'s transcript at the path environment variable `variable`
+	/// names, appended to as it stands: for a writer joining a transcript
+	/// another one started.
+	pub fn appending_from_env(variable: &str, host: &'static str) -> Self {
+		Self { path: std::env::var_os(variable).map(PathBuf::from), host }
 	}
 
 	/// `host`'s transcript at `path`, if given. The file is truncated so a
