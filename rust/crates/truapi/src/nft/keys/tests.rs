@@ -37,3 +37,18 @@ fn an_exported_secret_rebuilds_the_key_derived_at_its_slot_and_signs_for_it() {
 	assert_eq!(public.to_bytes(), keys[0].0);
 	assert!(public.verify_simple(b"substrate", b"move", &signature).is_ok());
 }
+
+/// Recovery derives item keys a range at a time under the item key prefix,
+/// so it must find exactly the keys allocation derived one slot at a time.
+#[test]
+fn keys_under_the_item_prefix_are_the_allocated_item_keys() {
+	let entropy = [0x42; 16];
+	let (purse, installation) = (PurseId(3), InstallationId([0x1d; 32]));
+	let slots = [0, 1, 7].map(|index| ItemSlot { purse, installation, index: ItemIndex(index) });
+
+	let root = derive_root_keypair_from_entropy(&entropy).unwrap();
+	let range = item_key_range_from_root(root, purse, installation, 0..8).unwrap();
+	let allocated = item_keys_from_entropy(&entropy, &slots).unwrap();
+
+	assert_eq!([0, 1, 7].map(|index| range[index]), allocated.as_slice());
+}

@@ -7,7 +7,7 @@ import SubstrateSdk
 /// call pending until `release()`.
 final class FakeStatementAccountFunding: StatementAccountFunding, @unchecked Sendable {
     private struct State {
-        var calls: [AccountId] = []
+        var holders: [StatementStoreAllowanceHolder] = []
         var priorities: [AllowanceRecord.Priority] = []
         var recordPeriod: UInt32?
         var periodOnFund: UInt32 = 0
@@ -19,7 +19,8 @@ final class FakeStatementAccountFunding: StatementAccountFunding, @unchecked Sen
 
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    var calls: [AccountId] { state.withLock { $0.calls } }
+    var calls: [AccountId] { state.withLock { $0.holders.map(\.accountId) } }
+    var signerKeyIds: [String?] { state.withLock { $0.holders.map(\.signerKeyId) } }
     var priorities: [AllowanceRecord.Priority] { state.withLock { $0.priorities } }
 
     func setRecord(period: UInt32?) {
@@ -50,12 +51,12 @@ final class FakeStatementAccountFunding: StatementAccountFunding, @unchecked Sen
     }
 
     func ensureFunded(
-        accountId: AccountId,
+        holder: StatementStoreAllowanceHolder,
         priority: AllowanceRecord.Priority,
         domain _: AllowanceRecord.Domain
     ) async throws {
         let shouldHold = state.withLock { state in
-            state.calls.append(accountId)
+            state.holders.append(holder)
             state.priorities.append(priority)
             defer { state.holdsNext = false }
             return state.holdsNext

@@ -7,6 +7,7 @@ import PolkadotUI
 import AudioToolbox
 import FoundationExt
 import DesignSystem
+import UIKitExt
 
 class AccountRecoveryViewLayout: ScrollableContainerLayoutView {
     let proceedButton: RoundedButton = .create { view in
@@ -82,6 +83,14 @@ extension AccountRecoveryViewLayout {
         textView.bind(inputViewModel: inputViewModel)
 
         setupProceedButton()
+    }
+}
+
+// MARK: - Sensitive Input
+
+extension AccountRecoveryViewLayout {
+    func setInputCovered(_ covered: Bool) {
+        textView.alpha = covered ? 0 : 1
     }
 }
 

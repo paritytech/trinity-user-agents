@@ -36,7 +36,7 @@ public struct PGASClaimTimeoutError: Error, Equatable {
 /// The provisioned account pays both the fee and the storage deposit in PGAS. Claiming takes a ring
 /// proof, which the allowance manager waits for — a fresh account simply waits here.
 public final class PGASAccountProvisioner: PGASAccountProvisioning, @unchecked Sendable {
-    private let allowanceManager: any AllowanceManaging
+    private let allowanceManager: any AllowanceManaging<AccountId>
     private let domain: AllowanceRecord.Domain
     private let balanceProvider: any PGASBalanceProviding
     private let issueDiagnostics: AllowanceIssueDiagnostics
@@ -44,7 +44,7 @@ public final class PGASAccountProvisioner: PGASAccountProvisioning, @unchecked S
     private let clock: any Clock<Duration>
 
     public init(
-        allowanceManager: any AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         domain: AllowanceRecord.Domain,
         balanceProvider: any PGASBalanceProviding,
         issueDiagnostics: AllowanceIssueDiagnostics,

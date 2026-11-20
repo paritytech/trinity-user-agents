@@ -10,6 +10,7 @@ import Testing
 @Suite(.timeLimit(.minutes(10)))
 struct ChatAccountFundingTests {
     private let accountId = Data(repeating: 0x01, count: 32)
+    private let signerKeyId = "//chat//peer-statement//test"
     private let funding = FakeStatementAccountFunding()
     private let dateProvider = MockDateProvider()
     private let peerAccountId = Data(repeating: 0x0A, count: 32)
@@ -29,6 +30,8 @@ struct ChatAccountFundingTests {
 
         #expect(signer.accountId == expected)
         #expect(funding.calls == [expected])
+        let expectedKeyId = try signerManager.statementSignerKeyId(with: peerAccountId)
+        #expect(funding.signerKeyIds == [expectedKeyId])
     }
 
     @Test func fallsBackToIdentityWhenNoSlotCanBeEvicted() async throws {
@@ -53,7 +56,7 @@ struct ChatAccountFundingTests {
 
     @Test func cooldownKeepsBackoffWithoutFallback() async throws {
         try await funding.recordOnFund(period: currentPeriod())
-        funding.fail(times: 2, with: StatementStoreAllowanceError.noSlotsAvailable(secsToWait: 60))
+        funding.fail(times: 2, with: StatementStoreAllowanceError.noSlotsAvailable)
 
         let signer = try await makeGate(clock: ImmediateClock()).signer(for: sessionRequest())
 
@@ -65,7 +68,7 @@ struct ChatAccountFundingTests {
     @Test func skipsFundingWhileRecordCoversCurrentPeriod() async throws {
         try await funding.setRecord(period: currentPeriod())
 
-        try await makeGate().awaitFunded(accountId: accountId)
+        try await makeGate().awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
 
         #expect(funding.calls.isEmpty)
     }
@@ -76,8 +79,8 @@ struct ChatAccountFundingTests {
         funding.recordOnFund(period: period)
         let gate = makeGate()
 
-        try await gate.awaitFunded(accountId: accountId)
-        try await gate.awaitFunded(accountId: accountId)
+        try await gate.awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
+        try await gate.awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
 
         #expect(funding.calls.count == 1)
         #expect(funding.priorities == [.critical])
@@ -88,8 +91,8 @@ struct ChatAccountFundingTests {
         let gate = makeGate()
         funding.holdNext()
 
-        async let first: Void = gate.awaitFunded(accountId: accountId)
-        async let second: Void = gate.awaitFunded(accountId: accountId)
+        async let first: Void = gate.awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
+        async let second: Void = gate.awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
 
         while funding.calls.isEmpty {
             await Task.yield()
@@ -104,7 +107,7 @@ struct ChatAccountFundingTests {
         try await funding.recordOnFund(period: currentPeriod())
         funding.fail(times: 2)
 
-        try await makeGate(clock: ImmediateClock()).awaitFunded(accountId: accountId)
+        try await makeGate(clock: ImmediateClock()).awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
 
         #expect(funding.calls.count == 3)
     }
@@ -113,7 +116,9 @@ struct ChatAccountFundingTests {
         funding.fail(times: .max)
         let gate = makeGate()
 
-        let submission = Task { [accountId] in try await gate.awaitFunded(accountId: accountId) }
+        let submission = Task { [accountId] in
+            try await gate.awaitFunded(accountId: accountId, signerKeyId: signerKeyId)
+        }
         while funding.calls.isEmpty {
             await Task.yield()
         }

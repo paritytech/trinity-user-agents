@@ -4,6 +4,11 @@ import Foundation_iOS
 import DesignSystem
 import PolkadotUI
 
+extension UIControl.Event {
+    /// Sent before the control becomes first responder, ahead of the system's keyboard choice.
+    static let editingWillBegin = UIControl.Event(rawValue: 1 << 24)
+}
+
 final class RoundedTextView: UIControl {
     var textInsets = NSDirectionalEdgeInsets(
         top: 16,
@@ -53,6 +58,12 @@ final class RoundedTextView: UIControl {
         $0.textContainerInset = .zero
         $0.textContainer.lineFragmentPadding = 0
         $0.autocapitalizationType = .none
+        $0.autocorrectionType = .no
+        $0.spellCheckingType = .no
+        $0.inlinePredictionType = .no
+        $0.smartQuotesType = .no
+        $0.smartDashesType = .no
+        $0.smartInsertDeleteType = .no
         $0.showsVerticalScrollIndicator = false
         $0.showsHorizontalScrollIndicator = false
     }
@@ -136,6 +147,19 @@ private extension RoundedTextView {
 // MARK: - UITextViewDelegate
 
 extension RoundedTextView: UITextViewDelegate {
+    func textViewShouldBeginEditing(_: UITextView) -> Bool {
+        sendActions(for: .editingWillBegin)
+        return true
+    }
+
+    func textViewDidBeginEditing(_: UITextView) {
+        sendActions(for: .editingDidBegin)
+    }
+
+    func textViewDidEndEditing(_: UITextView) {
+        sendActions(for: .editingDidEnd)
+    }
+
     func textViewDidChange(_ textView: UITextView) {
         if inputViewModel?.inputHandler.value != textView.text {
             textView.text = inputViewModel?.inputHandler.value
