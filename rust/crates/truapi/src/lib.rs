@@ -487,13 +487,7 @@ cfg_select! {
 			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
 			extrinsic::Sr25519Signer,
 		};
-		pub use host_logic::{
-			session::{
-				ExternalPairedSession, SsoSessionInfo, decode_persisted_session,
-				encode_external_paired_session,
-			},
-			worker::{WorkerLedger, WorkerTransition},
-		};
+		pub use host_logic::{session::SsoSessionInfo, worker::WorkerTransition};
 		pub use host_rpc_client::HostRpcClient;
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
