@@ -11,6 +11,7 @@ protocol SecretPhraseMnemonicPresenterProtocol: AnyObject {
     func setup()
     func copyDataInBuffer(_ data: String)
     func onShowMnemonic()
+    func onShowMnemonicWhileCaptured()
     func onHideMnemonic()
 }
 
@@ -24,4 +25,4 @@ protocol SecretPhraseMnemonicInteractorOutputProtocol: AnyObject {
 }
 
 @MainActor
-protocol SecretPhraseMnemonicWireframeProtocol: CommonCopyPresentable {}
+protocol SecretPhraseMnemonicWireframeProtocol: CommonCopyPresentable, BottomNotificationPresenting {}

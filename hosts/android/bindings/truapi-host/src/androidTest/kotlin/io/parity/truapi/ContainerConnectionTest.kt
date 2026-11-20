@@ -41,6 +41,7 @@ class ContainerConnectionTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = ContainerScriptBundle.load(context)
+        val testSdk = instrumentation.context.assets.open("truapi-test-sdk.js").bufferedReader().use { it.readText() }
         val reports = Reports()
         val connections = AtomicInteger()
         val permissionChecks = AtomicInteger()
@@ -95,6 +96,7 @@ class ContainerConnectionTest {
                     setOf("http://localhost"),
                 )
                 WebViewCompat.addDocumentStartJavaScript(webView, container, setOf("*"))
+                WebViewCompat.addDocumentStartJavaScript(webView, testSdk, setOf("*"))
                 webView.loadUrl("http://localhost/")
             }
 
@@ -168,16 +170,15 @@ class ContainerConnectionTest {
 
     private companion object {
         val SHARED_CLIENT = """
-            const host = window.__HOST_API_CLIENT__;
-            const client = host.client;
+            const client = truapiTestSdk.getClientSync();
             let connected = false;
-            host.subscribeConnectionStatus(status => {
+            truapiTestSdk.subscribeConnectionStatus(status => {
               if (status === 'connected') connected = true;
               if (connected && status === 'disconnected') connectionReport.disconnected();
             });
             window.sendCall = async () => {
               const result = await client.system.handshake();
-              connectionReport.response(String(result.isOk() && host.client === client));
+              connectionReport.response(String(result.isOk() && truapiTestSdk.getClientSync() === client));
             };
         """.trimIndent()
 

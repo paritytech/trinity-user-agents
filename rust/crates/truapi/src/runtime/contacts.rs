@@ -1,8 +1,9 @@
 //! The contact picker and the handles it hands out.
 //!
-//! A product never reads the contact list. It opens the host's picker, the host
-//! draws an overlay from its own chat contacts, and the core turns the one
-//! person the user selected into a handle.
+//! A product never reads the accounts of the contact list. It opens the host's
+//! picker, the host draws an overlay from its own chat contacts, and the core
+//! turns the one person the user selected into a handle. Only the game
+//! product, Jollity, reads the usernames of the contacts.
 //!
 //! The handle is deliberately **not** per-product: the same contact yields the
 //! same value in every product and on every host of this user. Per-product

@@ -1187,7 +1187,8 @@ impl WasmPairingHostRuntime {
 		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
-	/// Clear one product's durable and in-memory capability state.
+	/// Clear one product's durable and in-memory capability state and the
+	/// values it wrote to product storage.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
 		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await?;
@@ -1425,10 +1426,11 @@ impl WasmSigningHostRuntime {
 		self.runtime.notify_contacts_changed();
 	}
 
-	/// Revoke one product's grants from the current local activation.
+	/// Revoke one product's grants from the current local activation and
+	/// clear the values it wrote to product storage.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await;
+		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await?;
 		Ok(())
 	}
 

@@ -27,8 +27,11 @@ extension ProductAccountHolder: ProductAccountHolding {
     }
 
     public func deriveStatementStoreAccount(for productId: ProductId) throws -> any WalletManaging {
-        let path = Self.allowancePath(system: "statement-store", productId: productId)
-        return DynamicDerivedWallet(derivationPath: path, entropyManager: entropyManager)
+        DynamicDerivedWallet(derivationPath: statementStoreSignerKeyId(for: productId), entropyManager: entropyManager)
+    }
+
+    public func statementStoreSignerKeyId(for productId: ProductId) -> String {
+        Self.allowancePath(system: "statement-store", productId: productId)
     }
 
     public func deriveStatementStorePrivateKey(for productId: ProductId) throws -> Data {

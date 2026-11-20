@@ -34,10 +34,8 @@ fn activated(
 fn submit(
 	runtime: &ProductRuntimeHost<WalletAccountHolder>,
 	value: &[u8],
-) -> Result<
-	RemotePreimageSubmitResponse,
-	CallError<truapi::versioned::preimage::RemotePreimageSubmitError>,
-> {
+) -> Result<RemotePreimageSubmitResponse, CallError<truapi::versioned::preimage::PreimageSubmitError>>
+{
 	futures::executor::block_on(Preimage::submit(
 		runtime,
 		&CallContext::default(),
@@ -97,7 +95,7 @@ fn a_withheld_bulletin_allowance_still_refuses_the_submit() {
 	let error = submit(&runtime, b"refused").expect_err("the withheld allowance refuses it");
 	assert_eq!(
 		error,
-		CallError::Domain(truapi::versioned::preimage::RemotePreimageSubmitError::V1(
+		CallError::Domain(truapi::versioned::preimage::PreimageSubmitError::V1(
 			v01::PreimageSubmitError::Unknown {
 				reason: "Bulletin allowance allocation was rejected by the signing host"
 					.to_string(),

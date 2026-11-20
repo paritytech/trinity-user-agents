@@ -76,6 +76,14 @@ export function encodeLink(pointer: Pointer, base?: string): string {
   return wasm.encodeLink(pointer, base);
 }
 
+/**
+ * The link of each known Trinity stack, by name, from the trinity-stack crate's
+ * `known-stacks.json`. A project adds one with `trinity-stack add <name>`.
+ */
+export const knownStacks: Readonly<Record<string, string>> = Object.freeze(
+  wasm.knownStacks(),
+);
+
 /** Whether two pointers name the same stack: the same key, or the same URL when unsigned. */
 export function sameStack(a: Pointer, b: Pointer): boolean {
   return wasm.sameStack(a, b);
