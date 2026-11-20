@@ -397,6 +397,7 @@ fn admits_host_marker(target: &str) -> bool {
 /// condition. A string a provider, a product or a manifest wrote is none of
 /// those and does not belong in one, for the same reason it does not belong in
 /// a detail line.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "an event reaches no host until it is emitted"]
 pub struct CoreEvent {
 	marker: markers::Marker,
@@ -407,6 +408,16 @@ impl CoreEvent {
 	/// An event of `marker`, carrying nothing yet.
 	pub fn new(marker: markers::Marker) -> Self {
 		Self { marker, attributes: Vec::new() }
+	}
+
+	/// The marker it goes out under.
+	pub fn marker(&self) -> markers::Marker {
+		self.marker
+	}
+
+	/// What it carries so far, in the order it was given.
+	pub fn attributes(&self) -> &[CoreAttribute] {
+		&self.attributes
 	}
 
 	/// Carry `key` as a label, bounded to [`CORE_EVENT_TEXT_MAX_CHARS`].

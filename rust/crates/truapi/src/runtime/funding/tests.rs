@@ -255,6 +255,42 @@ fn a_restart_restores_open_sessions_and_expires_overdue_ones() {
 	);
 }
 
+/// A withdrawal handed to ramp.dot at `assigned_at_ms` on a quote of a
+/// minute, so it counts as taking longer a minute later.
+fn assigned_withdrawal(intent: &str, assigned_at_ms: u64) -> FundingSession {
+	let mut session = FundingSession { direction: FundingDirection::Out, ..session(intent, NOW) };
+	let mut choice = crate::host_logic::funding::test_choice();
+	choice.quote.eta_secs = Some(60);
+	assert!(session.assign(&ramp(), choice, assigned_at_ms));
+	session
+}
+
+fn flags_emitted(registry: &FundingRegistry) -> usize {
+	registry
+		.emitted_facts()
+		.iter()
+		.filter(|fact| fact.marker() == markers::FUNDING_STATUS_FLAG)
+		.count()
+}
+
+// A session already taking longer when a restart loads it was flagged by
+// the process that stored it, so it is not flagged again, though its host
+// still hears of it; one that starts taking longer afterwards is flagged.
+#[test]
+fn a_restart_does_not_flag_a_session_already_taking_longer() {
+	let db = open_memory_core_db();
+	let before = registry_on(&db);
+	insert(&before, assigned_withdrawal("fs_late", NOW - 120_000));
+	insert(&before, assigned_withdrawal("fs_later", NOW));
+
+	let after = registry_on(&db);
+	block_on(after.sweep(NOW)).expect("loaded");
+	let on_load = (flags_emitted(&after), after.lock_held().told_longer.contains("fs_late"));
+	block_on(after.sweep(NOW + 60_000)).expect("swept");
+
+	assert_eq!((on_load, flags_emitted(&after)), ((0, true), 1));
+}
+
 // A provider that restarts after a withdrawal was released must still be
 // handed it, or it could never report how the payout went; once it has,
 // there is nothing left for it to do.
@@ -1064,8 +1100,16 @@ fn a_compaction_that_fails_to_store_keeps_every_session() {
 #[test]
 fn a_replaced_frame_leaves_its_successor_tracked() {
 	let registry = FundingRegistry::default();
-	let mut first = registry.request_frame("fs_1", worker("ramp.dot"));
-	let mut second = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut first = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
+	let mut second = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 	assert_eq!(block_on(first.opened()), Some(FundingFrameOutcome::Dismissed));
 	assert!(registry.open_frame("fs_1"));
 	assert_eq!(block_on(second.opened()), None);
@@ -1087,7 +1131,11 @@ fn a_frame_asked_for_after_the_payment_moved_is_closed_at_once() {
 			..session("fs_1", NOW)
 		},
 	);
-	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut frame = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 
 	assert_eq!(
 		futures::FutureExt::now_or_never(frame.opened()),
@@ -1101,12 +1149,36 @@ fn a_frame_asked_for_after_the_payment_moved_is_closed_at_once() {
 #[test]
 fn a_frame_closed_before_it_is_presented_shows_nothing() {
 	let registry = FundingRegistry::default();
-	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut frame = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 	assert!(registry.open_frame("fs_1"));
 	assert!(registry.close_open_frame("fs_1"));
 
 	assert_eq!(block_on(frame.opened()), Some(FundingFrameOutcome::Closed));
 	assert!(!registry.frame_open("fs_1"));
+	drop(frame);
+	// It never showed, so it logs no opening and closes as withdrawn.
+	let facts: Vec<_> = registry
+		.emitted_facts()
+		.iter()
+		.map(|fact| {
+			let outcome = crate::runtime::funding_telemetry::read::value(fact, "outcome");
+			(fact.marker().target, outcome)
+		})
+		.collect();
+	assert_eq!(
+		facts,
+		[
+			(markers::FUNDING_FRAME_REQUESTED.target, None),
+			(
+				markers::FUNDING_FRAME_CLOSED.target,
+				crate::runtime::funding_telemetry::read::text("closed_by_core")
+			),
+		]
+	);
 }
 
 // A cancel that moved no money is left out of history, yet its summary still
