@@ -7,10 +7,9 @@ import TrUAPIHost
 /// holds when it says something changed, and pushes it to whoever follows a
 /// session or the list of sessions.
 ///
-/// Calls into the core that change it run one after another, off the
+/// Calls into the core that change it run on one serial queue, off the
 /// caller's thread, in the order they were made: the core is synchronous,
-/// and must see the user's steps in the order they were taken even when
-/// they come from separate tasks.
+/// and must see the user's steps in the order they were taken.
 final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     let events: AnyAsyncSequence<FundingEvent>
 
@@ -18,7 +17,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     private let logger: LoggerProtocol
     private let eventSink: AsyncStream<FundingEvent>.Continuation
     private let state = OSAllocatedUnfairLock(initialState: State())
-    private let calls = FundingCoreCalls()
+    private let calls = DispatchQueue(label: "io.parity.funding.core-calls")
 
     init(runtime: FundingRuntime, logger: LoggerProtocol) {
         self.runtime = runtime
@@ -57,7 +56,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func select(_ selection: FundingSelection, for entryId: String) {
-        calls.run { [runtime, weak self] in
+        calls.async { [runtime, weak self] in
             runtime.selectFundingOptions(intent: entryId, selection: selection)
             self?.publish(entryId)
         }
@@ -72,7 +71,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
 
         let ask = state.withLock { $0.quotes[entryId, default: QuoteAsk()].ask() }
         publish(entryId)
-        calls.run { [runtime, weak self] in
+        calls.async { [runtime, weak self] in
             let requestId = runtime.getFundingQuote(intent: entryId, amount: amount)
             self?.take(requestId, of: ask, for: entryId)
         }
@@ -85,7 +84,12 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     func start(_ entryId: String, provider: ProductId?) async throws {
         guard let provider else {
             state.withLock { $0.quotes[entryId, default: QuoteAsk()].startsWhenQuoted = true }
-            await calls.run { [weak self] in self?.startWhenQuoted(entryId) }.value
+            await withCheckedContinuation { continuation in
+                calls.async { [weak self] in
+                    self?.startWhenQuoted(entryId)
+                    continuation.resume()
+                }
+            }
             return
         }
         guard let quoteId = shownQuote(of: provider, for: entryId)?.quoteId else {
@@ -113,7 +117,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         }
         guard wasStarting else { return }
 
-        calls.run { [runtime] in runtime.cancelFundingAutoStart(intent: entryId) }
+        calls.async { [runtime] in runtime.cancelFundingAutoStart(intent: entryId) }
     }
 
     func leave(_ entryId: String) {
@@ -152,7 +156,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
 
     func openProviderFrame(_ request: FundingFrameRequest) {
         state.withLock { _ = $0.requestedFrames.remove(request.entryId) }
-        calls.run { [runtime, logger] in
+        calls.async { [runtime, logger] in
             guard !runtime.openProviderFrame(intent: request.entryId) else { return }
 
             logger.debug("[funding] \(request.entryId): \(request.providerId) no longer waits to show a screen")
