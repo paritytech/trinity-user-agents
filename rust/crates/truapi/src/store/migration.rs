@@ -6,6 +6,7 @@ mod v11_to_v12_materials;
 mod v12_to_v13_stack_records;
 mod v13_to_v14_nft_cheques;
 mod v14_to_v15_pocket_card_sides;
+mod v15_to_v16_nft_recovery;
 mod v1_to_v2_scheduled_submissions;
 mod v2_to_v3_nft_purses;
 mod v3_to_v4_nft_items;
@@ -37,5 +38,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v12_to_v13_stack_records::create_stack_records(),
 		v13_to_v14_nft_cheques::create_nft_cheques(),
 		v14_to_v15_pocket_card_sides::key_pocket_card_faces_by_side(),
+		v15_to_v16_nft_recovery::create_nft_recovery(),
 	])
 }

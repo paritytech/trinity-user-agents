@@ -19,6 +19,8 @@ use std::{collections::HashMap, sync::Mutex};
 
 use parity_scale_codec::Encode;
 
+use crate::host_logic::keyed_hash::blake2b_256_keyed;
+
 /// Upper bound on cached handles. The cache holds contacts the user picked, so
 /// it stays small; reaching the bound empties it rather than evicting in order.
 const HANDLE_CACHE_MAX_ENTRIES: usize = 256;
@@ -29,7 +31,7 @@ pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle";
 /// Domain-separate the session's root entropy source into the contact-handle
 /// key, so this key cannot collide with another derived from the same source.
 pub fn handle_key_from_root_source(root_entropy_source: &[u8; 32]) -> [u8; 32] {
-	blake2b256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
+	blake2b_256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
 }
 
 /// The handle one contact is known by, across every product and every host of
@@ -45,7 +47,7 @@ pub fn handle_key_from_root_source(root_entropy_source: &[u8; 32]) -> [u8; 32] {
 /// the key is uniform across a user's hosts because the wallet supplies the same
 /// root source to each.
 pub fn contact_handle(handle_key: &[u8; 32], account: &[u8; 32]) -> [u8; 32] {
-	blake2b256_keyed(&account.encode(), handle_key)
+	blake2b_256_keyed(&account.encode(), handle_key)
 }
 
 /// Both directions of the handle mapping: minting one for a contact the user
@@ -175,16 +177,6 @@ impl ContactHandleCache {
 	fn state(&self) -> std::sync::MutexGuard<'_, CacheState> {
 		self.state.lock().expect("contact handle cache poisoned")
 	}
-}
-
-fn blake2b256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
-	blake2b_simd::Params::new()
-		.hash_length(32)
-		.key(key)
-		.hash(message)
-		.as_bytes()
-		.try_into()
-		.expect("hash_length(32) configures BLAKE2b output to exactly 32 bytes; qed")
 }
 
 #[cfg(test)]
