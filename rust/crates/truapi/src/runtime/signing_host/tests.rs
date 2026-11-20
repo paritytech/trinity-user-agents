@@ -287,7 +287,7 @@ fn a_context_grant_lets_a_foreign_product_prove_with_the_owners_key() {
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
 	let (services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring_location = full_person_ring_location();
@@ -307,7 +307,7 @@ fn a_foreign_proof_is_refused_when_the_owner_granted_nothing() {
 	cache_grant(&platform, "peopl.dot", r#"{"someone-else":["context"]}"#);
 	let (services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring_location = full_person_ring_location();
@@ -473,7 +473,7 @@ fn a_consented_alias_read_warns_nobody() {
 	cache_grant(&platform, "peopl.dot", r#"{"someone-else":["context"]}"#);
 	let authority =
 		SigningHost::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring_location = full_person_ring_location();
@@ -613,7 +613,7 @@ fn a_context_grant_covers_the_identity_read() {
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -676,7 +676,7 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -779,7 +779,7 @@ fn third_product_context(
 	seed(&platform);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -973,7 +973,7 @@ fn an_owner_listing_its_own_keys_is_not_prompted_for_its_own_account() {
 	let platform = Arc::new(StubPlatform::default());
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -1017,7 +1017,7 @@ fn a_cross_network_namesake_is_not_treated_as_the_owner() {
 	cache_grant(&platform, "peopl.dot", r#"{"peopl":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -1057,7 +1057,7 @@ fn a_grantee_may_spell_its_own_context_differently() {
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -1191,7 +1191,7 @@ fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 	cache_grant(&platform, "peopl.dot", r#"{"dim2":["context"]}"#);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -1251,7 +1251,7 @@ fn an_owner_spelled_differently_still_proves_with_its_own_key() {
 	let platform = Arc::new(StubPlatform::default());
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring = full_person_ring_location();
@@ -1446,7 +1446,7 @@ fn with_the_owners_kept_key(trusted_products: &str) -> (Arc<SigningHost>, Author
 	cache_grant(&platform, "bank.dot", "{}");
 	let (services, authority) =
 		signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime_for(services, authority.clone(), "peopl.dot"));
 	let session = authority.accounts().current_session().expect("active session");
@@ -1645,7 +1645,7 @@ fn foreign_ring_vrf_sign_through_as(
 	}
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	register_full_person_key(&authority, &session, &full_person_ring_location());
@@ -1683,7 +1683,7 @@ fn foreign_proof_through_with(
 	seed(&platform);
 	let (_services, authority) =
 		signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let ring_location = full_person_ring_location();
@@ -1753,7 +1753,7 @@ fn ring_alias_and_proof_share_the_explicit_registered_key() {
 	let resolver = full_person_ring_resolver();
 	let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
 	let authority = SigningHost::new_with_ring_resolver(platform, resolver);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -1798,7 +1798,7 @@ fn ring_alias_and_proof_share_the_explicit_registered_key() {
 fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 	let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
 	let authority = SigningHost::new_with_ring_resolver(platform, full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let registered_ring = full_person_ring_location();
@@ -1830,7 +1830,7 @@ fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 	let platform = Arc::new(StubPlatform::default());
 	let authority =
 		SigningHost::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -1881,7 +1881,7 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 		Arc::new(StubPlatform { account_access_confirmed: true, ..StubPlatform::default() });
 	let authority =
 		SigningHost::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -1921,7 +1921,7 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 #[test]
 fn local_activation_exposes_the_peopl_dot_identity_account() {
 	let (_services, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 
 	let session = authority.accounts().current_session().expect("active session");
@@ -1936,7 +1936,7 @@ fn local_activation_exposes_the_peopl_dot_identity_account() {
 #[test]
 fn activate_then_sign_raw_verifies_against_derived_product_key() {
 	let (services, activation) = signing_runtime();
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 	let cx = CallContext::default();
@@ -1969,7 +1969,7 @@ fn activate_then_sign_raw_verifies_against_derived_product_key() {
 #[test]
 fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
 	let (_services, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let request = v01::HostAccountSignVrfRequest {
@@ -2011,7 +2011,7 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, authority.clone());
 	let allocation = futures::executor::block_on(ResourceAllocation::request(
@@ -2074,7 +2074,7 @@ fn auto_signing_grant_does_not_cross_root_identity_replacement() {
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("first activation succeeds");
 	let runtime = product_runtime(services, authority.clone());
 	futures::executor::block_on(ResourceAllocation::request(
@@ -2086,7 +2086,7 @@ fn auto_signing_grant_does_not_cross_root_identity_replacement() {
 	))
 	.expect("AutoSigning allocation succeeds");
 
-	futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new([0xCD; 16])))
 		.expect("replacement activation succeeds");
 	let replacement = authority.accounts().current_session().expect("replacement session");
 	let error = futures::executor::block_on(authority.accounts().sign_vrf(
@@ -2115,7 +2115,7 @@ fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("first activation succeeds");
 	let runtime = product_runtime(services, authority.clone());
 	futures::executor::block_on(ResourceAllocation::request(
@@ -2128,7 +2128,7 @@ fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
 	.expect("AutoSigning allocation succeeds");
 
 	futures::executor::block_on(authority.disconnect());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("same wallet reactivation succeeds");
 	let reactivated = authority.accounts().current_session().expect("reactivated session");
 	let error = futures::executor::block_on(authority.accounts().sign_vrf(
@@ -2153,11 +2153,11 @@ fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
 fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
 	let platform = Arc::new(StubPlatform { sign_vrf_confirmed: false, ..StubPlatform::default() });
 	let (_services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("first activation succeeds");
 	let stale = authority.accounts().current_session().expect("first session snapshot");
 
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("same wallet replacement activation succeeds");
 	let current = authority.accounts().current_session().expect("replacement session");
 	assert_ne!(stale.validation_id, current.validation_id);
@@ -2199,8 +2199,10 @@ fn auto_signing_grant_does_not_cross_runtime_instance() {
 		..StubPlatform::default()
 	});
 	let (services, granting_authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(granting_authority.activate_local_session(ENTROPY.to_vec()))
-		.expect("granting runtime activates");
+	futures::executor::block_on(
+		granting_authority.activate_local_session(RootEntropy::new(ENTROPY)),
+	)
+	.expect("granting runtime activates");
 	let granting_runtime = product_runtime(services, granting_authority);
 	futures::executor::block_on(ResourceAllocation::request(
 		&granting_runtime,
@@ -2212,7 +2214,7 @@ fn auto_signing_grant_does_not_cross_runtime_instance() {
 	.expect("AutoSigning allocation succeeds");
 
 	let (_replacement_services, replacement) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(replacement.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(replacement.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("replacement runtime activates with the same root");
 	let session = replacement.accounts().current_session().expect("replacement session");
 	let error = futures::executor::block_on(replacement.accounts().sign_vrf(
@@ -2236,7 +2238,7 @@ fn auto_signing_grant_does_not_cross_runtime_instance() {
 #[test]
 fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 	let (_services, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -2313,7 +2315,7 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 #[test]
 fn sign_raw_legacy_accepts_only_the_peopl_dot_identity_key() {
 	let (_services, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = authority.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -2394,7 +2396,7 @@ fn create_transaction_reaches_chain_metadata_resolution() {
 		..StubPlatform::default()
 	});
 	let (_services, activation) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = activation.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -2413,7 +2415,7 @@ fn create_transaction_reaches_chain_metadata_resolution() {
 #[test]
 fn create_transaction_legacy_signer_mismatch_errors() {
 	let (_services, activation) = signing_runtime();
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let session = activation.accounts().current_session().expect("active session");
 	let cx = CallContext::default();
@@ -2442,7 +2444,7 @@ fn create_transaction_requires_active_session() {
 	// A session snapshot cannot exist without activation, so construct the
 	// request against a role that has never been activated.
 	let (_s2, other) = signing_runtime();
-	futures::executor::block_on(other.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(other.activate_local_session(RootEntropy::new(ENTROPY))).unwrap();
 	let stale_session = other.accounts().current_session().expect("session");
 	futures::executor::block_on(other.disconnect());
 	let cx = CallContext::default();
@@ -2458,7 +2460,7 @@ fn create_transaction_requires_active_session() {
 #[test]
 fn derive_entropy_matches_ios_vector_over_local_session() {
 	let (services, activation) = signing_runtime();
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime_for(services, activation, "test.product.dot");
 	let cx = CallContext::default();
@@ -2494,7 +2496,7 @@ fn get_account_gates_on_local_session() {
 #[test]
 fn sign_raw_leaves_already_wrapped_payload_untouched() {
 	let (services, activation) = signing_runtime();
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 	let cx = CallContext::default();
@@ -2531,13 +2533,13 @@ fn sign_raw_leaves_already_wrapped_payload_untouched() {
 #[test]
 fn reactivation_invalidates_prior_session_snapshot() {
 	let (_services, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("first activation");
 	let stale = authority.accounts().current_session().expect("snapshot");
 
 	// Re-activate with different entropy: a fresh public key, hence a
 	// different validation id.
-	futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new([0xCD; 16])))
 		.expect("second activation");
 	assert_ne!(
 		authority.accounts().current_session().expect("session").public_key,
@@ -2564,7 +2566,7 @@ fn reactivation_invalidates_prior_session_snapshot() {
 #[test]
 fn disconnect_clears_local_session() {
 	let (_services, authority) = signing_runtime();
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation");
 	let session = authority.accounts().current_session().expect("connected");
 
@@ -2605,7 +2607,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 		..StubPlatform::default()
 	});
 	let (_services, authority) = signing_runtime_on_asset_hub(platform, [0xcc; 32]);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation");
 	let session = authority.accounts().current_session().expect("connected");
 	let cx = CallContext::default();
@@ -2637,7 +2639,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 #[test]
 fn a_withdrawn_allocation_is_refused_before_its_review() {
 	let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation");
 	let session = authority.accounts().current_session().expect("connected");
 	let cancel = truapi::CancellationToken::default();
@@ -2677,7 +2679,7 @@ fn a_withdrawn_allocation_starts_no_further_resource() {
 	use futures::StreamExt;
 
 	let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation");
 	let session = authority.accounts().current_session().expect("connected");
 	let cancel = truapi::CancellationToken::default();
@@ -2733,7 +2735,7 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 		..StubPlatform::default()
 	});
 	let (_services, authority) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation");
 	let session = authority.accounts().current_session().expect("connected");
 	let cx = CallContext::default();

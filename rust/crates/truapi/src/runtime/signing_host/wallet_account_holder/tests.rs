@@ -34,7 +34,7 @@ pub fn unlocked_wallet(
 	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
-	wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
+	wallet.install(wallet.prepare_activation(RootEntropy::new([entropy; 32]), None).unwrap());
 	wallet
 }
 

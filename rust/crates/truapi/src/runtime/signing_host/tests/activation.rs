@@ -18,7 +18,8 @@ fn pending_account_access_tracks_wallet_activation() {
 			..StubPlatform::default()
 		});
 		let (services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+			.unwrap();
 		let session = authority.accounts().current_session().unwrap();
 		let runtime = product_runtime(services, authority.clone());
 		let cx = CallContext::default();
@@ -36,8 +37,10 @@ fn pending_account_access_tracks_wallet_activation() {
 		match change {
 			"lock" => futures::executor::block_on(authority.disconnect()),
 			"reactivate" => {
-				futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-					.unwrap();
+				futures::executor::block_on(
+					authority.activate_local_session(RootEntropy::new(ENTROPY)),
+				)
+				.unwrap();
 			},
 			"reset" => authority.clear_product_state(&ProductId::for_test("myapp.dot")),
 			_ => unreachable!(),
@@ -68,7 +71,8 @@ fn pending_account_access_tracks_wallet_activation() {
 fn a_local_session_projects_the_install_wide_device_key() {
 	let platform = Arc::new(StubPlatform::default());
 	let (_, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 
 	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
 	let auth_states = platform.auth_states.lock().unwrap();
@@ -94,7 +98,8 @@ fn a_local_session_projects_the_install_wide_device_key() {
 #[test]
 fn an_active_session_keeps_its_device_key() {
 	let (_, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let install_secret = futures::executor::block_on(authority.device_encryption_secret()).unwrap();
 
 	let adoption = futures::executor::block_on(authority.adopt_device_encryption_secret([9; 32]));
@@ -116,7 +121,8 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let runtime = product_runtime(services, authority.clone());
 	let prompts_after_request = || {
 		futures::executor::block_on(runtime.get_account(
@@ -133,9 +139,11 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 	};
 	let mut prompts = vec![prompts_after_request(), prompts_after_request()];
 	futures::executor::block_on(authority.disconnect());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	prompts.push(prompts_after_request());
-	futures::executor::block_on(authority.activate_local_session(vec![0xCD; 16])).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new([0xCD; 16])))
+		.unwrap();
 	prompts.push(prompts_after_request());
 	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 	prompts.push(prompts_after_request());
@@ -154,7 +162,8 @@ fn the_static_receive_secret_is_the_users_chat_key() {
 
 	let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
 	let signed_out = authority.static_receive_secret().map(|secret| secret.public_key());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 
 	let signed_in = authority.static_receive_secret().unwrap().public_key();
 

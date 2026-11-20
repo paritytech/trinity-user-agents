@@ -53,7 +53,8 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
 	let (services, authority) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let authority_session = authority.accounts().current_session().unwrap();
 	let revision = grant_revision(authority.accounts());
 	for product in ["myapp.dot", "other.dot"] {
@@ -91,7 +92,8 @@ fn a_product_reset_leaves_another_products_kept_key_signing() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
 	let (services, authority) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let products =
 		["myapp.dot", "other.dot"].map(|product| ProductContext::new(ProductId::for_test(product)));
 	for product in &products {
@@ -134,7 +136,8 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_on_asset_hub(platform.clone(), crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let runtime = product_runtime_for(services, authority.clone(), PRODUCT_ID);
 	let cx = CallContext::default();
 	let allocation = ResourceAllocation::request(
@@ -243,7 +246,7 @@ fn a_new_session_looks_the_allowance_up_again() {
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 
 	futures::executor::block_on(signing_host.disconnect());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("re-activation succeeds");
 
 	assert_eq!(
@@ -272,7 +275,7 @@ fn clearing_a_product_forgets_only_its_key() {
 fn a_replaced_session_is_not_served_the_new_sessions_key() {
 	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
 	let authority_session = signing_host.accounts().current_session().unwrap();
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("re-activation succeeds");
 	remember(
 		&signing_host,
@@ -299,7 +302,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
 	let revision = grant_revision(signing_host.accounts());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("re-activation succeeds");
 
 	let remembered_stale =
@@ -335,7 +338,7 @@ fn submit_answered(
 		..Default::default()
 	});
 	let (services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 	let runtime = product_runtime_for(services, signing_host.clone(), PRODUCT_ID);

@@ -49,7 +49,7 @@ fn sign_as(
 	caller: &str,
 ) -> Result<v01::HostSignPayloadResponse, CallError<HostSignPayloadError>> {
 	let (services, activation) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	let runtime = product_runtime_for(services, activation, caller);
 
@@ -162,7 +162,7 @@ fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted
 		let platform = Arc::new(StubPlatform::default());
 		cache_grant(&platform, "dim2.paseo", trusted);
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("the local session activates");
 		let runtime = product_runtime_for(services, activation, "stash.paseo");
 
@@ -181,7 +181,7 @@ fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted
 fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost<WalletAccountHolder> {
 	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
 	let (services, activation) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	product_runtime_for(services, activation, "dim2next.paseo")
 }
@@ -372,7 +372,7 @@ fn a_product_is_asked_on_its_own_connection() {
 		..StubPlatform::default()
 	});
 	let (services, activation) = signing_runtime_with_platform(runtime_platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	let runtime = ProductRuntimeHost::from_services(
 		services.clone(),
@@ -416,7 +416,7 @@ fn a_cancelled_account_request_stops_waiting_for_the_prompt() {
 		..StubPlatform::default()
 	});
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("the local session activates");
 	let runtime = product_runtime(services, activation);
 	let cancel = truapi::CancellationToken::default();

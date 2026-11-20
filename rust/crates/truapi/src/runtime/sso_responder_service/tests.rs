@@ -109,7 +109,7 @@ fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<Si
 		Spawner::for_test(),
 	);
 	let signing_host = SigningHost::new(services.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	(services, signing_host)
 }
@@ -308,7 +308,7 @@ fn a_pairing_failure_is_sent_after_the_wallet_changes() {
 	)
 	.expect("the allocation is announced");
 
-	futures::executor::block_on(signing_host.activate_local_session(vec![0xCD; 16]))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new([0xCD; 16])))
 		.expect("another wallet activates");
 
 	futures::executor::block_on(
@@ -671,7 +671,7 @@ fn allocation_after_session_change(replacement: Option<Vec<u8>>) {
 
 		signing_host.disconnect().await;
 		if let Some(entropy) = replacement {
-			signing_host.activate_local_session(entropy).await.unwrap();
+			signing_host.activate_local_session(RootEntropy::new(entropy)).await.unwrap();
 		}
 		release.send(()).unwrap();
 
@@ -697,7 +697,8 @@ fn a_bound_service_cannot_follow_a_replaced_wallet() {
 		});
 		let (_, signing_host) = signing_fixture(platform.clone());
 		let service = sso_service(&signing_host);
-		futures::executor::block_on(signing_host.activate_local_session(entropy)).unwrap();
+		futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(entropy)))
+			.unwrap();
 		let Ok(Dispatch::Response(answer)) =
 			futures::executor::block_on(service.answer(allocation_request("stale-service")))
 		else {
@@ -1075,7 +1076,8 @@ fn a_replaced_activation_leaves_the_request_to_the_next_loop() {
 	let (_services, signing_host) = signing_fixture(platform.clone());
 	let session = paired_session(&signing_host);
 	let replaced = sso_service(&signing_host);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let current = sso_service(&signing_host);
 	let responder = signing_host.sso_responder();
 	let serve = |service| {

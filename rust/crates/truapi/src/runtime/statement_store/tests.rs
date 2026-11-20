@@ -79,7 +79,7 @@ fn signing_host_runtime_on(
 		Spawner::for_test(),
 	);
 	let signing_host = SigningHost::new(services.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),

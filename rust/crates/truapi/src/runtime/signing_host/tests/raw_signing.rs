@@ -18,7 +18,8 @@ use truapi::versioned::signing::{
 fn raw_signing_review_matches_the_signed_bytes() {
 	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let entropy = RootEntropy::new(ENTROPY);
 	let identity = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 	let product = entropy
@@ -86,8 +87,10 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 			let platform =
 				Arc::new(StubPlatform { sign_raw_confirmed: confirmed, ..Default::default() });
 			let (_, activation) = signing_runtime_with_platform(platform.clone());
-			futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-				.unwrap();
+			futures::executor::block_on(
+				activation.activate_local_session(RootEntropy::new(ENTROPY)),
+			)
+			.unwrap();
 			let service = sso_service(&activation);
 			let entropy = RootEntropy::new(ENTROPY);
 			let identity = entropy.derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();

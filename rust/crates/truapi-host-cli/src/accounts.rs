@@ -42,9 +42,8 @@ const IMPORTED_ACCOUNT_NAME: &str = "imported";
 /// Signer material selected for a signing-host session.
 #[derive(Clone, derive_more::Debug)]
 pub struct ResolvedSigner {
-	/// BIP-39 entropy backing the selected signer account.
 	#[debug("\"<redacted>\"")]
-	pub entropy: Vec<u8>,
+	entropy: RootEntropy,
 	/// Stored account name when this came from `accounts.json`.
 	pub account_name: Option<String>,
 	/// Lite username attested for the signer, when managed by the CLI.
@@ -54,9 +53,9 @@ pub struct ResolvedSigner {
 }
 
 impl ResolvedSigner {
-	/// The root entropy this signer's keys derive from.
-	pub fn root_entropy(&self) -> RootEntropy {
-		RootEntropy::new(self.entropy.clone())
+	/// The root entropy backing the selected signer account.
+	pub fn entropy(&self) -> &RootEntropy {
+		&self.entropy
 	}
 }
 
@@ -66,8 +65,9 @@ impl ResolvedSigner {
 pub struct ImportedSigner {
 	#[debug("\"<redacted>\"")]
 	mnemonic: String,
+	#[zeroize(skip)]
 	#[debug("\"<redacted>\"")]
-	entropy: Vec<u8>,
+	entropy: RootEntropy,
 	#[zeroize(skip)]
 	username: Option<String>,
 	#[zeroize(skip)]
@@ -92,7 +92,7 @@ impl ImportedSigner {
 	}
 
 	/// Borrow the already-derived entropy for off-side runtime activation.
-	pub fn entropy(&self) -> &[u8] {
+	pub fn entropy(&self) -> &RootEntropy {
 		&self.entropy
 	}
 }
@@ -353,7 +353,7 @@ pub fn remove_managed_accounts(
 
 pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedSigner> {
 	if let Some(mnemonic) = config.mnemonic {
-		let entropy = mnemonic_entropy(&mnemonic)?;
+		let entropy = root_entropy_from_mnemonic(&mnemonic)?;
 		return Ok(ResolvedSigner {
 			entropy,
 			account_name: None,
@@ -443,10 +443,9 @@ pub async fn inspect_imported_signer(network: &Stack, mnemonic: &str) -> Result<
 		)
 	})?;
 	let session_name = imported_session_name(username.as_deref(), &identity.public_key);
-	let entropy = mnemonic_entropy(&mnemonic)?;
 	Ok(ImportedSigner {
 		mnemonic,
-		entropy,
+		entropy: identity.entropy,
 		username,
 		session_name,
 		public_key: identity.public_key,
@@ -784,7 +783,7 @@ async fn sleep_ring_poll(attempt: usize, max_attempts: usize, sleep: Duration) {
 }
 
 fn resolved_from_record(record: AccountRecord, auto_managed: bool) -> Result<ResolvedSigner> {
-	let entropy = mnemonic_entropy(&record.mnemonic)?;
+	let entropy = root_entropy_from_mnemonic(&record.mnemonic)?;
 	let lite_username = (!record.lite_username.is_empty()).then_some(record.lite_username);
 	Ok(ResolvedSigner { entropy, account_name: Some(record.name), lite_username, auto_managed })
 }
@@ -836,13 +835,8 @@ fn identity_from_mnemonic(mnemonic: &str, network_suffix: &str) -> Result<Signer
 
 /// The root entropy of a BIP-39 `mnemonic`.
 pub fn root_entropy_from_mnemonic(mnemonic: &str) -> Result<RootEntropy> {
-	Ok(RootEntropy::new(mnemonic_entropy(mnemonic)?))
-}
-
-fn mnemonic_entropy(mnemonic: &str) -> Result<Vec<u8>> {
-	Ok(Mnemonic::parse(mnemonic.trim())
-		.context("invalid BIP-39 mnemonic")?
-		.to_entropy())
+	let mnemonic = Mnemonic::parse(mnemonic.trim()).context("invalid BIP-39 mnemonic")?;
+	Ok(RootEntropy::new(mnemonic.to_entropy()))
 }
 
 /// The two rejections are reported apart because they suggest opposite fixes.

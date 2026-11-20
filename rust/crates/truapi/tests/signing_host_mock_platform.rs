@@ -128,7 +128,7 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	let platform = Arc::new(MockPlatform::new());
 	let runtime =
 		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("a signing host activates a local session from raw entropy");
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
@@ -208,7 +208,7 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	let platform = Arc::new(MockPlatform::new());
 	let runtime =
 		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("local activation succeeds");
 	// Activation looks the session's username up on Asset Hub in the
 	// background. Nothing answers its request for the best block, so once
@@ -261,7 +261,7 @@ fn a_declined_confirmation_withholds_the_signature() {
 	}));
 	let runtime =
 		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("local activation succeeds");
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));

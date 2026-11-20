@@ -38,7 +38,7 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 			(
 				fs::read(&reloaded.path)?,
 				resolve_cached_signer(directory.path(), &network, None)?
-					.map(|signer| signer.entropy),
+					.map(|signer| signer.account_name),
 				serde_json::to_value(reloaded.pending_auto_candidate(network_id))?,
 			),
 			(original_accounts.clone(), None, serde_json::to_value(&pending)?,)
@@ -70,10 +70,16 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 			reloaded.data.accounts.len(),
 			reloaded.pending_auto_candidate(network_id).is_none(),
 			cached.account_name,
-			cached.entropy,
+			cached.entropy.derive_root_keypair()?.public.to_bytes(),
 			cached.lite_username,
 		),
-		(1, true, Some("auto-1".to_string()), vec![0; 16], Some("pending.01".to_string()),)
+		(
+			1,
+			true,
+			Some("auto-1".to_string()),
+			RootEntropy::new([0; 16]).derive_root_keypair()?.public.to_bytes(),
+			Some("pending.01".to_string()),
+		)
 	);
 	Ok(())
 }
@@ -81,7 +87,7 @@ async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<(
 #[test]
 fn debug_output_redacts_signer_secrets() {
 	let signer = ResolvedSigner {
-		entropy: vec![0xab; 32],
+		entropy: RootEntropy::new([0xab; 32]),
 		account_name: Some("auto-1".to_string()),
 		lite_username: None,
 		auto_managed: true,
@@ -280,7 +286,7 @@ fn imported_signer_is_durable_named_and_excluded_from_auto_pool() -> Result<()> 
 	let identity = identity_from_mnemonic(MNEMONIC, "paseo")?;
 	let imported = ImportedSigner {
 		mnemonic: MNEMONIC.to_string(),
-		entropy: mnemonic_entropy(MNEMONIC)?,
+		entropy: identity.entropy,
 		username: Some("alice.01".to_string()),
 		session_name: "alice.01".to_string(),
 		public_key: identity.public_key,
@@ -319,7 +325,7 @@ fn imported_signer_without_dotns_username_is_still_cached() -> Result<()> {
 	let session_name = imported_session_name(None, &identity.public_key);
 	let imported = ImportedSigner {
 		mnemonic: MNEMONIC.to_string(),
-		entropy: mnemonic_entropy(MNEMONIC)?,
+		entropy: identity.entropy,
 		username: None,
 		session_name: session_name.clone(),
 		public_key: identity.public_key,

@@ -48,7 +48,7 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> HostRuntime<Signing
 	)
 	.expect("signing host config is valid");
 	let runtime = HostRuntime::<SigningHost>::new(platform, config, Spawner::for_test());
-	futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new([0xab; 32])))
 		.expect("activation succeeds");
 	runtime
 }

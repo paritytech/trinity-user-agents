@@ -254,10 +254,10 @@ impl WalletAccountHolder {
 	/// Validate and derive activation material without changing the active wallet.
 	pub fn prepare_activation(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<PreparedWalletActivation, AuthorityError> {
-		let keys = WalletKeys::new(secret, self.services.stack().tld().to_string());
+		let keys = WalletKeys::new(entropy, self.services.stack().tld().to_string());
 		let public_key = keys.root_public_key()?;
 		let identity_account_id = keys.identity_keypair()?.public.to_bytes();
 		let identity_chat_private_key = keys.entropy.derive_identity_chat_private_key();
@@ -358,8 +358,8 @@ struct WalletKeys {
 }
 
 impl WalletKeys {
-	fn new(entropy: Vec<u8>, network_suffix: String) -> Self {
-		Self { entropy: RootEntropy::new(entropy), network_suffix }
+	fn new(entropy: RootEntropy, network_suffix: String) -> Self {
+		Self { entropy, network_suffix }
 	}
 
 	fn root_public_key(&self) -> Result<[u8; 32], ProductAccountError> {

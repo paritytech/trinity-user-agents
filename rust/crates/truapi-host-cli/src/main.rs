@@ -1746,8 +1746,7 @@ async fn start_signing_host(
 			reserved_username: None,
 		})
 		.await?;
-		match attestation::registered_lite_username(&network, &explicit_signer.root_entropy()).await
-		{
+		match attestation::registered_lite_username(&network, explicit_signer.entropy()).await {
 			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
 			Err(error) => {
 				tracing::warn!(error = %format!("{error:#}"), "explicit signer has no resolvable dotNS username")
@@ -1776,7 +1775,7 @@ async fn start_signing_host(
 	if let Some(cached_signer) = &signer {
 		runtime
 			.activate_local_session_with_identity(
-				cached_signer.entropy.clone(),
+				cached_signer.entropy().clone(),
 				cached_signer.lite_username.clone(),
 			)
 			.await
@@ -2405,7 +2404,10 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
 	let signer = session.signer.as_ref().context("signer has not been resolved")?;
 	session
 		.runtime
-		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
+		.activate_local_session_with_identity(
+			signer.entropy().clone(),
+			signer.lite_username.clone(),
+		)
 		.await
 		.map_err(SessionOperationError::LocalActivation)?;
 	if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
@@ -3206,7 +3208,10 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	let available_sessions = session.catalog.list()?;
 
 	if let Err(error) = runtime
-		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
+		.activate_local_session_with_identity(
+			signer.entropy().clone(),
+			signer.lite_username.clone(),
+		)
 		.await
 	{
 		bail!("failed to activate session {name:?}: {}", error.reason);
@@ -3289,7 +3294,7 @@ async fn import_mnemonic_session(
 		session.pocket.clone(),
 	)?;
 	runtime
-		.activate_local_session_with_identity(imported.entropy().to_vec(), username.clone())
+		.activate_local_session_with_identity(imported.entropy().clone(), username.clone())
 		.await
 		.map_err(|source| SessionOperationError::ImportedActivation {
 			session_name: session_name.clone(),
@@ -4011,14 +4016,8 @@ async fn run_profile_command(session: &SigningHostSession, command: ProfileComma
 		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await?,
 		ProfileCommand::Upload(path) => {
 			let (signer, username) = profile_identity(session)?;
-			profile::upload(
-				&session.runtime,
-				&session.network,
-				&signer.root_entropy(),
-				username,
-				&path,
-			)
-			.await?
+			profile::upload(&session.runtime, &session.network, signer.entropy(), username, &path)
+				.await?
 		},
 	};
 	terminal_ui::output_info(output);
@@ -4165,8 +4164,13 @@ mod cli_tests {
 	use super::*;
 	use crate::frame_server::ProductRuntimeFactory;
 	use parity_scale_codec::Encode;
+	use truapi::host_logic::root_entropy::RootEntropy;
 
 	const SESSION_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+	fn root_public_key(entropy: &RootEntropy) -> [u8; 32] {
+		entropy.derive_root_keypair().unwrap().public.to_bytes()
+	}
 
 	async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
 		let network = Network::default().bundled_stack(ChainBackend::Rpc);
@@ -4230,11 +4234,7 @@ mod cli_tests {
 		let accounts = finish_session_account(&session)?;
 		session.network = session.network.with_dub("http://127.0.0.1:1/");
 		let mut resets = session.runtime_factory.connection_reset().unwrap();
-		let expected_key = truapi::host_logic::root_entropy::RootEntropy::new([0; 16])
-			.derive_root_keypair()
-			.unwrap()
-			.public
-			.to_bytes();
+		let expected_key = root_public_key(&RootEntropy::new([0; 16]));
 
 		switch_session(&mut session, "pending".to_string()).await?;
 
@@ -4242,7 +4242,7 @@ mod cli_tests {
 			(
 				session.runtime.has_active_session(),
 				session.runtime.statement_renewal_owner_key().ok(),
-				session.signer.as_ref().map(|signer| signer.entropy.clone()),
+				session.signer.as_ref().map(|signer| root_public_key(signer.entropy())),
 				session.profile.as_ref().map(|profile| profile.name.as_str()),
 				session.catalog.current_session()?,
 				*resets.borrow_and_update(),
@@ -4253,7 +4253,7 @@ mod cli_tests {
 			(
 				true,
 				Some(expected_key),
-				Some(vec![0; 16]),
+				Some(expected_key),
 				Some("pending.01"),
 				CurrentSession::Pointed("pending.01".to_string()),
 				1,
@@ -4340,12 +4340,12 @@ mod cli_tests {
 			assert_eq!(
 				(
 					session.runtime.has_active_session(),
-					session.signer.as_ref().map(|signer| signer.entropy.clone()),
+					session.signer.as_ref().map(|signer| root_public_key(signer.entropy())),
 					std::fs::read(
 						session.profile.as_ref().unwrap().account_base_path.join("accounts.json")
 					)?,
 				),
-				(true, Some(vec![0; 16]), accounts)
+				(true, Some(root_public_key(&RootEntropy::new([0; 16]))), accounts)
 			);
 		}
 		Ok(())

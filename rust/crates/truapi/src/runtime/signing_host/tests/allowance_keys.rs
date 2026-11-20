@@ -206,7 +206,7 @@ fn a_preimage_larger_than_the_bulletin_authorization_extends_it_before_submittin
 		..Default::default()
 	});
 	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, signing_host);
 
@@ -258,7 +258,7 @@ fn a_preimage_the_bulletin_authorization_holds_is_submitted_without_extending_it
 		..Default::default()
 	});
 	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, signing_host);
 
