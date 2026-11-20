@@ -7,7 +7,7 @@ import FoundationExt
 import ChainStore
 import SDKLogger
 
-public struct SSSSlotInfo {
+public struct SSSFreeSlotInfo {
     public let period: UInt32
     public let seq: UInt32
     public let personOrigin: PersonOrigin
@@ -23,6 +23,23 @@ public struct SSSSlotInfo {
     }
 }
 
+/// `nowSeconds` is the chain time the candidates were read at.
+public struct SSSEvictSlotInfo {
+    public let period: UInt32
+    public let nowSeconds: UInt64
+    public let candidates: [SSSEvictionCandidate]
+
+    public init(
+        period: UInt32,
+        nowSeconds: UInt64,
+        candidates: [SSSEvictionCandidate]
+    ) {
+        self.period = period
+        self.nowSeconds = nowSeconds
+        self.candidates = candidates
+    }
+}
+
 public struct SSSRenewalSlot {
     public let personOrigin: PersonOrigin
     public let seq: UInt32
@@ -33,12 +50,17 @@ public struct SSSRenewalSlot {
     }
 }
 
+public enum SSSSlotPlan {
+    case free(SSSFreeSlotInfo)
+    case evict(SSSEvictSlotInfo)
+}
+
 public protocol StatementStoreSlotInfoProviding {
     func hasExistingSlot(for accountId: AccountId) async throws -> Bool
-    func freeSlot(
+    func slotPlan(
         excluding accountId: AccountId,
         callerPriority: AllowanceRecord.Priority
-    ) async throws -> SSSSlotInfo
+    ) async throws -> SSSSlotPlan
     func renewalSlots(period: UInt32) async throws -> [SSSRenewalSlot]
 }
 
@@ -78,7 +100,7 @@ public final class StatementStoreSlotInfoProvider: StatementStoreSlotInfoProvidi
     public func hasExistingSlot(for accountId: AccountId) async throws -> Bool {
         let state = try await fetchState()
         return state.originEntries.contains { originEntry in
-            originEntry.entries.contains { $0.value?.accountId == accountId }
+            originEntry.slots.entries.contains { $0.value?.accountId == accountId }
         }
     }
 
@@ -86,57 +108,56 @@ public final class StatementStoreSlotInfoProvider: StatementStoreSlotInfoProvidi
         let originEntries = try await fetchAllowanceEntries(period: period)
 
         return originEntries.flatMap { originEntry in
-            originEntry.entries.enumerated().compactMap { index, response in
+            originEntry.slots.entries.enumerated().compactMap { index, response in
                 guard response.value == nil else { return nil }
                 return SSSRenewalSlot(personOrigin: originEntry.personOrigin, seq: UInt32(index))
             }
         }
     }
 
-    public func freeSlot(
+    public func slotPlan(
         excluding accountId: AccountId,
         callerPriority: AllowanceRecord.Priority
-    ) async throws -> SSSSlotInfo {
+    ) async throws -> SSSSlotPlan {
         let state = try await fetchState()
 
         for originEntry in state.originEntries {
-            guard let freeIndex = originEntry.entries.firstIndex(where: { $0.value == nil }) else {
+            guard let freeIndex = originEntry.slots.entries.firstIndex(where: { $0.value == nil }) else {
                 continue
             }
             logger.debug("Found free slot: \(originEntry.personOrigin.label) idx: \(freeIndex)")
 
-            return SSSSlotInfo(
-                period: state.period,
-                seq: UInt32(freeIndex),
-                personOrigin: originEntry.personOrigin
+            return .free(
+                SSSFreeSlotInfo(
+                    period: state.period,
+                    seq: UInt32(freeIndex),
+                    personOrigin: originEntry.personOrigin
+                )
             )
         }
 
-        let cooldown = try await fetchReplacementCooldown()
-
-        let oldest = try await evictionPicker.pickCandidate(
+        let candidates = try await evictionPicker.rankCandidates(
             from: occupiedSlots(from: state),
             excluding: accountId,
-            callerPriority: callerPriority,
-            cooldown: cooldown,
-            nowSeconds: state.nowSeconds
+            callerPriority: callerPriority
         )
-        logger.debug("Found slot to evict: \(oldest.personOrigin.label) seq: \(oldest.seq)")
+        logger.debug("Found \(candidates.count) slots to evict for period \(state.period)")
 
-        return SSSSlotInfo(
-            period: state.period,
-            seq: oldest.seq,
-            personOrigin: oldest.personOrigin
-        )
+        return .evict(SSSEvictSlotInfo(period: state.period, nowSeconds: state.nowSeconds, candidates: candidates))
     }
 }
 
 private extension StatementStoreSlotInfoProvider {
     typealias AllowanceEntries = [StorageResponse<ResourcesPallet.StmtStoreAllowanceEntry>]
 
+    struct OriginSlots {
+        let aliases: [Data]
+        let entries: AllowanceEntries
+    }
+
     struct OriginEntries {
         let personOrigin: PersonOrigin
-        let entries: AllowanceEntries
+        let slots: OriginSlots
     }
 
     struct SlotState {
@@ -151,11 +172,7 @@ private extension StatementStoreSlotInfoProvider {
 
         let originEntries = try await fetchAllowanceEntries(period: period)
 
-        return SlotState(
-            originEntries: originEntries,
-            period: period,
-            nowSeconds: nowSeconds
-        )
+        return SlotState(originEntries: originEntries, period: period, nowSeconds: nowSeconds)
     }
 
     func fetchAllowanceEntries(
@@ -166,43 +183,43 @@ private extension StatementStoreSlotInfoProvider {
         let origins = try await originPersonProvider.pickPersonOrigins()
 
         let collected = try await withThrowingTaskGroup(
-            of: (MembersPallet.CollectionIdentifier, AllowanceEntries).self
+            of: (MembersPallet.CollectionIdentifier, OriginSlots).self
         ) { group in
             for origin in origins {
                 group.addTask { [self] in
                     let collectionId = origin.collectionIdentifier
-                    let entries = try await fetchEntries(
+                    let slots = try await fetchSlots(
                         period: period,
                         personOrigin: origin,
                         codingFactory: codingFactory
                     )
-                    return (collectionId, entries)
+                    return (collectionId, slots)
                 }
             }
-            var result: [MembersPallet.CollectionIdentifier: AllowanceEntries] = [:]
-            for try await (collectionId, entries) in group {
-                result[collectionId] = entries
+            var result: [MembersPallet.CollectionIdentifier: OriginSlots] = [:]
+            for try await (collectionId, slots) in group {
+                result[collectionId] = slots
             }
             return result
         }
 
         let originEntries = origins.compactMap { origin -> OriginEntries? in
-            guard let entries = collected[origin.collectionIdentifier], !entries.isEmpty else { return nil }
-            return OriginEntries(personOrigin: origin, entries: entries)
+            guard let slots = collected[origin.collectionIdentifier], !slots.entries.isEmpty else { return nil }
+            return OriginEntries(personOrigin: origin, slots: slots)
         }
         guard !originEntries.isEmpty else { throw AllowanceSlotAssignmentError.noSlotsAvailable }
 
         return originEntries
     }
 
-    func fetchEntries(
+    func fetchSlots(
         period: UInt32,
         personOrigin: PersonOrigin,
         codingFactory: RuntimeCoderFactoryProtocol
-    ) async throws -> AllowanceEntries {
+    ) async throws -> OriginSlots {
         let connection = try chainRegistry.getRpcConnectionOrError(for: chainId)
         let maxSlots = try await fetchMaxSlots(origin: personOrigin)
-        guard maxSlots > 0 else { return [] }
+        guard maxSlots > 0 else { return OriginSlots(aliases: [], entries: []) }
 
         let networkSuffix = try await networkSuffixProvider.networkSuffix()
 
@@ -215,7 +232,7 @@ private extension StatementStoreSlotInfoProvider {
         }
 
         let periodBytes = Data(period.bigEndianBytes)
-        return try await storageRequestFactory.queryItems(
+        let entries: AllowanceEntries = try await storageRequestFactory.queryItems(
             engine: connection,
             keyParams1: { Array(repeating: BytesCodable(wrappedValue: periodBytes), count: aliases.count) },
             keyParams2: { aliases.map { BytesCodable(wrappedValue: $0) } },
@@ -223,23 +240,22 @@ private extension StatementStoreSlotInfoProvider {
             storagePath: ResourcesPallet.statementStoreAllowances
         )
         .asyncExecute()
+
+        return OriginSlots(aliases: aliases, entries: entries)
     }
 
     func fetchMaxSlots(origin: PersonOrigin) async throws -> UInt32 {
         try await resourcesParameters.stmtStoreSlotsPerPeriod(chainId: chainId, origin: origin)
     }
 
-    func fetchReplacementCooldown() async throws -> UInt32 {
-        try await resourcesParameters.stmtStoreReplacementCooldown(chainId: chainId)
-    }
-
     func occupiedSlots(from state: SlotState) -> [SSSOccupiedSlot] {
         state.originEntries.flatMap { originEntry in
-            originEntry.entries.enumerated().compactMap { index, response in
+            originEntry.slots.entries.enumerated().compactMap { index, response in
                 guard let entry = response.value else { return nil }
                 return SSSOccupiedSlot(
                     personOrigin: originEntry.personOrigin,
                     seq: UInt32(index),
+                    alias: originEntry.slots.aliases[index],
                     accountId: entry.accountId,
                     since: entry.since
                 )

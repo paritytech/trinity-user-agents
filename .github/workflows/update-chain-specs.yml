@@ -2,8 +2,8 @@ name: Refresh Chain Specs
 
 # Refresh the smoldot chain specs bundled in truapi-provider and the stack descriptors bundled in
 # truapi-host (how the CLI uses them: rust/crates/truapi-host-cli/SPEC.md §14.1). Both change in
-# one PR, because a stack's restart from genesis changes its descriptor, its light-client spec and
-# the provider's `genesis_hex` together.
+# one PR, because a stack's restart from genesis changes both its descriptor and its light-client
+# spec, from which the provider derives each chain's genesis hash.
 on:
   schedule:
     # Daily at 01:00 UTC.
@@ -110,17 +110,14 @@ jobs:
             them. If none are shown below, push an empty commit before merging rather than
             assuming the suite passed.
 
-            When a stack restarted from genesis, `every_catalog_genesis_hash_matches_its_bundled_spec`
-            fails: the refresh rewrites the specs and the descriptors, never the catalog constants.
-            Edit `genesis_hex` in `rust/crates/truapi-provider/src/networks.rs` in this same PR. The
-            failure prints the network and service, the hash the refreshed spec derives to on the
-            left and the stale catalog constant on the right; copy the left one into `networks.rs`,
-            and update any consumer that pins the old hash.
-
             If `test_bundled_light_specs_match_the_bundled_copies` fails, a descriptor in `stacks/`
             names a light spec that `stacks/light-specs/` does not hold or that fails the check.
             `scripts/update-stacks.sh` writes both together, so rerun it rather than editing either
             file.
+
+            If `paseo_chains_keep_their_genesis` fails, a refreshed public Paseo spec derives to
+            a chain other than Paseo: an endpoint in `scripts/update-chain-specs.sh` serves
+            another chain. Do not merge until that endpoint is replaced.
 
             If `test_built_in_network_hosts` fails, a stack moved an endpoint: confirm the new
             host is a test network before adding it to `TEST_NETWORK_HOSTS` in

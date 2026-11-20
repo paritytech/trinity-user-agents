@@ -117,11 +117,16 @@ pub enum ProviderError {
 		"this provider was built without a stack, so it has no descriptor to check a light spec against"
 	)]
 	NoStack,
-	/// A bundled genesis hash does not decode to 32 bytes.
-	#[display("bundled genesis hash {hex} is malformed")]
-	MalformedGenesis {
-		/// The catalog entry as written.
-		hex: String,
+	/// A bundled chain spec does not yield a genesis hash.
+	#[cfg(feature = "networks")]
+	#[display("bundled {network} {service} chain spec yields no genesis hash: {source}")]
+	MalformedBundledSpec {
+		/// The catalog network listing the spec.
+		network: &'static str,
+		/// The chain's service within the network (`relay`, `asset-hub`, ...).
+		service: &'static str,
+		/// Why the spec does not parse or lacks a genesis state root.
+		source: trinity_stack::Error,
 	},
 }
 
