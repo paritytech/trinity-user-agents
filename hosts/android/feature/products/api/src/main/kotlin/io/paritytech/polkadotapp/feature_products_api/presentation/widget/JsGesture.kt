@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -50,7 +52,8 @@ import kotlin.math.sign
  * Draws the product's children and reports taps and pans on them; it has no face of its own.
  *
  * Without `pan.drag` the host only reports: start, every move (throttled by `moveIntervalMs`) and the end, and the
- * product moves the children with new trees. With `pan.drag` the host moves the children itself, with an offset that
+ * product moves the children with new trees. A keyed node coalesces moves per frame until its worker answers and
+ * draws position-only updates through its own offset state. With `pan.drag` the host moves the children itself, with an offset that
  * lives here and so survives new trees while the node keeps its place, and the product hears start and end only.
  *
  * The recogniser sits on the node, which never moves, and the children are offset inside it, as #2099's slide to
@@ -59,9 +62,9 @@ import kotlin.math.sign
  */
 @Composable
 internal fun JsGesture(
+    modifier: Modifier = Modifier,
     widget: JsWidget.Gesture,
     onAction: (actionId: String, event: JsUiEvent.Type.Gesture) -> Unit,
-    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -70,6 +73,8 @@ internal fun JsGesture(
     val rtl by rememberUpdatedState(LocalLayoutDirection.current == LayoutDirection.Rtl)
     val current by rememberUpdatedState(widget)
     val currentOnAction by rememberUpdatedState(onAction)
+    val workerPosition = widget.position?.value?.collectAsState()
+    val moves = remember { GestureMoveCoalescer<Offset>() }
 
     // Host-owned place of the children, in px from the travel's start. Kept across trees at the same place.
     val placeX = remember { Animatable(0f) }
@@ -171,6 +176,7 @@ internal fun JsGesture(
                     var x = originX
                     var y = originY
                     var lastMoveAt: Long? = null
+                    var moveJob: Job? = null
 
                     fun track(dx: Float, dy: Float, at: Long) {
                         pan ?: return
@@ -184,9 +190,13 @@ internal fun JsGesture(
                             }
                         }
                         if (drag != null) moveTo(x, y, animated = false)
-                        if (pan.moveAction != null && GestureRules.movesNow(at, lastMoveAt, pan.moveIntervalMs)) {
-                            lastMoveAt = at
-                            send(pan.moveAction, JsGesturePhase.MOVED, x, y, travel)
+                        if (pan.moveAction != null) {
+                            if (node.position != null) {
+                                moves.offer(Offset(x, y))
+                            } else if (GestureRules.movesNow(at, lastMoveAt, pan.moveIntervalMs)) {
+                                lastMoveAt = at
+                                send(pan.moveAction, JsGesturePhase.MOVED, x, y, travel)
+                            }
                         }
                     }
 
@@ -234,6 +244,18 @@ internal fun JsGesture(
                             when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
                                 SlideDragDecision.CLAIM -> {
                                     claimed = true
+                                    node.position?.let { position ->
+                                        if (pan.moveAction != null) {
+                                            moves.clear()
+                                            moveJob = scope.launchGestureMoves(moves, position, pan.moveIntervalMs) { point ->
+                                                if (current.enabled && current.position === position) {
+                                                    send(pan.moveAction, JsGesturePhase.MOVED, point.x, point.y, travel)
+                                                } else {
+                                                    moves.clear()
+                                                }
+                                            }
+                                        }
+                                    }
                                     send(pan.startAction, JsGesturePhase.STARTED, x, y, travel)
                                     // From the touch-down point: the slop crossed before the claim is fed in over the
                                     // first frames, so the children catch up with the finger instead of jumping to it.
@@ -251,6 +273,8 @@ internal fun JsGesture(
                             }
                         }
                     } finally {
+                        moveJob?.cancel()
+                        moves.clear()
                         when {
                             claimed && pan != null -> {
                                 val settle = when {
@@ -285,7 +309,11 @@ internal fun JsGesture(
                 .offset {
                     // Clamped here too: a tree that narrows the node mid-hold must not push the children out of it.
                     val travel = travelNow()
-                    IntOffset(placeX.value.coerceIn(0f, travel).roundToInt(), placeY.value.coerceIn(0f, travel).roundToInt())
+                    val position = workerPosition?.value
+                    IntOffset(
+                        (placeX.value.coerceIn(0f, travel) + (position?.x ?: 0) * density).roundToInt(),
+                        (placeY.value.coerceIn(0f, travel) + (position?.y ?: 0) * density).roundToInt(),
+                    )
                 },
         ) {
             content()

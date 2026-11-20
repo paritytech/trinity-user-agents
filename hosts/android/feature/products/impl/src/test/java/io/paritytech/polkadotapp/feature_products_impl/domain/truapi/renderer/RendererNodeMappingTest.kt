@@ -117,6 +117,7 @@ class RendererNodeMappingTest {
         val node = RendererNode.Gesture(
             modifiers = listOf(Modifier.FillWidth(true)),
             props = GestureProps(
+                key = null,
                 tapAction = null,
                 pan = PanGesture(
                     axis = PanAxis.HORIZONTAL,
@@ -158,6 +159,7 @@ class RendererNodeMappingTest {
         val node = RendererNode.Gesture(
             modifiers = emptyList(),
             props = GestureProps(
+                key = null,
                 tapAction = "tap",
                 pan = PanGesture(
                     axis = PanAxis.FREE,

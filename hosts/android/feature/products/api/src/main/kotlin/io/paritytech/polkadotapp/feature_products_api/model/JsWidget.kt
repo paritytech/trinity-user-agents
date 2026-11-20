@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 sealed interface JsWidget {
@@ -103,6 +104,7 @@ sealed interface JsWidget {
     @Serializable
     @SerialName("gesture")
     data class Gesture(
+        @Transient val position: JsGesturePosition? = null,
         val tapAction: String? = null,
         val pan: JsPanGesture? = null,
         val accessibilityLabel: String? = null,

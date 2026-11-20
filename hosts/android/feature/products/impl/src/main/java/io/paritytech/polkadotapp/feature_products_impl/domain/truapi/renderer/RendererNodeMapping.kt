@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
@@ -45,23 +46,23 @@ import uniffi.truapi.VerticalAlignment
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
-fun RendererNode.toJsWidget(): JsWidget = when (this) {
+fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { null }): JsWidget = when (this) {
     is RendererNode.Nil, is RendererNode.SetOffset -> JsWidget.Spacer()
     is RendererNode.String -> JsWidget.Text(text = text)
     is RendererNode.Box -> JsWidget.Box(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(gesturePosition),
         contentAlignment = props.contentAlignment?.toJs(),
     )
     is RendererNode.Column -> JsWidget.Column(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(gesturePosition),
         horizontalAlignment = props.horizontalAlignment?.toJs(),
         verticalArrangement = props.verticalArrangement?.toJs(),
     )
     is RendererNode.Row -> JsWidget.Row(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(gesturePosition),
         verticalAlignment = props.verticalAlignment?.toJs(),
         horizontalArrangement = props.horizontalArrangement?.toJs(),
     )
@@ -96,7 +97,7 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
+    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren(gesturePosition))
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,
         secondaryText = props.secondaryText,
@@ -110,13 +111,14 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
         modifiers = modifiers.toJsModifiers(),
     )
     is RendererNode.Gesture -> JsWidget.Gesture(
+        position = props.key?.let(gesturePosition),
         tapAction = props.tapAction,
         pan = props.pan?.toJs(),
         accessibilityLabel = props.accessibilityLabel,
         enabled = props.enabled ?: true,
         hapticOnComplete = props.hapticOnComplete ?: false,
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(),
+        children = children.toJsChildren(gesturePosition),
     )
 }
 
@@ -149,8 +151,8 @@ private fun PanDrag.toJs(): JsPanDrag = JsPanDrag(
     holdAtEnd = holdAtEnd ?: true,
 )
 
-private fun List<RendererNode>.toJsChildren(): List<JsWidget> =
-    filterNot { it is RendererNode.Nil || it is RendererNode.String }.map { it.toJsWidget() }
+private fun List<RendererNode>.toJsChildren(gesturePosition: (String) -> JsGesturePosition?): List<JsWidget> =
+    filterNot { it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset }.map { it.toJsWidget(gesturePosition) }
 
 private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
     var width: Int? = null

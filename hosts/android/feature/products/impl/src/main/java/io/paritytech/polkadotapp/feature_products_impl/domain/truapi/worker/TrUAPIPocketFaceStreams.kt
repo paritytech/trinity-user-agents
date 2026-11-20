@@ -12,6 +12,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterNot
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -75,6 +76,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
 
     private fun TrUAPIProductExecution.faces(key: PocketCardKey): Flow<RendererNode> =
         render(ProductRendererRenderRequest(key.renderContext(), payload = ByteArray(0)))
+            .filterNot { it is RendererNode.SetOffset }
             .retryWhileConnecting()
 
     private fun PocketCardKey.renderContext() = RenderContext.PocketCard(cardId.value)

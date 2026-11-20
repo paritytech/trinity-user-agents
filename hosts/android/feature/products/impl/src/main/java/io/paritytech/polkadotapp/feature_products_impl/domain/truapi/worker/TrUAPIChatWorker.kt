@@ -10,7 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.toGesturePayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererGestureOffsets
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -173,12 +173,19 @@ class TrUAPIChatWorker(
     private fun TrUAPIProductExecution.chatRender(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
         flow {
             var drew = false
-            render(ProductRendererRenderRequest(context, payload))
-                .retryWhileConnecting()
-                .collect { node ->
-                    drew = true
-                    emit(Result.success(node.toJsWidget()))
-                }
+            val offsets = RendererGestureOffsets()
+            try {
+                render(ProductRendererRenderRequest(context, payload))
+                    .retryWhileConnecting()
+                    .collect { node ->
+                        offsets.receive(node)?.let { widget ->
+                            drew = true
+                            emit(Result.success(widget))
+                        }
+                    }
+            } finally {
+                offsets.close()
+            }
             // A stream closed before its first tree would otherwise leave the cell loading for the
             // execution's whole life; a card keeps its last face, a cell has none.
             if (!drew) throw StreamDrewNothing()

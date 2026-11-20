@@ -1081,3 +1081,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for issue reports, feature proposals, a
 [MIT](./LICENSE)
 
 The renderer also supports worker-drawn `Gesture` containers with tap and pan actions. Pans can send movement to the worker or move children on the host; see the [renderer contract](docs/rfcs/unified-renderer.md#gesture-container).
+
+The Android host supports keyed gesture offset updates in chat and room footers,
+with one outstanding move per display frame and full-tree replacement taking
+precedence. See [keyed gesture rendering](hosts/android/README.md#keyed-gesture-rendering).
