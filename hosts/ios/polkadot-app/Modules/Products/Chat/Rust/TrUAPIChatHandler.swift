@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import StructuredConcurrency
 import TrUAPIHost
@@ -118,6 +119,25 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         payload: Data
     ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
         await render(.chatRoomFooter(roomId: roomId, messageType: messageType), payload: payload)
+    }
+
+    /// The materials of a tree this product drew for a message. Nil before the worker runs, and for
+    /// an execution that does not resolve materials.
+    nonisolated func resolveMessageMaterials(
+        tree: RendererNode,
+        roomId: String,
+        messageId: String,
+        messageType: String
+    ) -> MaterialsResolution? {
+        guard let execution = workers.currentExecution(of: productId) as? TrUAPIProductExecution else {
+            logger.debug("No running execution of \(productId) resolves materials for message \(messageId)")
+            return nil
+        }
+        return execution.resolveMaterials(
+            tree: tree,
+            context: .chatMessage(roomId: roomId, messageId: messageId, messageType: messageType),
+            floatFilterable: MaterialGPU.floatFilterable
+        )
     }
 
     /// A press inside a body the product drew is a renderer action addressed by

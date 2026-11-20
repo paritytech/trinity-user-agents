@@ -38,7 +38,8 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
             messageData: data,
             runtime: runtime,
             tokenResolver: tokenResolver,
-            logger: logger
+            logger: logger,
+            materials: makeMaterialsResolver(context: context)
         )
         viewModels[context.messageId] = viewModel
 
@@ -55,7 +56,8 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
                     messageId: messageId
                 ))
             },
-            resolveImage: resolveImage
+            resolveImage: resolveImage,
+            materials: viewModel.widgetMaterials
         )
 
         return [SwiftUIContentConfiguration(view: widgetView)]
@@ -120,5 +122,25 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
 
     func previewString(data _: Data) -> String {
         description ?? String(localized: .Common.productWidgetMessage)
+    }
+}
+
+private extension ProductMessageDecoder {
+    /// Only a message card draws materials: the room footer shares the view model and stays plain.
+    func makeMaterialsResolver(context: ChatMessageDecodingContext) -> ChatMaterialsResolver? {
+        guard let handler = runtime as? TrUAPIChatHandler, let roomId = context.roomId else { return nil }
+        let messageId = context.messageId
+        let messageType = context.identifier
+        return ChatMaterialsResolver(
+            resolve: { [weak handler] tree in
+                handler?.resolveMessageMaterials(
+                    tree: tree,
+                    roomId: roomId,
+                    messageId: messageId,
+                    messageType: messageType
+                )
+            },
+            logger: logger
+        )
     }
 }

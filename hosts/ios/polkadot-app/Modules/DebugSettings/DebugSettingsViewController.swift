@@ -133,6 +133,12 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
                 action: #selector(actionShowPocketCards),
                 for: .touchUpInside
             )
+
+            rootView.materialsCardButton.addTarget(
+                self,
+                action: #selector(actionShowMaterialsCard),
+                for: .touchUpInside
+            )
         #endif
     }
 
@@ -192,6 +198,10 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
     #if DEBUG
         @objc func actionOpenDevServer() {
             presenter.openDevServer()
+        }
+
+        @objc func actionShowMaterialsCard() {
+            presenter.showMaterialsCard()
         }
     #endif
 

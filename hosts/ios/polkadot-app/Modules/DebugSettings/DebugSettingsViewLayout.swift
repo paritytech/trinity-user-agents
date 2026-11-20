@@ -92,6 +92,11 @@ final class DebugSettingsViewLayout: UIView {
             button.applyMainStyle()
             button.imageWithTitleView?.title = "Pocket Cards"
         }
+
+        let materialsCardButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Materials Card"
+        }
     #endif
 
     let truApiRuntimeSwitch = UISwitch()
@@ -189,7 +194,8 @@ final class DebugSettingsViewLayout: UIView {
                 openDevServerButton,
                 openTrUAPIPlaygroundButton,
                 pocketFacePreviewButton,
-                pocketCardsButton
+                pocketCardsButton,
+                materialsCardButton
             ])
         #endif
 

@@ -39,6 +39,7 @@ Walk through each applicable section. For each rule violated, note the severity 
 - [ ] Async retry uses `withRetry` from StructuredConcurrency
 - [ ] Storage subscriptions use SDK helpers (CallbackBatchStorageSubscription.asyncStream)
 - [ ] Async streams use `AsyncPassthroughSubject` or `AsyncStream.makeStream` (not custom continuation hacks)
+- [ ] Device motion is read through `DeviceMotionSource`, never a new `CMMotionManager`
 - [ ] Hex conversion uses `Data.toHex()` and `String.fromHex()`, not `Data(hexString:)` directly or the underlying `NSData` variants from NovaCrypto
 - [ ] Reusable conversions extracted to appropriate package extensions
 - [ ] `UsernameStorage` used for own username (not remote queries)

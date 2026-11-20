@@ -174,10 +174,11 @@ fn a_node_with_an_unusable_inline_image_falls_back_at_once() {
 	assert_eq!(device.bulletin.lookups(preimage_key(HEIGHT)), 0);
 }
 
-/// R2 draws materials on Pocket cards only, front and back, and nowhere when
-/// the app has them off. Elsewhere a node draws plain as unsupported.
+/// Materials draw on Pocket cards, front and back, and on chat messages, and
+/// nowhere when the app has them off. Elsewhere, such as a room footer, a node
+/// draws plain as unsupported.
 #[test]
-fn materials_draw_only_on_pocket_cards_and_only_when_on() {
+fn materials_draw_only_on_pocket_cards_and_chat_messages_and_only_when_on() {
 	let (_dir, db) = open_temporary_core_db();
 	let device = Device::over(db);
 	let face = tree(vec![node(vec![layer(STILL, Vec::new())])]);
@@ -186,16 +187,22 @@ fn materials_draw_only_on_pocket_cards_and_only_when_on() {
 		message_id: "message".to_string(),
 		message_type: "note".to_string(),
 	};
+	let footer = RenderContext::ChatRoomFooter {
+		room_id: "room".to_string(),
+		message_type: "note".to_string(),
+	};
 	let off = ResolveSettings { enabled: false, ..ON };
 
-	for (context, settings) in [(chat, ON), (card(), off)] {
+	for (context, settings) in [(footer, ON), (chat.clone(), off), (card(), off)] {
 		let mut resolving = resolve(&device, &face, &context, settings);
 		assert_eq!(resolving.next(), [State::Plain(MaterialFailure::Unsupported)], "{context:?}");
 	}
 	assert_eq!(device.bulletin.lookups(preimage_key(STILL)), 0);
 
 	let back = RenderContext::PocketCardBack { card_id: "card".to_string() };
-	assert_eq!(resolve(&device, &face, &back, ON).next(), [State::Loading]);
+	for context in [back, chat] {
+		assert_eq!(resolve(&device, &face, &context, ON).next(), [State::Loading], "{context:?}");
+	}
 }
 
 /// A ready node carries exactly the shaders the core builds for its materials
