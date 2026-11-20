@@ -1,21 +1,18 @@
 import UIKit
 import FoundationExt
 
-final class CancelChatRequestViewController: UIViewController, ViewHolder {
-    typealias RootViewType = CancelChatRequestViewLayout
+final class ChatRequestConfirmationViewController: UIViewController, ViewHolder {
+    typealias RootViewType = ChatRequestConfirmationViewLayout
 
-    private let username: String
+    private let viewModel: ChatRequestConfirmationViewModel
     private let onConfirm: () -> Void
-    private let onKeep: () -> Void
 
     init(
-        username: String,
-        onConfirm: @escaping () -> Void,
-        onKeep: @escaping () -> Void
+        viewModel: ChatRequestConfirmationViewModel,
+        onConfirm: @escaping () -> Void
     ) {
-        self.username = username
+        self.viewModel = viewModel
         self.onConfirm = onConfirm
-        self.onKeep = onKeep
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -25,20 +22,20 @@ final class CancelChatRequestViewController: UIViewController, ViewHolder {
     }
 
     override func loadView() {
-        view = CancelChatRequestViewLayout()
+        view = ChatRequestConfirmationViewLayout()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        rootView.bind(username: username)
+        rootView.bind(viewModel: viewModel)
         setupActions()
     }
 }
 
 // MARK: - Private functions
 
-extension CancelChatRequestViewController {
+extension ChatRequestConfirmationViewController {
     private func setupActions() {
         rootView.confirmButton.addTarget(self, action: #selector(handleConfirm), for: .touchUpInside)
         rootView.keepButton.addTarget(self, action: #selector(handleKeep), for: .touchUpInside)
@@ -53,8 +50,6 @@ extension CancelChatRequestViewController {
 
     @objc
     private func handleKeep() {
-        dismiss(animated: true) { [onKeep] in
-            onKeep()
-        }
+        dismiss(animated: true)
     }
 }

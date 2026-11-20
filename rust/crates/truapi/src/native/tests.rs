@@ -3019,16 +3019,14 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		host_internal::sso_messages::{
 			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
 		},
-		host_logic::{
-			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
-			sso::pairing::derive_x25519_keypair_from_entropy,
-		},
+		host_logic::root_entropy::RootEntropy,
 	};
 	use parity_scale_codec::Encode;
 
 	let entropy = [7; 32];
-	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
-	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	let root_entropy = RootEntropy::new(entropy);
+	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
 			.open_sso_service(statement, encryption)
@@ -3063,14 +3061,11 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			}
 			.encode(),
 		};
-		let public_key = derive_product_subtree_keypair(
-			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
-				.unwrap(),
-			&ProductId::for_test("browse.dot"),
-		)
-		.unwrap()
-		.public
-		.to_bytes();
+		let public_key = root_entropy
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.unwrap()
+			.public
+			.to_bytes();
 		assert_eq!(
 			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
 			response(Ok(public_key))
