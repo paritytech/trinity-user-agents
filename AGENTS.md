@@ -20,11 +20,13 @@ rust/crates/
                          scheduled ones through their submission policies, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
-                         (purse records, item keys, and the tracker of what they hold on
-                         Asset Hub) and `nft_purse` (the NFT purses RFC over them)
-                         modules keep NFT purses in the same database, transfer items
-                         as scheduled durable transactions, and receive cheques over
-                         the statement store; its `public_profile` domain resolves and caches
+                         (purse records, item keys, the tracker of what they hold on
+                         Asset Hub, and backup recovery after a reinstall) and `nft_purse`
+                         (the NFT purses RFC over them) modules keep NFT purses in the
+                         same database, transfer items as scheduled durable transactions,
+                         and receive cheques over the statement store; recovery reads the
+                         seed's installations through `installation_registry` and scans
+                         keys with the generic `gap_scan`, which coinage can reuse; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them; its `materials` module keeps
                          the materials renderer trees name in the same database, read from
