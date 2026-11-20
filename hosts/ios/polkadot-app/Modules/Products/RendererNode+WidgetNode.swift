@@ -18,11 +18,10 @@ extension RendererNode {
              .setOffset:
             return leafWidgetNode(resolver: resolver)
 
-        case let .gesture(_, _, children):
-            // The iPhone gesture layer draws the gesture; until then its children draw in a plain box.
+        case let .gesture(modifiers, props, children):
             return CustomMessageWidgetNode(
-                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
-                modifiers: .empty
+                content: .gesture(props.nodeProps, children: children.widgetNodes(resolver: resolver)),
+                modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
         case let .materials(_, children):
@@ -420,5 +419,64 @@ private extension BlendingMode {
         case .color: .color
         case .luminosity: .luminosity
         }
+    }
+}
+
+private extension GestureProps {
+    var nodeProps: CustomMessageWidgetNode.GestureProps {
+        var value = CustomMessageWidgetNode.GestureProps { phase, position, fraction in
+            let nativePhase: GesturePhase =
+                switch phase {
+                case .tap: .tap
+                case .started: .started
+                case .moved: .moved
+                case .ended: .ended
+                case .cancelled: .cancelled
+                case .completed: .completed
+                }
+            return Data(encodeGestureEvent(event: GestureEvent(
+                phase: nativePhase,
+                x: Int32(clamping: Int(position.x.rounded())),
+                y: Int32(clamping: Int(position.y.rounded())),
+                fractionPermille: fraction
+            )))
+        }
+        value.tapAction = tapAction
+        value.pan = pan?.nodeProps
+        value.accessibilityLabel = accessibilityLabel
+        value.isEnabled = enabled ?? true
+        value.hapticOnComplete = hapticOnComplete ?? false
+        return value
+    }
+}
+
+private extension PanGesture {
+    var nodeProps: CustomMessageWidgetNode.PanGesture {
+        var value = CustomMessageWidgetNode.PanGesture()
+        switch axis {
+        case .horizontal: value.axis = .horizontal
+        case .vertical: value.axis = .vertical
+        case .free: value.axis = .free
+        }
+        value.drag = drag?.nodeProps
+        value.startAction = startAction
+        value.moveAction = moveAction
+        value.endAction = endAction
+        value.moveInterval = TimeInterval(moveIntervalMs ?? 0) / 1_000
+        return value
+    }
+}
+
+private extension PanDrag {
+    var nodeProps: CustomMessageWidgetNode.PanDrag {
+        var value = CustomMessageWidgetNode.PanDrag()
+        if case let .points(points) = travel { value.travelPoints = points.drawableLength }
+        switch release {
+        case .snapBack: value.release = .snapBack
+        case .stay: value.release = .stay
+        case let .complete(threshold): value.release = .complete(thresholdPercent: threshold)
+        }
+        value.holdAtEnd = holdAtEnd ?? true
+        return value
     }
 }

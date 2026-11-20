@@ -25,6 +25,7 @@ public extension CustomMessageWidgetNode {
         case textField(TextFieldProps)
         case image(ImageProps)
         case slideToConfirm(SlideToConfirmProps)
+        case gesture(GestureProps, children: [CustomMessageWidgetNode])
     }
 }
 

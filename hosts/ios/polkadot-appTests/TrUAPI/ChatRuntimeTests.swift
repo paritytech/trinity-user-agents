@@ -469,7 +469,7 @@ struct ChatRuntimeTests {
 
             try await runtime.onUserMessage(text: "hi", roomId: "room")
             await runtime.dispatchEvent(
-                roomId: "room", messageId: "m1", messageType: "t", actionId: "a1", payload: "p"
+                roomId: "room", messageId: "m1", messageType: "t", actionId: "a1", payload: Data("p".utf8)
             )
 
             // A user message is a chat action; a press inside a product-drawn body is
@@ -522,6 +522,21 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
+    @Test func rustRuntimePreservesBinaryGesturePayloads() async throws {
+        let execution = MockProductExecution()
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        let payload = Data([5, 240, 0, 0, 0, 0, 0, 0, 0, 232, 3])
+
+        await runtime.dispatchRoomFooterEvent(
+            roomId: "room", messageType: "register", actionId: "gesture.end", payload: payload
+        )
+
+        let action = try #require(execution.publishedRendererActions.first)
+        #expect(action.payload == payload)
+        await runtime.dispose()
+    }
+
     /// The core routes a press by context, so a footer press addressed as a chat
     /// message would reach no card the product drew.
     @Test func rustRuntimePublishesAFooterTapUnderTheFooterContext() async throws {
@@ -530,7 +545,7 @@ struct ChatRuntimeTests {
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         await runtime.dispatchRoomFooterEvent(
-            roomId: "room", messageType: "register", actionId: "join", payload: "p"
+            roomId: "room", messageType: "register", actionId: "join", payload: Data("p".utf8)
         )
 
         let rendererAction = try #require(execution.publishedRendererActions.first)

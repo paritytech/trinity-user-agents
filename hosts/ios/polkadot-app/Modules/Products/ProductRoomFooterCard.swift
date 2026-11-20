@@ -80,7 +80,8 @@ enum ProductRoomFooterFace: Hashable {
 
     private static func holdsSlide(_ node: CustomMessageWidgetNode) -> Bool {
         switch node.content {
-        case .slideToConfirm:
+        case .slideToConfirm,
+             .gesture:
             true
         case let .box(_, children),
              let .column(_, children),

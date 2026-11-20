@@ -145,7 +145,7 @@ extension ProductBot: ChatExtensionBotProtocol {
                 messageId: messageId,
                 messageType: messageType,
                 actionId: actionId,
-                payload: payload as? String
+                payload: payload as? Data
             )
         }
     }
