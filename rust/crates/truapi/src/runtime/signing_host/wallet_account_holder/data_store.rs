@@ -10,10 +10,8 @@ use zeroize::Zeroizing;
 use super::{WalletAccountHolder, WalletKeys};
 use crate::{
 	host_logic::{
-		dotns_gateway::account_to_h160,
-		keyed_hash::blake2b_256_keyed,
-		product_account::{ProductAccountError, derive_sr25519_hard_path},
-		x25519_seal::AeadKey,
+		dotns_gateway::account_to_h160, keyed_hash::blake2b_256_keyed,
+		product_account::ProductAccountError, x25519_seal::AeadKey,
 	},
 	installation::InstallationId,
 	runtime::AuthorityError,
@@ -61,7 +59,7 @@ impl WalletKeys {
 
 	/// The seed's `//datastore` account.
 	fn data_store_account(&self) -> Result<Keypair, ProductAccountError> {
-		derive_sr25519_hard_path(&self.entropy, &[DATA_STORE_JUNCTION])
+		self.entropy.derive_sr25519_hard_path(&[DATA_STORE_JUNCTION])
 	}
 }
 

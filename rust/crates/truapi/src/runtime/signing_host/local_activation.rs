@@ -1,6 +1,6 @@
 use super::SigningHost;
 use crate::{
-	host_logic::session::SessionInfo,
+	host_logic::{root_entropy::RootEntropy, session::SessionInfo},
 	runtime::{
 		AccountHolder, authority::AuthorityError, connected_session_ui_info, device_enc_public_key,
 		identity::lookup_session_identity,
@@ -10,33 +10,33 @@ use crate::{
 /// Activate the wallet from entropy supplied by the embedding host.
 #[async_trait::async_trait]
 pub trait LocalActivation: Send + Sync {
-	/// Activate a local session from raw BIP-39 entropy, deriving the root
+	/// Activate a local session from the root entropy, deriving the root
 	/// public key and marking the session connected.
-	async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), AuthorityError>;
+	async fn activate_local_session(&self, entropy: RootEntropy) -> Result<(), AuthorityError>;
 
 	/// Activate a local session under the host's known `lite_username` until
 	/// the dotNS record on Asset Hub answers. A record with a name replaces it.
 	async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError>;
 }
 
 #[async_trait::async_trait]
 impl LocalActivation for SigningHost {
-	async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), AuthorityError> {
-		self.activate_local_session_with_identity(secret, None).await
+	async fn activate_local_session(&self, entropy: RootEntropy) -> Result<(), AuthorityError> {
+		self.activate_local_session_with_identity(entropy, None).await
 	}
 
 	async fn activate_local_session_with_identity(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
 		let device_enc_public_key =
 			self.wallet.device_encryption_secret().await?.map(device_enc_public_key);
-		let activation = self.wallet.prepare_activation(secret, lite_username)?;
+		let activation = self.wallet.prepare_activation(entropy, lite_username)?;
 		let session = self.accounts.change_activation(|| self.wallet.install(activation));
 		self.auth_state
 			.connected(&connected_session_ui_info(&session, device_enc_public_key));

@@ -24,38 +24,21 @@ impl DomainId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurableTxId(pub i64);
 
-/// A submission policy's name, as the ledger stores it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PolicyId(String);
-
-impl PolicyId {
-	/// A policy with this name.
-	pub fn new(name: impl Into<String>) -> Self {
-		Self(name.into())
-	}
-
-	/// The name stored in the ledger.
-	pub fn as_str(&self) -> &str {
-		&self.0
-	}
-}
-
 /// What a policy stores with each transaction it builds. Opaque to the
 /// engine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyParams(pub Vec<u8>);
 
-/// How a transaction gets built: the policy that builds it, and that
-/// policy's params for it.
+/// How a transaction gets built: the params its domain's policy builds it
+/// from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmissionPlan {
-	/// The registered policy that builds it.
-	pub policy: PolicyId,
 	/// Handed back to the policy on every call.
 	pub params: PolicyParams,
 }
 
-/// A caller-chosen operation that several transactions belong to.
+/// A caller-chosen operation that several transactions belong to: a label to
+/// list and observe them by. It does not affect how they are built.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroupId(String);
 
@@ -150,9 +133,10 @@ impl From<VerdictFailureKind> for DurableTxFailureKind {
 	}
 }
 
-/// What a verdict decides about a submitted attempt. A verdict never
-/// schedules a transaction or abandons one: only the submission executor
-/// does.
+/// What a verdict decides about a submitted attempt. It is never waiting
+/// to be built or abandoned: a failure the policy retries becomes waiting
+/// to be built when it is written, and only the submission executor
+/// abandons a transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VerdictStatus {
 	/// No evidence either way yet.
@@ -192,6 +176,31 @@ pub enum HeadKind {
 	Best,
 }
 
+/// The blocks that can include an attempt, as the ledger keeps them: from
+/// the birth block up to, but not including, the death block. The birth
+/// block's hash matters only to the signature, which is complete before the
+/// engine sees the attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+	/// The birth block's number.
+	pub birth: u64,
+	/// How many blocks, from the birth block, can include the attempt.
+	pub period: u64,
+}
+
+impl Window {
+	/// The first block that can no longer include the attempt.
+	pub fn death(&self) -> u64 {
+		self.birth + self.period
+	}
+}
+
+impl From<&Mortality> for Window {
+	fn from(mortality: &Mortality) -> Self {
+		Self { birth: mortality.birth().number, period: mortality.period() }
+	}
+}
+
 /// One ledger row with a submitted attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DurableTxEntry {
@@ -203,8 +212,8 @@ pub struct DurableTxEntry {
 	pub group: Option<GroupId>,
 	/// Hash of the extrinsic of the current attempt.
 	pub tx_hash: H256,
-	/// The era it was signed with.
-	pub mortality: Mortality,
+	/// The window of the era it was signed with.
+	pub window: Window,
 	/// Where it stands.
 	pub status: DurableTxStatus,
 	/// Every block from birth through this one was searched and does not
@@ -218,7 +227,7 @@ pub struct DurableTxEntry {
 
 /// A transaction waiting for its policy to build an attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScheduledDurableTx {
+pub struct DeferredDurableTx {
 	/// Ledger id.
 	pub id: DurableTxId,
 	/// The domain that registered it.

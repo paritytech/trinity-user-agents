@@ -22,6 +22,7 @@ pub mod funding_view;
 pub mod keyed_hash;
 pub mod product_account;
 pub mod raw_signing;
+pub mod root_entropy;
 pub mod scanner;
 pub mod session;
 pub mod session_store;

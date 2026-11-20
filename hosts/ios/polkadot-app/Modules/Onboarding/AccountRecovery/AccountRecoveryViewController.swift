@@ -7,15 +7,18 @@ final class AccountRecoveryViewController: UIViewController, ViewHolder {
     typealias RootViewType = AccountRecoveryViewLayout
 
     let presenter: AccountRecoveryPresenterProtocol
+    private let screenCaptureProtector: ScreenCaptureProtector
 
     var keyboardHandler: KeyboardHandler?
 
     // MARK: - Lifecycle
 
     init(
-        presenter: AccountRecoveryPresenterProtocol
+        presenter: AccountRecoveryPresenterProtocol,
+        screenCaptureProtector: ScreenCaptureProtector
     ) {
         self.presenter = presenter
+        self.screenCaptureProtector = screenCaptureProtector
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -32,6 +35,7 @@ final class AccountRecoveryViewController: UIViewController, ViewHolder {
         super.viewDidLoad()
 
         addHandlers()
+        protectInput()
 
         presenter.setup()
     }
@@ -42,6 +46,12 @@ final class AccountRecoveryViewController: UIViewController, ViewHolder {
         if keyboardHandler == nil {
             setupKeyboardHandler()
         }
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        rootView.setInputCovered(screenCaptureProtector.isExposed)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -72,10 +82,18 @@ private extension AccountRecoveryViewController {
             action: #selector(actionProceed),
             for: .touchUpInside
         )
+
+        ThirdPartyKeyboardPolicy.restrict(rootView.textView)
     }
 
     @objc
     func actionProceed() {
         presenter.proceed()
+    }
+
+    func protectInput() {
+        screenCaptureProtector.protect([rootView.textView], in: self) { [weak self] isExposed in
+            self?.rootView.setInputCovered(isExposed)
+        }
     }
 }

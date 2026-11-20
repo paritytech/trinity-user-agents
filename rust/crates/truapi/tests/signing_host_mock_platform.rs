@@ -31,9 +31,9 @@ use truapi::{
 		MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START,
 		Payload, ProtocolMessage, request_ids, subscription_ids,
 	},
-	host_logic::product_account::{
-		SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair,
-		derive_root_keypair_from_entropy,
+	host_logic::{
+		product_account::{SR25519_SIGNING_CONTEXT, derivation_index_bytes},
+		root_entropy::RootEntropy,
 	},
 	platform::{
 		HostInfo, PlatformInfo, ProductContext, ProductId, SigningHostConfig,
@@ -128,7 +128,7 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	let platform = Arc::new(MockPlatform::new());
 	let runtime =
 		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("a signing host activates a local session from raw entropy");
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
@@ -174,13 +174,12 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	// The signature has to verify against the key the activation entropy
 	// derives, not merely against whatever the runtime happens to hold: that is
 	// what makes this a signature by *the user's* product account.
-	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root keypair derives");
-	let keypair = derive_product_keypair(
-		&root,
-		&ProductId::for_test(PRODUCT_ID),
-		derivation_index_bytes(&v01::DerivationIndex::Index(0)),
-	)
-	.expect("product keypair derives");
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(
+			&ProductId::for_test(PRODUCT_ID),
+			derivation_index_bytes(&v01::DerivationIndex::Index(0)),
+		)
+		.expect("product keypair derives");
 
 	// `sign_raw` watermarks the payload before signing, so the signed message
 	// is the wrapped form rather than the bytes the product handed over.
@@ -209,7 +208,7 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	let platform = Arc::new(MockPlatform::new());
 	let runtime =
 		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("local activation succeeds");
 	// Activation looks the session's username up on Asset Hub in the
 	// background. Nothing answers its request for the best block, so once
@@ -262,7 +261,7 @@ fn a_declined_confirmation_withholds_the_signature() {
 	}));
 	let runtime =
 		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("local activation succeeds");
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));

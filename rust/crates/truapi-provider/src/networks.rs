@@ -12,10 +12,9 @@ use std::collections::HashMap;
 
 use crate::{ProviderError, config::ChainSource, provider::EmbeddedChainProviderBuilder};
 
-/// One chain within a [`NetworkDef`].
+/// One chain within a [`NetworkDef`], identified by the genesis hash its spec
+/// derives to.
 struct ChainDef {
-	/// `0x`-prefixed genesis hash, the chain's stable identity.
-	genesis_hex: &'static str,
 	/// Chain-spec JSON.
 	spec: &'static str,
 	/// Whether the statement-store networking protocol runs on this chain.
@@ -47,11 +46,8 @@ pub struct NetworkChains {
 }
 
 /// The Paseo relay chain, shared by every network built on Paseo.
-const PASEO_RELAY: ChainDef = ChainDef {
-	genesis_hex: "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
-	spec: include_str!("../networks/paseo.json"),
-	statement_protocol: false,
-};
+const PASEO_RELAY: ChainDef =
+	ChainDef { spec: include_str!("../networks/paseo.json"), statement_protocol: false };
 
 /// The bundled networks, in lookup order.
 ///
@@ -67,17 +63,14 @@ const CATALOG: &[NetworkDef] = &[
 		name: "paseo-next-v2",
 		relay: PASEO_RELAY,
 		assethub: ChainDef {
-			genesis_hex: "0x4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a",
 			spec: include_str!("../networks/paseo-next-v2-asset-hub.json"),
 			statement_protocol: false,
 		},
 		bulletin: ChainDef {
-			genesis_hex: "0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22",
 			spec: include_str!("../networks/paseo-next-v2-bulletin.json"),
 			statement_protocol: false,
 		},
 		people: ChainDef {
-			genesis_hex: "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48",
 			spec: include_str!("../networks/paseo-next-v2-people.json"),
 			statement_protocol: true,
 		},
@@ -85,22 +78,18 @@ const CATALOG: &[NetworkDef] = &[
 	NetworkDef {
 		name: "previewnet",
 		relay: ChainDef {
-			genesis_hex: "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
 			spec: include_str!("../networks/previewnet.json"),
 			statement_protocol: false,
 		},
 		assethub: ChainDef {
-			genesis_hex: "0xbac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896",
 			spec: include_str!("../networks/previewnet-asset-hub.json"),
 			statement_protocol: false,
 		},
 		bulletin: ChainDef {
-			genesis_hex: "0xa081192b90c1f6a3f8e9ce7b2a8246f41af805c66456c84e05fd97c2b3502425",
 			spec: include_str!("../networks/previewnet-bulletin.json"),
 			statement_protocol: false,
 		},
 		people: ChainDef {
-			genesis_hex: "0x55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9",
 			spec: include_str!("../networks/previewnet-people.json"),
 			statement_protocol: true,
 		},
@@ -109,17 +98,14 @@ const CATALOG: &[NetworkDef] = &[
 		name: "paseo",
 		relay: PASEO_RELAY,
 		assethub: ChainDef {
-			genesis_hex: "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
 			spec: include_str!("../networks/paseo-asset-hub.json"),
 			statement_protocol: false,
 		},
 		bulletin: ChainDef {
-			genesis_hex: "0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
 			spec: include_str!("../networks/paseo-bulletin.json"),
 			statement_protocol: false,
 		},
 		people: ChainDef {
-			genesis_hex: "0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
 			spec: include_str!("../networks/paseo-people.json"),
 			statement_protocol: true,
 		},
@@ -131,11 +117,8 @@ pub fn known_networks() -> impl Iterator<Item = &'static str> {
 	CATALOG.iter().map(|network| network.name)
 }
 
-fn genesis(chain: &ChainDef) -> Result<[u8; 32], ProviderError> {
-	hex::decode(chain.genesis_hex.trim_start_matches("0x"))
-		.ok()
-		.and_then(|bytes| bytes.try_into().ok())
-		.ok_or_else(|| ProviderError::MalformedGenesis { hex: chain.genesis_hex.to_owned() })
+fn genesis(chain: &ChainDef) -> Result<[u8; 32], trinity_stack::Error> {
+	trinity_stack::light_spec_genesis(chain.spec.as_bytes())
 }
 
 /// A network's genesis hashes paired with each chain's genesis hash and
@@ -149,11 +132,18 @@ pub type ResolvedNetwork = (HashMap<[u8; 32], ChainSource>, Option<[u8; 32]>);
 /// Genesis hashes and standalone per-chain [`ChainSource`]s of one network; the
 /// caller pairs each parachain with the network's relay genesis.
 fn network_sources(network: &NetworkDef) -> Result<NetworkSources, ProviderError> {
+	let genesis = |service, chain| {
+		genesis(chain).map_err(|source| ProviderError::MalformedBundledSpec {
+			network: network.name,
+			service,
+			source,
+		})
+	};
 	let chains = NetworkChains {
-		relay: genesis(&network.relay)?,
-		assethub: genesis(&network.assethub)?,
-		bulletin: genesis(&network.bulletin)?,
-		people: genesis(&network.people)?,
+		relay: genesis("relay", &network.relay)?,
+		assethub: genesis("asset-hub", &network.assethub)?,
+		bulletin: genesis("bulletin", &network.bulletin)?,
+		people: genesis("people", &network.people)?,
 	};
 	let sources = vec![
 		(chains.relay, light_source(&network.relay)),

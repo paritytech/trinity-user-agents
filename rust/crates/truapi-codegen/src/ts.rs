@@ -182,30 +182,12 @@ fn selected_public_aliases(
 }
 
 fn emitted_version_prefixed_types(
+	api: &ApiDefinition,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
 ) -> BTreeSet<String> {
 	let mut names = BTreeSet::new();
-	for (wrapper_name, versions) in emit_versions {
-		let Some(wrapper) = wrappers.get(wrapper_name) else {
-			continue;
-		};
-		for version in versions {
-			let Some(variant) = wrapper.variants.get(version) else {
-				continue;
-			};
-			collect_preserved_version_prefixed_types(&variant.kind, aliases, &mut names);
-		}
-	}
-	names
-}
-
-fn preserve_version_prefixed_types_referenced_by_emitted_types(
-	api: &ApiDefinition,
-	aliases: &BTreeMap<String, String>,
-	names: &mut BTreeSet<String>,
-) {
 	loop {
 		let before = names.len();
 		for ty in &api.types {
@@ -215,36 +197,14 @@ fn preserve_version_prefixed_types_referenced_by_emitted_types(
 			{
 				continue;
 			}
-			preserve_version_prefixed_names(type_dependencies(ty), aliases, names);
+			let (dependencies, _) = binding_dependencies(ty, wrappers, emit_versions);
+			names.extend(dependencies.into_iter().filter(|name| {
+				version_prefixed_type(name).is_some() && !aliases.contains_key(name)
+			}));
 		}
 		if names.len() == before {
-			break;
+			return names;
 		}
-	}
-}
-
-fn preserve_version_prefixed_names(
-	dependencies: BTreeSet<String>,
-	aliases: &BTreeMap<String, String>,
-	names: &mut BTreeSet<String>,
-) {
-	names.extend(
-		dependencies
-			.into_iter()
-			.filter(|name| version_prefixed_type(name).is_some() && !aliases.contains_key(name)),
-	);
-}
-
-fn collect_preserved_version_prefixed_types(
-	kind: &VersionedKind,
-	aliases: &BTreeMap<String, String>,
-	names: &mut BTreeSet<String>,
-) {
-	match kind {
-		VersionedKind::Unit => {},
-		VersionedKind::Tuple(inner) => {
-			preserve_version_prefixed_names(type_ref_dependencies(inner), aliases, names);
-		},
 	}
 }
 
@@ -1108,13 +1068,8 @@ fn generate_type_bindings(
 	let wrappers = collect_versioned_wrappers(api);
 	let emit_versions = versioned_wrapper_emit_versions(api, &wrappers, target_version)?;
 	let aliases = selected_public_aliases(api, &wrappers, &emit_versions, target_version);
-	let mut preserved_version_prefixed_types =
-		emitted_version_prefixed_types(&wrappers, &emit_versions, &aliases);
-	preserve_version_prefixed_types_referenced_by_emitted_types(
-		api,
-		&aliases,
-		&mut preserved_version_prefixed_types,
-	);
+	let preserved_version_prefixed_types =
+		emitted_version_prefixed_types(api, &wrappers, &emit_versions, &aliases);
 	let internal_types = internal_type_names(api);
 	let types: Vec<_> = api
 		.types
