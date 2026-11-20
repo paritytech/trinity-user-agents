@@ -522,7 +522,8 @@ cfg_select! {
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, PairedSsoPeer, PairingHost,
 			PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-			SigningHost, StatementRenewalTarget, contacts::contact_handle,
+			SigningHost, SsoAccountHolderService, StatementRenewalTarget,
+			TrackedStatementRenewalTarget, contacts::contact_handle,
 			login_failure::reports_exhausted_period, product_manifest::encode_cached_root_manifest,
 			statement_allowance,
 		};
