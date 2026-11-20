@@ -4,25 +4,51 @@ import SubstrateSdk
 struct SSSOccupiedSlot {
     let personOrigin: PersonOrigin
     let seq: UInt32
+    let alias: Data
     let accountId: AccountId
     let since: UInt64
 
-    init(personOrigin: PersonOrigin, seq: UInt32, accountId: AccountId, since: UInt64) {
+    init(personOrigin: PersonOrigin, seq: UInt32, alias: Data, accountId: AccountId, since: UInt64) {
         self.personOrigin = personOrigin
         self.seq = seq
+        self.alias = alias
         self.accountId = accountId
         self.since = since
     }
 }
 
+/// `signerKeyId` is set only when this installation holds the holder's key; new runtimes need it to sign the takeover.
+public struct SSSEvictionCandidate {
+    public let personOrigin: PersonOrigin
+    public let seq: UInt32
+    public let alias: Data
+    public let holder: AccountId
+    public let since: UInt64
+    public let signerKeyId: String?
+
+    public init(
+        personOrigin: PersonOrigin,
+        seq: UInt32,
+        alias: Data,
+        holder: AccountId,
+        since: UInt64,
+        signerKeyId: String?
+    ) {
+        self.personOrigin = personOrigin
+        self.seq = seq
+        self.alias = alias
+        self.holder = holder
+        self.since = since
+        self.signerKeyId = signerKeyId
+    }
+}
+
 protocol StatementStoreSlotEvictionPicking {
-    func pickCandidate(
+    func rankCandidates(
         from occupiedSlots: [SSSOccupiedSlot],
         excluding accountId: AccountId,
-        callerPriority: AllowanceRecord.Priority,
-        cooldown: UInt32,
-        nowSeconds: UInt64
-    ) async throws -> SSSOccupiedSlot
+        callerPriority: AllowanceRecord.Priority
+    ) async throws -> [SSSEvictionCandidate]
 }
 
 final class StatementStoreSlotEvictionPicker: StatementStoreSlotEvictionPicking {
@@ -32,53 +58,47 @@ final class StatementStoreSlotEvictionPicker: StatementStoreSlotEvictionPicking 
         self.accounting = accounting
     }
 
-    func pickCandidate(
+    func rankCandidates(
         from occupiedSlots: [SSSOccupiedSlot],
         excluding accountId: AccountId,
-        callerPriority: AllowanceRecord.Priority,
-        cooldown: UInt32,
-        nowSeconds: UInt64
-    ) async throws -> SSSOccupiedSlot {
+        callerPriority: AllowanceRecord.Priority
+    ) async throws -> [SSSEvictionCandidate] {
         let slotsOfOthers = occupiedSlots.filter { $0.accountId != accountId }
+        let records = try await accounting.records(for: slotsOfOthers.map(\.accountId))
 
-        let prioritiesByAccount = try await accounting.priorities(
-            for: slotsOfOthers.map(\.accountId)
-        )
+        let ranked = slotsOfOthers.compactMap { slot -> RankedCandidate? in
+            // A slot with no local row belongs to another installation; it ranks as a normal allowance.
+            let record = records[slot.accountId]
+            let priority = record?.priority ?? .normal
 
-        let evictable = slotsOfOthers.filter { slot in
-            let priority = prioritiesByAccount[slot.accountId] ?? .normal
-            return priority.isEvictable && priority <= callerPriority
+            guard priority.isEvictable, priority <= callerPriority else {
+                return nil
+            }
+
+            let candidate = SSSEvictionCandidate(
+                personOrigin: slot.personOrigin,
+                seq: slot.seq,
+                alias: slot.alias,
+                holder: slot.accountId,
+                since: slot.since,
+                signerKeyId: record?.signerKeyId
+            )
+            return RankedCandidate(priority: priority, candidate: candidate)
         }
 
-        guard !evictable.isEmpty else {
+        guard !ranked.isEmpty else {
             throw StatementStoreAllowanceError.noEvictableSlots
         }
 
-        let cooledDown = evictable.filter { nowSeconds >= $0.since + UInt64(cooldown) }
-
-        let oldest = cooledDown.min { lhs, rhs in
-            let lhsPriority = prioritiesByAccount[lhs.accountId] ?? .normal
-            let rhsPriority = prioritiesByAccount[rhs.accountId] ?? .normal
-            return (lhsPriority, lhs.since) < (rhsPriority, rhs.since)
-        }
-
-        guard let oldest else {
-            throw StatementStoreAllowanceError.noSlotsAvailable(
-                secsToWait: secondsToWait(evictable: evictable, nowSeconds: nowSeconds, cooldown: cooldown)
-            )
-        }
-
-        return oldest
+        return ranked
+            .sorted { ($0.priority, $0.candidate.since) < ($1.priority, $1.candidate.since) }
+            .map(\.candidate)
     }
 }
 
 private extension StatementStoreSlotEvictionPicker {
-    func secondsToWait(
-        evictable: [SSSOccupiedSlot],
-        nowSeconds: UInt64,
-        cooldown: UInt32
-    ) -> TimeInterval {
-        let minSince = evictable.map(\.since).min() ?? nowSeconds
-        return max(TimeInterval(minSince + UInt64(cooldown)) - TimeInterval(nowSeconds), 0)
+    struct RankedCandidate {
+        let priority: AllowanceRecord.Priority
+        let candidate: SSSEvictionCandidate
     }
 }

@@ -118,6 +118,8 @@ private final class FakeBalanceProvider: PGASBalanceProviding, @unchecked Sendab
 }
 
 private final class FakeAllowanceManager: AllowanceManaging, @unchecked Sendable {
+    typealias Holder = AccountId
+
     private let clock: any Clock<Duration>
     var balances: FakeBalanceProvider?
     var topUp: BigUInt = .zero
@@ -130,7 +132,7 @@ private final class FakeAllowanceManager: AllowanceManaging, @unchecked Sendable
     }
 
     func allocate(
-        accountId: AccountId,
+        holder accountId: AccountId,
         policy: OnExistingAllowancePolicy,
         priority _: AllowanceRecord.Priority,
         domain _: AllowanceRecord.Domain
