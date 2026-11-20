@@ -1,9 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
-import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageContent
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -119,7 +120,7 @@ class RendererNodeMappingTest {
         val sized = listOf(JsModifier.Size(width = 40))
 
         assertEquals(
-            listOf(JsWidget.Image(source = JsImageSource.Inline(png.copyOf()), modifiers = sized), JsWidget.Box(modifiers = sized)),
+            listOf(JsWidget.Image(source = JsImageContent.Inline(png.copyOf().toDataByteArray()), modifiers = sized), JsWidget.Box(modifiers = sized)),
             listOf(imageOf(png).toJsWidget(), imageOf(ByteArray(0)).toJsWidget()),
         )
     }

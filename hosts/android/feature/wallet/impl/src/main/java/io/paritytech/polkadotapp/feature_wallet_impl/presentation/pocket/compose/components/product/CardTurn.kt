@@ -12,10 +12,10 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.PocketCardSide
 import kotlin.math.abs
 import kotlin.math.cos
@@ -113,9 +113,9 @@ internal class CardTurnState(initialAngle: Float = 0f) {
     }
 
     /** Turns the card for its page, answering as the turn starts. */
-    suspend fun requestSide(side: PocketCardSide): FaceShownAnswer {
+    suspend fun requestSide(side: PocketCardSide): ExpandedCardTurnOutcome {
         CoroutineScope(currentCoroutineContext()).launch { turnTo(side) }
-        return FaceShownAnswer.APPLIED
+        return ExpandedCardTurnOutcome.APPLIED
     }
 
     /** Turns the card back to its front for closing, which a drag cannot interrupt. */

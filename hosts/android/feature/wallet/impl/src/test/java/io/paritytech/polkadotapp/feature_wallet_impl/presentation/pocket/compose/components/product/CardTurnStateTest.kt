@@ -1,10 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product
 
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.APPLIED
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.NO_BACK
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer.USER_MOVING
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
-import kotlinx.coroutines.CompletableDeferred
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ExpandedCardRequest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
@@ -13,6 +9,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.PocketCardSide
 import kotlin.math.abs
 
@@ -105,12 +103,12 @@ class CardTurnStateTest {
     @Test
     fun `the page turns the card, unless there is no back`() = runTest(SteppingFrameClock) {
         val turn = CardTurnState()
-        val answers = listOf(true to false, false to false, true to true).map { (shown, hasBack) ->
-            answer(FaceShownRequest(shown, CompletableDeferred(), back = true), ExpandedCardFoldState(), turn, hasBack)
-        }
+        val answers = listOf(PocketCardSide.BACK to false, PocketCardSide.FRONT to false, PocketCardSide.BACK to true)
+            .map { (side, hasBack) -> ExpandedCardRequest.Turn(side).outcome(ExpandedCardFoldState(), turn, hasBack) }
         advanceUntilIdle()
 
-        assertEquals(listOf(NO_BACK, APPLIED, APPLIED) to -180f, answers to turn.angle)
+        val applied = ExpandedCardTurnOutcome.APPLIED
+        assertEquals(listOf(ExpandedCardTurnOutcome.NO_BACK, applied, applied) to -180f, answers to turn.angle)
     }
 
     // The user's finger on the card wins over the page, whether it is folding the face or turning the card. A missing
@@ -121,12 +119,15 @@ class CardTurnStateTest {
         val turn = dragged(CARD_WIDTH / 10)
         val held = turn.angle
 
-        val answers = listOf(false to true, true to true, true to false).map { (back, hasBack) ->
-            answer(FaceShownRequest(shown = true, reply = CompletableDeferred(), back = back), fold, turn, hasBack)
-        }
+        val answers = listOf(
+            ExpandedCardRequest.Face(shown = false).outcome(fold, turn),
+            ExpandedCardRequest.Turn(PocketCardSide.BACK).outcome(fold, turn, hasBack = true),
+            ExpandedCardRequest.Turn(PocketCardSide.BACK).outcome(fold, turn, hasBack = false),
+        )
         advanceUntilIdle()
 
-        assertEquals(listOf(USER_MOVING, USER_MOVING, NO_BACK) to listOf(0f, held), answers to listOf(fold.foldedPx, turn.angle))
+        val expected = listOf(ExpandedCardFaceOutcome.USER_MOVING, ExpandedCardTurnOutcome.USER_MOVING, ExpandedCardTurnOutcome.NO_BACK)
+        assertEquals(expected to listOf(0f, held), answers to listOf(fold.foldedPx, turn.angle))
     }
 
     // The page is told its request applied, so the card has to end on the side it asked for last.
@@ -198,7 +199,7 @@ class CardTurnStateTest {
 
         state.snapHome()
 
-        assertEquals(APPLIED, state.requestSide(PocketCardSide.BACK))
+        assertEquals(ExpandedCardTurnOutcome.APPLIED, state.requestSide(PocketCardSide.BACK))
     }
 
     @Test

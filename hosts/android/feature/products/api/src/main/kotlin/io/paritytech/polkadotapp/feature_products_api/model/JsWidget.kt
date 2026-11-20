@@ -88,7 +88,7 @@ sealed interface JsWidget {
     @Serializable
     @SerialName("image")
     data class Image(
-        val source: JsImageSource,
+        val source: JsImageContent,
         val fit: JsImageFit = JsImageFit.FILL,
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget

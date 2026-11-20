@@ -36,16 +36,13 @@ class RealPocketFaceSourceTest {
         val faces = MutableSharedFlow<RendererNode>()
         val backs = MutableSharedFlow<RendererNode>()
         var collectors = 0
-        val actions = mutableListOf<Triple<PocketCardKey, String, String>>()
 
         override fun renderFaces(key: PocketCardKey, side: PocketCardSide): Flow<RendererNode> = when (side) {
             PocketCardSide.FRONT -> faces.onStart { collectors++ }
             PocketCardSide.BACK -> backs
         }
 
-        override fun sendAction(key: PocketCardKey, side: PocketCardSide, actionId: String, payload: ByteArray) {
-            actions += Triple(key, "$side $actionId", payload.decodeToString())
-        }
+        override fun sendAction(key: PocketCardKey, side: PocketCardSide, actionId: String, payload: ByteArray) = Unit
     }
 
     private class NoImages : ProductImageResolver {
@@ -103,17 +100,6 @@ class RealPocketFaceSourceTest {
 
         assertEquals(listOf(faceOf("first").toJsWidget()), shown)
         onScreen.cancel()
-    }
-
-    @Test
-    fun `actions go to the product with the card's key and side`() {
-        source.sendAction(loyalty.card.key, PocketCardSide.FRONT, "stamp", "value".toByteArray())
-        source.sendAction(loyalty.card.key, PocketCardSide.BACK, "stamp-back", ByteArray(0))
-
-        assertEquals(
-            listOf(Triple(loyalty.card.key, "FRONT stamp", "value"), Triple(loyalty.card.key, "BACK stamp-back", "")),
-            streams.actions,
-        )
     }
 
     // A turn before the manifest is read still finds the person's own back, even offline.

@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost
 
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ExpandedCardRequest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
@@ -13,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExpandedCardTurnOutcome
+import uniffi.truapi.PocketCardSide
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CardFaceRequestsTest {
@@ -28,30 +28,31 @@ class CardFaceRequestsTest {
 
     // Only the screen knows whether the card it draws has a back right now.
     @Test
-    fun `a back request reaches the screen as one, and the screen's answer reaches the product`() = runTest {
-        val received = mutableListOf<FaceShownRequest>()
+    fun `a back request reaches the screen as a turn, and the screen's answer reaches the product`() = runTest {
+        val received = mutableListOf<PocketCardSide>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             requests.requests.collect {
-                received += it
-                it.reply.complete(FaceShownAnswer.NO_BACK)
+                val turn = it as ExpandedCardRequest.Turn
+                received += turn.side
+                turn.reply.complete(ExpandedCardTurnOutcome.NO_BACK)
             }
         }
 
         val outcome = requests.setBackShown(true)
 
-        assertEquals(listOf(true to true), received.map { it.back to it.shown })
-        assertEquals(ExpandedCardTurnOutcome.NO_BACK, outcome)
+        assertEquals(listOf(PocketCardSide.BACK) to ExpandedCardTurnOutcome.NO_BACK, received to outcome)
     }
 
     // Only the fold knows whether the user is dragging, so the product must get the screen's answer.
     @Test
     fun `the product gets the answer the watching screen gives, in request order`() = runTest {
         val received = mutableListOf<Boolean>()
-        val answers = ArrayDeque(listOf(FaceShownAnswer.APPLIED, FaceShownAnswer.USER_MOVING))
+        val answers = ArrayDeque(listOf(ExpandedCardFaceOutcome.APPLIED, ExpandedCardFaceOutcome.USER_MOVING))
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             requests.requests.collect {
-                received += it.shown
-                it.reply.complete(answers.removeFirst())
+                val face = it as ExpandedCardRequest.Face
+                received += face.shown
+                face.reply.complete(answers.removeFirst())
             }
         }
 
@@ -68,7 +69,7 @@ class CardFaceRequestsTest {
     @Test
     fun `a screen that left before applying the request leaves it not presented at once`() = runTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-            requests.requests.collect { it.reply.complete(FaceShownAnswer.NOT_PRESENTED) }
+            requests.requests.collect { it.answerNotPresented() }
         }
 
         assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, requests.setFaceShown(false))
@@ -92,7 +93,7 @@ class CardFaceRequestsTest {
     // The product has been told its face is not there; a screen answering late must not move it after all.
     @Test
     fun `a request left unanswered is withdrawn from the screen`() = runTest {
-        var received: FaceShownRequest? = null
+        var received: ExpandedCardRequest<*>? = null
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { requests.requests.collect { received = it } }
 
         requests.setFaceShown(false)

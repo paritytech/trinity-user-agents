@@ -38,7 +38,7 @@ class RealPocketCollectionTest {
         assertTrue(collection.removeCard(loyalty.card.key).isSuccess)
 
         assertEquals(listOf(humanity.card), collection.observeCards().first())
-        assertNull(collection.cachedFace(loyalty.card.key))
+        assertNull(collection.cachedFace(loyalty.card.key, PocketCardSide.FRONT))
     }
 
     // The screen shows the failure; a removal that did not happen must not read as done.
@@ -64,7 +64,7 @@ class RealPocketCollectionTest {
     fun `an added card shows the face it was approved by`() = runTest {
         collection.addCard(loyalty)
 
-        assertEquals(loyalty.face, collection.cachedFace(loyalty.card.key))
+        assertEquals(loyalty.face, collection.cachedFace(loyalty.card.key, PocketCardSide.FRONT))
     }
 
     // The bundled face is what a pinned card shows before its product has ever drawn one.
@@ -73,7 +73,7 @@ class RealPocketCollectionTest {
     fun `a pinned card with nothing drawn yet still shows the face bundled with the app`() = runTest {
         assertEquals(
             listOf(humanity.face, null),
-            listOf(collection.cachedFace(humanity.card.key), collection.cachedFace(humanity.card.key, PocketCardSide.BACK)),
+            listOf(collection.cachedFace(humanity.card.key, PocketCardSide.FRONT), collection.cachedFace(humanity.card.key, PocketCardSide.BACK)),
         )
     }
 
@@ -86,6 +86,6 @@ class RealPocketCollectionTest {
 
         val offline = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), unreadable)
 
-        assertEquals(humanity.face, offline.cachedFace(humanity.card.key))
+        assertEquals(humanity.face, offline.cachedFace(humanity.card.key, PocketCardSide.FRONT))
     }
 }

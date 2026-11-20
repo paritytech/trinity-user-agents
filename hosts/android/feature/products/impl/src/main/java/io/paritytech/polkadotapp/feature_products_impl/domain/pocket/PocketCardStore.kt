@@ -11,5 +11,5 @@ interface PocketCardStore : PocketCollection {
     suspend fun addCard(card: CachedPocketCard)
 
     /** The newest face held for [key]: bundled for a pinned card, approved for an added one, or the last streamed. */
-    suspend fun cachedFace(key: PocketCardKey, side: PocketCardSide = PocketCardSide.FRONT): RendererNode?
+    suspend fun cachedFace(key: PocketCardKey, side: PocketCardSide): RendererNode?
 }

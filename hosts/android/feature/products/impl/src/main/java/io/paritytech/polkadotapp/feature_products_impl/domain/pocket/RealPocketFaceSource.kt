@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.net.Uri
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
@@ -26,8 +27,8 @@ class RealPocketFaceSource @Inject constructor(
 ) : PocketFaceSource {
     // Shared into a ViewModel scope that has no handler for a throw, so a failure ends the stream quietly.
     override fun observeFace(key: PocketCardKey): Flow<JsWidget> = flow {
-        cachedFace(key)?.let { emit(it.toJsWidget()) }
-        streams.renderFaces(key).collect { face -> emit(face.toJsWidget()) }
+        cachedFace(key, PocketCardSide.FRONT)?.let { emit(it.toJsWidget()) }
+        streams.renderFaces(key, PocketCardSide.FRONT).collect { face -> emit(face.toJsWidget()) }
     }
         .catch { Timber.e(it, "pocket: the face stream for %s ended", key.cardId.value) }
 
@@ -48,9 +49,9 @@ class RealPocketFaceSource @Inject constructor(
     }
         .catch { Timber.e(it, "pocket: the back stream for %s ended", key.cardId.value) }
 
-    private suspend fun cachedFace(key: PocketCardKey, side: PocketCardSide = PocketCardSide.FRONT): RendererNode? =
-        runCatching { store.cachedFace(key, side) }
-            .onFailure { Timber.w(it, "pocket: no kept face for %s", key.cardId.value) }
+    private suspend fun cachedFace(key: PocketCardKey, side: PocketCardSide): RendererNode? =
+        runCancellableCatching { store.cachedFace(key, side) }
+            .logFailure("pocket: no kept $side face for ${key.cardId.value}")
             .getOrNull()
 
     override fun sendAction(key: PocketCardKey, side: PocketCardSide, actionId: String, payload: ByteArray) =

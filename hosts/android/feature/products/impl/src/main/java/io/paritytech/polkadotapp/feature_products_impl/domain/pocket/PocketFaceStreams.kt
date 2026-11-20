@@ -11,7 +11,7 @@ interface PocketFaceStreams {
      * Faces the product draws for [key], each replacing the previous. Collecting holds one worker
      * reference for the card's product; the flow stays silent while the worker is unavailable.
      */
-    fun renderFaces(key: PocketCardKey, side: PocketCardSide = PocketCardSide.FRONT): Flow<RendererNode>
+    fun renderFaces(key: PocketCardKey, side: PocketCardSide): Flow<RendererNode>
 
     fun sendAction(key: PocketCardKey, side: PocketCardSide, actionId: String, payload: ByteArray)
 }

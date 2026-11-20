@@ -16,7 +16,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -95,6 +94,9 @@ internal fun TurningPocketCard(
 @Composable
 private fun BoxScope.CardEdge(turn: CardTurnState, thickness: Float) {
     val shape = PolkadotTheme.shapes.large
+    // Shaded, the edge is the card's body; it catches light the more of it faces the viewer.
+    val shaded = PolkadotTheme.colors.bg.surface.container
+    val lit = PolkadotTheme.colors.stroke.secondary
     repeat(EDGE_SLICES) { slice ->
         val depth = thickness * (slice / (EDGE_SLICES - 1f) - 0.5f)
         Box(
@@ -103,8 +105,7 @@ private fun BoxScope.CardEdge(turn: CardTurnState, thickness: Float) {
                 .turned(turn, PocketCardSide.FRONT, depth)
                 .drawBehind {
                     val outline = shape.createOutline(size, layoutDirection, this)
-                    // The edge catches more light the more of it faces the viewer.
-                    val color = lerp(EDGE_SHADED, EDGE_LIT, turn.sideOn)
+                    val color = lerp(shaded, lit, turn.sideOn)
                     val strip = EDGE_STRIP.toPx()
                     val left = if (turn.leftSideNearer) 0f else size.width - strip
                     clipRect(left = left, right = left + strip) { drawOutline(outline, color) }
@@ -150,5 +151,3 @@ private const val CAMERA_DISTANCE_DP = 12f
 private val CARD_THICKNESS = 4.dp
 private const val EDGE_SLICES = 6
 private val EDGE_STRIP = 24.dp
-private val EDGE_SHADED = Color(0xFF16171A)
-private val EDGE_LIT = Color(0xFF4A4C53)

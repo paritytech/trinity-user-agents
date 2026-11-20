@@ -51,7 +51,7 @@ class TrUAPIPocketFaceStreamsTest {
     fun `a card whose product could not be read is looked up again`() = runTest {
         val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishingLoyalty())))
 
-        streams(resolver).renderFaces(key).toList()
+        streams(resolver).renderFaces(key, PocketCardSide.FRONT).toList()
 
         assertEquals(2, resolver.calls)
         coVerify(exactly = 1) { runtimeProvider.runtime() }
@@ -63,7 +63,7 @@ class TrUAPIPocketFaceStreamsTest {
     fun `a card whose manifest is malformed is not streamed and not looked up again`() = runTest {
         val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.MalformedManifest)))
 
-        streams(resolver).renderFaces(key).toList()
+        streams(resolver).renderFaces(key, PocketCardSide.FRONT).toList()
 
         assertEquals(1, resolver.calls)
         coVerify(exactly = 0) { runtimeProvider.runtime() }
