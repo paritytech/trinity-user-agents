@@ -29,7 +29,7 @@ fn context_bytes_pins_derivation_index_preimage() {
 	let mut expected = b"product/voting.dot/".to_vec();
 	expected.extend_from_slice(&index_bytes(0));
 
-	assert_eq!(context_bytes(&context), blake2b_256(&expected, None));
+	assert_eq!(context_bytes(&context), sp_crypto_hashing::blake2_256(&expected));
 }
 
 /// A raw 32-byte selector is used verbatim, and never collides with a

@@ -1,5 +1,182 @@
 # @parity/truapi-host
 
+## 0.32.0
+
+### Major Changes
+
+- 90dbd11: Product account operations on both host roles go through `HostAccounts` over an `AccountHolder`:
+  `WalletAccountHolder` on a signing host, or `RemoteAccountHolder` on a paired host, which sends wallet operations to
+  the phone. `ProductAuthority` is removed. `HostAccounts` binds each call to the calling product and the current wallet
+  activation, confirms signing, transaction, VRF and allocation requests with the user before the account holder acts on
+  them, and keeps the grants it was issued.
+  - A paired host answers `NotAvailable` for an allocated resource whose grant it cannot keep, instead of failing the
+    whole allocation.
+  - A paired host keeps its Bulletin allowance key when a refresh fails, and replaces it once the phone issues a new
+    one.
+  - A signing host keeps the Bulletin allowance key it issued for the current wallet activation, and serves later
+    requests for it from memory.
+  - The VRF signing prompt waits for the user's answer on both roles. The call's deadline bounds only the exchange with
+    the account holder that follows.
+
+- dd86dab: The host runtime gains `clearProductState(productId)`, which forgets one product: its grants, Allow once
+  answers and keys, and the values it wrote to product storage. Stop the product's executions first, since a value
+  written after the clear is kept. Storage is cleared through a new required callback,
+  `productStorage.clearProduct(productId)`, which removes every value the product owns and is idempotent. A subscription
+  to a removed key then sees it empty.
+
+  Every key the core hands a host for a product's values starts with
+  `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`. A host with one shared store removes the keys with
+  that prefix. A host that keeps a store per product drops that product's store.
+
+  The Swift and Kotlin bridges gain `clearProductState(productId:)` on `TrUAPIHostRuntime` and
+  `clearProductStorage(productId:)` on `HostBridge`. The core calls it on the bridge the runtime was built with, since a
+  product that is not running has no bridge of its own. A bridge that does not override it rejects the call, so
+  `clearProductState` fails on that host.
+
+- f73c18e: The game product, Jollity (`dim2` on every network), reads the dotNS usernames of the unblocked chat contacts
+  of the user with `contacts.usernames({})`, which answers `{ usernames }` without a prompt. Any other product, and a
+  host that lists no usernames, gets `Unsupported`. While nobody is signed in, Jollity gets a domain error with the
+  reason `No active session`.
+
+  A JS host serving contacts passes `contactUsernames` beside `contacts` and `pickContact`. The `contacts` host
+  callbacks now require `contactUsernames`, so a TypeScript host that serves contacts fails to compile until it adds it,
+  and one that cannot list usernames returns `{ tag: "Unsupported" }`. Native hosts get `contactUsernames` on
+  `ContactsHostBridge` with a default that answers `Unsupported`.
+
+- 7774baa: `RendererNode::Materials` replaces `Effect`, which is removed with `EffectProps` and `Rainbow`. A `Materials`
+  node names materials by ID with their arguments and holds the content they draw over. Hosts draw it as its children
+  for now, and refuse a tree that still carries `Effect`.
+
+  `system.featureSupported` takes a `Materials` question (format version, features). Products ask it before sending
+  materials. A host answers yes only when it draws them. A host built before this release cannot read the question and
+  answers with an error, which products read as no.
+
+  `renderer.failureSubscribe` reports `Materials` nodes that fell back, on a host that answers yes.
+
+  Native hosts map `RendererNode.materials` and answer `HostFeatureSupportedRequest.materials` in their exhaustive
+  switches.
+
+- 704fb2e: `getDeviceEncryptionKey()` and `SessionUiInfo.deviceEncPublicKey` name this device's own encryption key. On a
+  paired host it is the key from the pairing QR, which the wallet registered: `undefined` before pairing, and new with
+  every login. The paired wallet device's key is `SessionUiInfo.peerDeviceEncPublicKey`.
+- 543ec13: Native hosts consume public profiles through a cancellable finite stream with explicit resolution options.
+  Android avatar views collect cached and refreshed metadata independently of Coil image loading and preserve the
+  displayed image during replacement.
+
+  Breaking for Rust and Kotlin consumers: one-shot public-profile resolution is unavailable. Rust callers use
+  `observe_public_profile(username, options)` and Kotlin callers collect `observePublicProfile(username, options)`.
+  Swift callers use `resolvePublicProfile(username:options:)`, which returns an `AsyncThrowingStream`.
+
+- 47f60df: The wasm core fetches newer copies of its Trinity stack descriptor while it runs. Breaking for a host that
+  uses the raw glue: `WasmPairingHostRuntime`, `WasmSigningHostRuntime` and `WasmProductRuntime` have no constructor.
+  Build each with `await WasmPairingHostRuntime.create(callbacks, hostConfig)` instead, which resolves once the core has
+  read its stack record from the host's core storage, or after a few seconds without it. Hosts built with
+  `createWebWorkerPairingHostRuntime` need no change.
+
+  A host passes two raw callbacks to `create`, typed as `StackCallbacks`: `fetchStackDescriptor` makes the HTTP request,
+  and `stackChanged` receives a `StackStatus` at start and on each change. The core asks for a fetch once its copy is an
+  hour old, which is at start unless its stored copy was fetched less than an hour ago, and on `refreshStack()`, and
+  `stackStatus()` returns the current status. A `WasmProductRuntime` built on its own does not refresh. The core keeps
+  the last copy it verified in core storage under the new `StackRecord` key. A newer copy that changes a genesis hash,
+  the network, the TLD or the generation sets `restartRequired` once it is stored, and applies once the runtime is built
+  again. `StackStatus.generation` names the generation the core runs, for a host to key cached chain data by. Without
+  `fetchStackDescriptor` the core stays on the copy it started from. The `/web` worker runtime does not pass these
+  callbacks yet.
+
+- 4ea389e: The core refuses a stack without an Asset Hub chain, as it does one without People or Bulletin.
+  `TestStack.assetHub` is required, and the native `PublicProfileError` has no `AssetHubNotConfigured` case.
+
+### Minor Changes
+
+- fb1ed6d: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- bdc258a: Native hosts keep materials in the core database. The core reads a material from Bulletin itself, over its
+  own Bulletin connection, and keeps only text that hashes to its ID. Materials a saved Pocket face draws are never
+  evicted, and the rest share 4 MiB. At start-up the core fetches the materials saved faces draw and the database lacks.
+  Hosts change nothing.
+- ec663ec: Native hosts can resolve the materials of any tree: `resolveMaterials` on the runtime and on a product
+  execution reports, for each `Materials` node, whether it is loading, ready with its shaders for the platform (Metal on
+  iOS, GLSL ES elsewhere), or drawn plain and why, and takes the app's reports of shaders or images it could not use.
+  `materialNoise` and `checkMaterialImage` go with it. Products now get `Renderer::failureSubscribe`, and the materials
+  question answers yes when the host sets `HostRuntimeConfig.materialsEnabled`, which is off by default, so hosts change
+  nothing until they turn it on.
+- 56f7a7e: Native hosts keep the Trinity stack descriptor current while the runtime runs. A host installs
+  `NativeStackCallbacks` with `set_stack_callbacks`: `fetch_stack_descriptor` makes the HTTP request and `stack_changed`
+  receives a `StackStatus` at start and on each change. `stack_status()` returns the current status and
+  `refresh_stack()` asks for a fetch now. The core keeps the last copy it verified in its database and starts from it
+  when it is newer than the bundled one. Without the callbacks the core stays on the copy it started from.
+- 8c61cfa: `nftPurse.listCheques` returns every cheque the calling product created on this host, oldest first, exactly
+  as `createCheque` returned it, with the purse its items left, its destination and its creation time. A product that
+  lost a cheque can deliver it again or revoke it.
+- fb1ed6d: The core serves the card back. `expandedCard.setBackShown` reaches the host through the new
+  `HostBridge.setExpandedCardBackShown`, which defaults to `unsupported` and answers with the new
+  `ExpandedCardTurnOutcome`. The core keeps a card's back beside its front, and `pocketCardFace` takes a side that the
+  Kotlin and Swift wrappers default to the front. A product connection receives a press on a back only once it has drawn
+  that back. The core empties the bytes of an inline image a host must not draw, in rendered trees and in face files, so
+  it draws as empty space.
+- fb1ed6d: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+- afa0811: Native hosts observe public profile metadata as a finite stream. Required resolution options let callers
+  force a dotNS lookup and suppress stale stored values independently. Stored metadata arrives first unless suppressed;
+  a changed chain result follows when the record needs refreshing or the caller forces a lookup. An unchanged result
+  renews freshness and is emitted only when no stored value was emitted. The core retains up to 1,000 records by last
+  use, independently of its one-hour freshness policy. Hosts cache verified image bytes separately by CID through the
+  Bulletin image loader. Native observations report completion and typed errors and support cancellation; the Rust WASM
+  stream resolves one profile without a record cache.
+
+### Patch Changes
+
+- 1fa2e92: Every open action subscription of a product connection now hears each action. Before, a new `actionSubscribe`
+  on the same connection silently replaced the previous one, so a product that subscribed more than once only heard
+  actions on its newest subscription. Closed subscriptions are dropped, and with none open, actions are still buffered
+  for the next subscriber. Actions buffered while no subscription was open still go only to the next subscription, not
+  to every one opened after it; a follow-up will handle those. A product that calls `actionSubscribe` again without
+  ending its old stream now gets each action on both streams, where the old stream used to end.
+- 3ba496e: Native hosts keep only materials that pass format version 1, read as Shaderlab's reference parser reads it. A
+  material of a format version or feature the core does not read is reported as unsupported, and a broken one as
+  invalid. Hosts change nothing.
+- 3b6942c: Native hosts build each material's shaders: the GLSL ES 3.00 an OpenGL ES app compiles, the same shaders
+  Shaderlab's own compile step writes, and their Metal translation through naga, with where each uniform and texture
+  goes. Nothing calls this yet, and hosts change nothing.
+- d19447a: A pairing host sends one `ProductSubtreeRequest` to the paired signing host per SSO session and product while
+  one is in flight, and every caller waiting for that subtree takes its answer: `account.get_account`, AutoSigning
+  allocation, and the host's own subtree lookup. A request made after it settles asks again, so a failed fetch is not
+  remembered. A cancelled caller leaves the others waiting, and cancelling the last one withdraws the request from the
+  signing host.
+- b39f728: Shared host operations emit `host_runtime.<method>` trace names on both roles. Rust embedders construct
+  `HostRuntime::<PairingHost>::new(...)` for a paired wallet or `HostRuntime::<SigningHost>::new(...)` for a local
+  wallet.
+- c9f9250: The wire debugger link lives in its own module, so `@parity/truapi-host/worker-runtime` exports only the
+  worker entrypoint.
+- Updated dependencies [b6c9e41]
+- Updated dependencies [f73c18e]
+- Updated dependencies [fb833d9]
+- Updated dependencies [db367fd]
+- Updated dependencies [5710f49]
+- Updated dependencies [12ff192]
+- Updated dependencies [ef6c4de]
+- Updated dependencies [be15021]
+- Updated dependencies [ed0b17b]
+- Updated dependencies [c45e73a]
+- Updated dependencies [0fd13a7]
+- Updated dependencies [18ea313]
+- Updated dependencies [12386cf]
+- Updated dependencies [fb1ed6d]
+- Updated dependencies [0be1fba]
+- Updated dependencies [7443158]
+- Updated dependencies [7774baa]
+- Updated dependencies [95d3229]
+- Updated dependencies [8c61cfa]
+- Updated dependencies [ed0b17b]
+- Updated dependencies [fb1ed6d]
+- Updated dependencies [fb1ed6d]
+- Updated dependencies [d19447a]
+- Updated dependencies [f6dc8f0]
+  - @parity/truapi@0.32.0
+
 ## 0.31.0
 
 ### Major Changes

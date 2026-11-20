@@ -34,4 +34,7 @@ fn test_parsed_views() {
 
 	assert_eq!(descriptor.dotns_address("registrar"), Some([0xaa; 20]));
 	assert_eq!(descriptor.dotns_address("popController"), None);
+
+	assert_eq!(descriptor.contract_address("accountDataStore"), Some([0x22; 20]));
+	assert_eq!(descriptor.contract_address("registrar"), None);
 }

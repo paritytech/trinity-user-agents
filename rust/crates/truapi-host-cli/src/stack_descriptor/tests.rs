@@ -110,7 +110,7 @@ fn test_reads_same_by_field() {
 	let people = |edit: fn(&mut serde_json::Value)| {
 		move |descriptor: &mut serde_json::Value| edit(&mut descriptor["chains"][1])
 	};
-	let differs: [(&str, DescriptorEdit); 8] = [
+	let differs: [(&str, DescriptorEdit); 9] = [
 		("id", Box::new(|descriptor| descriptor["id"] = "other".into())),
 		("tld", Box::new(|descriptor| descriptor["tld"] = "testnet".into())),
 		("generation", Box::new(|descriptor| descriptor["generation"] = "g2".into())),
@@ -124,6 +124,13 @@ fn test_reads_same_by_field() {
 			"popController",
 			Box::new(|descriptor| {
 				descriptor["dotns"]["popController"] = format!("0x{}", "cd".repeat(20)).into();
+			}),
+		),
+		(
+			"contracts",
+			Box::new(|descriptor| {
+				descriptor["contracts"] =
+					serde_json::json!({ "accountDataStore": format!("0x{}", "22".repeat(20)) });
 			}),
 		),
 		(
@@ -167,6 +174,7 @@ fn test_reads_same_by_field() {
 			("generation", true, true),
 			("dub", true, true),
 			("popController", true, true),
+			("contracts", true, true),
 			("role genesis", true, true),
 			("role rpc", true, true),
 			("role first rpc", true, true),
