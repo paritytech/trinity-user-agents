@@ -9,6 +9,11 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignmen
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
@@ -24,6 +29,11 @@ import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
 import uniffi.truapi.ImageSource
 import uniffi.truapi.Modifier
+import uniffi.truapi.PanAxis
+import uniffi.truapi.PanDrag
+import uniffi.truapi.PanGesture
+import uniffi.truapi.PanRelease
+import uniffi.truapi.PanTravel
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.Size
@@ -86,8 +96,6 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    // The Android gesture layer draws the gesture; until then its children draw in a plain box.
-    is RendererNode.Gesture -> JsWidget.Box(children = children.toJsChildren())
     is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,
@@ -101,7 +109,45 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
         confirmed = props.confirmed ?: false,
         modifiers = modifiers.toJsModifiers(),
     )
+    is RendererNode.Gesture -> JsWidget.Gesture(
+        tapAction = props.tapAction,
+        pan = props.pan?.toJs(),
+        accessibilityLabel = props.accessibilityLabel,
+        enabled = props.enabled ?: true,
+        hapticOnComplete = props.hapticOnComplete ?: false,
+        modifiers = modifiers.toJsModifiers(),
+        children = children.toJsChildren(),
+    )
 }
+
+private fun PanGesture.toJs(): JsPanGesture = JsPanGesture(
+    axis = axis.toJs(),
+    drag = drag?.toJs(),
+    startAction = startAction,
+    moveAction = moveAction,
+    moveIntervalMs = moveIntervalMs?.toInt() ?: 0,
+    endAction = endAction,
+)
+
+private fun PanAxis.toJs(): JsPanAxis = when (this) {
+    PanAxis.HORIZONTAL -> JsPanAxis.HORIZONTAL
+    PanAxis.VERTICAL -> JsPanAxis.VERTICAL
+    PanAxis.FREE -> JsPanAxis.FREE
+}
+
+// A completed drag stays at the end unless the product says otherwise.
+private fun PanDrag.toJs(): JsPanDrag = JsPanDrag(
+    travel = when (val travel = travel) {
+        is PanTravel.ParentWidth -> JsPanTravel.ParentWidth
+        is PanTravel.Points -> JsPanTravel.Points(travel.v1.toDp())
+    },
+    release = when (val release = release) {
+        is PanRelease.SnapBack -> JsPanRelease.SnapBack
+        is PanRelease.Stay -> JsPanRelease.Stay
+        is PanRelease.Complete -> JsPanRelease.Complete(release.thresholdPercent.toInt())
+    },
+    holdAtEnd = holdAtEnd ?: true,
+)
 
 private fun List<RendererNode>.toJsChildren(): List<JsWidget> =
     filterNot { it is RendererNode.Nil || it is RendererNode.String }.map { it.toJsWidget() }

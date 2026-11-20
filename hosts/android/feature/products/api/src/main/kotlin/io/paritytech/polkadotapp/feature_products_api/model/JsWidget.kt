@@ -93,6 +93,26 @@ sealed interface JsWidget {
     ) : JsWidget
 
     /**
+     * Draws its children and reports taps and pans on them; no styling of its own.
+     * @param tapAction Action ID invoked on a tap that did not become a pan
+     * @param pan The pan the node accepts, if any
+     * @param accessibilityLabel What a screen reader's action on the node is called
+     * @param enabled Whether the node accepts gestures
+     * @param hapticOnComplete Whether a completed drag gives success feedback
+     */
+    @Serializable
+    @SerialName("gesture")
+    data class Gesture(
+        val tapAction: String? = null,
+        val pan: JsPanGesture? = null,
+        val accessibilityLabel: String? = null,
+        val enabled: Boolean = true,
+        val hapticOnComplete: Boolean = false,
+        val modifiers: List<JsModifier> = emptyList(),
+        val children: List<JsWidget> = emptyList(),
+    ) : JsWidget
+
+    /**
      * Text input field widget.
      * @param value Current text value
      * @param onValueChange Action ID invoked when text changes (receives new value in payload)

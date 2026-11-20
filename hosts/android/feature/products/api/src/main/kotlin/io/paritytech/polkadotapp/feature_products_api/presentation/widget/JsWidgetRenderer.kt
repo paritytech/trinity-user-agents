@@ -90,6 +90,7 @@ private fun JsWidgetContent(
         is JsWidget.Text -> JsTextRenderer(widget, modifier)
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
         is JsWidget.SlideToConfirm -> JsSlideToConfirmRenderer(widget, modifier)
+        is JsWidget.Gesture -> JsGestureRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
     }
@@ -298,6 +299,7 @@ private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.Text -> modifiers
     is JsWidget.Button -> modifiers
     is JsWidget.SlideToConfirm -> modifiers
+    is JsWidget.Gesture -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
 }.any { it is JsModifier.FillMaxHeight }
@@ -408,6 +410,21 @@ private fun JsSlideToConfirmRenderer(
         onConfirm = { widget.onConfirm?.let { actionId -> eventDispatcher(actionId, JsUiEvent.Type.ButtonClick) } },
         modifier = modifier.then(widget.modifiers.toComposeModifier()),
     )
+}
+
+@Composable
+private fun JsGestureRenderer(
+    widget: JsWidget.Gesture,
+    modifier: Modifier = Modifier,
+) {
+    val eventDispatcher = LocalJsEventHandler.current
+    JsGesture(
+        widget = widget,
+        onAction = { actionId, event -> eventDispatcher(actionId, event) },
+        modifier = modifier.then(widget.modifiers.toComposeModifier()),
+    ) {
+        widget.children.forEach { child -> JsWidgetContent(widget = child) }
+    }
 }
 
 @Composable

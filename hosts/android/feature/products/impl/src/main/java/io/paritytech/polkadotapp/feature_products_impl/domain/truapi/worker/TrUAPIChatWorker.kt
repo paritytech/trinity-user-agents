@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_api.model.toGesturePayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
@@ -191,6 +192,7 @@ class TrUAPIChatWorker(
     private fun JsUiEvent.Type.toActionPayload(): ByteArray = when (this) {
         JsUiEvent.Type.ButtonClick -> ByteArray(0)
         is JsUiEvent.Type.InputFieldValueChange -> newValue.toByteArray(Charsets.UTF_8)
+        is JsUiEvent.Type.Gesture -> toGesturePayload()
     }
 
     private class ExecutionUnavailableException(cause: Throwable) : Exception(cause.message, cause)

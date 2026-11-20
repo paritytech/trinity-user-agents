@@ -23,6 +23,8 @@ internal enum class ProductRoomFooterFace {
 
         private fun JsWidget.holdsSlide(): Boolean = when (this) {
             is JsWidget.SlideToConfirm -> true
+            // A product-drawn slider keeps its place through its trees the same way.
+            is JsWidget.Gesture -> true
             is JsWidget.Box -> children.any { it.holdsSlide() }
             is JsWidget.Column -> children.any { it.holdsSlide() }
             is JsWidget.Row -> children.any { it.holdsSlide() }
