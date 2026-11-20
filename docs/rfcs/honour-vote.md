@@ -90,5 +90,75 @@ Scores are public chain state. Products read `Honour.Tally` by subject id throug
 - A product that requested a vote knows its subject and its time. It can find the transaction and the point alias that the transaction wrote. When that point later moves to another subject, the product can link the two votes. Anyone watching `Points` can link the votes that reuse a point, without knowing whose they are. Closing this needs a pallet change.
 - A user can't change direction on a subject in one step, because the pallet rejects a second vote on a subject the user has an active vote on. Changing that is a runtime decision outside this RFC.
 - Rejected: designs A and B from PR 1206, for problems 1 to 4 above.
-- Rejected: Honour as a product that casts votes only in its own UI. Reasons 1 and 2 then apply to that one product for every user. It still needs the context change, a multi-context proof call and a `peopl` grant, and the user has to leave the product they are in.
+
+## Alternatives
+
+Both alternatives move Honour's logic from the core to a product `honor.<tld>`. Products call `honour.vote({ subject, direction })` in each of them, so the choice changes who implements the call and doesn't change the products that use it.
+
+The choice matters beyond Honour. Other protocols that allow one action per person, such as polls or quotas, raise the same question. Under this RFC each of them adds code to the core and needs a Host release.
+
+### Honour as a product
+
+`honor.<tld>` casts votes in its own UI, and other products send the user there. This needs:
+
+- Honour's contexts move under `honor.<tld>`. Existing votes are re-proved or dropped.
+- TrUAPI gains a multi-context proof call.
+- `peopl` grants `context` to `honor`.
+- `honor` gets the permission to submit transactions.
+
+What it costs in privacy:
+
+- honor derives every user's aliases, so it can read each user's full vote history (problem 1). No other product gets the aliases, so problem 2 is limited to honor.
+- RFC-0024 doesn't allow a prompt for proofs, so honor can vote for any user without the user (problem 3). Its vote sheet is its own code.
+- A product that can submit transactions can publish any data in them, including the vote history. An HTTP permission would let it send the history to a server.
+- Trust moves from the Host to honor's bundle and the owner of the `honor` dotNS name. One bundle update or a name transfer changes the code that runs for every user.
+
+What it gains:
+
+- Honour changes ship without a Host release.
+- honor can offer flows the Host sheet doesn't, such as a list of the user's votes or a vote on several subjects in one action.
+- The core doesn't contain Honour code.
+
+### Honour as a provider worker
+
+This follows the Funding modality: the core keeps what must not depend on the provider, and the provider's Worker does the steps specific to its service. The core forwards `honour.vote` to honor's Worker.
+
+| The core | honor's Worker |
+|---|---|
+| Renders the sheet from the decoded call | Picks the point, or lists the votes whose points can move |
+| Proves under honor's contexts, only inside this flow | Builds the `bestow` call |
+| Submits only that call | Shows the user's votes |
+| Returns only the outcome to the requesting product | Follows pallet changes |
+
+Its privacy is the same as this RFC's only if all of these hold:
+
+1. honor doesn't get a proof grant from `peopl`. It gets proofs only through this flow, so every vote passes the core's sheet.
+2. honor doesn't get remote permissions, and only the core submits. The vote history the Worker reads stays on the device.
+3. The core decodes the call before it proves it, so the sheet shows what the core proves. The core still needs the call layout and the mapping from `subject` to the string it shows.
+4. The requesting product receives only the outcome.
+
+If one of them doesn't hold, the privacy is that of Honour as a product. When all hold, the difference from this RFC is that honor's code reads each user's vote history on that user's device. It can't send the history anywhere or cast a vote the user didn't see on the sheet.
+
+This needs everything Honour as a product needs, except the `context` grant and the submit permission, and also:
+
+- a new modality: a Worker trait and the core's path to invoke it;
+- a grant that lets a product prove only through that modality;
+- call decoding for the sheet in the core.
+
+What it gains:
+
+- A second protocol of this kind adds a Worker instead of core code and a Host release. This is the strongest argument for it.
+- Honour changes ship without a Host release, unless they change the call layout the sheet decodes. A sheet that decodes calls from runtime metadata removes that exception and the per-protocol code in the core, but shows raw call fields to the user.
+
+### Comparison
+
+| | This RFC | Honour as a product | Provider worker |
+|---|---|---|---|
+| Reads a user's votes | the core, on the device | honor, for every user, and can publish them | honor's Worker, on the device, and can't send them |
+| Can vote without the user | no one | honor | no one |
+| Changes outside the Host | none | contexts, proof call, `peopl` grant | contexts, proof call, modality, grant |
+| Breaking Honour change | Host release | honor release | honor release, Host release if the call layout changes |
+| Next protocol of this kind | core code and a Host release | another product with the same privacy cost | another Worker |
+
+This RFC needs the least change and has the strongest privacy, so it is the proposal for Honour now. The provider worker is the option to revisit when a second protocol of this kind comes up. Products don't change if Honour moves to it later.
 
