@@ -7,11 +7,11 @@ use rusqlite::{
 	types::{ToSql, ToSqlOutput},
 };
 
-use super::{abandon_submission, domain_from_row, invalid_status};
+use super::{abandon_submission, domain_from_row, invalid_status, status_from_row};
 use crate::{
 	durable::model::{
 		DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DomainId, DurableTxId,
-		OnDependencyFailure, TransactionDependency,
+		DurableTxStatus, OnDependencyFailure, TransactionDependency,
 	},
 	store::{Db, DbError},
 };
@@ -89,18 +89,19 @@ pub fn registered_domain(conn: &Connection, id: DurableTxId) -> Result<Option<Do
 	Ok(domain)
 }
 
-const DEPENDENCY_STATUSES: &str = "SELECT dependency.id, dependency.status
+const RELEASED_DEPENDENCIES: &str = "SELECT dependency.id, dependency.status,
+    dependency.success_number, dependency.success_hash, dependency.failure_kind
     FROM durable_tx_dependency
     JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
     WHERE durable_tx_dependency.tx_id = :tx_id ORDER BY dependency.id";
 
 /// How each dependency of `dependent`, a row no dependency blocks any more,
-/// let it go.
+/// released it.
 pub fn released_dependencies(
 	conn: &Connection,
 	dependent: DurableTxId,
 ) -> rusqlite::Result<Vec<DependencyStatusRecord>> {
-	let mut stmt = conn.prepare_cached(DEPENDENCY_STATUSES)?;
+	let mut stmt = conn.prepare_cached(RELEASED_DEPENDENCIES)?;
 	let params = named_params! { ":tx_id": dependent.0 };
 	let records = stmt.query_map(params, |row| dependency_record_from_row(row, dependent))?;
 	records.collect()
@@ -113,18 +114,21 @@ fn dependency_record_from_row(
 	dependent: DurableTxId,
 ) -> rusqlite::Result<DependencyStatusRecord> {
 	let id = DurableTxId(row.get(0)?);
-	let status: String = row.get(1)?;
-	let status = match status.as_str() {
-		"PENDING_SUCCESS" | "FINALIZED_SUCCESS" => DependencyStatus::Success,
-		"FAILURE" => DependencyStatus::IgnoredFailure,
-		other => {
-			return Err(invalid_status(format!(
-				"dependency {id:?} of released transaction {dependent:?} is {other:?}, \
-                 expected PENDING_SUCCESS, FINALIZED_SUCCESS or FAILURE"
-			)));
+	let status = match status_from_row(row)? {
+		DurableTxStatus::PendingSuccess { .. } | DurableTxStatus::FinalizedSuccess { .. } => {
+			DependencyStatus::Success
 		},
+		DurableTxStatus::Failure(_) => DependencyStatus::IgnoredFailure,
+		unsettled => return Err(invalid_status(unreleased_message(id, dependent, unsettled))),
 	};
 	Ok(DependencyStatusRecord { id, status })
+}
+
+fn unreleased_message(id: DurableTxId, dependent: DurableTxId, status: DurableTxStatus) -> String {
+	format!(
+		"dependency {id:?} of released transaction {dependent:?} is {status:?}, \
+         expected PendingSuccess, FinalizedSuccess or Failure"
+	)
 }
 
 const HAS_UNSETTLED_DEPENDENCY: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx_dependency
@@ -134,7 +138,10 @@ const HAS_UNSETTLED_DEPENDENCY: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx_
 
 /// Whether some dependency of `dependent` has not taken effect yet: it
 /// waits to be built, or was submitted with no verdict.
-pub fn has_unsettled_dependency(conn: &Connection, dependent: DurableTxId) -> Result<bool, DbError> {
+pub fn has_unsettled_dependency(
+	conn: &Connection,
+	dependent: DurableTxId,
+) -> Result<bool, DbError> {
 	let mut stmt = conn.prepare_cached(HAS_UNSETTLED_DEPENDENCY)?;
 	let unsettled = stmt.query_row(named_params! { ":tx_id": dependent.0 }, |row| row.get(0))?;
 	Ok(unsettled)
@@ -148,7 +155,8 @@ pub struct CascadingFailure {
 	pub dependency: DurableTxId,
 }
 
-const CASCADING_FAILURES: &str = "SELECT durable_tx_dependency.tx_id, durable_tx_dependency.depends_on
+const CASCADING_FAILURES: &str =
+	"SELECT durable_tx_dependency.tx_id, durable_tx_dependency.depends_on
     FROM durable_tx_dependency
     JOIN durable_tx waiting ON waiting.id = durable_tx_dependency.tx_id
     JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
@@ -160,14 +168,17 @@ const CASCADING_FAILURES: &str = "SELECT durable_tx_dependency.tx_id, durable_tx
 pub fn cascading_failures(conn: &Connection) -> Result<Vec<CascadingFailure>, DbError> {
 	let mut stmt = conn.prepare_cached(CASCADING_FAILURES)?;
 	let failures = stmt.query_map([], |row| {
-		Ok(CascadingFailure { dependent: DurableTxId(row.get(0)?), dependency: DurableTxId(row.get(1)?) })
+		Ok(CascadingFailure {
+			dependent: DurableTxId(row.get(0)?),
+			dependency: DurableTxId(row.get(1)?),
+		})
 	})?;
 	Ok(failures.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Fails every waiting row a failed `CASCADE` dependency blocks, then the
-/// rows that cascade from those, until none is left. Returns each failure
-/// it applied.
+/// rows that cascade from those, until none is left. Returns each row it
+/// failed, with the dependency that failed it.
 pub fn abandon_cascading(tx: &Transaction<'_>) -> Result<Vec<CascadingFailure>, DbError> {
 	let mut applied = Vec::new();
 	loop {
@@ -175,11 +186,23 @@ pub fn abandon_cascading(tx: &Transaction<'_>) -> Result<Vec<CascadingFailure>, 
 		if level.is_empty() {
 			return Ok(applied);
 		}
-		for failure in &level {
-			abandon_submission(tx, failure.dependent)?;
-		}
-		applied.extend(level);
+		applied.extend(abandon_each(tx, level)?);
 	}
+}
+
+/// Fails the waiting row of each of `failures`. Returns those it failed,
+/// once per row: a row with two failed dependencies is failed by the first.
+fn abandon_each(
+	tx: &Transaction<'_>,
+	failures: Vec<CascadingFailure>,
+) -> Result<Vec<CascadingFailure>, DbError> {
+	let mut abandoned = Vec::new();
+	for failure in failures {
+		if abandon_submission(tx, failure.dependent)? {
+			abandoned.push(failure);
+		}
+	}
+	Ok(abandoned)
 }
 
 impl ToSql for OnDependencyFailure {

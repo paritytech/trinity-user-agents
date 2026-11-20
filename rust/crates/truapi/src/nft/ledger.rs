@@ -379,7 +379,6 @@ impl NftLedger {
 	}
 }
 
-
 /// Each move `params` describes, waiting for nothing.
 fn independent_submissions(params: Vec<PolicyParams>) -> Vec<DeferredSubmission> {
 	params.into_iter().map(DeferredSubmission::independent).collect()

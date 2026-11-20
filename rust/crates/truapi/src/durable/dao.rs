@@ -1,6 +1,7 @@
 //! Queries over the `durable_tx` ledger, one SQL constant and one function
 //! each.
 
+#[macro_use]
 mod dependency;
 
 use futures::stream::BoxStream;
@@ -10,12 +11,11 @@ use rusqlite::{
 };
 use subxt::utils::H256;
 
+use dependency::released_dependencies;
 pub use dependency::{
 	CascadingFailure, abandon_cascading, cascading_failures, has_unsettled_dependency,
-	insert_dependency,
-	observe_released_domains, registered_domain, released_submissions,
+	insert_dependency, observe_released_domains, registered_domain, released_submissions,
 };
-use dependency::released_dependencies;
 
 use super::model::{
 	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
@@ -80,15 +80,20 @@ pub fn defer(
 	Ok(id)
 }
 
-const START_ATTEMPT: &str = "UPDATE durable_tx
+const START_ATTEMPT: &str = concat!(
+	"UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
     period = :period, success_number = NULL, success_hash = NULL,
     scanned_number = NULL, attempts = attempts + 1,
     policy_params = COALESCE(:policy_params, policy_params)
-    WHERE id = :id AND status = 'PENDING_SUBMISSION'";
+    WHERE id = :id AND status = 'PENDING_SUBMISSION' AND NOT ",
+	blocked_by_dependency!()
+);
 
 /// Gives a waiting row the attempt `extrinsic` makes, and `params` in place of
-/// its policy params when given. Returns whether the row was still waiting.
+/// its policy params when given. Returns whether the row was still waiting
+/// with no dependency blocking it: one may have failed or gone back to
+/// pending while the policy built the attempt.
 pub fn start_attempt(
 	tx: &Transaction<'_>,
 	id: DurableTxId,

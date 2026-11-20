@@ -58,13 +58,13 @@ impl DurableTxEngine {
 			.into_iter()
 			.map(|(genesis, domains)| self.decide_chain(genesis, domains));
 		futures::future::join_all(chains).await;
-		self.cascade_failures().await;
+		self.abandon_cascaded_dependents().await;
 	}
 
 	/// Fails every waiting row a failed `Cascade` dependency blocks, and the
 	/// rows that cascade from those. Passes run on every head, so it reads
 	/// first and writes only when there is something to fail.
-	async fn cascade_failures(&self) {
+	async fn abandon_cascaded_dependents(&self) {
 		match self.db.read(dao::cascading_failures).await {
 			Ok(found) if found.is_empty() => return,
 			Ok(_) => {},
@@ -220,7 +220,6 @@ impl DurableTxEngine {
 		.collect()
 	}
 }
-
 
 fn log_cascaded_failure(failure: &dao::CascadingFailure) {
 	warn!(

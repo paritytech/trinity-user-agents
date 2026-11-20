@@ -1,16 +1,12 @@
 //! Which rows a policy is asked about together.
 
-use futures::{
-	channel::oneshot,
-	future::{pending, ready},
-};
-use parking_lot::Mutex;
+use futures::future::{pending, ready};
 
 use super::*;
 use crate::durable::{
 	engine::DurableRequest,
 	model::GroupId,
-	testing::{PrepareScript, ScriptedPolicy, test_submission},
+	testing::{PrepareScript, ScriptedPolicy, first_build_gated, test_submission},
 };
 
 /// Waits until `policy` was asked about exactly `batch`, built as `what`.
@@ -22,26 +18,6 @@ fn wait_for_batch(policy: &ScriptedPolicy, batch: Vec<DurableTxId>, what: &str) 
 fn deferred_in(domain: DomainId, group: &str, count: usize) -> DurableRequest {
 	let submissions = (0..count).map(|_| test_submission(vec![])).collect();
 	DurableRequest::deferred(domain, Some(GroupId::new(group)), submissions).unwrap()
-}
-
-/// A script whose first build waits until the returned sender fires, and
-/// every build answers with new bytes.
-fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
-	let (release, released) = oneshot::channel::<()>();
-	let gate = Mutex::new(Some(released));
-	let builds = AtomicU8::new(0);
-	let script: PrepareScript = Box::new(move |ids| {
-		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
-		let answer = answer_all_with(ids, Preparation::Ready { extrinsic: built, params: None });
-		let first_gate = gate.lock().take();
-		Box::pin(async move {
-			if let Some(released) = first_gate {
-				let _ = released.await;
-			}
-			answer
-		})
-	});
-	(release, script)
 }
 
 /// Each domain has its own policy, so a batch never mixes domains. Groups

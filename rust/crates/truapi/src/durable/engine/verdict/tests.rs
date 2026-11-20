@@ -118,4 +118,5 @@ fn a_dependent_failing_after_its_dependencies_settled_asks_its_policy() {
 
 	let expired = DurableTxStatus::Failure(DurableTxFailureKind::Expired);
 	assert_eq!(harness.status(observed.id), expired);
+	assert_eq!(harness.policy().retry_questions().len(), 1);
 }

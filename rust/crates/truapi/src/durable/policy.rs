@@ -13,8 +13,9 @@ use crate::chain::MortalExtrinsic;
 #[async_trait::async_trait]
 pub trait SubmissionPolicy: Send + Sync {
 	/// Whether `entry`, which failed for `failure`, goes back to
-	/// [`Self::prepare`] instead of failing for good. Asked while its verdict
-	/// is written, so it decides from what it is given and never waits.
+	/// [`Self::prepare`] instead of failing for good. Asked inside the write
+	/// of its verdict, so it decides from what it is given, never waits and
+	/// never touches the core database.
 	fn can_retry(
 		&self,
 		entry: &DurableTxEntry,

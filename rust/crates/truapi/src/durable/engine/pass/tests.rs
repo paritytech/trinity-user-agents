@@ -7,9 +7,8 @@ use crate::{
 	chain::{DispatchOutcome, HashAndNumber, Heads},
 	chain_runtime::RuntimeFailure,
 	durable::{
-		model::{DurableTxFailureKind, DurableTxStatus, HeadKind},
+		model::{DurableTxFailureKind, DurableTxStatus, HeadKind, TransactionDependency},
 		oracle::{DurableRegistry, PassScope, Unobservable},
-		model::TransactionDependency,
 		testing::{
 			DeferredTxHarness, FakeChain, ScriptedPolicy, ScriptedScope, ServesTestDomains, block,
 			cascading_dependency, engine_with, extrinsic, insert,
@@ -360,14 +359,14 @@ fn abandoned() -> DurableTxStatus {
 fn a_cascading_failure_fails_every_waiting_dependent_in_one_pass() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
-	let dependent = harness.defer_depending_on(vec![cascading_dependency(dependency)]);
-	let transitive = harness.defer_depending_on(vec![cascading_dependency(dependent)]);
+	let dependent = harness.defer_with_dependencies(vec![cascading_dependency(dependency)]);
+	let transitive = harness.defer_with_dependencies(vec![cascading_dependency(dependent)]);
 	harness.record_status(dependency, DurableTxStatus::Failure(DurableTxFailureKind::Expired));
 
 	block_on(harness.engine().run_pass());
 
-	let statuses = vec![harness.status(dependent), harness.status(transitive)];
-	assert_eq!(statuses, vec![abandoned(), abandoned()]);
+	assert_eq!(harness.status(dependent), abandoned());
+	assert_eq!(harness.status(transitive), abandoned());
 }
 
 /// A dependent that ignores its dependency's failure may still be built,
@@ -377,7 +376,7 @@ fn a_cascading_failure_fails_every_waiting_dependent_in_one_pass() {
 fn an_ignored_failure_leaves_the_dependent_to_its_policy() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
-	let dependent = harness.defer_depending_on(vec![TransactionDependency::new(dependency)]);
+	let dependent = harness.defer_with_dependencies(vec![TransactionDependency::new(dependency)]);
 	harness.record_status(dependency, DurableTxStatus::Failure(DurableTxFailureKind::Expired));
 
 	block_on(harness.engine().run_pass());
@@ -391,7 +390,7 @@ fn an_ignored_failure_leaves_the_dependent_to_its_policy() {
 fn a_cascading_failure_leaves_a_submitted_dependent_to_the_chain() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
-	let dependent = harness.defer_depending_on(vec![cascading_dependency(dependency)]);
+	let dependent = harness.defer_with_dependencies(vec![cascading_dependency(dependency)]);
 	harness.record_status(dependency, DurableTxStatus::PendingSuccess { at: block(131) });
 	harness.wait_for(dependent, DurableTxStatus::Pending);
 	let failed = DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed);

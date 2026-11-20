@@ -23,8 +23,8 @@ The engine does not construct or sign transactions itself. It accepts either a p
 enum RequestedTransactions {
     /// Signed already: recorded as pending and broadcast once committed.
     Presigned(Vec<DurableSubmission>),
-    /// Built later, each through its plan.
-    Deferred(Vec<SubmissionPlan>),
+    /// Built later, each from its params once its dependencies released it.
+    Deferred(Vec<DeferredSubmission>),
 }
 
 pub struct DurableSubmission {

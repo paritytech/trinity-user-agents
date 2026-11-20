@@ -448,10 +448,7 @@ fn a_row_keeps_the_plan_it_was_registered_with() {
 	let without = register(&db, None, 2);
 
 	assert_eq!(read(&db, move |conn| plan_of(conn, with_plan)), Some(test_plan(vec![3])));
-	assert_eq!(
-		read(&db, move |conn| plan_of(conn, with_empty_plan)),
-		Some(test_plan(vec![]))
-	);
+	assert_eq!(read(&db, move |conn| plan_of(conn, with_empty_plan)), Some(test_plan(vec![])));
 	assert_eq!(read(&db, move |conn| plan_of(conn, without)), None);
 }
 

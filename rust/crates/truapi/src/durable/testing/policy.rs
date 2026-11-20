@@ -5,7 +5,10 @@ use std::{
 	sync::atomic::{AtomicU8, Ordering},
 };
 
-use futures::future::{BoxFuture, pending, ready};
+use futures::{
+	channel::oneshot,
+	future::{BoxFuture, pending, ready},
+};
 use parking_lot::Mutex;
 
 use super::{extrinsic, insert_with_plan};
@@ -125,12 +128,11 @@ impl ScriptedPolicy {
 
 	/// The ids of every batch asked, in order.
 	pub fn batches(&self) -> Vec<Vec<DurableTxId>> {
-		let batches = self.batches.lock();
-		batches.iter().map(|batch| batch.iter().map(|row| row.id).collect()).collect()
+		self.batches.lock().iter().map(|batch| batch_ids(batch)).collect()
 	}
 
 	/// Every row handed over in any batch, in the order asked.
-	pub fn prepared_rows(&self) -> Vec<DeferredDurableTx> {
+	pub fn rows_asked(&self) -> Vec<DeferredDurableTx> {
 		self.batches.lock().iter().flatten().cloned().collect()
 	}
 }
@@ -155,9 +157,34 @@ impl SubmissionPolicy for ScriptedPolicy {
 	}
 }
 
+/// The ids of the rows of `batch`, in order.
+fn batch_ids(batch: &[DeferredDurableTx]) -> Vec<DurableTxId> {
+	batch.iter().map(|row| row.id).collect()
+}
+
 /// The same `preparation` for every id of `ids`.
 pub fn answer_all_with(ids: &[DurableTxId], preparation: Preparation) -> PrepareAnswer {
 	Ok(ids.iter().map(|id| (*id, preparation.clone())).collect())
+}
+
+/// A script whose first build waits until the returned sender fires, and
+/// every build answers with new bytes.
+pub fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
+	let (release, released) = oneshot::channel::<()>();
+	let gate = Mutex::new(Some(released));
+	let builds = AtomicU8::new(0);
+	let script: PrepareScript = Box::new(move |ids| {
+		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
+		let answer = answer_all_with(ids, Preparation::Ready { extrinsic: built, params: None });
+		let first_gate = gate.lock().take();
+		Box::pin(async move {
+			if let Some(released) = first_gate {
+				let _ = released.await;
+			}
+			answer
+		})
+	});
+	(release, script)
 }
 
 /// The bytes build `index` of [`ScriptedPolicy::building_everything`]

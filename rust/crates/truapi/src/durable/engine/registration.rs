@@ -46,7 +46,7 @@ pub struct DurableSubmission {
 }
 
 /// One transaction left for its domain's policy to build, once every
-/// transaction it depends on lets it go.
+/// transaction it depends on has released it.
 pub struct DeferredSubmission {
 	/// What the policy builds it from.
 	pub params: PolicyParams,
@@ -107,12 +107,26 @@ pub enum RegistrationError<E = DbError> {
 	UnknownDependency(DurableTxId),
 	/// A dependency lives on another chain than its dependent, where nothing
 	/// orders the two.
-	#[error("dependency {0:?} lives on another chain than its dependent, expected the same chain")]
-	DependencyOnOtherChain(DurableTxId),
+	#[error(
+		"dependency {dependency:?} lives on chain {chain:?}, expected its dependent's chain {expected:?}"
+	)]
+	DependencyOnOtherChain {
+		/// The dependency.
+		dependency: DurableTxId,
+		/// Genesis hash of the chain it lives on.
+		chain: H256,
+		/// Genesis hash of the dependent's chain.
+		expected: H256,
+	},
 	/// A dependency belongs to a domain the engine does not serve, so it
 	/// could never be decided.
-	#[error("dependency {0:?} belongs to a durable domain that is not registered")]
-	DependencyInUnservedDomain(DurableTxId),
+	#[error("dependency {dependency:?} belongs to durable domain {}, which is not registered", .domain.as_str())]
+	DependencyInUnservedDomain {
+		/// The dependency.
+		dependency: DurableTxId,
+		/// Its domain.
+		domain: DomainId,
+	},
 }
 
 impl<E> RequestedTransactions<E> {
@@ -147,7 +161,7 @@ impl<E> DurableRequest<E> {
 	}
 
 	/// One transaction per submission, recorded as waiting and built from
-	/// its params once committed and once its dependencies let it go.
+	/// its params once committed and once its dependencies released it.
 	pub fn deferred(
 		domain: DomainId,
 		group: Option<GroupId>,
@@ -181,46 +195,64 @@ impl<E> DurableRequest<E> {
 		Ok(Self { domain, group, transactions })
 	}
 
-	/// Records every transaction as a row, in order, or returns the plan's
-	/// refusal or the first dependency `scope` refuses.
+	/// Records every transaction as a row, in order, or returns why the
+	/// registration is refused: the plan's refusal, a dependency `scope`
+	/// rules out, or a failed write.
 	fn insert_all(
 		self,
 		tx: &rusqlite::Transaction<'_>,
 		scope: &DependencyScope,
-	) -> Result<Result<Vec<DurableTxId>, RegistrationError<E>>, DbError> {
+	) -> Result<Vec<DurableTxId>, RegistrationError<E>> {
 		let Self { domain, group, transactions } = self;
 		let submissions = match transactions {
 			RequestedTransactions::Presigned(submissions) => {
-				return insert_presigned(tx, &domain, group.as_ref(), &submissions).map(Ok);
+				return Ok(insert_presigned(tx, &domain, group.as_ref(), &submissions)?);
 			},
 			RequestedTransactions::Deferred(submissions) => submissions,
-			RequestedTransactions::PlannedInWrite(plan) => match plan(tx) {
-				Ok(submissions) => submissions,
-				Err(refusal) => return Ok(Err(RegistrationError::Hook(refusal))),
+			RequestedTransactions::PlannedInWrite(plan) => {
+				plan(tx).map_err(RegistrationError::Hook)?
 			},
 		};
-		defer_all(tx, &domain, group.as_ref(), submissions, scope)
+		scope.check_dependencies(tx, &submissions)?;
+		Ok(defer_all(tx, &domain, group.as_ref(), submissions)?)
 	}
 }
 
 impl DependencyScope {
+	/// Refuses the first dependency of `submissions` that names no row, or a
+	/// row on another chain or in a domain the engine does not serve.
+	fn check_dependencies<E>(
+		&self,
+		tx: &rusqlite::Transaction<'_>,
+		submissions: &[DeferredSubmission],
+	) -> Result<(), RegistrationError<E>> {
+		submissions
+			.iter()
+			.flat_map(|submission| &submission.depends_on)
+			.try_for_each(|dependency| self.check_dependency(tx, dependency.id))
+	}
+
 	/// Refuses dependency `id` when it names no row, or a row on another
 	/// chain or in a domain the engine does not serve.
-	fn check<E>(
+	fn check_dependency<E>(
 		&self,
 		tx: &rusqlite::Transaction<'_>,
 		id: DurableTxId,
-	) -> Result<Result<(), RegistrationError<E>>, DbError> {
+	) -> Result<(), RegistrationError<E>> {
 		let Some(domain) = dao::registered_domain(tx, id)? else {
-			return Ok(Err(RegistrationError::UnknownDependency(id)));
+			return Err(RegistrationError::UnknownDependency(id));
 		};
-		Ok(match self.registry.chain(&domain) {
-			None => Err(RegistrationError::DependencyInUnservedDomain(id)),
-			Some(genesis) if genesis != self.genesis => {
-				Err(RegistrationError::DependencyOnOtherChain(id))
+		match self.registry.chain(&domain) {
+			None => Err(RegistrationError::DependencyInUnservedDomain { dependency: id, domain }),
+			Some(chain) if chain != self.genesis => {
+				Err(RegistrationError::DependencyOnOtherChain {
+					dependency: id,
+					chain,
+					expected: self.genesis,
+				})
 			},
 			Some(_) => Ok(()),
-		})
+		}
 	}
 }
 
@@ -240,40 +272,33 @@ fn insert_presigned(
 }
 
 /// Records each submission as a waiting row with its dependencies, in
-/// order, or returns the first dependency `scope` refuses.
-fn defer_all<E>(
+/// order.
+fn defer_all(
 	tx: &rusqlite::Transaction<'_>,
 	domain: &DomainId,
 	group: Option<&GroupId>,
 	submissions: Vec<DeferredSubmission>,
-	scope: &DependencyScope,
-) -> Result<Result<Vec<DurableTxId>, RegistrationError<E>>, DbError> {
-	let mut ids = Vec::with_capacity(submissions.len());
-	for DeferredSubmission { params, depends_on } in submissions {
-		let id = dao::defer(tx, domain, group, &SubmissionPlan { params })?;
-		if let Err(refusal) = record_dependencies(tx, id, &depends_on, scope)? {
-			return Ok(Err(refusal));
-		}
-		ids.push(id);
-	}
-	Ok(Ok(ids))
+) -> Result<Vec<DurableTxId>, DbError> {
+	submissions
+		.into_iter()
+		.map(|submission| defer_one(tx, domain, group, submission))
+		.collect()
 }
 
-/// Records that `dependent` waits for each of `dependencies`, or returns
-/// the first one `scope` refuses.
-fn record_dependencies<E>(
+/// Records `submission` as a waiting row that waits for each of its
+/// dependencies.
+fn defer_one(
 	tx: &rusqlite::Transaction<'_>,
-	dependent: DurableTxId,
-	dependencies: &[TransactionDependency],
-	scope: &DependencyScope,
-) -> Result<Result<(), RegistrationError<E>>, DbError> {
-	for dependency in dependencies {
-		if let Err(refusal) = scope.check(tx, dependency.id)? {
-			return Ok(Err(refusal));
-		}
-		dao::insert_dependency(tx, dependent, dependency)?;
-	}
-	Ok(Ok(()))
+	domain: &DomainId,
+	group: Option<&GroupId>,
+	submission: DeferredSubmission,
+) -> Result<DurableTxId, DbError> {
+	let DeferredSubmission { params, depends_on } = submission;
+	let id = dao::defer(tx, domain, group, &SubmissionPlan { params })?;
+	depends_on
+		.iter()
+		.try_for_each(|dependency| dao::insert_dependency(tx, id, dependency))?;
+	Ok(id)
 }
 
 impl DurableTxEngine {
@@ -363,7 +388,7 @@ impl DurableTxEngine {
 		let (ownership, claims) = (self.ownership.clone(), taken.clone());
 		let write_rows_and_hook = move |tx: &rusqlite::Transaction<'_>| {
 			let presigned = request.transactions.presigned().len();
-			let ids = match request.insert_all(tx, &scope)? {
+			let ids = match request.insert_all(tx, &scope) {
 				Ok(ids) => ids,
 				Err(refusal) => return Ok(Err(refusal)),
 			};

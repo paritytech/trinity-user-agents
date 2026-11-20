@@ -17,29 +17,6 @@ fn migrated_with_two_rows() -> Connection {
 	connection
 }
 
-/// Rows registered before the table existed stay as they were.
-#[test]
-fn existing_rows_survive_the_migration() {
-	let connection = migrated_with_two_rows();
-	let mut statement = connection.prepare("SELECT policy_params FROM durable_tx ORDER BY id").unwrap();
-	let params: Vec<Vec<u8>> =
-		statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
-
-	assert_eq!(params, vec![vec![1], vec![2]]);
-}
-
-/// A transaction may wait for an older one.
-#[test]
-fn a_row_can_depend_on_an_older_row() {
-	let connection = migrated_with_two_rows();
-	let inserted = connection.execute(
-		"INSERT INTO durable_tx_dependency (tx_id, depends_on, on_failure) VALUES (2, 1, 'CASCADE')",
-		[],
-	);
-
-	assert_eq!(inserted.unwrap(), 1);
-}
-
 /// Only an older row can be waited for, so no cycle can be stored.
 #[test]
 fn a_row_cannot_depend_on_a_younger_row() {

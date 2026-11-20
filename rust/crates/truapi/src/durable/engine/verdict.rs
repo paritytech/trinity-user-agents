@@ -54,8 +54,8 @@ fn status_to_write(
 	let Some(plan) = &observed.plan else {
 		return Ok(status.into());
 	};
-	let waits_again = dao::has_unsettled_dependency(conn, observed.id)?
-		|| policy_retries(registry, observed, plan, failure);
+	let waits_again = dao::has_unsettled_dependency(conn, observed.id)? ||
+		policy_retries(registry, observed, plan, failure);
 	Ok(if waits_again { DurableTxStatus::PendingSubmission } else { status.into() })
 }
 

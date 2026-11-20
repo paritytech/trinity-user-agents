@@ -30,9 +30,10 @@ pub use engine::{
 	DurableWorkObserver, EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
-	DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
-	DurableTxStatus, GroupId, HeadKind, OnDependencyFailure, PolicyParams, SubmissionPlan,
-	TransactionDependency, Verdict, VerdictFailureKind, VerdictStatus, Window,
+	DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DomainId, DurableTxEntry,
+	DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus, GroupId, HeadKind,
+	OnDependencyFailure, PolicyParams, SubmissionPlan, TransactionDependency, Verdict,
+	VerdictFailureKind, VerdictStatus, Window,
 };
 pub use oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable};
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};

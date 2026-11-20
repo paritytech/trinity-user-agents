@@ -386,7 +386,7 @@ fn a_lost_chain_fails_recovery_while_a_row_waits_to_be_built() {
 fn recovery_fails_a_cascading_dependent_on_the_next_head() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
-	let dependent = harness.defer_depending_on(vec![cascading_dependency(dependency)]);
+	let dependent = harness.defer_with_dependencies(vec![cascading_dependency(dependency)]);
 	let running = run_in_background(harness.engine());
 	harness.settle();
 

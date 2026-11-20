@@ -8,7 +8,8 @@ use futures::{channel::mpsc, executor::block_on};
 use tempfile::TempDir;
 
 use super::{
-	FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan, test_submission,
+	FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan,
+	test_submission,
 };
 use crate::{
 	chain::{EncodedExtrinsic, HeadEvent, MortalExtrinsic},
@@ -17,8 +18,8 @@ use crate::{
 		dao,
 		engine::{DeferredSubmission, DurableDeps, DurableRequest, DurableTxEngine},
 		model::{
-			DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, OnDependencyFailure, PolicyParams,
-			SubmissionPlan, TransactionDependency,
+			DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, OnDependencyFailure,
+			PolicyParams, SubmissionPlan, TransactionDependency,
 		},
 		oracle::{DurableRegistry, Unobservable},
 	},
@@ -118,10 +119,11 @@ impl DeferredTxHarness {
 
 	/// Defers one test-domain transaction, in no group, that waits for
 	/// `dependencies`.
-	pub fn defer_depending_on(&self, dependencies: Vec<TransactionDependency>) -> DurableTxId {
+	pub fn defer_with_dependencies(&self, dependencies: Vec<TransactionDependency>) -> DurableTxId {
 		let submission =
 			DeferredSubmission { params: PolicyParams(vec![1]), depends_on: dependencies };
-		self.defer(DurableRequest::deferred(test_domain(), None, vec![submission]).unwrap())[0]
+		let request = DurableRequest::deferred(test_domain(), None, vec![submission]).unwrap();
+		self.defer(request)[0]
 	}
 
 	/// Writes `status` onto `id`, a row with an attempt, as a watch or a

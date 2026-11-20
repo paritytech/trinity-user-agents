@@ -25,10 +25,7 @@ use tracing::{error, warn};
 
 use super::DurableTxEngine;
 use crate::{
-	durable::{
-		dao,
-		model::DomainId,
-	},
+	durable::{dao, model::DomainId},
 	store::DbError,
 };
 use domain_run::DomainRun;
