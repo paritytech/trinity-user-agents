@@ -256,7 +256,7 @@ private extension NewMessageHandler {
             formatterFactory: formatterFactory
         )
         let amountString = formatter.amount(from: totalValue)
-        return String(localized: .contactSentYouAsset(username: contact.username)) + " \(amountString)"
+        return String(localized: .contactSentYouCoinage(username: contact.username, amount: amountString))
     }
 
     typealias DataChannelOfferContent =

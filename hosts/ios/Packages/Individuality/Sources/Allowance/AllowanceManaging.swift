@@ -25,18 +25,18 @@ public enum OnExistingAllowancePolicy: Equatable, ScaleCodable {
     }
 }
 
-public protocol AllowanceManaging {
+public protocol AllowanceManaging<Holder> {
+    associatedtype Holder
+
     func allocate(
-        accountId: AccountId,
+        holder: Holder,
         policy: OnExistingAllowancePolicy,
         priority: AllowanceRecord.Priority,
         domain: AllowanceRecord.Domain
     ) async throws
-    /// Ensures [accountId] can submit to HOP. Managers that do not distinguish this from a plain
-    /// allowance fall back to `allocate(policy: .ignore)`; the Bulletin manager overrides this to
-    /// gate on `HopRuntimeApi.can_account_promote` instead of the stored allowance extent.
+    /// Defaults to `allocate(policy: .ignore)`; Bulletin gates on `can_account_promote` instead of the stored extent.
     func ensureCanSubmit(
-        accountId: AccountId,
+        holder: Holder,
         priority: AllowanceRecord.Priority,
         domain: AllowanceRecord.Domain
     ) async throws
@@ -46,13 +46,32 @@ public protocol AllowanceManaging {
 
 public extension AllowanceManaging {
     func ensureCanSubmit(
-        accountId: AccountId,
+        holder: Holder,
         priority: AllowanceRecord.Priority,
         domain: AllowanceRecord.Domain
     ) async throws {
-        try await allocate(accountId: accountId, policy: .ignore, priority: priority, domain: domain)
+        try await allocate(holder: holder, policy: .ignore, priority: priority, domain: domain)
     }
 
     func renew() async throws {}
     func release(with _: AllowanceReleaseStrategy) async throws {}
+}
+
+public extension AllowanceManaging where Holder == AccountId {
+    func allocate(
+        accountId: AccountId,
+        policy: OnExistingAllowancePolicy,
+        priority: AllowanceRecord.Priority,
+        domain: AllowanceRecord.Domain
+    ) async throws {
+        try await allocate(holder: accountId, policy: policy, priority: priority, domain: domain)
+    }
+
+    func ensureCanSubmit(
+        accountId: AccountId,
+        priority: AllowanceRecord.Priority,
+        domain: AllowanceRecord.Domain
+    ) async throws {
+        try await ensureCanSubmit(holder: accountId, priority: priority, domain: domain)
+    }
 }

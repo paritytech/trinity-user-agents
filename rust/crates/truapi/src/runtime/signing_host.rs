@@ -235,6 +235,17 @@ impl SigningHost {
 		self.wallet.statement_renewal_targets().await
 	}
 
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails with `Disconnected` without
+	/// an active session.
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
+		self.wallet.identity_signer()
+	}
+
 	/// Root public key the active wallet records its ledger entries under.
 	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], StatementRenewalError> {
 		self.wallet.statement_renewal_owner_key()

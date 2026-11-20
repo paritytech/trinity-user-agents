@@ -8,11 +8,8 @@ use schnorrkel::{ExpansionMode, MiniSecretKey};
 use truapi::{
 	ProductId,
 	host_logic::{
-		entropy::derive_product_entropy,
-		product_account::{
-			derive_product_public_key, derive_product_subtree_keypair,
-			derive_root_keypair_from_entropy, index_bytes,
-		},
+		product_account::{derive_product_public_key, index_bytes},
+		root_entropy::RootEntropy,
 		session::SsoSessionInfo,
 		sso::pairing::{
 			self, PairingBootstrap, SsoStatementData, VersionedHandshakeProposal,
@@ -91,15 +88,18 @@ fn sso_session() -> SsoSessionInfo {
 #[wasm_bindgen_test]
 fn product_account_and_entropy_vectors_match_mobile() {
 	let product_id = ProductId::for_test("myapp.dot");
-	let root = derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&product_id)
+		.unwrap();
 	let derived = derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap();
 	assert_eq!(
 		hex::encode(derived),
 		"1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
 	);
 
-	let entropy = derive_product_entropy(&entropy_secret(), &product_id, b"product-key").unwrap();
+	let entropy = RootEntropy::new(entropy_secret())
+		.derive_product_entropy(&product_id, b"product-key")
+		.unwrap();
 	assert_eq!(
 		hex::encode(entropy),
 		"ab1887248c9de3cf4b8c5a255782796d3d35a98c8eb2d7df61a410db8b14da36"
