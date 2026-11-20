@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.common.utils.mapAsync
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUpdates
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHash
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -28,6 +29,12 @@ internal class RealDotNsUpdates @Inject constructor(
             .onFailure { builds.deleteUnreferenced(latest.mapNotNull { it.getOrNull()?.second?.contentHash }) }
             .logFailure("failed to fetch updates for $dotNsNames")
     }
+
+    override suspend fun applyUpdates(dotNsNames: Collection<String>): Set<String> = withContext(dispatchers.computation) {
+        builds.applyUpdates(dotNsNames)
+    }
+
+    override fun observePendingUpdates(): Flow<Set<String>> = builds.observePending()
 
     override fun namesOnDevice(): Set<String> = builds.names()
 

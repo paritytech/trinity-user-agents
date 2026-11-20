@@ -119,7 +119,13 @@ class SpaBrowserViewModel @Inject constructor(
     }
 
     override fun onRefresh() {
-        productSessionController.reload()
+        launch {
+            val url = activeTab.first()?.url
+            val updateApplied = url != null && interactor.applyPageUpdate(url)
+                .logFailure("Failed to apply the update of $url")
+                .getOrDefault(false)
+            if (!updateApplied) productSessionController.reload()
+        }
     }
 
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and

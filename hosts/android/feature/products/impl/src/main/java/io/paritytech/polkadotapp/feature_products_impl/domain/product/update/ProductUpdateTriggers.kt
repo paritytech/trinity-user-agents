@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.logFailure
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -27,6 +28,10 @@ class ProductUpdateTriggers @Inject constructor(
         appLifecycleObserver.subscribeIsForeground()
             .filter { it }
             .onEach { scope.checkEach(productsInUse.observe().first()) }
+            .launchIn(scope)
+
+        combine(productUpdater.observePendingNames(), productsInUse.observeShownNames()) { pending, shown -> pending - shown }
+            .onEach { notShownNames -> productUpdater.applyUpdates(notShownNames) }
             .launchIn(scope)
     }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.DotNsBuild
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.Json
@@ -29,6 +30,8 @@ class SharedPrefsDotNsBuildStorage @Inject constructor(
     }
 
     override fun all(): Map<String, DotNsBuild> = builds.value
+
+    override fun observeAll(): Flow<Map<String, DotNsBuild>> = builds
 
     override fun clear() {
         prefs.edit { clear() }

@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.utils.invokeOnCompletion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -14,28 +15,38 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class ShownPage(val productId: ProductId, val dotNsName: String)
+
 @Singleton
 class ProductsInUse @Inject constructor() {
     private val productHolds = MutableStateFlow<Map<ProductId, Int>>(emptyMap())
 
-    fun observe(): Flow<Set<ProductId>> = productHolds.map { it.keys }.distinctUntilChanged()
+    private val shownPages = MutableStateFlow<Map<TrackedPage, ShownPage>>(emptyMap())
+
+    fun observe(): Flow<Set<ProductId>> {
+        return combine(productHolds, shownPages) { holds, pages -> holds.keys + pages.values.map { it.productId } }
+            .distinctUntilChanged()
+    }
+
+    fun observeShownNames(): Flow<Set<String>> {
+        return shownPages.map { pages -> pages.values.mapTo(HashSet()) { it.dotNsName } }.distinctUntilChanged()
+    }
+
+    fun reloadPagesShowing(dotNsName: String) {
+        shownPages.value.filterValues { it.dotNsName == dotNsName }.keys.forEach { it.reload() }
+    }
 
     fun hold(productId: ProductId, scope: CoroutineScope) {
         acquire(productId)
         scope.invokeOnCompletion { release(productId) }
     }
 
-    fun trackPage(pageProducts: Flow<ProductId?>, scope: CoroutineScope) {
-        var held: ProductId? = null
+    fun trackPage(pages: Flow<ShownPage?>, scope: CoroutineScope, reload: () -> Unit) {
+        val trackedPage = TrackedPage(reload)
 
-        pageProducts
-            .distinctUntilChanged()
-            .onEach { next ->
-                held?.let(::release)
-                next?.let(::acquire)
-                held = next
-            }
-            .onCompletion { held?.let(::release) }
+        pages
+            .onEach { page -> shownPages.update { if (page == null) it - trackedPage else it + (trackedPage to page) } }
+            .onCompletion { shownPages.update { it - trackedPage } }
             .launchIn(scope)
     }
 
@@ -49,4 +60,6 @@ class ProductsInUse @Inject constructor() {
             if (left > 0) holds + (productId to left) else holds - productId
         }
     }
+
+    private class TrackedPage(val reload: () -> Unit)
 }

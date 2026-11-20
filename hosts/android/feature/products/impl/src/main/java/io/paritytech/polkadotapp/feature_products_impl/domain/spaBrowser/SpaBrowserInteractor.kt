@@ -17,8 +17,10 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIn
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdater
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.productIdShareHost
 import javax.inject.Inject
@@ -33,6 +35,8 @@ interface SpaBrowserInteractor {
     fun share(productId: ProductId)
 
     suspend fun checkForUpdate(productId: ProductId): Result<Unit>
+
+    suspend fun applyPageUpdate(url: String): Result<Boolean>
 }
 
 class RealSpaBrowserInteractor @Inject constructor(
@@ -42,6 +46,7 @@ class RealSpaBrowserInteractor @Inject constructor(
     private val sharingManager: SharingManager,
     private val dotNsTldProvider: DotNsTldProvider,
     private val productUpdater: ProductUpdater,
+    private val servingHostResolver: ProductServingHostResolver,
 ) : SpaBrowserInteractor {
     // Waits rather than guesses: a tab classified before the TLD lands would stick as "not a product"
     // for its whole lifetime.
@@ -67,4 +72,11 @@ class RealSpaBrowserInteractor @Inject constructor(
     }
 
     override suspend fun checkForUpdate(productId: ProductId): Result<Unit> = productUpdater.check(productId)
+
+    override suspend fun applyPageUpdate(url: String): Result<Boolean> {
+        val host = url.toUri().host ?: return Result.success(false)
+
+        return servingHostResolver.servingHostFor(host, ExecutableKind.APP)
+            .map { dotNsName -> productUpdater.applyUpdateAndReloadPages(dotNsName) }
+    }
 }

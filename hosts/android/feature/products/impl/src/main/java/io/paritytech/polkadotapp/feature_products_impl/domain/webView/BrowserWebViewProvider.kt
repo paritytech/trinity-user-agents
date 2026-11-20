@@ -36,10 +36,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecy
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductsInUse
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ShownPage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.launch
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSource
@@ -55,6 +58,7 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Replaces [SpaProductWebViewProvider] and [SpaExplorerWebViewProvider].
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class BrowserWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
     private val productWebChromeClientFactory: ProductWebChromeClient.Factory,
@@ -114,7 +118,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
         if (fixedProductId != null) {
             productsInUse.hold(fixedProductId, scope)
         } else {
-            productsInUse.trackPage(pageUrl.map { url -> url?.let { pageProductId(it) } }, scope)
+            productsInUse.trackPage(pageUrl.mapLatest { url -> url?.let { shownPageOf(it) } }, scope, reload = ::reloadPage)
         }
     }
 
@@ -192,8 +196,19 @@ class BrowserWebViewProvider @AssistedInject constructor(
             .logFailure("Failed to download the page content for $initialUrl")
     }
 
-    private suspend fun pageProductId(url: String): ProductId? {
-        return productIdFromUrl(url.toUri(), dotNsTldProvider.getTldRetrying()).getOrNull()
+    private suspend fun shownPageOf(url: String): ShownPage? {
+        val uri = url.toUri()
+        val productId = productIdFromUrl(uri, dotNsTldProvider.getTldRetrying()).getOrNull() ?: return null
+        val host = uri.host ?: return null
+
+        return servingHostResolver.servingHostFor(host, servedExecutable, NetworkRetryPolicy.UntilCancelled)
+            .logFailure("Failed to find the dotNS name $url is served from")
+            .map { dotNsName -> ShownPage(productId, dotNsName) }
+            .getOrNull()
+    }
+
+    private fun reloadPage() {
+        scope.launch { accessWebView(WebView::reload) }
     }
 
     override fun onInitialThemeDelivered() {

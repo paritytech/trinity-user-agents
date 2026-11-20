@@ -3,8 +3,12 @@ package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHash
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsBuildStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -30,6 +34,12 @@ internal class DotNsBuilds @Inject constructor(
         return served(dotNsName)?.contentHash?.let(contentStorage::getContentDirectory)
     }
 
+    fun observePending(): Flow<Set<String>> {
+        return buildStorage.observeAll()
+            .map { builds -> builds.filterValues { it.update != null }.keys }
+            .distinctUntilChanged()
+    }
+
     fun wasReadFromChainRecently(dotNsName: String): Boolean {
         return lastChainReads[dotNsName]?.let { it.elapsedNow() < MIN_TIME_BETWEEN_CHAIN_READS } == true
     }
@@ -51,6 +61,23 @@ internal class DotNsBuilds @Inject constructor(
 
         buildStorage.putAll(builds)
         (replacedUpdates + latest.values.mapNotNull { it.contentHash }).forEach { deleteUnlessReferenced(it) }
+    }
+
+    suspend fun applyUpdates(dotNsNames: Collection<String>): Set<String> = lock.withLock {
+        val pending = dotNsNames.mapNotNull { name ->
+            buildStorage.get(name)?.takeIf { it.update != null }?.let { name to it }
+        }.toMap()
+        if (pending.isEmpty()) return@withLock emptySet()
+
+        buildStorage.putAll(pending.mapValues { (_, build) -> build.applied() })
+        Timber.d("${pending.keys} now serve their updates")
+
+        pending.values
+            .filter { it.update?.contentHash != null }
+            .mapNotNull { it.served.contentHash }
+            .forEach { deleteUnlessReferenced(it) }
+
+        pending.keys
     }
 
     suspend fun deleteUnreferenced(contentHashes: Collection<ContentHash>) = lock.withLock {
