@@ -34,7 +34,7 @@ pub fn unlocked_wallet(
 	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
-	wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
+	wallet.install(wallet.prepare_activation(RootEntropy::new([entropy; 32]), None).unwrap());
 	wallet
 }
 
@@ -54,18 +54,19 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 		let signer = futures::executor::block_on(wallet.personhood_signer(&session)).unwrap();
 		let members = PersonhoodCollection::ALL
 			.map(|collection| (collection, signer.member(collection).unwrap()));
+		let root_entropy = RootEntropy::new([7; 32]);
 		let expected = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.map(|(collection, index)| {
-				let entropy = derive_ring_vrf_entropy(
-					&[7; 32],
-					&ProductId::for_test(&format!("peopl.{suffix}")),
-					&DerivationIndex::Index(index),
-				)
-				.unwrap();
+				let entropy = root_entropy
+					.derive_ring_vrf_entropy(
+						&ProductId::for_test(&format!("peopl.{suffix}")),
+						&DerivationIndex::Index(index),
+					)
+					.unwrap();
 				(collection, signer.vrf.member(&entropy).unwrap())
 			});
 		assert_eq!(members, expected);
-		let identity = derive_identity_keypair(&[7; 32], suffix).unwrap();
+		let identity = root_entropy.derive_identity_keypair(suffix).unwrap();
 		assert_eq!(session.identity_account_id, Some(identity.public.to_bytes()));
 	}
 }
@@ -113,7 +114,7 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 /// without a handler's check.
 #[test]
 fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
-	let keys = WalletKeys::new(vec![7; 32], crate::test_support::paseo_test_stack());
+	let keys = WalletKeys::new(RootEntropy::new([7; 32]), crate::test_support::paseo_test_stack());
 	let derives = |product: &str| {
 		let product_id = ProductId::for_test(product);
 		let account = ProductAccountId {

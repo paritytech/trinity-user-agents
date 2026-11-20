@@ -21,20 +21,13 @@ use zeroize::Zeroizing;
 
 use super::ring_vrf::RingResolver;
 use crate::{
-	host_internal::sso_messages::RingVrfError,
+	host_internal::{extrinsic::Sr25519Signer, sso_messages::RingVrfError},
 	host_logic::{
 		device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret},
-		entropy::{derive_product_entropy, root_entropy_source},
-		product_account::{
-			ProductAccountError, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
-			derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
-			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
-			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, derive_sr25519_hard_path,
-		},
+		product_account::{ProductAccountError, derivation_index_bytes},
+		root_entropy::RootEntropy,
 		session::{SessionInfo, SessionState},
-		sso::pairing::{
-			ResponderIdentity, derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
-		},
+		sso::pairing::ResponderIdentity,
 	},
 	platform::ProductId,
 	runtime::{
@@ -270,13 +263,13 @@ impl WalletAccountHolder {
 	/// Validate and derive activation material without changing the active wallet.
 	pub fn prepare_activation(
 		&self,
-		secret: Vec<u8>,
+		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<PreparedWalletActivation, AuthorityError> {
-		let keys = WalletKeys::new(secret, self.services.stack().clone());
+		let keys = WalletKeys::new(entropy, self.services.stack().clone());
 		let public_key = keys.root_public_key()?;
 		let identity_account_id = keys.identity_keypair()?.public.to_bytes();
-		let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);
+		let identity_chat_private_key = keys.entropy.derive_identity_chat_private_key();
 		Ok(PreparedWalletActivation {
 			keys,
 			session: SessionInfo {
@@ -321,6 +314,14 @@ impl WalletAccountHolder {
 	) -> Result<(), AuthorityError> {
 		self.with_keys(session, |keys| keys.identity_keypair_for(account).map(drop))
 	}
+
+	/// A signer for the identity account of the active session.
+	///
+	/// Fails with `Disconnected` without an active session.
+	pub fn identity_signer(&self) -> Result<Sr25519Signer, AuthorityError> {
+		let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.with_keys(&session, |keys| Ok(Sr25519Signer::from_keypair(&keys.identity_keypair()?)))
+	}
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -339,18 +340,13 @@ impl WalletAccountHolder {
 		&self,
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
-		self.with_installed_keys(|keys| {
-			crate::nft::item_keys_from_entropy(&keys.entropy, slots).map_err(AuthorityError::from)
-		})
+		self.with_installed_keys(|keys| keys.entropy.item_keys(slots).map_err(AuthorityError::from))
 	}
 
 	/// The signer for one item slot.
-	pub fn item_signer(
-		&self,
-		slot: crate::nft::ItemSlot,
-	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
+	pub fn item_signer(&self, slot: crate::nft::ItemSlot) -> Result<Sr25519Signer, AuthorityError> {
 		self.with_installed_keys(|keys| {
-			crate::nft::item_signer_from_entropy(&keys.entropy, slot).map_err(AuthorityError::from)
+			keys.entropy.item_signer(slot).map_err(AuthorityError::from)
 		})
 	}
 
@@ -360,29 +356,28 @@ impl WalletAccountHolder {
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {
 		self.with_installed_keys(|keys| {
-			crate::nft::item_secrets_from_entropy(&keys.entropy, slots)
-				.map_err(AuthorityError::from)
+			keys.entropy.item_secrets(slots).map_err(AuthorityError::from)
 		})
 	}
 
 	/// The identity chat key.
 	pub fn identity_chat_private_key(&self) -> Result<[u8; 32], AuthorityError> {
-		self.with_installed_keys(|keys| Ok(derive_identity_chat_private_key(&keys.entropy)))
+		self.with_installed_keys(|keys| Ok(keys.entropy.derive_identity_chat_private_key()))
 	}
 }
 
 struct WalletKeys {
-	entropy: Zeroizing<Vec<u8>>,
+	entropy: RootEntropy,
 	stack: Stack,
 }
 
 impl WalletKeys {
-	fn new(entropy: Vec<u8>, stack: Stack) -> Self {
-		Self { entropy: Zeroizing::new(entropy), stack }
+	fn new(entropy: RootEntropy, stack: Stack) -> Self {
+		Self { entropy, stack }
 	}
 
 	fn root_public_key(&self) -> Result<[u8; 32], ProductAccountError> {
-		derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
+		self.entropy.derive_root_keypair().map(|root| root.public.to_bytes())
 	}
 
 	/// Refuses a product the stack does not serve. Every derivation keyed by a
@@ -397,8 +392,7 @@ impl WalletKeys {
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
 		self.require_served(product_id)?;
-		let root = derive_root_keypair_from_entropy(&self.entropy)?;
-		Ok(derive_product_subtree_keypair(&root, product_id)?)
+		Ok(self.entropy.derive_product_subtree_keypair(product_id)?)
 	}
 
 	/// The root keypair is recomputed per call (PBKDF2, 2048 rounds, via
@@ -409,16 +403,14 @@ impl WalletKeys {
 		account: &ProductAccountId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
 		self.require_served(&account.dot_ns_identifier)?;
-		let root = derive_root_keypair_from_entropy(&self.entropy)?;
-		Ok(derive_product_keypair(
-			&root,
+		Ok(self.entropy.derive_product_keypair(
 			&account.dot_ns_identifier,
 			derivation_index_bytes(&account.derivation_index),
 		)?)
 	}
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
-		Ok(derive_identity_keypair(&self.entropy, self.stack.tld())?)
+		Ok(self.entropy.derive_identity_keypair(self.stack.tld())?)
 	}
 
 	fn identity_keypair_for(
@@ -441,23 +433,24 @@ impl WalletKeys {
 		handle: &ProductAccountId,
 	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
 		self.require_served(&handle.dot_ns_identifier)?;
-		derive_ring_vrf_entropy(&self.entropy, &handle.dot_ns_identifier, &handle.derivation_index)
+		self.entropy
+			.derive_ring_vrf_entropy(&handle.dot_ns_identifier, &handle.derivation_index)
 			.map(Zeroizing::new)
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })
 	}
 
 	fn ring_vrf_domain_entropy(&self, product_id: &ProductId) -> Result<[u8; 32], AuthorityError> {
 		self.require_served(product_id)?;
-		Ok(derive_ring_vrf_domain_entropy(&self.entropy, product_id)?)
+		Ok(self.entropy.derive_ring_vrf_domain_entropy(product_id)?)
 	}
 
 	fn personhood_entropy(&self, collection: PersonhoodCollection) -> Zeroizing<[u8; 32]> {
 		Zeroizing::new(match collection {
 			PersonhoodCollection::People => {
-				derive_full_person_ring_vrf_entropy(&self.entropy, self.stack.tld())
+				self.entropy.derive_full_person_ring_vrf_entropy(self.stack.tld())
 			},
 			PersonhoodCollection::LitePeople => {
-				derive_lite_person_ring_vrf_entropy(&self.entropy, self.stack.tld())
+				self.entropy.derive_lite_person_ring_vrf_entropy(self.stack.tld())
 			},
 		})
 	}
@@ -469,7 +462,8 @@ impl WalletKeys {
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
 		self.require_served(product_id)?;
-		derive_product_entropy(&self.entropy, product_id, context)
+		self.entropy
+			.derive_product_entropy(product_id, context)
 			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
 
@@ -481,7 +475,7 @@ impl WalletKeys {
 
 	/// Purpose-limited entropy shared with a paired host.
 	fn root_entropy_source(&self) -> [u8; 32] {
-		root_entropy_source(&self.entropy)
+		self.entropy.root_entropy_source()
 	}
 
 	fn statement_allowance_key(
@@ -489,10 +483,11 @@ impl WalletKeys {
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
 		self.require_served(product_id)?;
-		Ok(derive_sr25519_hard_path(
-			&self.entropy,
-			&["allowance", "statement-store", product_id.as_str()],
-		)?)
+		Ok(self.entropy.derive_sr25519_hard_path(&[
+			"allowance",
+			"statement-store",
+			product_id.as_str(),
+		])?)
 	}
 
 	fn bulletin_allowance_key(
@@ -500,19 +495,20 @@ impl WalletKeys {
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
 		self.require_served(product_id)?;
-		Ok(derive_sr25519_hard_path(
-			&self.entropy,
-			&["allowance", "bulletin", product_id.as_str()],
-		)?)
+		Ok(self.entropy.derive_sr25519_hard_path(&[
+			"allowance",
+			"bulletin",
+			product_id.as_str(),
+		])?)
 	}
 
 	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO
 	/// encryption key, and the identity chat key.
 	fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
-		let statement = derive_identity_keypair(&self.entropy, self.stack.tld())?;
+		let statement = self.entropy.derive_identity_keypair(self.stack.tld())?;
 		let (encryption_secret_key, encryption_public_key) =
-			derive_x25519_keypair_from_entropy(&self.entropy, SSO_ENCRYPTION_DOMAIN);
-		let identity_chat_private_key = derive_identity_chat_private_key(&self.entropy);
+			self.entropy.derive_x25519_keypair(SSO_ENCRYPTION_DOMAIN);
+		let identity_chat_private_key = self.entropy.derive_identity_chat_private_key();
 		Ok((
 			ResponderIdentity {
 				statement_secret: statement.secret.to_bytes(),

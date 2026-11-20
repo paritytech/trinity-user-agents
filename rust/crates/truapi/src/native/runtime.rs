@@ -35,6 +35,7 @@ use crate::{
 		permissions::TemporaryPermissions,
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
+	host_logic::root_entropy::RootEntropy,
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
@@ -213,7 +214,7 @@ impl NativeTrUApiHostRuntime {
 		}
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
-				secret,
+				RootEntropy::new(secret),
 				runtime_config.local_session_lite_username,
 			))
 			.map_err(|err| NativeRuntimeConfigError::LocalSessionActivation {
@@ -981,7 +982,8 @@ impl NativeTrUApiHostRuntime {
 		lite_username: Option<String>,
 	) -> Result<(), HostRejection> {
 		futures::executor::block_on(
-			self.runtime.activate_local_session_with_identity(secret, lite_username),
+			self.runtime
+				.activate_local_session_with_identity(RootEntropy::new(secret), lite_username),
 		)
 		.map_err(Into::into)
 	}

@@ -111,7 +111,7 @@ extension BackupPresenter: BackupPresenterProtocol {
     func selectCloudBackup() {
         switch statusType {
         case .notFound:
-            interactor.backupMnemonic()
+            authorizeBackup()
         case .cloudIsOff:
             wireframe.showEnableCloud(from: view)
         case .created,
@@ -128,6 +128,15 @@ private extension BackupPresenter {
                 return
             }
             wireframe?.openSecretRecoveryPhase(from: view)
+        }
+    }
+
+    func authorizeBackup() {
+        wireframe.authorizeInPlace { [weak self] isAuthorized in
+            guard isAuthorized else {
+                return
+            }
+            self?.interactor.backupMnemonic()
         }
     }
 }
