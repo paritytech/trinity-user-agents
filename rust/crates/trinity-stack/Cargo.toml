@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["polkadot", "trinity", "descriptor", "ed25519"]
 categories = ["cryptography::cryptocurrencies", "parser-implementations"]
 # The conformance vectors and their generator stay in the repository.
-include = ["src/", "schema/", "tests/fixtures/", "README.md", "LICENSE"]
+include = ["src/", "schema/", "known-stacks.json", "tests/fixtures/", "README.md", "LICENSE"]
 
 [lib]
 # `cdylib` is the wasm-bindgen bundle @parity/trinity-stack ships.

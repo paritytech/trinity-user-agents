@@ -12,6 +12,7 @@ import {
   MAX_DESCRIPTOR_BYTES,
   fetchDescriptor,
   open,
+  knownStacks,
   parse,
   publicKey,
   publish,
@@ -403,5 +404,14 @@ describe("links", () => {
     );
     expect(stackId({ url: `${URL_}#top` })).toBe(stackId({ url: URL_ }));
     expect(await store.get(stackId({ url: `${URL_}#top` }))).toEqual(document);
+  });
+
+  // The package and the crate must hand out the same links for the same names.
+  test("knownStacks lists the crate's known stacks", async () => {
+    const crateFile = new URL(
+      "../../../../rust/crates/trinity-stack/known-stacks.json",
+      import.meta.url,
+    );
+    expect(knownStacks).toEqual(await Bun.file(crateFile).json());
   });
 });
