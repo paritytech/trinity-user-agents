@@ -535,6 +535,14 @@ pub struct GestureProps {
 		deserialize_with = "option_bool_json::deserialize"
 	)]
 	pub haptic_on_complete: OptionBool,
+	/// Names this gesture for [`RendererNode::SetOffset`] updates.
+	///
+	/// A keyed pan with a move action is paced by the host: at most one move
+	/// per display frame, and none while the previous move is unanswered. A
+	/// move is answered by a `SetOffset` for this key or by a new tree. The
+	/// host drops the moves in between and sends only the newest, so no
+	/// backlog builds up. Absent keeps every move, as `moveIntervalMs` says.
+	pub key: Option<String>,
 }
 
 /// Stage of a gesture action.
@@ -802,6 +810,24 @@ pub enum RendererNode {
 		/// Content to draw and optionally move.
 		children: Vec<RendererNode>,
 	},
+	/// Moves the children of the `Gesture` whose `key` matches, without a new
+	/// tree. Valid only as a whole item of a `render` stream; inside a tree it
+	/// draws nothing.
+	///
+	/// The host adds `x` and `y` (logical pixels, along the layout direction)
+	/// to where the current tree places those children, and keeps the offset
+	/// until the next tree, which replaces it: a tree always wins. A key that
+	/// matches no `Gesture` in the current tree is ignored. The item is not a
+	/// tree: a Pocket card does not keep it as a face.
+	#[codec(index = 14)]
+	SetOffset {
+		/// The `key` of the `Gesture` to move.
+		key: String,
+		/// Horizontal offset in logical pixels.
+		x: i32,
+		/// Vertical offset in logical pixels.
+		y: i32,
+	},
 }
 
 /// Where a product-rendered body lives, and the id that names it there.
@@ -926,6 +952,7 @@ impl RendererNode {
 			Self::String { .. } |
 			Self::Spacer { .. } |
 			Self::TextField { .. } |
+			Self::SetOffset { .. } |
 			Self::SlideToConfirm { .. } => {},
 		}
 	}

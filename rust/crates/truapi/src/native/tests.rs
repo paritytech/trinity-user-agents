@@ -3856,3 +3856,21 @@ fn gesture_json_and_native_payload_use_canonical_types() {
 		vec![5, 240, 0, 0, 0, 0, 0, 0, 0, 232, 3]
 	);
 }
+
+#[test]
+fn set_offset_and_gesture_key_read_from_json() {
+	let offset: latest::RendererNode =
+		serde_json::from_str(r#"{"tag":"SetOffset","value":{"key":"thumb","x":42,"y":0}}"#)
+			.unwrap();
+	assert_eq!(offset, latest::RendererNode::SetOffset { key: "thumb".into(), x: 42, y: 0 });
+	let gesture: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"Gesture","value":{"modifiers":[],"props":{"key":"thumb",
+		"pan":{"axis":"Horizontal","moveAction":"move","startAction":"start"}},
+		"children":[]}}"#,
+	)
+	.unwrap();
+	let latest::RendererNode::Gesture { props, .. } = gesture else {
+		panic!("gesture was not decoded");
+	};
+	assert_eq!(props.key.as_deref(), Some("thumb"));
+}

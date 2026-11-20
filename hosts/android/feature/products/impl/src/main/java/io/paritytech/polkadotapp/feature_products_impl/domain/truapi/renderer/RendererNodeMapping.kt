@@ -36,7 +36,7 @@ import uniffi.truapi.VerticalAlignment
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
 fun RendererNode.toJsWidget(): JsWidget = when (this) {
-    is RendererNode.Nil -> JsWidget.Spacer()
+    is RendererNode.Nil, is RendererNode.SetOffset -> JsWidget.Spacer()
     is RendererNode.String -> JsWidget.Text(text = text)
     is RendererNode.Box -> JsWidget.Box(
         modifiers = modifiers.toJsModifiers(),

@@ -236,10 +236,11 @@ fn gesture_keeps_its_wire_index_and_children() {
 			accessibility_label: None,
 			enabled: OptionBool(None),
 			haptic_on_complete: OptionBool(None),
+			key: None,
 		},
 		children: vec![RendererNode::Nil],
 	};
-	assert_eq!(node.encode(), vec![13, 0, 0, 0, 0, 0, 0, 4, 0]);
+	assert_eq!(node.encode(), vec![13, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
 	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
 }
 
@@ -273,6 +274,7 @@ fn gesture_modes_round_trip_with_actions_and_motion() {
 				accessibility_label: Some("Register".into()),
 				enabled: OptionBool(Some(true)),
 				haptic_on_complete: OptionBool(Some(true)),
+				key: Some("thumb".into()),
 			},
 			children: vec![renderer_node()],
 		};
@@ -287,4 +289,57 @@ fn gesture_payload_has_the_same_bytes_on_hosts_and_clients() {
 	let expected = [5, 240, 0, 0, 0, 0, 0, 0, 0, 232, 3];
 	assert_eq!(event.encode(), expected);
 	assert_eq!(GestureEvent::decode(&mut expected.as_slice()).unwrap(), event);
+}
+
+#[test]
+fn set_offset_has_the_same_bytes_on_hosts_and_clients() {
+	let node = RendererNode::SetOffset { key: "thumb".into(), x: 120, y: -2 };
+	let expected = [14, 20, b't', b'h', b'u', b'm', b'b', 120, 0, 0, 0, 254, 255, 255, 255];
+	assert_eq!(node.encode(), expected);
+	assert_eq!(RendererNode::decode(&mut expected.as_slice()).unwrap(), node);
+}
+
+/// An offset update is eleven bytes plus its key, against hundreds for the
+/// footer tree it moves a part of.
+#[test]
+fn set_offset_is_smaller_than_any_tree_holding_its_gesture() {
+	let offset = RendererNode::SetOffset { key: "thumb".into(), x: 120, y: 0 };
+	let tree = RendererNode::Gesture {
+		modifiers: Vec::new(),
+		props: GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: Some("thumb".into()),
+		},
+		children: vec![renderer_node()],
+	};
+	assert_eq!(offset.encode().len(), 15);
+	assert!(offset.encode().len() < tree.encode().len());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn set_offset_and_keyed_gesture_round_trip_through_uniffi() {
+	for node in [
+		RendererNode::SetOffset { key: "thumb".into(), x: -7, y: 3 },
+		RendererNode::Gesture {
+			modifiers: Vec::new(),
+			props: GestureProps {
+				tap_action: None,
+				pan: None,
+				accessibility_label: None,
+				enabled: OptionBool(None),
+				haptic_on_complete: OptionBool(None),
+				key: Some("thumb".into()),
+			},
+			children: vec![RendererNode::Nil],
+		},
+	] {
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
+		assert_eq!(lifted, node);
+	}
 }

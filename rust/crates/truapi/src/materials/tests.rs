@@ -355,6 +355,7 @@ fn gesture_children_keep_material_validation_and_loading() {
 			accessibility_label: None,
 			enabled: parity_scale_codec::OptionBool(None),
 			haptic_on_complete: parity_scale_codec::OptionBool(None),
+			key: None,
 		},
 		children: vec![RendererNode::Materials {
 			props: MaterialsProps {

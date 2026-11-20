@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { RendererNode, type GestureEvent } from "./generated/types.js";
-import { decodeGestureEvent, encodeGestureEvent } from "./gesture-event.js";
+import { decodeGestureEvent, encodeGestureEvent, setOffset } from "./gesture-event.js";
 
 describe("gesture wire contract", () => {
     it("matches the Rust payload vector", () => {
@@ -15,7 +15,7 @@ describe("gesture wire contract", () => {
             tag: "Gesture",
             value: { modifiers: [], props: {}, children: [{ tag: "Nil" }] },
         };
-        expect(Array.from(RendererNode.enc(node))).toEqual([13, 0, 0, 0, 0, 0, 0, 4, 0]);
+        expect(Array.from(RendererNode.enc(node))).toEqual([13, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
         expect(RendererNode.dec(RendererNode.enc(node))).toEqual(node);
     });
 
@@ -29,6 +29,7 @@ describe("gesture wire contract", () => {
                         enabled: true,
                         hapticOnComplete: true,
                         accessibilityLabel: "Register",
+                        key: "thumb",
                         pan: {
                             axis: "Horizontal",
                             startAction: "start",
@@ -53,5 +54,17 @@ describe("gesture wire contract", () => {
             };
             expect(RendererNode.dec(RendererNode.enc(node))).toEqual(node);
         }
+    });
+
+    it("sends an offset update with the Rust bytes", () => {
+        const node = setOffset("thumb", 120, -2);
+        expect(node).toEqual({ tag: "SetOffset", value: { key: "thumb", x: 120, y: -2 } });
+        const bytes = [14, 20, 116, 104, 117, 109, 98, 120, 0, 0, 0, 254, 255, 255, 255];
+        expect(Array.from(RendererNode.enc(node))).toEqual(bytes);
+        expect(RendererNode.dec(Uint8Array.from(bytes))).toEqual(node);
+    });
+
+    it("rounds an offset to whole logical pixels", () => {
+        expect(setOffset("thumb", 10.6)).toEqual({ tag: "SetOffset", value: { key: "thumb", x: 11, y: 0 } });
     });
 });

@@ -14,7 +14,8 @@ extension RendererNode {
              .text,
              .button,
              .textField,
-             .slideToConfirm:
+             .slideToConfirm,
+             .setOffset:
             return leafWidgetNode(resolver: resolver)
 
         case let .gesture(_, _, children):
@@ -69,7 +70,8 @@ private extension RendererNode {
     func leafWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
         switch self {
         case .nil,
-             .string:
+             .string,
+             .setOffset:
             return nil
 
         case let .image(modifiers, props):

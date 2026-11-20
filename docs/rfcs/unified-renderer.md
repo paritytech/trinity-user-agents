@@ -500,3 +500,22 @@ Only declared actions fire; omitting moveAction eliminates move round trips.
 Host offset and recognizer identity survive tree updates at the same structural
 place. A completed drag stays at the end by default; holdAtEnd false resets it.
 The accessibility action uses the same Completed payload as a successful release.
+
+### Offset updates
+
+A worker that follows a pan itself does not need to send a whole tree per
+move. It gives the `Gesture` a `key` and answers each move with a
+`SetOffset { key, x, y }` item (SCALE index 14) on the same `render`
+stream. The host adds the offset to where the current tree places that
+gesture's children and keeps it until the next tree, which replaces it: a
+tree always wins. Being on the same stream, an update can never overtake the
+tree it moves. Inside a tree `SetOffset` draws nothing, and a Pocket card
+does not keep it as a face.
+
+A keyed pan with a move action is paced by the host: at most one move per
+display frame, and none while the previous move is unanswered (by a
+`SetOffset` for the key or by a tree). Moves in between are dropped and only
+the newest is sent, so a slow worker never builds a backlog. A worker should
+likewise answer only the newest move it holds. Start, end and completion
+still send whole trees.
+
