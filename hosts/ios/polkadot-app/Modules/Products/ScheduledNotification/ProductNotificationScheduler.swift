@@ -118,7 +118,7 @@ private extension ProductNotificationScheduler {
         let repository = createRepository()
         try await reporting(.sweepFailed, productId: productId) { try await sweep() }
         let (currentCount, notificationId) = try await reporting(.readFailed, productId: productId) {
-            let bookedCount = try await repository.fetchAllOperation(with: .init()).asyncExecute().count
+            let bookedCount = try await repository.fetchCountOperation().asyncExecute()
             return try await (bookedCount, generateUniqueId(productId: productId))
         }
 
