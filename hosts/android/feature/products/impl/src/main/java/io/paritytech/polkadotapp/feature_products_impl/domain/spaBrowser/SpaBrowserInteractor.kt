@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdater
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
@@ -30,6 +31,8 @@ interface SpaBrowserInteractor {
     suspend fun installChatAndAwaitRoomCreated(productId: ProductId): Result<ChatId>
 
     fun share(productId: ProductId)
+
+    suspend fun checkForUpdate(productId: ProductId): Result<Unit>
 }
 
 class RealSpaBrowserInteractor @Inject constructor(
@@ -38,6 +41,7 @@ class RealSpaBrowserInteractor @Inject constructor(
     private val chatRoomRepository: ReadOnlyChatRoomRepository,
     private val sharingManager: SharingManager,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val productUpdater: ProductUpdater,
 ) : SpaBrowserInteractor {
     // Waits rather than guesses: a tab classified before the TLD lands would stick as "not a product"
     // for its whole lifetime.
@@ -61,4 +65,6 @@ class RealSpaBrowserInteractor @Inject constructor(
         val link = productIdShareHost(productId)?.let(Urls::ensureHasProtocolOrHttps) ?: productId.toUrl()
         sharingManager.shareText(link)
     }
+
+    override suspend fun checkForUpdate(productId: ProductId): Result<Unit> = productUpdater.check(productId)
 }

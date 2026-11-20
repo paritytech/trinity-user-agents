@@ -149,6 +149,13 @@ class SpaBrowserViewModel @Inject constructor(
         interactor.share(product.id)
     }
 
+    override fun onScreenStarted() {
+        launch {
+            val productId = productIdOf(activeTab.first()?.url) ?: return@launch
+            interactor.checkForUpdate(productId).logFailure("Failed to check $productId for an update")
+        }
+    }
+
     override fun onCloseAppClick() {
         productSessionController.closeActiveTab()
         closeAppRequested.value = true

@@ -17,6 +17,8 @@ interface SpaBrowserContract {
     fun onShareClick()
 
     fun onCloseAppClick()
+
+    fun onScreenStarted()
 }
 
 data class SpaBrowserUiState(
