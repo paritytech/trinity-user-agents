@@ -404,6 +404,8 @@ cfg_select! {
 		mod dotns_views;
 		mod dynamic_vrf;
 		mod evm_contract;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod gap_scan;
 		pub mod frame;
 		mod host_core;
 		mod host_internal;
@@ -456,6 +458,9 @@ cfg_select! {
 
 		#[cfg(not(target_arch = "wasm32"))]
 		pub mod installation;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		mod installation_registry;
 
 		#[cfg(not(target_arch = "wasm32"))]
 		mod nft;

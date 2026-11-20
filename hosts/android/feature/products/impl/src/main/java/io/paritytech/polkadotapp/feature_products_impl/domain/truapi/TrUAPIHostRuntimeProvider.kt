@@ -43,6 +43,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.CoreAttribute
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -84,6 +85,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
     private val pinnedPocketCards: PinnedPocketCards,
+    private val coreEventLogger: CoreEventLogger,
     private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
@@ -232,6 +234,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override fun onCoreLog(marker: String, detail: String) {
             logCoreLine(marker, detail)
+        }
+
+        override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
+            coreEventLogger.log(marker, attributes)
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
