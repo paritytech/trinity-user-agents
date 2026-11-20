@@ -27,16 +27,17 @@ const HANDLE_CACHE_MAX_ENTRIES: usize = 256;
 /// Domain separator for the contact-handle key.
 pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle";
 
-/// Domain-separate the session's root entropy source into the contact-handle
-/// key, so this key cannot collide with another derived from the same source.
-pub fn handle_key_from_root_source(root_entropy_source: &[u8; 32]) -> [u8; 32] {
+/// Domain-separate the session's root entropy source into the user's handle
+/// key, so it cannot collide with another key derived from the same source.
+/// Never used to mint: only [`product_handle_key`] reads it.
+pub fn user_handle_key(root_entropy_source: &[u8; 32]) -> [u8; 32] {
 	blake2b_256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
 }
 
 /// Scope the user's handle key to one product, so the same contact hashes to an
 /// unrelated handle in every other product.
-pub fn product_handle_key(handle_key: &[u8; 32], product_id: &ProductId) -> [u8; 32] {
-	blake2b_256_keyed(product_id.as_str().as_bytes(), handle_key)
+pub fn product_handle_key(user_handle_key: &[u8; 32], product_id: &ProductId) -> [u8; 32] {
+	blake2b_256_keyed(product_id.as_str().as_bytes(), user_handle_key)
 }
 
 /// The handle one contact is known by in one product, on every host of this
@@ -52,49 +53,36 @@ pub fn contact_handle(handle_key: &[u8; 32], account: &[u8; 32]) -> [u8; 32] {
 	blake2b_256_keyed(&account.encode(), handle_key)
 }
 
-/// The user's contact key, before it is scoped to a product.
+/// One product's handle key: mints the handles that product holds and checks
+/// the accounts a host resolves them to.
 ///
 /// Derived from the session's root entropy source, which both host roles hold
-/// and no product can reach. It mints nothing itself: handles exist only per
-/// product, through [`Self::for_product`], so no caller can hand out one
-/// handle that two products share.
-pub struct ContactKey([u8; 32]);
-
-impl ContactKey {
-	/// Derive the key from the session's root entropy source.
-	pub fn from_root_entropy_source(root_entropy_source: &[u8; 32]) -> Self {
-		Self(handle_key_from_root_source(root_entropy_source))
-	}
-
-	/// The handles `product_id` knows contacts by.
-	pub fn for_product(&self, product_id: &ProductId) -> ContactHandles {
-		ContactHandles {
-			handle_key: product_handle_key(&self.0, product_id),
-			product_id: product_id.clone(),
-		}
-	}
-}
-
-/// Both directions of one product's handle mapping: minting one for a contact
-/// the user picked, and recovering the account a handle the product holds
-/// names. Only a host can go either way.
-pub struct ContactHandles {
-	handle_key: [u8; 32],
+/// and no product can reach, and always for one product, so no handle exists
+/// that two products share.
+pub struct ContactHandleKey {
+	bytes: [u8; 32],
 	product_id: ProductId,
 }
 
-impl ContactHandles {
+impl ContactHandleKey {
+	/// The handle key of `product_id` under the session's root entropy source.
+	pub fn from_root_entropy_source(root_entropy_source: &[u8; 32], product_id: &ProductId) -> Self {
+		Self {
+			bytes: product_handle_key(&user_handle_key(root_entropy_source), product_id),
+			product_id: product_id.clone(),
+		}
+	}
+
 	/// The handle this product knows `account` by.
 	pub fn mint(&self, account: &[u8; 32]) -> [u8; 32] {
-		contact_handle(&self.handle_key, account)
+		contact_handle(&self.bytes, account)
 	}
 
 	/// The host lookup for the accounts `handles` name.
 	///
-	/// It carries the key the handles are minted under, which the host needs
-	/// to look them up.
+	/// It carries this key, which the host needs to look the handles up.
 	pub fn lookup(&self, handles: Vec<[u8; 32]>) -> crate::platform::HostContactLookup {
-		crate::platform::HostContactLookup { handle_key: self.handle_key, handles }
+		crate::platform::HostContactLookup { handle_key: self.bytes, handles }
 	}
 
 	/// Whether `account` is the one `handle` names.
@@ -103,7 +91,7 @@ impl ContactHandles {
 	/// wrong contact, or with anyone at all for a made-up handle, is refused
 	/// rather than trusted: resolution is the host's lookup, but the check
 	/// stays in the core.
-	pub fn names(&self, handle: &[u8; 32], account: &[u8; 32]) -> bool {
+	pub fn matches(&self, handle: &[u8; 32], account: &[u8; 32]) -> bool {
 		&self.mint(account) == handle
 	}
 }
@@ -159,11 +147,11 @@ impl ContactHandleCache {
 		self.state().generation
 	}
 
-	/// Remember the account `handle` names under `handles`, unless the cache
+	/// Remember the account `handle` names under `handle_key`, unless the cache
 	/// was cleared since `generation` was read.
 	pub fn insert(
 		&self,
-		handles: &ContactHandles,
+		handle_key: &ContactHandleKey,
 		handle: [u8; 32],
 		account: [u8; 32],
 		generation: u64,
@@ -177,14 +165,14 @@ impl ContactHandleCache {
 		}
 		state
 			.entries
-			.insert(handle, CacheEntry { account, product_id: handles.product_id.clone() });
+			.insert(handle, CacheEntry { account, product_id: handle_key.product_id.clone() });
 	}
 
-	/// The account `handle` names under `handles`, if this cache holds it.
-	pub fn get(&self, handle: &[u8; 32], handles: &ContactHandles) -> Option<[u8; 32]> {
+	/// The account `handle` names under `handle_key`, if this cache holds it.
+	pub fn get(&self, handle: &[u8; 32], handle_key: &ContactHandleKey) -> Option<[u8; 32]> {
 		let state = self.state();
 		let entry = state.entries.get(handle)?;
-		(entry.product_id == handles.product_id && &handles.mint(&entry.account) == handle)
+		(entry.product_id == handle_key.product_id && handle_key.matches(handle, &entry.account))
 			.then_some(entry.account)
 	}
 

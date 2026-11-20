@@ -42,7 +42,7 @@ use crate::{
 		authority::{
 			AccountHolder, AuthorityError, AuthoritySession, authority_session_validation_id,
 		},
-		contacts::ContactKey,
+		contacts::ContactHandleKey,
 		product_consent::ProductConsent,
 		ring_vrf_registry::RingVrfRegistryStore,
 		statement_allowance::{
@@ -454,8 +454,8 @@ impl WalletKeys {
 
 	/// The same key a pairing host derives from the root entropy source it
 	/// receives, so one contact hashes alike whichever role the user is running.
-	fn contact_key(&self) -> ContactKey {
-		ContactKey::from_root_entropy_source(&self.root_entropy_source())
+	fn contact_handle_key(&self, product_id: &ProductId) -> ContactHandleKey {
+		ContactHandleKey::from_root_entropy_source(&self.root_entropy_source(), product_id)
 	}
 
 	/// Purpose-limited entropy shared with a paired host.

@@ -631,12 +631,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.holder.derive_entropy(session, product_id, context)
 	}
 
-	/// The user's contact key under the selected account holder.
-	pub fn contact_key(
+	/// The handle key of `product_id` under the selected account holder.
+	pub fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<super::contacts::ContactKey, AuthorityError> {
-		self.holder.contact_key(session)
+		product_id: &ProductId,
+	) -> Result<super::contacts::ContactHandleKey, AuthorityError> {
+		self.holder.contact_handle_key(session, product_id)
 	}
 
 	/// Seed a subtree without an account-holder exchange.

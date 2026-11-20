@@ -31,7 +31,7 @@ use super::{
 		CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		StatementStoreAllowanceKey,
 	},
-	contacts::ContactHandles,
+	contacts::ContactHandleKey,
 	product_consent::ProductConsent,
 };
 
@@ -304,14 +304,11 @@ impl<H: AccountHolder> ProductAccounts<H> {
 			.derive_entropy(session, &self.connection.product.product_id, context)
 	}
 
-	/// Contact handles scoped to this product, stable across the user's hosts.
-	pub fn contact_handles(
+	/// This product's handle key, alike on every host of the user.
+	pub fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<ContactHandles, AuthorityError> {
-		Ok(self
-			.accounts
-			.contact_key(session)?
-			.for_product(&self.connection.product.product_id))
+	) -> Result<ContactHandleKey, AuthorityError> {
+		self.accounts.contact_handle_key(session, &self.connection.product.product_id)
 	}
 }

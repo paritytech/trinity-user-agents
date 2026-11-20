@@ -723,13 +723,13 @@ pub trait AccountHolder: Send + Sync + 'static {
 
 	/// Mint and resolve contact handles under the session's root entropy source.
 	///
-	/// The user's contact key, alike on both host roles. Handles come only from
-	/// scoping it to a product, and the key never leaves the core unscoped, so
-	/// no product can recover contacts by hashing candidate accounts.
-	fn contact_key(
+	/// The handle key of `product_id`, alike on both host roles. No product
+	/// receives it, so none can recover contacts by hashing candidate accounts.
+	fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<super::contacts::ContactKey, AuthorityError>;
+		product_id: &ProductId,
+	) -> Result<super::contacts::ContactHandleKey, AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.

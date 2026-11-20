@@ -1074,7 +1074,7 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
 	let voting = ProductId::for_test("voting.dot");
 	let key_from = |source: &[u8; 32]| {
 		crate::runtime::contacts::product_handle_key(
-			&crate::runtime::contacts::handle_key_from_root_source(source),
+			&crate::runtime::contacts::user_handle_key(source),
 			&voting,
 		)
 	};
@@ -1463,7 +1463,7 @@ fn a_removed_contact_stops_resolving_once_the_host_signals() {
 	};
 
 	contacts.listed.lock().expect("listed mutex poisoned").clear();
-	host.connection.services.contact_handles.clear();
+	host.connection.services.contact_handle_cache.clear();
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1591,7 +1591,7 @@ fn uncached_handles_are_resolved_in_one_lookup() {
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
 	let key = crate::runtime::contacts::product_handle_key(
-		&crate::runtime::contacts::handle_key_from_root_source(&source),
+		&crate::runtime::contacts::user_handle_key(&source),
 		&ProductId::for_test("voting.dot"),
 	);
 	let handles = [alice, bob].map(|account| v01::ContactHandle {
