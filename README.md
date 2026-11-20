@@ -371,6 +371,22 @@ Transactions of a domain or policy the core did not register on this start
 are left as they are and do not count as live, so they resume once it is
 registered again.
 
+### PGAS claims
+
+Native signing hosts claim PGAS through the durable ledger. A
+`SmartContractAllowance` resource, from a product or from a paired host over
+SSO, registers a deferred claim of one slot into the product account and
+answers once the claim is in a best block, as a direct claim did. A
+destination has at most one claim waiting to be built or to reach a block, so
+a retried or concurrent request waits on that claim instead of spending
+another slot. A claim is built only from a session of the account that
+registered it, and gives up when another account is signed in. A refused or
+expired attempt is built again in a fresh slot, up to five attempts. The
+claim is proven landed when `Pgas.ClaimedGasAliases` records the alias of its
+slot. A request stops waiting after three minutes or when it is cancelled,
+answering `NotAvailable`, and the claim carries on. Hosts without a core
+database, the wasm test host and the CLI tools claim directly.
+
 ### NFT purses
 
 Native signing hosts serve the `NftPurse` API from the
