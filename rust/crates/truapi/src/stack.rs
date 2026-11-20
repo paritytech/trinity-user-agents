@@ -3,10 +3,13 @@
 //! The core takes all of its chain configuration from the stack.
 //! [`StackRefresh::load`] checks the descriptor a host build bundles against
 //! the key in the stack's link, starts from it or from a newer copy the core
-//! stored, and fetches newer copies while the core runs. The [`Stack`] it
-//! resolves holds the network, the dotNS TLD, each chain's genesis hash and
-//! the `AccountDataStore` contract address, and answers `get_chain_info`.
+//! stored, and fetches newer copies while the core runs. A copy on another
+//! TLD than the bundled one is refused. The [`Stack`] it resolves holds the
+//! network, the dotNS TLD, each chain's genesis hash and the
+//! `AccountDataStore` contract address, and answers `get_chain_info`.
 
+mod held;
+mod pinned;
 mod records;
 mod refresh;
 mod source;
@@ -132,6 +135,12 @@ pub enum StackError {
 	ReservedGenesis {
 		/// The reserved genesis hash.
 		genesis_hash: [u8; 32],
+	},
+	/// A stored or fetched copy changes a field the bundled copy pins.
+	#[display("stack descriptor changes {field}, which the bundled copy pins")]
+	PinnedFieldChanged {
+		/// The field, as the descriptor spells it.
+		field: &'static str,
 	},
 }
 
