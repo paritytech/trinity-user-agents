@@ -569,9 +569,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider a Rust host offers with `origin: Bundled`
-  ships inside it: its shipped manifest is what the core goes by, and dotNS
-  is never read for it.
+  Funding drops out.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -720,8 +718,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  when the provider publishes an `app` subname on dotNS, read within ten
+  seconds; otherwise `NoApp`). The
   core never shows it on its own: it holds the call, tells the host through
   `provider_frame_requested`, and presents it once the host calls
   `open_provider_frame`, at once while the user looks at the session or when
