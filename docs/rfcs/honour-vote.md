@@ -97,7 +97,7 @@ Both alternatives move Honour's logic from the core to a product `honor.<tld>`. 
 
 The choice matters beyond Honour. Other protocols that allow one action per person, such as polls or quotas, raise the same question. Under this RFC each of them adds code to the core and needs a Host release.
 
-### Honour as a product
+### Alternative 1: Honour as a product
 
 `honor.<tld>` casts votes in its own UI, and other products send the user there. This needs:
 
@@ -119,7 +119,7 @@ What it gains:
 - honor can offer flows the Host sheet doesn't, such as a list of the user's votes or a vote on several subjects in one action.
 - The core doesn't contain Honour code.
 
-### Honour as a provider worker
+### Alternative 2: Honour as a provider worker
 
 This follows the Funding modality: the core keeps what must not depend on the provider, and the provider's Worker does the steps specific to its service. The core forwards `honour.vote` to honor's Worker.
 
@@ -132,14 +132,14 @@ This follows the Funding modality: the core keeps what must not depend on the pr
 
 Its privacy is the same as this RFC's only if all of these hold:
 
-1. honor doesn't get a proof grant from `peopl`. It gets proofs only through this flow, so every vote passes the core's sheet.
-2. honor doesn't get remote permissions, and only the core submits. The vote history the Worker reads stays on the device.
-3. The core decodes the call before it proves it, so the sheet shows what the core proves. The core still needs the call layout and the mapping from `subject` to the string it shows.
-4. The requesting product receives only the outcome.
+- honor doesn't get a proof grant from `peopl`. It gets proofs only through this flow, so every vote passes the core's sheet.
+- honor doesn't get remote permissions, and only the core submits. The vote history the Worker reads stays on the device.
+- The core decodes the call before it proves it, so the sheet shows what the core proves. The core still needs the call layout and the mapping from `subject` to the string it shows.
+- The requesting product receives only the outcome.
 
-If one of them doesn't hold, the privacy is that of Honour as a product. When all hold, the difference from this RFC is that honor's code reads each user's vote history on that user's device. It can't send the history anywhere or cast a vote the user didn't see on the sheet.
+If one of them doesn't hold, the privacy is that of alternative 1. When all hold, the difference from this RFC is that honor's code reads each user's vote history on that user's device. It can't send the history anywhere or cast a vote the user didn't see on the sheet.
 
-This needs everything Honour as a product needs, except the `context` grant and the submit permission, and also:
+This needs everything alternative 1 needs, except the `context` grant and the submit permission, and also:
 
 - a new modality: a Worker trait and the core's path to invoke it;
 - a grant that lets a product prove only through that modality;
@@ -152,7 +152,7 @@ What it gains:
 
 ### Comparison
 
-| | This RFC | Honour as a product | Provider worker |
+| | This RFC | Alternative 1 | Alternative 2 |
 |---|---|---|---|
 | Reads a user's votes | the core, on the device | honor, for every user, and can publish them | honor's Worker, on the device, and can't send them |
 | Can vote without the user | no one | honor | no one |
@@ -160,5 +160,5 @@ What it gains:
 | Breaking Honour change | Host release | honor release | honor release, Host release if the call layout changes |
 | Next protocol of this kind | core code and a Host release | another product with the same privacy cost | another Worker |
 
-This RFC needs the least change and has the strongest privacy, so it is the proposal for Honour now. The provider worker is the option to revisit when a second protocol of this kind comes up. Products don't change if Honour moves to it later.
+This RFC needs the least change and has the strongest privacy, so it is the proposal for Honour now. Alternative 2 is the option to revisit when a second protocol of this kind comes up. Products don't change if Honour moves to it later.
 
