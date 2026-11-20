@@ -28,7 +28,7 @@ import {
   HostWorkerBeginOperationResponse,
   RemotePermissionRequest,
 } from "@parity/truapi";
-import type { GenericError } from "@parity/truapi";
+import type { GenericError, ProductId } from "@parity/truapi";
 import {
   AuthState,
   CoreStorageKey,
@@ -37,6 +37,7 @@ import {
   HostContactLookup,
   HostContactMatches,
   HostContactPick,
+  HostContactUsernames,
   HostScan,
   PermissionDecision,
   ProductContext,
@@ -75,6 +76,7 @@ export interface RawCallbacks {
   ): (() => void) | void;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
+  contactUsernames?(product: Uint8Array): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
@@ -114,6 +116,7 @@ export interface RawCallbacks {
   read(key: string): Promise<Uint8Array | null | undefined>;
   write(key: string, value: Uint8Array): Promise<void>;
   clear(key: string): Promise<void>;
+  clearProduct(productId: ProductId): Promise<void>;
   subscribeStorage(
     key: string,
     sendItem: (item?: Uint8Array) => void,
@@ -187,6 +190,10 @@ export function createWasmRawCallbacks(
           pickContact: async (product) =>
             HostContactPick.enc(
               await contacts.pickContact(ProductContext.dec(product)),
+            ),
+          contactUsernames: async (product) =>
+            HostContactUsernames.enc(
+              await contacts.contactUsernames(ProductContext.dec(product)),
             ),
         }
       : {}),
@@ -296,6 +303,8 @@ export function createWasmRawCallbacks(
     write: async (key, value) =>
       await callbacks.productStorage.write(key, value),
     clear: async (key) => await callbacks.productStorage.clear(key),
+    clearProduct: async (productId) =>
+      await callbacks.productStorage.clearProduct(productId),
     subscribeStorage: (key, sendItem, sendError) =>
       driveResultStream(
         callbacks.productStorage.subscribeStorage(key),

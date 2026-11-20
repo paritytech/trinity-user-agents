@@ -124,6 +124,14 @@ export interface WorkerPairingHostRuntime {
    * {@link WorkerPairingHostRuntime.activateStoredSession} does.
    */
   resetSessionState(): Promise<void>;
+  /**
+   * Forget one product: revoke its grants, Allow once answers and keys, and
+   * remove the values it wrote to product storage through
+   * `productStorage.clearProduct`. The session and other products are kept.
+   * Rejects on a disposed runtime, as
+   * {@link WorkerPairingHostRuntime.activateStoredSession} does.
+   */
+  clearProductState(productId: ProductId): Promise<void>;
   getPermissionAuthorizationStatus(
     productId: ProductId,
     request: PermissionAuthorizationRequest,
@@ -1580,6 +1588,13 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       return sendSessionActivationRequest(state, (requestId) => ({
         kind: "resetSessionState",
         requestId,
+      }));
+    },
+    clearProductState(productId: ProductId): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "clearProductState",
+        requestId,
+        productId,
       }));
     },
     getPermissionAuthorizationStatus(productId, request) {

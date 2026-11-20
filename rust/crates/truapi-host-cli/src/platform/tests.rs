@@ -654,6 +654,52 @@ fn product_storage_uses_safe_per_product_files() {
 	assert_eq!(localhost_value, Some(b"light".to_vec()));
 }
 
+// Clearing removes the product's file rather than leaving an empty one, and
+// writes none for a product that never stored anything.
+#[test]
+fn a_cleared_product_stays_cleared_after_a_restart() {
+	let temporary = tempdir().expect("create product storage root");
+	let cleared = ProductStorageKey::new(ProductId::for_test("cleared.dot"), "theme");
+	let kept = ProductStorageKey::new(ProductId::for_test("kept.dot"), "theme");
+	let open = || {
+		CliPlatform::new(
+			&test_network(),
+			Some(test_storage_paths(temporary.path(), "test")),
+			ApprovalPolicy::AutoAccept,
+			None,
+		)
+	};
+	let platform = open();
+	futures::executor::block_on(async {
+		platform.write(cleared.encode(), b"dark".to_vec()).await.expect("write cleared");
+		platform.write(kept.encode(), b"light".to_vec()).await.expect("write kept");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clear product");
+		platform
+			.clear_product(cleared.product_id().clone())
+			.await
+			.expect("clearing again is Ok");
+		platform
+			.clear_product(ProductId::for_test("never.dot"))
+			.await
+			.expect("clearing a product that never stored is Ok");
+	});
+
+	let directory = temporary.path().join("storage").join("test");
+	assert_eq!(fs::read_dir(&directory).expect("list product storage").count(), 1);
+	drop(platform);
+	let restored = open();
+	let values = futures::executor::block_on(async {
+		(
+			restored.read(cleared.encode()).await.expect("read cleared"),
+			restored.read(kept.encode()).await.expect("read kept"),
+		)
+	});
+	assert_eq!(values, (None, Some(b"light".to_vec())));
+}
+
 #[test]
 fn product_storage_is_isolated_by_session_then_product() {
 	let temporary = tempdir().expect("create session storage root");
@@ -707,6 +753,27 @@ fn a_storage_subscription_hears_later_writes_of_its_key() {
 		platform.write(watched.clone(), b"sent".to_vec()).await.expect("write watched");
 		assert_eq!(value(changes.next().await), Some(b"sent".to_vec()));
 		platform.clear(watched).await.expect("clear watched");
+		assert_eq!(value(changes.next().await), None);
+	});
+}
+
+// Clearing a product's state empties every key a subscription watches.
+#[test]
+fn a_storage_subscription_hears_its_product_cleared() {
+	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
+	let watched = ProductStorageKey::new(ProductId::for_test("ramp.dot"), "action");
+
+	futures::executor::block_on(async {
+		platform.write(watched.encode(), b"sent".to_vec()).await.expect("write watched");
+		let mut changes = platform.subscribe_storage(watched.encode());
+		let value = |item: Option<Result<api::HostLocalStorageChangeItem, _>>| {
+			item.expect("an item").expect("a change").value
+		};
+		assert_eq!(value(changes.next().await), Some(b"sent".to_vec()));
+		platform
+			.clear_product(watched.product_id().clone())
+			.await
+			.expect("clear product");
 		assert_eq!(value(changes.next().await), None);
 	});
 }
