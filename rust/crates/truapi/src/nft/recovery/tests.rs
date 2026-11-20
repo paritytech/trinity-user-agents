@@ -334,8 +334,10 @@ async fn recovery_runs_once_a_session_connects() {
 		tokio::time::timeout(Duration::from_millis(100), recovery.wait_until_finished()).await;
 
 	harness.deps.session_state.set_session(session_info());
+	// The full scan derives thousands of keys, which takes seconds in a debug
+	// build on a loaded runner. The bound only has to catch a scan that never runs.
 	let after_session =
-		tokio::time::timeout(Duration::from_secs(5), recovery.wait_until_finished()).await;
+		tokio::time::timeout(Duration::from_secs(60), recovery.wait_until_finished()).await;
 
 	assert!(before_session.is_err(), "recovery ran before a session connected");
 	assert!(after_session.is_ok(), "recovery did not finish once a session connected");
