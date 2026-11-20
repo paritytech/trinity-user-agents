@@ -183,6 +183,8 @@ An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `C
 
 `HostBridge` defaults the callback to nothing on both hosts, so a host carries structured traffic once it says it wants it.
 
+Both apps send a marker the table exports to Sentry at the table's severity, as a log whose body is the marker, tagged `truapi.core`, with each attribute beside the tag. A marker the table keeps local or does not list never reaches Sentry. On Android both bridges call one injected `CoreEventLogger`, which writes the event to the device log at debug and hands an exported marker to `CoreEventSink`, bound to `SentryCoreEventSink`, so Sentry logs there come from `SentryLogTree` and that sink. On iOS both bridges call `logCoreEvent` on the logger they already hold, typed `CoreEventLoggerProtocol`. It logs the event as a `[truapi.core]` line at the marker's level, or at debug when the marker is not exported, and carries the attributes as SwiftyBeaver context. `HostLogSinkDestination`, the one destination that holds the `HostLogSink`, forwards that line at info and above as the marker with the attributes as fields.
+
 ## Trade-offs
 
 The cost is that every new marker has to be registered, which the author cannot skip because an unregistered target does not compile. That is deliberate: it is the same friction that stops a marker shipping off-device without anyone saying what it carries.

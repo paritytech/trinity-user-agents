@@ -63,6 +63,7 @@ final class RecordingHostLogSink: HostLogSink, @unchecked Sendable {
         let level: HostLogLevel
         let tag: String
         let message: String
+        var attributes: [String: HostLogAttribute] = [:]
     }
 
     private let lock = NSLock()
@@ -72,7 +73,9 @@ final class RecordingHostLogSink: HostLogSink, @unchecked Sendable {
         lock.withLock { recorded }
     }
 
-    func log(level: HostLogLevel, tag: String, message: String) {
-        lock.withLock { recorded.append(Line(level: level, tag: tag, message: message)) }
+    func log(level: HostLogLevel, tag: String, message: String, attributes: [String: HostLogAttribute]) {
+        lock.withLock {
+            recorded.append(Line(level: level, tag: tag, message: message, attributes: attributes))
+        }
     }
 }
