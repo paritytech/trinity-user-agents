@@ -42,21 +42,15 @@ const IMPORTED_ACCOUNT_NAME: &str = "imported";
 /// Signer material selected for a signing-host session.
 #[derive(Clone, derive_more::Debug)]
 pub struct ResolvedSigner {
+	/// BIP-39 entropy backing the selected signer account.
 	#[debug("\"<redacted>\"")]
-	entropy: RootEntropy,
+	pub entropy: RootEntropy,
 	/// Stored account name when this came from `accounts.json`.
 	pub account_name: Option<String>,
 	/// Lite username attested for the signer, when managed by the CLI.
 	pub lite_username: Option<String>,
 	/// Whether the account was selected from the CLI-managed auto pool.
 	pub auto_managed: bool,
-}
-
-impl ResolvedSigner {
-	/// The root entropy backing the selected signer account.
-	pub fn entropy(&self) -> &RootEntropy {
-		&self.entropy
-	}
 }
 
 /// A mnemonic whose existing on-chain identity and personhood membership have

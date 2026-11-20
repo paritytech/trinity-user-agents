@@ -1746,7 +1746,7 @@ async fn start_signing_host(
 			reserved_username: None,
 		})
 		.await?;
-		match attestation::registered_lite_username(&network, explicit_signer.entropy()).await {
+		match attestation::registered_lite_username(&network, &explicit_signer.entropy).await {
 			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
 			Err(error) => {
 				tracing::warn!(error = %format!("{error:#}"), "explicit signer has no resolvable dotNS username")
@@ -1775,7 +1775,7 @@ async fn start_signing_host(
 	if let Some(cached_signer) = &signer {
 		runtime
 			.activate_local_session_with_identity(
-				cached_signer.entropy().clone(),
+				cached_signer.entropy.clone(),
 				cached_signer.lite_username.clone(),
 			)
 			.await
@@ -2404,10 +2404,7 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
 	let signer = session.signer.as_ref().context("signer has not been resolved")?;
 	session
 		.runtime
-		.activate_local_session_with_identity(
-			signer.entropy().clone(),
-			signer.lite_username.clone(),
-		)
+		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
 		.await
 		.map_err(SessionOperationError::LocalActivation)?;
 	if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
@@ -3208,10 +3205,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	let available_sessions = session.catalog.list()?;
 
 	if let Err(error) = runtime
-		.activate_local_session_with_identity(
-			signer.entropy().clone(),
-			signer.lite_username.clone(),
-		)
+		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
 		.await
 	{
 		bail!("failed to activate session {name:?}: {}", error.reason);
@@ -4016,7 +4010,7 @@ async fn run_profile_command(session: &SigningHostSession, command: ProfileComma
 		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await?,
 		ProfileCommand::Upload(path) => {
 			let (signer, username) = profile_identity(session)?;
-			profile::upload(&session.runtime, &session.network, signer.entropy(), username, &path)
+			profile::upload(&session.runtime, &session.network, &signer.entropy, username, &path)
 				.await?
 		},
 	};
@@ -4242,7 +4236,7 @@ mod cli_tests {
 			(
 				session.runtime.has_active_session(),
 				session.runtime.statement_renewal_owner_key().ok(),
-				session.signer.as_ref().map(|signer| root_public_key(signer.entropy())),
+				session.signer.as_ref().map(|signer| root_public_key(&signer.entropy)),
 				session.profile.as_ref().map(|profile| profile.name.as_str()),
 				session.catalog.current_session()?,
 				*resets.borrow_and_update(),
@@ -4340,7 +4334,7 @@ mod cli_tests {
 			assert_eq!(
 				(
 					session.runtime.has_active_session(),
-					session.signer.as_ref().map(|signer| root_public_key(signer.entropy())),
+					session.signer.as_ref().map(|signer| root_public_key(&signer.entropy)),
 					std::fs::read(
 						session.profile.as_ref().unwrap().account_base_path.join("accounts.json")
 					)?,
