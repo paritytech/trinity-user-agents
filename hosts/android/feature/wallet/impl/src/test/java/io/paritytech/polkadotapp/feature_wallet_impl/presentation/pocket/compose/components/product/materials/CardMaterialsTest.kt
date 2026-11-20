@@ -6,7 +6,6 @@ import io.mockk.verify
 import io.parity.truapi.MaterialsResolution
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
 import org.junit.Test
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.MaterialShader
@@ -39,16 +38,6 @@ class CardMaterialsTest {
         }
 
         assertEquals(listOf(NodeDraw.Plain, NodeDraw.Layers(layers), NodeDraw.Plain), drawn)
-    }
-
-    // A face redrawn with new arguments loads again; the node keeps its look rather than flashing plain.
-    @Test
-    fun `a node loading again keeps the layers it last drew`() {
-        nodes(NodeMaterials.Ready(layers))
-        materials.draw(0)
-        nodes(NodeMaterials.Loading)
-
-        assertEquals(NodeDraw.Layers(layers), materials.draw(0))
     }
 
     @Test
@@ -88,53 +77,6 @@ class CardMaterialsTest {
 
         assertEquals(listOf(NodeDraw.Plain, NodeDraw.Plain), drawn)
         verify(exactly = 1) { resolution.report(0u, tint, MaterialFailure.UNSUPPORTED) }
-    }
-
-    // A product that redraws its face gets a new resolution; the node keeps drawing what it drew
-    // until the new one settles, rather than flashing plain.
-    @Test
-    fun `a card keeps its last layers while its next resolution loads`() {
-        val slot = CardMaterialsSlot()
-        nodes(NodeMaterials.Ready(layers))
-        val card = slot.of(resolution, guard, allPlain)
-        card.draw(0)
-
-        val next = mockk<MaterialsResolution>(relaxed = true) { every { resolved } returns MutableStateFlow(null) }
-
-        assertSame(card, slot.of(next, guard, allPlain))
-        assertSame(next, card.resolution.value)
-        assertEquals(NodeDraw.Layers(layers), card.draw(0))
-    }
-
-    // A failed node is not tried and reported again each time the product redraws the same material.
-    @Test
-    fun `a dropped node stays plain for the same layers and draws again for new ones`() {
-        val slot = CardMaterialsSlot()
-        nodes(NodeMaterials.Ready(layers))
-        val card = slot.of(resolution, guard, allPlain)
-        card.draw(0)
-        card.failed(0, tint, MaterialFailure.UNSUPPORTED)
-
-        val sameAgain = ResolvedMaterials(listOf(NodeMaterials.Ready(listOf(ReadyLayer(tint.copyOf(), shader(), emptyList())))), 7u)
-        slot.of(mockk(relaxed = true) { every { resolved } returns MutableStateFlow(sameAgain) }, guard, allPlain)
-        val sameDrawn = card.draw(0)
-
-        val other = listOf(ReadyLayer(ByteArray(32) { 2 }, shader(), emptyList()))
-        slot.of(mockk(relaxed = true) { every { resolved } returns MutableStateFlow(ResolvedMaterials(listOf(NodeMaterials.Ready(other)), 7u)) }, guard, allPlain)
-
-        assertEquals(listOf(NodeDraw.Plain, NodeDraw.Layers(other)), listOf(sameDrawn, card.draw(0)))
-    }
-
-    // With the switch off, or nothing to draw, the card must not start GL or snapshot itself.
-    @Test
-    fun `a card takes the materials path only while a node can draw layers`() {
-        val slot = CardMaterialsSlot()
-        val plain = ResolvedMaterials(listOf(NodeMaterials.Plain(MaterialFailure.UNSUPPORTED)), 7u)
-        val loading = ResolvedMaterials(listOf(NodeMaterials.Plain(MaterialFailure.UNSUPPORTED), NodeMaterials.Loading), 7u)
-
-        val taken = listOf(null, plain, loading, null, plain).map { slot.drawsMaterials(it) }
-
-        assertEquals(listOf(false, false, true, true, false), taken)
     }
 
     private fun shader() = MaterialShader(

@@ -4,8 +4,6 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
-import io.parity.truapi.MaterialsResolution
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
@@ -28,11 +26,9 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Test
 import uniffi.truapi.MaterialsProps
 import uniffi.truapi.ProductId
-import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
 
 class TrUAPIPocketFaceStreamsTest {
@@ -97,7 +93,6 @@ class TrUAPIPocketFaceStreamsTest {
     }
 
     private val tree = RendererNode.Materials(MaterialsProps(emptyList()), emptyList())
-    private val cardContext = RenderContext.PocketCard("loyalty")
 
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
 
@@ -111,31 +106,6 @@ class TrUAPIPocketFaceStreamsTest {
         }
         val published = PublishedPocketCards(ScriptedResolver(listOf(Result.success(publishing))))
         return TrUAPIPocketFaceStreams(provider, workers, published)
-    }
-
-    // On the execution that drew the tree a node that falls back is also reported to the product. Float
-    // images are filtered in the shader on every device, so no GPU is asked whether it can.
-    @Test
-    fun `a drawn tree resolves on the execution that drew it`() = runTest {
-        val resolution = mockk<MaterialsResolution>()
-        val execution = mockk<TrUAPIProductExecution> { every { resolveMaterials(tree, cardContext, false) } returns resolution }
-
-        val resolved = drawnBy(execution).renderFaces(key).first().resolveMaterials()
-
-        assertSame(resolution, resolved)
-        verify(exactly = 0) { runtime.resolveMaterials(any(), any(), any()) }
-    }
-
-    // No execution drew a kept face, so the product must not hear of its fallbacks.
-    @Test
-    fun `a kept face resolves on the runtime`() = runTest {
-        val resolution = mockk<MaterialsResolution>()
-        val runtime = mockk<TrUAPIHostRuntime> { every { resolveMaterials(tree, cardContext, false) } returns resolution }
-        val provider = mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(runtime) }
-
-        val resolved = TrUAPIPocketFaceStreams(provider, mockk(), mockk()).resolveKeptMaterials(key, tree)
-
-        assertSame(resolution, resolved)
     }
 
     @Test

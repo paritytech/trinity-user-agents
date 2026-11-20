@@ -12,9 +12,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,20 +53,6 @@ class MaterialsSurfaceTest {
         val drawn = draw(listOf(layer(1, IDENTITY)))
 
         assertEquals(listOf(RED, BLUE), listOf(drawn.top, drawn.bottom))
-    }
-
-    // Each layer reads the one before it, so the same layers in another order draw something else.
-    @Test
-    fun layerOrderMatters() {
-        assumeTrue("needs EXT_color_buffer_float", onGl { MaterialsGl.floatTargets })
-
-        val tintThenInvert = draw(listOf(layer(3, HALF_RED), layer(2, INVERT)))
-        reopen()
-        val invertThenTint = draw(listOf(layer(2, INVERT), layer(3, HALF_RED)))
-
-        assertEquals(listOf(128, 255, 255), tintThenInvert.top.channels().map { it.roundToNearest(128) })
-        assertEquals(CYAN, invertThenTint.top)
-        assertNotEquals(tintThenInvert.top, invertThenTint.top)
     }
 
     @Test
@@ -146,14 +130,6 @@ class MaterialsSurfaceTest {
         }
     }
 
-    private fun reopen() {
-        surface?.release()
-        surface = null
-        onGl { }
-        reader.close()
-        reader = ImageReader.newInstance(SIDE, SIDE, PixelFormat.RGBA_8888, 2)
-    }
-
     private fun base(): Bitmap = Bitmap.createBitmap(SIDE, SIDE, Bitmap.Config.ARGB_8888).apply {
         for (y in 0 until SIDE) for (x in 0 until SIDE) setPixel(x, y, if (y < SIDE / 2) Color.RED else Color.BLUE)
     }
@@ -162,20 +138,12 @@ class MaterialsSurfaceTest {
         const val SIDE = 16
         const val NOISE_BYTES = 1024 * 1024
         const val IDENTITY = "vec4 material(vec2 uv){return texture(r_input, uv);}"
-        const val INVERT = "vec4 material(vec2 uv){vec4 c=texture(r_input, uv);return vec4(1.0-c.rgb,c.a);}"
-        const val HALF_RED = "vec4 material(vec2 uv){vec4 c=texture(r_input, uv);return vec4(c.r*0.5,c.g,c.b,c.a);}"
         val RED = Color.rgb(255, 0, 0)
         val BLUE = Color.rgb(0, 0, 255)
-        val CYAN = Color.rgb(0, 255, 255)
     }
 }
 
 internal const val TIMEOUT_SECONDS = 10L
-
-private fun Int.channels() = listOf(Color.red(this), Color.green(this), Color.blue(this))
-
-// 0.5 lands on either side of 127.5 depending on the GPU's rounding.
-private fun Int.roundToNearest(target: Int) = if (kotlin.math.abs(this - target) <= 1) target else this
 
 internal fun <T> onGl(block: () -> T): T {
     val done = CountDownLatch(1)

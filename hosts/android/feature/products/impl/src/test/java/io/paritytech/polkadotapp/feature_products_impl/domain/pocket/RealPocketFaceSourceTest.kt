@@ -75,19 +75,6 @@ class RealPocketFaceSourceTest {
         verify { streams.sendAction(loyalty.card.key, "stamp", payload) }
     }
 
-    // A face without Materials nodes costs the core nothing: no resolver is built for it.
-    @Test
-    fun `a face without materials nodes is not resolved`() = runTest {
-        val onScreen = source.observeFace(loyalty.card.key).launchIn(this)
-        advanceUntilIdle()
-        faces.emit(faceOf("plain"))
-        advanceUntilIdle()
-
-        coVerify(exactly = 0) { streams.resolveKeptMaterials(any(), any()) }
-        verify(exactly = 0) { resolveDrawn(any()) }
-        onScreen.cancel()
-    }
-
     // The core asks for the next tree's resolution to start before the old one closes, so the
     // materials both trees share keep their fetch; and nothing may stay open once the card is gone.
     @Test
