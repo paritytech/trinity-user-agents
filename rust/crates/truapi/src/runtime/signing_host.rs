@@ -365,7 +365,7 @@ impl crate::pgas_claims::PgasClaimBuilder for SigningHost {
 		identity: crate::pgas_claims::ClaimIdentity,
 		excluded: &std::collections::BTreeSet<statement_allowance::pgas::ClaimSlot>,
 	) -> Result<statement_allowance::pgas::BuiltClaim, crate::pgas_claims::ClaimBuildError> {
-		self.wallet.build_pgas_claim_as(target.0, identity, excluded).await
+		self.wallet.build_pgas_claim_for_identity(target.0, identity, excluded).await
 	}
 }
 

@@ -369,40 +369,41 @@ impl WalletAccountHolder {
 		derivation_index: api::DerivationIndex,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<(), AllowanceAllocationError> {
-		use crate::runtime::statement_allowance::pgas;
-
 		let session = invocation.session;
-		// PGAS credits the product account the caller named.
-		let target = self.with_keys(session, |keys| {
-			keys.product_keypair(&api::ProductAccountId {
-				dot_ns_identifier: product_id.clone(),
-				derivation_index,
-			})
-			.map(|key| key.public.to_bytes())
-		})?;
+		let target = self.product_account_public_key(session, product_id, derivation_index)?;
 		let asset_hub = self.pgas_asset_hub().await?;
-
 		// Reusing a funded account preserves the person's daily claim slots.
 		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
-			pgas::holds_a_full_claim(
-				asset_hub.client.rpc(),
-				&asset_hub.context.metadata,
-				&target,
-			)
-			.await?
+			asset_hub.holds_a_full_claim(&target).await?
 		{
 			debug!(%product_id, "PGAS allowance already funded; leaving it alone");
 			return Ok(());
 		}
 		let signer = self.personhood_signer(session).await?;
-		let ring = self.strongest_personhood_ring(&signer).await?;
+		// Both claim paths need the person in a ring, so the check runs first either way.
+		let proof = self.claim_proof_context(&asset_hub, &signer).await?;
 		self.require_current_session(session)?;
 		#[cfg(not(target_arch = "wasm32"))]
 		if let Some(claims) = self.services.pgas_claims() {
 			let request = super::pgas_delivery::DurablePgasClaim::new(session, target);
 			return request.deliver(&claims, invocation.call.cancel()).await;
 		}
-		self.claim_pgas_directly(product_id, self.pgas_claim(&asset_hub, &ring, &signer, &target))
-			.await
+		let claim = self.pgas_claim(&asset_hub, &proof, &signer, &target);
+		self.claim_pgas_directly(product_id, claim).await
+	}
+
+	/// The public key of the product account PGAS credits: the account of
+	/// `product_id` that `derivation_index` selects.
+	fn product_account_public_key(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		derivation_index: api::DerivationIndex,
+	) -> Result<[u8; 32], AuthorityError> {
+		let account =
+			api::ProductAccountId { dot_ns_identifier: product_id.clone(), derivation_index };
+		self.with_keys(session, |keys| {
+			keys.product_keypair(&account).map(|key| key.public.to_bytes())
+		})
 	}
 }

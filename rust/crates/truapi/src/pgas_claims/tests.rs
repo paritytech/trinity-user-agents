@@ -1,12 +1,10 @@
 use super::*;
 use crate::{
 	durable::DurableTxFailureKind,
-	pgas_claims::testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination},
+	pgas_claims::testing::{
+		ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination, transient,
+	},
 };
-
-fn transient() -> ClaimBuildError {
-	ClaimBuildError::Transient(anyhow::anyhow!("the ring revision has not arrived"))
-}
 
 /// A caller finds its claim again by the destination alone, so the claim
 /// lives in that destination's group.
@@ -18,8 +16,10 @@ fn a_claim_waits_in_its_destinations_group() {
 
 	let group = destination_group(&destination(7));
 	let listed = futures::executor::block_on(harness.engine().group(&pgas_domain(), &group));
-	let statuses: Vec<_> = listed.unwrap().into_iter().map(|row| (row.id, row.status)).collect();
-	assert_eq!(statuses, vec![(id, DurableTxStatus::PendingSubmission)]);
+	let rows = listed.unwrap();
+	let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+	assert_eq!(ids, vec![id]);
+	assert_eq!(rows[0].status, DurableTxStatus::PendingSubmission);
 }
 
 /// Two requests for one destination share a claim instead of spending two
@@ -49,8 +49,8 @@ fn an_active_claim_into_another_destination_does_not_refuse_a_claim() {
 	assert!(other.is_ok(), "{other:?}");
 }
 
-/// A request after the previous claim reached a block claims again, as a
-/// request did before claims were durable.
+/// Once a claim has reached a block, the next request for the destination
+/// claims another slot.
 #[test]
 fn a_claim_seen_in_a_best_block_no_longer_refuses_a_new_one() {
 	let harness = ClaimsHarness::new(FakeClaimBuilder::building());

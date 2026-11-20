@@ -7,22 +7,18 @@ use crate::{
 	CancellationToken,
 	pgas_claims::{
 		ClaimBuildError,
-		testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination},
+		testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination, transient},
 	},
 	test_support::wait_until,
 };
-
-fn transient() -> ClaimBuildError {
-	ClaimBuildError::Transient(anyhow::anyhow!("the ring revision has not arrived"))
-}
 
 /// Waits for `id` with no cancellation.
 fn wait_uncancelled(harness: &ClaimsHarness, id: DurableTxId) -> Result<(), UndeliveredClaim> {
 	block_on(harness.claims().wait_until_delivered(id, pending()))
 }
 
-/// Products are answered once the claim is in a best block, as before claims
-/// were durable.
+/// A product is answered as soon as its claim is in a best block, without
+/// waiting for finality.
 #[test]
 fn a_claim_seen_in_a_best_block_is_delivered() {
 	let harness = ClaimsHarness::new(FakeClaimBuilder::building());

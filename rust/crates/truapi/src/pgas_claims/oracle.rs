@@ -54,7 +54,8 @@ impl CompletionOracle for PgasClaimOracle {
 		transactions: &[DurableTxEntry],
 		heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
-		let attempted: Vec<_> = transactions.iter().filter_map(AttemptedClaim::of).collect();
+		let attempted: Vec<_> =
+			transactions.iter().filter_map(AttemptedClaim::from_entry).collect();
 		let (at_finalized, at_best) = futures::future::try_join(
 			self.recorded_claims(&attempted, heads.finalized.hash),
 			self.recorded_claims(&attempted, heads.best.hash),
@@ -72,7 +73,7 @@ struct AttemptedClaim {
 
 impl AttemptedClaim {
 	/// The claim `entry` makes, once an attempt of it was built.
-	fn of(entry: &DurableTxEntry) -> Option<Self> {
+	fn from_entry(entry: &DurableTxEntry) -> Option<Self> {
 		let plan = entry.plan.as_ref()?;
 		let attempt = ClaimParams::try_from(&plan.params).ok()?.attempt?;
 		Some(Self { id: entry.id, attempt })

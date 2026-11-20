@@ -376,7 +376,7 @@ registered again.
 Native signing hosts claim PGAS through the durable ledger. A
 `SmartContractAllowance` resource, from a product or from a paired host over
 SSO, registers a deferred claim of one slot into the product account and
-answers once the claim is in a best block, as a direct claim did. A
+answers once the claim is in a best block. A
 destination has at most one claim waiting to be built or to reach a block, so
 a retried or concurrent request waits on that claim instead of spending
 another slot. A claim is built only from a session of the account that

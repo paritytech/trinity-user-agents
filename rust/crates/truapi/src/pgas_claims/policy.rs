@@ -58,26 +58,49 @@ impl PgasClaimPolicy {
 		Self { builder, recent: Mutex::default() }
 	}
 
-	/// The answer for `claim` at unix time `now`, or `None` while it waits.
-	/// The slot of a claim it builds joins `excluded` and the recent slots.
+	/// What `claim` comes to at unix time `now`, built in a slot `excluded`
+	/// does not list.
 	async fn prepare_claim(
 		&self,
 		claim: &PlannedClaim,
-		excluded: &mut BTreeSet<ClaimSlot>,
+		excluded: &BTreeSet<ClaimSlot>,
 		now: u64,
-	) -> Option<Preparation> {
+	) -> PreparedClaim {
 		if claim.attempts >= MAX_ATTEMPTS {
-			return Some(Preparation::GiveUp);
+			return PreparedClaim::answered(Some(Preparation::GiveUp));
 		}
 		let ClaimParams { target, identity, .. } = &claim.params;
 		match self.builder.build_claim(*target, *identity, excluded).await {
-			Ok(built) => {
-				excluded.insert(built.slot);
-				self.recent.lock().remember(built.slot, now);
-				Some(ready_preparation(claim, built))
-			},
-			Err(error) => answer_unbuilt_claim(claim, &error, now),
+			Ok(built) => PreparedClaim::built(claim, built),
+			Err(error) => PreparedClaim::answered(answer_unbuilt_claim(claim, &error, now)),
 		}
+	}
+
+	/// Holds `slot`, built at unix time `now`, back from every later claim of
+	/// this batch and of the batches that follow.
+	fn hold_slot(&self, excluded: &mut BTreeSet<ClaimSlot>, slot: ClaimSlot, now: u64) {
+		excluded.insert(slot);
+		self.recent.lock().remember(slot, now);
+	}
+}
+
+/// What one claim of a batch came to: the engine's answer, if any, and the
+/// slot it was built in, if it was.
+struct PreparedClaim {
+	answer: Option<Preparation>,
+	built_slot: Option<ClaimSlot>,
+}
+
+impl PreparedClaim {
+	/// A claim answered with `answer` and built in no slot.
+	fn answered(answer: Option<Preparation>) -> Self {
+		Self { answer, built_slot: None }
+	}
+
+	/// `claim` ready to submit as `built`.
+	fn built(claim: &PlannedClaim, built: BuiltClaim) -> Self {
+		let built_slot = Some(built.slot);
+		Self { answer: Some(ready_preparation(claim, built)), built_slot }
 	}
 }
 
@@ -99,7 +122,12 @@ impl SubmissionPolicy for PgasClaimPolicy {
 		let mut excluded = self.recent.lock().held_slots(now.saturating_sub(RECENT_SLOT_SECS));
 		let mut prepared = HashMap::new();
 		for claim in planned_claims(batch) {
-			if let Some(answer) = self.prepare_claim(&claim, &mut excluded, now).await {
+			let PreparedClaim { answer, built_slot } =
+				self.prepare_claim(&claim, &excluded, now).await;
+			if let Some(slot) = built_slot {
+				self.hold_slot(&mut excluded, slot, now);
+			}
+			if let Some(answer) = answer {
 				prepared.insert(claim.id, answer);
 			}
 		}

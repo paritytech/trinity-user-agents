@@ -6,7 +6,7 @@ use crate::{
 
 fn build_as(wallet: &WalletAccountHolder, identity: ClaimIdentity) -> ClaimBuildError {
 	let excluded = BTreeSet::new();
-	let build = wallet.build_pgas_claim_as([0x44; 32], identity, &excluded);
+	let build = wallet.build_pgas_claim_for_identity([0x44; 32], identity, &excluded);
 	futures::executor::block_on(build).err().expect("the claim is not built")
 }
 

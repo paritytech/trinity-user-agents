@@ -229,7 +229,8 @@ pub async fn build_pgas_claim(
 ) -> Result<BuiltClaim, StatementAllowanceError> {
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
-	let day = slot::current_period(slot::read_chain_now_seconds(params.asset_hub_rpc).await?);
+	let chain_now = slot::read_chain_now_seconds(params.asset_hub_rpc).await?;
+	let day = slot::current_period(chain_now);
 	let revision = await_claim_ring_revision(params).await?;
 	let slot_index = scan_free_claim_slot(params, day, excluded).await?;
 	let slot = ClaimSlot { day, slot_index };
@@ -343,8 +344,8 @@ async fn confirm_claim_recorded(
 	block_hash: String,
 ) -> Result<PgasClaimOutcome, StatementAllowanceError> {
 	let ClaimSlot { day, slot_index } = built.slot;
-	// Inclusion is not success. `Pgas.claim_pgas` can dispatch-error —
-	// `AlreadyClaimed`, `PgasMintFailed` — and the extrinsic still lands,
+	// Inclusion is not success. `Pgas.claim_pgas` can fail its dispatch, with
+	// `AlreadyClaimed` or `PgasMintFailed`, and the extrinsic still lands,
 	// so reporting an allowance now would promise PGAS that was never
 	// minted. The pallet marks the alias spent on success; check that.
 	if !slot::pgas_slot_is_claimed_at(params.asset_hub_rpc, &built.alias, day, &block_hash).await? {

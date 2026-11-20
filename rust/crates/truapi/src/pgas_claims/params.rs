@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// Everything a claim is built and decided from, so neither reads a table.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct ClaimParams {
 	/// The account the claim mints into.
 	pub target: AccountId32,
@@ -25,7 +25,7 @@ pub struct ClaimParams {
 }
 
 /// The slot an attempt claims and the alias the pallet records once it lands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct ClaimAttempt {
 	/// The slot claimed.
 	pub slot: ClaimSlot,

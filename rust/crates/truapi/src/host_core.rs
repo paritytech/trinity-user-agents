@@ -1268,10 +1268,7 @@ impl HostRuntime<SigningHost> {
 	/// Stop the product's executions first: a value a running execution
 	/// writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(
-		&self,
-		product_id: &ProductId,
-	) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id);
 		self.services
 			.platform
@@ -1414,7 +1411,7 @@ fn materials(services: &Arc<RuntimeServices>, db: crate::store::Db) -> crate::ma
 	crate::materials::Materials::new(db, Arc::new(bulletin), timer, services.spawner.clone())
 }
 
-/// Installs the durable transaction engine over `db`, with the PGAS claims
+/// Installs the durable transaction engine over `db`, and the PGAS claims
 /// registered with it, reports its pending work and starts its submissions.
 /// `None` when an engine is already installed.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1471,28 +1468,38 @@ fn durable_registry(
 	host: std::sync::Weak<SigningHost>,
 ) -> crate::durable::DurableRegistry {
 	use crate::{
-		nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers},
+		nft::with_scarcity_transfers,
 		pgas_claims::{PgasClaimsDeps, with_pgas_claims},
 	};
 
-	let chain = Arc::new(services.chain.clone());
+	let storage = Arc::new(services.chain.clone());
 	let genesis = services.asset_hub_chain_genesis_hash().into();
-	let claims =
-		PgasClaimsDeps { storage: chain.clone(), genesis, builder: Arc::new(host.clone()) };
+	let claims = PgasClaimsDeps { storage, genesis, builder: Arc::new(host.clone()) };
 	let registry = with_pgas_claims(crate::durable::DurableRegistry::new(), claims);
-	let Some(encrypted) = services.encrypted_storage() else {
+	let Some(transfers) = scarcity_transfers_deps(services, host) else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
 	};
-	let deps = ScarcityTransfersDeps {
+	with_scarcity_transfers(registry, transfers)
+}
+
+/// What NFT transfers signed by `host` run on, or `None` without encrypted
+/// storage to keep the secrets of imported item keys.
+#[cfg(not(target_arch = "wasm32"))]
+fn scarcity_transfers_deps(
+	services: &RuntimeServices,
+	host: std::sync::Weak<SigningHost>,
+) -> Option<crate::nft::ScarcityTransfersDeps> {
+	let encrypted = services.encrypted_storage()?;
+	let chain = Arc::new(services.chain.clone());
+	Some(crate::nft::ScarcityTransfersDeps {
 		storage: chain.clone(),
 		heads: chain,
-		genesis,
+		genesis: services.asset_hub_chain_genesis_hash().into(),
 		signer: Arc::new(host),
-		imported: ImportedSecretStore::new(encrypted),
+		imported: crate::nft::ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
-	};
-	with_scarcity_transfers(registry, deps)
+	})
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the

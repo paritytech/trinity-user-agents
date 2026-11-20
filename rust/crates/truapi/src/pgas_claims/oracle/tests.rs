@@ -22,7 +22,7 @@ struct RecordedAliases(HashMap<H256, HashSet<Vec<u8>>>);
 
 impl RecordedAliases {
 	/// Records the alias of `attempt` at each block of `at`.
-	fn of(attempt: ClaimAttempt, at: &[HashAndNumber]) -> Arc<Self> {
+	fn recording(attempt: ClaimAttempt, at: &[HashAndNumber]) -> Arc<Self> {
 		let key = claimed_gas_alias_key(attempt.slot.day, &attempt.alias);
 		let recorded = at.iter().map(|block| (block.hash, HashSet::from([key.clone()]))).collect();
 		Arc::new(Self(recorded))
@@ -75,7 +75,7 @@ impl WatchedStorage for RecordedAliases {
 
 /// An attempt in `slot_index`, with an alias distinct to that slot as the
 /// person's aliases are.
-fn attempt_in(slot_index: u32) -> ClaimAttempt {
+fn attempt_in_slot(slot_index: u32) -> ClaimAttempt {
 	let alias = [u8::try_from(slot_index).expect("a test slot fits in u8"); 32];
 	ClaimAttempt { slot: ClaimSlot { day: TEST_DAY, slot_index }, alias }
 }
@@ -96,51 +96,57 @@ fn claim_entry(attempt: Option<ClaimAttempt>) -> DurableTxEntry {
 	}
 }
 
-/// Whether `entry` is proven completed at the finalized and at the best
-/// head, by an oracle over `storage`.
-fn proven(storage: Arc<RecordedAliases>, entry: &DurableTxEntry) -> [bool; 2] {
+/// What an oracle over `storage` proves about `entry` in a pass.
+fn open_pass_over(storage: Arc<RecordedAliases>, entry: &DurableTxEntry) -> Box<dyn PassScope> {
 	let oracle = PgasClaimOracle::new(storage, GENESIS);
 	let heads = Heads { finalized: FINALIZED, best: BEST };
-	let scope = block_on(oracle.open_pass(std::slice::from_ref(entry), &heads)).unwrap();
-	[HeadKind::Finalized, HeadKind::Best].map(|head| scope.proven_completed(entry, head))
+	block_on(oracle.open_pass(std::slice::from_ref(entry), &heads)).unwrap()
 }
 
 /// The pallet records the alias only when the claim succeeds, so the record
 /// proves the claim.
 #[test]
 fn a_recorded_alias_proves_the_claim() {
-	let entry = claim_entry(Some(attempt_in(3)));
+	let entry = claim_entry(Some(attempt_in_slot(3)));
+	let recorded = RecordedAliases::recording(attempt_in_slot(3), &[FINALIZED, BEST]);
 
-	let proof = proven(RecordedAliases::of(attempt_in(3), &[FINALIZED, BEST]), &entry);
+	let scope = open_pass_over(recorded, &entry);
 
-	assert_eq!(proof, [true, true]);
+	assert!(scope.proven_completed(&entry, HeadKind::Finalized));
+	assert!(scope.proven_completed(&entry, HeadKind::Best));
 }
 
 /// A claim in a best block that is not finalized yet is proven only there.
 #[test]
 fn an_alias_recorded_only_at_the_best_head_proves_the_claim_only_there() {
-	let entry = claim_entry(Some(attempt_in(3)));
+	let entry = claim_entry(Some(attempt_in_slot(3)));
+	let recorded = RecordedAliases::recording(attempt_in_slot(3), &[BEST]);
 
-	let proof = proven(RecordedAliases::of(attempt_in(3), &[BEST]), &entry);
+	let scope = open_pass_over(recorded, &entry);
 
-	assert_eq!(proof, [false, true]);
+	assert!(!scope.proven_completed(&entry, HeadKind::Finalized));
+	assert!(scope.proven_completed(&entry, HeadKind::Best));
 }
 
 /// The alias of another slot of the same day was spent by another claim.
 #[test]
 fn the_alias_of_another_slot_proves_nothing() {
-	let entry = claim_entry(Some(attempt_in(3)));
+	let entry = claim_entry(Some(attempt_in_slot(3)));
+	let recorded = RecordedAliases::recording(attempt_in_slot(4), &[FINALIZED, BEST]);
 
-	let proof = proven(RecordedAliases::of(attempt_in(4), &[FINALIZED, BEST]), &entry);
+	let scope = open_pass_over(recorded, &entry);
 
-	assert_eq!(proof, [false, false]);
+	assert!(!scope.proven_completed(&entry, HeadKind::Finalized));
+	assert!(!scope.proven_completed(&entry, HeadKind::Best));
 }
 
 #[test]
 fn a_claim_never_built_proves_nothing() {
 	let entry = claim_entry(None);
+	let recorded = RecordedAliases::recording(attempt_in_slot(3), &[FINALIZED, BEST]);
 
-	let proof = proven(RecordedAliases::of(attempt_in(3), &[FINALIZED, BEST]), &entry);
+	let scope = open_pass_over(recorded, &entry);
 
-	assert_eq!(proof, [false, false]);
+	assert!(!scope.proven_completed(&entry, HeadKind::Finalized));
+	assert!(!scope.proven_completed(&entry, HeadKind::Best));
 }

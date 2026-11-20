@@ -31,6 +31,11 @@ pub const TEST_DAY: u32 = 20_412;
 /// The identity fixtures register claims as.
 pub const TEST_IDENTITY: ClaimIdentity = ClaimIdentity::from_root_public_key([0x1d; 32]);
 
+/// A build failure the policy asks about again later.
+pub fn transient() -> ClaimBuildError {
+	ClaimBuildError::Transient(anyhow::anyhow!("the ring revision has not arrived"))
+}
+
 /// A destination with a distinct byte.
 pub fn destination(byte: u8) -> AccountId32 {
 	AccountId32([byte; 32])

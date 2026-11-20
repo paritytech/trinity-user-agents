@@ -21,7 +21,7 @@ use subxt::utils::{AccountId32, H256};
 pub use builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder};
 pub use delivery::UndeliveredClaim;
 #[cfg(test)]
-pub use testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination};
+pub use testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination, transient};
 
 use self::{oracle::PgasClaimOracle, params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{
@@ -95,7 +95,7 @@ impl PgasClaims {
 	/// and returns its ledger id. Refuses with
 	/// [`PgasClaimError::AlreadyClaiming`] when `dest` already has an active
 	/// claim, checked in the registration write.
-	pub async fn claim(
+	async fn claim(
 		&self,
 		dest: AccountId32,
 		identity: ClaimIdentity,

@@ -14,7 +14,8 @@ use subxt::utils::{AccountId32, H256};
 
 use super::{
 	ClaimBuildError, ClaimIdentity, PgasClaimBuilder, PgasClaims, PgasClaimsDeps,
-	destination_group, oracle::PgasClaimOracle, pgas_domain, with_pgas_claims,
+	destination_group, oracle::PgasClaimOracle, pgas_domain, testing::TEST_IDENTITY,
+	with_pgas_claims,
 };
 use crate::{
 	chain::{
@@ -29,17 +30,16 @@ use crate::{
 	host_logic::product_account::{
 		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
 	},
+	nft::ASSET_HUB_PIPELINE,
 	runtime::statement_allowance::{
 		self as alloc, CollectionCandidate, FixedPersonhoodSigner, StatementAllowanceError,
 		collection::PersonhoodCollection,
 		pgas::{BuiltClaim, ClaimSlot, PgasClaim, build_pgas_claim, holds_a_full_claim},
+		ring::RingParams,
 	},
 	store::open_temporary_core_db,
 	time::RealTimer,
 };
-
-/// The extension pipeline the hosts map Asset Hub to, which carries `AsPgas`.
-const ASSET_HUB_PIPELINE: u8 = 1;
 
 /// The person behind a mnemonic, with the chains its claims are built from.
 struct LivePerson {
@@ -98,16 +98,7 @@ impl LivePerson {
 	) -> Result<BuiltClaim, StatementAllowanceError> {
 		let candidates = self.candidates();
 		let signer = FixedPersonhoodSigner::new(&candidates).await?;
-		let collections = &PersonhoodCollection::ALL;
-		let rings = alloc::find_including_rings(
-			&self.people,
-			&self.people_metadata,
-			&signer,
-			collections,
-			u32::MAX,
-		)
-		.await?;
-		let ring = rings.first().expect("the person is in a People ring");
+		let ring = self.strongest_ring(&signer).await?;
 		let claim = PgasClaim {
 			asset_hub_rpc: &self.asset_hub,
 			asset_hub_metadata: &self.asset_hub_metadata,
@@ -120,9 +111,27 @@ impl LivePerson {
 			signer: &signer,
 			network_suffix: &self.network_suffix,
 			target: &target.0,
-			ring,
+			ring: &ring,
 		};
 		build_pgas_claim(&claim, excluded).await
+	}
+
+	/// The strongest People ring `signer` proves the person in.
+	async fn strongest_ring(
+		&self,
+		signer: &FixedPersonhoodSigner<'_>,
+	) -> Result<RingParams, StatementAllowanceError> {
+		let collections = &PersonhoodCollection::ALL;
+		let people = &self.people;
+		let rings = alloc::find_including_rings(
+			people,
+			&self.people_metadata,
+			signer,
+			collections,
+			u32::MAX,
+		)
+		.await?;
+		Ok(rings.into_iter().next().expect("the person is in a People ring"))
 	}
 }
 
@@ -136,7 +145,7 @@ impl PgasClaimBuilder for LivePerson {
 	) -> Result<BuiltClaim, ClaimBuildError> {
 		self.build(target, excluded)
 			.await
-			.map_err(|error| ClaimBuildError::Transient(anyhow::anyhow!(error.to_string())))
+			.map_err(|error| ClaimBuildError::Transient(error.into()))
 	}
 }
 
@@ -177,9 +186,8 @@ async fn a_durable_claim_lands_on_asset_hub_and_its_alias_proves_it() {
 	let engine = live_engine(&chain, db, with_pgas_claims(DurableRegistry::new(), deps));
 	let claims = PgasClaims::new(engine, Arc::new(RealTimer));
 	let dest = AccountId32(rand::random());
-	let identity = ClaimIdentity::from_root_public_key([0x1d; 32]);
 
-	let id = claims.claim(dest, identity).await.unwrap();
+	let id = claims.claim(dest, TEST_IDENTITY).await.unwrap();
 	claims.wait_until_delivered(id, pending()).await.unwrap();
 
 	let funded = holds_a_full_claim(&person.asset_hub, &person.asset_hub_metadata, &dest.0);
