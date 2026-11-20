@@ -6024,6 +6024,7 @@ version = "0.32.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "anyhow",
  "async-lock",
  "async-sqlite",
  "async-trait",
