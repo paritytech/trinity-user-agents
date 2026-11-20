@@ -39,21 +39,18 @@ final class FakeSlotAccounting: StatementStoreSlotAccounting {
             kind: record.kind,
             domain: .product,
             priority: record.priority,
-            latestRenewedPeriod: period
+            latestRenewedPeriod: period,
+            signerKeyId: record.signerKeyId
         )
         markRenewedCalls.append((record: updated, period: period, since: since))
         records.removeAll { $0.accountId == record.accountId }
         records.append(updated)
     }
 
-    func priorities(for accountIds: [AccountId]) async throws -> [AccountId: AllowanceRecord.Priority] {
+    func records(for accountIds: [AccountId]) async throws -> [AccountId: AllowanceRecord] {
         let requestedIds = Set(accountIds)
         let filtered = records.filter { requestedIds.contains($0.accountId) }
-        var result: [AccountId: AllowanceRecord.Priority] = [:]
-        for record in filtered {
-            result[record.accountId] = record.priority
-        }
-        return result
+        return filtered.reduce(into: [:]) { $0[$1.accountId] = $1 }
     }
 }
 
@@ -86,7 +83,7 @@ final class FakeBandersnatchKeyManaging: BandersnatchKeyManaging {
 
 struct FakeSlotInfoProviderConfig {
     var renewalSlots: Result<[SSSRenewalSlot], Error> = .success([])
-    var freeSlot: Result<SSSSlotInfo, Error> = .failure(AllowanceSlotAssignmentError.noSlotsAvailable)
+    var slotPlan: Result<SSSSlotPlan, Error> = .failure(AllowanceSlotAssignmentError.noSlotsAvailable)
 }
 
 final class FakeSlotInfoProvider: StatementStoreSlotInfoProviding {
@@ -100,21 +97,21 @@ final class FakeSlotInfoProvider: StatementStoreSlotInfoProviding {
         config.renewalSlots = result
     }
 
-    func updateFreeSlot(_ result: Result<SSSSlotInfo, Error>) {
-        config.freeSlot = result
+    func updateSlotPlan(_ result: Result<SSSSlotPlan, Error>) {
+        config.slotPlan = result
     }
 
     func hasExistingSlot(for _: AccountId) async throws -> Bool {
         false
     }
 
-    func freeSlot(
+    func slotPlan(
         excluding _: AccountId,
         callerPriority _: AllowanceRecord.Priority
-    ) async throws -> SSSSlotInfo {
-        switch config.freeSlot {
-        case let .success(slot):
-            return slot
+    ) async throws -> SSSSlotPlan {
+        switch config.slotPlan {
+        case let .success(plan):
+            return plan
         case let .failure(error):
             throw error
         }
@@ -134,17 +131,19 @@ final class FakeSlotInfoProvider: StatementStoreSlotInfoProviding {
 
 final class FakeSubmitter: SlotAssignmentSubmitting {
     private(set) var submitCalls: [ChainId] = []
+    private(set) var submittedCalls: [any RuntimeCallable] = []
     var failureSequence: [Bool] = []
     var failureError: Error?
     private var failureIndex: Int = 0
 
     func submit(
-        call _: any RuntimeCallable,
+        call: any RuntimeCallable,
         makeOrigin: @Sendable (ChainId) async throws -> ExtrinsicOriginDefining,
         chainId: ChainId
     ) async throws {
         _ = try await makeOrigin(chainId)
         submitCalls.append(chainId)
+        submittedCalls.append(call)
 
         if failureIndex < failureSequence.count, failureSequence[failureIndex] {
             failureIndex += 1
@@ -198,6 +197,23 @@ final class FakeOriginFactory: AsResourcesOriginCreating {
         chain _: ChainId
     ) async throws -> ExtrinsicOriginDefining {
         sssOriginCalls.append((personOrigin: personOrigin, period: period, seq: seq))
+        return StubExtrinsicOrigin()
+    }
+
+    private(set) var holderOriginCalls: [(signerKeyId: String, holder: AccountId)] = []
+    var mismatchedSignerKeyIds: Set<String> = []
+
+    func createStmtStoreHolderOrigin(
+        signerKeyId: String,
+        holder: AccountId,
+        chain _: ChainId
+    ) async throws -> ExtrinsicOriginDefining {
+        holderOriginCalls.append((signerKeyId: signerKeyId, holder: holder))
+
+        if mismatchedSignerKeyIds.contains(signerKeyId) {
+            throw SlotHolderSignerError.accountMismatch(signerKeyId: signerKeyId)
+        }
+
         return StubExtrinsicOrigin()
     }
 
@@ -272,4 +288,63 @@ struct InlineBackgroundExecutor: BackgroundExecuting {
     ) async throws -> T {
         try await operation()
     }
+}
+
+// MARK: - FakeReplacementValidator
+
+/// Answers one scripted validity per call; the last answer repeats once the script runs out.
+final class FakeReplacementValidator: SlotReplacementValidating {
+    private var script: [SlotReplacementValidity]
+    private(set) var validatedCalls: [any RuntimeCallable] = []
+
+    init(script: [SlotReplacementValidity]) {
+        self.script = script
+    }
+
+    func validate(
+        call: any RuntimeCallable,
+        origin _: ExtrinsicOriginDefining,
+        chainId _: ChainId
+    ) async throws -> SlotReplacementValidity {
+        validatedCalls.append(call)
+        guard let next = script.first else { throw FakeReplacementValidatorError.scriptExhausted }
+        if script.count > 1 { script.removeFirst() }
+        return next
+    }
+}
+
+enum FakeReplacementValidatorError: Error {
+    case scriptExhausted
+}
+
+// MARK: - FakeStatementStoreRuntimeCapabilities
+
+struct FakeStatementStoreRuntimeCapabilities: StatementStoreRuntimeCapabilitiesProviding {
+    let supportsReplacement: Bool
+
+    func supportsSlotReplacement() async throws -> Bool {
+        supportsReplacement
+    }
+}
+
+// MARK: - FakeResourcesParameters
+
+final class FakeResourcesParameters: ResourcesParametersProviding, @unchecked Sendable {
+    let cooldown: UInt32
+    private(set) var cooldownReads = 0
+
+    init(cooldown: UInt32) {
+        self.cooldown = cooldown
+    }
+
+    func stmtStoreSlotsPerPeriod(chainId _: ChainId, origin _: PersonOrigin) async throws -> UInt32 { 0 }
+
+    func stmtStoreReplacementCooldown(chainId _: ChainId) async throws -> UInt32 {
+        cooldownReads += 1
+        return cooldown
+    }
+
+    func longTermStorageClaimsPerPeriod(chainId _: ChainId) async throws -> UInt8 { 0 }
+
+    func notificationHighestSeq(chainId _: ChainId, origin _: PersonOrigin) async throws -> UInt8 { 0 }
 }
