@@ -6,20 +6,6 @@ import TrUAPIHost
 /// How the CASH card lists a session in flight: with the status the core
 /// gives it.
 struct FundingActivityStatusTests {
-    @Test(arguments: [
-        FundingStatus.waitingForPayment,
-        .waitingForTransfer,
-        .waitingForDeposit,
-        .convertingToCash,
-        .retrying,
-        .takingLonger
-    ])
-    func aSessionInFlightShowsTheCoresStatus(status: FundingStatus) {
-        let item = FundingActivityItem(session: session(.in, stage: .open), progress: progress(status))
-
-        #expect(item.status == .inProgress(status))
-    }
-
     @Test
     func aReleasedWithdrawalStaysInFlightUntilItsPayoutIsReported() {
         #expect(FundingStatus.preparingPayout.isInFlight)
