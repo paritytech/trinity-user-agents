@@ -701,7 +701,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You Sent"
+            "value" : "You sent"
           }
         }
       }
@@ -1226,13 +1226,35 @@
         }
       }
     },
+    "transfer.status.amount.received" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You received %1$(received)@ of %2$(sent)@"
+          }
+        }
+      }
+    },
+    "transfer.status.amount.receivedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ received %2$(received)@ of %3$(sent)@"
+          }
+        }
+      }
+    },
     "transfer.status.claiming" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claiming"
+            "value" : "Adding to your balance"
           }
         }
       }
@@ -1243,7 +1265,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Detecting"
+            "value" : "Incoming…"
           }
         }
       }
@@ -1253,8 +1275,8 @@
       "localizations" : {
         "en" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Transaction failed"
+            "state" : "translated",
+            "value" : "Payment didn’t arrive"
           }
         }
       }
@@ -1265,7 +1287,29 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claimed"
+            "value" : "Added to your balance"
+          }
+        }
+      }
+    },
+    "transfer.status.notSent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not sent"
+          }
+        }
+      }
+    },
+    "transfer.status.receivedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received by %1$(username)@"
           }
         }
       }
@@ -1276,7 +1320,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sending"
+            "value" : "Sending…"
           }
         }
       }
@@ -1287,7 +1331,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sent, waiting to be claimed"
+            "value" : "Sent · not received yet"
           }
         }
       }

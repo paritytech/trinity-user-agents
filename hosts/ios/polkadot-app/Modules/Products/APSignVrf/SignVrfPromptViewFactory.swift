@@ -31,6 +31,7 @@ private extension SignVrfPromptViewFactory {
         for context: SignVrfConfirmationContext
     ) -> TitleDetailsSheetViewModel {
         let request = context.request
+        let authorizer = DeviceOwnerAuthorizer()
 
         return TitleDetailsSheetViewModel(
             graphics: makeIcon(),
@@ -38,7 +39,14 @@ private extension SignVrfPromptViewFactory {
             message: LocalizableResource { _ in .normal(makeBody(for: request)) },
             mainAction: makeAction(
                 title: String(localized: .Common.approve)
-            ) { context.deliver(.approved) },
+            ) {
+                authorizer.authorize(animated: true, retriable: false) { isAuthorized in
+                    guard isAuthorized else {
+                        return
+                    }
+                    context.deliver(.approved)
+                }
+            },
             secondaryAction: makeAction(
                 title: String(localized: .Common.reject)
             ) { context.deliver(.rejected) }

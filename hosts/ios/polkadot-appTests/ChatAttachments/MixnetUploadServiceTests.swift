@@ -256,7 +256,7 @@ extension MixnetUploadServiceTests {
     func makeTestEnv(
         loaderFactory: HOPFileLoaderMaking = MockHOPFileLoaderFactory(),
         nodeProvider: HOPNodeProviding = MockHOPNodeProvider(),
-        allowanceManager: AllowanceManaging = MockAllowanceManager(),
+        allowanceManager: any AllowanceManaging<AccountId> = MockAllowanceManager(),
         retryPolicy: UploadRetryPolicy = .fastRetries
     ) -> TestEnv {
         let facade = UserDataStorageTestFacade()
