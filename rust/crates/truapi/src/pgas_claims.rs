@@ -1,9 +1,11 @@
 //! PGAS claims through the durable engine: each claim mints one slot of PGAS
 //! into an account, a destination has at most one active claim, and only the
 //! identity that registered a claim builds it. [`with_pgas_claims`] serves
-//! the domain, and [`PgasClaims`] registers claims and finds them again.
+//! the domain, and [`PgasClaims`] registers claims, joins a destination's
+//! active one, and waits for them.
 
 mod builder;
+mod delivery;
 mod oracle;
 mod params;
 mod policy;
@@ -15,6 +17,9 @@ use std::sync::Arc;
 use subxt::utils::{AccountId32, H256};
 
 pub use builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder};
+pub use delivery::UndeliveredClaim;
+#[cfg(test)]
+pub use testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination};
 
 use self::{oracle::PgasClaimOracle, params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{
@@ -24,6 +29,7 @@ use crate::{
 		DurableTxId, DurableTxState, DurableTxStatus, GroupId, RegistrationError,
 	},
 	store::DbError,
+	time::Timer,
 	unix_time::current_unix_secs,
 };
 
@@ -72,12 +78,15 @@ pub enum PgasClaimError {
 #[derive(Clone)]
 pub struct PgasClaims {
 	engine: Arc<DurableTxEngine>,
+	/// Times out a caller's wait for its claim.
+	timer: Arc<dyn Timer>,
 }
 
 impl PgasClaims {
-	/// Claims registered with `engine`, which must serve [`with_pgas_claims`].
-	pub fn new(engine: Arc<DurableTxEngine>) -> Self {
-		Self { engine }
+	/// Claims registered with `engine`, which must serve [`with_pgas_claims`],
+	/// whose callers stop waiting on `timer`.
+	pub fn new(engine: Arc<DurableTxEngine>, timer: Arc<dyn Timer>) -> Self {
+		Self { engine, timer }
 	}
 
 	/// Registers a claim of one slot into `dest`, built later as `identity`,
@@ -101,12 +110,6 @@ impl PgasClaims {
 			unreachable!("a request of one claim registers one row, got {ids:?}")
 		};
 		Ok(id)
-	}
-
-	/// The active claim into `dest`, if any.
-	pub async fn active_claim(&self, dest: AccountId32) -> Result<Option<DurableTxId>, DbError> {
-		let claims = self.engine.group(&pgas_domain(), &destination_group(&dest)).await?;
-		Ok(first_active_claim(claims))
 	}
 }
 

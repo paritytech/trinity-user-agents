@@ -348,7 +348,7 @@ impl AccountHolder for WalletAccountHolder {
 						),
 						api::AllocatableResource::SmartContractAllowance(index) => {
 							self.allocate_smart_contract_allowance(
-								invocation.session,
+								&invocation,
 								&product_id,
 								index,
 								policy,

@@ -11,7 +11,7 @@ use crate::{
 	platform::ProductId,
 	runtime::{
 		allowances::current_unix_secs,
-		authority::{AccountHolder, AuthorityError, AuthoritySession},
+		authority::{AccountHolder, AccountInvocation, AuthorityError, AuthoritySession},
 		statement_allowance::StatementAllowanceError,
 		statement_store_rpc::StatementStoreRpcClientError,
 	},
@@ -44,6 +44,22 @@ pub enum AllowanceAllocationError {
 		/// Chain runtime failure.
 		#[source]
 		source: RuntimeFailure,
+	},
+	/// The durable ledger did not register the PGAS claim.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[error("PGAS claim not registered: {0}")]
+	PgasClaimNotRegistered(
+		#[from] crate::durable::RegistrationError<crate::pgas_claims::PgasClaimError>,
+	),
+	/// The request stopped waiting before its PGAS claim reached a block.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[error("PGAS claim {claim:?} not delivered: {reason}")]
+	PgasClaimNotDelivered {
+		/// The claim's ledger id.
+		claim: crate::durable::DurableTxId,
+		/// Why the request stopped waiting.
+		#[source]
+		reason: crate::pgas_claims::UndeliveredClaim,
 	},
 	/// The signing account is not in any personhood ring.
 	#[error("signing account is not a personhood ring member; cannot grant {resource} allowance")]
@@ -348,13 +364,14 @@ impl WalletAccountHolder {
 	/// there is no key to hand back.
 	pub async fn allocate_smart_contract_allowance(
 		&self,
-		session: &AuthoritySession,
+		invocation: &AccountInvocation<'_>,
 		product_id: &ProductId,
 		derivation_index: api::DerivationIndex,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<(), AllowanceAllocationError> {
 		use crate::runtime::statement_allowance::pgas;
 
+		let session = invocation.session;
 		// PGAS credits the product account the caller named.
 		let target = self.with_keys(session, |keys| {
 			keys.product_keypair(&api::ProductAccountId {
@@ -380,16 +397,12 @@ impl WalletAccountHolder {
 		let signer = self.personhood_signer(session).await?;
 		let ring = self.strongest_personhood_ring(&signer).await?;
 		self.require_current_session(session)?;
-		let outcome =
-			pgas::claim_pgas(self.pgas_claim(&asset_hub, &ring, &signer, &target)).await?;
-		debug!(
-			%product_id,
-			day = outcome.day,
-			slot_index = outcome.slot_index,
-			ring_index = outcome.ring_index,
-			block = %outcome.block_hash,
-			"claimed PGAS allowance"
-		);
-		Ok(())
+		#[cfg(not(target_arch = "wasm32"))]
+		if let Some(claims) = self.services.pgas_claims() {
+			let request = super::pgas_delivery::DurablePgasClaim::new(session, target);
+			return request.deliver(&claims, invocation.call.cancel()).await;
+		}
+		self.claim_pgas_directly(product_id, self.pgas_claim(&asset_hub, &ring, &signer, &target))
+			.await
 	}
 }

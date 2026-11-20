@@ -3,6 +3,7 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
+use futures::channel::mpsc::UnboundedSender;
 use parking_lot::Mutex;
 use subxt::utils::AccountId32;
 use tempfile::TempDir;
@@ -10,17 +11,18 @@ use tempfile::TempDir;
 use super::{
 	PgasClaims,
 	builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder},
-	pgas_domain,
+	destination_group, pgas_domain,
 	policy::PgasClaimPolicy,
 };
 use crate::{
-	chain::WatchEvent,
+	chain::{DispatchOutcome, WatchEvent},
 	durable::{
 		DurableRegistry, DurableTxEngine, DurableTxId, DurableTxStatus, FakeChain, GENESIS,
-		Unobservable, engine_with, extrinsic,
+		Unobservable, block, block_hash, engine_with, extrinsic,
 	},
 	runtime::statement_allowance::pgas::{BuiltClaim, ClaimSlot},
 	test_support::wait_until,
+	time::ManualTimer,
 };
 
 /// The day every fake claim is built for.
@@ -107,6 +109,7 @@ pub struct ClaimsHarness {
 	_dir: TempDir,
 	chain: Arc<FakeChain>,
 	engine: Arc<DurableTxEngine>,
+	delivery_timer: Arc<ManualTimer>,
 	claims: PgasClaims,
 }
 
@@ -122,8 +125,9 @@ impl ClaimsHarness {
 			policy,
 		);
 		let (dir, engine, _timer) = engine_with(&chain, registry);
-		let claims = PgasClaims::new(engine.clone());
-		Self { _dir: dir, chain, engine, claims }
+		let delivery_timer = Arc::new(ManualTimer::default());
+		let claims = PgasClaims::new(engine.clone(), delivery_timer.clone());
+		Self { _dir: dir, chain, engine, delivery_timer, claims }
 	}
 
 	/// The claims under test.
@@ -136,10 +140,23 @@ impl ClaimsHarness {
 		&self.engine
 	}
 
+	/// The clock callers time out their wait for a claim on, apart from the
+	/// engine's.
+	pub fn delivery_timer(&self) -> &ManualTimer {
+		&self.delivery_timer
+	}
+
 	/// Registers a claim into `dest` as [`TEST_IDENTITY`], which must be
 	/// accepted.
 	pub fn claim_into(&self, dest: AccountId32) -> DurableTxId {
 		futures::executor::block_on(self.claims.claim(dest, TEST_IDENTITY)).unwrap()
+	}
+
+	/// Every claim into `dest`, in registration order.
+	pub fn claims_into(&self, dest: AccountId32) -> Vec<DurableTxId> {
+		let group = destination_group(&dest);
+		let claims = futures::executor::block_on(self.engine.group(&pgas_domain(), &group));
+		claims.unwrap().into_iter().map(|claim| claim.id).collect()
 	}
 
 	/// Where `id` stands.
@@ -152,13 +169,28 @@ impl ClaimsHarness {
 		wait_until(|| self.status(id) == status, "the claim reaches its status");
 	}
 
+	/// Registers a claim into `dest` as [`TEST_IDENTITY`] and takes it to a
+	/// best block. The builder must build.
+	pub fn claim_seen_in_best_block(&self, dest: AccountId32) -> DurableTxId {
+		let events = self.script_watch();
+		let id = self.claim_into(dest);
+		self.take_to_best_block(id, &events);
+		id
+	}
+
 	/// The events the next submitted claim reports, sent by the test.
-	pub fn script_watch(&self) -> futures::channel::mpsc::UnboundedSender<WatchEvent> {
+	pub fn script_watch(&self) -> UnboundedSender<WatchEvent> {
 		self.chain.script_watch()
 	}
 
-	/// The chain the claims are submitted to.
-	pub fn chain(&self) -> &FakeChain {
-		&self.chain
+	/// Takes claim `id`, whose attempt reports on `events`, to a best block
+	/// once it is submitted.
+	pub fn take_to_best_block(&self, id: DurableTxId, events: &UnboundedSender<WatchEvent>) {
+		self.wait_for(id, DurableTxStatus::Pending);
+		let submitted =
+			self.chain.state().submitted.last().expect("the claim was submitted").hash();
+		self.chain.include(135, submitted, DispatchOutcome::Succeeded);
+		events.unbounded_send(WatchEvent::InBestBlock(block_hash(135))).unwrap();
+		self.wait_for(id, DurableTxStatus::PendingSuccess { at: block(135) });
 	}
 }

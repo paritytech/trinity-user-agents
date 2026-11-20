@@ -1,15 +1,13 @@
 //! What a PGAS claim is built from: the Asset Hub it is built for and the
-//! People ring that proves the person, read for one wallet session.
+//! People ring that proves the person, read for one wallet session. Builds
+//! claims for the durable engine, and claims directly where none runs.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::BTreeSet;
 
+use tracing::debug;
+
 use super::{WalletAccountHolder, allowance::AllowanceAllocationError};
-use crate::runtime::statement_allowance::{
-	ChainClient, ChainContext, PersonhoodSigner, collection::PersonhoodCollection,
-	find_including_rings, pgas::PgasClaim, ring::RingParams, rpc::RpcClient,
-	slot::read_network_suffix,
-};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
 	pgas_claims::{ClaimBuildError, ClaimIdentity},
@@ -20,6 +18,18 @@ use crate::{
 			pgas::{BuiltClaim, ClaimSlot, build_pgas_claim},
 			slot::SlotError,
 		},
+	},
+};
+use crate::{
+	platform::ProductId,
+	runtime::statement_allowance::{
+		ChainClient, ChainContext, PersonhoodSigner,
+		collection::PersonhoodCollection,
+		find_including_rings,
+		pgas::{PgasClaim, claim_pgas},
+		ring::RingParams,
+		rpc::RpcClient,
+		slot::read_network_suffix,
 	},
 };
 
@@ -79,6 +89,25 @@ impl WalletAccountHolder {
 			.next()
 			.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
 		Ok(PersonhoodRing { people, context, membership })
+	}
+
+	/// Claims one PGAS slot as `claim` describes, submitting it here and
+	/// waiting until the pallet records it in a block.
+	pub async fn claim_pgas_directly(
+		&self,
+		product_id: &ProductId,
+		claim: PgasClaim<'_>,
+	) -> Result<(), AllowanceAllocationError> {
+		let outcome = claim_pgas(claim).await?;
+		debug!(
+			%product_id,
+			day = outcome.day,
+			slot_index = outcome.slot_index,
+			ring_index = outcome.ring_index,
+			block = %outcome.block_hash,
+			"claimed PGAS allowance"
+		);
+		Ok(())
 	}
 
 	/// A claim into `target` built for `asset_hub` and proved by `signer` in

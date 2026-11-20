@@ -1,22 +1,11 @@
 use super::*;
 use crate::{
-	chain::{DispatchOutcome, WatchEvent},
-	durable::{DurableTxFailureKind, block, block_hash, extrinsic},
+	durable::DurableTxFailureKind,
 	pgas_claims::testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination},
 };
 
 fn transient() -> ClaimBuildError {
 	ClaimBuildError::Transient(anyhow::anyhow!("the ring revision has not arrived"))
-}
-
-/// Takes the claim built in slot 0 to a best block, as a watch reports it.
-fn deliver_first_built_claim(harness: &ClaimsHarness, id: DurableTxId) {
-	let events = harness.script_watch();
-	harness.wait_for(id, DurableTxStatus::Pending);
-	let tx_hash = extrinsic(0, 130, 64).extrinsic.hash();
-	harness.chain().include(135, tx_hash, DispatchOutcome::Succeeded);
-	events.unbounded_send(WatchEvent::InBestBlock(block_hash(135))).unwrap();
-	harness.wait_for(id, DurableTxStatus::PendingSuccess { at: block(135) });
 }
 
 /// A caller finds its claim again by the destination alone, so the claim
@@ -65,36 +54,22 @@ fn an_active_claim_into_another_destination_does_not_refuse_a_claim() {
 #[test]
 fn a_claim_seen_in_a_best_block_no_longer_refuses_a_new_one() {
 	let harness = ClaimsHarness::new(FakeClaimBuilder::building());
-	let delivered = harness.claim_into(destination(7));
-	deliver_first_built_claim(&harness, delivered);
+	let delivered = harness.claim_seen_in_best_block(destination(7));
 
 	let next = futures::executor::block_on(harness.claims().claim(destination(7), TEST_IDENTITY));
 
 	assert!(next.is_ok_and(|id| id != delivered));
 }
 
-/// After an interruption, a caller re-attaches to the claim that is still
-/// under way.
+/// A failed claim is over, so it does not refuse a new one.
 #[test]
-fn the_active_claim_is_the_one_still_waiting_to_be_built() {
-	let harness = ClaimsHarness::new(FakeClaimBuilder::failing_with(transient));
-	let waiting = harness.claim_into(destination(7));
-
-	let active = futures::executor::block_on(harness.claims().active_claim(destination(7)));
-
-	assert_eq!(active.unwrap(), Some(waiting));
-}
-
-/// A failed claim is over, so it neither stands in for a new one nor
-/// refuses it.
-#[test]
-fn a_failed_claim_is_not_active() {
+fn a_failed_claim_no_longer_refuses_a_new_one() {
 	let harness =
 		ClaimsHarness::new(FakeClaimBuilder::failing_with(|| ClaimBuildError::NoPersonhood));
 	let failed = harness.claim_into(destination(7));
 	harness.wait_for(failed, DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
 
-	let active = futures::executor::block_on(harness.claims().active_claim(destination(7)));
+	let next = futures::executor::block_on(harness.claims().claim(destination(7), TEST_IDENTITY));
 
-	assert_eq!(active.unwrap(), None);
+	assert!(next.is_ok_and(|id| id != failed));
 }
