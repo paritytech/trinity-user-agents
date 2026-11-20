@@ -22,7 +22,6 @@ class ProductSources @Inject constructor(
         url,
         dotNsTldProvider.currentTldOrNull()?.value.orEmpty(),
         devServers.enabled,
-        emptyList(),
     )
 
     fun ofSpaPage(launchUrl: String): ProductSource? {
