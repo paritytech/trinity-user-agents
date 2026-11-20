@@ -12,6 +12,7 @@ use super::{
 	host_grants::{HostGrantGuard, HostGrantStore},
 	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
+	served::Served,
 	services::RuntimeServices,
 	signing_host::ring_vrf::{MemberCandidate, RingResolver, context_bytes, create_proof},
 	statement_allowance, vrf,
@@ -48,7 +49,9 @@ use zeroize::Zeroizing;
 /// A host role builds one and shares it with every product connection. Each
 /// product call is bound to the calling product and to the session it started
 /// under, and a signing, transaction, VRF or allocation request is confirmed
-/// with the user before the account holder acts on it. Kept grants are read
+/// with the user before the account holder acts on it. Accounts, keys and
+/// contexts a request names arrive [`Served`], so nothing is resolved for a
+/// product the stack does not serve. Kept grants are read
 /// under a revision that a product reset, a lock or a session change advances;
 /// grant work that began before the change fails `Disconnected`. A kept
 /// signing key is fenced on its own product instead, so resetting one product
@@ -197,7 +200,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		&self,
 		cx: &CallContext,
 		connection: &ProductConnection,
-		account: api::ProductAccountId,
+		account: Served<api::ProductAccountId>,
 	) -> Result<[u8; 32], AuthorityError> {
 		let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
 		let product = &connection.product;
@@ -232,7 +235,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		cx: &CallContext,
 		session: &AuthoritySession,
 		product: &ProductContext,
-		account: &api::ProductAccountId,
+		account: &Served<api::ProductAccountId>,
 	) -> Result<[u8; 32], AuthorityError> {
 		let subtree = self
 			.resolve_product_subtree(session, cx, product, &account.dot_ns_identifier, None)
@@ -695,7 +698,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let grant = self.grants.auto_signing_key(&current, &product.product_id).await?;
 		self.holder.require_current_session(session)?;
 		let product_id = &product.product_id;
-		Ok(grant.map(|grant| KeptSigningKey { accounts: self, session, product_id, grant, account }))
+		Ok(grant.map(|grant| KeptSigningKey {
+			accounts: self,
+			session,
+			product_id,
+			grant,
+			account,
+		}))
 	}
 
 	/// Sign with a kept product key, or confirm with the user and ask the holder.
@@ -756,7 +765,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let product = &connection.product;
 		let account = match &request {
 			SignRawAuthorityRequest::Product(payload) => Some(&payload.account),
-			SignRawAuthorityRequest::LegacyAccount { product_account, .. } => Some(product_account),
+			SignRawAuthorityRequest::LegacyAccount { product_account, .. } => {
+				Some(&**product_account)
+			},
 			SignRawAuthorityRequest::IdentityAccount { .. } => None,
 		};
 		// The unwatermarked API is never grant-covered, so a local signature
@@ -885,7 +896,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		cx: &CallContext,
 		connection: &ProductConnection,
-		request: api::HostAccountSignVrfRequest,
+		request: Served<api::HostAccountSignVrfRequest>,
 	) -> Result<api::VrfSignature, AuthorityError> {
 		let product = &connection.product;
 		if let Some(kept) = self.kept_signing_key(session, product, &request.account).await? {
@@ -907,13 +918,14 @@ impl<H: AccountHolder> HostAccounts<H> {
 		}
 		let review = UserConfirmationReview::SignVrf(SignVrfReview {
 			calling_product_id: product.product_id.clone(),
-			request: request.clone(),
+			request: api::HostAccountSignVrfRequest::clone(&request),
 		});
 		self.confirm(cx, session, connection, review).await?;
 		let cx = super::remote_authority_context(cx);
 		super::remote_authority_call(
 			&cx,
-			self.holder.sign_vrf(local_invocation(&cx, session, product), request),
+			self.holder
+				.sign_vrf(local_invocation(&cx, session, product), request.into_inner()),
 		)
 		.await
 	}
@@ -925,7 +937,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		cx: &CallContext,
 		connection: &ProductConnection,
-		account: api::ProductAccountId,
+		account: Served<api::ProductAccountId>,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
 		let product = &connection.product;
@@ -944,7 +956,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let review =
 			UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {
 				calling_product_id: Some(product.product_id.clone()),
-				account: account.clone(),
+				account: api::ProductAccountId::clone(&account),
 				payload: payload.clone(),
 			});
 		self.confirm_signature(
@@ -961,7 +973,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 			&cx,
 			self.holder.sign_statement_store_product_payload(
 				local_invocation(&cx, session, product),
-				account,
+				account.into_inner(),
 				payload,
 			),
 		)
@@ -1068,7 +1080,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
-		request: api::HostAccountGetAliasRequest,
+		request: Served<api::HostAccountGetAliasRequest>,
 	) -> Result<api::ContextualAlias, RingVrfError> {
 		let revision = self.grants.lifecycle().revision();
 		let cx = &super::remote_authority_context(cx);
@@ -1090,7 +1102,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 					context,
 				});
 			}
-			self.holder.account_alias(local_invocation(cx, session, product), request).await
+			self.holder
+				.account_alias(local_invocation(cx, session, product), request.into_inner())
+				.await
 		})
 		.await
 	}
@@ -1104,7 +1118,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
-		request: api::HostAccountCreateProofRequest,
+		request: Served<api::HostAccountCreateProofRequest>,
 	) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
 		let revision = self.grants.lifecycle().revision();
 		let cx = &super::remote_authority_context(cx);
@@ -1141,7 +1155,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 					ring_revision: resolved.ring_revision,
 				});
 			}
-			self.holder.create_proof(local_invocation(cx, session, product), request).await
+			self.holder
+				.create_proof(local_invocation(cx, session, product), request.into_inner())
+				.await
 		})
 		.await
 	}
@@ -1186,7 +1202,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
-		request: api::HostAccountListRingVrfKeysRequest,
+		request: Served<api::HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
 		let cx = &super::remote_authority_context(cx);
 		super::remote_authority_call(cx, async {
@@ -1202,7 +1218,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 				return Ok(entries);
 			}
 			self.holder
-				.list_ring_vrf_keys(local_invocation(cx, session, product), request)
+				.list_ring_vrf_keys(local_invocation(cx, session, product), request.into_inner())
 				.await
 		})
 		.await
@@ -1217,7 +1233,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
-		request: api::HostAccountRingVrfSignRequest,
+		request: Served<api::HostAccountRingVrfSignRequest>,
 	) -> Result<Vec<u8>, RingVrfError> {
 		let revision = self.grants.lifecycle().revision();
 		let cx = &super::remote_authority_context(cx);
@@ -1230,7 +1246,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 				let _lifecycle = self.hold_grant(session, revision)?;
 				return vrf.sign(&entropy, &request.message);
 			}
-			self.holder.ring_vrf_sign(local_invocation(cx, session, product), request).await
+			self.holder
+				.ring_vrf_sign(local_invocation(cx, session, product), request.into_inner())
+				.await
 		})
 		.await
 	}

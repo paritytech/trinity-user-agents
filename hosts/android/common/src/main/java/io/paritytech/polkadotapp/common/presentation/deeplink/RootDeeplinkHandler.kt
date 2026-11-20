@@ -4,10 +4,12 @@ import android.net.Uri
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import kotlinx.coroutines.withContext
+import uniffi.truapi.Stack
 import javax.inject.Inject
 
 class RootDeeplinkHandler @Inject constructor(
     private val coroutineDispatchers: CoroutineDispatchers,
+    private val stack: Stack?,
     private val handlers: Set<@JvmSuppressWildcards DeepLinkHandler>,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
@@ -24,5 +26,5 @@ class RootDeeplinkHandler @Inject constructor(
             ?: Result.failure(IllegalArgumentException("No matching handlers found to handle deeplink: $data"))
     }
 
-    private fun Uri.candidates(): List<Uri> = listOfNotNull(toAppSchemeDeeplinkOrNull(), this)
+    private fun Uri.candidates(): List<Uri> = listOfNotNull(stack?.let { toAppSchemeDeeplinkOrNull(it) }, this)
 }

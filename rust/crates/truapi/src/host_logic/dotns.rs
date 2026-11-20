@@ -6,8 +6,9 @@
 
 use crate::{
 	dotns_name::normalize_host,
-	platform::{ProductId, has_dotns_tld, normalize_chat_identifier},
+	platform::{ProductId, normalize_chat_identifier},
 	product_id::PRODUCT_SHARE_SUFFIX,
+	stack::Stack,
 };
 use url::{Url, form_urlencoded};
 
@@ -128,11 +129,13 @@ impl ProductLink {
 			return None;
 		}
 		let hostname = parsed.host_str()?;
+		// Try the direct reading too: when the network's TLD is the share
+		// suffix, the share reading gives a name one label shorter than the
+		// product.
 		let identifier = ProductId::from_share_host(hostname)
-			.or_else(|| normalize_host(hostname).parse::<ProductId>().ok())?;
-		if !identifier.matches_network(network_suffix) {
-			return None;
-		}
+			.into_iter()
+			.chain(normalize_host(hostname).parse::<ProductId>())
+			.find(|identifier| identifier.matches_network(network_suffix))?;
 		let route = if parsed.path().is_empty() { "/" } else { parsed.path() };
 		let path = route.to_string() + &suffix(&parsed);
 		let canonical_url = format!("{HTTPS_SCHEME}://{identifier}{path}");
@@ -140,12 +143,9 @@ impl ProductLink {
 	}
 }
 
-/// Public share domains for the canonical dotNS networks.
-pub fn product_share_hosts() -> Vec<String> {
-	crate::dotns_name::DOTNS_TLDS
-		.iter()
-		.map(|suffix| format!("{suffix}{PRODUCT_SHARE_SUFFIX}"))
-		.collect()
+/// Public share domains of the TLDs `stack` serves.
+pub fn product_share_hosts(stack: &Stack) -> Vec<String> {
+	stack.served_tlds().map(|tld| format!("{tld}{PRODUCT_SHARE_SUFFIX}")).collect()
 }
 
 fn join_url(scheme: &str, host: &str, path: &str) -> String {
@@ -154,17 +154,20 @@ fn join_url(scheme: &str, host: &str, path: &str) -> String {
 
 /// Classify a URL the way the host navigation handler does: try the Pocket
 /// deeplink first, then dotNS, then `localhost`, then normalize as external.
-pub fn parse_navigate(input: &str) -> NavigateDecision {
+///
+/// A name is dotNS only under a TLD the host's `stack` serves, so any other
+/// host is external.
+pub fn parse_navigate(input: &str, stack: &Stack) -> NavigateDecision {
 	let trimmed = input.trim();
 	if trimmed.is_empty() {
 		return NavigateDecision::Reject { reason: "empty input".to_string() };
 	}
 
-	if let Some(decision) = classify_pocket(trimmed) {
+	if let Some(decision) = classify_pocket(trimmed, stack) {
 		return decision;
 	}
 
-	if let Some(decision) = classify_dotns(trimmed) {
+	if let Some(decision) = classify_dotns(trimmed, stack) {
 		return decision;
 	}
 
@@ -178,12 +181,13 @@ pub fn parse_navigate(input: &str) -> NavigateDecision {
 	}
 }
 
-/// dotNS TLD check, applied to the [`normalize_host`] form so `Example.DOT`
-/// and the trailing-dot FQDN `example.dot.` classify like `example.dot`.
-/// Shares [`crate::platform::DOTNS_TLDS`] with product-identifier validation
-/// so navigation and derivation accept the same per-network names.
-fn is_dotns_domain(host: &str) -> bool {
-	has_dotns_tld(&normalize_host(host))
+/// Whether `host` ends in a TLD `stack` serves, applied to
+/// the [`normalize_host`] form so `Example.DOT` and the trailing-dot FQDN
+/// `example.dot.` classify like `example.dot`.
+fn is_dotns_domain(host: &str, stack: &Stack) -> bool {
+	normalize_host(host)
+		.rsplit_once('.')
+		.is_some_and(|(_, tld)| stack.serves_tld(tld))
 }
 
 fn parse_with_explicit_https(input: &str) -> Option<Url> {
@@ -199,7 +203,7 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 /// of the scheme maps it to [`APP_SCHEME`] before asking. Recognized ahead of
 /// the other `polkadotapp:` links, which need an `OpenUrl` grant: the Pocket is
 /// the host's own surface. `None` sends the input on to the other branches.
-fn classify_pocket(input: &str) -> Option<NavigateDecision> {
+fn classify_pocket(input: &str, stack: &Stack) -> Option<NavigateDecision> {
 	let url = Url::parse(input).ok().filter(|url| url.scheme() == APP_SCHEME)?;
 	if normalize_host(url.host_str()?) != POCKET_HOST {
 		return None;
@@ -237,10 +241,10 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 		});
 	};
 	let identifier = match product.parse::<ProductId>() {
-		Ok(identifier) if has_dotns_tld(identifier.as_str()) => identifier,
+		Ok(identifier) if !identifier.is_localhost() && stack.serves(&identifier) => identifier,
 		_ => {
 			return Some(NavigateDecision::Reject {
-				reason: "pocket deeplink names a product that is not a dotNS name".to_string(),
+				reason: "pocket deeplink names no dotNS product this host serves".to_string(),
 			});
 		},
 	};
@@ -306,11 +310,11 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 /// - `Some(DotName)` for a clean dotNS URL
 /// - `Some(Reject)` for a dotNS URL with port or userinfo
 /// - `None` when the input isn't a dotNS URL (caller falls through to localhost / external)
-fn classify_dotns(input: &str) -> Option<NavigateDecision> {
+fn classify_dotns(input: &str, stack: &Stack) -> Option<NavigateDecision> {
 	let parsed = parse_with_explicit_https(input)?;
 
 	let hostname = parsed.host_str()?;
-	if !is_dotns_domain(hostname) {
+	if !is_dotns_domain(hostname, stack) {
 		return None;
 	}
 

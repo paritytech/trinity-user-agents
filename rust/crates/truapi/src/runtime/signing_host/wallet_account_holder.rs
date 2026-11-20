@@ -38,12 +38,14 @@ use crate::{
 		contacts::ContactHandles,
 		product_consent::ProductConsent,
 		ring_vrf_registry::RingVrfRegistryStore,
+		served::{NamesProducts, Served, serve},
 		statement_allowance::{
 			PersonhoodSigner, StatementAllowanceError, collection::PersonhoodCollection, proof,
 			ring::RingParams,
 		},
 		vrf::{self, Vrf},
 	},
+	stack::Stack,
 };
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
@@ -192,6 +194,13 @@ impl WalletAccountHolder {
 		}
 	}
 
+	/// Wraps `value` in [`Served`] if the stack serves every product it names.
+	/// For a paired host's request, which does not pass through a product
+	/// connection.
+	pub fn serve<T: NamesProducts>(&self, value: T) -> Result<Served<T>, AuthorityError> {
+		Ok(serve(self.services.stack(), value)?)
+	}
+
 	/// This install's X25519 encryption secret, which contacts encrypt to and
 	/// pairing answers advertise.
 	///
@@ -257,7 +266,7 @@ impl WalletAccountHolder {
 		entropy: RootEntropy,
 		lite_username: Option<String>,
 	) -> Result<PreparedWalletActivation, AuthorityError> {
-		let keys = WalletKeys::new(entropy, self.services.stack().tld().to_string());
+		let keys = WalletKeys::new(entropy, self.services.stack().clone());
 		let public_key = keys.root_public_key()?;
 		let identity_account_id = keys.identity_keypair()?.public.to_bytes();
 		let identity_chat_private_key = keys.entropy.derive_identity_chat_private_key();
@@ -359,22 +368,30 @@ impl WalletAccountHolder {
 
 struct WalletKeys {
 	entropy: RootEntropy,
-	network_suffix: String,
+	stack: Stack,
 }
 
 impl WalletKeys {
-	fn new(entropy: RootEntropy, network_suffix: String) -> Self {
-		Self { entropy, network_suffix }
+	fn new(entropy: RootEntropy, stack: Stack) -> Self {
+		Self { entropy, stack }
 	}
 
 	fn root_public_key(&self) -> Result<[u8; 32], ProductAccountError> {
 		self.entropy.derive_root_keypair().map(|root| root.public.to_bytes())
 	}
 
+	/// Refuses a product the stack does not serve. Every derivation keyed by a
+	/// product id calls it first, so a paired host's request and a stored renewal
+	/// target, which reaches the wallet without a request, are checked as well.
+	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
+		Ok(self.stack.require_served(product_id)?)
+	}
+
 	fn product_subtree_keypair(
 		&self,
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
 		Ok(self.entropy.derive_product_subtree_keypair(product_id)?)
 	}
 
@@ -385,6 +402,7 @@ impl WalletKeys {
 		&self,
 		account: &ProductAccountId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(&account.dot_ns_identifier)?;
 		Ok(self.entropy.derive_product_keypair(
 			&account.dot_ns_identifier,
 			derivation_index_bytes(&account.derivation_index),
@@ -392,7 +410,7 @@ impl WalletKeys {
 	}
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
-		Ok(self.entropy.derive_identity_keypair(&self.network_suffix)?)
+		Ok(self.entropy.derive_identity_keypair(self.stack.tld())?)
 	}
 
 	fn identity_keypair_for(
@@ -414,6 +432,7 @@ impl WalletKeys {
 		&self,
 		handle: &ProductAccountId,
 	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
+		self.require_served(&handle.dot_ns_identifier)?;
 		self.entropy
 			.derive_ring_vrf_entropy(&handle.dot_ns_identifier, &handle.derivation_index)
 			.map(Zeroizing::new)
@@ -421,16 +440,17 @@ impl WalletKeys {
 	}
 
 	fn ring_vrf_domain_entropy(&self, product_id: &ProductId) -> Result<[u8; 32], AuthorityError> {
+		self.require_served(product_id)?;
 		Ok(self.entropy.derive_ring_vrf_domain_entropy(product_id)?)
 	}
 
 	fn personhood_entropy(&self, collection: PersonhoodCollection) -> Zeroizing<[u8; 32]> {
 		Zeroizing::new(match collection {
 			PersonhoodCollection::People => {
-				self.entropy.derive_full_person_ring_vrf_entropy(&self.network_suffix)
+				self.entropy.derive_full_person_ring_vrf_entropy(self.stack.tld())
 			},
 			PersonhoodCollection::LitePeople => {
-				self.entropy.derive_lite_person_ring_vrf_entropy(&self.network_suffix)
+				self.entropy.derive_lite_person_ring_vrf_entropy(self.stack.tld())
 			},
 		})
 	}
@@ -441,6 +461,7 @@ impl WalletKeys {
 		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
+		self.require_served(product_id)?;
 		self.entropy
 			.derive_product_entropy(product_id, context)
 			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
@@ -460,26 +481,31 @@ impl WalletKeys {
 	fn statement_allowance_key(
 		&self,
 		product_id: &ProductId,
-	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		self.entropy.derive_sr25519_hard_path(&[
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
+		Ok(self.entropy.derive_sr25519_hard_path(&[
 			"allowance",
 			"statement-store",
 			product_id.as_str(),
-		])
+		])?)
 	}
 
 	fn bulletin_allowance_key(
 		&self,
 		product_id: &ProductId,
-	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		self.entropy
-			.derive_sr25519_hard_path(&["allowance", "bulletin", product_id.as_str()])
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
+		Ok(self.entropy.derive_sr25519_hard_path(&[
+			"allowance",
+			"bulletin",
+			product_id.as_str(),
+		])?)
 	}
 
 	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO
 	/// encryption key, and the identity chat key.
 	fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
-		let statement = self.entropy.derive_identity_keypair(&self.network_suffix)?;
+		let statement = self.entropy.derive_identity_keypair(self.stack.tld())?;
 		let (encryption_secret_key, encryption_public_key) =
 			self.entropy.derive_x25519_keypair(SSO_ENCRYPTION_DOMAIN);
 		let identity_chat_private_key = self.entropy.derive_identity_chat_private_key();

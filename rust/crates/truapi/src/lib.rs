@@ -541,8 +541,7 @@ cfg_select! {
 		pub use wasm::{
 			WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
 			derive_product_account_public_key, describe_core_storage_key_for_wasm,
-			has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-			wire_schema_hash,
+			product_account_address, set_log_level, wire_schema_hash,
 		};
 	},
 	_ => {},

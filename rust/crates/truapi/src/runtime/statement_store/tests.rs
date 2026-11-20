@@ -11,7 +11,7 @@ use crate::{
 		root_entropy::RootEntropy,
 		statement_store::{MAX_MATCH_ANY_TOPICS, SUBMIT_STATEMENT_METHOD, TopicFilterKind},
 	},
-	platform::{CoreStorageKey, ProductContext},
+	platform::{CoreStorageKey, ProductContext, ProductId},
 	test_support::{
 		StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 		sso_session_info, sso_success_response_script, statement, stub_platform,

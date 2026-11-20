@@ -26,8 +26,9 @@ use truapi::Bytes32;
 #[cfg(feature = "mock")]
 pub mod mock;
 
+use crate::runtime::NamesProducts;
 pub use crate::{
-	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
+	dotns_name::{MAX_DNS_LABEL_LEN, is_dns_label},
 	product_id::{
 		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
 		REMOTE_PERMISSION_TRUSTED_LABELS,
@@ -35,7 +36,7 @@ pub use crate::{
 	stack::{
 		CoreStorageRecords, ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest,
 		StackFetchResponse, StackHost, StackRecords, StackRefresh, StackRefreshOutcome,
-		StackStatus,
+		StackStatus, UnservedProduct,
 	},
 };
 
@@ -213,6 +214,10 @@ impl SigningHostConfig {
 
 impl ProductContext {
 	/// A product context for an app.
+	///
+	/// Does not check the stack, because host administration works on products
+	/// of any network, for example to clear their data. Build a product the core
+	/// will run with [`Self::served_by`].
 	pub fn new(product_id: ProductId) -> Self {
 		Self::new_with_execution(product_id, ExecutableKind::App)
 	}
@@ -220,6 +225,19 @@ impl ProductContext {
 	/// A product context for a host-selected executable kind.
 	pub fn new_with_execution(product_id: ProductId, execution_kind: ExecutableKind) -> Self {
 		Self { product_id, execution_kind }
+	}
+
+	/// The product a host asks the core to run on `stack`.
+	///
+	/// Fails when the stack does not serve the product's TLD. Every bridge
+	/// builds a host-supplied product through here.
+	pub fn served_by(
+		stack: &Stack,
+		product_id: ProductId,
+		execution_kind: ExecutableKind,
+	) -> Result<Self, RuntimeConfigValidationError> {
+		stack.require_served(&product_id)?;
+		Ok(Self::new_with_execution(product_id, execution_kind))
 	}
 }
 
@@ -718,6 +736,10 @@ pub enum RuntimeConfigValidationError {
 	#[display("{_0}")]
 	#[from]
 	InvalidProductId(#[error(not(source))] ProductIdError),
+	/// The product's TLD is not one the host's stack serves.
+	#[display("{_0}")]
+	#[from]
+	UnservedProduct(UnservedProduct),
 }
 
 const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
@@ -1946,6 +1968,66 @@ pub enum UserConfirmationReview {
 	/// Move items out of an NFT purse the product does not own.
 	#[codec(index = 12)]
 	NftPurseDrain(NftPurseDrainReview),
+}
+
+/// The products a review names to the user: the caller, and the owner of each
+/// account, context or purse it asks about.
+impl NamesProducts for UserConfirmationReview {
+	fn products(&self) -> Vec<&ProductId> {
+		fn account<'a>(
+			calling: &'a Option<ProductId>,
+			account: &'a ProductAccountId,
+		) -> Vec<&'a ProductId> {
+			calling.iter().chain([&account.dot_ns_identifier]).collect()
+		}
+		fn legacy(account: &LegacySigningAccount) -> Vec<&ProductId> {
+			match account {
+				LegacySigningAccount::Identity => vec![],
+				LegacySigningAccount::Product(account) => vec![&account.dot_ns_identifier],
+			}
+		}
+		match self {
+			Self::SignPayload(SignPayloadReview::Product { calling_product_id, request }) => {
+				account(calling_product_id, &request.account)
+			},
+			Self::SignPayload(SignPayloadReview::LegacyAccount { account, .. }) => {
+				vec![&account.dot_ns_identifier]
+			},
+			Self::SignRaw(SignRawReview::Product { calling_product_id, request, .. }) => {
+				account(calling_product_id, &request.account)
+			},
+			Self::SignRaw(SignRawReview::LegacyAccount { account, .. }) => legacy(account),
+			Self::StatementStoreProductSign(review) => {
+				account(&review.calling_product_id, &review.account)
+			},
+			Self::CreateTransaction(CreateTransactionReview::Product {
+				calling_product_id,
+				payload,
+			}) => account(calling_product_id, &payload.signer),
+			Self::CreateTransaction(CreateTransactionReview::LegacyAccount { account, .. }) => {
+				legacy(account)
+			},
+			Self::AccountAlias(review) => {
+				vec![&review.calling_product_id, &review.context.product_id]
+			},
+			Self::CreateProof(review) => {
+				vec![&review.calling_product_id, &review.context.product_id]
+			},
+			Self::IdentityDisclosure(review) => vec![&review.product_id],
+			Self::ResourceAllocation(review) => vec![&review.calling_product_id],
+			Self::AccountAccess(review) => {
+				vec![&review.requesting_product_id, &review.target_product_id]
+			},
+			Self::SignVrf(review) => {
+				vec![&review.calling_product_id, &review.request.account.dot_ns_identifier]
+			},
+			Self::ProductSubtree(review) => vec![&review.product_id],
+			Self::NftPurseDrain(review) => match &review.owner {
+				NftPurseOwner::Product(owner) => vec![&review.calling_product_id, owner],
+				NftPurseOwner::Root => vec![&review.calling_product_id],
+			},
+		}
+	}
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.

@@ -16,7 +16,7 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::{CallError, ProductId, dotns_name::is_dns_label};
 
 pub use records::{CoreStorageRecords, ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
@@ -59,10 +59,29 @@ const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
+/// A product under a TLD the stack does not serve.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[display("product {product_id} is not under a TLD the {stack_tld} stack serves")]
+pub struct UnservedProduct {
+	/// The product that was named.
+	pub product_id: ProductId,
+	/// The stack's own TLD.
+	pub stack_tld: String,
+}
+
+/// A request naming such a product is malformed, the same as one whose id
+/// does not parse.
+impl<D> From<UnservedProduct> for CallError<D> {
+	fn from(error: UnservedProduct) -> Self {
+		CallError::MalformedFrame { reason: error.to_string() }
+	}
+}
+
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// the genesis hash of each chain role the core uses, and the Asset Hub
 /// contracts the core reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Object))]
 pub struct Stack {
 	network: String,
 	tld: String,
@@ -114,9 +133,9 @@ pub enum StackError {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
 	},
-	/// The TLD is not one the core serves dotNS names under.
-	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
-	UnsupportedTld {
+	/// The TLD is not a DNS label, so no dotNS name can end in it.
+	#[display("stack tld {tld:?} is not a lowercase DNS label")]
+	InvalidTld {
 		/// The descriptor's TLD.
 		tld: String,
 	},
@@ -197,8 +216,8 @@ impl Stack {
 		chains: StackChains,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
-		if !DOTNS_TLDS.contains(&tld.as_str()) {
-			return Err(StackError::UnsupportedTld { tld });
+		if !is_dns_label(&tld) {
+			return Err(StackError::InvalidTld { tld });
 		}
 		let StackChains { relay, asset_hub, people, bulletin } = chains;
 		if relay == Some([0; 32]) {
@@ -226,6 +245,41 @@ impl Stack {
 	/// account and for the person ring-VRF keys.
 	pub fn tld(&self) -> &str {
 		&self.tld
+	}
+
+	/// The dotNS TLDs this stack serves names under: Polkadot's reserved TLD,
+	/// then its own when it is another one.
+	///
+	/// The core has no other list of TLDs. Product ids, dotNS links and share
+	/// hosts are all judged against this one.
+	pub fn served_tlds(&self) -> impl Iterator<Item = &str> {
+		let own = (self.tld != RESERVED_TLD).then_some(self.tld.as_str());
+		[RESERVED_TLD].into_iter().chain(own)
+	}
+
+	/// Whether `tld` is one of [`Self::served_tlds`].
+	pub fn serves_tld(&self, tld: &str) -> bool {
+		self.served_tlds().any(|served| served == tld)
+	}
+
+	/// Whether this stack serves `product_id`: a localhost development id, or a
+	/// name under one of [`Self::served_tlds`].
+	pub fn serves(&self, product_id: &ProductId) -> bool {
+		product_id.network_suffix().is_none_or(|tld| self.serves_tld(tld))
+	}
+
+	/// [`Self::serves`] as a check: fails with the product and the stack's TLD.
+	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
+		if self.serves(product_id) {
+			return Ok(());
+		}
+		Err(UnservedProduct { product_id: product_id.clone(), stack_tld: self.tld.clone() })
+	}
+
+	/// Whether this stack gives `product_id` every `RemotePermission` without a
+	/// prompt: a trusted label under a TLD it serves.
+	pub fn trusts(&self, product_id: &ProductId) -> bool {
+		self.serves(product_id) && product_id.has_trusted_remote_permissions()
 	}
 
 	/// The stack's chains.

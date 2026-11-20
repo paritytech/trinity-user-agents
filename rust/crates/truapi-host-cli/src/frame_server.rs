@@ -40,7 +40,7 @@ use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, HostRuntime, PairingHost, ProductContext, ProductRuntime,
 	ProductRuntimeError, SigningHost,
-	platform::{ExecutableKind, ProductId},
+	platform::{ExecutableKind, ProductId, RuntimeConfigValidationError, Stack},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -74,11 +74,16 @@ pub struct ProductSelection {
 }
 
 impl ProductSelection {
-	/// Select the initial product identity.
-	pub fn new(product_id: ProductId, execution_kind: ExecutableKind) -> Arc<Self> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind);
+	/// Select the initial product identity. Fails when `stack`, the stack the
+	/// host runs, does not serve the product's TLD.
+	pub fn new(
+		product_id: ProductId,
+		execution_kind: ExecutableKind,
+		stack: &Stack,
+	) -> Result<Arc<Self>, RuntimeConfigValidationError> {
+		let product = ProductContext::served_by(stack, product_id, execution_kind)?;
 		let (current, _) = watch::channel(product);
-		Arc::new(Self { current, execution_kind })
+		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
 	/// The current product id.
@@ -86,17 +91,23 @@ impl ProductSelection {
 		self.current.borrow().product_id.clone()
 	}
 
-	/// Select a product, returning whether the selection changed.
-	pub fn select(&self, product_id: ProductId) -> bool {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind);
-		self.current.send_if_modified(|current| {
+	/// Select a product, returning whether the selection changed. Fails, and
+	/// keeps the selection, when `stack`, the stack the host runs, does not
+	/// serve the product's TLD.
+	pub fn select(
+		&self,
+		product_id: ProductId,
+		stack: &Stack,
+	) -> Result<bool, RuntimeConfigValidationError> {
+		let product = ProductContext::served_by(stack, product_id, self.execution_kind)?;
+		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false
 			} else {
 				*current = product;
 				true
 			}
-		})
+		}))
 	}
 
 	fn subscribe(&self) -> watch::Receiver<ProductContext> {

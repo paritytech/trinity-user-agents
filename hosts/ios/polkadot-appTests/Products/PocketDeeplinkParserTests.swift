@@ -7,7 +7,11 @@ import struct TrUAPIHost.ProductId
 /// Classification goes through the core's own `parse_navigate`, so every host
 /// reads a Pocket link the same way rather than parsing the string itself.
 struct PocketDeeplinkParserTests {
-    let parser = PocketDeeplinkParser()
+    let parser: PocketDeeplinkParser
+
+    init() throws {
+        parser = PocketDeeplinkParser(stack: try TrUAPIBundledStack.paseoNextV2.open())
+    }
 
     private func classify(_ link: String) -> PocketLinkClassification {
         parser.classify(URL(string: link)!)
@@ -100,5 +104,24 @@ struct PocketDeeplinkParserTests {
     @Test
     func doesNotClaimAWebUrl() {
         #expect(classify("https://pocket/add?product=game.dot&card=loyalty") == .notOurs)
+    }
+
+    /// The stack serves its own TLD and Polkadot's, so a card of another
+    /// network's product is a Pocket link the core refuses.
+    @Test
+    func readsACardOfAnotherNetworksProductAsMalformed() {
+        guard case .pocket = classify("polkadotapp://pocket/add?product=game.paseo&card=loyalty") else {
+            Issue.record("expected the network's own product to be read")
+            return
+        }
+        #expect(classify("polkadotapp://pocket/add?product=game.testnet&card=loyalty") == .malformed)
+    }
+
+    /// Which products are served is unknown without the stack, so no link is
+    /// claimed when the bundled stack could not be opened.
+    @Test
+    func claimsNoLinkWithoutAStack() {
+        let parser = PocketDeeplinkParser(stack: nil)
+        #expect(parser.classify(URL(string: "polkadotapp://pocket")!) == .notOurs)
     }
 }

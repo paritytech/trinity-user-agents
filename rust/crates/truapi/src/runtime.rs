@@ -37,6 +37,7 @@ mod product_subtree;
 mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
+mod served;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
@@ -85,6 +86,7 @@ pub use host_accounts::HostAccounts;
 pub use pairing_host::PairingHost;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
+pub use served::{NamesProducts, Served, serve};
 pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
@@ -208,7 +210,7 @@ const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the
 
 #[derive(Clone)]
 enum LegacySigner {
-	Product(latest::ProductAccountId),
+	Product(Served<latest::ProductAccountId>),
 	Identity([u8; 32]),
 }
 
@@ -474,9 +476,14 @@ impl ProductConnection {
 	}
 
 	fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
-		PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
-			.with_status_host(self.permission_status.as_deref())
-			.with_temporary_permissions(self.temporary_permissions.clone())
+		PermissionsService::new(
+			self.platform.as_ref(),
+			self.platform.as_ref(),
+			&self.product,
+			self.services.stack(),
+		)
+		.with_status_host(self.permission_status.as_deref())
+		.with_temporary_permissions(self.temporary_permissions.clone())
 	}
 
 	/// Trusted executable kind attached to this product connection.
@@ -502,6 +509,12 @@ impl ProductConnection {
 
 	fn product_id(&self) -> &ProductId {
 		&self.product.product_id
+	}
+
+	/// Wraps `value` in [`Served`] if the stack serves every product it names.
+	/// Otherwise the request is malformed and nothing is looked up for it.
+	fn serve<T: NamesProducts, D>(&self, value: T) -> Result<Served<T>, CallError<D>> {
+		Ok(serve(self.services.stack(), value)?)
 	}
 
 	// Foreign reads must keep the authorized owner, not the calling product.
@@ -901,23 +914,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		}
 	}
 
-	async fn legacy_slot_zero_public_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-	) -> Result<[u8; 32], AuthorityError> {
-		self.accounts
-			.product_account_public_key(
-				cx,
-				session,
-				&latest::ProductAccountId {
-					dot_ns_identifier: self.connection.product_id().clone(),
-					derivation_index: latest::DerivationIndex::Index(0),
-				},
-			)
-			.await
-	}
-
 	async fn classify_legacy_address_signer(
 		&self,
 		cx: &CallContext,
@@ -939,12 +935,17 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		if session.identity_account_id == Some(requested_key) {
 			return Ok(LegacySigner::Identity(requested_key));
 		}
-		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
-		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product(latest::ProductAccountId {
+		let slot_zero = serve(
+			self.connection.services.stack(),
+			latest::ProductAccountId {
 				dot_ns_identifier: self.connection.product_id().clone(),
 				derivation_index: latest::DerivationIndex::Index(0),
-			}));
+			},
+		)
+		.map_err(AuthorityError::from)?;
+		let public_key = self.accounts.product_account_public_key(cx, session, &slot_zero).await?;
+		if requested_key == public_key {
+			return Ok(LegacySigner::Product(slot_zero));
 		}
 		Err(LegacySignerError::Unavailable)
 	}

@@ -261,10 +261,10 @@ impl AccountHolder for RemoteAccountHolder {
 		request: SignPayloadAuthorityRequest,
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
-			SignPayloadAuthorityRequest::Product(request) => request,
+			SignPayloadAuthorityRequest::Product(request) => request.into_inner(),
 			SignPayloadAuthorityRequest::LegacyAccount { product_account, request } => {
 				latest::HostSignPayloadRequest {
-					account: product_account,
+					account: product_account.into_inner(),
 					payload: request.payload,
 				}
 			},
@@ -281,9 +281,12 @@ impl AccountHolder for RemoteAccountHolder {
 		watermarked: bool,
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
-			SignRawAuthorityRequest::Product(request) => request,
+			SignRawAuthorityRequest::Product(request) => request.into_inner(),
 			SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
-				latest::HostSignRawRequest { account: product_account, payload: request.payload }
+				latest::HostSignRawRequest {
+					account: product_account.into_inner(),
+					payload: request.payload,
+				}
 			},
 			SignRawAuthorityRequest::IdentityAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
@@ -324,7 +327,7 @@ impl AccountHolder for RemoteAccountHolder {
 					&invocation,
 					CreateTransactionRequest {
 						payload: CreateTransactionPayload::V1(SsoProductTxPayload::from_resolved(
-							payload,
+							payload.into_inner(),
 						)),
 					},
 				)
@@ -335,7 +338,7 @@ impl AccountHolder for RemoteAccountHolder {
 					&invocation,
 					CreateTransactionRequest {
 						payload: CreateTransactionPayload::V1(SsoProductTxPayload {
-							signer: product_account,
+							signer: product_account.into_inner(),
 							genesis_hash: request.genesis_hash,
 							call_data: request.call_data,
 							extensions: request.extensions,

@@ -456,10 +456,11 @@ impl AccountHolder for WalletAccountHolder {
 			self.with_keys(invocation.session, |keys| {
 				let (account, payload) = match request {
 					SignPayloadAuthorityRequest::Product(request) => {
+						let request = request.into_inner();
 						(request.account, request.payload)
 					},
 					SignPayloadAuthorityRequest::LegacyAccount { product_account, request } => {
-						(product_account, request.payload)
+						(product_account.into_inner(), request.payload)
 					},
 				};
 				Ok(sign_extrinsic_payload(&keys.product_keypair(&account)?, payload)?)
@@ -480,6 +481,7 @@ impl AccountHolder for WalletAccountHolder {
 			self.with_keys(invocation.session, |keys| {
 				let (keypair, payload) = match request {
 					SignRawAuthorityRequest::Product(request) => {
+						let request = request.into_inner();
 						(keys.product_keypair(&request.account)?, request.payload)
 					},
 					SignRawAuthorityRequest::LegacyAccount { product_account, request } => {

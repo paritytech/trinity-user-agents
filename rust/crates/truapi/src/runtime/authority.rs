@@ -2,7 +2,7 @@
 //!
 //! Caller origin separates local host permissions from remote wallet consent.
 
-use super::allowances::AllowanceResource;
+use super::{allowances::AllowanceResource, served::Served};
 use crate::platform::{ProductContext, ProductId};
 use truapi::{
 	CallContext, CancellationReason,
@@ -31,6 +31,7 @@ use crate::{
 		session::{SessionInfo, SessionState},
 		statement_store::statement_public_key_from_secret,
 	},
+	stack::UnservedProduct,
 };
 
 use super::sso_remote::{
@@ -283,6 +284,12 @@ impl From<RawPayloadError> for AuthorityError {
 	}
 }
 
+impl From<UnservedProduct> for AuthorityError {
+	fn from(error: UnservedProduct) -> Self {
+		Self::NotSupported { reason: error.to_string() }
+	}
+}
+
 impl From<AuthorityError> for RingVrfError {
 	fn from(err: AuthorityError) -> Self {
 		match err {
@@ -327,29 +334,32 @@ impl AuthorityCancelError {
 	}
 }
 
-/// Payload-signing request selected by the product API entrypoint.
+/// Payload-signing request selected by the product API entrypoint. Its
+/// product account is [`Served`], so it can only be built for a product the
+/// stack serves.
 #[derive(Clone)]
 pub enum SignPayloadAuthorityRequest {
 	/// Sign a payload with a product-derived account.
-	Product(HostSignPayloadRequest),
+	Product(Served<HostSignPayloadRequest>),
 	/// Sign a payload through the legacy-account API.
 	LegacyAccount {
 		/// Product slot-zero account that backs the validated legacy signer.
-		product_account: ProductAccountId,
+		product_account: Served<ProductAccountId>,
 		/// Original legacy-account request.
 		request: HostSignPayloadWithLegacyAccountRequest,
 	},
 }
 
-/// Raw-signing request selected by the product API entrypoint.
+/// Raw-signing request selected by the product API entrypoint. Its
+/// product account is [`Served`].
 #[derive(Clone)]
 pub enum SignRawAuthorityRequest {
 	/// Sign raw data with a product-derived account.
-	Product(HostSignRawRequest),
+	Product(Served<HostSignRawRequest>),
 	/// Sign raw data through the legacy-account API.
 	LegacyAccount {
 		/// Product slot-zero account backing the validated legacy signer.
-		product_account: ProductAccountId,
+		product_account: Served<ProductAccountId>,
 		/// Original legacy-account request.
 		request: HostSignRawWithLegacyAccountRequest,
 	},
@@ -363,14 +373,15 @@ pub enum SignRawAuthorityRequest {
 }
 
 /// Transaction-creation request selected by the product API entrypoint.
+/// Its product account is [`Served`].
 #[derive(Clone)]
 pub enum CreateTransactionAuthorityRequest {
 	/// Create a transaction with a product-derived account.
-	Product(ProductAccountTxPayload),
+	Product(Served<ProductAccountTxPayload>),
 	/// Create a transaction through the legacy-account API using the product slot-zero account.
 	LegacyAccount {
 		/// Product slot-zero account that backs the validated legacy signer.
-		product_account: ProductAccountId,
+		product_account: Served<ProductAccountId>,
 		/// Original legacy-account transaction request.
 		request: LegacyAccountTxPayload,
 	},
@@ -385,10 +396,10 @@ impl SignPayloadAuthorityRequest {
 		UserConfirmationReview::SignPayload(match self {
 			Self::Product(request) => SignPayloadReview::Product {
 				calling_product_id: caller.product_id().cloned(),
-				request: request.clone(),
+				request: HostSignPayloadRequest::clone(request),
 			},
 			Self::LegacyAccount { product_account, request } => SignPayloadReview::LegacyAccount {
-				account: product_account.clone(),
+				account: ProductAccountId::clone(product_account),
 				request: request.clone(),
 			},
 		})
@@ -406,11 +417,11 @@ impl SignRawAuthorityRequest {
 		UserConfirmationReview::SignRaw(match self {
 			Self::Product(request) => SignRawReview::Product {
 				calling_product_id: caller.product_id().cloned(),
-				request: request.clone(),
+				request: HostSignRawRequest::clone(request),
 				watermarked,
 			},
 			Self::LegacyAccount { product_account, request } => SignRawReview::LegacyAccount {
-				account: LegacySigningAccount::Product(product_account.clone()),
+				account: LegacySigningAccount::Product(ProductAccountId::clone(product_account)),
 				request: request.clone(),
 				watermarked,
 			},
@@ -432,11 +443,13 @@ impl CreateTransactionAuthorityRequest {
 		UserConfirmationReview::CreateTransaction(match self {
 			Self::Product(payload) => CreateTransactionReview::Product {
 				calling_product_id: caller.product_id().cloned(),
-				payload: payload.clone(),
+				payload: ProductAccountTxPayload::clone(payload),
 			},
 			Self::LegacyAccount { product_account, request } => {
 				CreateTransactionReview::LegacyAccount {
-					account: LegacySigningAccount::Product(product_account.clone()),
+					account: LegacySigningAccount::Product(ProductAccountId::clone(
+						product_account,
+					)),
 					payload: request.clone(),
 				}
 			},

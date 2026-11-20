@@ -3804,3 +3804,48 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
+
+#[test]
+fn share_hosts_require_a_tld_the_stack_serves() {
+	let stack = crate::test_support::test_stack("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	for (input, expected) in [
+		("BROWSE.TESTNET.LI", Some("browse.testnet")),
+		("browse.dot.li", Some("browse.dot")),
+		("browse.paseo.li", None),
+		("browse.test.li", None),
+		("browse.dot", None),
+		("https://browse.dot.li", None),
+		("localhost.li", None),
+	] {
+		assert_eq!(
+			stack.parse_product_share_host(input.to_string()),
+			expected.map(ProductId::for_test),
+			"{input}"
+		);
+	}
+}
+
+/// A host opens the stack its build bundles before the runtime starts and
+/// takes its share hosts and trusted products from it, so it never supplies a
+/// TLD of its own. A copy the build does not allow is refused the same way the
+/// runtime refuses it.
+#[test]
+fn a_host_reads_links_and_trust_from_the_bundled_stack() {
+	let open = |tld: &str, allows_reserved_values| {
+		let descriptor =
+			crate::test_support::test_descriptor(tld, [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+		let (pointer, descriptor) = crate::test_support::sign_test_descriptor(&descriptor);
+		Stack::open_bundled(BundledStack { pointer, descriptor, allows_reserved_values })
+	};
+
+	let fork = open("fork", false).expect("a fork's stack opens");
+	assert_eq!(
+		(
+			fork.product_share_hosts(),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.fork")),
+			fork.has_trusted_remote_permissions(ProductId::for_test("peopl.paseo")),
+		),
+		(vec!["dot.li".to_owned(), "fork.li".to_owned()], true, false)
+	);
+	assert!(matches!(open("dot", false), Err(NativeRuntimeConfigError::Invalid { .. })));
+}

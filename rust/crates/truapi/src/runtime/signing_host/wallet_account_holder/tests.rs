@@ -108,3 +108,32 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 		RingVrfError::Unknown { reason } if reason.contains("does not match the active wallet")
 	));
 }
+
+/// Every derivation keyed by a product id refuses a product the stack does
+/// not serve, whoever asked for it. A paired host's request reaches these
+/// without a handler's check.
+#[test]
+fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
+	let keys = WalletKeys::new(RootEntropy::new([7; 32]), crate::test_support::paseo_test_stack());
+	let derives = |product: &str| {
+		let product_id = ProductId::for_test(product);
+		let account = ProductAccountId {
+			dot_ns_identifier: product_id.clone(),
+			derivation_index: DerivationIndex::Index(0),
+		};
+		[
+			keys.product_subtree_keypair(&product_id).is_ok(),
+			keys.product_keypair(&account).is_ok(),
+			keys.ring_vrf_entropy(&account).is_ok(),
+			keys.ring_vrf_domain_entropy(&product_id).is_ok(),
+			keys.derive_entropy(&product_id, b"context").is_ok(),
+			keys.statement_allowance_key(&product_id).is_ok(),
+			keys.bulletin_allowance_key(&product_id).is_ok(),
+		]
+	};
+
+	assert_eq!(derives("myapp.paseo"), [true; 7]);
+	assert_eq!(derives("myapp.dot"), [true; 7]);
+	assert_eq!(derives("myapp.testnet"), [false; 7]);
+	assert_eq!(derives("example.com"), [false; 7]);
+}

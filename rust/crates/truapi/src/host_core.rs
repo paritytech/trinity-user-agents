@@ -22,7 +22,8 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
 	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, Stack,
+	TopUpPlatform,
 };
 use futures::{
 	StreamExt,
@@ -309,10 +310,22 @@ impl<Role> HostRuntime<Role> {
 		self.services.contact_handles.clear();
 	}
 
+	/// The stack this host runs.
+	pub fn stack(&self) -> &Stack {
+		self.services.stack()
+	}
+
 	/// Reference counts per product worker, shared by every connection of
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
 		&self.services.worker_ledger
+	}
+
+	/// Take one reference on the product's worker for a modality holder. A
+	/// product the stack does not serve is logged and dropped, since its
+	/// worker can never open.
+	pub fn acquire_worker(&self, product_id: &ProductId) {
+		self.services.acquire_worker(product_id);
 	}
 
 	/// Report that the product's worker stopped without being asked to:

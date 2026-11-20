@@ -32,10 +32,7 @@ use crate::{
 		},
 		worker_manifest::{WorkerManifest, check_app_manifest},
 	},
-	runtime::{
-		dotns_lookup::DotnsLookup,
-		services::RuntimeServices,
-	},
+	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
 	unix_time::current_unix_secs,
 };
 
@@ -55,25 +52,17 @@ const APP_SUBNAME: &str = "app";
 /// The two are one answer because a caller cannot act on the difference.
 ///
 /// The TLD the identifier carries is discarded and the node re-derived under
-/// the TLD the network reports. A product id is minted on one network but
-/// [`DOTNS_TLDS`][tlds] spans them all, so `dim2.dot` reaching a `.paseo`
-/// deployment has to resolve there rather than hash a name no registry holds.
-///
-/// [tlds]: crate::platform::DOTNS_TLDS
+/// the TLD the network reports. A stack also serves `dot` names, so `dim2.dot`
+/// on a `paseo` deployment resolves as `dim2.paseo`: no registry there holds a
+/// `dim2.dot` node.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
 async fn fetch_root_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
 ) -> Result<Option<String>, DotnsError> {
-	fetch_text_record(
-		chain,
-		asset_hub_chain_genesis_hash,
-		product_id,
-		None,
-		MANIFEST_RECORD_KEY,
-	)
-	.await
+	fetch_text_record(chain, asset_hub_chain_genesis_hash, product_id, None, MANIFEST_RECORD_KEY)
+		.await
 }
 
 /// Reads the JSON `product_id`'s `worker.<product_id>.<tld>` subname publishes
@@ -281,6 +270,10 @@ pub enum ManifestSource {
 	/// The lookup ran past [`MANIFEST_RESOLUTION_CEILING`].
 	#[display("dotNS lookup timed out")]
 	TimedOut,
+	/// The product is under a TLD the stack does not serve, so nothing was
+	/// read for it.
+	#[display("not a product of this stack")]
+	Unserved,
 }
 
 /// Why a grant lookup refused, with what it judged by.
@@ -669,24 +662,34 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
-	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), CachePolicy::UseCache, || async {
-		let genesis_hash = services.asset_hub_chain_genesis_hash();
-		let (chain, target) = (services.chain.clone(), target.clone());
-		services
-			.dotns_reads
-			.root_manifests
-			.run(target.bare_label().to_string(), move || async move {
-				fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
-					let reason = error.reason();
-					warn!(%target, %reason, "root manifest lookup failed");
-					ManifestSource::LookupFailed { reason }
+	// The read below drops the TLD and caches by bare label, so an
+	// unserved `foo.testnet` would get `foo.paseo`'s manifest.
+	if services.stack().require_served(target).is_err() {
+		return (None, ManifestSource::Unserved);
+	}
+	let read = cached_dotns_json(
+		platform,
+		CoreStorageKey::product_manifest(target),
+		CachePolicy::UseCache,
+		|| async {
+			let genesis_hash = services.asset_hub_chain_genesis_hash();
+			let (chain, target) = (services.chain.clone(), target.clone());
+			services
+				.dotns_reads
+				.root_manifests
+				.run(target.bare_label().to_string(), move || async move {
+					fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
+						let reason = error.reason();
+						warn!(%target, %reason, "root manifest lookup failed");
+						ManifestSource::LookupFailed { reason }
+					})
 				})
-			})
-			.await
-			.unwrap_or_else(|| {
-				Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
-			})
-	})
+				.await
+				.unwrap_or_else(|| {
+					Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
+				})
+		},
+	)
 	.await;
 	match read {
 		Ok((json, DotnsRead::Cached { age_secs })) => (json, ManifestSource::Cached { age_secs }),
@@ -710,22 +713,28 @@ pub async fn read_worker_manifest(
 	product_id: &ProductId,
 	policy: CachePolicy,
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
-	let (json, read) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
-		let genesis_hash = services.asset_hub_chain_genesis_hash();
-		let (chain, product) = (services.chain.clone(), product_id.clone());
-		services
-			.dotns_reads
-			.worker_manifests
-			.run(product_id.bare_label().to_string(), move || async move {
-				fetch_worker_manifest(&chain, genesis_hash, &product)
-					.await
-					.map_err(|error| error.reason())
-			})
-			.await
-			.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
-	})
-	.await
-	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
+	if services.stack().require_served(product_id).is_err() {
+		// Reported as just fetched: there is nothing to refresh for an
+		// id the stack does not serve.
+		return Ok((None, DotnsRead::Fetched));
+	}
+	let (json, read) =
+		cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
+			let genesis_hash = services.asset_hub_chain_genesis_hash();
+			let (chain, product) = (services.chain.clone(), product_id.clone());
+			services
+				.dotns_reads
+				.worker_manifests
+				.run(product_id.bare_label().to_string(), move || async move {
+					fetch_worker_manifest(&chain, genesis_hash, &product)
+						.await
+						.map_err(|error| error.reason())
+				})
+				.await
+				.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
+		})
+		.await
+		.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
 	let Some(json) = json else {
 		return Ok((None, read));
 	};
@@ -775,11 +784,19 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
-	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), CachePolicy::UseCache, || async {
-		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
-			.await
-			.map_err(|error| error.reason())
-	});
+	if services.stack().require_served(product_id).is_err() {
+		return Some(false);
+	}
+	let read = cached_dotns_json(
+		platform,
+		app_manifest_cache_key(product_id),
+		CachePolicy::UseCache,
+		|| async {
+			fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
+				.await
+				.map_err(|error| error.reason())
+		},
+	);
 	let (json, _) = with_ceiling(ceiling, read)
 		.await?
 		.inspect_err(|reason| warn!(%product_id, %reason, "app manifest lookup failed"))
