@@ -39,17 +39,20 @@ pub use crate::evm_contract::{EvmContractCaller, EvmContractError, PreparedEvmTr
 pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
-	DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder,
-	ExtrinsicService, ExtrinsicServiceDeps, ExtrinsicVersion, InheritedImplication,
-	SubstrateSigner, TransactionExtension,
+	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicService,
+	InheritedImplication, SubstrateSigner, TransactionExtension,
 };
+#[cfg(test)]
+pub use extrinsic::DEFAULT_MORTALITY_PERIOD;
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use runtime_api::{RpcClientAtBlock, RuntimeApiCaller};
 pub use storage_watch::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
-	StorageWatchError, WatchedHead, WatchedStorage,
+	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageWatchError, WatchedHead,
+	WatchedStorage,
 };
+#[cfg(test)]
+pub use storage_watch::StorageSnapshot;
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 

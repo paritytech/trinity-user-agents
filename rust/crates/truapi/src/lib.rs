@@ -398,7 +398,7 @@ cfg_select! {
 	feature = "runtime" => {
 		pub mod background_task;
 		pub mod bootstrap;
-		pub mod chain;
+		mod chain;
 		mod chain_runtime;
 		mod dispatcher;
 		mod dotns_views;
@@ -484,6 +484,10 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
+		pub use chain::{
+			EvmContractCaller, EvmContractError, ExtrinsicBuilder, ExtrinsicService,
+			PreparedEvmTransaction, RuntimeApiCaller,
+		};
 		pub use host_core::{
 			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
 			ProductRuntime, ProductRuntimeControl, ProductRuntimeError,

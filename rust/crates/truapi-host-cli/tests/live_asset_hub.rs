@@ -185,7 +185,7 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use truapi::{
-	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	EvmContractCaller, EvmContractError, RuntimeApiCaller,
 	host_logic::dotns_gateway::{
 		DotnsError, DotnsRegistrar, DotnsTransport, classify_labels, discover_pop_controller,
 		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,

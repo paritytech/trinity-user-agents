@@ -15,8 +15,8 @@ use truapi::latest::GenericError;
 use super::ExtrinsicService;
 use crate::{
 	chain::{
-		BlockBackend, ExtrinsicBuildError, ExtrinsicVersion, HashAndNumber, MortalExtrinsic, Node,
-		method_count, serve,
+		BlockBackend, ExtrinsicBuildError, HashAndNumber, MortalExtrinsic, Node, method_count, serve,
+		extrinsic::ExtrinsicVersion,
 	},
 	host_internal::extrinsic::{Sr25519Signer, tests::split_v4},
 	platform::{ChainExtensionVersion, ExtensionVersionMap, ExtrinsicVersionHost},

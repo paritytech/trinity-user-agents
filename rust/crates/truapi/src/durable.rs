@@ -1,7 +1,7 @@
 //! Durable transactions: a ledger in the core database that follows signed
 //! extrinsics from registration to a verdict, across crashes and restarts.
 //!
-//! A domain registers presigned [`MortalExtrinsic`](crate::chain::MortalExtrinsic)s
+//! A domain registers presigned `MortalExtrinsic`s
 //! in its own write and observes their status; the engine broadcasts them,
 //! watches them, and decides every one it no longer watches from the chain.
 //! Signed bytes are never persisted, so a transaction left live by a previous

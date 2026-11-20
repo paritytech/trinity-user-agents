@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
-	chain::{EvmContractCaller, EvmContractError},
+	EvmContractCaller, EvmContractError,
 	host_logic::dotns_gateway::{
 		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, claim_blocker,
 		classify_labels, label_available, lite_label_owner_key, resolve_labels, timestamp_now_key,

@@ -5,10 +5,9 @@ use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use subxt::tx::Signer;
 use truapi::{
-	CallContext, HostAdmin, HostRuntime, PROFILE_RECORD_KEY, ProfileRecordLocation, SigningHost,
-	Sr25519Signer,
+	CallContext, EvmContractCaller, HostAdmin, HostRuntime, PROFILE_RECORD_KEY,
+	PreparedEvmTransaction, ProfileRecordLocation, SigningHost, Sr25519Signer,
 	api::{Preimage, ResourceAllocation},
-	chain::{EvmContractCaller, PreparedEvmTransaction},
 	host_logic::{
 		dotns_gateway::{ContentResolver, DotnsRegistry, account_to_h160, read_view},
 		product_account::personhood_product_id,

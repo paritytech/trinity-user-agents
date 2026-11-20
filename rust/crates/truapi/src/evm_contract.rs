@@ -57,14 +57,14 @@ pub enum EvmContractError {
 	/// Sending failed or the watch ended before a finalized block included
 	/// the extrinsic. The node may have received it, so a block can still
 	/// include it until its era ends: follow `extrinsic` through
-	/// [`Mortality::death`](crate::chain::Mortality::death) before signing the
+	/// `Mortality::death` before signing the
 	/// write again. Resubmitting the same `extrinsic` is safe, since its
 	/// nonce lets the chain include it at most once; signing a new one is not.
 	#[error("extrinsic {hash:?} was not finalized: {event:?}", hash = .extrinsic.extrinsic.hash())]
 	NotFinalized {
 		/// The submitted extrinsic and its era.
 		extrinsic: Box<MortalExtrinsic>,
-		/// The event that ended the watch, [`WatchEvent::Error`] when sending
+		/// The event that ended the watch, `WatchEvent::Error` when sending
 		/// or watching failed.
 		event: WatchEvent,
 	},
@@ -91,7 +91,7 @@ pub enum EvmContractError {
 	/// too, as `Revive::ContractReverted`, without its revert reason.
 	#[error("the extrinsic failed to dispatch: {detail}")]
 	DispatchFailed {
-		/// The dispatch error as [`DispatchOutcome::Failed`] reports it: named
+		/// The dispatch error as `DispatchOutcome::Failed` reports it: named
 		/// by the block's runtime metadata, or
 		/// `undecodable dispatch error 0x<fields>: <cause>` when it does not
 		/// decode.
