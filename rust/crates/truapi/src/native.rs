@@ -408,3 +408,11 @@ pub fn core_markers() -> std::collections::HashMap<String, crate::markers::Marke
 
 #[cfg(test)]
 mod tests;
+
+/// Encode a renderer gesture payload with the canonical protocol codec.
+///
+/// Hosts pass these bytes unchanged to the renderer action subscription.
+#[uniffi::export]
+pub fn encode_gesture_event(event: latest::GestureEvent) -> Vec<u8> {
+    event.encode()
+}

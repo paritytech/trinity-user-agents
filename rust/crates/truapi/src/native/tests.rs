@@ -3832,3 +3832,27 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 	);
 	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }
+
+#[test]
+fn gesture_json_and_native_payload_use_canonical_types() {
+	let json = r#"{"tag":"Gesture","value":{"modifiers":[],"props":{
+		"pan":{"axis":"Horizontal","drag":{"travel":{"tag":"ParentWidth"},
+		"release":{"tag":"Complete","value":{"thresholdPercent":90}},"holdAtEnd":true},
+		"startAction":"start","endAction":"end"},"enabled":true
+	},"children":[{"tag":"Nil"}]}}"#;
+	let node: latest::RendererNode = serde_json::from_str(json).unwrap();
+	let latest::RendererNode::Gesture { props, children, .. } = node else {
+		panic!("gesture was not decoded");
+	};
+	assert_eq!(props.enabled.0, Some(true));
+	assert_eq!(children, vec![latest::RendererNode::Nil]);
+	assert_eq!(
+		encode_gesture_event(latest::GestureEvent {
+			phase: latest::GesturePhase::Completed,
+			x: 240,
+			y: 0,
+			fraction_permille: 1000,
+		}),
+		vec![5, 240, 0, 0, 0, 0, 0, 0, 0, 232, 3]
+	);
+}

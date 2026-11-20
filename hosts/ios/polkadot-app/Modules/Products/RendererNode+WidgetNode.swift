@@ -17,6 +17,13 @@ extension RendererNode {
              .slideToConfirm:
             return leafWidgetNode(resolver: resolver)
 
+        case let .gesture(_, _, children):
+            // The iPhone gesture layer draws the gesture; until then its children draw in a plain box.
+            return CustomMessageWidgetNode(
+                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
+                modifiers: .empty
+            )
+
         case let .materials(_, children):
             return CustomMessageWidgetNode(
                 content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
@@ -121,7 +128,8 @@ private extension RendererNode {
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
-        case .box,
+        case .gesture,
+             .box,
              .column,
              .row,
              .materials:

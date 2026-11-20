@@ -438,6 +438,7 @@ Action payload by node, as the host sends it in `HostRendererActionSubscribeItem
 | ----------- | ------------ | ---------------------------------------------- |
 | `Button`    | Press        | Empty                                          |
 | `TextField` | Value change | UTF-8 bytes of the new value, no length prefix |
+| `Gesture` | Tap or pan lifecycle | SCALE `GestureEvent` |
 
 The host fills `context` from the render request whose tree the node belongs to. Only the current tree of an open
 `render` stream is a source of actions. Actions published before the product subscribes are buffered until it does.
@@ -480,3 +481,22 @@ keeps its cached face, and other surfaces draw as after any other render error.
 ## Open questions
 
 - Whether a pocket card drawn through `Renderer` needs a viewport signal beyond the stream closing.
+
+### Gesture container
+
+`Gesture` (SCALE index 13) draws its children and recognizes taps and pans.
+`SlideToConfirm` retains index 12. Every declared gesture action carries a SCALE
+`GestureEvent`: phase (Tap, Started, Moved, Ended, Cancelled, Completed), x and y
+(i32 logical-pixel translation), and fractionPermille (u16, 0 to 1000).
+The native `encode_gesture_event` and client `decodeGestureEvent` helpers share
+this codec. The action envelope and context do not change.
+
+Without `pan.drag`, the worker receives declared move actions and can redraw a
+thumb using `Margin(start)`. `moveIntervalMs: 0` requests every move. With
+`pan.drag`, the host owns the offset, clamps it to travel and settles using
+SnapBack, Stay, or Complete at the declared threshold. ParentWidth means parent
+width minus child width. Zero travel never completes. Cancelled never completes.
+Only declared actions fire; omitting moveAction eliminates move round trips.
+Host offset and recognizer identity survive tree updates at the same structural
+place. A completed drag stays at the end by default; holdAtEnd false resets it.
+The accessibility action uses the same Completed payload as a successful release.

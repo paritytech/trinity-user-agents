@@ -366,6 +366,7 @@ fn visit_materials<'tree>(
 			nodes.push((props, nested));
 			children
 		},
+		RendererNode::Gesture { children, .. } |
 		RendererNode::Box { children, .. } |
 		RendererNode::Column { children, .. } |
 		RendererNode::Row { children, .. } |

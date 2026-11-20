@@ -86,6 +86,8 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
+    // The Android gesture layer draws the gesture; until then its children draw in a plain box.
+    is RendererNode.Gesture -> JsWidget.Box(children = children.toJsChildren())
     is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,

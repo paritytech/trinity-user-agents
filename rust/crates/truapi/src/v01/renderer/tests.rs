@@ -225,3 +225,66 @@ fn refused_inline_images_are_emptied_throughout_the_tree() {
 
 	assert_eq!(node, tree(Vec::new()));
 }
+
+#[test]
+fn gesture_keeps_its_wire_index_and_children() {
+	let node = RendererNode::Gesture {
+		modifiers: Vec::new(),
+		props: GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+		},
+		children: vec![RendererNode::Nil],
+	};
+	assert_eq!(node.encode(), vec![13, 0, 0, 0, 0, 0, 0, 4, 0]);
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+}
+
+#[test]
+fn gesture_modes_round_trip_with_actions_and_motion() {
+	for drag in [
+		None,
+		Some(PanDrag {
+			travel: PanTravel::ParentWidth,
+			release: PanRelease::Complete { threshold_percent: 90 },
+			hold_at_end: OptionBool(Some(true)),
+		}),
+		Some(PanDrag {
+			travel: PanTravel::Points(Compact(240)),
+			release: PanRelease::SnapBack,
+			hold_at_end: OptionBool(Some(false)),
+		}),
+	] {
+		let node = RendererNode::Gesture {
+			modifiers: vec![Modifier::FillWidth(true)],
+			props: GestureProps {
+				tap_action: Some("tap".into()),
+				pan: Some(PanGesture {
+					axis: PanAxis::Horizontal,
+					drag,
+					start_action: Some("start".into()),
+					move_action: Some("move".into()),
+					move_interval_ms: Some(0),
+					end_action: Some("end".into()),
+				}),
+				accessibility_label: Some("Register".into()),
+				enabled: OptionBool(Some(true)),
+				haptic_on_complete: OptionBool(Some(true)),
+			},
+			children: vec![renderer_node()],
+		};
+		assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	}
+}
+
+#[test]
+fn gesture_payload_has_the_same_bytes_on_hosts_and_clients() {
+	let event =
+		GestureEvent { phase: GesturePhase::Completed, x: 240, y: 0, fraction_permille: 1000 };
+	let expected = [5, 240, 0, 0, 0, 0, 0, 0, 0, 232, 3];
+	assert_eq!(event.encode(), expected);
+	assert_eq!(GestureEvent::decode(&mut expected.as_slice()).unwrap(), event);
+}
