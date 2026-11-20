@@ -61,6 +61,19 @@ struct AppContactsHostBridgeTests {
         #expect(matches.accounts == [nil, alice])
     }
 
+    @Test("Lookups alternating between product keys both resolve")
+    func alternatingKeysResolve() throws {
+        let bridge = makeBridge()
+        bridge.update(contacts: [makeContact(accountId: alice)])
+
+        for handleKey in [key, otherKey, key, otherKey] {
+            let matches = try bridge.contacts(
+                lookup: HostContactLookup(handleKey: handleKey, handles: [handle(alice, handleKey)])
+            )
+            #expect(matches.accounts == [alice])
+        }
+    }
+
     @Test("Usernames leave out blocked contacts and contacts without one")
     func listsUnblockedUsernames() throws {
         let bridge = makeBridge()

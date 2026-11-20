@@ -33,8 +33,6 @@ class AppContactsHostBridge @Inject constructor(
     private val directory: ContactDirectory,
     private val picks: TrUAPIContactPicks,
 ) : ContactsHostBridge {
-    private class HandleIndex(val handleKey: ByteArray, val accountsByHandle: Map<DataByteArray, ByteArray>)
-
     private val lock = Any()
 
     /** Unblocked contacts' accounts, from the latest snapshot. */
@@ -43,14 +41,14 @@ class AppContactsHostBridge @Inject constructor(
     /** Usernames of the unblocked contacts with an established chat, from the latest snapshot. */
     private var usernames: List<String>? = null
 
-    /** Rebuilt when the contacts or the key change; the key changes with the session. */
-    private var index: HandleIndex? = null
+    /** One index per handle key: the key differs per product, and changes with the session. */
+    private val indexes = mutableMapOf<DataByteArray, Map<DataByteArray, ByteArray>>()
 
     /** Take the latest contacts, dropping the handle index built from the old ones. */
     internal fun update(contacts: List<Contact>) = synchronized(lock) {
         accounts = contacts.map { it.accountId.value }
         usernames = contacts.usernames()
-        index = null
+        indexes.clear()
     }
 
     /**
@@ -64,15 +62,19 @@ class AppContactsHostBridge @Inject constructor(
     }
 
     private fun handleIndex(handleKey: ByteArray): Map<DataByteArray, ByteArray> {
+        val key = handleKey.toDataByteArray()
         val snapshot = synchronized(lock) {
-            index?.takeIf { it.handleKey.contentEquals(handleKey) }?.let { return it.accountsByHandle }
+            indexes[key]?.let { return it }
             accounts
         }
         val current = snapshot ?: runBlocking { directory.getContacts().map { it.accountId.value } }
         val built = current.associateBy { contactHandle(handleKey, it).toDataByteArray() }
         synchronized(lock) {
             // Kept only if no newer snapshot landed while hashing.
-            if (accounts === snapshot) index = HandleIndex(handleKey, built)
+            if (accounts === snapshot) {
+                if (indexes.size >= MAX_HANDLE_INDEXES) indexes.clear()
+                indexes[key] = built
+            }
         }
         return built
     }
@@ -127,6 +129,8 @@ class AppContactsHostBridge @Inject constructor(
         .onEach(::update)
         .contactRemovals()
 }
+
+private const val MAX_HANDLE_INDEXES = 16
 
 /** The handle the core knows [account] by under [handleKey]. */
 internal fun contactHandle(handleKey: ByteArray, account: ByteArray): ByteArray =

@@ -64,6 +64,18 @@ class AppContactsHostBridgeTest {
     }
 
     @Test
+    fun `lookups alternating between product keys both resolve`() {
+        bridge.update(listOf(contact(alice)))
+
+        repeat(2) {
+            listOf(key, otherKey).forEach { handleKey ->
+                val matches = bridge.contacts(HostContactLookup(handleKey, listOf(contactHandle(handleKey, alice))))
+                assertArrayEquals(alice, matches.accounts[0])
+            }
+        }
+    }
+
+    @Test
     fun `usernames leave out a contact without one and keep the label as stored`() {
         bridge.update(
             listOf(

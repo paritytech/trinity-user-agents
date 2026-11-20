@@ -957,7 +957,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	) -> Result<Vec<u8>, ContactResolutionError> {
 		let cache = &self.connection.services.contact_handles;
 		let declared_bytes: Vec<[u8; 32]> = declared.iter().map(|handle| handle.bytes).collect();
-		if cache.has_undeclared_handle(&call_data, &declared_bytes) {
+		if cache.has_undeclared_handle(self.connection.product_id(), &call_data, &declared_bytes) {
 			return Err(ContactResolutionError::UnknownContact);
 		}
 		if declared.is_empty() {
@@ -1006,7 +1006,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				// not hash to its handle is treated as no contact at all.
 				*account = answer.filter(|account| handles.names(handle, account));
 				if let Some(account) = account {
-					cache.insert(*handle, *account, generation);
+					cache.insert(&handles, *handle, *account, generation);
 				}
 			}
 		}
@@ -1401,7 +1401,7 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 							self.connection
 								.services
 								.contact_handles
-								.insert(handle, account, generation);
+								.insert(&handles, handle, account, generation);
 							latest::ContactPickOutcome::Picked {
 								handle: latest::ContactHandle { bytes: handle },
 							}

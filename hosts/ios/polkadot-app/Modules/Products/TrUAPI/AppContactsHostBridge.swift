@@ -23,9 +23,10 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     private var accounts: [Data]?
     /// Usernames of the unblocked contacts, from the latest snapshot.
     private var usernames: [String]?
-    /// Handle to account under one handle key. Rebuilt when the key or the
-    /// contacts change; the key changes with the session.
-    private var index: (handleKey: Data, accountsByHandle: [Data: Data])?
+    /// Handle to account, one index per handle key: the key differs per
+    /// product, and changes with the session. Dropped when the contacts change.
+    private var indexes: [Data: [Data: Data]] = [:]
+    private static let maxHandleIndexes = 16
 
     init(
         repositoryFactory: ChatContactRepositoryMaking,
@@ -46,13 +47,13 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
         lock.lock()
         accounts = unblockedAccounts
         usernames = unblockedUsernames
-        index = nil
+        indexes = [:]
         lock.unlock()
     }
 
     /// A contact's handle is BLAKE2b-256 keyed with the lookup's handle key
     /// over its account. The index for that key is built once and reused until
-    /// the contacts or the key change. The core re-checks each account returned.
+    /// the contacts change. The core re-checks each account returned.
     func contacts(lookup: HostContactLookup) throws -> HostContactMatches {
         let accountsByHandle = try handleIndex(for: lookup.handleKey)
         return HostContactMatches(accounts: lookup.handles.map { accountsByHandle[$0] })
@@ -95,9 +96,9 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
 
     private func handleIndex(for handleKey: Data) throws -> [Data: Data] {
         lock.lock()
-        if let index, index.handleKey == handleKey {
-            defer { lock.unlock() }
-            return index.accountsByHandle
+        if let index = indexes[handleKey] {
+            lock.unlock()
+            return index
         }
         let snapshot = accounts
         lock.unlock()
@@ -112,7 +113,8 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
         lock.lock()
         // Kept only if no newer snapshot landed while hashing.
         if accounts == snapshot {
-            index = (handleKey, accountsByHandle)
+            if indexes.count >= Self.maxHandleIndexes { indexes = [:] }
+            indexes[handleKey] = accountsByHandle
         }
         lock.unlock()
         return accountsByHandle

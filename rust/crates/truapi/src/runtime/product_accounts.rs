@@ -304,11 +304,14 @@ impl<H: AccountHolder> ProductAccounts<H> {
 			.derive_entropy(session, &self.connection.product.product_id, context)
 	}
 
-	/// Contact handles that stay stable across products.
+	/// Contact handles scoped to this product, stable across the user's hosts.
 	pub fn contact_handles(
 		&self,
 		session: &AuthoritySession,
 	) -> Result<ContactHandles, AuthorityError> {
-		self.accounts.contact_handles(session)
+		Ok(self
+			.accounts
+			.contact_key(session)?
+			.for_product(&self.connection.product.product_id))
 	}
 }
