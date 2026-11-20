@@ -1,4 +1,5 @@
 import Foundation
+import Keystore_iOS
 import Products
 
 /// Owns the product-worker ref counter and its operations, and keeps a worker
@@ -16,9 +17,11 @@ final class ProductWorkerFacade {
     let operations: ProductWorkerOperating
 
     private let reconciler: ProductWorkerOperationReconciler
+    private let settingsManager: SettingsManagerProtocol
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
+        settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared,
         makeFactory: (ProductWorkerOperating) -> ProductWorkerFactory
     ) {
@@ -28,11 +31,18 @@ final class ProductWorkerFacade {
 
         self.operations = operations
         self.manager = manager
+        self.settingsManager = settingsManager
         reconciler = ProductWorkerOperationReconciler(store: store, manager: manager, logger: logger)
     }
 
     /// Starts keeping workers alive for persisted operations. Call once at launch.
+    ///
+    /// Only the native runtime records operations, so on TrUAPI any left in the
+    /// store are from an earlier native run. Reviving them would start the
+    /// product in the native container beside its TrUAPI worker, where a product
+    /// built for TrUAPI gets no answer to anything it asks.
     func setup() {
+        guard !settingsManager.isTrUAPIRuntimeEnabled else { return }
         reconciler.start()
     }
 }
