@@ -30,6 +30,7 @@ android {
         // Matches the truapi-host floor so a host can depend on both.
         minSdk = 29
         consumerProguardFiles("consumer-rules.pro")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     sourceSets {
@@ -37,6 +38,9 @@ android {
             java.srcDirs("src/main/kotlin")
             manifest.srcFile("src/main/AndroidManifest.xml")
             jniLibs.srcDirs("src/main/jniLibs")
+        }
+        getByName("androidTest") {
+            java.srcDirs("src/androidTest/kotlin")
         }
     }
 
@@ -62,6 +66,10 @@ dependencies {
     api("net.java.dev.jna:jna:5.14.0@aar")
     // UniFFI async functions and callbacks use cancellable continuations and jobs.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
 }
 
 // Coordinates for the local Maven publication (`publishToMavenLocal`), which is
