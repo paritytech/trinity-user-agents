@@ -24,6 +24,55 @@ impl DomainId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurableTxId(pub i64);
 
+/// A transaction a deferred one waits for, and what its failure does to it.
+pub struct TransactionDependency {
+	/// A transaction already registered, on the dependent's chain.
+	pub id: DurableTxId,
+	/// What a failure for good of `id` does to the dependent.
+	pub on_failure: OnDependencyFailure,
+}
+
+impl TransactionDependency {
+	/// A dependency on `id` whose failure leaves the dependent to its
+	/// policy, which is the default.
+	pub fn new(id: DurableTxId) -> Self {
+		Self { id, on_failure: OnDependencyFailure::Ignore }
+	}
+}
+
+/// What a dependency's failure for good does to its dependent.
+pub enum OnDependencyFailure {
+	/// The dependent is released to its policy, which decides from the chain
+	/// whether it can still be built.
+	Ignore,
+	/// The consumer is sure the dependent cannot take effect without it. The
+	/// dependent fails as [`DurableTxFailureKind::Abandoned`] at the end of a
+	/// recovery pass unless it is already final, even when it is submitted or
+	/// took effect at a block that is not finalized, and so do the
+	/// dependents that cascade from it.
+	Cascade,
+}
+
+/// One dependency of a transaction its policy is asked to build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyStatusRecord {
+	/// The dependency.
+	pub id: DurableTxId,
+	/// How it released its dependent.
+	pub status: DependencyStatus,
+}
+
+/// How a dependency released its dependent. A dependency that has not taken
+/// effect yet, or failed with [`OnDependencyFailure::Cascade`], never
+/// reaches the policy: its dependent is not built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DependencyStatus {
+	/// It took effect, at a best or a finalized block.
+	Success,
+	/// It failed for good, and its dependent ignores that.
+	IgnoredFailure,
+}
+
 /// What a policy stores with each transaction it builds. Opaque to the
 /// engine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -119,7 +168,8 @@ pub enum DurableTxFailureKind {
 	DispatchFailed,
 	/// The node refused it before it reached the pool.
 	Rejected,
-	/// It waited to be built and its policy will never build it.
+	/// It will never take effect: its policy gave up building it, or a
+	/// dependency it cascades from failed.
 	Abandoned,
 }
 
@@ -239,6 +289,8 @@ pub struct DeferredDurableTx {
 	/// How many attempts its policy already built it into, which sets how
 	/// long the next build waits.
 	pub attempts: u32,
+	/// Each transaction it depended on, all of which released it.
+	pub dependencies: Vec<DependencyStatusRecord>,
 }
 
 /// A transaction as a group lists it: where it stands, its latest attempt,

@@ -360,7 +360,9 @@ Each domain registers the chain it lives on, its completion oracle and one
 submission policy. A domain can also defer a transaction before it can be
 signed. Its policy builds it later, and builds it again when a proven failure
 is one it accepts to retry; a presigned transaction may carry a plan for that
-policy too.
+policy too. A deferred transaction can wait for others on the same chain: it is
+built once each has taken effect at a best block, and fails with one marked to
+cascade.
 
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once

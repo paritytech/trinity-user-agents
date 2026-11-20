@@ -26,13 +26,14 @@ pub use testing::engine_on;
 
 pub use dao::{group, group_exists};
 pub use engine::{
-	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
-	EmptyRequest, RecoveryError, RegistrationError,
+	DeferredSubmission, DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine,
+	DurableWorkObserver, EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
-	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
-	DurableTxStatus, GroupId, HeadKind, PolicyParams, SubmissionPlan, Verdict, VerdictFailureKind,
-	VerdictStatus, Window,
+	DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DomainId, DurableTxEntry,
+	DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus, GroupId, HeadKind,
+	OnDependencyFailure, PolicyParams, SubmissionPlan, TransactionDependency, Verdict,
+	VerdictFailureKind, VerdictStatus, Window,
 };
 pub use oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable};
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};

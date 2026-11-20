@@ -1,12 +1,21 @@
 //! Queries over the `durable_tx` ledger, one SQL constant and one function
 //! each.
 
+#[macro_use]
+mod dependency;
+
 use futures::stream::BoxStream;
 use rusqlite::{
 	Connection, Row, Transaction, named_params,
 	types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, Type, ValueRef},
 };
 use subxt::utils::H256;
+
+use dependency::released_dependencies;
+pub use dependency::{
+	CascadingFailure, abandon_cascading, cascading_failures, has_unsettled_dependency,
+	insert_dependency, observe_released_domains, registered_domain, released_submissions,
+};
 
 use super::model::{
 	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
@@ -71,15 +80,20 @@ pub fn defer(
 	Ok(id)
 }
 
-const START_ATTEMPT: &str = "UPDATE durable_tx
+const START_ATTEMPT: &str = concat!(
+	"UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
     period = :period, success_number = NULL, success_hash = NULL,
     scanned_number = NULL, attempts = attempts + 1,
     policy_params = COALESCE(:policy_params, policy_params)
-    WHERE id = :id AND status = 'PENDING_SUBMISSION'";
+    WHERE id = :id AND status = 'PENDING_SUBMISSION' AND NOT ",
+	blocked_by_dependency!()
+);
 
 /// Gives a waiting row the attempt `extrinsic` makes, and `params` in place of
-/// its policy params when given. Returns whether the row was still waiting.
+/// its policy params when given. Returns whether the row was still waiting
+/// with no dependency blocking it: one may have failed or gone back to
+/// pending while the policy built the attempt.
 pub fn start_attempt(
 	tx: &Transaction<'_>,
 	id: DurableTxId,
@@ -107,17 +121,6 @@ pub fn abandon_submission(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool,
 	Ok(changed == 1)
 }
 
-const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
-    FROM durable_tx WHERE status = 'PENDING_SUBMISSION' ORDER BY id";
-
-/// Every row waiting to be built, in registration order, re-read after every
-/// commit that changes them.
-pub fn observe_pending_submissions(
-	db: &Db,
-) -> BoxStream<'static, Result<Vec<DeferredDurableTx>, DbError>> {
-	db.observe(PENDING_SUBMISSIONS, |stmt| stmt.query_map([], DeferredDurableTx::from_row))
-}
-
 const WAITING_DOMAINS: &str = "SELECT DISTINCT domain FROM durable_tx
     WHERE status = 'PENDING_SUBMISSION'";
 
@@ -133,27 +136,19 @@ pub fn observe_waiting_domains(db: &Db) -> BoxStream<'static, Result<Vec<DomainI
 	db.observe(WAITING_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
 }
 
-const DOMAIN_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
-    FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain ORDER BY id";
-
-/// The rows of one domain waiting to be built, of every group, in
-/// registration order.
-pub fn domain_submissions(
-	conn: &Connection,
-	domain: &DomainId,
-) -> Result<Vec<DeferredDurableTx>, DbError> {
-	let mut stmt = conn.prepare_cached(DOMAIN_SUBMISSIONS)?;
-	let params = named_params! { ":domain": domain.as_str() };
-	let rows = stmt.query_map(params, DeferredDurableTx::from_row)?;
-	Ok(rows.collect::<rusqlite::Result<_>>()?)
-}
-
 const LIVE_IN_DOMAIN: &str = "SELECT id, status FROM durable_tx WHERE domain = :domain
-    AND status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS') ORDER BY id";
+    AND status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS')
+    UNION ALL
+    SELECT dependency.id, dependency.status FROM durable_tx_dependency
+    JOIN durable_tx waiting ON waiting.id = durable_tx_dependency.tx_id
+    JOIN durable_tx dependency ON dependency.id = durable_tx_dependency.depends_on
+    WHERE waiting.domain = :domain AND waiting.status = 'PENDING_SUBMISSION'
+    ORDER BY 1, 2";
 
 /// Emits whenever a row of `domain` is registered, changes between live
-/// statuses, or reaches a final status. What it emits is only a signal: the
-/// ids and statuses of the domain's live rows.
+/// statuses, or reaches a final status, and whenever a dependency of one of
+/// its waiting rows changes status, whatever the dependency's domain. What
+/// it emits is only a signal: ids and statuses.
 pub fn observe_domain_changes(
 	db: &Db,
 	domain: DomainId,
@@ -365,13 +360,16 @@ fn success_from_row(row: &Row<'_>) -> rusqlite::Result<Option<HashAndNumber>> {
 }
 
 impl DeferredDurableTx {
-	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+	/// The waiting row `row`, with its dependencies read through `conn`.
+	fn from_row(row: &Row<'_>, conn: &Connection) -> rusqlite::Result<Self> {
+		let id = DurableTxId(row.get("id")?);
 		Ok(Self {
-			id: DurableTxId(row.get("id")?),
+			id,
 			domain: domain_from_row(row)?,
 			group: group_from_row(row)?,
 			plan: SubmissionPlan::from_row(row)?,
 			attempts: row.get("attempts")?,
+			dependencies: released_dependencies(conn, id)?,
 		})
 	}
 }
