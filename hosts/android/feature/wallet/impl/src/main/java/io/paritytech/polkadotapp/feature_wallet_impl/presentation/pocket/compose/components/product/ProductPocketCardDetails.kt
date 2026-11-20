@@ -44,7 +44,7 @@ import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ExpandedCardRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
@@ -59,6 +59,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
+import uniffi.truapi.PocketCardSide
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -71,6 +74,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 fun ProductPocketCardDetails(
     card: PocketCardUiModel.ProductCard,
     bindings: ProductFaceBindings,
+    backBindings: ProductFaceBindings,
     shownProduct: ShownProduct?,
     openingFaceShown: Boolean?,
     cardIndex: Int,
@@ -80,6 +84,7 @@ fun ProductPocketCardDetails(
     BackHandler { onBack() }
 
     val fold = rememberExpandedCardFoldState()
+    val turn = rememberCardTurnState()
     val closeDrag = rememberCardCloseDragState()
 
     // One WebView per product: a screen still drawn for another card must not take it.
@@ -110,13 +115,17 @@ fun ProductPocketCardDetails(
     // card's fold alone. Requests wait for the card to settle, so the fold never starts mid-flight.
     LaunchedEffect(session, fold, leaving) {
         if (leaving) return@LaunchedEffect
-        session?.faceShownRequests?.collect { request ->
+        session?.expandedCardRequests?.collect { request ->
             val handling = launch {
                 try {
                     snapshotFlow { settled }.first { it }
-                    request.reply.complete(fold.showFace(request.shown))
+                    when (request) {
+                        is ExpandedCardRequest.Face -> request.reply.complete(request.outcome(fold, turn))
+                        is ExpandedCardRequest.Turn ->
+                            request.reply.complete(request.outcome(fold, turn, hasBack = backBindings.face.value != null))
+                    }
                 } finally {
-                    request.reply.complete(FaceShownAnswer.NOT_PRESENTED)
+                    request.answerNotPresented()
                 }
             }
             // A withdrawn request was answered NotPresented, so its face must not move after all.
@@ -141,14 +150,15 @@ fun ProductPocketCardDetails(
         FoldableCard(fold = fold, closeDrag = closeDrag, onClose = onBack) {
             VerticalSpacer { mediumIncreased }
 
-            ProductPocketCard(
+            TurningPocketCard(
                 modifier = Modifier
                     .padding(horizontal = PolkadotTheme.spacings.mediumIncreased)
                     .pocketCardSharedElement(cardIndex),
                 card = card,
-                bindings = bindings,
-                onOpen = null,
-                onRemoveRequested = null
+                front = bindings,
+                back = backBindings,
+                leaving = leaving,
+                turn = turn,
             )
 
             VerticalSpacer { mediumIncreased }
@@ -280,3 +290,18 @@ private fun ProductLoadProgress(progress: DotNsLoadProgress) {
 
 private val PRODUCT_PROGRESS_SIZE = 48.dp
 internal val PRODUCT_PROGRESS_DELAY = 1500.milliseconds
+
+/** Covers or uncovers the face for the page, unless the user's finger is on the card. */
+internal suspend fun ExpandedCardRequest.Face.outcome(fold: ExpandedCardFoldState, turn: CardTurnState) =
+    if (fold.dragging || turn.dragging) ExpandedCardFaceOutcome.USER_MOVING else fold.showFace(shown)
+
+/**
+ * Turns the card for the page, unless the user's finger is on the card. A missing back is told first, so the page
+ * does not wait for the finger only to retry into `NoBack`.
+ */
+internal suspend fun ExpandedCardRequest.Turn.outcome(fold: ExpandedCardFoldState, turn: CardTurnState, hasBack: Boolean) =
+    when {
+        side == PocketCardSide.BACK && !hasBack -> ExpandedCardTurnOutcome.NO_BACK
+        fold.dragging || turn.dragging -> ExpandedCardTurnOutcome.USER_MOVING
+        else -> turn.requestSide(side)
+    }

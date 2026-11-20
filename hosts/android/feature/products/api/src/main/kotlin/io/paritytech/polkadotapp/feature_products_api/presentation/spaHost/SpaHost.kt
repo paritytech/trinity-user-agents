@@ -9,6 +9,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
+import uniffi.truapi.PocketCardSide
 
 /**
  * Factory for self-contained SPA sessions.
@@ -30,19 +33,21 @@ interface SpaHost {
     fun createSession(initialUrl: String, underCard: Boolean = false): SpaHostSession
 }
 
-/** A request from the card's product to show or hide the card face, answered by the screen drawing the card. */
-class FaceShownRequest(val shown: Boolean, val reply: CompletableDeferred<FaceShownAnswer>)
+/**
+ * A request from the product under an expanded card, answered by the screen drawing the card. A
+ * request that reaches no screen is never sent.
+ */
+sealed class ExpandedCardRequest<Outcome : Any>(val notPresented: Outcome) {
+    val reply = CompletableDeferred<Outcome>()
 
-/** What the screen answers a [FaceShownRequest] with; a request that reaches no screen is never sent. */
-enum class FaceShownAnswer {
-    /** The face moved to the requested state. */
-    APPLIED,
+    /** Answers that the card left before the request could be carried out. */
+    fun answerNotPresented() = reply.complete(notPresented)
 
-    /** The user is dragging the face, so it was left alone. */
-    USER_MOVING,
+    /** Cover the face with the page, or uncover it. */
+    class Face(val shown: Boolean) : ExpandedCardRequest<ExpandedCardFaceOutcome>(ExpandedCardFaceOutcome.NOT_PRESENTED)
 
-    /** The card left before the face could move. */
-    NOT_PRESENTED,
+    /** Turn the card so [side] is up. */
+    class Turn(val side: PocketCardSide) : ExpandedCardRequest<ExpandedCardTurnOutcome>(ExpandedCardTurnOutcome.NOT_PRESENTED)
 }
 
 interface SpaHostSession {
@@ -60,8 +65,8 @@ interface SpaHostSession {
     /** Current page title, updated as the product navigates. */
     val title: StateFlow<String>
 
-    /** Face show/hide requests from the product under a card; empty for any other session. */
-    val faceShownRequests: Flow<FaceShownRequest>
+    /** Requests from the product under a card; empty for any other session. */
+    val expandedCardRequests: Flow<ExpandedCardRequest<*>>
         get() = emptyFlow()
 
     fun pauseConnections()

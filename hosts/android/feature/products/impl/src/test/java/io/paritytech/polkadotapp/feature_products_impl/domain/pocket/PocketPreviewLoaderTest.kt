@@ -2,8 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -42,9 +40,6 @@ class PocketPreviewLoaderTest {
         remoteFaces = remoteFaces,
     )
 
-    private fun definition(preview: PocketCardPreview) =
-        PocketCardDefinition(id = PocketCardId("loyalty"), title = "Loyalty", preview = preview, faceShown = true)
-
     /**
      * The preview is read on the way to the add sheet, before the user has approved anything, so how
      * much of it there is to read is entirely the product's choice. It has to be refused on its size
@@ -54,7 +49,7 @@ class PocketPreviewLoaderTest {
     fun `a preview of a megabyte is refused on its size rather than read whole`() = runBlocking {
         publishPreview(textFace("x".repeat(ONE_MEGABYTE)))
 
-        val result = loader.load(gameProduct, definition(PocketCardPreview.Archive(ARCHIVE_PATH)))
+        val result = loader.load(gameProduct, PocketCardPreview.Archive(ARCHIVE_PATH))
 
         assertTrue("a megabyte of well-formed face still has to be refused", result.isFailure)
     }
@@ -63,7 +58,7 @@ class PocketPreviewLoaderTest {
     fun `a preview of the size a real face is decodes`() = runBlocking {
         publishPreview(textFace("Loyalty"))
 
-        val face = loader.load(gameProduct, definition(PocketCardPreview.Archive(ARCHIVE_PATH))).getOrThrow()
+        val face = loader.load(gameProduct, PocketCardPreview.Archive(ARCHIVE_PATH)).getOrThrow()
 
         assertEquals(RendererNode.Text(emptyList(), TextProps(style = null, color = null), listOf(RendererNode.String("Loyalty"))), face)
     }
@@ -75,7 +70,7 @@ class PocketPreviewLoaderTest {
      */
     @Test
     fun `a url preview is fetched rather than looked for in the archive`() = runBlocking {
-        val face = loader.load(gameProduct, definition(PocketCardPreview.Url(DEV_SERVER_FACE))).getOrThrow()
+        val face = loader.load(gameProduct, PocketCardPreview.Url(DEV_SERVER_FACE)).getOrThrow()
 
         assertEquals(listOf(DEV_SERVER_FACE), fetchedUrls)
         assertEquals(faceOf("from the dev server"), face)
@@ -84,7 +79,7 @@ class PocketPreviewLoaderTest {
     /** The archive is resolved through dotNS, which a locally served worker has no entry in. */
     @Test
     fun `a url preview does not touch dotNS`() = runBlocking {
-        loader.load(gameProduct, definition(PocketCardPreview.Url(DEV_SERVER_FACE)))
+        loader.load(gameProduct, PocketCardPreview.Url(DEV_SERVER_FACE))
 
         verifyNoInteractions(dotNsResolver)
     }
@@ -93,7 +88,7 @@ class PocketPreviewLoaderTest {
     fun `a url preview that cannot be fetched fails rather than falling back to the archive`() = runBlocking {
         remoteFace = Result.failure(IllegalStateException("dev server is not running"))
 
-        val result = loader.load(gameProduct, definition(PocketCardPreview.Url(DEV_SERVER_FACE)))
+        val result = loader.load(gameProduct, PocketCardPreview.Url(DEV_SERVER_FACE))
 
         assertTrue("an unreachable dev server must surface, not read a stale archive", result.isFailure)
     }

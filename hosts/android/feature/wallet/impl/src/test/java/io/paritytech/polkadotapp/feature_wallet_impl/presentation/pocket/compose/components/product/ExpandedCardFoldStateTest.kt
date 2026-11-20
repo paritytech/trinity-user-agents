@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.runtime.snapshots.Snapshot
-import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -12,10 +11,11 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ExpandedCardFaceOutcome
 
-private const val FRAME_NANOS = 16_000_000L
+internal const val FRAME_NANOS = 16_000_000L
 
-private object SteppingFrameClock : MonotonicFrameClock {
+internal object SteppingFrameClock : MonotonicFrameClock {
     private var nanos = 0L
 
     override suspend fun <R> withFrameNanos(onFrame: (Long) -> R): R {
@@ -84,11 +84,11 @@ class ExpandedCardFoldStateTest {
     /** The page asking for the card back or away is the point of the feature: the fold must follow it. */
     @Test
     fun `the page can fold the card away and back`() = runTest(SteppingFrameClock) {
-        assertEquals(FaceShownAnswer.APPLIED, state.showFace(shown = false))
+        assertEquals(ExpandedCardFaceOutcome.APPLIED, state.showFace(shown = false))
         advanceUntilIdle()
         assertEquals(CARD_HEIGHT, state.foldedPx, 0f)
 
-        assertEquals(FaceShownAnswer.APPLIED, state.showFace(shown = true))
+        assertEquals(ExpandedCardFaceOutcome.APPLIED, state.showFace(shown = true))
         advanceUntilIdle()
         assertEquals(0f, state.foldedPx, 0f)
     }
@@ -99,7 +99,7 @@ class ExpandedCardFoldStateTest {
         state.beginDrag()
         state.drag(-100f)
 
-        assertEquals(FaceShownAnswer.USER_MOVING, state.showFace(shown = false))
+        assertEquals(ExpandedCardFaceOutcome.USER_MOVING, state.showFace(shown = false))
         advanceUntilIdle()
 
         assertEquals(100f, state.foldedPx, 0f)
@@ -115,7 +115,7 @@ class ExpandedCardFoldStateTest {
             val release = async { state.endDrag() }
             advanceTimeBy(FRAME_NANOS / 1_000_000)
 
-            assertEquals(FaceShownAnswer.USER_MOVING, state.showFace(shown = false))
+            assertEquals(ExpandedCardFaceOutcome.USER_MOVING, state.showFace(shown = false))
             release.await()
 
             assertEquals(0f, state.foldedPx, 0f)
@@ -131,7 +131,7 @@ class ExpandedCardFoldStateTest {
 
         unmeasured.maxFoldPx = CARD_HEIGHT
         Snapshot.sendApplyNotifications()
-        assertEquals(FaceShownAnswer.APPLIED, answer.await())
+        assertEquals(ExpandedCardFaceOutcome.APPLIED, answer.await())
         advanceUntilIdle()
 
         assertEquals(CARD_HEIGHT, unmeasured.foldedPx, 0f)
