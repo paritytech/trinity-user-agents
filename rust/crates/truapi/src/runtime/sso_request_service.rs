@@ -21,8 +21,8 @@ use crate::{
 	Spawner,
 	chain_runtime::ChainRuntime,
 	host_logic::{
+		SessionStoreChangeNotifier,
 		session::{SessionInfo, SessionState, encode_persisted_session},
-		session_store::SessionStoreChangeNotifier,
 	},
 	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, SessionUiInfo},
 	session_usernames::SessionUsernames,

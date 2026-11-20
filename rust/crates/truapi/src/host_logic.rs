@@ -23,9 +23,11 @@ pub mod product_account;
 pub mod raw_signing;
 pub mod scanner;
 pub mod session;
-pub mod session_store;
+mod session_store;
 pub mod sso;
 pub mod statement_store;
 pub mod worker;
 pub mod worker_manifest;
 pub mod x25519_seal;
+
+pub use session_store::SessionStoreChangeNotifier;
