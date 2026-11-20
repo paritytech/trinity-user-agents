@@ -57,14 +57,14 @@ describe("gesture wire contract", () => {
     });
 
     it("sends an offset update with the Rust bytes", () => {
-        const node = setOffset("thumb", 120, -2);
+        const node = setOffset("thumb", 1.2, -0.02);
         expect(node).toEqual({ tag: "SetOffset", value: { key: "thumb", x: 120, y: -2 } });
         const bytes = [14, 20, 116, 104, 117, 109, 98, 120, 0, 0, 0, 254, 255, 255, 255];
         expect(Array.from(RendererNode.enc(node))).toEqual(bytes);
         expect(RendererNode.dec(Uint8Array.from(bytes))).toEqual(node);
     });
 
-    it("rounds an offset to whole logical pixels", () => {
-        expect(setOffset("thumb", 10.6)).toEqual({ tag: "SetOffset", value: { key: "thumb", x: 11, y: 0 } });
+    it("carries an offset in hundredths of a logical pixel", () => {
+        expect(setOffset("thumb", 10.606)).toEqual({ tag: "SetOffset", value: { key: "thumb", x: 1061, y: 0 } });
     });
 });

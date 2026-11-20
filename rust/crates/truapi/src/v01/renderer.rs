@@ -574,9 +574,10 @@ pub enum GesturePhase {
 pub struct GestureEvent {
 	/// Recognizer lifecycle stage.
 	pub phase: GesturePhase,
-	/// Horizontal translation in logical pixels.
+	/// Horizontal translation, in hundredths of a logical pixel: a whole
+	/// pixel would let a slow drag report a new place only every few frames.
 	pub x: i32,
-	/// Vertical translation in logical pixels.
+	/// Vertical translation, in hundredths of a logical pixel.
 	pub y: i32,
 	/// Progress along the primary axis, in thousandths.
 	pub fraction_permille: u16,
@@ -814,18 +815,19 @@ pub enum RendererNode {
 	/// tree. Valid only as a whole item of a `render` stream; inside a tree it
 	/// draws nothing.
 	///
-	/// The host adds `x` and `y` (logical pixels, along the layout direction)
-	/// to where the current tree places those children, and keeps the offset
-	/// until the next tree, which replaces it: a tree always wins. A key that
+	/// The host adds `x` and `y` (hundredths of a logical pixel, along the
+	/// layout direction) to where the current tree places those children, and
+	/// keeps the offset until the next tree, which replaces it: a tree always
+	/// wins. A key that
 	/// matches no `Gesture` in the current tree is ignored. The item is not a
 	/// tree: a Pocket card does not keep it as a face.
 	#[codec(index = 14)]
 	SetOffset {
 		/// The `key` of the `Gesture` to move.
 		key: String,
-		/// Horizontal offset in logical pixels.
+		/// Horizontal offset, in hundredths of a logical pixel.
 		x: i32,
-		/// Vertical offset in logical pixels.
+		/// Vertical offset, in hundredths of a logical pixel.
 		y: i32,
 	},
 }

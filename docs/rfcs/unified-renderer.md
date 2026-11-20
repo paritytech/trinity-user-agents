@@ -487,7 +487,8 @@ keeps its cached face, and other surfaces draw as after any other render error.
 `Gesture` (SCALE index 13) draws its children and recognizes taps and pans.
 `SlideToConfirm` retains index 12. Every declared gesture action carries a SCALE
 `GestureEvent`: phase (Tap, Started, Moved, Ended, Cancelled, Completed), x and y
-(i32 logical-pixel translation), and fractionPermille (u16, 0 to 1000).
+(i32 translation in hundredths of a logical pixel), and fractionPermille (u16,
+0 to 1000).
 The native `encode_gesture_event` and client `decodeGestureEvent` helpers share
 this codec. The action envelope and context do not change.
 
@@ -509,7 +510,9 @@ move. It gives the `Gesture` a `key` and answers each move with a
 stream. The host adds the offset to where the current tree places that
 gesture's children and keeps it until the next tree, which replaces it: a
 tree always wins. Being on the same stream, an update can never overtake the
-tree it moves. Inside a tree `SetOffset` draws nothing, and a Pocket card
+tree it moves. Offsets, like gesture positions, are in hundredths of a logical
+pixel: in whole pixels a slow drag (say 35 px a second) could move the
+children only about 35 times a second, however fast the round trip. Inside a tree `SetOffset` draws nothing, and a Pocket card
 does not keep it as a face.
 
 A keyed pan with a move action is paced by the host: at most one move per
