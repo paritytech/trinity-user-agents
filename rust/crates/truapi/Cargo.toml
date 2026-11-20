@@ -85,6 +85,7 @@ runtime = [
     "dep:binary-merkle-tree",
     "dep:hash-db",
     "dep:imagesize",
+    "dep:mime_guess",
 ]
 wasm-signing-host = ["runtime"]
 # Test-host-only shortcuts a shipping host must not carry, such as answering
@@ -162,6 +163,8 @@ itertools = { workspace = true, optional = true }
 # The clearing root of an NFT operation.
 binary-merkle-tree = { workspace = true, optional = true }
 hash-db = { workspace = true, optional = true }
+# The MIME type a downloaded product archive's files are served with.
+mime_guess = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
