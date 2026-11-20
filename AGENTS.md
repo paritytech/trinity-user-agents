@@ -17,7 +17,8 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         deferred ones through their domain's submission policy, and its
+                         deferred ones through their domain's submission policy once the
+                         transactions they depend on take effect, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, the tracker of what they hold on

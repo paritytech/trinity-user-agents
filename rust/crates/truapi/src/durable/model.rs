@@ -165,7 +165,8 @@ pub enum DurableTxFailureKind {
 	DispatchFailed,
 	/// The node refused it before it reached the pool.
 	Rejected,
-	/// It waited to be built and its policy will never build it.
+	/// It waited to be built and will never be: its policy gave up, or a
+	/// dependency it cascades from failed.
 	Abandoned,
 }
 
