@@ -5,7 +5,7 @@
 //! left. Only bytes that hash to the ID count: the core's Bulletin lookup
 //! already reads others as a miss. Once [`FETCH_DEADLINE`] passes without
 //! them, the fetch reports `NotFound` and goes on, so a material that arrives
-//! late still draws.
+//! late still draws. Only materials this core reads are kept.
 //! A material a saved Pocket face draws is never evicted. The others share
 //! [`UNPINNED_BYTES`], and the oldest kept goes first.
 
@@ -28,8 +28,20 @@ use futures::{
 };
 use parking_lot::Mutex;
 use rusqlite::{OptionalExtension, Transaction};
-use truapi::latest::{MaterialFailure, RendererNode};
+use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
 
+use self::format::read_material;
+pub use self::{
+	noise::noise_image,
+	resolve::{
+		FallbackReporter, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
+		ResolveSettings, ResolvedMaterials, check_material_image,
+	},
+	shader::{
+		MaterialShader, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
+		UniformRole,
+	},
+};
 use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::PreimageHost,
@@ -38,6 +50,26 @@ use crate::{
 	store::{Db, DbError},
 	time::Timer,
 };
+
+/// Whether a host with materials `enabled` draws materials of format
+/// `version` requiring `features`: the format version this core reads, and
+/// only features it reads (none, in version 1).
+pub fn draws(enabled: bool, version: u32, features: &[String]) -> bool {
+	enabled &&
+		version == format::FORMAT_VERSION &&
+		features.iter().all(|feature| format::FEATURES.contains(&feature.as_str()))
+}
+
+/// Why a material was not kept.
+#[derive(Debug, thiserror::Error)]
+pub enum KeepMaterialError {
+	/// The core cannot read the material, or the host draws no materials.
+	#[error("refused: {0:?}")]
+	Refused(MaterialFailure),
+	/// The core database did not save it.
+	#[error("not saved: {0}")]
+	NotSaved(#[from] DbError),
+}
 
 /// Largest material the format allows.
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
@@ -58,6 +90,7 @@ struct Shared {
 	timer: Arc<dyn Timer>,
 	spawner: Spawner,
 	fetches: Mutex<HashMap<[u8; 32], Fetch>>,
+	shaders: Mutex<resolve::ShaderCache>,
 }
 
 /// One fetch in flight, and the callers it answers.
@@ -76,13 +109,20 @@ impl Materials {
 		timer: Arc<dyn Timer>,
 		spawner: Spawner,
 	) -> Self {
-		Self(Arc::new(Shared { db, lookup, timer, spawner, fetches: Mutex::default() }))
+		Self(Arc::new(Shared {
+			db,
+			lookup,
+			timer,
+			spawner,
+			fetches: Mutex::default(),
+			shaders: Mutex::default(),
+		}))
 	}
 
 	/// The text of material `id` once it is on the device, then the end.
 	/// Before that, the failure the deadline reported, after which the text
-	/// can still come. `InvalidMaterial`, or a lookup that can never answer,
-	/// ends the stream.
+	/// can still come. A material this core cannot read (`InvalidMaterial` or
+	/// `Unsupported`), or a lookup that can never answer, ends the stream.
 	pub fn observe(&self, id: [u8; 32]) -> BoxStream<'static, Result<Vec<u8>, MaterialFailure>> {
 		let (caller, answers) = unbounded();
 		let started = {
@@ -136,7 +176,7 @@ impl Materials {
 	}
 
 	async fn fetch(self, id: [u8; 32], own: AbortHandle) {
-		let answer = self.resolve(id, &own).await;
+		let answer = self.read_or_fetch(id, &own).await;
 		let mut fetches = self.0.fetches.lock();
 		// Every caller left as the answer came, so the entry may be a newer fetch's.
 		if own.is_aborted() {
@@ -153,7 +193,11 @@ impl Materials {
 		}
 	}
 
-	async fn resolve(&self, id: [u8; 32], own: &AbortHandle) -> Result<Vec<u8>, MaterialFailure> {
+	async fn read_or_fetch(
+		&self,
+		id: [u8; 32],
+		own: &AbortHandle,
+	) -> Result<Vec<u8>, MaterialFailure> {
 		match self.kept(id).await {
 			Ok(Some(text)) => return Ok(text),
 			Ok(None) => {},
@@ -165,7 +209,12 @@ impl Materials {
 			// An answer already in hand beats the deadline.
 			select_biased! {
 				answer = lookup.next() => match answer {
-					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => return self.keep(id, bytes).await,
+					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => {
+						if let Err(error) = self.keep(id, bytes.clone()).await? {
+							tracing::warn!(%error, "a material was not kept, and is fetched again next time");
+						}
+						return Ok(bytes)
+					},
 					Some(Ok(Some(_))) => return Err(MaterialFailure::Integrity),
 					Some(Ok(None)) => {},
 					Some(Err(error)) => {
@@ -188,23 +237,29 @@ impl Materials {
 			.await
 	}
 
-	async fn keep(&self, id: [u8; 32], text: Vec<u8>) -> Result<Vec<u8>, MaterialFailure> {
-		if text.len() > MAX_MATERIAL_BYTES {
-			return Err(MaterialFailure::InvalidMaterial);
+	/// Keeps `text` as material `id` once the core can read it, as a fetch
+	/// does. The inner result says whether the database saved it.
+	pub async fn keep(
+		&self,
+		id: [u8; 32],
+		text: Vec<u8>,
+	) -> Result<Result<(), DbError>, MaterialFailure> {
+		if let Err(error) = read_material(&text) {
+			tracing::info!(
+				target: crate::markers::MATERIALS_NODE_PLAIN.target,
+				"material {} refused: {error}",
+				hex::encode(id)
+			);
+			return Err(error.into());
 		}
-		let row = text.clone();
-		let kept = self
+		Ok(self
 			.0
 			.db
 			.write(move |tx| {
-				tx.prepare_cached(KEEP)?.execute(rusqlite::params![id, row])?;
+				tx.prepare_cached(KEEP)?.execute(rusqlite::params![id, text])?;
 				evict(tx)
 			})
-			.await;
-		if let Err(error) = kept {
-			tracing::warn!(%error, "a material was not kept, and is fetched again next time");
-		}
-		Ok(text)
+			.await)
 	}
 
 	fn report(&self, id: [u8; 32], failure: MaterialFailure, own: &AbortHandle) {
@@ -289,9 +344,26 @@ fn evict(tx: &Transaction<'_>) -> Result<(), DbError> {
 }
 
 fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
+	let layers = materials_nodes(node).into_iter().flat_map(|(props, _)| &props.layers);
+	ids.extend(layers.map(|layer| layer.material));
+}
+
+/// Every `Materials` node in `tree`, depth first, each with whether another
+/// `Materials` node encloses it.
+fn materials_nodes(tree: &RendererNode) -> Vec<(&MaterialsProps, bool)> {
+	let mut nodes = Vec::new();
+	visit_materials(tree, false, &mut nodes);
+	nodes
+}
+
+fn visit_materials<'tree>(
+	node: &'tree RendererNode,
+	nested: bool,
+	nodes: &mut Vec<(&'tree MaterialsProps, bool)>,
+) {
 	let children = match node {
 		RendererNode::Materials { props, children } => {
-			ids.extend(props.layers.iter().map(|layer| layer.material));
+			nodes.push((props, nested));
 			children
 		},
 		RendererNode::Box { children, .. } |
@@ -305,8 +377,9 @@ fn collect_material_ids(node: &RendererNode, ids: &mut HashSet<[u8; 32]>) {
 		RendererNode::TextField { .. } |
 		RendererNode::Image { .. } => return,
 	};
+	let nested = nested || matches!(node, RendererNode::Materials { .. });
 	for child in children {
-		collect_material_ids(child, ids);
+		visit_materials(child, nested, nodes);
 	}
 }
 
@@ -320,5 +393,15 @@ const NEWEST_FIRST: &str = "SELECT id, length(text) FROM material ORDER BY rowid
 
 const DELETE: &str = "DELETE FROM material WHERE id = ?1";
 
+mod format;
+mod glsl;
+mod limits;
+mod metal;
+mod noise;
+mod resolve;
+mod shader;
+
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;

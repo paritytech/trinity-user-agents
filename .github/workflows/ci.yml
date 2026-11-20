@@ -498,69 +498,49 @@ jobs:
   # The app build's warning ratchet runs on a pull request against main as it
   # stood then. Two pull requests can each pass it and still break a SwiftLint
   # rule together, such as a file's length, and the merge queue does not build
-  # the app. This lints the change and its base on ubuntu and fails on any
-  # violation the change adds, in the queue on the combined result and on a
-  # pull request as an early signal. It compares against the base rather than
-  # the committed baseline, so a violation already on main fails neither this
-  # job nor the pull requests that do not touch it.
+  # the app. This lints the iOS tree on ubuntu against the same committed
+  # baseline the ratchet uses, in the queue on the combined result and on a
+  # pull request as an early signal.
   ios-lint:
     name: iOS SwiftLint
     needs: changes
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'merge_group')
       && (needs.changes.outputs.ios_tree == 'true' || needs.changes.outputs.workflows == 'true')
-    runs-on: ubuntu-latest
+    # SwiftLint's Linux binary links libxml2.so.2, which ubuntu-26.04 does not
+    # ship.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 2
           persist-credentials: false
 
       - name: Install the pinned SwiftLint
         uses: ./.github/actions/setup-swiftlint
 
-      # On a pull request the checkout is the merge commit, so HEAD^1 is the
-      # base. In the merge queue the base is the commit this entry was built
-      # on, which already holds every entry queued ahead of it.
-      - name: Lint the change and its base
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+      # Exit 2 means an error severity violation, which the comparison
+      # always reports as new. A skipped SourceKit rule would make this job
+      # disagree with the app build, so it fails instead.
+      - name: Lint against the warning baseline
+        working-directory: hosts/ios
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = merge_group ]; then
-            git fetch --no-tags --depth=1 origin "$MERGE_BASE"
-            base="$MERGE_BASE"
-          else
-            base="$(git rev-parse HEAD^1)"
+          status=0
+          swiftlint lint --quiet --reporter json > "${RUNNER_TEMP}/swiftlint.json" \
+            2> "${RUNNER_TEMP}/swiftlint.log" || status=$?
+          cat "${RUNNER_TEMP}/swiftlint.log" >&2
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+            echo "::error::SwiftLint exited with ${status}"
+            exit 1
           fi
-          git worktree add --detach "${RUNNER_TEMP}/base" "$base"
-
-          # Exit 2 means an error severity violation, which the comparison
-          # reports like any other. A skipped SourceKit rule would make this
-          # job disagree with the app build, so it fails instead.
-          lint() {
-            local status=0
-            (cd "$1" && swiftlint lint --quiet --reporter json) > "$2" 2> "$2.log" || status=$?
-            cat "$2.log" >&2
-            if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
-              echo "::error::SwiftLint exited with ${status}"
-              exit 1
-            fi
-            if grep -q "requires SourceKit" "$2.log"; then
-              echo "::error::SwiftLint skipped rules that need SourceKit"
-              exit 1
-            fi
-          }
-          lint "${RUNNER_TEMP}/base/hosts/ios" "${RUNNER_TEMP}/base.json"
-          lint hosts/ios "${RUNNER_TEMP}/head.json"
-
-          git diff -M --name-status --diff-filter=R "$base" HEAD -- hosts/ios > "${RUNNER_TEMP}/renames.tsv"
-          scripts/swiftlint-diff.sh \
-            --base "${RUNNER_TEMP}/base.json" --base-root "${RUNNER_TEMP}/base/hosts/ios" \
-            --head "${RUNNER_TEMP}/head.json" --head-root hosts/ios \
-            --renames "${RUNNER_TEMP}/renames.tsv" --tree hosts/ios
+          if grep -q "requires SourceKit" "${RUNNER_TEMP}/swiftlint.log"; then
+            echo "::error::SwiftLint skipped rules that need SourceKit"
+            exit 1
+          fi
+          ../../scripts/swiftlint-diff.sh \
+            --report "${RUNNER_TEMP}/swiftlint.json" --root . \
+            --baseline build-logs/warnings.json --tree hosts/ios
 
   # The app tree vendored at hosts/android consumes the core in this repository
   # rather than a published package, so a core change that breaks it fails here

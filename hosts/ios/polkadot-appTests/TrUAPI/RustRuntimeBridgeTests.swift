@@ -88,6 +88,7 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
+    cardFace: (any ExpandedCardFaceShowing)? = nil,
     router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
@@ -115,7 +116,7 @@ private func makeBridge(
         hostProvider: hostProvider,
         themeManager: themeManager,
         logger: Logger.shared
-    ))
+    ), cardFace: cardFace)
 }
 
 // MARK: - Tests
@@ -576,6 +577,28 @@ struct RustRuntimeBridgeTests {
         let review = UserConfirmationReview
             .productSubtree(ProductSubtreeReview(productId: try! ProductId("test.product.dot")))
         #expect(await presenter.confirm(review: review, from: "test.product.dot") == false)
+    }
+
+    // MARK: setExpandedCardFaceShown
+
+    /// Called through `HostBridge` as the core does: an override whose signature drifts would lose
+    /// to the default and answer `.unsupported`.
+    @MainActor
+    @Test func expandedCardFaceReachesTheCardsFace() async throws {
+        let face = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
+        #expect(face.requests == [false])
+    }
+
+    @MainActor
+    @Test func expandedCardFaceIsNotPresentedOnceTheCardIsGone() async throws {
+        var face: StubCardFace? = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
+        face = nil
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .notPresented)
     }
 
     // MARK: attach

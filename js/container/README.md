@@ -18,10 +18,9 @@ extensible product objects create ordinary own properties. Explicit redefinition
   reply listeners. Promise and SDK Result methods carry asynchronous permission decisions.
 - `String`, `Number`, `Uint8Array`, and `DataView` protect request IDs, numeric validation, and encoded request/reply
   bytes. The global `BigInt` conversion and timeout functions are also pinned.
-- `MessageChannel`, `MessagePort`, and `EventTarget` remain protected. The
-  [legacy port getter](../packages/truapi/src/host-connection.ts) creates its channel lazily, then reads port methods
-  and `addEventListener` after the handshake. Capturing native WebSocket operations at startup does not protect this
-  path.
+- `MessageChannel`, `MessagePort`, and `EventTarget` remain protected. The [legacy port](src/legacy-port.ts) creates its
+  channel lazily, when a product first reads the getter, and reads port methods and `addEventListener` then. Capturing
+  native WebSocket operations at startup does not protect this path.
 - Text encoder/decoder prototypes remain protected because SCALE codecs retain their instances but read their methods on
   each call.
 
@@ -32,7 +31,7 @@ lookups, different codecs, or dependency updates require checking this boundary 
 
 | Built-in                                   | Why it is not frozen                                                                                                                                                                                                                                                                                                                |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Function` and its prototype               | The [gates](src/network.ts) and [host connection](../packages/truapi/src/host-connection.ts) bind native operations during setup. The private SDK request path uses `ResultAsync.fromSafePromise`, `andThen`, and `then`, which do not use neverthrow's `Function.apply`-dependent generator helpers.                               |
+| `Function` and its prototype               | The [gates](src/network.ts) and [host connection](src/host-connection.ts) bind native operations during setup. The private SDK request path uses `ResultAsync.fromSafePromise`, `andThen`, and `then`, which do not use neverthrow's `Function.apply`-dependent generator helpers.                                                  |
 | `Reflect`                                  | Gates and the [socket provider factory](../packages/truapi/src/transport.ts) capture the operations they use before product execution, including for reconnects.                                                                                                                                                                    |
 | `Symbol`                                   | Explicit iterator keys are read during setup. Later private collection iteration uses the language's well-known iterator symbol and protected prototypes, not the current global `Symbol` binding. Public SDK iterator helpers are outside this claim.                                                                              |
 | `Date`                                     | Connection freshness uses a bound `performance.now`; request deadlines use pinned timeout functions.                                                                                                                                                                                                                                |

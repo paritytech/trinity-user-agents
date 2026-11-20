@@ -383,6 +383,11 @@ fn document_cases() -> Vec<DocumentCase> {
 			"duplicate-chain-role",
 		),
 		plain(
+			"duplicate-genesis-hash",
+			with(|value| value["chains"][2]["genesisHash"] = json!(ASSET_HUB)),
+			"duplicate-genesis-hash",
+		),
+		plain(
 			"duplicate-service-kind",
 			with(|value| value["services"][1]["kind"] = json!("dub")),
 			"duplicate-service-kind",
@@ -1024,6 +1029,17 @@ fn refresh_cases() -> Vec<Value> {
 					outcome("unchanged", 42, true),
 				),
 				json!({ "restart": NOW, "build": "refresh/42.json" }),
+				get(NOW, Some(42), fetch(None)),
+				get(NOW + 1, Some(42), Value::Null),
+			],
+		),
+		case(
+			"a-request-time-ahead-of-the-clock-is-due",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW + 86_400, Some(42), fetch(None)),
+				fetched(None, None, NOW + 86_400, outcome("unreachable", 42, false)),
 				get(NOW, Some(42), fetch(None)),
 				get(NOW + 1, Some(42), Value::Null),
 			],

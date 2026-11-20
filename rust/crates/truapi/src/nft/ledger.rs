@@ -319,15 +319,19 @@ impl NftLedger {
 
 	/// Hands the keys of `request` off: exports their secrets, lets `seal` turn
 	/// them into the caller's result, then records the keys as handed off under
-	/// the tag in one write that checks them again. The keys are spent from
-	/// then on. Returns what `seal` returned; on any refusal nothing is written.
-	pub async fn hand_off<T, E, Seal>(
+	/// the tag and lets `record` store the result, in one write that checks the
+	/// keys again. The keys are spent from then on. Returns what `seal`
+	/// returned; on any refusal or failure of `record` nothing is written.
+	pub async fn hand_off<T, E, Seal, Record>(
 		&self,
 		request: HandoffRequest,
 		seal: Seal,
+		record: Record,
 	) -> Result<T, HandoffError<E>>
 	where
 		Seal: FnOnce(&[ItemSecret]) -> Result<T, E>,
+		Record: FnOnce(&rusqlite::Transaction<'_>, &T) -> Result<(), DbError> + Send + 'static,
+		T: Send + 'static,
 		E: Send + 'static,
 	{
 		if request.keys.is_empty() {
@@ -338,9 +342,12 @@ impl NftLedger {
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
-			.write_unless_refused(move |tx| Ok(record_handoff(tx, &request)))
-			.await??;
-		Ok(sealed)
+			.write_unless_refused(move |tx| {
+				let recorded = record_handoff(tx, &request)
+					.and_then(|()| record(tx, &sealed).map_err(HandoffError::Db));
+				Ok(recorded.map(|()| sealed))
+			})
+			.await?
 	}
 
 	/// Checks, in a read, that `request` can be handed off, and returns the

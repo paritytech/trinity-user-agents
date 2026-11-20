@@ -5,8 +5,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.domain.main.MainInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
-import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabbar.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarHiddenFractionHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarMode
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
@@ -57,6 +57,8 @@ class RootNavBarViewModel @Inject constructor(
 
     val isScannerTooltipVisible: StateFlow<Boolean>
         field = MutableStateFlow(interactor.shouldShowScannerTooltip())
+
+    val dockletAutoHideEnabled: StateFlow<Boolean> = interactor.observeDockletAutoHide()
 
     val scanPanelOpenRequests: SharedFlow<Unit> = scanPanelRequests.openRequests
 

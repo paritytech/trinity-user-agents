@@ -18,17 +18,20 @@ extension MainTabBarViewController {
     ) {
         widgetController.setAppliedControllers(tab: context.tabController, content: context.contentController)
 
-        updateWidgetLayout(animatingAlongside: transitionCoordinator)
+        updateWidgetLayout(for: context, animatingAlongside: transitionCoordinator)
     }
 
-    func updateWidgetLayout(animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil) {
+    func updateWidgetLayout(
+        for context: TabBarChromeContext,
+        animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil
+    ) {
         guard view.window != nil else {
             return
         }
 
-        widgetController.setBottomOffset(-chromeController.restingBarHeight)
+        widgetController.setBottomOffset(-chromeController.restingBarHeight(for: context))
         widgetController.updateContentSafeAreaInset(
-            barClearance: chromeController.restingBottomClearance,
+            barClearance: chromeController.bottomClearance(for: context),
             fittingWidth: view.bounds.width
         )
 
