@@ -19,7 +19,7 @@ pub mod features;
 pub mod funding;
 pub mod funding_providers;
 pub mod funding_view;
-pub mod keyed_hash;
+mod keyed_hash;
 pub mod product_account;
 mod raw_signing;
 pub mod root_entropy;
@@ -33,6 +33,7 @@ mod worker_manifest;
 pub mod x25519_seal;
 
 pub use contact_substitution::{SubstitutionError, substitute};
+pub use keyed_hash::blake2b_256_keyed;
 pub use device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret};
 pub use raw_signing::{RawPayloadError, raw_payload_bytes};
 pub use session_store::SessionStoreChangeNotifier;
