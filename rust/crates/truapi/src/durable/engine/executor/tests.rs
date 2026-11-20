@@ -1,4 +1,5 @@
 mod batching;
+mod dependencies;
 mod pacing;
 mod races;
 
@@ -26,7 +27,7 @@ use crate::{
 /// The rows of the test domain waiting to be built, read straight from the
 /// ledger.
 fn waiting_ids(db: &Db) -> Vec<DurableTxId> {
-	let read = db.read(|conn| dao::domain_submissions(conn, &test_domain()));
+	let read = db.read(|conn| dao::released_submissions(conn, &test_domain()));
 	let rows = block_on(read).unwrap();
 	rows.iter().map(|deferred| deferred.id).collect()
 }

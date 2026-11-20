@@ -30,7 +30,7 @@ pub use engine::{
 	DurableWorkObserver, EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
-	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
+	DeferredDurableTx, DependencyStatus, DependencyStatusRecord, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
 	DurableTxStatus, GroupId, HeadKind, OnDependencyFailure, PolicyParams, SubmissionPlan,
 	TransactionDependency, Verdict, VerdictFailureKind, VerdictStatus, Window,
 };

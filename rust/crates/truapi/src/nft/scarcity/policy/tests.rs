@@ -132,7 +132,14 @@ fn deferred_transfer(params: TransferParams, attempts: u32) -> RegisteredTransfe
 	let plan = SubmissionPlan { params: params.into() };
 	let id = DurableTxId(1);
 	let deferred =
-		DeferredDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };
+		DeferredDurableTx {
+			id,
+			domain: DomainId::new("nft"),
+			group: None,
+			plan,
+			attempts,
+			dependencies: vec![],
+		};
 	RegisteredTransfer { source, deferred }
 }
 

@@ -24,7 +24,10 @@ pub trait SubmissionPolicy: Send + Sync {
 
 	/// What to do with each transaction of `batch`: the domain's waiting
 	/// transactions the engine wants built now, of any group. A batch is never
-	/// all of them, as it leaves out those still followed or cooling down, so
+	/// all of them, as it leaves out those still followed, cooling down or
+	/// blocked by a dependency. Each one lists its dependencies, which all
+	/// succeeded or failed with
+	/// [`OnDependencyFailure::Ignore`](super::model::OnDependencyFailure::Ignore), so
 	/// decide each transaction from itself, the ledger and the chain, never
 	/// from what the batch holds. A transaction missing from the answer keeps
 	/// waiting. An error is never a verdict: the batch is asked again later.

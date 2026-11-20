@@ -52,7 +52,7 @@ pub struct ScriptedPolicy {
 	retry_answer: RetryAnswer,
 	script: PrepareScript,
 	retry_questions: Mutex<Vec<RetryQuestion>>,
-	batches: Mutex<Vec<Vec<DurableTxId>>>,
+	batches: Mutex<Vec<Vec<DeferredDurableTx>>>,
 }
 
 /// One [`SubmissionPolicy::can_retry`] call.
@@ -125,7 +125,13 @@ impl ScriptedPolicy {
 
 	/// The ids of every batch asked, in order.
 	pub fn batches(&self) -> Vec<Vec<DurableTxId>> {
-		self.batches.lock().clone()
+		let batches = self.batches.lock();
+		batches.iter().map(|batch| batch.iter().map(|row| row.id).collect()).collect()
+	}
+
+	/// Every row handed over in any batch, in the order asked.
+	pub fn prepared_rows(&self) -> Vec<DeferredDurableTx> {
+		self.batches.lock().iter().flatten().cloned().collect()
 	}
 }
 
@@ -144,7 +150,7 @@ impl SubmissionPolicy for ScriptedPolicy {
 
 	async fn prepare(&self, batch: &[DeferredDurableTx]) -> PrepareAnswer {
 		let ids: Vec<DurableTxId> = batch.iter().map(|deferred| deferred.id).collect();
-		self.batches.lock().push(ids.clone());
+		self.batches.lock().push(batch.to_vec());
 		(self.script)(&ids).await
 	}
 }

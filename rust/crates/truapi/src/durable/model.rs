@@ -50,6 +50,26 @@ pub enum OnDependencyFailure {
 	Cascade,
 }
 
+/// One dependency of a transaction its policy is asked to build.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DependencyStatusRecord {
+	/// The dependency.
+	pub id: DurableTxId,
+	/// How it let its dependent go.
+	pub status: DependencyStatus,
+}
+
+/// How a dependency let its dependent go. A dependency that has not taken
+/// effect yet, or failed with [`OnDependencyFailure::Cascade`], never
+/// reaches the policy: its dependent is not built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DependencyStatus {
+	/// It took effect, at a best or a finalized block.
+	Success,
+	/// It failed for good, and its dependent ignores that.
+	IgnoredFailure,
+}
+
 /// What a policy stores with each transaction it builds. Opaque to the
 /// engine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -265,6 +285,8 @@ pub struct DeferredDurableTx {
 	/// How many attempts its policy already built it into, which sets how
 	/// long the next build waits.
 	pub attempts: u32,
+	/// Each transaction it depended on, all of which let it go.
+	pub dependencies: Vec<DependencyStatusRecord>,
 }
 
 /// A transaction as a group lists it: where it stands, its latest attempt,

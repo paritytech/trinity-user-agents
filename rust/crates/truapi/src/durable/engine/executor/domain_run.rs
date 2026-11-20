@@ -104,7 +104,7 @@ impl DomainRun {
 		let mut failures = 0;
 		loop {
 			let domain = self.domain.clone();
-			match self.db.read(move |conn| dao::domain_submissions(conn, &domain)).await {
+			match self.db.read(move |conn| dao::released_submissions(conn, &domain)).await {
 				Ok(rows) if rows.is_empty() => return None,
 				Ok(rows) => return Some(rows),
 				Err(error) => {
