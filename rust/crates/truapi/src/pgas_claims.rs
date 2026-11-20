@@ -6,6 +6,8 @@
 
 mod builder;
 mod delivery;
+#[cfg(test)]
+mod live;
 mod oracle;
 mod params;
 mod policy;
