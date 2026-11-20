@@ -24,7 +24,7 @@ fn activated(
 	withheld: &[&str],
 ) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	let (services, activation) = signing_runtime_with_platform(approving_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(unchecked);
 	activation.set_withheld_resources(withheld.iter().map(|tag| tag.to_string()).collect());
@@ -49,7 +49,7 @@ fn submit(
 fn a_first_submit_obtains_its_allowance_without_an_allocation_prompt() {
 	let platform = Arc::new(StubPlatform::default());
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	let runtime = product_runtime(services, activation);

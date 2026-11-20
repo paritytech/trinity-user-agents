@@ -48,7 +48,8 @@ use crate::SigningHost;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, HostRuntime, PairingHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
-	host_logic::worker::WorkerTransition, runtime::HostRole,
+	host_logic::{root_entropy::RootEntropy, worker::WorkerTransition},
+	runtime::HostRole,
 };
 
 mod generated_bridge;
@@ -1401,7 +1402,7 @@ impl WasmSigningHostRuntime {
 	/// Activate a wallet-local session from raw BIP-39 entropy.
 	#[wasm_bindgen(js_name = activateLocalSession)]
 	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
-		self.runtime.activate_local_session(secret).await?;
+		self.runtime.activate_local_session(RootEntropy::new(secret)).await?;
 		Ok(())
 	}
 
@@ -1412,7 +1413,9 @@ impl WasmSigningHostRuntime {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<(), JsValue> {
-		self.runtime.activate_local_session_with_identity(secret, lite_username).await?;
+		self.runtime
+			.activate_local_session_with_identity(RootEntropy::new(secret), lite_username)
+			.await?;
 		Ok(())
 	}
 
@@ -1507,12 +1510,11 @@ pub fn derive_product_subtree_public_key(
 	root_entropy: Vec<u8>,
 	raw_product_id: String,
 ) -> Result<Vec<u8>, JsValue> {
-	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
-		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	let product_id = raw_product_id
 		.parse::<crate::platform::ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
+	RootEntropy::new(root_entropy)
+		.derive_product_subtree_keypair(&product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())
 		.map_err(|err| JsValue::from_str(&err.to_string()))
 }
