@@ -18,14 +18,14 @@ if (!journalPath || !fundingLog) {
   );
 }
 
-/** The connection status the runner exposes, as a host-embedded page sees it. */
+/** The host transport the runner injects, as a host-embedded page sees it. */
 interface HostLink {
   subscribeConnectionStatus(
     listener: (status: "disconnected" | "connecting" | "connected") => void,
   ): () => void;
 }
-const link = (globalThis as { __HOST_API_CLIENT__?: HostLink })
-  .__HOST_API_CLIENT__;
+const link = (globalThis as { __HOST_API_TRANSPORT__?: HostLink })
+  .__HOST_API_TRANSPORT__;
 if (!link) throw new Error("the runner exposes no host connection");
 
 new ScriptedProvider(truapi, journalPath, fundingLog);
