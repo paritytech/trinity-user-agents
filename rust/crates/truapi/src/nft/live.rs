@@ -154,8 +154,15 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));
 	let installation = Arc::new(FixedInstallation(TEST_INSTALLATION));
 	let secrets = keys.clone();
-	let deps =
-		NftLedgerDeps { db: db.clone(), installation, keys, durable: engine, secrets, imported };
+	let deps = NftLedgerDeps {
+		db: db.clone(),
+		installation,
+		keys,
+		durable: engine,
+		secrets,
+		imported,
+		recovery: Arc::new(super::NftRecovery::off()),
+	};
 	let ledger = NftLedger::new(deps);
 	let tracking = super::HoldingTrackerDeps {
 		ledger: ledger.clone(),
@@ -471,7 +478,7 @@ impl LiveRun<'_> {
 		let prepared = self.purses.prepare_cheque(&sender(), from, to, items).await;
 		prepared
 			.expect("the cheque is not refused")
-			.create()
+			.create(0)
 			.await
 			.expect("the cheque is made")
 	}

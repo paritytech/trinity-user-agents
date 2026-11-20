@@ -2,6 +2,7 @@
 //! the pallet's storage layout stays in here.
 
 mod chain;
+mod holdings;
 mod oracle;
 mod policy;
 #[cfg(test)]
@@ -13,6 +14,7 @@ use std::sync::Arc;
 
 use subxt::utils::H256;
 
+pub use holdings::ScarcityHoldings;
 pub use policy::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner};
 #[cfg(test)]
 pub use testing::ASSET_HUB_PIPELINE;

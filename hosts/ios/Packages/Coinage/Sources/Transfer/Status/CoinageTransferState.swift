@@ -2,8 +2,8 @@ import Foundation
 import SubstrateSdk
 
 public enum CoinageTransferStatus: Equatable, Sendable {
-    /// Present on chain: the peer has not taken it yet.
-    case awaitingClaim
+    /// Present on chain: the peer has not taken it yet. `finalized` once the finalized chain holds it too.
+    case awaitingClaim(finalized: Bool)
 
     /// Absent, and its minter has not resolved: it may simply not exist yet.
     case detecting

@@ -35,7 +35,7 @@ extension BulletInAllowanceManager: AllowanceManaging {
     static let claimTimeout: Duration = .seconds(120)
 
     public func allocate(
-        accountId: AccountId,
+        holder accountId: AccountId,
         policy: OnExistingAllowancePolicy,
         priority: AllowanceRecord.Priority,
         domain _: AllowanceRecord.Domain
@@ -49,7 +49,7 @@ extension BulletInAllowanceManager: AllowanceManaging {
     /// requires an unexpired authorization; the remaining extent is not checked. Products keep using
     /// [allocate], which reads the extent to honour capacity.
     public func ensureCanSubmit(
-        accountId: AccountId,
+        holder accountId: AccountId,
         priority: AllowanceRecord.Priority,
         domain _: AllowanceRecord.Domain
     ) async throws {

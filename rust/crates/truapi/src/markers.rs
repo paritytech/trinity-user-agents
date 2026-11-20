@@ -117,6 +117,14 @@ markers! {
 	/// message, which is written for operators and names no person.
 	TRACING_ERROR = "truapi.tracing.error" => Export(Error);
 
+	// ------------------------------------------------------------- materials
+
+	/// A `Materials` node draws its children plain. Detail names the node, the
+	/// material and the reason. It stays on the device: a node that falls back is
+	/// the product's to hear about, not a crash, and with materials off every
+	/// node does.
+	MATERIALS_NODE_PLAIN = "truapi.materials.node_plain" => Local;
+
 	// ------------------------------------------------- native host callbacks
 	//
 	// These stay on the device. Their details describe what the person is doing
@@ -158,6 +166,9 @@ markers! {
 
 	/// A card face was expanded or collapsed. Detail names the card.
 	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN = "truapi.native.callback.set_expanded_card_face_shown" => Local;
+
+	/// An expanded card was turned to its back or its front.
+	NATIVE_SET_EXPANDED_CARD_BACK_SHOWN = "truapi.native.callback.set_expanded_card_back_shown" => Local;
 
 	/// The host's chain socket connected. Detail names the chain.
 	NATIVE_CHAIN_CONNECTED = "truapi.native.callback.chain_connected" => Local;

@@ -22,6 +22,7 @@ use super::{
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims, record_reclaim_inputs},
+	recovery::NftRecovery,
 	returns::{
 		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
 	},
@@ -46,6 +47,8 @@ pub struct NftLedgerDeps {
 	pub secrets: Arc<dyn ItemSecrets>,
 	/// Keeps the secrets of imported keys.
 	pub imported: ImportedSecretStore,
+	/// Backup recovery, which new purse ids wait for.
+	pub recovery: Arc<NftRecovery>,
 }
 
 /// Layer 1's store of purses and their items.
@@ -57,22 +60,25 @@ pub struct NftLedger {
 	durable: Arc<DurableTxEngine>,
 	secrets: Arc<dyn ItemSecrets>,
 	imported: ImportedSecretStore,
+	recovery: Arc<NftRecovery>,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys, durable, secrets, imported } = deps;
-		Self { db, installation, keys, durable, secrets, imported }
+		let NftLedgerDeps { db, installation, keys, durable, secrets, imported, recovery } = deps;
+		Self { db, installation, keys, durable, secrets, imported, recovery }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
-	/// [`PurseId::MAIN`], in one write.
+	/// [`PurseId::MAIN`], in one write. Waits first until backup recovery has
+	/// finished, so it can no longer recreate a purse at that id.
 	pub async fn create_purse(
 		&self,
 		name: String,
 		tag: PurseTag,
 	) -> Result<PurseId, CreatePurseError> {
+		self.recovery.wait_until_finished().await;
 		let created = self.db.write(move |tx| dao::insert_purse(tx, &name, &tag)).await?;
 		created.ok_or(CreatePurseError::IdsExhausted)
 	}
@@ -314,15 +320,19 @@ impl NftLedger {
 
 	/// Hands the keys of `request` off: exports their secrets, lets `seal` turn
 	/// them into the caller's result, then records the keys as handed off under
-	/// the tag in one write that checks them again. The keys are spent from
-	/// then on. Returns what `seal` returned; on any refusal nothing is written.
-	pub async fn hand_off<T, E, Seal>(
+	/// the tag and lets `record` store the result, in one write that checks the
+	/// keys again. The keys are spent from then on. Returns what `seal`
+	/// returned; on any refusal or failure of `record` nothing is written.
+	pub async fn hand_off<T, E, Seal, Record>(
 		&self,
 		request: HandoffRequest,
 		seal: Seal,
+		record: Record,
 	) -> Result<T, HandoffError<E>>
 	where
 		Seal: FnOnce(&[ItemSecret]) -> Result<T, E>,
+		Record: FnOnce(&rusqlite::Transaction<'_>, &T) -> Result<(), DbError> + Send + 'static,
+		T: Send + 'static,
 		E: Send + 'static,
 	{
 		if request.keys.is_empty() {
@@ -333,9 +343,12 @@ impl NftLedger {
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
-			.write_unless_refused(move |tx| Ok(record_handoff(tx, &request)))
-			.await??;
-		Ok(sealed)
+			.write_unless_refused(move |tx| {
+				let recorded = record_handoff(tx, &request)
+					.and_then(|()| record(tx, &sealed).map_err(HandoffError::Db));
+				Ok(recorded.map(|()| sealed))
+			})
+			.await?
 	}
 
 	/// Checks, in a read, that `request` can be handed off, and returns the

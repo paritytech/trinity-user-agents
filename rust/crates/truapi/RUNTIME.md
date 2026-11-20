@@ -14,7 +14,7 @@ protocol API into a working host. It owns:
 - the auto-generated dispatcher/wire-table tables shipped under
   [`crate::generated`]
 - the host embedding surface: one long-lived role handle
-  (`PairingHostRuntime` or `SigningHostRuntime`) per host application, exposing
+  (`HostRuntime<PairingHost>` or `HostRuntime<SigningHost>`) per host application, exposing
   shared [`RuntimeServices`] plus one [`ProductRuntime`] per product connection
 
 ## Architecture
@@ -157,16 +157,18 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
-The embedder builds a role handle, `PairingHostRuntime::new(...)` or
-`SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
+The embedder builds a role handle, `HostRuntime::<PairingHost>::new(...)` or
+`HostRuntime::<SigningHost>::new(...)`, then calls `product_runtime(product, sink)` for
 each product connection. Role-specific operations live only on the matching handle:
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
 `activate_local_session` on the signing handle. Both handles expose
-`clear_product_state` to revoke one product's capability material without
-touching the session or other products, and `notify_contacts_changed` to drop
+`clear_product_state` to revoke one product's capability material and remove
+the values it wrote to product storage, through `ProductStorage::clear_product`,
+without touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
-a compile error, not a runtime `Unavailable`.
+a compile error, not a runtime `Unavailable`. Stop a product's executions
+before clearing its state, since a value written after the clear is kept.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
@@ -177,18 +179,52 @@ Both host configs carry a `Stack`, the core's only chain configuration: the
 Relay, Asset Hub, People and Bulletin genesis hashes, the network
 `get_chain_info` reports, and the dotNS TLD.
 
-A native or browser shell builds it with `Stack::bundled` from the stack's
+A native or browser shell puts three things in its runtime config: the stack's
 pointer, the signed descriptor its build bundles, and whether the build allows
-Polkadot's reserved values. A Rust host that resolves its chains itself, such as
-the CLI, uses `Stack::new`, and a test-host browser bundle passes
-`runtimeConfig.testStack`. Each constructor documents what it refuses.
+Polkadot's reserved values. The core resolves the `Stack` from them with
+`StackRefresh::load`.
+
+A Rust host that resolves its chains itself, such as the CLI, uses
+`Stack::new`, and a test-host browser bundle passes `runtimeConfig.testStack`.
+The core does not refresh a stack built either of those ways. Each constructor
+documents what it refuses.
 
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
 to be equal. Taking the TLD from the stack keeps local activation and key
-derivation working offline. The core does not check it against the chain, does
-not check genesis hashes against the live chains, and does not fetch newer
-copies.
+derivation working offline. The core does not check it against the chain and
+does not check genesis hashes against the live chains.
+
+#### Descriptor refresh
+
+The core starts from the bundled descriptor or the last one it verified,
+whichever has the higher `sequence`. It never waits on the network to start,
+and waits a few seconds at most for the stored copy before it starts from the
+bundled one.
+
+The core has no HTTP client. A native host installs `NativeStackCallbacks` with
+`set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,
+and the core keeps the last descriptor it verified in its database. A browser
+host passes the `fetchStackDescriptor` and `stackChanged` raw callbacks, and the
+core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
+Without the callbacks the core stays on the descriptor it started from.
+
+The core fetches once the callbacks are installed, unless the last fetch was
+under an hour ago, then once an hour and whenever the host calls
+`refresh_stack`. A sleeping device can stretch that hour, so a host calls it
+when its app returns to the foreground. `StackFetchRequest` says how to make
+the request.
+
+`trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
+a failed fetch, a refused descriptor or a lower `sequence` keeps the current
+one. The core also refuses a descriptor it could not start from, such as one
+without a People chain.
+
+A newer descriptor that changes a genesis hash, the network, the TLD or the
+`generation` applies from the next start. Once the core has stored it,
+`StackStatus` has `restart_required` set, and the host builds the runtime
+again. Any other change applies at once. `StackStatus` documents the rest,
+including the `generation` a host keys cached chain data by.
 
 ### Core database
 
@@ -198,7 +234,7 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+it on iOS and Android, and `HostRuntime::<SigningHost>::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
 `EncryptedStorage` that keeps NFT receive key and deposited item secrets with
@@ -207,20 +243,50 @@ the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
 The database also holds the Pocket collection (`pocket_cards` module): the
-cards in the Pocket and the newest face of each. The host lists the cards it
+cards in the Pocket and the newest face of each side. The host lists the cards it
 pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
 approves with `add_pocket_card`, and follows the collection with
 `observe_pocket_cards`. A card no longer pinned stays only if the user added
 it. The core keeps the newest face of a card from every
-`RenderContext::PocketCard` render, at most every two seconds and once more
-when the render stops, so a card has a face offline and at cold start.
+`RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
+render, at most every two seconds and once more when the render stops, so a
+card has both sides offline and at cold start. `pocket_card_face` reads a side.
+A product connection's renderer actions leave out a press on a back that
+connection has not drawn: a product whose SDK predates `PocketCardBack` cannot
+decode one and would lose its whole action stream.
+
+It also keeps materials (`materials` module), the text behind each material
+ID a renderer tree names. The core reads a material it lacks from Bulletin
+itself, with `bitswap_v1_get` over the Bulletin connection it holds for
+preimage submission, not through the host's preimage lookup. Only text that
+hashes to the ID and passes format version 1, as Shaderlab's reference parser
+reads it, is kept. A node that answers with bytes that do not hash to the ID
+ends the fetch, and the material falls back as `Integrity`. A material a saved
+Pocket face draws is never
+evicted, and the others share 4 MiB, oldest out first. At start-up the core
+fetches what the saved faces draw and the database lacks. From a material's
+text the core builds the shaders an app compiles: the GLSL ES 3.00 that
+Shaderlab's own compile step writes, for OpenGL ES, and naga's Metal
+translation of it, with where each uniform and texture goes.
+
+A host that draws materials (`materials_enabled` in its startup config) asks
+the core to resolve a tree's materials: for each `Materials` node, depth first,
+whether it is loading, ready with its built layers, or drawn plain and why.
+The resolution follows the shared fetch, checks the tree's limits and each layer's
+arguments, builds the shaders for the platform (Metal on iOS, GLSL ES
+elsewhere), and changes as materials arrive or fail and as the app reports a
+shader it could not compile or an image it could not use. A node that falls
+back is logged on the device, and when the resolution runs on a product's execution,
+reported to that product through `Renderer::failure_subscribe`, once. The
+capability answer to the materials question is yes only with materials on, for
+the format version and features the core reads.
 
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
-embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+embedder calls `HostRuntime::<SigningHost>::set_encrypted_storage`. Web hosts do not
 compile it.
 
 ### Durable transactions
@@ -320,7 +386,7 @@ a withdrawn request posts no response. See the
 
 When a device finishes pairing, the signing host reports it to the embedder's
 [`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
-once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
+once through `HostRuntime::<SigningHost>::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and
 `disconnect_paired_host` take.
@@ -726,15 +792,24 @@ for raw bytes signed inside the `<Bytes>` watermark.
   persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
   `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
-  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  Widget, and turn that card to its back or front. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
+- `ContactsPlatform`: resolve the handles a transaction names to contacts,
+  render the picker that selects one, and list the dotNS usernames of the
+  contacts the picker would offer. `contacts` is the only required method.
+  `pick_contact` defaults to `Unsupported`, so a host serving no picker says so
+  rather than looking like a user who declined, and `contact_usernames`
+  defaults to `Unsupported` the same way. The host owns the UI, so no account
+  on the list reaches the product. A product gets a handle for the selection,
+  and the game product may also read the usernames. The core caches resolved
+  handles. A host calls `notify_contacts_changed` on its runtime when a contact
+  is removed or blocked.
+  The core serves `contacts.usernames` only to the game product, `dim2` on
+  every network, and answers `Unsupported` to any other product without
+  calling the host. While nobody is signed in it answers a domain error
+  with the reason `No active session`, also without calling the host. Each
+  username is the bare dotNS label with no top-level domain, and the core
+  drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host

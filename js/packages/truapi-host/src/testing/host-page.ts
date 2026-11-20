@@ -316,16 +316,18 @@ export async function startTestHost(
     const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
       default: () => Promise<unknown>;
       setLogLevel?: (level: string) => void;
-      WasmSigningHostRuntime: new (
-        callbacks: unknown,
-        config: unknown,
-      ) => DirectSigningRuntime;
+      WasmSigningHostRuntime: {
+        create(
+          callbacks: unknown,
+          config: unknown,
+        ): Promise<DirectSigningRuntime>;
+      };
     };
     await glue.default();
     if (options.logLevel) glue.setLogLevel?.(options.logLevel);
     const { createWasmRawCallbacks } =
       await import("../generated/host-callbacks-adapter.js");
-    directRuntime = new glue.WasmSigningHostRuntime(
+    directRuntime = await glue.WasmSigningHostRuntime.create(
       {
         // A raw bridge callback rather than a generated host callback, so it
         // is supplied here the way the worker runtime does. The test host runs

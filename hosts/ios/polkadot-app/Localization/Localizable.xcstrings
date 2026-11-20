@@ -493,6 +493,61 @@
         }
       }
     },
+    "cancel.chat.request.confirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel request"
+          }
+        }
+      }
+    },
+    "cancel.chat.request.keep" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep request"
+          }
+        }
+      }
+    },
+    "cancel.chat.request.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ will no longer see your request."
+          }
+        }
+      }
+    },
+    "cancel.chat.request.message.unnamed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The recipient will no longer see your request."
+          }
+        }
+      }
+    },
+    "cancel.chat.request.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel request?"
+          }
+        }
+      }
+    },
     "chat.call.camera.access.message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1700,6 +1755,61 @@
         }
       }
     },
+    "decline.chat.request.confirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Decline"
+          }
+        }
+      }
+    },
+    "decline.chat.request.keep" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep request"
+          }
+        }
+      }
+    },
+    "decline.chat.request.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ will not be notified. The chat will be removed."
+          }
+        }
+      }
+    },
+    "decline.chat.request.message.unnamed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The sender will not be notified. The chat will be removed."
+          }
+        }
+      }
+    },
+    "decline.chat.request.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Decline chat request?"
+          }
+        }
+      }
+    },
     "deposit.copy.action" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2286,17 +2396,6 @@
         }
       }
     },
-    "polkadot.sign.in.no.slots.available" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Please, try again in %1$(time)@"
-          }
-        }
-      }
-    },
     "polkadot.signing.failure" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2733,6 +2832,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Recent chats"
+          }
+        }
+      }
+    },
+    "secret.recovery.reveal.captured" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop screen recording or mirroring to reveal the recovery phrase"
           }
         }
       }

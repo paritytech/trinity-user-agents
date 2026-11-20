@@ -4,7 +4,6 @@ plugins {
     id("polkadotapp.android.application")
     id("polkadotapp.android.compose")
     id("polkadotapp.android.hilt")
-    alias(libs.plugins.firebase.crashlytics)
     alias(libs.plugins.google.services)
     alias(libs.plugins.sentry.android.gradle)
 }
@@ -182,10 +181,6 @@ dependencies {
     implementation(project(":tools:media-connection:api"))
     // Endregion tools
 
-    "gpImplementation"(platform(libs.firebase.bom))
-    "gpImplementation"(libs.firebase.crashlytics)
-    "gpImplementation"(libs.firebase.analytics)
-
     "gpImplementation"(libs.google.play.services.mlkit)
     "vanillaImplementation"(libs.google.mlkit.barcode.scanning)
 
@@ -236,3 +231,11 @@ configurations.configureEach {
 }
 
 apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))
+
+// The SDK bundle :bindings:truapi-host builds for instrumentation test pages.
+android.sourceSets.getByName("androidTest").assets.srcDir(
+    project(":bindings:truapi-host").layout.buildDirectory.dir("generated/truapi-test-assets"),
+)
+tasks.matching { it.name.endsWith("AndroidTestAssets") }.configureEach {
+    dependsOn(":bindings:truapi-host:copyTrUAPITestSdk")
+}

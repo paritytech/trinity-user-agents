@@ -291,6 +291,7 @@ Commands:
 | `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
 | `network-check` | Resolve the network and print its routing as JSON, without contacting a chain. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
+| `materials` | Resolve a card face's materials as a phone would (section 6.8). |
 
 ### 4.1 Global logging option
 
@@ -541,14 +542,15 @@ The product includes a development-only blocking tag before product code:
 ```
 
 The script installs the shared browser container and publishes
-`window.__HOST_API_CLIENT__`. SDK calls and authorization requests use this
-stable client, sharing one WebSocket and one Rust execution. The container
-consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
-same TCP port. After a disconnect, the SDK replaces the socket. Calls and
-subscriptions already sent fail and are not replayed. Calls not yet sent go out
-on the replacement once its handshake completes. Older SDKs use the compatibility
-`window.__HOST_API_PORT__` MessagePort, which requires a page reload after a
-disconnect.
+`window.__HOST_API_TRANSPORT__`, a frame channel the SDK builds its own client
+over. SDK calls and authorization requests share one WebSocket and one Rust
+execution. The container consumes `window.__truapi_localhost` during startup.
+HTTP and WebSocket share the same TCP port. After a disconnect, the host
+replaces the socket. Calls and subscriptions already sent fail and are not
+replayed. Calls not yet sent go out on the replacement once its handshake
+completes. Older SDKs use the compatibility `window.__HOST_API_PORT__`
+MessagePort, which behaves the same way and reports what was lost as a
+`HostFailure` error.
 Production builds must omit the tag.
 
 On Unix the wrapped command is the leader of a process group retained by the
@@ -583,7 +585,7 @@ print the rule's code, such as `refused (bad-signature): ...`.
 | `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
 | `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
 | `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since every session and account moves to another namespace, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since every session and account moves to another namespace, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI or the core reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
 | `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
 
 `publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
@@ -592,6 +594,31 @@ current time in seconds. The state file is written before the descriptor, and
 both writes are atomic. Keep it outside anything a wipe deletes.
 
 Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
+
+### 6.8 Top-level `materials`
+
+```sh
+truapi-host materials resolve <face.json> [--materials <dir>] [--metal] [--out <dir>] [--base-path <dir>]
+```
+
+`materials resolve` reads a card face as the generated client writes a renderer
+tree and prints what its `Materials` nodes resolve to, with the same core a
+phone uses: one `materials:` block each time that changes, with one line per node
+(`node <n>: loading`, `node <n>: ready, 1 layer`, `node <n>: ready, <k> layers`
+or `node <n>: plain, <reason>`). It exits once no node is loading. A material Bulletin does not
+answer within 30 seconds draws plain as `NotFound`.
+
+| Option | Behavior |
+| --- | --- |
+| `--materials <dir>` | Keeps each file in `<dir>` first, as a fetch from Bulletin would, printing `kept <file> 0x<id>` or `refused <file>: <reason>`. A file the database cannot save stops the command with an error. A face naming only kept materials resolves without Bulletin. |
+| `--metal` | Builds Metal shaders, as iOS draws, instead of GLSL ES 3.00, as Android does. |
+| `--out <dir>` | Writes each ready layer's shaders as `node<n>-layer<k>.vert` and `.frag` (or `.vertex.metal` and `.fragment.metal`), and what feeds them (uniform blocks, uniforms, textures) as `node<n>-layer<k>.txt`. |
+
+The face is resolved on a Pocket card, the only surface that draws materials in
+this release, with shaders that filter 32-bit float images themselves. Kept
+materials live in their own core database under
+`<base-path>/v2/<network>/materials`, apart from every signing host's, so a
+later run draws them without the files or Bulletin.
 
 ## 7. Product identifiers and switching
 
@@ -927,10 +954,11 @@ execution, preserving Allow once, Allow always and Deny semantics. These wrapper
 are also used by the full browser container loaded by dev's first blocking
 bootstrap tag.
 
-The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_CLIENT__`, and
+The runner exposes `window.__HOST_WEBVIEW_MARK__`, `__HOST_API_TRANSPORT__`, and
 the legacy `__HOST_API_PORT__` adapter over that same connection. Published Product
-SDK imports discover the host automatically. Scripts using an older SDK's
-legacy port must be rerun after a host disconnect.
+SDK imports discover the host automatically. The injected transport serves one
+client, so a script that imports an SDK built on it takes the connection over
+from the `truapi` global.
 
 Scripts retain Bun/Node filesystem, environment, subprocess and module imports.
 Native networking APIs can bypass the web API wrappers; this is not
@@ -1714,7 +1742,9 @@ Every network comes from a Trinity stack descriptor
 The fields the CLI reads are these, `id` (the product namespace), `generation`,
 and the full `rpc` list of People, Asset Hub and Bulletin; the full list is
 compared because the Polkadot comparison below contacts the reference's nodes.
-A published copy that changes none of them makes no notice print (below).
+The core of every host also reads `contracts`, which the host builds bundle from
+the same copies, so it counts as read too. A published copy that changes none of
+these makes no notice print (below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
 genesis hash (the host routes each role by its genesis), has a `tld` the core
@@ -1725,7 +1755,8 @@ through that controller without looking it up on chain; the signing host's
 core still discovers its controller on chain.
 
 The binary also ships real Polkadot's signed descriptor, from PCF's pointer, as
-`stacks/polkadot.json` with its link in `stacks/polkadot.link`. It is not a
+`stacks/polkadot.json` with the link of the known stack `polkadot` (see
+[the trinity-stack crate](../trinity-stack/README.md#known-stacks)). It is not a
 network `--network` selects: it lists Polkadot's chains, among them these, and
 the RPC nodes that tell a fork of Polkadot from Polkadot itself:
 
@@ -1757,7 +1788,7 @@ sessions of real Polkadot identities.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
 ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
-its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
+its pointer from the trinity-stack crate's known stack of the same name. A command that resolves a built-in fetches
 the published descriptor (3-second timeout) and runs the RFC's `accept` with the
 shipped copy as the stored one, then uses what it returns. A published descriptor
 that answers with a non-2xx HTTP status is logged as a warning with the status
@@ -1777,7 +1808,7 @@ light-client` on a built-in whose descriptor in use has genesis hashes other tha
 this build's light-client chain specs fails at start, since the stack restarted
 after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
 no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
-shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
+shipped copies, and the daily chain-spec workflow carries the refresh in one PR
 with its changeset. `truapi-host stack bundle` refuses a copy that changes the
 `tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
 on.
@@ -1826,7 +1857,7 @@ and `genesis` for `people`, `asset_hub` and `bulletin`.
 #### `pcf-devnet`
 
 PCF's devnet: Paseo's relay and Asset Hub with PCF's own People and Bulletin
-chains, from the descriptor PCF signs (`stacks/pcf-devnet.link`). Reserved
+chains, from the descriptor PCF signs (the known stack `pcf-devnet`). Reserved
 identities derive under `.dot`. The identity backend is the descriptor's `dub`
 service.
 
@@ -2031,16 +2062,21 @@ Deliberately unavailable methods:
 - the product-initiated `Renderer/action_subscribe`, because
   `renderer_access_for` grants product Renderer access only to a `Worker`
   execution and these reports run the CLI as `App`; the host-initiated
-  `Renderer` render subscription is also unused because the CLI draws no
-  product-rendered bodies;
-- the product-initiated `Renderer/failure_subscribe`, which no host serves yet;
+  `Renderer` render subscription opens only on a signing host serving Pocket,
+  which these reports do not run;
+- the product-initiated `Renderer/failure_subscribe`, which reports only on the
+  Pocket cards a `Worker` execution draws, so these reports never hear from it;
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
 A successful `System/feature_supported` call returns `true` for the People,
 Bulletin and Asset Hub genesis hashes of the host's stack, the chains
-`Chain/get_chain_info` answers for, and `false` for anything else. A materials question returns `false`, answered
-by the core. Success means the method is wired, not that every feature is present.
+`Chain/get_chain_info` answers for, and `false` for anything else. A materials
+question returns `false` here: only a signing host serving Pocket
+(`--execution-kind worker` with `TRUAPI_POCKET_CARDS`) answers `true`, because
+it resolves the materials of every face its Worker renders as a phone does. The
+core answers it. Success means the method is wired, not that every feature is
+present.
 
 ### 15.2 Platform-specific semantics
 

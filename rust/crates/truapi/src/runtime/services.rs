@@ -33,6 +33,7 @@ use crate::{
 use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
+	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
@@ -46,9 +47,8 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
-/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
-/// until it settles, so callers asking for the same thing while one runs wait
-/// for its answer, and a burst of them holds one follow slot, not one each.
+/// dotNS reads running now. Callers asking for the same thing while one runs
+/// wait for its answer, so a burst of them reads Asset Hub once, not once each.
 #[derive(Clone)]
 pub struct DotnsReads {
 	/// Root manifest reads, by product label.
@@ -134,6 +134,11 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
+	/// The materials on the device, over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	materials: OnceLock<Materials>,
+	/// Whether the host draws materials, from its configuration.
+	materials_enabled: AtomicBool,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -179,10 +184,6 @@ pub struct RuntimeServices {
 	statement_cache: Mutex<StatementCache>,
 	/// Task spawner for background runtime work.
 	pub spawner: Spawner,
-	/// Serializes the read-or-create of the persisted device encryption key.
-	/// Concurrent first-time readers would otherwise each generate a secret and
-	/// persist it, leaving peers addressing an overwritten key.
-	device_encryption_key: futures::lock::Mutex<()>,
 	next_core_instance: AtomicU64,
 }
 
@@ -215,16 +216,17 @@ impl RuntimeServices {
 		stack: Stack,
 		spawner: Spawner,
 	) -> Arc<Self> {
-		Self::with_chat_platform(platform, host_info, stack, spawner, None)
+		Self::with_platforms(platform, host_info, stack, spawner, None, None)
 	}
 
-	/// Same as [`Self::new`], with the host's chat adapter installed.
-	pub fn with_chat_platform(
+	/// Same as [`Self::new`], with the host's optional chat and contacts adapters.
+	pub fn with_platforms(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
 		stack: Stack,
 		spawner: Spawner,
 		chat_platform: Option<Arc<dyn ChatPlatform>>,
+		contacts_platform: Option<Arc<dyn ContactsPlatform>>,
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
@@ -255,7 +257,7 @@ impl RuntimeServices {
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
-			contacts_platform: OnceLock::new(),
+			contacts_platform: contacts_platform.map(OnceLock::from).unwrap_or_default(),
 			contact_handles: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
 			public_profiles,
@@ -269,6 +271,9 @@ impl RuntimeServices {
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			materials: OnceLock::new(),
+			materials_enabled: AtomicBool::new(false),
 			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -291,7 +296,6 @@ impl RuntimeServices {
 			local_preimages: Mutex::new(std::collections::HashMap::new()),
 			statement_cache: Mutex::new(StatementCache::default()),
 			spawner,
-			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
 		})
 	}
@@ -481,6 +485,65 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
+	/// Install the materials on the device. Set-once, like the database they
+	/// are kept in. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_materials(&self, materials: Materials) -> bool {
+		self.materials.set(materials).is_ok()
+	}
+
+	/// The materials on the device, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn materials(&self) -> Option<Materials> {
+		self.materials.get().cloned()
+	}
+
+	/// Let the host draw materials, as its configuration asks.
+	pub fn enable_materials(&self) {
+		self.materials_enabled.store(true, Ordering::Relaxed);
+	}
+
+	/// Whether the host draws materials at all.
+	pub fn materials_enabled(&self) -> bool {
+		self.materials_enabled.load(Ordering::Relaxed)
+	}
+
+	/// Whether the host draws materials of format `version` requiring
+	/// `features`.
+	pub fn draws_materials(&self, version: u32, features: &[String]) -> bool {
+		#[cfg(not(target_arch = "wasm32"))]
+		{
+			crate::materials::draws(self.materials_enabled(), version, features)
+		}
+		#[cfg(target_arch = "wasm32")]
+		{
+			let _ = (version, features);
+			false
+		}
+	}
+
+	/// The resolved materials of `tree` in `context`, its shaders in
+	/// `language`, filtering 32-bit float images themselves unless
+	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the materials
+	/// are installed over a core database, every node draws plain.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn resolve_materials(
+		&self,
+		tree: &latest::RendererNode,
+		context: &latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
+		let Some(materials) = self.materials() else {
+			tracing::warn!("no core database, so every material node draws plain");
+			return crate::MaterialsResolution::plain(tree, context, failures);
+		};
+		let enabled = self.materials_enabled();
+		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
+		materials.resolve(tree, context, settings, failures)
+	}
+
 	/// Install the NFT ledger. Set-once, like the database it runs on.
 	/// Returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -551,19 +614,6 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
 		self.durable_work_observer.get().cloned()
-	}
-
-	/// This device's persisted X25519 encryption secret, created on first use.
-	///
-	/// The only supported way to reach the key: it bundles the serialization
-	/// guard with the read, so no caller can race another into generating a
-	/// second secret and overwriting the one peers were told to address.
-	pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
-		let _guard = self.device_encryption_key.lock().await;
-		crate::host_logic::device_key::read_or_create_device_encryption_secret(
-			self.platform.as_ref(),
-		)
-		.await
 	}
 
 	/// Allocate the next per-product-runtime id, used to scope chain follow

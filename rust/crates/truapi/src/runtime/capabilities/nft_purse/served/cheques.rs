@@ -66,7 +66,10 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.map_err(create_cheque_failure)?;
 		let denied = latest::HostNftPurseCreateChequeError::Denied;
 		self.confirm_drain(cx, drain, denied).await?;
-		let cheque = prepared.create().await.map_err(create_cheque_failure)?;
+		let cheque = prepared
+			.create(crate::current_unix_millis())
+			.await
+			.map_err(create_cheque_failure)?;
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 
