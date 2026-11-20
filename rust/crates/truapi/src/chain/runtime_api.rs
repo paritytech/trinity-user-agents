@@ -29,7 +29,7 @@ pub trait RuntimeApiCaller: Send {
 #[async_trait::async_trait]
 impl RuntimeApiCaller for RpcClient {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
-		state_call(self, function, input, None).await
+		Ok(state_call(self, function, input, None).await?)
 	}
 
 	async fn call_batch(
@@ -58,7 +58,7 @@ impl RpcClientAtBlock {
 #[async_trait::async_trait]
 impl RuntimeApiCaller for RpcClientAtBlock {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
-		state_call(&self.rpc, function, input, Some(self.at)).await
+		Ok(state_call(&self.rpc, function, input, Some(self.at)).await?)
 	}
 
 	async fn call_batch(
@@ -76,11 +76,10 @@ async fn state_call(
 	function: &str,
 	input: &[u8],
 	at: Option<H256>,
-) -> Result<Vec<u8>, subxt::Error> {
+) -> Result<Vec<u8>, subxt_rpcs::Error> {
 	LegacyRpcMethods::<RpcConfigFor<SubstrateConfig>>::new(rpc.clone())
 		.state_call(function, Some(input), at)
 		.await
-		.map_err(Into::into)
 }
 
 /// A `state_call` for every input, all sent at once, with the results in
@@ -91,7 +90,10 @@ async fn state_call_batch(
 	inputs: Vec<Vec<u8>>,
 	at: Option<H256>,
 ) -> Vec<Result<Vec<u8>, subxt::Error>> {
-	futures::future::join_all(inputs.iter().map(|input| state_call(rpc, function, input, at))).await
+	let calls = inputs.iter().map(|input| async move {
+		state_call(rpc, function, input, at).await.map_err(subxt::Error::from)
+	});
+	futures::future::join_all(calls).await
 }
 
 #[cfg(test)]
