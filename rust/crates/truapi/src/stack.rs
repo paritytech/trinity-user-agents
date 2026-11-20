@@ -5,8 +5,9 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy. The [`Stack`] it resolves holds the network, the dotNS TLD
-//! and each chain's genesis hash, and answers `get_chain_info`.
+//! the same policy. The [`Stack`] it resolves holds the network, the dotNS TLD,
+//! each chain's genesis hash and the `AccountDataStore` contract address, and
+//! answers `get_chain_info`.
 
 mod records;
 mod refresh;
@@ -52,6 +53,9 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 	POLKADOT_PEOPLE_GENESIS,
 	POLKADOT_BULLETIN_GENESIS,
 ];
+
+/// The `contracts` name of the contract each seed registers its installations in.
+const ACCOUNT_DATA_STORE_CONTRACT: &str = "accountDataStore";
 
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
 /// person's Polkadot identities.
@@ -130,12 +134,14 @@ impl ReservedValuesPolicy {
 }
 
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
-/// and the genesis hash of each chain role the core uses.
+/// the genesis hash of each chain role the core uses, and the Asset Hub
+/// contracts the core reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
 	network: String,
 	tld: String,
 	chains: StackChains,
+	account_data_store: Option<[u8; 20]>,
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -258,16 +264,17 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::from_chains(
+		let stack = Self::from_chains(
 			descriptor.network.clone(),
 			descriptor.tld.clone(),
 			chains,
 			reserved_values,
-		)
+		)?;
+		Ok(Self { account_data_store: account_data_store_in(descriptor), ..stack })
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
-	/// bundled descriptor, such as the CLI's.
+	/// bundled descriptor, such as the CLI's. It names no contracts.
 	///
 	/// Applies the same policy, TLD and reserved-value rules as
 	/// [`Self::bundled`], and refuses an all-zero Relay or Asset Hub genesis
@@ -301,7 +308,7 @@ impl Stack {
 		}
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
-		Ok(Self { network, tld, chains })
+		Ok(Self { network, tld, chains, account_data_store: None })
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
@@ -319,6 +326,13 @@ impl Stack {
 	/// The stack's chains.
 	pub fn chains(&self) -> &StackChains {
 		&self.chains
+	}
+
+	/// The `AccountDataStore` contract on Asset Hub, where each seed registers
+	/// its installations. `None` when the descriptor names none, or names the
+	/// all-zero address.
+	pub fn account_data_store(&self) -> Option<[u8; 20]> {
+		self.account_data_store
 	}
 
 	/// The genesis hash of the chain with this role, or `None` when the stack
@@ -348,6 +362,14 @@ impl Stack {
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
 	}
+}
+
+/// The `AccountDataStore` address `descriptor` names, or `None` when it names
+/// none or the all-zero address, which no contract has.
+fn account_data_store_in(descriptor: &Descriptor) -> Option<[u8; 20]> {
+	descriptor
+		.contract_address(ACCOUNT_DATA_STORE_CONTRACT)
+		.filter(|address| *address != [0; 20])
 }
 
 /// The pointer a stack link carries. A host runs only a signed stack, so a

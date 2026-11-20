@@ -15,6 +15,7 @@ use super::{
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
 	purse::PurseId,
+	recovery::NftRecovery,
 	scarcity::{TRANSFER_POLICY, TransferParams},
 };
 use crate::{
@@ -52,6 +53,7 @@ pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 		durable: unbuilt_transfers_engine(db),
 		secrets: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
 		imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
+		recovery: Arc::new(NftRecovery::off()),
 	}
 }
 

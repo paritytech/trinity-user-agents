@@ -244,6 +244,17 @@ impl Descriptor {
 		Some(format::hex_bytes("dotns", address).expect("invalid dotns address in a descriptor"))
 	}
 
+	/// The address of the Asset Hub contract named `name` in `contracts` as bytes, when the stack
+	/// has one. Decodes hex that validation already checked, so it panics only on a descriptor
+	/// that skipped [`Descriptor::from_json`] and deserialisation.
+	pub fn contract_address(&self, name: &str) -> Option<[u8; 20]> {
+		let address = self.contracts.as_ref()?.get(name)?;
+		Some(
+			format::hex_bytes("contracts", address)
+				.expect("invalid contract address in a descriptor"),
+		)
+	}
+
 	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
 	/// the stack names none. The name is one label, or several ending in the stack's `tld`; fails
 	/// with [`Error::InvalidName`] otherwise, so `my-app.dot` on a `testnet` stack is refused
