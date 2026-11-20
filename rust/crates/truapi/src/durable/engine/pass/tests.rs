@@ -9,8 +9,10 @@ use crate::{
 	durable::{
 		model::{DurableTxFailureKind, DurableTxStatus, HeadKind},
 		oracle::{DurableRegistry, PassScope, Unobservable},
+		model::TransactionDependency,
 		testing::{
-			FakeChain, ScriptedScope, ServesTestDomains, block, engine_with, extrinsic, insert,
+			DeferredTxHarness, FakeChain, ScriptedPolicy, ScriptedScope, ServesTestDomains, block,
+			cascading_dependency, engine_with, extrinsic, insert,
 		},
 	},
 	store::Db,
@@ -345,4 +347,57 @@ fn record_success(db: &Db, id: DurableTxId, at: HashAndNumber) {
 		Ok(())
 	}))
 	.unwrap();
+}
+
+fn abandoned() -> DurableTxStatus {
+	DurableTxStatus::Failure(DurableTxFailureKind::Abandoned)
+}
+
+/// A dependent that needs its dependency to take effect can never be valid
+/// once the dependency failed, so it fails with it. Whatever cascades from
+/// the dependent fails in the same pass, so no blocked row is left behind.
+#[test]
+fn a_cascading_failure_fails_every_waiting_dependent_in_one_pass() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
+	let dependent = harness.defer_depending_on(vec![cascading_dependency(dependency)]);
+	let transitive = harness.defer_depending_on(vec![cascading_dependency(dependent)]);
+	harness.record_status(dependency, DurableTxStatus::Failure(DurableTxFailureKind::Expired));
+
+	block_on(harness.engine().run_pass());
+
+	let statuses = vec![harness.status(dependent), harness.status(transitive)];
+	assert_eq!(statuses, vec![abandoned(), abandoned()]);
+}
+
+/// A dependent that ignores its dependency's failure may still be built,
+/// for example when what the dependency would have done happened another
+/// way. Only its policy can tell.
+#[test]
+fn an_ignored_failure_leaves_the_dependent_to_its_policy() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
+	let dependent = harness.defer_depending_on(vec![TransactionDependency::new(dependency)]);
+	harness.record_status(dependency, DurableTxStatus::Failure(DurableTxFailureKind::Expired));
+
+	block_on(harness.engine().run_pass());
+
+	assert_eq!(harness.status(dependent), DurableTxStatus::PendingSubmission);
+}
+
+/// An attempt already submitted is decided from the chain like any other:
+/// it may still land, and failing it here would contradict the chain.
+#[test]
+fn a_cascading_failure_leaves_a_submitted_dependent_to_the_chain() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
+	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
+	let dependent = harness.defer_depending_on(vec![cascading_dependency(dependency)]);
+	harness.record_status(dependency, DurableTxStatus::PendingSuccess { at: block(131) });
+	harness.wait_for(dependent, DurableTxStatus::Pending);
+	let failed = DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed);
+	harness.record_status(dependency, failed);
+
+	block_on(harness.engine().run_pass());
+
+	assert_eq!(harness.status(dependent), DurableTxStatus::Pending);
 }

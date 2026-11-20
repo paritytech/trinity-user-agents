@@ -1,19 +1,13 @@
 //! A dependent is handed to its policy only once its dependencies let it
 //! go.
 
-use futures::executor::block_on;
-
 use crate::{
 	durable::{
-		dao,
-		engine::{DeferredSubmission, DurableRequest},
 		model::{
 			DependencyStatus, DependencyStatusRecord, DurableTxFailureKind, DurableTxId,
-			DurableTxStatus, PolicyParams, TransactionDependency,
+			DurableTxStatus, TransactionDependency,
 		},
-		testing::{
-			DeferredTxHarness, ScriptedPolicy, block, extrinsic, insert, other_domain, test_domain,
-		},
+		testing::{DeferredTxHarness, ScriptedPolicy, block, extrinsic, insert, other_domain},
 	},
 	test_support::wait_until,
 };
@@ -21,22 +15,13 @@ use crate::{
 /// One test-domain transaction waiting for each of `dependencies`, whose
 /// failure it ignores.
 fn defer_waiting_for(harness: &DeferredTxHarness, dependencies: &[DurableTxId]) -> DurableTxId {
-	let depends_on = dependencies.iter().copied().map(TransactionDependency::new).collect();
-	let submission = DeferredSubmission { params: PolicyParams(vec![1]), depends_on };
-	harness.defer(DurableRequest::deferred(test_domain(), None, vec![submission]).unwrap())[0]
+	harness.defer_depending_on(dependencies.iter().copied().map(TransactionDependency::new).collect())
 }
 
 /// A submitted transaction of the other domain that nothing watches or
 /// decides, so only the test moves it.
 fn unwatched_dependency(harness: &DeferredTxHarness, tag: u8) -> DurableTxId {
 	insert(harness.db(), &other_domain(), extrinsic(tag, 100, 64))
-}
-
-/// Writes `status` onto `id`, as a watch or a pass would.
-fn record_status(harness: &DeferredTxHarness, id: DurableTxId, status: DurableTxStatus) {
-	let observed = harness.entry(id);
-	let write = harness.db().write(move |tx| dao::compare_and_set(tx, &observed, status, None));
-	assert!(block_on(write).unwrap());
 }
 
 /// Whether the policy was ever asked about `id`.
@@ -55,7 +40,7 @@ fn a_dependent_waits_until_its_dependency_succeeds_at_the_best_block() {
 	harness.settle();
 	assert!(!asked_about(&harness, dependent));
 
-	record_status(&harness, dependency, DurableTxStatus::PendingSuccess { at: block(131) });
+	harness.record_status(dependency, DurableTxStatus::PendingSuccess { at: block(131) });
 	wait_until(|| asked_about(&harness, dependent), "the released dependent is handed over");
 }
 
@@ -71,7 +56,7 @@ fn a_dependency_of_another_domain_wakes_the_running_worker() {
 	let dependent = defer_waiting_for(&harness, &[dependency]);
 	harness.settle();
 
-	record_status(&harness, dependency, DurableTxStatus::PendingSuccess { at: block(131) });
+	harness.record_status(dependency, DurableTxStatus::PendingSuccess { at: block(131) });
 
 	wait_until(|| asked_about(&harness, dependent), "the worker hears the dependency");
 }
@@ -86,10 +71,10 @@ fn the_policy_sees_how_each_dependency_let_the_dependent_go() {
 	let failed = unwatched_dependency(&harness, 3);
 	let dependent = defer_waiting_for(&harness, &[in_best_block, finalized, failed]);
 
-	record_status(&harness, in_best_block, DurableTxStatus::PendingSuccess { at: block(131) });
-	record_status(&harness, finalized, DurableTxStatus::FinalizedSuccess { at: None });
+	harness.record_status(in_best_block, DurableTxStatus::PendingSuccess { at: block(131) });
+	harness.record_status(finalized, DurableTxStatus::FinalizedSuccess { at: None });
 	let expired = DurableTxStatus::Failure(DurableTxFailureKind::Expired);
-	record_status(&harness, failed, expired);
+	harness.record_status(failed, expired);
 	wait_until(|| asked_about(&harness, dependent), "the released dependent is handed over");
 
 	let handed_over = harness.policy().prepared_rows();

@@ -1,7 +1,6 @@
 //! Queries over the `durable_tx` ledger, one SQL constant and one function
 //! each.
 
-#[macro_use]
 mod dependency;
 
 use futures::stream::BoxStream;
@@ -11,7 +10,10 @@ use rusqlite::{
 };
 use subxt::utils::H256;
 
-pub use dependency::{insert_dependency, registered_domain};
+pub use dependency::{
+	CascadingFailure, abandon_cascading, cascading_failures, insert_dependency,
+	observe_released_domains, registered_domain, released_submissions,
+};
 use dependency::released_dependencies;
 
 use super::model::{
@@ -113,20 +115,6 @@ pub fn abandon_submission(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool,
 	Ok(changed == 1)
 }
 
-const RELEASED_DOMAINS: &str = concat!(
-	"SELECT id, attempts, domain FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND NOT ",
-	blocked_by_dependency!(),
-	" ORDER BY id"
-);
-
-/// The domain of every row waiting to be built that no dependency blocks,
-/// one per row in registration order. It is read again after every commit
-/// that changes such a row, so a row built and handed back is reported again
-/// even when the domains it lists stay the same.
-pub fn observe_released_domains(db: &Db) -> BoxStream<'static, Result<Vec<DomainId>, DbError>> {
-	db.observe(RELEASED_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
-}
-
 const WAITING_DOMAINS: &str = "SELECT DISTINCT domain FROM durable_tx
     WHERE status = 'PENDING_SUBMISSION'";
 
@@ -140,26 +128,6 @@ pub fn waiting_domains(conn: &Connection) -> Result<Vec<DomainId>, DbError> {
 /// [`waiting_domains`], re-read after every commit that changes it.
 pub fn observe_waiting_domains(db: &Db) -> BoxStream<'static, Result<Vec<DomainId>, DbError>> {
 	db.observe(WAITING_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
-}
-
-const RELEASED_SUBMISSIONS: &str = concat!(
-	"SELECT id, domain, group_id, policy_params, attempts FROM durable_tx
-    WHERE status = 'PENDING_SUBMISSION' AND domain = :domain AND NOT ",
-	blocked_by_dependency!(),
-	" ORDER BY id"
-);
-
-/// The rows of one domain waiting to be built that no dependency blocks, of
-/// every group, in registration order, each with how its dependencies let
-/// it go.
-pub fn released_submissions(
-	conn: &Connection,
-	domain: &DomainId,
-) -> Result<Vec<DeferredDurableTx>, DbError> {
-	let mut stmt = conn.prepare_cached(RELEASED_SUBMISSIONS)?;
-	let params = named_params! { ":domain": domain.as_str() };
-	let rows = stmt.query_map(params, |row| DeferredDurableTx::from_row(row, conn))?;
-	Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 const LIVE_IN_DOMAIN: &str = "SELECT id, status FROM durable_tx WHERE domain = :domain
