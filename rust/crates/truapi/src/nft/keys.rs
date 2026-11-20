@@ -1,5 +1,6 @@
 //! Item keys and where they sit in the derivation tree.
 
+use core::ops::Range;
 use std::sync::Weak;
 
 use parity_scale_codec::{Decode, Encode};
@@ -8,9 +9,11 @@ use zeroize::Zeroizing;
 
 use super::purse::PurseId;
 use crate::{
+	gap_scan::KeyRange,
 	host_internal::extrinsic::Sr25519Signer,
-	host_logic::product_account::{
-		ProductAccountError, derive_hard_path_from_keypair, derive_root_keypair_from_entropy,
+	host_logic::{
+		product_account::{ProductAccountError, derive_hard_path_from_keypair},
+		root_entropy::RootEntropy,
 	},
 	installation::InstallationId,
 	runtime::AuthorityError,
@@ -42,15 +45,37 @@ impl ItemSlot {
 	/// reveals nothing about its siblings. The installation is written as
 	/// `0x` and lowercase hex, as coinage writes it.
 	pub fn junctions(&self) -> [String; 4] {
-		let installation = format!("0x{}", hex::encode(self.installation.0));
-		["nft".to_string(), self.purse.0.to_string(), installation, self.index.0.to_string()]
+		let [nft, purse, installation] = item_key_prefix(self.purse, self.installation);
+		[nft, purse, installation, self.index.0.to_string()]
 	}
+}
+
+/// The hard junctions `//nft//<purse>//<installation>` every item key of
+/// `purse` allocated by `installation` sits under.
+fn item_key_prefix(purse: PurseId, installation: InstallationId) -> [String; 3] {
+	let installation = format!("0x{}", hex::encode(installation.0));
+	["nft".to_string(), purse.0.to_string(), installation]
 }
 
 /// Derives item public keys from the user's root entropy.
 pub trait ItemKeyDeriver: Send + Sync {
 	/// The public key at each of `slots`, in order.
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError>;
+
+	/// The public keys of `purse` allocated by `installation` at each of
+	/// `indices`, in order. A deriver that holds the seed derives the shared
+	/// prefix once for the whole range.
+	fn derive_item_key_range(
+		&self,
+		purse: PurseId,
+		installation: InstallationId,
+		indices: Range<u32>,
+	) -> Result<Vec<ItemKey>, AuthorityError> {
+		let slots: Vec<ItemSlot> = indices
+			.map(|index| ItemSlot { purse, installation, index: ItemIndex(index) })
+			.collect();
+		self.derive_item_keys(&slots)
+	}
 }
 
 /// For a deriver that owns the ledger, which must not keep it alive in turn.
@@ -62,6 +87,34 @@ impl<Deriver: ItemKeyDeriver> ItemKeyDeriver for Weak<Deriver> {
 			return Err(AuthorityError::Unavailable { reason });
 		};
 		deriver.derive_item_keys(slots)
+	}
+
+	fn derive_item_key_range(
+		&self,
+		purse: PurseId,
+		installation: InstallationId,
+		indices: Range<u32>,
+	) -> Result<Vec<ItemKey>, AuthorityError> {
+		let Some(deriver) = self.upgrade() else {
+			let reason = "the item key deriver was dropped".to_string();
+			return Err(AuthorityError::Unavailable { reason });
+		};
+		deriver.derive_item_key_range(purse, installation, indices)
+	}
+}
+
+/// The keys recovery scans: one purse's item keys under one installation.
+impl KeyRange for dyn ItemKeyDeriver + '_ {
+	type PurseId = PurseId;
+	type Key = ItemKey;
+
+	fn derive_range(
+		&self,
+		purse: &PurseId,
+		installation: InstallationId,
+		indices: Range<u32>,
+	) -> anyhow::Result<Vec<ItemKey>> {
+		Ok(self.derive_item_key_range(*purse, installation, indices)?)
 	}
 }
 
@@ -152,47 +205,60 @@ impl<Exporter: ItemSecrets> ItemSecrets for Weak<Exporter> {
 	}
 }
 
-/// The public key at each of `slots`, derived from the root of `entropy`.
-pub fn item_keys_from_entropy(
-	entropy: &[u8],
-	slots: &[ItemSlot],
-) -> Result<Vec<ItemKey>, ProductAccountError> {
-	let root = derive_root_keypair_from_entropy(entropy)?;
-	let item_key = |slot: &ItemSlot| {
-		let keypair = item_keypair_under(root.clone(), slot)?;
-		Ok(ItemKey(keypair.public.to_bytes()))
-	};
-	slots.iter().map(item_key).collect()
-}
+impl RootEntropy {
+	/// The public key at each of `slots`.
+	pub fn item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, ProductAccountError> {
+		let root = self.derive_root_keypair()?;
+		let item_key = |slot: &ItemSlot| {
+			let keypair = item_keypair_for_slot(root.clone(), slot)?;
+			Ok(ItemKey(keypair.public.to_bytes()))
+		};
+		slots.iter().map(item_key).collect()
+	}
 
-/// A signer for the key at `slot`, derived from the root of `entropy`.
-pub fn item_signer_from_entropy(
-	entropy: &[u8],
-	slot: ItemSlot,
-) -> Result<Sr25519Signer, ProductAccountError> {
-	let root = derive_root_keypair_from_entropy(entropy)?;
-	let keypair = item_keypair_under(root, &slot)?;
-	Ok(Sr25519Signer::from_keypair(&keypair))
-}
+	/// The public keys of `purse` allocated by `installation` at each of
+	/// `indices`, with the shared prefix derived once.
+	pub fn item_key_range(
+		&self,
+		purse: PurseId,
+		installation: InstallationId,
+		indices: Range<u32>,
+	) -> Result<Vec<ItemKey>, ProductAccountError> {
+		let prefix = item_key_prefix(purse, installation);
+		let prefix = prefix.each_ref().map(String::as_str);
+		let prefix_keypair = self.derive_sr25519_hard_path(&prefix)?;
+		indices.map(|index| item_key_for_index(prefix_keypair.clone(), index)).collect()
+	}
 
-/// The secret at each of `slots`, derived from the root of `entropy`.
-pub fn item_secrets_from_entropy(
-	entropy: &[u8],
-	slots: &[ItemSlot],
-) -> Result<Vec<ItemSecret>, ProductAccountError> {
-	let root = derive_root_keypair_from_entropy(entropy)?;
-	let item_secret = |slot: &ItemSlot| {
-		let keypair = item_keypair_under(root.clone(), slot)?;
-		Ok(ItemSecret(Zeroizing::new(keypair.secret.to_bytes())))
-	};
-	slots.iter().map(item_secret).collect()
+	/// A signer for the key at `slot`.
+	pub fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, ProductAccountError> {
+		let keypair = item_keypair_for_slot(self.derive_root_keypair()?, &slot)?;
+		Ok(Sr25519Signer::from_keypair(&keypair))
+	}
+
+	/// The secret at each of `slots`.
+	pub fn item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, ProductAccountError> {
+		let root = self.derive_root_keypair()?;
+		let item_secret = |slot: &ItemSlot| {
+			let keypair = item_keypair_for_slot(root.clone(), slot)?;
+			Ok(ItemSecret(Zeroizing::new(keypair.secret.to_bytes())))
+		};
+		slots.iter().map(item_secret).collect()
+	}
 }
 
 /// The keypair at `slot` under `root`.
-fn item_keypair_under(root: Keypair, slot: &ItemSlot) -> Result<Keypair, ProductAccountError> {
+fn item_keypair_for_slot(root: Keypair, slot: &ItemSlot) -> Result<Keypair, ProductAccountError> {
 	let junctions = slot.junctions();
 	let junctions = junctions.each_ref().map(String::as_str);
 	derive_hard_path_from_keypair(root, &junctions)
+}
+
+/// The public key at `prefix_keypair//index`, a hard junction.
+fn item_key_for_index(prefix_keypair: Keypair, index: u32) -> Result<ItemKey, ProductAccountError> {
+	let junction = index.to_string();
+	let keypair = derive_hard_path_from_keypair(prefix_keypair, &[junction.as_str()])?;
+	Ok(ItemKey(keypair.public.to_bytes()))
 }
 
 #[cfg(test)]

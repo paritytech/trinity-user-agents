@@ -9,6 +9,8 @@ public struct AllowanceRecord: Equatable {
     public let domain: Domain
     public let priority: Priority
     public let latestRenewedPeriod: UInt32?
+    /// `nil` means this installation cannot sign for the account, so its slot is never handed over.
+    public let signerKeyId: String?
 
     public init(
         accountId: AccountId,
@@ -16,7 +18,8 @@ public struct AllowanceRecord: Equatable {
         kind: Kind?,
         domain: Domain,
         priority: Priority,
-        latestRenewedPeriod: UInt32?
+        latestRenewedPeriod: UInt32?,
+        signerKeyId: String? = nil
     ) {
         self.accountId = accountId
         self.allocatedAt = allocatedAt
@@ -24,6 +27,7 @@ public struct AllowanceRecord: Equatable {
         self.domain = domain
         self.priority = priority
         self.latestRenewedPeriod = latestRenewedPeriod
+        self.signerKeyId = signerKeyId
     }
 }
 

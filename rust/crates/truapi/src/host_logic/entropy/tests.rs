@@ -1,4 +1,5 @@
 use super::*;
+use crate::host_logic::root_entropy::RootEntropy;
 
 fn secret() -> [u8; 32] {
 	let mut secret = [0u8; 32];
@@ -38,16 +39,17 @@ fn product_entropy_cases() {
 		},
 	];
 
+	let root_entropy = RootEntropy::new(secret());
 	for case in success_cases {
-		let entropy =
-			derive_product_entropy(&secret(), &ProductId::for_test(case.product_id), &case.key)
-				.unwrap();
+		let entropy = root_entropy
+			.derive_product_entropy(&ProductId::for_test(case.product_id), &case.key)
+			.unwrap();
 		assert_eq!(hex::encode(entropy), case.expected_hex, "{}", case.name);
 	}
 
 	// Byte-for-byte vectors from polkadot-app-ios-v2
 	// (ProductRootEntropyDeriverTests): raw BIP-39 entropy of 16 * 0xAB.
-	let ios_entropy = [0xABu8; 16];
+	let ios_entropy = RootEntropy::new([0xAB; 16]);
 	let ios_cases = [
 		(
 			"test.product.dot",
@@ -66,8 +68,9 @@ fn product_entropy_cases() {
 		),
 	];
 	for (product_id, key, expected_hex) in ios_cases {
-		let entropy =
-			derive_product_entropy(&ios_entropy, &ProductId::for_test(product_id), key).unwrap();
+		let entropy = ios_entropy
+			.derive_product_entropy(&ProductId::for_test(product_id), key)
+			.unwrap();
 		assert_eq!(hex::encode(entropy), expected_hex, "ios vector {product_id}");
 	}
 
@@ -77,7 +80,9 @@ fn product_entropy_cases() {
 	];
 	for (key, expected) in error_cases {
 		assert_eq!(
-			derive_product_entropy(&secret(), &ProductId::for_test("myapp.dot"), &key).unwrap_err(),
+			root_entropy
+				.derive_product_entropy(&ProductId::for_test("myapp.dot"), &key)
+				.unwrap_err(),
 			expected,
 		);
 	}

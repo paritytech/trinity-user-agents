@@ -2,6 +2,7 @@ import Foundation
 import FoundationExt
 import Products
 import Individuality
+import ExtrinsicService
 import KeyDerivation
 import Operation_iOS
 import SubstrateSdk
@@ -43,7 +44,8 @@ extension SSStoreAllowanceManager {
             wallet: wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            networkSuffixProvider: tldProvider
+            networkSuffixProvider: tldProvider,
+            signerResolver: DerivationPathSignerResolver(entropyManager: entropyManager)
         )
 
         let extrinsicFacade = ExtrinsicSubmissionMonitorFacade(
@@ -54,7 +56,8 @@ extension SSStoreAllowanceManager {
 
         guard
             let chatChain = chainRegistry.getChain(for: AppConfig.Chains.chatChain),
-            let monitorFactory = try? extrinsicFacade.createMonitorFactory(chain: chatChain)
+            let monitorFactory = try? extrinsicFacade.createMonitorFactory(chain: chatChain),
+            let operationFactory = try? extrinsicFacade.createOperationFactory(chain: chatChain)
         else {
             return nil
         }
@@ -70,13 +73,6 @@ extension SSStoreAllowanceManager {
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )
-        let logger = Logger.shared
-
-        let originPersonProvider = ChainOriginPersonProvider(
-            chainId: chatChain.chainId,
-            chainRegistry: chainRegistry,
-            keyResolver: keyResolver
-        )
 
         let slotInfoProvider = StatementStoreSlotInfoProvider(
             chainId: chatChain.chainId,
@@ -85,18 +81,37 @@ extension SSStoreAllowanceManager {
             networkSuffixProvider: tldProvider,
             resourcesParameters: ResourcesParametersFacade.shared,
             chainTimeProvider: timeProvider,
-            originPersonProvider: originPersonProvider,
+            originPersonProvider: ChainOriginPersonProvider(
+                chainId: chatChain.chainId,
+                chainRegistry: chainRegistry,
+                keyResolver: keyResolver
+            ),
             accounting: accounting,
-            logger: logger
+            logger: Logger.shared
         )
 
         let submitter = SlotAssignmentSubmitter(monitorFactory: monitorFactory)
 
+        let capabilities = StatementStoreRuntimeCapabilities(
+            chainId: chatChain.chainId,
+            chainRegistry: chainRegistry
+        )
         let allocator = StatementStoreSlotAllocator(
             chainId: chatChain.chainId,
-            originFactory: originFactory,
-            submitter: submitter,
-            slotInfoProvider: slotInfoProvider,
+            dependencies: .init(
+                originFactory: originFactory,
+                submitter: submitter,
+                slotInfoProvider: slotInfoProvider,
+                replacementValidator: makeReplacementValidator(
+                    chain: chatChain,
+                    operationFactory: operationFactory,
+                    chainRegistry: chainRegistry,
+                    operationQueue: operationQueue,
+                    logger: Logger.shared
+                ),
+                capabilities: capabilities,
+                resourcesParameters: ResourcesParametersFacade.shared
+            ),
             serialQueue: serialQueue
         )
 
@@ -109,10 +124,10 @@ extension SSStoreAllowanceManager {
             chainTimeProvider: timeProvider,
             serialQueue: serialQueue,
             issueDiagnostics: .make(reporter: IssueReportingFacade.shared),
-            logger: logger
+            logger: Logger.shared
         )
 
-        let manager = SSStoreAllowanceManager(
+        return SSStoreAllowanceManager(
             repository: allowanceRepository,
             allocator: allocator,
             slotInfoProvider: slotInfoProvider,
@@ -120,7 +135,26 @@ extension SSStoreAllowanceManager {
             backgroundExecutor: ConnectionRetainingExecutor(provider: chainRegistry),
             issueDiagnostics: .make(flow: "statement-store-allowance", reporter: IssueReportingFacade.shared)
         )
+    }
+}
 
-        return manager
+private extension SSStoreAllowanceManager {
+    static func makeReplacementValidator(
+        chain: ChainModel,
+        operationFactory: ExtrinsicOperationFactoryProtocol,
+        chainRegistry: ChainRegistryProtocol,
+        operationQueue: OperationQueue,
+        logger: LoggerProtocol
+    ) -> SlotReplacementValidator {
+        SlotReplacementValidator(
+            operationFactory: operationFactory,
+            validationApi: TaggedTransactionQueueApi(chainRegistry: chainRegistry, operationQueue: operationQueue),
+            blockInfoProvider: BlockInfoProvider(
+                chainRegistry: chainRegistry,
+                operationQueue: operationQueue,
+                chainId: chain.chainId
+            ),
+            logger: logger
+        )
     }
 }

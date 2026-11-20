@@ -8,7 +8,7 @@ protocol AllowanceCleanupServicing: Sendable {
 
 final class AllowanceCleanupService: @unchecked Sendable {
     struct Target {
-        let manager: AllowanceManaging
+        let manager: any AllowanceManaging
         let strategy: AllowanceReleaseStrategy
     }
 

@@ -114,6 +114,32 @@ public extension ResourcesPallet {
         }
     }
 
+    struct ReplaceStatementStoreAccountCall: RuntimeCallConvertible {
+        public static let callName = "replace_statement_store_account"
+
+        public var moduleName: String { ResourcesPallet.name }
+        public var name: String { Self.callName }
+
+        enum CodingKeys: String, CodingKey {
+            case period
+            case alias
+            case newAccount = "new_account"
+            case since
+        }
+
+        @StringCodable public var period: UInt32
+        @BytesCodable public var alias: Data
+        @BytesCodable public var newAccount: Data
+        @StringCodable public var since: UInt64
+
+        public init(period: UInt32, alias: Data, newAccount: Data, since: UInt64) {
+            _period = StringCodable(wrappedValue: period)
+            _alias = BytesCodable(wrappedValue: alias)
+            _newAccount = BytesCodable(wrappedValue: newAccount)
+            _since = StringCodable(wrappedValue: since)
+        }
+    }
+
     /// Origin: NotificationAlias via AsResources(RegisterNotificationForCollection(..)).
     /// Binds `accountId` to one statement of the notification allowance until the period ends plus grace.
     struct SetNotificationStatementAccountForSequenceCall: RuntimeCallConvertible {

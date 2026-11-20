@@ -17,6 +17,7 @@ mod live;
 mod operation;
 mod purse;
 mod reclaim;
+mod recovery;
 mod returns;
 mod scarcity;
 mod standing;
@@ -30,7 +31,6 @@ pub use imported_secrets::ImportedSecretStore;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{
 	ImportedItemKey, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot,
-	item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{
@@ -39,6 +39,7 @@ pub use operation::{
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use reclaim::ReclaimRequest;
+pub use recovery::{AssetHubRecoveryChain, NftRecovery, NftRecoveryDeps, recovery_scan_config};
 pub use returns::ReturnRequest;
 pub use scarcity::{
 	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,

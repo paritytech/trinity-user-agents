@@ -1734,21 +1734,14 @@ impl<H: AccountHolder> FundingProvider for ProductRuntimeHost<H> {
 				let services = &self.connection.services;
 				let provider = &self.connection.product;
 				if matches!(target, latest::FundingFrameTarget::App { .. }) {
-					use crate::host_logic::funding_providers::FundingProviderApp;
-					let has_app = match services.funding_providers().app(&provider.product_id) {
-						FundingProviderApp::Shipped => true,
-						FundingProviderApp::Absent => false,
-						FundingProviderApp::Unknown => {
-							crate::runtime::product_manifest::publishes_app(
-								services,
-								services.platform.as_ref(),
-								&provider.product_id,
-								APP_LOOKUP_CEILING,
-							)
-							.await
-							.unwrap_or(false)
-						},
-					};
+					let has_app = crate::runtime::product_manifest::publishes_app(
+						services,
+						services.platform.as_ref(),
+						&provider.product_id,
+						APP_LOOKUP_CEILING,
+					)
+					.await
+					.unwrap_or(false);
 					if !has_app {
 						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
 					}

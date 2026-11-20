@@ -8,13 +8,6 @@ extension ChatPresenter: ChatMoreActionsDelegate {
     func didConfirmBlockUser() {
         interactor.blockUser()
     }
-
-    func didConfirmCancelChatRequest() {
-        interactor.cancelChatRequest()
-        MainActor.assumeIsolated {
-            wireframe.dismissChat(from: view)
-        }
-    }
 }
 
 extension ChatPresenter: ChatAttachmentPreviewDelegate {

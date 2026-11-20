@@ -30,18 +30,17 @@ public final class SSStoreAllowanceManager {
 }
 
 extension SSStoreAllowanceManager: AllowanceManaging {
+    public typealias Holder = StatementStoreAllowanceHolder
+
     public func allocate(
-        accountId: AccountId,
+        holder: StatementStoreAllowanceHolder,
         policy: OnExistingAllowancePolicy,
         priority: AllowanceRecord.Priority,
         domain: AllowanceRecord.Domain
     ) async throws {
         try await issueDiagnostics.observeAllocation {
             try await allocateInBackground(
-                accountId: accountId,
-                policy: policy,
-                priority: priority,
-                domain: domain
+                AllocationRequest(holder: holder, policy: policy, priority: priority, domain: domain)
             )
         }
     }
@@ -76,47 +75,49 @@ extension SSStoreAllowanceManager: StatementAccountFunding {
     }
 
     public func ensureFunded(
-        accountId: AccountId,
+        holder: StatementStoreAllowanceHolder,
         priority: AllowanceRecord.Priority,
         domain: AllowanceRecord.Domain
     ) async throws {
         try await issueDiagnostics.observeAllocation {
             try await allocateInBackground(
-                accountId: accountId,
-                policy: .ignore,
-                priority: priority,
-                domain: domain
+                AllocationRequest(holder: holder, policy: .ignore, priority: priority, domain: domain)
             )
         }
     }
 }
 
 private extension SSStoreAllowanceManager {
-    func allocateInBackground(
-        accountId: AccountId,
-        policy: OnExistingAllowancePolicy,
-        priority: AllowanceRecord.Priority,
-        domain: AllowanceRecord.Domain
-    ) async throws {
+    struct AllocationRequest {
+        let holder: StatementStoreAllowanceHolder
+        let policy: OnExistingAllowancePolicy
+        let priority: AllowanceRecord.Priority
+        let domain: AllowanceRecord.Domain
+
+        var accountId: AccountId { holder.accountId }
+    }
+
+    func allocateInBackground(_ request: AllocationRequest) async throws {
         try await backgroundExecutor.execute { [allocator, repository, slotInfoProvider] in
             try await markStallActivity("Allocating SS allowance") {
                 let existing = try await markStallRegion("Check existing slot") {
-                    try await slotInfoProvider.hasExistingSlot(for: accountId)
+                    try await slotInfoProvider.hasExistingSlot(for: request.accountId)
                 }
 
-                if policy == .ignore, existing {
+                if request.policy == .ignore, existing {
                     return
                 }
 
-                let period = try await allocator.assignSlot(accountId: accountId, priority: priority)
+                let period = try await allocator.assignSlot(accountId: request.accountId, priority: request.priority)
 
                 let record = AllowanceRecord(
-                    accountId: accountId,
+                    accountId: request.accountId,
                     allocatedAt: Date(),
                     kind: .statementStore,
-                    domain: domain,
-                    priority: priority,
-                    latestRenewedPeriod: period
+                    domain: request.domain,
+                    priority: request.priority,
+                    latestRenewedPeriod: period,
+                    signerKeyId: request.holder.signerKeyId
                 )
                 try await repository.saveOperation({ [record] }, { [] }).asyncExecute()
             }

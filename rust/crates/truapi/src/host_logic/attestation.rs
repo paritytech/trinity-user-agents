@@ -27,10 +27,9 @@ use verifiable::{
 use crate::host_logic::{
 	dotns_gateway::build_reservation_message,
 	product_account::{
-		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-		derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
+		ProductAccountError, SR25519_SIGNING_CONTEXT, product_public_key_to_address,
 	},
-	sso::pairing::derive_identity_chat_private_key,
+	root_entropy::RootEntropy,
 	x25519_seal::X25519PrivateKey,
 };
 
@@ -134,7 +133,7 @@ pub struct SigningContexts {
 /// `people_signing_context` and `asset_hub_signing_context` come from
 /// [`signing_context_from_constant`] on each chain's metadata.
 pub fn build_lite_registration(
-	entropy: &[u8],
+	entropy: &RootEntropy,
 	network_suffix: &str,
 	verifier_account_id: [u8; 32],
 	username_base: &str,
@@ -147,10 +146,10 @@ pub fn build_lite_registration(
 ) -> Result<LiteRegistration, LiteRegistrationError> {
 	// Registration, local activation, and the SSO responder all use the
 	// RFC-0028 identity account.
-	let candidate = derive_identity_keypair(entropy, network_suffix)?;
+	let candidate = entropy.derive_identity_keypair(network_suffix)?;
 	let candidate_public_key = candidate.public.to_bytes();
 
-	let vrf_entropy = derive_lite_person_ring_vrf_entropy(entropy, network_suffix);
+	let vrf_entropy = entropy.derive_lite_person_ring_vrf_entropy(network_suffix);
 	let vrf_secret = BandersnatchVrfVerifiable::new_secret(vrf_entropy);
 	let ring_vrf_key = BandersnatchVrfVerifiable::member_from_secret(&vrf_secret);
 
@@ -223,8 +222,8 @@ pub fn build_lite_registration(
 /// advertised on chain is the counterpart of the private key this host serves
 /// to a paired chat client. The 65-byte width predates X25519 and stayed when
 /// the curve changed; readers ignore the padding rather than validate it.
-fn derive_identifier_key(entropy: &[u8]) -> [u8; 65] {
-	let chat_key = X25519PrivateKey::from(derive_identity_chat_private_key(entropy));
+fn derive_identifier_key(entropy: &RootEntropy) -> [u8; 65] {
+	let chat_key = X25519PrivateKey::from(entropy.derive_identity_chat_private_key());
 	let public_key = chat_key.public_key().0;
 	let mut identifier_key = [0u8; 65];
 	identifier_key[0] = IDENTIFIER_KEY_TAG_X25519;

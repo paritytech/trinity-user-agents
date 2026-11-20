@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import MessageExchangeKit
 import ChainRegistry
 import KeyDerivation
@@ -10,13 +11,13 @@ protocol ChatMessageCompactorMaking: MessageCompactorMaking
 final class ChatMessageCompactorFactory: @unchecked Sendable {
     let hopNodeProvider: HOPNodeProviding
     let hopLoaderFactory: HOPFileLoaderMaking
-    let allowanceManager: AllowanceManaging
+    let allowanceManager: any AllowanceManaging<AccountId>
     let signerProvider: AttachmentsSenderProviding
     let logger: LoggerProtocol
 
     init(
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
-        allowanceManager: AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         signerProvider: AttachmentsSenderProviding = AttachmentsSenderProvider(),
         logger: LoggerProtocol = Logger.shared
     ) {

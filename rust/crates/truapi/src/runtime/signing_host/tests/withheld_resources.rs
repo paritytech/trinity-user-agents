@@ -33,7 +33,7 @@ fn allocate(
 #[test]
 fn a_withheld_resource_is_refused_while_the_others_are_granted() {
 	let (services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
@@ -56,7 +56,7 @@ fn a_withheld_resource_is_refused_while_the_others_are_granted() {
 #[test]
 fn withholding_nothing_leaves_every_resource_granted() {
 	let (services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	let runtime = product_runtime(services, activation);
@@ -70,7 +70,7 @@ fn withholding_nothing_leaves_every_resource_granted() {
 #[test]
 fn a_later_set_replaces_the_earlier_one() {
 	let (services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
@@ -109,7 +109,7 @@ fn proof_is_signed(runtime: &ProductRuntimeHost<WalletAccountHolder>) -> bool {
 #[test]
 fn a_withheld_statement_store_allowance_leaves_the_proof_path_unsigned() {
 	let (services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	activation.set_withheld_resources(vec!["StatementStoreAllowance".to_string()]);
@@ -124,7 +124,7 @@ fn a_withheld_statement_store_allowance_leaves_the_proof_path_unsigned() {
 #[test]
 fn a_granted_statement_store_allowance_signs_the_proof_path() {
 	let (services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	let runtime = product_runtime(services, activation);
@@ -137,7 +137,7 @@ fn a_granted_statement_store_allowance_signs_the_proof_path() {
 #[test]
 fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
 	let (_services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	activation.set_grant_allowances_unchecked(true);
 	activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);

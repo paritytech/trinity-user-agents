@@ -13,6 +13,12 @@ public protocol AsResourcesOriginCreating {
         chain: ChainId
     ) async throws -> ExtrinsicOriginDefining
 
+    func createStmtStoreHolderOrigin(
+        signerKeyId: String,
+        holder: AccountId,
+        chain: ChainId
+    ) async throws -> ExtrinsicOriginDefining
+
     func createLTSOrigin(
         personOrigin: PersonOrigin,
         period: UInt32,
@@ -33,17 +39,20 @@ public final class AsResourcesOriginFactory: AsResourcesOriginCreating {
     private let keyResolver: BandersnatchKeyResolving
     private let chainRegistry: ChainResourceProtocol
     private let networkSuffixProvider: NetworkSuffixProviding
+    private let signerResolver: SlotHolderSignerResolving
 
     public init(
         wallet: WalletManaging,
         keyResolver: BandersnatchKeyResolving,
         chainRegistry: ChainResourceProtocol,
-        networkSuffixProvider: NetworkSuffixProviding
+        networkSuffixProvider: NetworkSuffixProviding,
+        signerResolver: SlotHolderSignerResolving
     ) {
         self.wallet = wallet
         self.keyResolver = keyResolver
         self.chainRegistry = chainRegistry
         self.networkSuffixProvider = networkSuffixProvider
+        self.signerResolver = signerResolver
     }
 
     public func createSSSOrigin(
@@ -57,6 +66,18 @@ public final class AsResourcesOriginFactory: AsResourcesOriginCreating {
             suffix: .statementStoreSlot(period: period, seq: seq),
             kind: .registerStatementStoreAllowance,
             chain: chain
+        )
+    }
+
+    public func createStmtStoreHolderOrigin(
+        signerKeyId: String,
+        holder: AccountId,
+        chain _: ChainId
+    ) async throws -> ExtrinsicOriginDefining {
+        let signer = try signerResolver.signer(for: signerKeyId, expecting: holder)
+
+        return ExtrinsicCompoundOrigin(
+            children: [RestrictsOriginDefinition(enabled: true), StmtStoreHolderOriginDefinition(signer: signer)]
         )
     }
 

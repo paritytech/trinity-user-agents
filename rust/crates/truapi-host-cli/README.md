@@ -181,10 +181,10 @@ itself:
 
 That script installs the SDK bridge and the shared `js/container` sandbox
 synchronously. Keep it before application scripts, without `async` or `defer`.
-Updated SDKs use the injected `__HOST_API_CLIENT__` across reconnects. Older SDKs
-can still start through the `__HOST_API_PORT__` adapter but require a page reload
-after a disconnect. SDK calls and sandbox permission checks share one host
-WebSocket and its temporary permissions.
+Updated SDKs build their own client over the injected `__HOST_API_TRANSPORT__`
+and keep it across reconnects. Older SDKs use the `__HOST_API_PORT__` adapter,
+which survives a reconnect too. SDK calls and sandbox permission checks share
+one host WebSocket and its temporary permissions.
 `/script` uses the same fetch and WebSocket permission checks in Bun, and the
 XHR wrapper when that API is available. Dev keeps automatic approvals, and the
 app server handles assets and hot reload. `--app-port` names the development
@@ -1037,8 +1037,8 @@ copy was signed with another key (every derived account, or the namespace every
 session is stored under, would change; remove the copy to bundle it on purpose),
 and a built-in network's copy the CLI cannot run on.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
-copy that differs from the one at `--out` only in fields truapi-host does not read
-leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
+copy that differs from the one at `--out` only in fields neither truapi-host nor
+the core reads leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
 has every option.
 
 ## Statement-store allowance

@@ -39,7 +39,6 @@ pub async fn read(runtime: &HostRuntime<SigningHost>, username: &str) -> Result<
 pub async fn upload(
 	runtime: &HostRuntime<SigningHost>,
 	network: &Stack,
-	entropy: &[u8],
 	username: &str,
 	path: &Path,
 ) -> Result<String> {
@@ -47,7 +46,7 @@ pub async fn upload(
 	let image = tokio::task::spawn_blocking(move || read_image(&path))
 		.await
 		.context("join profile image reader")??;
-	let mut profile = chain::ChainProfile::connect(runtime, network, entropy, username).await?;
+	let mut profile = chain::ChainProfile::connect(runtime, network, username).await?;
 	let record = publish_avatar(&mut profile.backend(), image).await?;
 	let published = PublicProfile { avatar: record.avatar() };
 	Ok(format!("Profile published\n{}", format_profile(username, &published)))
