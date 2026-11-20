@@ -64,12 +64,12 @@ pub enum RenderContext {
         /// Candidate id, as the product answered it.
         candidate_id: String,
     },
-    /// A card face in the host's Pocket collection.
+    /// The face of a plain card in the host's Pocket collection.
     PocketCard {
         /// Card id, as declared in the product's worker manifest.
         card_id: String,
     },
-    /// The back of a card in the host's Pocket collection.
+    /// The back of a plain card in the host's Pocket collection.
     PocketCardBack {
         /// Card id, as declared in the product's worker manifest.
         card_id: String,
@@ -80,6 +80,20 @@ pub enum RenderContext {
         room_id: String,
         /// The `message_type` of the `ChatCustomMessage` the product set through `Chat::set_room_footer`.
         message_type: String,
+    },
+    /// The face of a Pocket card that is an instance.
+    PocketCardInstance {
+        /// Card id, as declared in the product's worker manifest.
+        card_id: String,
+        /// Instance id, as the Pocket link that added the card named it.
+        instance_id: String,
+    },
+    /// The back of a Pocket card that is an instance.
+    PocketCardInstanceBack {
+        /// Card id, as declared in the product's worker manifest.
+        card_id: String,
+        /// Instance id, as the Pocket link that added the card named it.
+        instance_id: String,
     },
 }
 
@@ -126,11 +140,12 @@ pub trait Renderer: Send + Sync {
 }
 ```
 
-`RenderContext` has one variant per surface, or per body a surface draws apart, such as a Pocket card's back, holding
-the ids that surface uses to name a body. The host scopes an id to the product that minted it, and for `InputWidget`
-also to the query the candidate answered. For `ChatRoomFooter` the host scopes `room_id` to the product that created the
-room. A render request and the actions inside it carry the same context verbatim, so a product correlates by equality. A
-new surface, or a new kind of body on one, is a new variant.
+`RenderContext` has one variant for each kind of body a surface draws and each set of ids that names it, so a Pocket
+card's face and back, named by a card id alone or with an instance id, take four variants. The host scopes an id to the
+product whose body it names, and for `InputWidget` also to the query the candidate answered. For `ChatRoomFooter` the
+host scopes `room_id` to the product that created the room. A render request and the actions inside it carry the same
+context verbatim, so a product correlates by equality. A new surface, a new kind of body on one, or a new set of ids is
+a new variant.
 
 A product registers one `render` handler, and the host calls it for every context of a surface the product's manifest
 `includes`. A product that draws on more than one surface matches on `context`. Contexts for surfaces the product does
