@@ -1869,7 +1869,7 @@ impl FundingSession {
 				true
 			},
 			answer => {
-				error!(intent = %self.intent, ?answer, "a provider's cancel answer does not fit");
+				error!(?answer, "a provider's cancel answer does not fit");
 				self.cancel = Some(FundingCancel::Refused { reason: String::new() });
 				true
 			},

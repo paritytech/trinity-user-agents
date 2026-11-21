@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -45,6 +46,7 @@ import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlayInsets
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReplyPreview
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.AttachFileButton
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatInputField
@@ -84,7 +86,15 @@ internal fun ChatInputRow(
         .fillMaxWidth()
         .onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
     if (inputState is ChatInputUiState.ExtensionCard) {
-        Box(modifier = measuredModifier) { inputState.renderer.drawInputSlot() }
+        // A global overlay (a product's game pill) covers the bottom of the screen; the slot sits above it,
+        // over the chat's own background, so the pill neither hides the slot nor shows the chat beneath it.
+        val overlayBottomPx by ChatOverlayInsets.bottom.collectAsStateWithLifecycle()
+        val overlayBottom = with(density) { overlayBottomPx.toDp() }
+        Box(
+            modifier = measuredModifier
+                .background(PolkadotTheme.colors.bg.surface.main)
+                .padding(bottom = overlayBottom)
+        ) { inputState.renderer.drawInputSlot() }
         return
     }
     PolkadotSurface(

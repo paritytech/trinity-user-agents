@@ -2,6 +2,7 @@
 
 mod v0_to_v1_durable_tx;
 mod v10_to_v11_profile_cache_lru;
+mod v11_to_v12_materials;
 mod v1_to_v2_scheduled_submissions;
 mod v2_to_v3_nft_purses;
 mod v3_to_v4_nft_items;
@@ -29,5 +30,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v8_to_v9_pocket_cards::create_pocket_cards(),
 		v9_to_v10_public_profiles::create_public_profiles(),
 		v10_to_v11_profile_cache_lru::profile_cache_lru(),
+		v11_to_v12_materials::create_materials(),
 	])
 }

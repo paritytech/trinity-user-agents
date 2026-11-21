@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 
 extension NSPredicate {
     static func contactsAcceptedAfter(_ date: Date) -> NSPredicate {
@@ -22,6 +23,10 @@ extension NSPredicate {
             #keyPath(CDRemovedChat.removedAt),
             date as NSDate
         )
+    }
+
+    static func removedChat(for accountId: AccountId) -> NSPredicate {
+        NSPredicate(format: "%K == %@", #keyPath(CDRemovedChat.identifier), accountId.toHex())
     }
 
     static func devicesCreatedAfter(_ date: Date) -> NSPredicate {

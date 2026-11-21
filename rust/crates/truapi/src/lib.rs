@@ -903,9 +903,18 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		mod pocket_cards;
 
+		#[cfg(not(target_arch = "wasm32"))]
+		mod bulletin_lookup;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		mod materials;
+
 		pub use spawner::Spawner;
 
 		pub use truapi_core::TrUApiCore;
+
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
 			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,

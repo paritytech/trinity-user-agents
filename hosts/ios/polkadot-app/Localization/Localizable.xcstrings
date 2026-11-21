@@ -493,6 +493,50 @@
         }
       }
     },
+    "cancel.chat.request.confirm" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel request"
+          }
+        }
+      }
+    },
+    "cancel.chat.request.keep" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep request"
+          }
+        }
+      }
+    },
+    "cancel.chat.request.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ will no longer see your request."
+          }
+        }
+      }
+    },
+    "cancel.chat.request.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel request?"
+          }
+        }
+      }
+    },
     "chat.call.camera.access.message" : {
       "extractionState" : "manual",
       "localizations" : {

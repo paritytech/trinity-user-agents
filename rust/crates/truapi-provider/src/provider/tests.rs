@@ -91,30 +91,49 @@ fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
 	);
 }
 
+/// The parachain with `parachain_spec`, its relay seeded with a blob.
+#[cfg(feature = "smoldot")]
+fn parachain_with_a_seeded_relay(parachain_spec: &'static str) -> EmbeddedChainProvider {
+	use crate::test_specs::{PARACHAIN_GENESIS, RELAY_GENESIS, RELAY_SPEC};
+
+	EmbeddedChainProvider::builder()
+		.chain(RELAY_GENESIS, ChainSource::light_client(RELAY_SPEC).build())
+		.parachain(
+			PARACHAIN_GENESIS,
+			ChainSource::light_client(parachain_spec).build(),
+			RELAY_GENESIS,
+		)
+		.database(RELAY_GENESIS, "relay-blob".to_owned())
+		.build()
+}
+
 /// A blob registered for a relay reaches it even when the relay is never
 /// connected directly, only brought up behind one of its parachains.
 #[cfg(feature = "smoldot")]
 #[test]
-// Without the `ws` backend the enum has a single variant, making the
-// let-else below irrefutable there.
-#[allow(irrefutable_let_patterns)]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
-	use std::collections::HashMap;
+	use crate::test_specs::{PARACHAIN_GENESIS, PARACHAIN_SPEC, RELAY_GENESIS};
 
-	const RELAY: [u8; 32] = [1; 32];
-	let mut chains = HashMap::new();
-	chains.insert(RELAY, ChainSource::light_client("{}").build());
-	let provider = EmbeddedChainProvider::builder()
-		.database(RELAY, "relay-blob".to_owned())
-		.build();
+	let provider = parachain_with_a_seeded_relay(PARACHAIN_SPEC);
 
-	let (genesis, source) =
-		provider.resolve_relay(&chains, RELAY).expect("the relay is registered");
-	assert_eq!(genesis, RELAY);
-	let ChainSource::LightClient { database_content, .. } = source else {
-		panic!("expected a LightClient source");
-	};
-	assert_eq!(database_content.as_deref(), Some("relay-blob"));
+	let _connection = futures::executor::block_on(provider.connect(PARACHAIN_GENESIS))
+		.expect("the parachain syncs through its relay");
+
+	assert!(!provider.has_database(RELAY_GENESIS), "the relay took its blob");
+}
+
+/// The relay is the chain that warp syncs, so losing its blob to a parachain
+/// that failed to start would make the retry sync cold.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_failed_parachain_connect_keeps_the_relays_blob() {
+	use crate::test_specs::{PARACHAIN_GENESIS, RELAY_GENESIS};
+
+	let provider = parachain_with_a_seeded_relay("not a chain spec");
+
+	assert!(futures::executor::block_on(provider.connect(PARACHAIN_GENESIS)).is_err());
+
+	assert!(provider.has_database(RELAY_GENESIS));
 }
 
 /// The snapshot round trip resolves against a live light client, and the

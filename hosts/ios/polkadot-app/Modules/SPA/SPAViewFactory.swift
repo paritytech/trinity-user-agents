@@ -206,14 +206,13 @@ extension SPAViewFactory {
             rust: rustEnvironment,
             configuration: configuration,
             contentLoader: flowState.contentLoader,
+            productResolver: flowState.productResolver,
             schemeHandlerProxy: schemeHandlerProxy,
             routers: routers
         ))
 
         let interactor = SPARustRuntimeInteractor(
             runtimeFactory: runtimeFactory,
-            productResolver: flowState.productResolver,
-            contentLoader: flowState.contentLoader,
             presenceRegistry: RootDependencyLocator.getDependency(),
             configuration: configuration,
             logger: Logger.shared,

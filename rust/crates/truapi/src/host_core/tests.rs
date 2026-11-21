@@ -1757,6 +1757,20 @@ fn the_durable_engine_starts_without_an_installation_provider() {
 	assert!(runtime.services.durable_engine().is_some());
 }
 
+/// The runtime keeps one set of materials, so every renderer tree shares
+/// the fetches the start-up fetch began, and a second start begins none.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn core_services_install_the_materials_once() {
+	let (runtime, _platform) = test_signing_runtime();
+	let db = crate::store::open_memory_core_db();
+	runtime.set_core_db(db.clone());
+	runtime.start_core_services();
+	runtime.start_core_services();
+
+	assert!(!runtime.services.install_materials(materials(&runtime.services, db)));
+}
+
 #[test]
 fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer() {
 	let platform = Arc::new(StubPlatform {
@@ -1942,7 +1956,7 @@ struct ManifestLookup {
 fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
-	// The stub serves no dotNS, so end the follow rather than
+	// The stub serves no dotNS, so end its responses rather than
 	// wait out `dotns_lookup::OPERATION_TIMEOUT` for the same refusal.
 	let platform = Arc::new(StubPlatform { chain_responses_end: true, ..StubPlatform::default() });
 	let runtime = SigningHostRuntime::new(

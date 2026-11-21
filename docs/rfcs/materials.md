@@ -38,12 +38,12 @@ have no shared definition, so the same material would look different in each ren
 
 ### Material
 
-A material is one UTF-8 text file in version 1 of the material format. The format is the
-[material format](https://github.com/paritytech/shaderlab-spa/blob/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/docs/materials-platform/MATERIAL_FORMAT.md)
-with its
-[renderer inputs](https://github.com/paritytech/shaderlab-spa/blob/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/docs/MATERIAL_SPEC.md),
-as of commit `f8251d2b`, including the versioning rules it proposes. Its
-[conformance vectors](https://github.com/paritytech/shaderlab-spa/tree/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/tools/fixtures/conformance/core)
+A material is one UTF-8 text file in version 1 of the material format. The format is the one Shaderlab's
+[reference parser](https://github.com/paritytech/shaderlab-spa/blob/66dd4552edea41787c10469b3088781f6e8f4395/packages/material-core/src/format.ts)
+reads, with its
+[renderer inputs](https://github.com/paritytech/shaderlab-spa/blob/66dd4552edea41787c10469b3088781f6e8f4395/docs/MATERIAL_SPEC.md),
+as of commit `66dd4552` on Shaderlab's `main`, including its versioning rules. Its
+[conformance vectors](https://github.com/paritytech/shaderlab-spa/tree/66dd4552edea41787c10469b3088781f6e8f4395/tools/fixtures/conformance/core)
 are the test: a host that disagrees with a vector is wrong. A material's ID is the BLAKE2b-256 hash of its exact
 canonical text. The same 32 bytes are its Bulletin preimage key, shown as a CIDv1 with the raw codec in base32.
 
@@ -259,7 +259,8 @@ the host can read, time and tilt are zero, orientation is zero and rotation is t
 
 The noise image is 1024 × 1024 bytes in row order, made of 32,768 chunks. Chunk `c` is the BLAKE2b-256 hash of the seed
 as a little-endian u32 followed by `c` as a little-endian u32. It is sampled nearest with repeat. The seed is the 32-bit
-FNV-1a hash of the UTF-8 id that names the body in its `RenderContext`: `card_id`, `message_id` or `candidate_id`.
+FNV-1a hash of the UTF-8 id that names the body in its `RenderContext`: `card_id`, `message_id`, `candidate_id`, or
+`room_id` for a room's footer.
 
 Images follow the format's rules: channels are normalised, with no colour-space conversion and no premultiplication.
 Each image is read as four channels: a greyscale image repeats its value in red, green and blue, and an image without

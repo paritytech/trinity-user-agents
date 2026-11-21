@@ -128,7 +128,7 @@ interface WorkerChainConnection {
  * Worker-side half of the host chain-connect bridge.
  *
  * The Rust core runs in this worker but owns no socket. When it needs chain
- * access (chainHead v1 for dotNS identity on Asset Hub / statement-store SSO) it
+ * access (Asset Hub reads for dotNS / statement-store SSO) it
  * calls this; the actual transport lives on the host main thread and is reached
  * over postMessage. The data crossing here is JSON-RPC strings, not SCALE: only
  * the product<->core wire is SCALE.

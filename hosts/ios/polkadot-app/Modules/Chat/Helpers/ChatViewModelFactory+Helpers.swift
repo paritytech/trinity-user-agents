@@ -64,7 +64,8 @@ private extension IncomingTransferState.Status {
         switch self {
         case .detecting: .detecting
         case .claiming: .claiming
-        case .claimed: .claimed
+        case .claimed,
+             .claimedFinalized: .claimed
         case .failed: .failed
         }
     }
@@ -74,8 +75,10 @@ private extension OutgoingTransferState.Status {
     var viewState: ChatTransferMessageConfiguration.OutgoingState {
         switch self {
         case .sending: .sending
-        case .sent: .sent
-        case .claimed: .claimed
+        case .sent,
+             .sentFinalized: .sent
+        case .claimed,
+             .claimedFinalized: .claimed
         case .failed: .failed
         }
     }

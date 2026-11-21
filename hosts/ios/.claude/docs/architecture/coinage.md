@@ -111,6 +111,18 @@ Transfer plans determine how coins are spent:
 - Integrates with chat for payment request/confirmation messages
 - See `architecture/chat-extension.md` for chat integration
 
+### Transfer state rows (chat bubbles)
+
+`CoinageTransferMonitor` writes one row per coinage message (`CDIncomingTransferState` /
+`CDOutgoingTransferState`, `Modules/Coinage/Model/TransferState.swift`) and subscribes to every message whose
+row is not terminal (`NSPredicate.withoutTerminalTransferState`). Statuses come in best-head and finalized pairs:
+incoming `claimed` → `claimedFinalized`, outgoing `sent` → `sentFinalized` and `claimed` → `claimedFinalized`.
+A best-head reading is one a fork can still undo, so only `claimedFinalized` and `failed` are terminal — an
+explicit set (`Status.terminal`). A relaunch while a row is `claimed`/`sent` therefore tracks the message again until the finalized chain
+agrees; the bubbles render a finalized status like its best-head twin. Per coin, the package ladder
+(`CoinageTransferStatusService.transferStatus`) reports `awaitingClaim(finalized:)` / `claimed(finalized:)` from the
+finalized head's presence map.
+
 ## Submission Policies (retries)
 
 A coinage transaction proven unable to land is **built again** rather than failed. Each of the three

@@ -131,7 +131,7 @@ loader errors. Initial profile and image errors leave the host's placeholder vis
 The core derives `namehash(<username>.<tld>)` and reads `text(node, "profile")`
 on the `contentResolver` contract registered by the dotNS protocol registry.
 The username's node resolver does not select its profile storage. Independent
-registry views run concurrently on one pinned block through the shared EVM
+registry views run concurrently at one best block through the shared EVM
 contract caller.
 
 ### The core cache

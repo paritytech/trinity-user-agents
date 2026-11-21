@@ -39,6 +39,7 @@
 | Typed wrappers, SubstrateSdk types             | code/project-types.md                                      |
 | Wireframe navigation, module transitions       | code/navigation.md                                         |
 | Unit tests, integration tests                  | code/testing.md                                            |
+| What to test, test audit, flaky tests, clocks  | code/testing.md + `tester` skill references                |
 | PolkadotUI, design tokens, theming             | code/design-system.md                                      |
 | Reviewing a PR (architecture)                  | review/architecture-checklist.md                           |
 | Reviewing a PR (code)                          | review/code-checklist.md                                   |

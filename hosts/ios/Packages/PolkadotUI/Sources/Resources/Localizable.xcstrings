@@ -245,28 +245,6 @@
         }
       }
     },
-    "Chat.call.cancelled.audio" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Canceled voice call"
-          }
-        }
-      }
-    },
-    "Chat.call.cancelled.video" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Canceled video call"
-          }
-        }
-      }
-    },
     "Chat.call.finished.audio" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -317,7 +295,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Missing voice call"
+            "value" : "Missed voice call"
           }
         }
       }
@@ -328,7 +306,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Missing video call"
+            "value" : "Missed video call"
           }
         }
       }
@@ -350,7 +328,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Outgoing video sall"
+            "value" : "Outgoing video call"
           }
         }
       }
@@ -384,6 +362,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Tap to call back"
+          }
+        }
+      }
+    },
+    "Chat.call.subtitle.no.answer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No answer"
           }
         }
       }
@@ -612,6 +601,18 @@
         }
       }
     },
+    "chat.request.cancelled.banner.message" : {
+      "comment" : "Displayed in the bottom of the chat when the peer cancelled their chat request",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ cancelled this chat request."
+          }
+        }
+      }
+    },
     "chat.request.in.progress.message" : {
       "comment" : "Display when message for chat request is being entered by the user",
       "extractionState" : "manual",
@@ -644,6 +645,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Request message sent"
+          }
+        }
+      }
+    },
+    "chat.requested.banner.cancel" : {
+      "comment" : "Button in the bottom of the chat that cancels the pending request",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel request"
           }
         }
       }

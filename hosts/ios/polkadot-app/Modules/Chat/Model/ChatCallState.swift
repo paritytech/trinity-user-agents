@@ -5,7 +5,8 @@ extension Chat {
         case calling
         case active
         case finished(durationMs: UInt64)
-        case cancelled(ringDurationMs: UInt64)
+        /// An outgoing call that ended before it was answered.
+        case cancelled
         case missed
     }
 }
@@ -50,7 +51,7 @@ extension Chat.LocalMessage {
 
         switch offer.status {
         case .outgoing:
-            return .cancelled(ringDurationMs: closed.timestamp.saturatingSubtract(offer.timestamp))
+            return .cancelled
         case .incoming:
             return .missed
         }

@@ -98,4 +98,38 @@ class ProductRoomFooterCardViewModelTest {
         verify(exactly = 1) { worker.renderRoomFooter(ProductChatIdParameter(ROOM), "register", any()) }
         verify { worker.dispatchRoomFooterEvent(ProductChatIdParameter(ROOM), "register", "join", JsUiEvent.Type.ButtonClick) }
     }
+
+    /**
+     * A slide in the docked card goes to the product the way a press on any of its buttons does, and the
+     * product's next trees (the slid control waiting, then the card it hands back to) replace it in place,
+     * with no spinner between them: the footer never goes back to loading for the same card.
+     */
+    @Test
+    fun `a slide reaches the product through the footer's press path and its trees replace it in place`() = runTest(testDispatcher) {
+        val slider = JsWidget.SlideToConfirm(text = "Slide to register", onConfirm = "register")
+        val waiting = slider.copy(loading = true, onConfirm = null)
+        val handedBack = JsWidget.Column(children = listOf(JsWidget.Text("Registered")))
+        val trees = MutableSharedFlow<Result<JsWidget>>()
+        val worker = mockk<ProductWorker>(relaxed = true) {
+            every { renderRoomFooter(any(), any(), any()) } returns trees
+        }
+        val viewModel = ProductRoomFooterCardViewModel(ROOM, worker)
+        val seen = mutableListOf<LoadingState<JsWidget>>()
+        viewModel.show(register)
+        advanceUntilIdle()
+
+        trees.emit(Result.success(slider))
+        advanceUntilIdle()
+        seen += viewModel.state.value
+        viewModel.handleUiEvent("register", JsUiEvent.Type.ButtonClick)
+        trees.emit(Result.success(waiting))
+        advanceUntilIdle()
+        seen += viewModel.state.value
+        trees.emit(Result.success(handedBack))
+        advanceUntilIdle()
+        seen += viewModel.state.value
+
+        verify(exactly = 1) { worker.dispatchRoomFooterEvent(ProductChatIdParameter(ROOM), "register", "register", JsUiEvent.Type.ButtonClick) }
+        assertEquals(listOf(LoadingState.Loaded(slider), LoadingState.Loaded(waiting), LoadingState.Loaded(handedBack)), seen)
+    }
 }

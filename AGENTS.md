@@ -26,7 +26,10 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
-                         from Bulletin by CID and checks them
+                         from Bulletin by CID and checks them; its `materials` module keeps
+                         the materials renderer trees name in the same database, read from
+                         Bulletin by its `bulletin_lookup` module and checked against
+                         Shaderlab's material format and the tree limits
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry

@@ -6,11 +6,12 @@ struct SlideToConfirmFace: View {
     let props: CustomMessageWidgetNode.SlideToConfirmProps
     let progress: CGFloat
     let isHinting: Bool
+    var trackHeight: CGFloat = SlideToConfirmMetrics.trackHeight
 
     var body: some View {
         switch props.variant {
         case .thumb:
-            SlideToConfirmThumbFace(props: props, progress: progress, isHinting: isHinting)
+            SlideToConfirmThumbFace(props: props, progress: progress, isHinting: isHinting, trackHeight: trackHeight)
         case .reveal:
             SlideToConfirmRevealFace(props: props, progress: progress)
         }
@@ -22,6 +23,8 @@ struct SlideToConfirmThumbFace: View {
     let props: CustomMessageWidgetNode.SlideToConfirmProps
     let progress: CGFloat
     let isHinting: Bool
+    /// The product's height for the control, or the track's own; the thumb stays centred in it.
+    var trackHeight: CGFloat = SlideToConfirmMetrics.trackHeight
 
     @Environment(\.self) private var environment
 
@@ -30,12 +33,12 @@ struct SlideToConfirmThumbFace: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .overlay(alignment: .leading) {
                 GeometryReader { geometry in
-                    thumb.offset(x: progress * max(geometry.size.width - SlideToConfirmMetrics.thumbSize, 0))
+                    thumb.offset(x: progress * SlideToConfirmMetrics.thumbTravel(laneWidth: geometry.size.width))
                 }
                 .frame(height: SlideToConfirmMetrics.thumbSize)
             }
-            .padding(DSSpacings.small)
-            .frame(height: SlideToConfirmMetrics.trackHeight)
+            .padding(SlideToConfirmMetrics.thumbInset(trackHeight: trackHeight))
+            .frame(height: trackHeight)
             .background(Color.bgSurfaceNested, in: Capsule())
             .clipShape(Capsule())
     }
