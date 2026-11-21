@@ -255,6 +255,14 @@ A product connection's renderer actions leave out a press on a back that
 connection has not drawn: a product whose SDK predates `PocketCardBack` cannot
 decode one and would lose its whole action stream.
 
+Before a host sees a rendered tree or a face file, the core empties refused
+inline images and drops motion no host can run: a `Drive` naming no remaining
+`Pan`, a repeated pan id, a pan with a zero `distance` or `period`, keyframes
+that are empty, not finite or not ascending, and anything past 4 pans, 32
+drives or 16 keyframes per drive. The tree then draws without that motion. A
+host reports a pan's events with the bytes `pan_event_payload` returns, and
+answers `RendererMotion` itself, since only it knows whether it draws motion.
+
 It also keeps materials (`materials` module), the text behind each material
 ID a renderer tree names. The core reads a material it lacks from Bulletin
 itself, with `bitswap_v1_get` over the Bulletin connection it holds for

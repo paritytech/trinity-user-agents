@@ -268,7 +268,150 @@ pub enum BlendingMode {
 	Luminosity,
 }
 
-/// Layout and styling applied to one node.
+/// The axis a pan follows.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum PanAxis {
+	/// Sideways drags.
+	Horizontal,
+	/// Up and down drags.
+	Vertical,
+}
+
+/// How the host moves a pan to a value a new tree declares.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum Animation {
+	/// A spring that settles within `duration_ms`.
+	Spring {
+		/// Time to settle, in milliseconds.
+		#[serde(rename = "durationMs")]
+		duration_ms: u32,
+		/// Overshoot, in per mille. 0 does not overshoot.
+		#[serde(rename = "bouncePerMille")]
+		bounce_per_mille: u16,
+	},
+	/// An ease in and out over `duration_ms`.
+	Ease {
+		/// Duration, in milliseconds.
+		#[serde(rename = "durationMs")]
+		duration_ms: u32,
+	},
+}
+
+/// A drag that moves a value the host keeps, which comes to rest on whole
+/// steps.
+///
+/// The value is a real number of steps. A drag of `distance` along `axis`
+/// moves it by one, and on release the host settles it on an integer within
+/// `max_steps_per_gesture` of where the drag began. The host applies `value`
+/// only when it differs from the previous tree's, so a tree sent before a
+/// drag settled cannot undo it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Pan {
+	/// Unique in the tree. Drives and the host's state refer to it.
+	pub id: String,
+	/// Axis the drag follows.
+	pub axis: PanAxis,
+	/// Per mille of the node's size along `axis` that moves the value one
+	/// step. Negative turns a leftward or upward drag into a positive step.
+	pub distance: i32,
+	/// The resting step the product declares.
+	pub value: i32,
+	/// Steps one drag may move from where it began. Absent is unbounded.
+	pub max_steps_per_gesture: Option<u32>,
+	/// Drives read the value modulo this many steps. Absent does not wrap.
+	pub period: Option<u32>,
+	/// How a change of `value` between trees is animated. Absent jumps.
+	pub animation: Option<Animation>,
+	/// Action the host reports a [`PanEvent`] on. Absent reports nothing.
+	pub action: Option<String>,
+	/// Name of the accessibility action that steps the value by one. Absent
+	/// offers none.
+	pub label: Option<String>,
+}
+
+/// A node property a [`Drive`] can set.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum DrivenProperty {
+	/// Rotation about the horizontal axis, in degrees.
+	RotationX,
+	/// Rotation about the vertical axis, in degrees.
+	RotationY,
+	/// Rotation in the plane, in degrees.
+	RotationZ,
+	/// Scale factor about the node's center.
+	Scale,
+	/// 0 to 1, multiplied with `Modifier::Opacity`.
+	Opacity,
+	/// Horizontal offset, in logical pixels.
+	TranslationX,
+	/// Vertical offset, in logical pixels.
+	TranslationY,
+}
+
+/// The path between two keyframes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum KeyframeCurve {
+	/// A straight line from the previous keyframe.
+	Linear,
+	/// Holds the previous value until `at`, then jumps.
+	Step,
+}
+
+/// The value of a driven property at one pan value.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Keyframe {
+	/// The pan value, as an IEEE 754 single bit pattern.
+	pub at: u32,
+	/// The property value at `at`, as an IEEE 754 single bit pattern.
+	pub value: u32,
+	/// How the property reaches `value` from the previous keyframe.
+	pub curve: KeyframeCurve,
+}
+
+/// A property of a node, computed every frame from a pan's value.
+///
+/// The keyframes are read at the pan's value modulo its `period`, and hold
+/// their first and last values outside their range.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Drive {
+	/// A `Pan::id` in the same tree.
+	pub source: String,
+	/// The property the keyframes set.
+	pub property: DrivenProperty,
+	/// Strictly ascending in `at`.
+	pub keyframes: Vec<Keyframe>,
+}
+
+/// What a pan reports on its action, SCALE-encoded in
+/// `HostRendererActionSubscribeItem::payload`.
+///
+/// It travels as payload bytes rather than as an action variant, so it
+/// reaches only the product that declared the pan.
+#[derive(Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum PanEvent {
+	/// A finger took the pan. The value may move before the next event.
+	Began,
+	/// The value came to rest, after a drag, an accessibility step or an
+	/// animation.
+	Settled {
+		/// The rest value, in steps.
+		value: i32,
+	},
+	/// Something else took the press before the value moved.
+	Cancelled,
+}
+
+/// Layout, styling and motion applied to one node.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(tag = "tag", content = "value")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -298,6 +441,12 @@ pub enum Modifier {
 	Opacity(u8),
 	/// Compositing mode against what is behind the node.
 	BlendingMode(BlendingMode),
+	/// Drags on this node along one axis move a value the host keeps.
+	Pan(Pan),
+	/// A property of this node, computed every frame from a pan's value.
+	Drive(Drive),
+	/// Distance of the viewer from children rotated in 3D, in logical pixels.
+	Perspective(Size),
 }
 
 /// Properties of a `Box`.
@@ -716,5 +865,6 @@ impl ImageSource {
 	}
 }
 
+mod motion;
 #[cfg(test)]
 mod tests;

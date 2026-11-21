@@ -1950,6 +1950,7 @@ impl ProductRuntimeControl {
 						truapi::versioned::renderer::ProductRendererRenderItem::V2(mut node),
 					) => {
 						node.clear_refused_inline_images();
+						node.clear_invalid_motion();
 						if let Some((connection, card_id)) = back.take() {
 							connection.mark_back_drawn(card_id);
 						}

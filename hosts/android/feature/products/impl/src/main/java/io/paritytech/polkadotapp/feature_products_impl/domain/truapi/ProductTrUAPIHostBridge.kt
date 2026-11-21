@@ -242,6 +242,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
                 is HostFeatureSupportedRequest.Materials -> false
+                is HostFeatureSupportedRequest.RendererMotion -> false
             }
 
         override fun currentTheme(): HostThemeSubscribeItem = cachedTheme.get()

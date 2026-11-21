@@ -3391,6 +3391,26 @@ fn a_face_file_reads_with_refused_inline_image_bytes_emptied() {
 	);
 }
 
+/// A face file reaches every host through this reader, so motion no host can
+/// run is dropped here once, and the face draws without it.
+#[test]
+fn a_face_file_reads_without_motion_it_cannot_run() {
+	let json = r#"{"tag":"Spacer","value":{"modifiers":[{"tag":"Drive","value":{"source":"turn",
+		"property":"Opacity","keyframes":[{"at":0,"value":1065353216,"curve":"Linear"}]}}]}}"#;
+
+	assert_eq!(
+		parse_renderer_node_json(json.to_string()).expect("the face reads"),
+		latest::RendererNode::Spacer { modifiers: Vec::new() }
+	);
+}
+
+/// A pan's events reach the product as these payload bytes, whichever host
+/// reports them.
+#[test]
+fn pan_event_payload_is_the_scale_encoding() {
+	assert_eq!(pan_event_payload(latest::PanEvent::Settled { value: 1 }), vec![1, 1, 0, 0, 0]);
+}
+
 /// The bridge drops a log whose target is not in the marker table, so an
 /// expanded card call logged under any other name is never seen.
 #[test]

@@ -28,6 +28,10 @@ pub enum HostFeatureSupportedRequest {
 		/// Feature names, as on the `// @requires` line.
 		features: Vec<String>,
 	},
+	/// Ask whether the host draws the `Pan`, `Drive` and `Perspective`
+	/// modifiers. A host that does not fails to decode a tree that carries
+	/// them.
+	RendererMotion,
 }
 
 /// Error from [`crate::api::System::navigate_to`].

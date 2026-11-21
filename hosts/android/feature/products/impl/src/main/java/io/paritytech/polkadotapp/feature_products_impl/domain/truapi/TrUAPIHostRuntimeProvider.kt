@@ -281,6 +281,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
                 is HostFeatureSupportedRequest.Materials -> false
+                is HostFeatureSupportedRequest.RendererMotion -> false
             }
 
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =

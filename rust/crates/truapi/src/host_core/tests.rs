@@ -1200,6 +1200,37 @@ fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
 	));
 }
 
+/// Every host runs the motion the core hands it, so the core drops motion
+/// no host can run once for all of them.
+#[test]
+fn a_rendered_tree_reaches_the_host_without_motion_it_cannot_run() {
+	let (runtime, sink) = render_runtime();
+	let mut render = start_render(&runtime, "loyalty");
+	let spacer = |modifiers: Vec<v01::Modifier>| v01::RendererNode::Spacer { modifiers };
+	let orphan = v01::Modifier::Drive(v01::Drive {
+		source: "turn".to_string(),
+		property: v01::DrivenProperty::Opacity,
+		keyframes: vec![v01::Keyframe {
+			at: 0f32.to_bits(),
+			value: 1f32.to_bits(),
+			curve: v01::KeyframeCurve::Linear,
+		}],
+	});
+
+	let item = truapi::versioned::renderer::ProductRendererRenderItem::V1(spacer(vec![orphan]));
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_RECEIVE,
+		item.encode(),
+	);
+
+	assert!(matches!(
+		poll_render(&mut render),
+		core::task::Poll::Ready(Some(Ok(node))) if node == spacer(Vec::new())
+	));
+}
+
 #[test]
 fn a_render_the_product_ends_releases_its_worker_reference() {
 	let (runtime, sink) = render_runtime();

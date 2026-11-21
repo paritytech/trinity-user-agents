@@ -73,3 +73,30 @@ fn the_core_answers_the_materials_question_not_the_platform() {
 	assert_eq!(answer(&AlwaysSupported, false), (false, asked.clone()));
 	assert_eq!(answer(&AlwaysUnsupported, true), (true, asked));
 }
+
+struct DrawsMotion;
+
+#[async_trait::async_trait]
+impl Features for DrawsMotion {
+	async fn feature_supported(
+		&self,
+		request: HostFeatureSupportedRequest,
+	) -> Result<HostFeatureSupportedResponse, GenericError> {
+		Ok(HostFeatureSupportedResponse {
+			supported: request == HostFeatureSupportedRequest::RendererMotion,
+		})
+	}
+}
+
+/// Only the host knows whether it draws motion, so the core asks it.
+#[test]
+fn the_platform_answers_the_motion_question() {
+	let response = futures::executor::block_on(feature_supported(
+		&DrawsMotion,
+		|_, _| false,
+		HostFeatureSupportedRequest::RendererMotion,
+	))
+	.unwrap();
+
+	assert!(response.supported);
+}

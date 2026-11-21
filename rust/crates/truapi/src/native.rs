@@ -261,6 +261,16 @@ pub fn parse_renderer_node_json(json: String) -> Result<latest::RendererNode, Na
 	read_face_on_stack(json, FACE_READER_STACK_BYTES)
 }
 
+/// The payload a host reports `event` with on a pan's action, in
+/// `HostRendererActionSubscribeItem::payload`.
+///
+/// Hosts call this rather than encoding the event themselves, so every host
+/// sends the bytes the product SDK decodes.
+#[uniffi::export]
+pub fn pan_event_payload(event: latest::PanEvent) -> Vec<u8> {
+	event.encode()
+}
+
 /// [`parse_renderer_node_json`] on a thread of its own carrying `stack_bytes`.
 fn read_face_on_stack(
 	json: String,
@@ -300,6 +310,7 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 	)
 	.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })?;
 	node.clear_refused_inline_images();
+	node.clear_invalid_motion();
 	Ok(node)
 }
 

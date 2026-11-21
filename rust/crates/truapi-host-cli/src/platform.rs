@@ -840,7 +840,8 @@ impl Features for CliPlatform {
 	) -> Result<api::HostFeatureSupportedResponse, api::GenericError> {
 		let genesis_hash = match request {
 			api::HostFeatureSupportedRequest::Chain { genesis_hash } => genesis_hash,
-			api::HostFeatureSupportedRequest::Materials { .. } => {
+			api::HostFeatureSupportedRequest::Materials { .. } |
+			api::HostFeatureSupportedRequest::RendererMotion => {
 				return Ok(api::HostFeatureSupportedResponse { supported: false });
 			},
 		};

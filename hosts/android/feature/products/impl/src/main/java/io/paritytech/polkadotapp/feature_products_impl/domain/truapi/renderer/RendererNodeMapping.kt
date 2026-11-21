@@ -112,6 +112,8 @@ private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
             is Modifier.FillHeight -> if (modifier.v1) add(JsModifier.FillMaxHeight())
             is Modifier.Opacity -> add(JsModifier.Opacity(modifier.v1.toInt()))
             is Modifier.BlendingMode -> add(JsModifier.BlendingMode(modifier.v1.toJs()))
+            // This host answers RendererMotion with false, so it draws a tree's resting state.
+            is Modifier.Pan, is Modifier.Drive, is Modifier.Perspective -> Unit
         }
     }
 

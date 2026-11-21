@@ -187,6 +187,11 @@ private extension [Modifier] {
                 opacity = CGFloat(value) / 255
             case let .blendingMode(mode):
                 blendingMode = mode.blendMode
+            case .pan,
+                 .drive,
+                 .perspective:
+                // This host answers `RendererMotion` with false, so it draws a tree's resting state.
+                break
             }
         }
 

@@ -39,6 +39,43 @@ fn renderer_node() -> RendererNode {
 				children: Vec::new(),
 			},
 			RendererNode::Spacer { modifiers: vec![Modifier::Opacity(128)] },
+			RendererNode::Box {
+				modifiers: vec![
+					Modifier::Perspective(Compact(1200)),
+					Modifier::Pan(Pan {
+						id: "turn".to_string(),
+						axis: PanAxis::Horizontal,
+						distance: -1000,
+						value: 1,
+						max_steps_per_gesture: Some(1),
+						period: Some(2),
+						animation: Some(Animation::Spring {
+							duration_ms: 500,
+							bounce_per_mille: 150,
+						}),
+						action: Some("turned".to_string()),
+						label: Some("Turn over".to_string()),
+					}),
+					Modifier::Drive(Drive {
+						source: "turn".to_string(),
+						property: DrivenProperty::RotationY,
+						keyframes: vec![
+							Keyframe {
+								at: 0f32.to_bits(),
+								value: 0f32.to_bits(),
+								curve: KeyframeCurve::Linear,
+							},
+							Keyframe {
+								at: 0.5f32.to_bits(),
+								value: 0f32.to_bits(),
+								curve: KeyframeCurve::Step,
+							},
+						],
+					}),
+				],
+				props: BoxProps { content_alignment: None },
+				children: Vec::new(),
+			},
 			RendererNode::Image {
 				modifiers: vec![Modifier::Width(Compact(40))],
 				props: ImageProps {
@@ -95,6 +132,45 @@ fn variants_encode_only_the_fields_they_carry() {
 	assert_eq!(materials.encode(), vec![11, 0, 0]);
 
 	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
+}
+
+/// The motion modifiers come after every earlier one, so a tree without
+/// motion encodes as it always has.
+#[test]
+fn motion_modifiers_append_to_the_modifier_indexes() {
+	assert_eq!(Modifier::BlendingMode(BlendingMode::Normal).encode(), vec![11, 0]);
+	assert_eq!(Modifier::Perspective(Compact(1)).encode(), vec![14, 4]);
+}
+
+/// The product SDK decodes these exact bytes from an action's payload.
+#[test]
+fn pan_events_encode_as_the_sdk_decodes_them() {
+	assert_eq!(PanEvent::Began.encode(), vec![0]);
+	assert_eq!(PanEvent::Settled { value: -1 }.encode(), vec![1, 0xff, 0xff, 0xff, 0xff]);
+	assert_eq!(PanEvent::Cancelled.encode(), vec![2]);
+}
+
+/// A static face file spells motion the way the generated client does.
+#[test]
+fn motion_reads_from_face_json() {
+	let json = r#"{"tag":"Pan","value":{"id":"turn","axis":"Horizontal","distance":-1000,"value":0,
+		"maxStepsPerGesture":1,"period":2,"animation":{"tag":"Spring","value":{"durationMs":500,"bouncePerMille":150}}}}"#;
+	let modifier: Modifier = serde_json::from_str(json).unwrap();
+
+	assert_eq!(
+		modifier,
+		Modifier::Pan(Pan {
+			id: "turn".to_string(),
+			axis: PanAxis::Horizontal,
+			distance: -1000,
+			value: 0,
+			max_steps_per_gesture: Some(1),
+			period: Some(2),
+			animation: Some(Animation::Spring { duration_ms: 500, bounce_per_mille: 150 }),
+			action: None,
+			label: None,
+		})
+	);
 }
 
 /// Index 10 stays unused, so an older tree is refused rather than misread.
