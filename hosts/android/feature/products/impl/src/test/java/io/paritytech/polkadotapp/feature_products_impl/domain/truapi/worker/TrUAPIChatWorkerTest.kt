@@ -73,7 +73,7 @@ class TrUAPIChatWorkerTest {
         workers: TrUAPIWorkerSupervisor = mock(),
         chatMessaging: ProductChatMessaging = FakeChatMessaging(),
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
-    ): TrUAPIChatWorker = TrUAPIChatWorker(productId, runtime, workers, chatMessaging, scope)
+    ): TrUAPIChatWorker = TrUAPIChatWorker(productId, runtime, workers, chatMessaging, scope, StandardTestDispatcher(testScheduler))
 
     private fun runningWorkers(execution: TrUAPIProductExecution): TrUAPIWorkerSupervisor {
         val workers: TrUAPIWorkerSupervisor = mock()

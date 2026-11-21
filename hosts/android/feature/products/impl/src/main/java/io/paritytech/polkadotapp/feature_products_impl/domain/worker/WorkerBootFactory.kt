@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import dagger.Lazy
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
@@ -34,6 +35,7 @@ class RealWorkerBootFactory @Inject constructor(
     private val runtimeSettings: ProductRuntimeSettings,
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
+    private val dispatchers: CoroutineDispatchers,
 ) : WorkerBootFactory {
     override suspend fun boot(
         productId: ProductId,
@@ -57,6 +59,7 @@ class RealWorkerBootFactory @Inject constructor(
         workers = workerSupervisor.get(),
         chatMessaging = botApi,
         scope = scope,
+        renderDispatcher = dispatchers.computation,
     )
 
     private suspend fun bootJs(

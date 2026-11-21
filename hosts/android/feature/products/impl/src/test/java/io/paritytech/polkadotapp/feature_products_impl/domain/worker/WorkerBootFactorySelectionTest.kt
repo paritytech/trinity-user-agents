@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.Hos
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIChatWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
+import io.paritytech.polkadotapp.test_shared.testDispatchers
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -38,6 +39,7 @@ class WorkerBootFactorySelectionTest {
         runtimeSettings = runtimeSettings,
         runtimeProvider = Lazy { runtimeProvider },
         workerSupervisor = Lazy { workerSupervisor },
+        dispatchers = testDispatchers(),
     )
 
     private fun settingsWith(enabled: Boolean): ProductRuntimeSettings {
