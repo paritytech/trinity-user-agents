@@ -21,11 +21,14 @@ struct NodeGestureView<Content: View>: View {
     @State private var catchUpStep = 0
     @State private var confirmations = 0
     @State private var pacer = GestureMovePacer()
+    /// Bumped when a pan starts while a release settle is still moving the thumb, which drops that animation at once.
+    @State private var settleGeneration = 0
 
     var body: some View {
         content()
             .onGeometryChange(for: CGFloat.self, of: \.size.width) { childWidth = $0 }
             .offset(x: shown.x * (layoutDirection == .rightToLeft ? -1 : 1), y: shown.y)
+            .id(settleGeneration)
             .frame(maxWidth: .infinity, alignment: .leading)
             .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
             .overlay {
@@ -91,6 +94,7 @@ private extension NodeGestureView {
     func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: PanTranslation) {
         guard props.isEnabled, !held, let pan = props.pan else { return }
         if case .started = phase {
+            cutSettleShort()
             dragging = true
             panTravel = travel
             origin = pan.drag == nil ? .zero : offset
@@ -117,7 +121,7 @@ private extension NodeGestureView {
         case .started,
              .moved:
             if pacesMoves {
-                pacer.offer(payload(.moved))
+                pacer.offer(payload(.moved), place: position)
                 return
             }
             let now = ProcessInfo.processInfo.systemUptime
@@ -134,6 +138,7 @@ private extension NodeGestureView {
     func release(cancelled: Bool) {
         guard let pan = props.pan else { return }
         dragging = false
+        settleKeyedThumb(pan, cancelled: cancelled)
         stopPacing()
         let completed = !cancelled && GestureMotion.completes(
             position, axis: pan.axis, travel: panTravel, release: pan.drag?.release
@@ -156,6 +161,33 @@ private extension NodeGestureView {
             }
         }
         if completed, props.hapticOnComplete { confirmations += 1 }
+    }
+
+    /// Every-move mode: the worker's thumb settles on the host when the finger lifts (`GestureSettle`), instead of
+    /// jumping when the worker's end tree arrives.
+    func settleKeyedThumb(_ pan: CustomMessageWidgetNode.PanGesture, cancelled: Bool) {
+        guard pacesMoves, pan.drag == nil, let channel, let answer = channel.offset, let answered = pacer.sentPlace
+        else { return }
+        let along = pan.axis == .vertical ? position.y : position.x
+        let kind = GestureSettle.kind(released: along, travel: panTravel, cancelled: cancelled)
+        let target = GestureSettle.target(
+            kind,
+            axis: pan.axis,
+            travel: panTravel,
+            drawnAt: GestureSettle.drawnAt(answeredMove: answered, answer: answer)
+        )
+        channel.settle(
+            to: target,
+            animation: GestureSettle.animation(kind, reduceMotion: reduceMotion),
+            now: ProcessInfo.processInfo.systemUptime
+        )
+    }
+
+    /// A pan that starts while the thumb is still settling takes over at once.
+    func cutSettleShort() {
+        guard let channel else { return }
+        if channel.isSettling(at: ProcessInfo.processInfo.systemUptime) { settleGeneration += 1 }
+        channel.endSettle()
     }
 
     func cancel() {

@@ -107,11 +107,78 @@ public final class GestureOffsetChannel {
     public private(set) var offset: CGPoint?
     /// Called whenever the worker answers: an offset for this key, or a new tree.
     @ObservationIgnored var onAnswer: (() -> Void)?
+    /// When the last release settle began (media time); a pan starting before it is over cuts it short.
+    @ObservationIgnored private(set) var settleStarted: TimeInterval?
+    /// From a release until the worker's next tree, a late answer to a move must not pull the settling thumb back.
+    @ObservationIgnored private(set) var holdsSettle = false
 
     @MainActor
     func receive(_ offset: CGPoint?) {
-        if self.offset != offset { self.offset = offset }
+        if offset == nil { holdsSettle = false }
+        if offset == nil || !holdsSettle, self.offset != offset { self.offset = offset }
         onAnswer?()
+    }
+
+    /// Moves the thumb to `target` with `animation` (nil: at once): the release settle, drawn by the host alone.
+    @MainActor
+    func settle(to target: CGPoint, animation: Animation?, now: TimeInterval) {
+        settleStarted = now
+        holdsSettle = true
+        withAnimation(animation) { offset = target }
+    }
+
+    /// A settle that may still be moving the thumb at `now`.
+    func isSettling(at now: TimeInterval) -> Bool {
+        guard let settleStarted else { return false }
+        return now - settleStarted < GestureSettle.longest
+    }
+
+    /// A new pan began: tracking takes over at once.
+    @MainActor
+    func endSettle() {
+        settleStarted = nil
+        holdsSettle = false
+    }
+}
+
+/// How a keyed every-move thumb settles when the finger lifts, on the host, so it does not jump in one frame: back home
+/// with the native slide-to-confirm's spring, or, released at or past the worker's completion point (90% of the
+/// travel, as its slider decides), to the end with a short ease-out. Tracking while the finger is down stays direct.
+enum GestureSettle: Equatable {
+    case home
+    case end
+
+    static let completionShare: CGFloat = 0.9
+    static let endDuration: TimeInterval = 0.14
+    /// About how long the spring takes to come to rest (it overshoots once); a pan in this time cuts it short.
+    static let longest: TimeInterval = 0.7
+
+    static func kind(released along: CGFloat, travel: CGFloat, cancelled: Bool) -> GestureSettle {
+        !cancelled && travel > 0 && along >= travel * completionShare ? .end : .home
+    }
+
+    /// The channel offset that puts the thumb there. Offsets count from where the worker's last tree drew the thumb,
+    /// `drawnAt`, which is the place of the move it last answered minus that answer, in whole points as it draws them.
+    static func target(
+        _ kind: GestureSettle,
+        axis: CustomMessageWidgetNode.PanAxis,
+        travel: CGFloat,
+        drawnAt: CGPoint
+    ) -> CGPoint {
+        let place = kind == .end ? GestureMotion.end(axis: axis, travel: travel) : .zero
+        return CGPoint(x: place.x - drawnAt.x, y: place.y - drawnAt.y)
+    }
+
+    static func drawnAt(answeredMove: CGPoint, answer: CGPoint) -> CGPoint {
+        CGPoint(x: (answeredMove.x - answer.x).rounded(), y: (answeredMove.y - answer.y).rounded())
+    }
+
+    static func animation(_ kind: GestureSettle, reduceMotion: Bool) -> Animation? {
+        if reduceMotion { return nil }
+        switch kind {
+        case .home: return .spring(response: 0.35, dampingFraction: 0.6)
+        case .end: return .easeOut(duration: endDuration)
+        }
     }
 }
 
@@ -242,7 +309,12 @@ final class GestureMovePacer: NSObject {
         self.link = link
     }
 
-    func offer(_ payload: Data) {
+    /// The place of the move last sent, which the worker's next answer is for (one move is in flight at a time).
+    private(set) var sentPlace: CGPoint?
+    private var pendingPlace: CGPoint?
+
+    func offer(_ payload: Data, place: CGPoint? = nil) {
+        pendingPlace = place
         pacing.offer(payload)
         if sendOnTouch, link != nil, let payload = pacing.touch(at: CACurrentMediaTime()) {
             deliver(payload)
@@ -260,11 +332,14 @@ final class GestureMovePacer: NSObject {
         link = nil
         send = nil
         offsets = nil
+        sentPlace = nil
+        pendingPlace = nil
         pacing.reset()
     }
 
     /// Sends a move, then gives the worker up to `answerWait` to answer, so its offset is drawn in this frame.
     private func deliver(_ payload: Data) {
+        sentPlace = pendingPlace ?? sentPlace
         let before = offsets?.answers.delivered ?? 0
         send?(payload)
         guard answerWait > 0, let offsets else { return }
