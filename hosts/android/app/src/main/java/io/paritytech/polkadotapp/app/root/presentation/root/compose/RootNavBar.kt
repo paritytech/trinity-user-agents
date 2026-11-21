@@ -52,7 +52,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -151,14 +150,12 @@ fun RootNavBar(
     onAppClose: (Long) -> Unit,
     onScanHandled: (navigate: (() -> Unit)?) -> Unit,
     onScannerTooltipDismiss: () -> Unit,
-    onRestingHeightChange: (Dp) -> Unit,
     onBarWidthChange: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
     val statusInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val keyboardHeight = rememberDockletKeyboardHeight()
     val networkStatusItem = FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR.isEnabled
-    val currentOnRestingHeightChange by rememberUpdatedState(onRestingHeightChange)
     val currentOnBarWidthChange by rememberUpdatedState(onBarWidthChange)
     val currentOnDockletAreas by rememberUpdatedState(onDockletAreas)
 
@@ -201,8 +198,6 @@ fun RootNavBar(
                     .systemGestureExclusion(),
             )
         }
-        val restingHeight = maxHeight - dock.top + DockletGeometry.PillProud
-        LaunchedEffect(restingHeight) { currentOnRestingHeightChange(restingHeight) }
         LaunchedEffect(dock.right, density) { currentOnBarWidthChange(with(density) { dock.right.toPx() }) }
 
         val networkStatusOpen = networkStatusItem && networkStatusExpanded

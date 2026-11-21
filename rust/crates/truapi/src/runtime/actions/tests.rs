@@ -98,12 +98,10 @@ fn every_open_subscription_of_a_connection_hears_each_action() {
 	assert_eq!(block_on(messages.next()), Some(Ok("press".to_string())));
 	assert_eq!(block_on(footer.next()), Some(Ok("press".to_string())));
 
-	// A subscription the product dropped is skipped; the others still hear.
 	drop(messages);
 	channel.publish("again".to_string()).unwrap();
 	assert_eq!(block_on(footer.next()), Some(Ok("again".to_string())));
 
-	// With every subscription gone, an action waits for the next one.
 	drop(footer);
 	channel.publish("later".to_string()).unwrap();
 	let mut next = channel.subscribe::<truapi::latest::GenericError>();

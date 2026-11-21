@@ -35,3 +35,10 @@
 
 # Documents and proposals.
 /docs/                  @paritytech/host-sdk-team @paritytech/hosts-team
+
+# The weekly chain spec and stack descriptor refresh, which update-chain-specs.yml
+# opens. Its files can also be approved on their own, so the refresh does not wait
+# on either team.
+/rust/crates/truapi-provider/networks/*.json  @paritytech/host-sdk-team @paritytech/hosts-team @mordamax
+/stacks/*.json                                @paritytech/host-sdk-team @paritytech/hosts-team @mordamax
+/.changeset/bundled-refresh-*.md              @paritytech/host-sdk-team @paritytech/hosts-team @mordamax

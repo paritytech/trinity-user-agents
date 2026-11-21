@@ -289,6 +289,15 @@ impl AccountHolder for WalletAccountHolder {
 			.require_session(self.session_state.current(), session)
 	}
 
+	/// The install-wide secret this host answers pairing proposals with,
+	/// generated and persisted on first read.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.encryption_secret()
+			.await
+			.map(Some)
+			.map_err(|reason| AuthorityError::Unknown { reason })
+	}
+
 	async fn allocate_grants<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,

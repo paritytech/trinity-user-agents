@@ -3,9 +3,9 @@
 use crate::{
 	CallContext, CallError, Subscription,
 	versioned::preimage::{
-		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-		RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError,
-		RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
+		PreimageSubmitError, RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
+		RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitRequest,
+		RemotePreimageSubmitResponse,
 	},
 	wire, wire_trait,
 };
@@ -60,7 +60,7 @@ pub trait Preimage: Send + Sync {
 		&self,
 		_cx: &CallContext,
 		_request: RemotePreimageSubmitRequest,
-	) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
+	) -> Result<RemotePreimageSubmitResponse, CallError<PreimageSubmitError>> {
 		Err(CallError::unavailable())
 	}
 }

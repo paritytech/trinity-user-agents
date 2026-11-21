@@ -186,12 +186,10 @@ final class ProductPocketService: @unchecked Sendable {
         follow()
     }
 
-    /// Stops the handlers and the workers behind them, and gives up the product
-    /// behind an opened card. All of it belongs to the session's runtime
-    /// provider, so none of it may outlive it.
+    /// Stops the handlers and the workers behind them. All of it belongs to the
+    /// session's runtime provider, so none of it may outlive it.
     func stop() {
         install(manager: nil, drawing: nil, handlers: nil)
-        Task { @MainActor in cardHosts.release() }
     }
 }
 

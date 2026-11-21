@@ -353,7 +353,10 @@ impl ChainProviderHandle {
 			.await
 			{
 				futures::future::Either::Left((
-					Err(error @ crate::ProviderError::UnknownGenesis { .. }),
+					Err(
+						error @ (crate::ProviderError::UnknownGenesis { .. } |
+						crate::ProviderError::UnknownRelay { .. }),
+					),
 					_,
 				)) => return Err(error.into()),
 				futures::future::Either::Left((Err(error), _)) => {

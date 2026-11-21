@@ -66,3 +66,23 @@ pub enum HostContactsPickError {
 		reason: String,
 	},
 }
+
+/// Request for the usernames of the chat contacts of the user.
+///
+/// Carries no arguments: the host answers from the contacts it already holds,
+/// with no prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostContactsUsernamesRequest {}
+
+/// The dotNS usernames of the unblocked chat contacts of the user.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostContactsUsernamesResponse {
+	/// One username per contact, in host order, and empty when the user has no
+	/// contacts. A contact without a username is left out, and so is any name
+	/// the host holds that is not a bare dotNS label.
+	///
+	/// Each entry is a bare dotNS label with no top-level domain, as the host
+	/// last stored it: a personhood name (`alice`) or a device name with its
+	/// two-digit index (`alice.07`).
+	pub usernames: Vec<String>,
+}

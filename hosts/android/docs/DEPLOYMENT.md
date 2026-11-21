@@ -40,9 +40,8 @@ The app ships two parallel distribution tracks:
 
 The `vanilla` edition is a first-class release track aimed at privacy-focused users
 running [GrapheneOS](https://grapheneos.org/). It carries the same core app
-functionality and is fully operational without Google Play Services. Google Sign-In,
-Firebase Auth, Firebase Analytics, and Firebase Crashlytics are excluded from the
-`vanilla` APK.
+functionality and is fully operational without Google Play Services. Google Sign-In
+and Firebase Auth are excluded from the `vanilla` APK.
 
 Both editions do initialize the default `FirebaseApp`, because **Firebase Remote
 Config is required for the app to function** (`tools/remoteconfig:impl` drives feature
@@ -192,7 +191,6 @@ Firebase services the app uses, so you can enable them in that project:
 | Remote Config | both | All runtime configuration (§4.1). Mandatory. |
 | Authentication (Google provider) + Firestore | `gp` | Cloud backups: the encryption-key record is stored in the `users-<suffix>` collection (`-debug`, `-nightly`, `-safetynet`, `-production`) of the database named by `FIRESTORE_DATABASE_ID`. Security rules must let a signed-in user read/write their own document. |
 | Cloud Messaging | `gp` | Push notifications. |
-| Crashlytics, Analytics | `gp` | Crash and usage reporting. |
 
 ### 4.1 Remote Config keys
 
@@ -400,7 +398,7 @@ Outputs land in `app/build/outputs/apk/gp/<buildType>/`.
 ### 6.2 `vanilla` edition (GrapheneOS / GMS-free)
 
 The `vanilla` edition produces an APK with **no Google Play Services dependency**: no
-Play Integrity, no GMS-backed Sign-In, no Analytics or Crashlytics. It is designed to
+Play Integrity, no GMS-backed Sign-In. It is designed to
 run correctly on [GrapheneOS](https://grapheneos.org/) and any other Android
 distribution that does not ship Google Play Services. Firebase Remote Config is the
 one Firebase service it keeps, because the app cannot function without it; it needs no

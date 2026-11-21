@@ -69,7 +69,10 @@ fn a_material_gives_its_parameters_in_declaration_order() {
 
 	assert_eq!(
 		read_material(text.as_bytes()).map(|material| material.params),
-		Ok(vec![ParamKind::Vec3, ParamKind::SamplerFloat])
+		Ok(vec![
+			Param { name: "tint".to_string(), kind: ParamKind::Vec3 },
+			Param { name: "height".to_string(), kind: ParamKind::SamplerFloat },
+		])
 	);
 }
 
@@ -226,8 +229,13 @@ fn each_code_maps_to_its_failure() {
 	);
 }
 
-fn tint_and_height() -> Material {
-	Material { params: vec![ParamKind::Vec3, ParamKind::SamplerVec2] }
+fn material_taking(kinds: &[ParamKind]) -> Material {
+	let params = kinds
+		.iter()
+		.enumerate()
+		.map(|(index, kind)| Param { name: format!("param{index}"), kind: *kind })
+		.collect();
+	Material { params, body: String::new() }
 }
 
 fn image() -> ImageRef {
@@ -238,7 +246,7 @@ fn image() -> ImageRef {
 /// and the noise image has one channel, so it fills only `samplerFloat`.
 #[test]
 fn arguments_match_by_count_type_and_finite_value() {
-	let material = tint_and_height();
+	let material = material_taking(&[ParamKind::Vec3, ParamKind::SamplerVec2]);
 	let tint = Parameter::Vec3([1f32.to_bits(); 3]);
 	let height = Parameter::SamplerVec2(image());
 
@@ -254,7 +262,7 @@ fn arguments_match_by_count_type_and_finite_value() {
 		assert!(!material.arguments_match(&args), "{args:?}");
 	}
 	assert!(
-		Material { params: vec![ParamKind::SamplerFloat] }
+		material_taking(&[ParamKind::SamplerFloat])
 			.arguments_match(&[Parameter::SamplerFloat(ImageRef::Noise)])
 	);
 }

@@ -30,6 +30,9 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseRevokeChequeRequest { V1 => v01::HostNftPurseRevokeChequeRequest }
 	pub enum HostNftPurseRevokeChequeResponse { V1 }
 	pub enum HostNftPurseRevokeChequeError { V1 => v01::NftPurseRevokeChequeError }
+	pub enum HostNftPurseListChequesRequest { V1 => v01::HostNftPurseListChequesRequest }
+	pub enum HostNftPurseListChequesResponse { V1 => v01::HostNftPurseListChequesResponse }
+	pub enum HostNftPurseListChequesError { V1 => v01::NftPurseListChequesError }
 	pub enum HostNftPurseDepositRequest { V1 => v01::HostNftPurseDepositRequest }
 	pub enum HostNftPurseDepositResponse { V1 }
 	pub enum HostNftPurseDepositError { V1 => v01::NftPurseDepositError }

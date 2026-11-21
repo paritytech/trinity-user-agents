@@ -57,6 +57,11 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		self.accounts.current_session()
 	}
 
+	/// This device's X25519 encryption secret, as the account holder keeps it.
+	pub async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.accounts.device_encryption_secret().await
+	}
+
 	/// Seed a product subtree for authority tests.
 	#[cfg(test)]
 	pub fn cache_product_subtree_for_test(

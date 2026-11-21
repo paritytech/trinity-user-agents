@@ -76,6 +76,7 @@ class ChatInputRowGamePillTest {
                             onUnblockUserClick = {},
                             onAllowIdentitySigningClick = {},
                             onDeclineIdentitySigningClick = {},
+                            dockletHiddenFraction = { 1f },
                             onHeightChanged = {},
                         )
                     }

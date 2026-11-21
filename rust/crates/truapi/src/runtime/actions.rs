@@ -13,7 +13,8 @@ const ACTION_BUFFER_CAPACITY: usize = 64;
 struct State<Item> {
 	/// Every open subscription of this connection. A product may subscribe more
 	/// than once (an SDK keeps one stream per surface it draws), and each one
-	/// hears every item; a new subscription never cuts off an older one.
+	/// hears every item published while it is open. Items buffered while none
+	/// was open go only to the next subscription.
 	subscribers: Vec<mpsc::UnboundedSender<Item>>,
 	buffer: VecDeque<Item>,
 	closed: bool,
@@ -55,7 +56,14 @@ impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 		Self::new("renderer is closed for this product connection")
 	}
 
+	/// One connection's stream of `Materials` nodes that fell back. Separate
+	/// from the renderer's, whose items count as the user's taps.
+	pub fn renderer_failures() -> Self {
+		Self::new("renderer failures are closed for this product connection")
+	}
+
 	/// Open one more subscription for the product, draining buffered items into it first.
+	/// Buffered items go to this subscription only, so one opened later never hears them.
 	pub fn subscribe<E: Send + 'static>(&self) -> Subscription<Item, CallError<E>> {
 		let (sender, receiver) = mpsc::unbounded();
 		let mut state = self.state.lock().expect("action channel mutex poisoned");
@@ -78,17 +86,10 @@ impl<Item: Clone + Send + 'static> ActionChannel<Item> {
 		if state.closed {
 			return Err(ProductRuntimeError::Closed);
 		}
-		state.subscribers.retain(|subscriber| !subscriber.is_closed());
 		if !state.subscribers.is_empty() {
-			// Stamped first, so a product reacting to the item already finds it.
 			self.note_published_now();
-			let mut delivered = false;
-			state.subscribers.retain(|subscriber| {
-				let sent = subscriber.unbounded_send(item.clone()).is_ok();
-				delivered |= sent;
-				sent
-			});
-			if delivered {
+			state.subscribers.retain(|subscriber| subscriber.unbounded_send(item.clone()).is_ok());
+			if !state.subscribers.is_empty() {
 				return Ok(());
 			}
 		}

@@ -13,6 +13,7 @@ summaries are generated with `cargo deny check licenses` (Rust) and
 |---------|-------|
 | `MIT OR Apache-2.0`, `MIT`, `Apache-2.0` | Permissive, MIT-compatible |
 | `Zlib` | Permissive |
+| `BSD-3-Clause` | Permissive (`pp-rs`, the GLSL preprocessor of `naga`) |
 | `Unicode-3.0` | Permissive (Unicode data tables) |
 | `Unlicense OR MIT` | Permissive (MIT selected) |
 

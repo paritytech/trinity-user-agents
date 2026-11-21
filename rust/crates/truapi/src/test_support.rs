@@ -30,7 +30,7 @@ use crate::platform::{
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
 	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
+	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
 	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
 	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
@@ -70,6 +70,17 @@ pub fn wait_until(mut condition: impl FnMut() -> bool, message: &str) {
 	while !condition() {
 		assert!(std::time::Instant::now() < deadline, "{message}");
 		std::thread::sleep(Duration::from_millis(5));
+	}
+}
+
+/// The next item of `stream`, failing the test rather than hanging when none
+/// comes within two seconds.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
+	let timeout = futures_timer::Delay::new(Duration::from_secs(2));
+	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
+		futures::future::Either::Left((item, _)) => item,
+		futures::future::Either::Right(_) => panic!("nothing came"),
 	}
 }
 
@@ -410,6 +421,28 @@ pub fn test_descriptor_chain(
 	chain
 }
 
+/// The People chain the test stack is published on.
+pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
+
+/// The People chain the test stack is published on after a wipe. No test
+/// bundles a stack on it, so a copy that names it always changes the chain.
+pub const TEST_STACK_WIPED_PEOPLE: [u8; 32] = [0xa9; 32];
+
+/// The test stack's descriptor as published at `sequence` in `generation`,
+/// with People on `people`, Bulletin on `[0xbb; 32]` and Asset Hub on
+/// `[0xcc; 32]`. A wipe is a higher `sequence`, another `generation` and
+/// another `people`.
+pub fn published_test_descriptor(
+	sequence: u32,
+	generation: &str,
+	people: [u8; 32],
+) -> serde_json::Value {
+	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = generation.into();
+	descriptor
+}
+
 /// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
 /// verifies it.
 pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
@@ -466,7 +499,7 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 			0xc1, 0xd7, 0x20, 0x23,
 		]),
 		identity_chat_private_key: None,
-		device_enc_public_key: None,
+		peer_device_enc_public_key: None,
 		lite_username: Some("alice".to_string()),
 		full_username: Some("Alice Smith".to_string()),
 	}
@@ -476,9 +509,12 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 /// side of one SSO session.
 pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	use crate::{
-		host_logic::sso::pairing::{
-			ResponderIdentity, create_pairing_bootstrap, derive_x25519_keypair_from_entropy,
-			establish_responder_session_info, establish_sso_session_info,
+		host_logic::{
+			root_entropy::RootEntropy,
+			sso::pairing::{
+				ResponderIdentity, create_pairing_bootstrap, establish_responder_session_info,
+				establish_sso_session_info,
+			},
 		},
 		platform::{HostInfo, PairingHostConfig, PlatformInfo},
 	};
@@ -500,7 +536,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 		.unwrap()
 		.expand_to_keypair(ExpansionMode::Ed25519);
 	let (encryption_secret_key, encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso");
+		RootEntropy::new([0xAB; 16]).derive_x25519_keypair(b"sso");
 	let responder = ResponderIdentity {
 		statement_secret: statement_keypair.secret.to_bytes(),
 		statement_public_key: statement_keypair.public.to_bytes(),
@@ -1113,6 +1149,27 @@ impl PlatformProductStorage for StubPlatform {
 		}
 		self.local_storage.lock().expect("local storage mutex poisoned").remove(&key);
 		self.push_storage_change(&key, None);
+		Ok(())
+	}
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		if let Some(reason) = self.local_storage_error {
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		let keys: Vec<String> = self
+			.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in keys {
+			self.clear(key).await?;
+		}
 		Ok(())
 	}
 
