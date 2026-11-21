@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UIKit.UIGestureRecognizerSubclass
 
 /// A pan's translation from where it was recognised, and the slop: how far the finger had already moved from its
 /// touch-down point by then, which the translation leaves out.
@@ -27,23 +26,9 @@ struct GestureSurface: UIViewRepresentable {
     }
 }
 
-/// Remembers where the finger first touched, which a pan recogniser only reports once it has crossed its slop.
-final class TouchDownPanGestureRecognizer: UIPanGestureRecognizer {
-    private(set) var touchDown: CGPoint?
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        if touchDown == nil { touchDown = touches.first?.location(in: nil) }
-        super.touchesBegan(touches, with: event)
-    }
-
-    override func reset() {
-        super.reset()
-        touchDown = nil
-    }
-}
-
 final class GestureSurfaceView: UIView {
-    let panRecognizer = TouchDownPanGestureRecognizer()
+    /// Our own low-threshold recogniser, or the system's pan when `GestureDragThreshold` says `system`.
+    let panRecognizer: any DragRecognizing = GestureSurfaceView.makeDragRecognizer(GestureDragThreshold.current)
     let tapRecognizer = UITapGestureRecognizer()
     var axis: CustomMessageWidgetNode.PanAxis?
     var isInteractive = false
@@ -57,7 +42,6 @@ final class GestureSurfaceView: UIView {
         backgroundColor = .clear
         accessibilityElementsHidden = true
         panRecognizer.delegate = self
-        panRecognizer.maximumNumberOfTouches = 1
         panRecognizer.addTarget(self, action: #selector(handlePan))
         addGestureRecognizer(panRecognizer)
         tapRecognizer.delegate = self
@@ -81,6 +65,16 @@ final class GestureSurfaceView: UIView {
         case .vertical: return abs(movement.y) >= abs(movement.x)
         case .free: return true
         }
+    }
+
+    /// One finger, starting after `threshold` points; nil threshold is the system pan recogniser and its own slop.
+    static func makeDragRecognizer(_ threshold: CGFloat?) -> any DragRecognizing {
+        guard let threshold else {
+            let system = TouchDownPanGestureRecognizer()
+            system.maximumNumberOfTouches = 1
+            return system
+        }
+        return ThresholdPanGestureRecognizer(threshold: threshold)
     }
 
     /// In window points; zero when the touch-down was not seen.
@@ -115,7 +109,8 @@ extension GestureSurfaceView: UIGestureRecognizerDelegate {
 private extension GestureSurfaceView {
     @objc func handleTap() { onTap?() }
 
-    @objc func handlePan(_ recognizer: TouchDownPanGestureRecognizer) {
+    @objc func handlePan() {
+        let recognizer = panRecognizer
         let translation = recognizer.translation(in: window)
         if recognizer.state == .began {
             slop = Self.slop(
