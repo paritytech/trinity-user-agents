@@ -1,16 +1,23 @@
 import PolkadotUI
 import Products
 import SwiftUI
+import func TrUAPIHost.panEventPayload
 
 /// One card as the collection draws it: the face the host holds, replaced by
 /// every face its product draws while the card is on screen.
 struct PocketCollectionCardView: View {
     let card: PocketCardViewModel
     let pocket: ProductPocketService?
+    var onUserMovingChange: ((Bool) -> Void)?
 
-    init(card: PocketCardViewModel, pocket: ProductPocketService? = nil) {
+    init(
+        card: PocketCardViewModel,
+        pocket: ProductPocketService? = nil,
+        onUserMovingChange: ((Bool) -> Void)? = nil
+    ) {
         self.card = card
         self.pocket = pocket ?? .current
+        self.onUserMovingChange = onUserMovingChange
     }
 
     @State private var streamed: CustomMessageWidgetNode?
@@ -30,7 +37,9 @@ struct PocketCollectionCardView: View {
                     return await images.resolve(source)
                 }
             },
-            onAction: { action, value in send(action, value) }
+            onAction: { action, value in send(action, value) },
+            onPan: { action, event in send(action, event) },
+            onUserMovingChange: onUserMovingChange
         )
         // Keyed on the Pocket as well as the card: a session that installed a
         // new one ended the stream this card was drawing, and a key of its own
@@ -57,5 +66,10 @@ struct PocketCollectionCardView: View {
     /// which is the shape every host sends.
     private func send(_ action: String, _ value: String?) {
         pocket?.send(action: action, payload: Data((value ?? "").utf8), for: card.key)
+    }
+
+    /// A pan reports in the core's encoding, the one the product SDK decodes.
+    private func send(_ action: String, _ event: WidgetPanEvent) {
+        pocket?.send(action: action, payload: panEventPayload(event: event.toCore), for: card.key)
     }
 }

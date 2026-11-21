@@ -152,6 +152,9 @@ private extension [Modifier] {
         var fillHeight = false
         var opacity: CGFloat?
         var blendingMode: BlendMode?
+        var pan: CustomMessageWidgetNode.Pan?
+        var drives: [CustomMessageWidgetNode.Drive] = []
+        var perspective: CGFloat?
 
         for modifier in self {
             switch modifier {
@@ -187,11 +190,12 @@ private extension [Modifier] {
                 opacity = CGFloat(value) / 255
             case let .blendingMode(mode):
                 blendingMode = mode.blendMode
-            case .pan,
-                 .drive,
-                 .perspective:
-                // This host answers `RendererMotion` with false, so it draws a tree's resting state.
-                break
+            case let .pan(value):
+                pan = value.widgetPan
+            case let .drive(value):
+                drives.append(value.widgetDrive)
+            case let .perspective(value):
+                perspective = value.drawableLength
             }
         }
 
@@ -207,8 +211,78 @@ private extension [Modifier] {
             fillWidth: fillWidth,
             fillHeight: fillHeight,
             opacity: opacity,
-            blendingMode: blendingMode
+            blendingMode: blendingMode,
+            pan: pan,
+            drives: drives,
+            perspective: perspective
         )
+    }
+}
+
+// MARK: - Motion
+
+private extension Pan {
+    var widgetPan: CustomMessageWidgetNode.Pan {
+        CustomMessageWidgetNode.Pan(
+            id: id,
+            axis: axis == .horizontal ? .horizontal : .vertical,
+            distance: Double(distance) / 1_000,
+            value: Int(value),
+            maxStepsPerGesture: maxStepsPerGesture.map(Int.init),
+            period: period.map(Int.init),
+            // The core's `Animation` is named apart from SwiftUI's only by module, so it is matched, not named.
+            animation: animation.map { animation -> CustomMessageWidgetNode.PanAnimation in
+                switch animation {
+                case let .spring(durationMs, bouncePerMille):
+                    .spring(duration: Double(durationMs) / 1_000, bounce: Double(bouncePerMille) / 1_000)
+                case let .ease(durationMs):
+                    .ease(duration: Double(durationMs) / 1_000)
+                }
+            },
+            actionId: action,
+            label: label
+        )
+    }
+}
+
+private extension Drive {
+    var widgetDrive: CustomMessageWidgetNode.Drive {
+        CustomMessageWidgetNode.Drive(
+            source: source,
+            property: property.widgetProperty,
+            keyframes: keyframes.map { keyframe in
+                CustomMessageWidgetNode.Keyframe(
+                    at: Double(Float(bitPattern: keyframe.at)),
+                    value: Double(Float(bitPattern: keyframe.value)),
+                    curve: keyframe.curve == .linear ? .linear : .step
+                )
+            }
+        )
+    }
+}
+
+private extension DrivenProperty {
+    var widgetProperty: CustomMessageWidgetNode.Drive.Property {
+        switch self {
+        case .rotationX: .rotationX
+        case .rotationY: .rotationY
+        case .rotationZ: .rotationZ
+        case .scale: .scale
+        case .opacity: .opacity
+        case .translationX: .translationX
+        case .translationY: .translationY
+        }
+    }
+}
+
+extension WidgetPanEvent {
+    /// The event as the core encodes it into an action's payload.
+    var toCore: PanEvent {
+        switch self {
+        case .began: .began
+        case let .settled(value): .settled(value: Int32(clamping: value))
+        case .cancelled: .cancelled
+        }
     }
 }
 

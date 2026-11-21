@@ -367,6 +367,72 @@ struct RendererNodeMappingTests {
         #expect(props.alignment == .topLeading)
         #expect(textProps.text == "kept")
     }
+
+    /// Fractions arrive as IEEE single bit patterns and durations in milliseconds, and a node keeps every drive in
+    /// order, so a face can turn and fade from one pan.
+    @Test func motionModifiersMapIntoTheWidgetModel() throws {
+        let keyframe = { (at: Float, value: Float, curve: KeyframeCurve) in
+            Keyframe(at: at.bitPattern, value: value.bitPattern, curve: curve)
+        }
+        let node = RendererNode.box(
+            modifiers: [
+                .perspective(1_200),
+                .pan(Pan(
+                    id: "turn",
+                    axis: .horizontal,
+                    distance: -1_000,
+                    value: 1,
+                    maxStepsPerGesture: 1,
+                    period: 2,
+                    animation: .spring(durationMs: 500, bouncePerMille: 150),
+                    action: "turned",
+                    label: "Turn over"
+                )),
+                .drive(Drive(
+                    source: "turn",
+                    property: .rotationY,
+                    keyframes: [keyframe(0, 0, .linear), keyframe(2, 360, .linear)]
+                )),
+                .drive(Drive(source: "turn", property: .opacity, keyframes: [keyframe(0.5, 0, .step)]))
+            ],
+            props: BoxProps(contentAlignment: nil),
+            children: []
+        )
+
+        let modifiers = try #require(node.toWidgetNode(resolver: resolver)).modifiers
+
+        #expect(modifiers.perspective == 1_200)
+        #expect(modifiers.pan == CustomMessageWidgetNode.Pan(
+            id: "turn",
+            axis: .horizontal,
+            distance: -1,
+            value: 1,
+            maxStepsPerGesture: 1,
+            period: 2,
+            animation: .spring(duration: 0.5, bounce: 0.15),
+            actionId: "turned",
+            label: "Turn over"
+        ))
+        #expect(modifiers.drives == [
+            CustomMessageWidgetNode.Drive(
+                source: "turn",
+                property: .rotationY,
+                keyframes: [.init(at: 0, value: 0, curve: .linear), .init(at: 2, value: 360, curve: .linear)]
+            ),
+            CustomMessageWidgetNode.Drive(
+                source: "turn",
+                property: .opacity,
+                keyframes: [.init(at: 0.5, value: 0, curve: .step)]
+            )
+        ])
+    }
+
+    /// The core decodes the bytes this sends, so each event must map to its own variant.
+    @Test func panEventsMapToTheCoreEvent() {
+        #expect(WidgetPanEvent.began.toCore == .began)
+        #expect(WidgetPanEvent.settled(-1).toCore == .settled(value: -1))
+        #expect(WidgetPanEvent.cancelled.toCore == .cancelled)
+    }
 }
 
 /// Records the shapes the mapping resolves, so a token translation can be

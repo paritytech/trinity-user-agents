@@ -23,7 +23,9 @@ extension View {
             .modifier(NodeBorderModifier(border: modifiers.border))
             // 5. Compositing, over the node and its background but under the margin
             .modifier(NodeCompositingModifier(modifiers: modifiers))
-            // 6. Outer margin
+            // 6. Motion: driven transform and opacity, and the pan's drag
+            .modifier(NodeMotionModifier(modifiers: modifiers))
+            // 7. Outer margin
             .padding(modifiers.margin)
     }
 }

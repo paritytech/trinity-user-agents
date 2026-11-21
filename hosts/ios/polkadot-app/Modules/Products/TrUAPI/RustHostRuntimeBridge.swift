@@ -112,9 +112,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return chainRegistry.getConnection(for: chain.chainId) != nil
-        case .materials,
-             .rendererMotion:
+        case .materials:
             return false
+        case .rendererMotion:
+            return true
         }
     }
 

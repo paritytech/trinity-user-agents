@@ -200,6 +200,11 @@ public extension CustomMessageWidgetNode {
         /// `nil` is fully opaque, matching a node that carries no opacity modifier.
         public let opacity: CGFloat?
         public let blendingMode: BlendMode?
+        public let pan: Pan?
+        /// Applied in order, each from its pan's value every frame.
+        public let drives: [Drive]
+        /// Distance of the viewer from the children this node rotates in 3D, in points.
+        public let perspective: CGFloat?
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -230,7 +235,10 @@ public extension CustomMessageWidgetNode {
             fillWidth: false,
             fillHeight: false,
             opacity: nil,
-            blendingMode: nil
+            blendingMode: nil,
+            pan: nil,
+            drives: [],
+            perspective: nil
         )
 
         public init(
@@ -245,7 +253,10 @@ public extension CustomMessageWidgetNode {
             fillWidth: Bool = false,
             fillHeight: Bool = false,
             opacity: CGFloat? = nil,
-            blendingMode: BlendMode? = nil
+            blendingMode: BlendMode? = nil,
+            pan: Pan? = nil,
+            drives: [Drive] = [],
+            perspective: CGFloat? = nil
         ) {
             self.padding = padding
             self.margin = margin
@@ -259,6 +270,126 @@ public extension CustomMessageWidgetNode {
             self.fillHeight = fillHeight
             self.opacity = opacity
             self.blendingMode = blendingMode
+            self.pan = pan
+            self.drives = drives
+            self.perspective = perspective
         }
     }
+}
+
+// MARK: - Motion
+
+public extension CustomMessageWidgetNode {
+    /// A drag on a node that moves a value the host keeps, which comes to rest on whole steps.
+    ///
+    /// The value is a number of steps. A drag of `distance` times the node's size along `axis` moves it by one, and
+    /// the product sees only where it comes to rest. `value` is the rest the product declares, applied when it
+    /// changes between trees.
+    struct Pan: Equatable {
+        public enum Axis: Equatable {
+            case horizontal
+            case vertical
+        }
+
+        public let id: String
+        public let axis: Axis
+        /// Share of the node's size along `axis` that moves the value one step. Negative counts a leftward or
+        /// upward drag as a positive step.
+        public let distance: Double
+        public let value: Int
+        /// Steps one drag may move from where it began. Nil is unbounded.
+        public let maxStepsPerGesture: Int?
+        /// Drives read the value modulo this many steps. Nil does not wrap.
+        public let period: Int?
+        /// How a declared change is animated. Nil jumps.
+        public let animation: PanAnimation?
+        /// Where the pan reports its events. Nil reports nothing.
+        public let actionId: String?
+        /// The accessibility action that steps the value by one. Nil offers none.
+        public let label: String?
+
+        public init(
+            id: String,
+            axis: Axis,
+            distance: Double,
+            value: Int,
+            maxStepsPerGesture: Int?,
+            period: Int?,
+            animation: PanAnimation?,
+            actionId: String?,
+            label: String?
+        ) {
+            self.id = id
+            self.axis = axis
+            self.distance = distance
+            self.value = value
+            self.maxStepsPerGesture = maxStepsPerGesture
+            self.period = period
+            self.animation = animation
+            self.actionId = actionId
+            self.label = label
+        }
+    }
+
+    /// How a pan moves to a value a new tree declares. Durations are in seconds, bounce from 0 to 1.
+    enum PanAnimation: Equatable {
+        case spring(duration: Double, bounce: Double)
+        case ease(duration: Double)
+    }
+
+    /// A property of a node computed every frame from a pan's value.
+    struct Drive: Equatable {
+        /// Rotations in degrees, scale as a factor, opacity from 0 to 1, translations in points.
+        public enum Property: Equatable {
+            case rotationX
+            case rotationY
+            case rotationZ
+            case scale
+            case opacity
+            case translationX
+            case translationY
+        }
+
+        /// The `Pan.id` the property follows.
+        public let source: String
+        public let property: Property
+        /// Strictly ascending in `at`.
+        public let keyframes: [Keyframe]
+
+        public init(source: String, property: Property, keyframes: [Keyframe]) {
+            self.source = source
+            self.property = property
+            self.keyframes = keyframes
+        }
+    }
+
+    /// The value of a driven property at one pan value.
+    struct Keyframe: Equatable {
+        public enum Curve: Equatable {
+            /// A straight line from the previous keyframe.
+            case linear
+            /// Holds the previous value until `at`, then jumps.
+            case step
+        }
+
+        public let at: Double
+        public let value: Double
+        public let curve: Curve
+
+        public init(at: Double, value: Double, curve: Curve) {
+            self.at = at
+            self.value = value
+            self.curve = curve
+        }
+    }
+}
+
+/// What a pan tells the product, on the pan's action.
+public enum WidgetPanEvent: Equatable {
+    /// A finger took the pan.
+    case began
+    /// The value came to rest on this step.
+    case settled(Int)
+    /// Something else took the press before the value moved.
+    case cancelled
 }

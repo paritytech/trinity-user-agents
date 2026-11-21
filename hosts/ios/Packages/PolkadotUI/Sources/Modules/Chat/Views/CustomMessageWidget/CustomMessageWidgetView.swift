@@ -52,15 +52,24 @@ extension EnvironmentValues {
 public struct CustomMessageWidgetView: View {
     let node: CustomMessageWidgetNode
     var onAction: WidgetActionHandler?
+    var onPan: WidgetPanHandler?
+    var onUserMovingChange: ((Bool) -> Void)?
     var resolveImage: WidgetImageResolver?
+
+    /// The body's pans. Held here, so a pan keeps its value for as long as this body is drawn, whatever its tree.
+    @State private var motion = WidgetMotion()
 
     public init(
         node: CustomMessageWidgetNode,
         onAction: WidgetActionHandler? = nil,
+        onPan: WidgetPanHandler? = nil,
+        onUserMovingChange: ((Bool) -> Void)? = nil,
         resolveImage: WidgetImageResolver?
     ) {
         self.node = node
         self.onAction = onAction
+        self.onPan = onPan
+        self.onUserMovingChange = onUserMovingChange
         self.resolveImage = resolveImage
     }
 
@@ -68,6 +77,12 @@ public struct CustomMessageWidgetView: View {
         WidgetNodeContent(node: node)
             .environment(\.widgetActionHandler, onAction)
             .environment(\.widgetImageResolver, resolveImage)
+            .environment(\.widgetMotion, motion)
+            .onChange(of: node.pans, initial: true) { _, pans in
+                motion.onEvent = onPan
+                motion.apply(pans: pans)
+            }
+            .onChange(of: motion.isUserMoving) { _, moving in onUserMovingChange?(moving) }
     }
 }
 

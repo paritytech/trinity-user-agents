@@ -186,6 +186,28 @@ Rules:
    past `ResumePolicy.expiryThreshold` it `expire()`s all of them, otherwise it
    `probe(timeout:)`s each and only silent ones close (`.livenessTimeout`).
 
+## Renderer Motion
+
+Product-drawn trees can carry `Pan`, `Drive` and `Perspective`, and the app answers `RendererMotion` with true. All of
+it is drawn in PolkadotUI under `CustomMessageWidget/Motion/`; the app only maps the core's types in
+`RendererNode+WidgetNode.swift` and sends the events.
+
+- **The frame loop stays on the device.** `WidgetMotion` (owned as `@State` by `CustomMessageWidgetView`, so it lives
+  as long as the body) holds each pan's value by id, moves it under the finger and settles it on a display link. The
+  product hears only `began`, `settled(step)` and `cancelled`.
+- **Reconciling a new tree.** A declared value is applied only when it differs from the previous tree's for that id,
+  so a tree sent before a turn settled cannot undo it, and one confirming where the card rests moves and reports
+  nothing. A declared change while a finger holds the pan is dropped: the finger wins, and its `settled` tells the
+  product. A tree without the pan's id drops its state.
+- **Where a pan follows a finger is the surface's call.** `widgetPansEnabled(true)` is set only by the opened Pocket
+  card and the Debug face preview. Everywhere else (the Pocket list, which scrolls, chat, the room footer, the add-card
+  sheet) drives draw at the declared value, so a card showing its back shows it in the list too.
+- **Events reach the product as the core encodes them.** `WidgetPanHandler` sits beside `WidgetActionHandler`; the
+  Pocket card turns a `WidgetPanEvent` into bytes with `panEventPayload(event:)` and sends it on the pan's action.
+- **The opened card shares the press with pull-to-close by axis.** A pan claims a drag whose first move runs along its
+  axis; the pull-down begins only on downward drags. While a finger holds the pan, the pull-down is off and the page's
+  `setFaceShown` answers `userMoving`.
+
 ## Seams
 
 | Seam                          | Where                                    | When to touch                        |

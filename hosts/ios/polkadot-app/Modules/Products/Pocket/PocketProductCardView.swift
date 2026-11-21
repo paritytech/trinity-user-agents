@@ -24,6 +24,8 @@ struct PocketProductCardView: View {
     /// where its images are, and nothing about the card says so.
     let resolveImage: WidgetImageResolver?
     var onAction: WidgetActionHandler?
+    var onPan: WidgetPanHandler?
+    var onUserMovingChange: ((Bool) -> Void)?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -34,8 +36,14 @@ struct PocketProductCardView: View {
                 // The face is authored against the whole card, so it is handed
                 // the full frame: its own modifiers decide where things sit,
                 // and a centring container here would override them.
-                CustomMessageWidgetView(node: face, onAction: onAction, resolveImage: resolveImage)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                CustomMessageWidgetView(
+                    node: face,
+                    onAction: onAction,
+                    onPan: onPan,
+                    onUserMovingChange: onUserMovingChange,
+                    resolveImage: resolveImage
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 // A card whose product has not drawn yet keeps its place rather
                 // than collapsing the layout around it, and says it is still

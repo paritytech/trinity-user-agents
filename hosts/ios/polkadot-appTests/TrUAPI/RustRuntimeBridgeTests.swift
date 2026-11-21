@@ -364,6 +364,14 @@ struct RustRuntimeBridgeTests {
         #expect(!result)
     }
 
+    /// A product's worker asks before sending motion, and this host draws it.
+    @Test func featureSupportedRendererMotionReturnsTrue() async throws {
+        let bridge = makeBridge(chainRegistry: MockChainRegistry())
+
+        let result = try await bridge.featureSupported(request: .rendererMotion)
+        #expect(result)
+    }
+
     @Test func featureSupportedUnknownChainReturnsFalse() async throws {
         let bridge = makeBridge(chainRegistry: MockChainRegistry())
 

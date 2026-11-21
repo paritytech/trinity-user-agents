@@ -62,6 +62,14 @@ struct RustHostRuntimeBridgeTests {
         #expect(!result)
     }
 
+    /// Products send `Pan`, `Drive` and `Perspective` only to a host that says it draws them, and this one does.
+    @Test func featureSupportedRendererMotionReturnsTrue() async throws {
+        let bridge = makeHostBridge()
+
+        let result = try await bridge.featureSupported(request: .rendererMotion)
+        #expect(result)
+    }
+
     /// No product identity at host level: navigation is rejected.
     @Test func navigateToRejects() async {
         let bridge = makeHostBridge()

@@ -190,9 +190,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return dependencies.chainRegistry.getConnection(for: chain.chainId) != nil
-        case .materials,
-             .rendererMotion:
+        case .materials:
             return false
+        case .rendererMotion:
+            return true
         }
     }
 

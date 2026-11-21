@@ -23,6 +23,8 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
     private var faceSetByPage = false
+    /// A finger holds a pan on the face, from the start of its drag until it comes to rest.
+    private var isFaceMoving = false
     private var isClosing = false
     private var isInFlight = false
 
@@ -153,7 +155,7 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
 
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         guard isOnDisplay, !isClosing else { return .notPresented }
-        guard !pullDown.isPulling else { return .userMoving }
+        guard !pullDown.isPulling, !isFaceMoving else { return .userMoving }
 
         faceSetByPage = true
         setFaceCovered(!shown)
@@ -222,6 +224,10 @@ extension ExpandedPocketCardViewController: NavigationTransitionAnimating {
 
 private extension ExpandedPocketCardViewController {
     func setupFace() {
+        face.rootView = PocketOpenedCardView(card: card) { [weak self] moving in
+            self?.isFaceMoving = moving
+            self?.updatePullDown()
+        }
         addChild(face)
         rootView.embedFace(face.view)
         face.didMove(toParent: self)
@@ -241,7 +247,12 @@ private extension ExpandedPocketCardViewController {
 
     func setFaceCovered(_ covered: Bool) {
         rootView.isFaceCovered = covered
-        pullDown.isEnabled = !covered
+        updatePullDown()
+    }
+
+    /// A covered face gives its touches to the page, and a face being turned keeps the press it has.
+    func updatePullDown() {
+        pullDown.isEnabled = !rootView.isFaceCovered && !isFaceMoving
     }
 
     func close() {

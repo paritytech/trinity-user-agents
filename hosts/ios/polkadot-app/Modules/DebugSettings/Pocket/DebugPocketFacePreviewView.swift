@@ -20,6 +20,7 @@ struct DebugPocketFacePreviewView: View {
             // Drawn in the real card frame, so what is seen here is what the
             // Pocket will show.
             PocketProductCardView(title: "Preview", face: viewModel.face, resolveImage: viewModel.imageResolver)
+                .widgetPansEnabled(true)
                 .id(viewModel.draws)
 
             if let refusal = viewModel.refusal {
