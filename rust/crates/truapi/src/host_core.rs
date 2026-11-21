@@ -1921,12 +1921,6 @@ impl ProductRuntimeControl {
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = self.connection.hold_worker();
-		let back = match &request.context {
-			truapi::latest::RenderContext::PocketCardBack { card_id } => {
-				Some((self.connection.clone(), card_id.clone()))
-			},
-			_ => None,
-		};
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
 			request,
 			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
@@ -1942,8 +1936,8 @@ impl ProductRuntimeControl {
 		// and is not polled past, so it releases there rather than waiting for
 		// the caller to drop the handle.
 		let stream = futures::stream::unfold(
-			(stream, Some(reference), back),
-			|(mut stream, reference, mut back)| async move {
+			(stream, Some(reference)),
+			|(mut stream, reference)| async move {
 				match stream.next().await? {
 					Ok(
 						truapi::versioned::renderer::ProductRendererRenderItem::V1(mut node) |
@@ -1951,14 +1945,11 @@ impl ProductRuntimeControl {
 					) => {
 						node.clear_refused_inline_images();
 						node.clear_invalid_motion();
-						if let Some((connection, card_id)) = back.take() {
-							connection.mark_back_drawn(card_id);
-						}
-						Some((Ok(node), (stream, reference, back)))
+						Some((Ok(node), (stream, reference)))
 					},
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None, None),
+						(stream, None),
 					)),
 				}
 			},

@@ -235,11 +235,7 @@ impl Resolver {
 		settings: ResolveSettings,
 		failures: Box<dyn Fn(NodeFallback) + Send + Sync>,
 	) -> Self {
-		let drawn_here = settings.enabled &&
-			matches!(
-				context,
-				RenderContext::PocketCard { .. } | RenderContext::PocketCardBack { .. }
-			);
+		let drawn_here = settings.enabled && matches!(context, RenderContext::PocketCard { .. });
 		let nodes = materials_nodes(tree)
 			.into_iter()
 			.zip(tree_failures(tree))

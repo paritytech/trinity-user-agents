@@ -103,7 +103,6 @@ pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
 	pub face_requests: Mutex<Vec<bool>>,
-	pub back_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
@@ -193,18 +192,12 @@ impl EventCallbacks {
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
 			face_requests: Mutex::new(Vec::new()),
-			back_requests: Mutex::new(Vec::new()),
 		}
 	}
 
 	/// The face visibilities this execution's card was asked for, in order.
 	pub fn face_requests(&self) -> Vec<bool> {
 		self.face_requests.lock().expect("face requests mutex poisoned").clone()
-	}
-
-	/// The sides this execution's card was asked to turn to, in order.
-	pub fn back_requests(&self) -> Vec<bool> {
-		self.back_requests.lock().expect("back requests mutex poisoned").clone()
 	}
 }
 
@@ -289,13 +282,6 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
 		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
-	}
-	async fn set_expanded_card_back_shown(
-		&self,
-		shown: bool,
-	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
-		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
-		Ok(crate::platform::ExpandedCardTurnOutcome::Applied)
 	}
 	async fn remote_permission(
 		&self,
@@ -2232,12 +2218,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
 		}
-		async fn set_expanded_card_back_shown(
-			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
-		}
 		async fn remote_permission(
 			&self,
 			_product: ProductExecutionConfig,
@@ -2441,12 +2421,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			_shown: bool,
 		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
-		}
-		async fn set_expanded_card_back_shown(
-			&self,
-			_shown: bool,
-		) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection> {
-			Ok(crate::platform::ExpandedCardTurnOutcome::Unsupported)
 		}
 		async fn remote_permission(
 			&self,
@@ -3419,7 +3393,6 @@ fn expanded_card_calls_log_registered_markers() {
 
 	futures::executor::block_on(async {
 		let _ = crate::platform::ExpandedCardHost::set_expanded_card_face_shown(&platform, true).await;
-		let _ = crate::platform::ExpandedCardHost::set_expanded_card_back_shown(&platform, true).await;
 	});
 
 	let classes: Vec<_> = callbacks
@@ -3429,7 +3402,7 @@ fn expanded_card_calls_log_registered_markers() {
 		.iter()
 		.map(|(target, _)| crate::markers::class_of(target))
 		.collect();
-	assert_eq!(classes, vec![Some(crate::markers::MarkerClass::Local); 2]);
+	assert_eq!(classes, vec![Some(crate::markers::MarkerClass::Local)]);
 }
 
 /// `depth` boxes around an empty node, three brackets per box.
@@ -3535,12 +3508,7 @@ fn the_deepest_face_with_materials_reads_back_once_kept() {
 	))
 	.unwrap();
 	assert_eq!(
-		futures::executor::block_on(cards.face(
-			product,
-			"stamps".into(),
-			crate::pocket_cards::PocketCardSide::Front,
-		))
-		.unwrap(),
+		futures::executor::block_on(cards.face(product, "stamps".into())).unwrap(),
 		Some(deepest)
 	);
 	assert!(matches!(

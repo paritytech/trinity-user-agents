@@ -174,8 +174,9 @@ fn a_node_with_an_unusable_inline_image_falls_back_at_once() {
 	assert_eq!(device.bulletin.lookups(preimage_key(HEIGHT)), 0);
 }
 
-/// R2 draws materials on Pocket cards only, front and back, and nowhere when
-/// the app has them off. Elsewhere a node draws plain as unsupported.
+/// R2 draws materials on Pocket card faces only, and nowhere when the app has
+/// them off. Elsewhere a node draws plain as unsupported, including the card
+/// back context no host sends any more.
 #[test]
 fn materials_draw_only_on_pocket_cards_and_only_when_on() {
 	let (_dir, db) = open_temporary_core_db();
@@ -188,14 +189,12 @@ fn materials_draw_only_on_pocket_cards_and_only_when_on() {
 	};
 	let off = ResolveSettings { enabled: false, ..ON };
 
-	for (context, settings) in [(chat, ON), (card(), off)] {
+	let back = RenderContext::PocketCardBack { card_id: "card".to_string() };
+	for (context, settings) in [(chat, ON), (back, ON), (card(), off)] {
 		let mut resolving = resolve(&device, &face, &context, settings);
 		assert_eq!(resolving.next(), [State::Plain(MaterialFailure::Unsupported)], "{context:?}");
 	}
 	assert_eq!(device.bulletin.lookups(preimage_key(STILL)), 0);
-
-	let back = RenderContext::PocketCardBack { card_id: "card".to_string() };
-	assert_eq!(resolve(&device, &face, &back, ON).next(), [State::Loading]);
 }
 
 /// A ready node carries exactly the shaders the core builds for its materials

@@ -343,16 +343,6 @@ export type ExpandedCardFaceOutcome =
   | "Unsupported";
 
 /**
- * What the host did with a request to turn the expanded card.
- */
-export type ExpandedCardTurnOutcome =
-  | "Applied"
-  | "NotPresented"
-  | "UserMoving"
-  | "Unsupported"
-  | "NoBack";
-
-/**
  * The chains a host builds as V5 general transactions. A chain not listed is
  * built as V4.
  */
@@ -1222,14 +1212,6 @@ export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
 );
 
 /**
- * What the host did with a request to turn the expanded card.
- */
-export const ExpandedCardTurnOutcome: S.Codec<ExpandedCardTurnOutcome> = S.lazy(
-  (): S.Codec<ExpandedCardTurnOutcome> =>
-    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported", "NoBack"),
-);
-
-/**
  * The chains a host builds as V5 general transactions. A chain not listed is
  * built as V4.
  */
@@ -2019,12 +2001,6 @@ export interface ExpandedCardHost {
    * Uncover (`true`) or cover (`false`) the face under the calling Widget.
    */
   setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
-
-  /**
-   * Turn the card above the calling Widget so its back (`true`) or its
-   * front (`false`) is up.
-   */
-  setExpandedCardBackShown(shown: boolean): Promise<ExpandedCardTurnOutcome>;
 }
 
 /**

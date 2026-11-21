@@ -21,7 +21,7 @@ use truapi::{Bytes32, latest, v01, versioned::IntoLatest};
 
 use super::{
 	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
-	pocket::{NativePocketObserver, card_side, keeping_faces, observe_pocket_cards},
+	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards, pocket_card},
 	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
@@ -36,7 +36,7 @@ use crate::{
 		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	host_logic::root_entropy::RootEntropy,
-	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCardSide, PocketCards},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
 	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
@@ -1073,14 +1073,13 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.pocket.remove(product_id, card_id).await?)
 	}
 
-	/// The newest face kept for one side of a card, if one is.
+	/// The newest face kept for a card, if one is.
 	pub async fn pocket_card_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
-		side: PocketCardSide,
 	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
-		Ok(self.pocket.face(product_id, card_id, side).await?)
+		Ok(self.pocket.face(product_id, card_id).await?)
 	}
 
 	/// Decides durable transactions from the chain until none is live, then
@@ -1393,14 +1392,13 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
-		let card = card_side(&request.context);
+		let card = pocket_card(&request.context);
 		let stream = control.render(request)?;
 		let observer = match card {
-			Some((card_id, side)) => keeping_faces(
+			Some(card_id) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
-				side,
 				observer,
 				&self.spawner,
 			),

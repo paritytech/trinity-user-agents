@@ -44,7 +44,7 @@ mod tests {
 		)
 		.unwrap();
 
-		migrations.to_latest(&mut conn).unwrap();
+		migrations.to_version(&mut conn, 15).unwrap();
 
 		let kept: (String, Vec<u8>, i64) = conn
 			.query_row("SELECT side, face, draw_order FROM pocket_card_face", [], |row| {

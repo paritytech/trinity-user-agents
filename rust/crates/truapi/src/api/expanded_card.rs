@@ -3,9 +3,8 @@
 use crate::{
 	CallContext, CallError,
 	versioned::expanded_card::{
-		HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
-		HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
-		HostExpandedCardSetFaceShownRequest, HostExpandedCardSetFaceShownResponse,
+		HostExpandedCardSetFaceShownError, HostExpandedCardSetFaceShownRequest,
+		HostExpandedCardSetFaceShownResponse,
 	},
 	wire, wire_trait,
 };
@@ -36,28 +35,6 @@ pub trait ExpandedCard: Send + Sync {
 		_cx: &CallContext,
 		_request: HostExpandedCardSetFaceShownRequest,
 	) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
-	{
-		Err(CallError::unavailable())
-	}
-
-	/// Turn the card under the calling Widget so its back or its front is up.
-	///
-	/// Succeeds when that side is already up. Fails with `NotPresented` when
-	/// the Widget is not shown under its card, `UserMoving` while the user moves
-	/// or turns the card, `NoBack` when the card has no back to show
-	/// right now, and `Unsupported` on a host that cannot turn cards.
-	///
-	/// ```ts
-	/// const result = await truapi.expandedCard.setBackShown({ shown: true });
-	/// assert(result.isOk(), "setBackShown failed:", result);
-	/// console.log("back shown");
-	/// ```
-	#[wire(id = 1)]
-	async fn set_back_shown(
-		&self,
-		_cx: &CallContext,
-		_request: HostExpandedCardSetBackShownRequest,
-	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
 	{
 		Err(CallError::unavailable())
 	}

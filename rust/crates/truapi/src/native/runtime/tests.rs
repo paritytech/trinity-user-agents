@@ -345,23 +345,11 @@ fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 		v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
 	));
 
-	let turned = futures::executor::block_on(truapi::api::ExpandedCard::set_back_shown(
-		admin.product_runtime().as_ref(),
-		&truapi::CallContext::default(),
-		v01::HostExpandedCardSetBackShownRequest { shown: true }.into(),
-	));
-
+	assert!(reply.is_ok(), "the card's own host applied it: {reply:?}");
+	assert_eq!(card_callbacks.face_requests(), vec![false]);
 	assert!(
-		reply.is_ok() && turned.is_ok(),
-		"the card's own host applied both: {reply:?} {turned:?}"
-	);
-	assert_eq!(
-		(card_callbacks.face_requests(), card_callbacks.back_requests()),
-		(vec![false], vec![true])
-	);
-	assert!(
-		other_callbacks.face_requests().is_empty() && other_callbacks.back_requests().is_empty(),
-		"another product's card must not be asked to move its face or turn"
+		other_callbacks.face_requests().is_empty(),
+		"another product's card must not be asked to move its face"
 	);
 }
 

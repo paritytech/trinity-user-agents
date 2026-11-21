@@ -167,9 +167,6 @@ markers! {
 	/// A card face was expanded or collapsed. Detail names the card.
 	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN = "truapi.native.callback.set_expanded_card_face_shown" => Local;
 
-	/// An expanded card was turned to its back or its front.
-	NATIVE_SET_EXPANDED_CARD_BACK_SHOWN = "truapi.native.callback.set_expanded_card_back_shown" => Local;
-
 	/// The host's chain socket connected. Detail names the chain.
 	NATIVE_CHAIN_CONNECTED = "truapi.native.callback.chain_connected" => Local;
 

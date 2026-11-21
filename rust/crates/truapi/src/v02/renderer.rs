@@ -27,8 +27,8 @@ pub enum RenderContext {
 		/// Card id, as declared in the product's worker manifest.
 		card_id: String,
 	},
-	/// The back of a card in the host's Pocket collection, for a card whose
-	/// definition declares `back`.
+	/// Never sent. A card draws both its faces in one `PocketCard` tree, and
+	/// this variant only keeps the indexes of the ones after it.
 	PocketCardBack {
 		/// Card id, as declared in the product's worker manifest.
 		card_id: String,
