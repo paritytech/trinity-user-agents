@@ -50,7 +50,11 @@ private extension NodeSlideToConfirmView {
     }
 
     var travel: CGFloat {
-        max(width - SlideToConfirmMetrics.travelEndInset, 0)
+        SlideToConfirmMetrics.travel(
+            of: props.variant,
+            width: width,
+            trackHeight: SlideToConfirmMetrics.thumbTrackHeight(given: modifiers)
+        )
     }
 
     var accessibilityLabel: String {
@@ -97,7 +101,7 @@ enum SlideToConfirmMetrics {
     static let trackHeight: CGFloat = 72
     static let thumbSize: CGFloat = 56
     static let iconSize: CGFloat = 24
-    /// What a full slide leaves uncovered at the end: a thumb's width, or the last of a peeled face.
+    /// What a full reveal slide leaves uncovered at the end: the last of the peeled face.
     static let travelEndInset: CGFloat = 56
     static let disabledOpacity: CGFloat = 0.4
     /// The label is gone once the thumb has travelled this share of the track.
@@ -115,5 +119,26 @@ enum SlideToConfirmMetrics {
     /// 12 in the room footer's 80, as on the web footer's pill.
     static func thumbInset(trackHeight: CGFloat) -> CGFloat {
         (trackHeight - thumbSize) / 2
+    }
+
+    /// How far a full slide goes on a control `width` wide. The drag divides the finger's move by
+    /// this and the face draws progress over the same distance, so the thumb follows the finger one
+    /// for one. The thumb travels the lane inside the track's inset; the reveal keeps its own end.
+    static func travel(
+        of variant: CustomMessageWidgetNode.SlideToConfirmVariant,
+        width: CGFloat,
+        trackHeight: CGFloat
+    ) -> CGFloat {
+        switch variant {
+        case .thumb:
+            thumbTravel(laneWidth: width - 2 * thumbInset(trackHeight: trackHeight))
+        case .reveal:
+            max(width - travelEndInset, 0)
+        }
+    }
+
+    /// How far the thumb travels along a lane `laneWidth` wide: the track inside its inset.
+    static func thumbTravel(laneWidth: CGFloat) -> CGFloat {
+        max(laneWidth - thumbSize, 0)
     }
 }

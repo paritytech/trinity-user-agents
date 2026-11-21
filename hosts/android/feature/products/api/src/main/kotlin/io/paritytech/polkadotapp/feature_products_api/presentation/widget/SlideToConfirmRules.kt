@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlin.math.abs
 
@@ -29,6 +30,20 @@ internal object SlideToConfirmRules {
 
     /** The space around the thumb inside the track, in dp, the same on every side: 8 in the track's own 72, 12 in 80. */
     fun thumbInsetDp(widget: JsWidget.SlideToConfirm): Float = (thumbTrackHeightDp(widget) - THUMB_SIZE_DP) / 2f
+
+    /** What a full slide keeps from each side of the control, in dp: the thumb's inset, or nothing for the reveal's peel. */
+    fun travelSideInsetDp(widget: JsWidget.SlideToConfirm): Float = when (widget.variant) {
+        JsSlideToConfirmVariant.THUMB -> thumbInsetDp(widget)
+        JsSlideToConfirmVariant.REVEAL -> 0f
+    }
+
+    /**
+     * How far a full slide goes, in px, on a control [widthPx] wide. The drag divides the finger's move by this
+     * and the face draws the thumb over the same distance, so the thumb follows the finger one for one. The thumb
+     * travels the lane inside the track's inset ([sideInsetPx] a side) less its own width ([endInsetPx]).
+     */
+    fun travelPx(widthPx: Float, endInsetPx: Float, sideInsetPx: Float): Float =
+        (widthPx - endInsetPx - 2 * sideInsetPx).coerceAtLeast(0f)
 
     /** A control without an action is inert, as a `Button` without one is. */
     fun acceptsSlide(widget: JsWidget.SlideToConfirm, heldAtEnd: Boolean): Boolean =

@@ -33,7 +33,7 @@ struct SlideToConfirmThumbFace: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .overlay(alignment: .leading) {
                 GeometryReader { geometry in
-                    thumb.offset(x: progress * max(geometry.size.width - SlideToConfirmMetrics.thumbSize, 0))
+                    thumb.offset(x: progress * SlideToConfirmMetrics.thumbTravel(laneWidth: geometry.size.width))
                 }
                 .frame(height: SlideToConfirmMetrics.thumbSize)
             }

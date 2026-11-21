@@ -25,7 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -88,10 +88,15 @@ internal fun JsSlideToConfirm(
     val haptics = LocalHapticFeedback.current
     val rtl by rememberUpdatedState(LocalLayoutDirection.current == LayoutDirection.Rtl)
     val currentOnConfirm by rememberUpdatedState(onConfirm)
-    val endInsetPx = with(LocalDensity.current) { TRAVEL_END_INSET.toPx() }
+    val density = LocalDensity.current
+    // Whole pixels, as the layout places the thumb and the track's padding.
+    val endInsetPx by rememberUpdatedState(with(density) { TRAVEL_END_INSET.roundToPx() }.toFloat())
+    val sideInsetPx by rememberUpdatedState(with(density) { SlideToConfirmRules.travelSideInsetDp(widget).dp.roundToPx() }.toFloat())
 
     val progress = remember { Animatable(0f) }
-    var travelPx by remember { mutableFloatStateOf(0f) }
+    var widthPx by remember { mutableIntStateOf(0) }
+    // One travel for the drag and the face, read where it is used: the thumb follows the finger one for one.
+    val travelPx = { SlideToConfirmRules.travelPx(widthPx.toFloat(), endInsetPx, sideInsetPx) }
     var dragging by remember { mutableStateOf(false) }
     var heldAtEnd by remember { mutableStateOf(false) }
 
@@ -142,7 +147,7 @@ internal fun JsSlideToConfirm(
                     disabled()
                 }
             }
-            .onSizeChanged { travelPx = (it.width - endInsetPx).coerceAtLeast(0f) }
+            .onSizeChanged { widthPx = it.width }
             // The loop reads every move itself, consumed or not, and consumes what it uses. A drag
             // that starts on the control is then the control's alone: the bubble's swipe to reply
             // and the feed's scroll see consumed moves and stand down.
@@ -150,10 +155,10 @@ internal fun JsSlideToConfirm(
                 val slop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    if (!interactive || travelPx <= 0f) return@awaitEachGesture
+                    if (!interactive || travelPx() <= 0f) return@awaitEachGesture
                     var slid = progress.value
                     fun follow(dx: Float) {
-                        slid = SlideToConfirmRules.slideBy(slid, dx, travelPx, rtl)
+                        slid = SlideToConfirmRules.slideBy(slid, dx, travelPx(), rtl)
                         val target = slid
                         scope.launch(start = CoroutineStart.UNDISPATCHED) { progress.snapTo(target) }
                     }
@@ -207,7 +212,7 @@ internal fun JsSlideToConfirm(
             JsSlideToConfirmVariant.THUMB -> SlideToConfirmThumbFace(
                 widget = widget,
                 progress = { progress.value },
-                travelPx = { travelPx },
+                travelPx = travelPx,
                 hinting = interactive && !dragging,
             )
             JsSlideToConfirmVariant.REVEAL -> SlideToConfirmRevealFace(
@@ -282,14 +287,14 @@ private fun SlideToConfirmThumbFace(
             }
         }
 
-        val trackPaddingPx = with(LocalDensity.current) { thumbInset.toPx() }
         val thumbTop = widget.accent?.toComposeColor() ?: colors.fg.primary
         val thumbBottom = lerp(thumbTop, colors.fg.secondary, THUMB_GRADIENT_DEPTH)
         Box(
             modifier = Modifier
                 .offset {
-                    // The track's padding is inside the travel the owner measured.
-                    IntOffset((progress() * (travelPx() - 2 * trackPaddingPx)).coerceAtLeast(0f).roundToInt(), 0)
+                    // The owner's travel: the lane inside the track's padding less the thumb, the distance the drag
+                    // divides by. A spring back that dips below the start stops at it.
+                    IntOffset((progress() * travelPx()).coerceAtLeast(0f).roundToInt(), 0)
                 }
                 .size(THUMB_SIZE)
                 .clip(CircleShape)
@@ -342,7 +347,7 @@ private val THUMB_SIZE = SlideToConfirmRules.THUMB_SIZE_DP.dp
 private val CHEVRON_SIZE = 24.dp
 private val SPINNER_STROKE = 2.dp
 
-// What a full slide leaves uncovered at the end: a thumb's width, or the last of a peeled face.
+// What a full slide leaves uncovered at the end: the thumb's width, or the last of a peeled face.
 private val TRAVEL_END_INSET = 56.dp
 private const val DISABLED_ALPHA = 0.4f
 

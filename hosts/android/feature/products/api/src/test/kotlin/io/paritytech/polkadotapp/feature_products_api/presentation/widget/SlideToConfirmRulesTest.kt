@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
+import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.roundToInt
 
 class SlideToConfirmRulesTest {
     private val ready = JsWidget.SlideToConfirm(text = "Slide to register", onConfirm = "register")
@@ -114,5 +116,80 @@ class SlideToConfirmRulesTest {
         val twice = ready.copy(modifiers = listOf(JsModifier.Size(width = 300), JsModifier.Size(height = 80), JsModifier.Size(height = 64)))
 
         assertEquals(80, SlideToConfirmRules.thumbTrackHeightDp(twice))
+    }
+
+    // The room footer's track on a 1080 px phone at 2.625 px a dp: 954 px wide, the thumb 147 px, its inset 12 dp,
+    // which the layout pads as 32 px. The thumb's lane is 954 - 2 * 32 = 890 px, so a full slide carries it 743 px.
+    private val footerWidthPx = 954f
+    private val thumbPx = 147f
+    private val footerInsetPx = 32f
+    private val footerTravelPx = SlideToConfirmRules.travelPx(footerWidthPx, endInsetPx = thumbPx, sideInsetPx = footerInsetPx)
+
+    @Test
+    fun `in the room footer a full slide carries the thumb along its lane inside the inset`() {
+        assertEquals(743f, footerTravelPx, 0f)
+    }
+
+    @Test
+    fun `the thumb keeps its inset from each side of the travel, the reveal keeps none`() {
+        val docked = ready.copy(modifiers = listOf(JsModifier.Size(height = 80)))
+
+        assertEquals(12f, SlideToConfirmRules.travelSideInsetDp(docked))
+        assertEquals(8f, SlideToConfirmRules.travelSideInsetDp(ready))
+        assertEquals(0f, SlideToConfirmRules.travelSideInsetDp(docked.copy(variant = JsSlideToConfirmVariant.REVEAL)))
+    }
+
+    // The face draws the thumb at progress times the travel, the same travel the drag divides the finger's move by.
+    @Test
+    fun `a finger move of N px moves the thumb N px before it reaches the end`() {
+        for (move in listOf(1f, 21f, 100f, 371f, 742f)) {
+            val progress = SlideToConfirmRules.slideBy(progress = 0f, dx = move, travelPx = footerTravelPx, rtl = false)
+            val drawn = progress * footerTravelPx
+
+            assertEquals("moved $move", move, drawn, 0.001f)
+            assertEquals("moved $move, drawn on whole pixels", move.roundToInt(), drawn.roundToInt())
+        }
+    }
+
+    @Test
+    fun `moves add up one for one across a drag, in either reading direction`() {
+        var ltr = 0f
+        var rtl = 0f
+        repeat(10) {
+            ltr = SlideToConfirmRules.slideBy(progress = ltr, dx = 30f, travelPx = footerTravelPx, rtl = false)
+            rtl = SlideToConfirmRules.slideBy(progress = rtl, dx = -30f, travelPx = footerTravelPx, rtl = true)
+        }
+
+        assertEquals(300f, ltr * footerTravelPx, 0.001f)
+        assertEquals(300f, rtl * footerTravelPx, 0.001f)
+    }
+
+    @Test
+    fun `a drag of the full travel reaches the end and released there completes`() {
+        val progress = SlideToConfirmRules.slideBy(progress = 0f, dx = footerTravelPx, travelPx = footerTravelPx, rtl = false)
+
+        assertEquals(1f, progress, 0f)
+        assertEquals(743, (progress * footerTravelPx).roundToInt())
+        assertTrue(SlideToConfirmRules.completes(progress, lifted = true))
+    }
+
+    @Test
+    fun `the slide completes once released 90 percent of the drawn travel along, and not before`() {
+        // 90% of 743 px is 668.7 px.
+        val past = SlideToConfirmRules.slideBy(0f, dx = 669f, travelPx = footerTravelPx, rtl = false)
+        val short = SlideToConfirmRules.slideBy(0f, dx = 668f, travelPx = footerTravelPx, rtl = false)
+
+        assertTrue(SlideToConfirmRules.completes(past, lifted = true))
+        assertFalse(SlideToConfirmRules.completes(short, lifted = true))
+    }
+
+    @Test
+    fun `the reveal keeps its own travel, the width less the end it leaves unpeeled`() {
+        assertEquals(807f, SlideToConfirmRules.travelPx(footerWidthPx, endInsetPx = thumbPx, sideInsetPx = 0f), 0f)
+    }
+
+    @Test
+    fun `a track too narrow for the thumb does not travel`() {
+        assertEquals(0f, SlideToConfirmRules.travelPx(200f, endInsetPx = thumbPx, sideInsetPx = footerInsetPx), 0f)
     }
 }
