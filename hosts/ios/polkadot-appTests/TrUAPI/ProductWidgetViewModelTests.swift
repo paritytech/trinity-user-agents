@@ -205,4 +205,39 @@ struct ProductWidgetViewModelTests {
         let offset = await MainActor.run { viewModel.gestureOffsets?.channel(for: "thumb").offset }
         #expect(offset == nil)
     }
+
+    /// Cleared cells cut more of their keyed cover away without replacing the tree.
+    @Test func clearedCellsReachTheirCoverWithoutANewTree() async {
+        let viewModel = makeViewModel(serving: [
+            .native(.spacer(modifiers: [])),
+            .native(.clearCells(key: "foil", cells: [3, 40])),
+            .native(.clearCells(key: "foil", cells: [41]))
+        ])
+
+        await viewModel.renderTask?.value
+
+        let (cleared, node) = await MainActor.run {
+            (viewModel.gestureOffsets?.cover(for: "foil").cleared, viewModel.node)
+        }
+        #expect(cleared?.count == 3)
+        #expect([3, 40, 41].allSatisfy { cleared?.contains($0) == true })
+        guard case .spacer = node?.content else {
+            Issue.record("the tree was replaced by the cleared cells")
+            return
+        }
+    }
+
+    /// A tree that arrives after cleared cells clears the cover itself.
+    @Test func aTreeAfterClearedCellsWins() async {
+        let viewModel = makeViewModel(serving: [
+            .native(.spacer(modifiers: [])),
+            .native(.clearCells(key: "foil", cells: [3])),
+            .native(.spacer(modifiers: []))
+        ])
+
+        await viewModel.renderTask?.value
+
+        let cleared = await MainActor.run { viewModel.gestureOffsets?.cover(for: "foil").cleared }
+        #expect(cleared == nil)
+    }
 }

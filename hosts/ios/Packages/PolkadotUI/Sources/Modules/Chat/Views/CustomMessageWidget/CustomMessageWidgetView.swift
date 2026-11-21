@@ -105,6 +105,14 @@ private struct WidgetNodeContent: View {
                     }
                 }
             }
+        case let .coverGrid(props, children):
+            NodeCoverGridView(props: props, modifiers: node.modifiers) {
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(children.enumerated()), id: \.offset) { _, child in
+                        WidgetNodeContent(node: child)
+                    }
+                }
+            }
         }
     }
 }

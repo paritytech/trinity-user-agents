@@ -139,6 +139,14 @@ private extension ProductWidgetViewModel {
                     continue
                 }
 
+                // Cleared cells cut more of one keyed cover away: no tree to map, and only that cover's mask draws.
+                if case let .native(.clearCells(key, cells)) = output {
+                    await MainActor.run {
+                        self.gestureOffsets?.clear(key: key, cells: cells.map(Int.init))
+                    }
+                    continue
+                }
+
                 let resolved: CustomMessageWidgetNode? =
                     switch output {
                     case let .scaleEncoded(hexString):

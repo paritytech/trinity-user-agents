@@ -2,10 +2,13 @@ import SwiftUI
 import UIKit
 
 /// A pan's translation from where it was recognised, and the slop: how far the finger had already moved from its
-/// touch-down point by then, which the translation leaves out.
+/// touch-down point by then, which the translation leaves out. `location` and `touchDown` are where the finger is
+/// and first touched inside the surface, from its top-start corner and clamped to its bounds.
 struct PanTranslation: Equatable {
     var recognized: CGPoint
     var slop: CGPoint
+    var location: CGPoint = .zero
+    var touchDown: CGPoint = .zero
 }
 
 struct GestureSurface: UIViewRepresentable {
@@ -99,6 +102,12 @@ final class GestureSurfaceView: UIView {
         return ThresholdPanGestureRecognizer(threshold: threshold)
     }
 
+    /// A point of the surface measured from its top-start corner and clamped to its bounds.
+    static func inside(_ point: CGPoint, _ size: CGSize, mirrored: Bool) -> CGPoint {
+        let across = min(max(point.x, 0), size.width)
+        return CGPoint(x: mirrored ? size.width - across : across, y: min(max(point.y, 0), size.height))
+    }
+
     /// In window points; zero when the touch-down was not seen.
     static func slop(touchDown: CGPoint?, location: CGPoint, translation: CGPoint) -> CGPoint {
         guard let touchDown else { return .zero }
@@ -139,8 +148,16 @@ private extension GestureSurfaceView {
                 touchDown: recognizer.touchDown, location: recognizer.location(in: window), translation: translation
             )
         }
-        var sample = PanTranslation(recognized: translation, slop: slop)
-        if effectiveUserInterfaceLayoutDirection == .rightToLeft {
+        let location = recognizer.location(in: self)
+        let touchDown = recognizer.touchDown.map { convert($0, from: nil) } ?? location
+        let mirrored = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        var sample = PanTranslation(
+            recognized: translation,
+            slop: slop,
+            location: Self.inside(location, bounds.size, mirrored: mirrored),
+            touchDown: Self.inside(touchDown, bounds.size, mirrored: mirrored)
+        )
+        if mirrored {
             sample.recognized.x = -sample.recognized.x
             sample.slop.x = -sample.slop.x
         }

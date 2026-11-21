@@ -85,7 +85,8 @@ enum ProductRoomFooterFace: Hashable {
             true
         case let .box(_, children),
              let .column(_, children),
-             let .row(_, children):
+             let .row(_, children),
+             let .coverGrid(_, children):
             children.contains(where: holdsSlide)
         case .spacer,
              .text,

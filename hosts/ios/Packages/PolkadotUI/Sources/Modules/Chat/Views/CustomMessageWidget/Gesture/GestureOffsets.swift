@@ -2,11 +2,11 @@ import QuartzCore
 import UIKit
 import SwiftUI
 
-/// The offsets a worker sets on its keyed gestures between trees (`RendererNode.SetOffset`).
+/// What a worker changes on its keyed nodes between trees: gesture offsets (`RendererNode.SetOffset`) and cleared
+/// cover cells (`RendererNode.ClearCells`).
 ///
-/// An offset update moves one gesture's children straight away: it is not a tree, so nothing is decoded, mapped or
-/// diffed, and only the gesture view reading that key's channel draws again. A new tree drops every offset, because
-/// the tree always wins.
+/// An update changes one node straight away: it is not a tree, so nothing is decoded, mapped or diffed, and only the
+/// view reading that key's channel draws again. A new tree drops every update, because the tree always wins.
 ///
 /// An offset is first handed over from the render stream's thread (`deliver`) and then applied on the main thread,
 /// either by the frame that sent the move, which waits a moment for it (`GestureMovePacer`), or by the stream's own hop
@@ -14,6 +14,7 @@ import SwiftUI
 public final class GestureOffsets {
     private var channels: [String: GestureOffsetChannel] = [:]
     private var places: [String: GesturePanPlace] = [:]
+    private var covers: [String: CoverGridChannel] = [:]
     let answers = GestureAnswerMailbox()
 
     public init() {}
@@ -53,12 +54,32 @@ public final class GestureOffsets {
         set(key: answer.key, offset: answer.offset)
     }
 
-    /// A new tree arrived: it places every gesture itself.
+    @MainActor
+    public func cover(for key: String) -> CoverGridChannel {
+        if let cover = covers[key] { return cover }
+        let cover = CoverGridChannel()
+        covers[key] = cover
+        return cover
+    }
+
+    /// A `ClearCells` item for `key`. It is the worker's answer to a paced move, whichever gesture is under way.
+    @MainActor
+    public func clear(key: String, cells: [Int]) {
+        cover(for: key).clear(cells)
+        for channel in channels.values {
+            channel.onAnswer?()
+        }
+    }
+
+    /// A new tree arrived: it places every gesture and clears every cover itself.
     @MainActor
     public func treeArrived() {
         _ = answers.take()
         for channel in channels.values {
             channel.receive(nil)
+        }
+        for cover in covers.values {
+            cover.reset()
         }
     }
 }
@@ -115,7 +136,7 @@ final class GestureAnswerMailbox: @unchecked Sendable {
 public final class GestureOffsetChannel {
     /// Added to where the current tree places the gesture's children; nil until the worker sets one.
     public private(set) var offset: CGPoint?
-    /// Called whenever the worker answers: an offset for this key, or a new tree.
+    /// Called whenever the worker answers: an offset for this key, cleared cells, or a new tree.
     @ObservationIgnored var onAnswer: (() -> Void)?
     /// When the last release settle began (media time); a pan starting before it is over cuts it short.
     @ObservationIgnored private(set) var settleStarted: TimeInterval?

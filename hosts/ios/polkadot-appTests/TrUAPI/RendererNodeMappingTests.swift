@@ -350,6 +350,61 @@ struct RendererNodeMappingTests {
         #expect(radius == 0)
     }
 
+    @Test func coverGridCarriesItsGridAndClearedCells() throws {
+        let node = RendererNode.coverGrid(
+            modifiers: [.fillWidth(true)],
+            props: CoverGridProps(key: "foil", columns: 35, rows: 37, cleared: Data([0b1001])),
+            children: [.spacer(modifiers: [])]
+        )
+        let widget = try #require(node.toWidgetNode(resolver: resolver))
+        guard case let .coverGrid(props, children) = widget.content else {
+            Issue.record("a cover grid did not map to one")
+            return
+        }
+        #expect(props.key == "foil" && props.columns == 35 && props.rows == 37)
+        #expect(props.cleared.count == 2 && props.cleared.contains(0) && props.cleared.contains(3))
+        #expect(children.count == 1)
+    }
+
+    @Test func clearedCellsInsideATreeDrawNothing() {
+        let node = RendererNode.box(
+            modifiers: [],
+            props: BoxProps(contentAlignment: nil),
+            children: [.clearCells(key: "foil", cells: [1])]
+        )
+        guard case let .box(_, children) = node.toWidgetNode(resolver: resolver)?.content else {
+            Issue.record("the box did not map")
+            return
+        }
+        #expect(children.isEmpty)
+    }
+
+    @Test func aLocationPanReportsWhereTheFingerIs() throws {
+        let pan = PanGesture(
+            axis: .free,
+            drag: nil,
+            startAction: "start",
+            moveAction: "move",
+            moveIntervalMs: nil,
+            endAction: "end",
+            location: true
+        )
+        let node = RendererNode.gesture(
+            modifiers: [],
+            props: GestureProps(
+                tapAction: nil, pan: pan, accessibilityLabel: nil, enabled: nil, hapticOnComplete: nil, key: "scratch", feel: nil
+            ),
+            children: []
+        )
+        guard case let .gesture(props, _) = try #require(node.toWidgetNode(resolver: resolver)).content else {
+            Issue.record("the gesture did not map")
+            return
+        }
+        #expect(props.pan?.reportsLocation == true)
+        #expect(props.pan?.axis == .free)
+        #expect(props.key == "scratch")
+    }
+
     @Test func materialsDrawTheirChildrenPlain() throws {
         let materials = RendererNode.materials(
             props: MaterialsProps(layers: []),

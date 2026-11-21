@@ -88,7 +88,9 @@ private extension NodeGestureView {
     var pacesMoves: Bool { props.key != nil && props.pan?.moveAction != nil }
 
     func payload(_ phase: CustomMessageWidgetNode.GesturePhase) -> Data {
-        let fraction = GestureMotion.fraction(position, axis: props.pan?.axis ?? .horizontal, travel: panTravel)
+        let fraction = props.pan?.reportsLocation == true
+            ? GestureMotion.fraction(position, axis: .horizontal, travel: width)
+            : GestureMotion.fraction(position, axis: props.pan?.axis ?? .horizontal, travel: panTravel)
         return props.encodePayload(phase, position, fraction)
     }
 
@@ -111,6 +113,10 @@ private extension NodeGestureView {
 
     func receive(_ phase: CustomMessageWidgetNode.GesturePhase, _ translation: PanTranslation) {
         guard props.isEnabled, !held, let pan = props.pan else { return }
+        if pan.reportsLocation {
+            receiveLocation(phase, translation, pan)
+            return
+        }
         if case .started = phase {
             cutSettleShort()
             dragging = true
@@ -150,6 +156,49 @@ private extension NodeGestureView {
         case .ended: release(cancelled: false)
         case .cancelled: release(cancelled: true)
         default: break
+        }
+    }
+
+    /// A pan that reports where the finger is: `Started` carries the touch-down point, every move the finger's place
+    /// (paced like any keyed pan), and the end the place it lifted. Nothing is clamped to travel and nothing completes.
+    func receiveLocation(
+        _ phase: CustomMessageWidgetNode.GesturePhase,
+        _ sample: PanTranslation,
+        _ pan: CustomMessageWidgetNode.PanGesture
+    ) {
+        switch phase {
+        case .started:
+            dragging = true
+            lastMove = 0
+            startPacing(pan)
+            position = sample.touchDown
+            emit(pan.startAction, .started)
+            position = sample.location
+            offerMove(pan)
+        case .moved:
+            guard dragging else { return }
+            position = sample.location
+            offerMove(pan)
+        case .ended,
+             .cancelled:
+            guard dragging else { return }
+            position = sample.location
+            dragging = false
+            stopPacing()
+            emit(pan.endAction, phase)
+        default: break
+        }
+    }
+
+    func offerMove(_ pan: CustomMessageWidgetNode.PanGesture) {
+        if pacesMoves {
+            pacer.offer(payload(.moved))
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastMove >= pan.moveInterval {
+            lastMove = now
+            emit(pan.moveAction, .moved)
         }
     }
 

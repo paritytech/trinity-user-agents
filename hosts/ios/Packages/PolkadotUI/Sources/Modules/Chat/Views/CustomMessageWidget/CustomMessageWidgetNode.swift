@@ -26,6 +26,8 @@ public extension CustomMessageWidgetNode {
         case image(ImageProps)
         case slideToConfirm(SlideToConfirmProps)
         case gesture(GestureProps, children: [CustomMessageWidgetNode])
+        /// A cover drawn by its children, with the cells a worker cleared cut out of it.
+        case coverGrid(CoverGridProps, children: [CustomMessageWidgetNode])
     }
 }
 

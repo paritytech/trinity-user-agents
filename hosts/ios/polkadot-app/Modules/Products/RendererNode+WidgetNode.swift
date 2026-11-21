@@ -25,11 +25,16 @@ extension RendererNode {
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
-        case let .coverGrid(_, _, children):
-            // The iPhone cover grid layer draws the cover; until then its children draw in a plain box.
+        case let .coverGrid(modifiers, props, children):
+            let cover = CustomMessageWidgetNode.CoverGridProps(
+                key: props.key,
+                columns: props.columns,
+                rows: props.rows,
+                bits: props.cleared
+            )
             return CustomMessageWidgetNode(
-                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
-                modifiers: .empty
+                content: .coverGrid(cover, children: children.widgetNodes(resolver: resolver)),
+                modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
         case let .materials(_, children):
@@ -80,7 +85,7 @@ private extension RendererNode {
              .string,
              .setOffset,
              .clearCells:
-            // An offset update is a stream item, not part of a tree: inside one it draws nothing.
+            // Offset and cleared-cells updates are stream items, not part of a tree: inside one they draw nothing.
             return nil
 
         case let .image(modifiers, props):
@@ -467,6 +472,7 @@ extension PanGesture {
         value.moveAction = moveAction
         value.endAction = endAction
         value.moveInterval = TimeInterval(moveIntervalMs ?? 0) / 1_000
+        value.reportsLocation = location ?? false
         return value
     }
 }
