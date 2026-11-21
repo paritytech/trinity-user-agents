@@ -315,7 +315,7 @@ jobs:
       # compiler on any machine; hosts/ios/.github/actions/install pins it.
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: "26.4.1"
+          xcode-version: "27"
 
       # Only for scripts/lib/ios-simulator.mjs, which picks the test simulator.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

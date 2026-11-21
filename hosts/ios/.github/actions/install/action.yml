@@ -9,7 +9,7 @@ inputs:
   xcode-version:
     description: "The Xcode version to install"
     required: true
-    default: "26.4.1"
+    default: "27"
   match_repository_pat:
     description: "Fine-grained GitHub PAT for the private Match repository"
     required: false
@@ -57,6 +57,17 @@ runs:
     - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
       with:
         xcode-version: ${{ inputs.xcode-version }}
+
+    - name: Report the toolchain (probe)
+      shell: bash
+      run: |
+        echo "runner: ${RUNNER_NAME}"
+        sw_vers
+        ls -d /Applications/Xcode*.app
+        xcodebuild -version
+        xcrun --sdk iphoneos --show-sdk-version
+        xcrun simctl list runtimes | grep -i ios || true
+        if command -v swiftlint; then swiftlint version; else echo "no swiftlint on PATH"; fi
 
     # v1 here is a branch rather than a tag, so it moves on every release.
     - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.324.0
