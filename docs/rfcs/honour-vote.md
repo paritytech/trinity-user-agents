@@ -93,13 +93,23 @@ Scores are public chain state. Products read `Honour.Tally` by subject id throug
 
 ## Alternatives
 
-Both alternatives move Honour's logic from the core to a product `honor.<tld>`. Products call `honour.vote({ subject, direction })` in each of them, so the choice changes who implements the call and doesn't change the products that use it.
+Both alternatives move Honour's logic from the core to a product `honor.<tld>`. Products call `honour.vote({ subject, direction })` in this RFC and in alternative 2, so a move between the two doesn't change the products that use it. In alternative 1, products send the user to honor instead.
 
 The choice matters beyond Honour. Other protocols that allow one action per person, such as polls or quotas, raise the same question. Under this RFC each of them adds code to the core and needs a Host release.
 
 ### Alternative 1: Honour as a product
 
-`honor.<tld>` casts votes in its own UI, and other products send the user there. This needs:
+`honor.<tld>` casts votes in its own UI. A product opens it with `navigate_to`, for example `honor.dot/vote?subject=dotns:chess.dot&direction=up`, and the core keeps the path and query. honor opens as a separate product, not as a sheet over the one the user was in.
+
+Nothing comes back to the product that sent the user. `navigate_to` returns once the handoff is done, and the destination isn't told which product navigated to it. honor could navigate back to a return URL from the query, but a confirmation in that URL doesn't verify anything:
+
+- honor doesn't know which product sent the user, so it trusts whatever return URL the query contains.
+- The product can't tell that honor opened the URL. Any product or link can open `browse.dot/...?voted=...`.
+- The chain doesn't help, because a vote doesn't show who cast it.
+
+A verified confirmation needs the core to open honor on behalf of a product, and to return honor's result to that product. That is the cross-product request that alternative 2 adds.
+
+This alternative needs:
 
 - Honour's contexts move under `honor.<tld>`. Existing votes are re-proved or dropped.
 - TrUAPI gains a multi-context proof call.
@@ -156,6 +166,7 @@ What it gains:
 |---|---|---|---|
 | Reads a user's votes | the core, on the device | honor, for every user, and can publish them | honor's Worker, on the device, and can't send them |
 | Can vote without the user | no one | honor | no one |
+| Product learns the outcome | yes | no, and the user leaves the product | yes |
 | Changes outside the Host | none | contexts, proof call, `peopl` grant | contexts, proof call, modality, grant |
 | Breaking Honour change | Host release | honor release | honor release, Host release if the call layout changes |
 | Next protocol of this kind | core code and a Host release | another product with the same privacy cost | another Worker |
