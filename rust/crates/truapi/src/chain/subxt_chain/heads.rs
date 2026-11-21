@@ -8,22 +8,12 @@ use sp_crypto_hashing::blake2_256;
 use subxt::{config::Header, utils::H256};
 use subxt_rpcs::Error as RpcError;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::chain::Heads;
-#[cfg(not(target_arch = "wasm32"))]
-use super::best_block;
-#[cfg(not(target_arch = "wasm32"))]
-use super::finalized_block;
 use super::failure;
 use crate::{
 	chain::{ChainHeads, HashAndNumber, HeadEvent},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-const HEADS: &str = "chain_heads";
-#[cfg(not(target_arch = "wasm32"))]
-const FINALIZED_BLOCK: &str = "chain_finalized_block";
 const HEAD_EVENTS: &str = "chain_head_events";
 
 type HeadEvents = BoxStream<'static, Result<HeadEvent, RuntimeFailure>>;
@@ -31,18 +21,20 @@ type HeadEvents = BoxStream<'static, Result<HeadEvent, RuntimeFailure>>;
 #[async_trait::async_trait]
 impl ChainHeads for ChainRuntime {
 	#[cfg(not(target_arch = "wasm32"))]
-	async fn heads(&self, genesis: H256) -> Result<Heads, RuntimeFailure> {
+	async fn heads(&self, genesis: H256) -> Result<crate::chain::Heads, RuntimeFailure> {
+		const METHOD: &str = "chain_heads";
 		let legacy = self.legacy(genesis).await?;
-		Ok(Heads {
-			finalized: finalized_block(&legacy, HEADS).await?,
-			best: best_block(&legacy, HEADS).await?,
+		Ok(crate::chain::Heads {
+			finalized: super::finalized_block(&legacy, METHOD).await?,
+			best: super::best_block(&legacy, METHOD).await?,
 		})
 	}
 
 	#[cfg(not(target_arch = "wasm32"))]
 	async fn finalized_block(&self, genesis: H256) -> Result<HashAndNumber, RuntimeFailure> {
+		const METHOD: &str = "chain_finalized_block";
 		let legacy = self.legacy(genesis).await?;
-		finalized_block(&legacy, FINALIZED_BLOCK).await
+		super::finalized_block(&legacy, METHOD).await
 	}
 
 	async fn head_events(&self, genesis: H256) -> Result<HeadEvents, RuntimeFailure> {

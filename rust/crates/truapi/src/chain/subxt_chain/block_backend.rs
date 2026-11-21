@@ -11,8 +11,6 @@ use subxt::{
 	utils::H256,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use super::finalized_block;
 use super::failure;
 use crate::{
 	chain::{BlockBackend, DispatchOutcome, HashAndNumber},
@@ -37,7 +35,7 @@ impl BlockBackend for ChainRuntime {
 		}
 		// Every height up to the finalized one has a block, so a missing hash
 		// there is one the node cannot serve, not one that does not exist.
-		if number <= finalized_block(&legacy, METHOD).await?.number {
+		if number <= super::finalized_block(&legacy, METHOD).await?.number {
 			return Err(RuntimeFailure::host_failure(
 				METHOD,
 				format!("node cannot serve the hash of finalized block {number}"),
