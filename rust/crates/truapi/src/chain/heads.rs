@@ -7,6 +7,7 @@ use super::HashAndNumber;
 use crate::chain_runtime::RuntimeFailure;
 
 /// The finalized and best blocks, read together.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heads {
 	/// Latest finalized block.
@@ -28,9 +29,11 @@ pub enum HeadEvent {
 #[async_trait::async_trait]
 pub trait ChainHeads: Send + Sync {
 	/// The current finalized and best blocks.
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn heads(&self, genesis: H256) -> Result<Heads, RuntimeFailure>;
 
 	/// The current finalized block, without reading the best one.
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn finalized_block(&self, genesis: H256) -> Result<HashAndNumber, RuntimeFailure>;
 
 	/// A fresh stream of the finalized and best blocks the node announces,

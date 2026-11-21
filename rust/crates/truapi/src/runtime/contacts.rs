@@ -19,7 +19,7 @@ use std::{collections::HashMap, sync::Mutex};
 
 use parity_scale_codec::Encode;
 
-use crate::host_logic::keyed_hash::blake2b_256_keyed;
+use crate::host_logic::blake2b_256_keyed;
 
 /// Upper bound on cached handles. The cache holds contacts the user picked, so
 /// it stays small; reaching the bound empties it rather than evicting in order.

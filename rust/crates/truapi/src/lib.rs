@@ -398,7 +398,7 @@ cfg_select! {
 	feature = "runtime" => {
 		pub mod background_task;
 		pub mod bootstrap;
-		pub mod chain;
+		mod chain;
 		mod chain_runtime;
 		mod dispatcher;
 		mod dotns_views;
@@ -484,23 +484,25 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
+		pub use chain::{
+			DispatchOutcome, EvmContractCaller, EvmContractError, ExtrinsicBuildError,
+			ExtrinsicBuilder, ExtrinsicService, MortalExtrinsic, Mortality, PreparedEvmTransaction,
+			RuntimeApiCaller, WatchEvent,
+		};
 		pub use host_core::{
 			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
 			ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
 		};
 		pub use host_internal::{
-			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
+			bulletin::{BitswapError, BulletinCid, bitswap_get, preimage_key},
 			extrinsic::Sr25519Signer,
 		};
-		pub use host_logic::{
-			session::{
-				ExternalPairedSession, SsoSessionInfo, decode_persisted_session,
-				encode_external_paired_session,
-			},
-			worker::{WorkerLedger, WorkerTransition},
-		};
+		pub use host_logic::{session::SsoSessionInfo, worker::WorkerTransition};
 		pub use host_rpc_client::HostRpcClient;
-		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
+		pub use image_loader::{
+			ImageError, ImageFormat, ImageReference, LoadedImage, MAX_IMAGE_BYTES, MAX_IMAGE_SIDE,
+			Rejection, check_image,
+		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use materials::{
 			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
@@ -513,24 +515,22 @@ cfg_select! {
 			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
-		pub use native_debug::{DebugSinkError, WsDebugSink};
+		pub use native_debug::WsDebugSink;
 		pub use platform::{
-			CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner,
 			HostIdentity, PairingHostConfig, PermissionAuthorizationRequest,
 			PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
-			describe_core_storage_key,
 		};
 		pub use public_profile::{
 			PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
 			PublicProfileError, PublicProfileResolutionOptions,
 		};
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use runtime::TrackedStatementRenewalTarget;
 		pub use runtime::{
-			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
-			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, SigningHost, StatementRenewalTarget,
-			contacts::contact_handle,
-			login_failure::reports_exhausted_period,
-			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},
+			AnnouncedPairing, DevicePairingObserver, FundingFeed, PairedSsoPeer, PairingHost,
+			PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+			SigningHost, SsoAccountHolderService, StatementRenewalTarget, contacts::contact_handle,
+			login_failure::reports_exhausted_period, product_manifest::encode_cached_root_manifest,
 			statement_allowance,
 		};
 		pub use unix_time::current_unix_millis;

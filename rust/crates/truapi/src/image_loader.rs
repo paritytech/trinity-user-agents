@@ -10,7 +10,7 @@ use futures::FutureExt;
 use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, instrument, warn};
 
-pub use policy::check as check_image;
+pub use policy::{MAX_IMAGE_BYTES, MAX_IMAGE_SIDE, Rejection, check as check_image};
 
 use crate::{
 	host_internal::bulletin::{BitswapError, BulletinCid, bitswap_get},

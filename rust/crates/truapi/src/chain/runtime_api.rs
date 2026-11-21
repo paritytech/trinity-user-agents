@@ -43,11 +43,13 @@ impl RuntimeApiCaller for RpcClient {
 
 /// Calls runtime APIs at one block over a plain RPC client, so related reads
 /// see the same state.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct RpcClientAtBlock {
 	rpc: RpcClient,
 	at: H256,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl RpcClientAtBlock {
 	/// Calls through `rpc`, every one at the block `at`.
 	pub fn new(rpc: RpcClient, at: H256) -> Self {
@@ -55,6 +57,7 @@ impl RpcClientAtBlock {
 	}
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
 impl RuntimeApiCaller for RpcClientAtBlock {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {

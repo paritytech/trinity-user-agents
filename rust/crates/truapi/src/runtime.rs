@@ -89,8 +89,8 @@ pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	AnnouncedPairing, DevicePairingObserver, PairedSsoPeer, PairingProposal,
+	PairingProposalMetadata, ResponderExit, ResumePairingError,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -1010,7 +1010,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				}
 			}
 		}
-		crate::host_logic::contact_substitution::substitute(&call_data, &resolved)
+		crate::host_logic::substitute(&call_data, &resolved)
 			.map_err(|_| ContactResolutionError::UnknownContact)
 	}
 
