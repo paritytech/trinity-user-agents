@@ -1,0 +1,15 @@
+{
+  "name": "qjs-bench-workloads",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "corpus": "bun src/record-corpus.ts",
+    "verify": "bun src/verify-corpus.ts"
+  },
+  "dependencies": {
+    "@parity/truapi": "file:../../../js/packages/truapi"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.0"
+  }
+}

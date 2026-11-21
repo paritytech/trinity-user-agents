@@ -16,6 +16,8 @@ never see it.
   linear-memory cap, links only the WASI calls wasi-libc needs, and echoes
   every outbound frame back to the guest.
 - `samples/`: scripts for the T1 checks.
+- `workloads/`: the bench worker, the host frames it is driven with, and
+  `corpus/corpus.bin`, the recorded conversation every engine replays (T2).
 
 ## Run
 
@@ -25,6 +27,58 @@ cargo run -p qjs-runner --release -- target/wasm32-wasip1/release/qjs_guest.wasm
 cargo run -p qjs-runner --release -- target/wasm32-wasip1/release/qjs_guest.wasm samples/t1-busy-loop.js --fuel-per-turn 50000000
 cargo run -p qjs-runner --release -- target/wasm32-wasip1/release/qjs_guest.wasm samples/t1-memory.js --memory-mib 8
 ```
+
+The workloads need the generated TS client: run `./scripts/codegen.sh` and
+`npm install` in `js/packages/truapi` once, then:
+
+```bash
+cd workloads && bun install
+bun run corpus   # rebuild corpus/corpus.bin
+bun run verify   # T2 done-when check
+```
+
+## T2: the corpus
+
+The M0 plan proposed recording a Pocket battery run. That does not work as a
+replay source, for three reasons:
+
+- In the Pocket phase the worker is `pocket-battery.ts` itself, so a
+  recording only replays against that script, not the playground worker.
+- The CLI never sends render requests, so the gate's render round trip never
+  appears in any recording.
+- Every battery script logs in first, which needs a signing session and the
+  network, so recordings would not be repeatable.
+
+The corpus is built from the protocol itself instead:
+
+- `src/bench-worker.ts` runs the real `@parity/truapi` client and transport,
+  and answers host-initiated render requests with the playground's real
+  `ChatDiagnosis.rendererNode()` tree. The worker glue is ours because the
+  playground worker ties each render to a random run id and to a message id
+  it only learns from a live chat host.
+- `src/host-frames.ts` encodes host frames with the client's generated codecs,
+  exactly as the core sends them: a handshake ping, then 200 V1 render requests
+  for chat messages (`h:1` to `h:200`, the core's host-initiated id scheme),
+  each closed by a Stop.
+- `src/record-corpus.ts` replays those frames against the worker under Bun and
+  records each reply into `corpus/corpus.bin`. `src/corpus-format.ts`
+  describes the format.
+
+Result: 401 inbound frames, 201 outbound frames (1 handshake answer, 200
+renderer trees, the largest 519 bytes), 124 KB. `bun run verify` replays the
+corpus again, checks every outbound frame byte for byte, and decodes each one
+with the generated wire decoder.
+
+### Finding: views with a byte offset break frame decoding
+
+`decodeWireMessage` fails on a `Uint8Array` that is a view with a non-zero
+`byteOffset`. It throws `RangeError: Length out of range of buffer` or
+decodes the wrong bytes, because `scale-ts`'s string decoder builds its
+`DataView` from `bytes.buffer` at its own position and ignores the view's
+offset. Browsers, Bun and the QuickJS guest hand over fresh buffers, so
+today's hosts do not hit this. A Node `Buffer` slice from a pooled
+allocation would. Repro: encode a frame, copy it into a larger array at
+offset 16, and decode `array.subarray(16)`.
 
 ## T1 results (Apple silicon Mac, release build)
 
