@@ -7,8 +7,6 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
@@ -33,7 +31,8 @@ import androidx.compose.ui.graphics.RenderEffect as ComposeRenderEffect
 /**
  * Draws the children as a cover, with a round hole cut for every cleared cell: those of the tree, plus those the
  * worker cleared since (until the next tree, which always wins). The worker's cells are read in the draw phase only,
- * so a cleared-cells update redraws the cover and composes nothing. From Android 12 the holes' edge is smoothed as it
+ * from a snapshot state written where the answer arrives, so a cleared-cells update redraws the cover, composes
+ * nothing, and can be drawn in the frame whose touch sent the move ([JsCoverCells.drawn]). From Android 12 the holes' edge is smoothed as it
  * is drawn ([CoverGridRules.softening]), so cells read as one scratch, not as steps; before that it is drawn as is.
  */
 @Composable
@@ -45,7 +44,7 @@ internal fun JsCoverGrid(
     val columns = widget.columns.coerceIn(1, JsCoverCells.MAX_SIDE)
     val rows = widget.rows.coerceIn(1, JsCoverCells.MAX_SIDE)
     val treeCells = remember(widget.cleared) { BitSet().apply { widget.cleared.filter { it >= 0 }.forEach(::set) } }
-    val since: State<JsCoverCells.Value>? = widget.cells?.value?.collectAsState()
+    val since = widget.cells
     val mirrored = LocalLayoutDirection.current == LayoutDirection.Rtl
     val holesLayer = rememberGraphicsLayer()
     Box(
@@ -54,7 +53,7 @@ internal fun JsCoverGrid(
             .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
             .drawWithContent {
                 drawContent()
-                val cells = since?.value?.cells?.let { worker -> (treeCells.clone() as BitSet).apply { or(worker) } } ?: treeCells
+                val cells = since?.drawn?.cells?.let { worker -> (treeCells.clone() as BitSet).apply { or(worker) } } ?: treeCells
                 if (cells.isEmpty) return@drawWithContent
                 val holes = Path()
                 CoverGridRules.holes(cells, columns, rows, size, mirrored).forEach(holes::addOval)

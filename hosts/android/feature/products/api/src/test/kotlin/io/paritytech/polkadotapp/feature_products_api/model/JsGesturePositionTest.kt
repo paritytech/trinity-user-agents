@@ -68,4 +68,22 @@ class JsGesturePositionTest {
         assertFalse(value.attached)
         assertEquals(0L, value.answer)
     }
+
+    @Test
+    fun `cleared cells answered from another thread end the wait, with the place unchanged`() {
+        val position = JsGesturePosition()
+        position.receive(5, 0)
+        val answerer = thread {
+            Thread.sleep(20)
+            position.acknowledge()
+        }
+
+        val started = System.nanoTime()
+        val value = position.awaitAnswer(after = 1, timeoutNanos = TimeUnit.SECONDS.toNanos(5))
+        answerer.join()
+
+        assertEquals(2L, value.answer)
+        assertEquals(5, value.x)
+        assertTrue(System.nanoTime() - started < TimeUnit.SECONDS.toNanos(1))
+    }
 }
