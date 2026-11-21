@@ -80,10 +80,9 @@ the face.
 
 `set_face_shown(false)` marks the face covered: it stays drawn where it is, and touches over it go to the page.
 `set_face_shown(true)` sends touches over the face back to the face. Neither call moves the face or resizes the page. A
-card definition's `faceShown` sets whether the face starts covered, with `false` meaning covered. Covering applies to
-the card whichever side is up, and turning the card keeps it covered or uncovered. Gestures that move the card, such as
-pulling it down to close it, start only while the face is uncovered. A covered page is still never a trap: the host
-keeps a way to leave the card, such as its back navigation or tab bar.
+card definition's `faceShown` sets whether the face starts covered, with `false` meaning covered. Gestures that move
+the card, such as pulling it down to close it, start only while the face is uncovered. A covered page is still never a
+trap: the host keeps a way to leave the card, such as its back navigation or tab bar.
 
 `UserMoving` means the user is moving the card, such as pulling it down to close it, and the request has no effect.
 `NotPresented` keeps its meaning.
