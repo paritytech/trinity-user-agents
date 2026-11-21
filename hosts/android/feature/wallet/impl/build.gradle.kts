@@ -44,6 +44,10 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.mockk.android) {
+        exclude(group = "org.junit.jupiter")
+        exclude(group = "org.junit.platform")
+    }
 }
 
 apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))
