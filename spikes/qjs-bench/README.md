@@ -61,6 +61,13 @@ QuickJS) for the Mac instead of wasm. That is the E2 engine, early.
 
 - QuickJS itself is about 7 times slower than a JIT, which is what an
   interpreter costs.
+- JavaScriptCore without its JIT, which is what `JSContext` gets inside an
+  iOS app, runs at the same speed as native QuickJS on the codec (4 493
+  round trips/s, with a JS text-codec shim) and 1.7 times faster on rxjs
+  (531 000 events/s). Measured with macOS's shell:
+  `jsc --useJIT=false src/jsc-shim.js dist/w-codec.js`. With the JIT it
+  reaches 22 216 and 1 890 000. So only WKWebView's own process gets the
+  fast JavaScriptCore; in-app it is in QuickJS's league.
 - The wasm layer on wasmi costs a further factor of about 30, against the
   plan's estimate of 3 to 10. This, not QuickJS, is what puts the gate at
   risk on iOS, where no JIT is allowed.
