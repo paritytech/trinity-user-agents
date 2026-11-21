@@ -40,13 +40,14 @@ class TrUAPIHostRuntimeProviderTest {
     val tempFolder = TemporaryFolder()
 
     private val runtimeConfig = slot<HostRuntimeConfig>()
+    private val nativeRuntime = mockk<NativeTrUApiHostRuntime>(relaxed = true)
     private val paseo = requireNotNull(DotNsTld.parse("paseo"))
     private val pinnedHumanity = listOf(PinnedPocketCard(personhoodProduct, "humanity", "humanity"))
 
     @Before
     fun captureRuntimeConfig() {
         mockkObject(NativeTrUApiHostRuntime.Companion)
-        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns mockk(relaxed = true)
+        every { NativeTrUApiHostRuntime.withRuntimeConfig(any(), capture(runtimeConfig)) } returns nativeRuntime
     }
 
     @After
@@ -127,6 +128,7 @@ class TrUAPIHostRuntimeProviderTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
+        fundingProviders = mockk(relaxed = true),
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
         installations = mockk(),
@@ -135,6 +137,8 @@ class TrUAPIHostRuntimeProviderTest {
         coreEventLogger = CoreEventLogger { _, _, _ -> },
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
         workerSupervisor = { mockk(relaxed = true) },
+        workerCrashNotice = mockk(relaxed = true),
+        workerCrashListener = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )
 
