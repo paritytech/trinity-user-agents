@@ -49,7 +49,7 @@ import uniffi.truapi.VerticalAlignment
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
 fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { null }): JsWidget = when (this) {
-    is RendererNode.Nil, is RendererNode.SetOffset -> JsWidget.Spacer()
+    is RendererNode.Nil, is RendererNode.SetOffset, is RendererNode.ClearCells -> JsWidget.Spacer()
     is RendererNode.String -> JsWidget.Text(text = text)
     is RendererNode.Box -> JsWidget.Box(
         modifiers = modifiers.toJsModifiers(),
@@ -99,6 +99,8 @@ fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { 
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
+    // The Android cover grid layer draws the cover; until then its children draw in a plain box.
+    is RendererNode.CoverGrid -> JsWidget.Box(children = children.toJsChildren(gesturePosition))
     is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren(gesturePosition))
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,

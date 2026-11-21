@@ -3874,3 +3874,28 @@ fn set_offset_and_gesture_key_read_from_json() {
 	};
 	assert_eq!(props.key.as_deref(), Some("thumb"));
 }
+
+#[test]
+fn cover_grid_clear_cells_and_location_pan_read_from_json() {
+	let clear: latest::RendererNode =
+		serde_json::from_str(r#"{"tag":"ClearCells","value":{"key":"foil","cells":[4,5]}}"#).unwrap();
+	assert_eq!(clear, latest::RendererNode::ClearCells { key: "foil".into(), cells: vec![4, 5] });
+	let cover: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"CoverGrid","value":{"modifiers":[],"props":{"key":"foil","columns":2,"rows":2,
+		"cleared":"0x09"},"children":[]}}"#,
+	)
+	.unwrap();
+	let latest::RendererNode::CoverGrid { props, .. } = cover else {
+		panic!("cover grid was not decoded");
+	};
+	assert_eq!((props.columns, props.rows, props.cleared), (2, 2, vec![9]));
+	let gesture: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"Gesture","value":{"modifiers":[],"props":{"key":"scratch",
+		"pan":{"axis":"Free","moveAction":"move","location":true}},"children":[]}}"#,
+	)
+	.unwrap();
+	let latest::RendererNode::Gesture { props, .. } = gesture else {
+		panic!("gesture was not decoded");
+	};
+	assert_eq!(props.pan.unwrap().location.0, Some(true));
+}

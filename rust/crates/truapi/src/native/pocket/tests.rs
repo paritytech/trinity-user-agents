@@ -76,3 +76,28 @@ fn an_offset_update_is_drawn_but_not_kept_as_the_face() {
 	std::thread::sleep(std::time::Duration::from_millis(50));
 	assert_eq!(block_on(cards.face(product.clone(), card(), PocketCardSide::Front)).unwrap(), Some(face));
 }
+
+#[test]
+fn a_cleared_cells_update_is_drawn_but_not_kept_as_the_face() {
+	let (_dir, db) = open_temporary_core_db();
+	let cards = block_on(PocketCards::open(db, Vec::new())).unwrap();
+	let product = ProductId::for_test("loyalty.dot");
+	let card = || "ticket".to_string();
+	block_on(cards.add(product.clone(), card(), "Ticket".into(), RendererNode::Nil)).unwrap();
+	let drawn = Arc::new(Drawn::default());
+	let observer =
+		keeping_faces(cards.clone(), product.clone(), card(), PocketCardSide::Front, drawn.clone(), &Spawner::for_test());
+	let face = RendererNode::String { text: "Scratch me".into() };
+	let clear = RendererNode::ClearCells { key: "foil".into(), cells: vec![1, 2] };
+
+	observer.on_update(face.clone());
+	observer.on_update(clear.clone());
+
+	assert_eq!(*drawn.0.lock().unwrap(), vec![face.clone(), clear]);
+	wait_until(
+		|| block_on(cards.face(product.clone(), card(), PocketCardSide::Front)).unwrap() == Some(face.clone()),
+		"the tree is kept",
+	);
+	std::thread::sleep(std::time::Duration::from_millis(50));
+	assert_eq!(block_on(cards.face(product.clone(), card(), PocketCardSide::Front)).unwrap(), Some(face));
+}

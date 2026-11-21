@@ -367,6 +367,7 @@ fn visit_materials<'tree>(
 			children
 		},
 		RendererNode::Gesture { children, .. } |
+		RendererNode::CoverGrid { children, .. } |
 		RendererNode::Box { children, .. } |
 		RendererNode::Column { children, .. } |
 		RendererNode::Row { children, .. } |
@@ -378,7 +379,8 @@ fn visit_materials<'tree>(
 		RendererNode::TextField { .. } |
 		RendererNode::Image { .. } |
 		RendererNode::SlideToConfirm { .. } |
-		RendererNode::SetOffset { .. } => return,
+		RendererNode::SetOffset { .. } |
+		RendererNode::ClearCells { .. } => return,
 	};
 	let nested = nested || matches!(node, RendererNode::Materials { .. });
 	for child in children {

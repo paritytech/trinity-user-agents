@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { RendererNode, type GestureEvent } from "./generated/types.js";
-import { decodeGestureEvent, encodeGestureEvent, setOffset } from "./gesture-event.js";
+import { clearCells, coverBits, decodeGestureEvent, encodeGestureEvent, setOffset } from "./gesture-event.js";
 
 describe("gesture wire contract", () => {
     it("matches the Rust payload vector", () => {
@@ -66,5 +66,32 @@ describe("gesture wire contract", () => {
 
     it("carries an offset in hundredths of a logical pixel", () => {
         expect(setOffset("thumb", 10.606)).toEqual({ tag: "SetOffset", value: { key: "thumb", x: 1061, y: 0 } });
+    });
+
+    it("clears cover cells with the Rust bytes", () => {
+        const node = clearCells("foil", [3, 300]);
+        expect(node).toEqual({ tag: "ClearCells", value: { key: "foil", cells: [3, 300] } });
+        const bytes = [16, 16, 102, 111, 105, 108, 8, 3, 0, 44, 1];
+        expect(Array.from(RendererNode.enc(node))).toEqual(bytes);
+        expect(RendererNode.dec(Uint8Array.from(bytes))).toEqual(node);
+    });
+
+    it("draws a cover grid with the Rust bytes", () => {
+        const node: RendererNode = {
+            tag: "CoverGrid",
+            value: { modifiers: [], props: { key: "f", columns: 2, rows: 1, cleared: coverBits([1], 2, 1) }, children: [{ tag: "Nil" }] },
+        };
+        expect(Array.from(RendererNode.enc(node))).toEqual([15, 0, 4, 102, 2, 0, 1, 0, 4, 2, 4, 0]);
+    });
+
+    it("packs cleared cells lowest bit first and ignores cells outside the grid", () => {
+        expect(coverBits([0, 2, 11, 12, -1], 4, 3)).toBe("0x0508");
+    });
+
+    it("carries a location pan as its last flag", () => {
+        const pan = { axis: "Free" as const, location: true };
+        const node: RendererNode = { tag: "Gesture", value: { modifiers: [], props: { pan }, children: [] } };
+        const decoded = RendererNode.dec(RendererNode.enc(node));
+        expect(decoded).toEqual({ tag: "Gesture", value: { modifiers: [], props: { pan: { axis: "Free", location: true } }, children: [] } });
     });
 });

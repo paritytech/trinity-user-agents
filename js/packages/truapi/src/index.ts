@@ -39,4 +39,4 @@ export type { CreateTransportOptions } from "./client.js";
 export * as scale from "./scale.js";
 export type { CallErrorValue, Codec, HexString } from "./scale.js";
 export * from "./generated/index.js";
-export { encodeGestureEvent, decodeGestureEvent, setOffset } from "./gesture-event.js";
+export { encodeGestureEvent, decodeGestureEvent, setOffset, clearCells, coverBits } from "./gesture-event.js";

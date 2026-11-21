@@ -640,6 +640,20 @@ pub struct PanGesture {
 	pub move_interval_ms: Option<u16>,
 	/// Action on release or cancellation.
 	pub end_action: Option<String>,
+	/// Report where the finger is instead of how far it moved; absent means
+	/// false.
+	///
+	/// Each event's `x` and `y` are then the finger's place inside the
+	/// gesture, from its top-start corner and clamped to its frame, and
+	/// `fraction_permille` is `x` as a share of the width. `Started` carries
+	/// the touch-down point. The axis still decides which pans the gesture
+	/// claims; there is no travel and no host-owned drag to clamp to. This is
+	/// what a worker drawing under the finger needs, as a scratch card does.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub location: OptionBool,
 }
 
 /// A container tracking taps and pans over worker-drawn children.
@@ -672,9 +686,10 @@ pub struct GestureProps {
 	///
 	/// A keyed pan with a move action is paced by the host: at most one move
 	/// per display frame, and none while the previous move is unanswered. A
-	/// move is answered by a `SetOffset` for this key or by a new tree. The
-	/// host drops the moves in between and sends only the newest, so no
-	/// backlog builds up. Absent keeps every move, as `moveIntervalMs` says.
+	/// move is answered by the next item of the render stream: a `SetOffset`,
+	/// a [`RendererNode::ClearCells`] or a new tree. The host drops the moves
+	/// in between and sends only the newest, so no backlog builds up. Absent
+	/// keeps every move, as `moveIntervalMs` says.
 	pub key: Option<String>,
 	/// How the children move when pressed and when a pan lets go; absent
 	/// leaves it to the host.
@@ -756,6 +771,41 @@ pub struct GestureEvent {
 	pub y: i32,
 	/// Progress along the primary axis, in thousandths.
 	pub fraction_permille: u16,
+}
+
+/// A cover over what is drawn beneath it, cut into a grid of cells that a
+/// worker clears one by one, as the foil of a scratch card.
+///
+/// The cover is the node's children, drawn as usual; each cleared cell cuts a
+/// round hole through them, centred on the cell and wide enough to reach its
+/// corners, so neighbouring holes merge into one soft-edged scratch instead of
+/// showing square blocks. What is behind the node shows through the holes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoverGridProps {
+	/// Names this cover for [`RendererNode::ClearCells`] updates.
+	pub key: String,
+	/// Cells across, 1 through 128; the node's width is split evenly.
+	pub columns: u16,
+	/// Cells down, 1 through 128; the node's height is split evenly.
+	pub rows: u16,
+	/// The cells cleared so far, one bit per cell, row by row from the top
+	/// start, lowest bit first: cell `row * columns + column` is bit
+	/// `index % 8` of byte `index / 8`. Missing bytes are uncleared cells.
+	#[serde(default, deserialize_with = "hex_bytes_json::deserialize")]
+	pub cleared: Vec<u8>,
+}
+
+impl CoverGridProps {
+	/// Most cells a side may have.
+	pub const MAX_SIDE: u16 = 128;
+
+	/// Whether `cell` is cleared in this tree.
+	pub fn is_cleared(&self, cell: u32) -> bool {
+		let byte = (cell / 8) as usize;
+		self.cleared.get(byte).is_some_and(|bits| bits & (1 << (cell % 8)) != 0)
+	}
 }
 
 /// Where image bytes come from: a place the host fetches them from, or the
@@ -1005,6 +1055,34 @@ pub enum RendererNode {
 		/// Vertical offset, in hundredths of a logical pixel.
 		y: i32,
 	},
+	/// A cover cut into cells that a worker clears, as a scratch card's foil.
+	/// See [`CoverGridProps`]. As large as its children, like a `Box`.
+	#[codec(index = 15)]
+	CoverGrid {
+		/// Layout and styling.
+		modifiers: Vec<Modifier>,
+		/// The grid, its key and the cells already cleared.
+		props: CoverGridProps,
+		/// The cover itself.
+		children: Vec<RendererNode>,
+	},
+	/// Clears more cells of the `CoverGrid` whose `key` matches, without a new
+	/// tree. Valid only as a whole item of a `render` stream; inside a tree it
+	/// draws nothing.
+	///
+	/// The host adds the cells to those the current tree clears and keeps them
+	/// until the next tree, which replaces them with its own `cleared`: a tree
+	/// always wins, so a worker that sends a tree sends every cell it cleared.
+	/// A key that matches no `CoverGrid`, and a cell outside its grid, are
+	/// ignored. The item is not a tree: a Pocket card does not keep it as a
+	/// face. It answers a paced pan move, as a `SetOffset` does.
+	#[codec(index = 16)]
+	ClearCells {
+		/// The `key` of the `CoverGrid` to clear.
+		key: String,
+		/// Cell indices, `row * columns + column`.
+		cells: Vec<u16>,
+	},
 }
 
 /// Where a product-rendered body lives, and the id that names it there.
@@ -1124,12 +1202,14 @@ impl RendererNode {
 			Self::Row { children, .. } |
 			Self::Text { children, .. } |
 			Self::Gesture { children, .. } |
+			Self::CoverGrid { children, .. } |
 			Self::Button { children, .. } => children.iter_mut().for_each(Self::clear_refused_inline_images),
 			Self::Nil |
 			Self::String { .. } |
 			Self::Spacer { .. } |
 			Self::TextField { .. } |
 			Self::SetOffset { .. } |
+			Self::ClearCells { .. } |
 			Self::SlideToConfirm { .. } => {},
 		}
 	}

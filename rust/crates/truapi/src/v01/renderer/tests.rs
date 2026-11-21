@@ -271,6 +271,7 @@ fn gesture_modes_round_trip_with_actions_and_motion() {
 					move_action: Some("move".into()),
 					move_interval_ms: Some(0),
 					end_action: Some("end".into()),
+					location: OptionBool(None),
 				}),
 				accessibility_label: Some("Register".into()),
 				enabled: OptionBool(Some(true)),
@@ -399,6 +400,99 @@ fn modifiers_by_value_round_trip_through_scale() {
 	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
 }
 
+fn scratch_tree(cleared: Vec<u8>) -> RendererNode {
+	RendererNode::Gesture {
+		modifiers: vec![Modifier::Width(Compact(280)), Modifier::Height(Compact(300))],
+		props: GestureProps {
+			tap_action: None,
+			pan: Some(PanGesture {
+				axis: PanAxis::Free,
+				drag: None,
+				start_action: Some("scratch.start".into()),
+				move_action: Some("scratch.move".into()),
+				move_interval_ms: None,
+				end_action: Some("scratch.end".into()),
+				location: OptionBool(Some(true)),
+			}),
+			accessibility_label: Some("Scratch the ticket".into()),
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: Some("scratch".into()),
+			feel: None,
+		},
+		children: vec![RendererNode::CoverGrid {
+			modifiers: vec![Modifier::FillWidth(true)],
+			props: CoverGridProps { key: "foil".into(), columns: 35, rows: 37, cleared },
+			children: vec![renderer_node()],
+		}],
+	}
+}
+
+#[test]
+fn a_scratch_card_round_trips_with_its_cover_and_location_pan() {
+	for cleared in [Vec::new(), vec![0b1000_0001, 0, 0xff]] {
+		let node = scratch_tree(cleared);
+		assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	}
+}
+
+#[test]
+fn clear_cells_has_the_same_bytes_on_hosts_and_clients() {
+	let node = RendererNode::ClearCells { key: "foil".into(), cells: vec![3, 300] };
+	// Index 16, the key, then a compact count of two little-endian u16 cells.
+	let expected = [16, 16, b'f', b'o', b'i', b'l', 8, 3, 0, 44, 1];
+	assert_eq!(node.encode(), expected);
+	assert_eq!(RendererNode::decode(&mut expected.as_slice()).unwrap(), node);
+}
+
+#[test]
+fn a_cover_grid_keeps_its_wire_index() {
+	let node = RendererNode::CoverGrid {
+		modifiers: Vec::new(),
+		props: CoverGridProps { key: "f".into(), columns: 2, rows: 1, cleared: vec![2] },
+		children: vec![RendererNode::Nil],
+	};
+	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 4, 0]);
+}
+
+#[test]
+fn cleared_bits_read_row_by_row_lowest_bit_first() {
+	let props = CoverGridProps {
+		key: "f".into(),
+		columns: 4,
+		rows: 3,
+		cleared: vec![0b0000_0101, 0b0000_1000],
+	};
+	let cleared: Vec<u32> = (0..12).filter(|&cell| props.is_cleared(cell)).collect();
+	assert_eq!(cleared, vec![0, 2, 11]);
+	assert!(!props.is_cleared(400), "a cell past the bytes is not cleared");
+}
+
+/// A move's answer stays a few bytes however much of the card is already
+/// scratched, while the tree carrying the same cover grows with it.
+#[test]
+fn clearing_cells_is_far_smaller_than_the_tree_that_carries_them() {
+	let update = RendererNode::ClearCells { key: "foil".into(), cells: (0..8).collect() };
+	let tree = scratch_tree(vec![0xff; 162]);
+	assert_eq!(update.encode().len(), 23);
+	assert!(update.encode().len() * 10 < tree.encode().len());
+}
+
+#[test]
+fn a_location_pan_is_a_flag_after_the_end_action() {
+	let pan = |location| PanGesture {
+		axis: PanAxis::Free,
+		drag: None,
+		start_action: None,
+		move_action: None,
+		move_interval_ms: None,
+		end_action: None,
+		location: OptionBool(location),
+	};
+	assert_eq!(pan(None).encode(), vec![2, 0, 0, 0, 0, 0, 0]);
+	assert_eq!(pan(Some(true)).encode(), vec![2, 0, 0, 0, 0, 0, 1]);
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn modifiers_by_value_round_trip_through_uniffi() {
@@ -478,5 +572,18 @@ fn a_gesture_feel_round_trips_through_scale_json_and_uniffi() {
 	{
 		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
 		assert_eq!(<RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), node);
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn cover_grid_and_clear_cells_round_trip_through_uniffi() {
+	for node in [
+		scratch_tree(vec![1, 2, 3]),
+		RendererNode::ClearCells { key: "foil".into(), cells: vec![0, 1294] },
+	] {
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
+		assert_eq!(lifted, node);
 	}
 }

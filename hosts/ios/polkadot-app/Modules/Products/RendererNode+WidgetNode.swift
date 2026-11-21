@@ -15,13 +15,21 @@ extension RendererNode {
              .button,
              .textField,
              .slideToConfirm,
-             .setOffset:
+             .setOffset,
+             .clearCells:
             return leafWidgetNode(resolver: resolver)
 
         case let .gesture(modifiers, props, children):
             return CustomMessageWidgetNode(
                 content: .gesture(props.nodeProps, children: children.widgetNodes(resolver: resolver)),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
+            )
+
+        case let .coverGrid(_, _, children):
+            // The iPhone cover grid layer draws the cover; until then its children draw in a plain box.
+            return CustomMessageWidgetNode(
+                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
+                modifiers: .empty
             )
 
         case let .materials(_, children):
@@ -70,7 +78,8 @@ private extension RendererNode {
         switch self {
         case .nil,
              .string,
-             .setOffset:
+             .setOffset,
+             .clearCells:
             // An offset update is a stream item, not part of a tree: inside one it draws nothing.
             return nil
 
@@ -131,6 +140,7 @@ private extension RendererNode {
             )
 
         case .gesture,
+             .coverGrid,
              .box,
              .column,
              .row,

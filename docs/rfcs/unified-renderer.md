@@ -516,8 +516,8 @@ children only about 35 times a second, however fast the round trip. Inside a tre
 does not keep it as a face.
 
 A keyed pan with a move action is paced by the host: at most one move per
-display frame, and none while the previous move is unanswered (by a
-`SetOffset` for the key or by a tree). Moves in between are dropped and only
+display frame, and none while the previous move is unanswered (by the next
+item on the stream: a `SetOffset`, a `ClearCells` or a tree). Moves in between are dropped and only
 the newest is sent, so a slow worker never builds a backlog. A worker should
 likewise answer only the newest move it holds. Start, end and completion
 still send whole trees.
@@ -554,3 +554,29 @@ pressed, the damped spring that takes them home when a pan lets go, and the
 ease and scale "pop" with which a completed pan reaches the end, all by value
 (an existing slider's constants copy straight in). The host runs it for host-owned
 drags and for the release settle of a worker's every-move thumb alike.
+
+### Cover grids: drawing under the finger
+
+The renderer has no free-form drawing, and a scratch card needs only one kind:
+taking away a cover where the finger went. `CoverGrid` (SCALE index 15) draws
+its children as a cover and cuts it into `columns` x `rows` cells (each at most
+128). Each cleared cell cuts a round hole through the cover, centred on the cell
+and reaching its corners, so neighbouring holes merge into one soft-edged
+scratch rather than square blocks; whatever is behind the node shows through.
+The tree carries the cells already cleared as a bitset (`cleared`, one bit per
+cell, row by row, lowest bit first), and the worker clears more with a
+`ClearCells { key, cells }` item (SCALE index 16) on the same stream. As with
+`SetOffset`, the host keeps those cells only until the next tree, whose
+`cleared` replaces them, so a worker sending a tree sends every cell it cleared.
+A `ClearCells` answers a paced move. Inside a tree it draws nothing, and a
+Pocket card does not keep it as a face.
+
+To hear where the finger is rather than how far it moved, a pan sets
+`location: true`: each event's `x` and `y` are then the finger's place inside
+the gesture, from its top-start corner and clamped to its frame (hundredths of
+a logical pixel), `Started` carries the touch-down point, and
+`fractionPermille` is `x` as a share of the width. A worker scratching a card
+keeps the last point it handled and clears every cell within its brush of the
+segment from there to the newest point, so the moves the host drops between
+frames leave no gaps.
+
