@@ -568,12 +568,22 @@ async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
 	.await
 }
 
+/// Frames on the bridge are small and answer one another. With Nagle's algorithm on, a frame written
+/// while the last one is still unacknowledged waits for the peer's delayed ACK (at least 40 ms on Linux,
+/// so on Android): a gesture move sent after the reply to the previous answer arrived about 44 ms late.
+fn send_frames_at_once(stream: &tokio::net::TcpStream, peer: SocketAddr, logger: &BridgeLogger) {
+	if let Err(err) = stream.set_nodelay(true) {
+		logger(markers::WS_BRIDGE_ACCEPT_ERROR.target, &format!("{peer}: no TCP_NODELAY: {err}"));
+	}
+}
+
 async fn connection_setup(
 	stream: tokio::net::TcpStream,
 	peer: SocketAddr,
 	registry: Arc<WsBridgeRegistry>,
 	logger: BridgeLogger,
 ) {
+	send_frames_at_once(&stream, peer, &logger);
 	let auth_result = tokio::time::timeout(
 		HANDSHAKE_TIMEOUT,
 		authenticate_and_upgrade(stream, peer, &registry, logger.clone()),

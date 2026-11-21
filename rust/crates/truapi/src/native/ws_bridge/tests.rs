@@ -1045,3 +1045,17 @@ fn three_tokens_route_to_their_own_factory_only() {
 
 	drop(bridge);
 }
+
+#[test]
+fn accepted_sockets_send_each_frame_at_once() {
+	let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+	rt.block_on(async {
+		let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+		let addr = listener.local_addr().expect("address");
+		let _client = tokio::net::TcpStream::connect(addr).await.expect("connect");
+		let (stream, peer) = listener.accept().await.expect("accept");
+		assert!(!stream.nodelay().expect("read TCP_NODELAY"), "a fresh socket batches small writes");
+		send_frames_at_once(&stream, peer, &no_log());
+		assert!(stream.nodelay().expect("read TCP_NODELAY"));
+	});
+}
