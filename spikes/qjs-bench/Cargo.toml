@@ -1,0 +1,16 @@
+# Throwaway M0 benchmark for wasm-sandboxed QuickJS workers.
+# Its own workspace so nothing here reaches the main workspace, its lints or CI.
+[workspace]
+resolver = "2"
+members = ["guest", "runner"]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

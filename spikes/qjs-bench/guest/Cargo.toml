@@ -1,0 +1,11 @@
+[package]
+name = "qjs-guest"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rquickjs = { version = "=0.14.0", default-features = false, features = ["array-buffer"] }
