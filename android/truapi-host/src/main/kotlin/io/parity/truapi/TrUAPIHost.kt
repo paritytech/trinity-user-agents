@@ -85,7 +85,6 @@ import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.NativeSubscription
 import uniffi.truapi.PocketAddException
 import uniffi.truapi.PocketCardRemoval
-import uniffi.truapi.PocketCardSide
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
@@ -1336,13 +1335,10 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
         inner.removePocketCard(productId, cardId)
 
-    /** The newest face kept for one side of a card, if one is. */
+    /** The newest face kept for a card, if one is. */
     @Throws(NativeCoreDatabaseException::class)
-    suspend fun pocketCardFace(
-        productId: ProductId,
-        cardId: String,
-        side: PocketCardSide = PocketCardSide.FRONT,
-    ): RendererNode? = inner.pocketCardFace(productId, cardId, side)
+    suspend fun pocketCardFace(productId: ProductId, cardId: String): RendererNode? =
+        inner.pocketCardFace(productId, cardId)
 
     /**
      * Decide durable transactions from the chain until none is live, then
