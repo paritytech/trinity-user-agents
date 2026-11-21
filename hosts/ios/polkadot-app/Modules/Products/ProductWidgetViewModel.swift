@@ -141,8 +141,10 @@ private extension ProductWidgetViewModel {
 
                 // Cleared cells cut more of one keyed cover away: no tree to map, and only that cover's mask draws.
                 if case let .native(.clearCells(key, cells)) = output {
+                    // Handed over here first, like an offset, so the frame that sent the move can draw these cells.
+                    gestureOffsets?.deliver(key: key, cells: cells.map(Int.init))
                     await MainActor.run {
-                        self.gestureOffsets?.clear(key: key, cells: cells.map(Int.init))
+                        self.gestureOffsets?.applyDelivered()
                     }
                     continue
                 }

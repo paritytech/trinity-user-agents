@@ -186,6 +186,20 @@ struct GestureAnswerMailboxTests {
         #expect(mailbox.take() == thumb)
         #expect(mailbox.take() == nil)
     }
+
+    @Test("Every batch of cleared cells is kept, in order, and a wait wakes on one")
+    func cellsAddUp() {
+        let mailbox = GestureAnswerMailbox()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.005) {
+            mailbox.deliver(CoverAnswer(key: "foil", cells: [1, 2]))
+        }
+        #expect(mailbox.wait(after: 0, until: Date(timeIntervalSinceNow: 1)))
+        mailbox.deliver(CoverAnswer(key: "foil", cells: [3]))
+        #expect(mailbox.delivered == 2)
+        #expect(mailbox.takeCells() == [CoverAnswer(key: "foil", cells: [1, 2]), CoverAnswer(key: "foil", cells: [3])])
+        #expect(mailbox.takeCells().isEmpty)
+        #expect(mailbox.take() == nil, "cells are not an offset")
+    }
 }
 
 @MainActor
@@ -234,6 +248,52 @@ struct GestureOffsetsDeliveryTests {
         pacer.offer(Data([1]))
         #expect(sent == [Data([1])])
         #expect(channel.offset == CGPoint(x: 3, y: 0))
+        #expect(pacer.pacing.sentAt == nil)
+        pacer.stop()
+    }
+
+    @Test("Delivered cells are applied once, whoever applies them first, and answer the pan")
+    func cellsAppliedOnce() {
+        let offsets = GestureOffsets()
+        let pan = offsets.channel(for: "scratch")
+        var answers = 0
+        pan.onAnswer = { answers += 1 }
+        offsets.deliver(key: "foil", cells: [3, 4])
+        offsets.deliver(key: "foil", cells: [5])
+        offsets.applyDelivered()
+        offsets.applyDelivered()
+        #expect(offsets.cover(for: "foil").cleared?.count == 3)
+        #expect(pan.offset == nil, "clearing cells moves no gesture")
+        #expect(answers == 2)
+    }
+
+    @Test("A tree drops cells delivered before it and not yet applied")
+    func treeDropsDeliveredCells() {
+        let offsets = GestureOffsets()
+        offsets.deliver(key: "foil", cells: [1, 2])
+        offsets.treeArrived()
+        offsets.applyDelivered()
+        #expect(offsets.cover(for: "foil").cleared == nil)
+    }
+
+    @Test("A cover grid's pan waits for its cleared cells and draws them in the frame that sent the move")
+    func pacerWaitsForCells() {
+        let offsets = GestureOffsets()
+        let pan = offsets.channel(for: "scratch")
+        let pacer = GestureMovePacer()
+        pacer.start(
+            send: { _ in
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.001) {
+                    offsets.deliver(key: "foil", cells: [7, 8])
+                }
+            },
+            offsets: offsets,
+            sendOnTouch: true,
+            answerWait: 0.5
+        )
+        pan.onAnswer = { [pacer] in pacer.answered() }
+        pacer.offer(Data([1]))
+        #expect(offsets.cover(for: "foil").cleared?.count == 2)
         #expect(pacer.pacing.sentAt == nil)
         pacer.stop()
     }

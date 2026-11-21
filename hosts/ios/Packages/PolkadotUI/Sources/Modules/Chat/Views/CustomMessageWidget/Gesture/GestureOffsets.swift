@@ -8,7 +8,7 @@ import SwiftUI
 /// An update changes one node straight away: it is not a tree, so nothing is decoded, mapped or diffed, and only the
 /// view reading that key's channel draws again. A new tree drops every update, because the tree always wins.
 ///
-/// An offset is first handed over from the render stream's thread (`deliver`) and then applied on the main thread,
+/// An update is first handed over from the render stream's thread (`deliver`) and then applied on the main thread,
 /// either by the frame that sent the move, which waits a moment for it (`GestureMovePacer`), or by the stream's own hop
 /// to the main thread (`applyDelivered`), whichever comes first. Each answer is applied once.
 public final class GestureOffsets {
@@ -42,18 +42,6 @@ public final class GestureOffsets {
         channel(for: key).receive(offset)
     }
 
-    /// A `SetOffset` item for `key`, from any thread: kept until the main thread applies it.
-    public func deliver(key: String, offset: CGPoint) {
-        answers.deliver(GestureAnswer(key: key, offset: offset))
-    }
-
-    /// Applies the newest offset delivered and not yet applied, if any.
-    @MainActor
-    public func applyDelivered() {
-        guard let answer = answers.take() else { return }
-        set(key: answer.key, offset: answer.offset)
-    }
-
     @MainActor
     public func cover(for key: String) -> CoverGridChannel {
         if let cover = covers[key] { return cover }
@@ -71,10 +59,33 @@ public final class GestureOffsets {
         }
     }
 
+    /// A `SetOffset` item for `key`, from any thread: kept until the main thread applies it.
+    public func deliver(key: String, offset: CGPoint) {
+        answers.deliver(GestureAnswer(key: key, offset: offset))
+    }
+
+    /// A `ClearCells` item for `key`, from any thread: kept, with every other batch not yet applied, until the main
+    /// thread applies it.
+    public func deliver(key: String, cells: [Int]) {
+        answers.deliver(CoverAnswer(key: key, cells: cells))
+    }
+
+    /// Applies every update delivered and not yet applied: the newest offset and each batch of cleared cells, in the
+    /// order they came.
+    @MainActor
+    public func applyDelivered() {
+        for answer in answers.takeCells() {
+            clear(key: answer.key, cells: answer.cells)
+        }
+        guard let answer = answers.take() else { return }
+        set(key: answer.key, offset: answer.offset)
+    }
+
     /// A new tree arrived: it places every gesture and clears every cover itself.
     @MainActor
     public func treeArrived() {
         _ = answers.take()
+        _ = answers.takeCells()
         for channel in channels.values {
             channel.receive(nil)
         }
@@ -89,11 +100,18 @@ struct GestureAnswer: Equatable {
     var offset: CGPoint
 }
 
-/// Hands a worker's offset answers from the render stream's thread to the main thread. Only the newest one not yet
-/// applied is kept, and a waiting frame wakes as soon as one arrives.
+struct CoverAnswer: Equatable {
+    var key: String
+    var cells: [Int]
+}
+
+/// Hands a worker's answers from the render stream's thread to the main thread. Of the offsets, only the newest one not
+/// yet applied is kept; cleared cells add up, so every batch not yet applied is kept. A waiting frame wakes as soon as
+/// either arrives.
 final class GestureAnswerMailbox: @unchecked Sendable {
     private let condition = NSCondition()
     private var newest: GestureAnswer?
+    private var cells: [CoverAnswer] = []
     private var count = 0
 
     /// How many answers have been delivered so far.
@@ -111,13 +129,30 @@ final class GestureAnswerMailbox: @unchecked Sendable {
         condition.unlock()
     }
 
-    /// The newest answer not yet applied, which is then applied by the caller alone.
+    func deliver(_ answer: CoverAnswer) {
+        condition.lock()
+        cells.append(answer)
+        count += 1
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// The newest offset not yet applied, which is then applied by the caller alone.
     func take() -> GestureAnswer? {
         condition.lock()
         defer { condition.unlock() }
         let answer = newest
         newest = nil
         return answer
+    }
+
+    /// Every batch of cleared cells not yet applied, oldest first, which are then applied by the caller alone.
+    func takeCells() -> [CoverAnswer] {
+        condition.lock()
+        defer { condition.unlock() }
+        let taken = cells
+        cells = []
+        return taken
     }
 
     /// Waits until an answer arrives after the first `after` ones, or `deadline` passes; true when one did.
@@ -376,7 +411,8 @@ final class GestureMovePacer: NSObject {
         pacing.reset()
     }
 
-    /// Sends a move, then gives the worker up to `answerWait` to answer, so its offset is drawn in this frame.
+    /// Sends a move, then gives the worker up to `answerWait` to answer, so its offset or cleared cells are drawn in this
+    /// frame.
     private func deliver(_ payload: Data) {
         sentPlace = pendingPlace ?? sentPlace
         let before = offsets?.answers.delivered ?? 0
