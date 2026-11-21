@@ -21,7 +21,8 @@ internal object GesturePacingSettings {
     private const val NANOS_PER_SECOND = 1_000_000_000.0
     private const val DEFAULT_REFRESH_HZ = 60f
 
-    private fun property(name: String): String? = runCatching {
+    /** A system property's value, read for the measuring switches; null when it cannot be read. */
+    fun property(name: String): String? = runCatching {
         Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, name) as? String
     }.getOrNull()
 

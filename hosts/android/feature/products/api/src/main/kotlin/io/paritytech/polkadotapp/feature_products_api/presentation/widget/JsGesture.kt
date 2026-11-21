@@ -2,8 +2,11 @@ package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -85,6 +88,10 @@ internal fun JsGesture(
     var nodeWidth by remember { mutableIntStateOf(0) }
     var childrenWidth by remember { mutableIntStateOf(0) }
     var heldAtEnd by remember { mutableStateOf(false) }
+    // An every-move worker thumb's settle after the finger lifts (WorkerThumbSettle), drawn instead of the worker's place.
+    val settle = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var settling by remember { mutableStateOf(false) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
 
     // The worker's answer waited for in the frame that sent its move, laid out in that frame (GesturePacingSettings).
     var answeredInFrame by remember { mutableStateOf<Pair<JsGesturePosition, JsGesturePosition.Value>?>(null) }
@@ -121,6 +128,43 @@ internal fun JsGesture(
             moves.noteAnswer(answered.answer)
             answeredInFrame = position to answered
         }
+    }
+
+    /** Where the worker's thumb is drawn now, in px from the travel's start. */
+    fun workerPlacePx(): Offset {
+        if (settling) return settle.value
+        val shown = GestureRules.newest(
+            current.position?.value?.value,
+            answeredInFrame?.takeIf { it.first === current.position }?.second,
+        ) ?: return Offset.Zero
+        return Offset(shown.x / 100f * density, shown.y / 100f * density)
+    }
+
+    /** A released every-move thumb settles from where it is drawn instead of jumping to the worker's next place. */
+    fun settleWorkerThumb(axis: JsPanAxis, releasedPermille: Int, cancelled: Boolean, travel: Float) {
+        if (!WorkerThumbSettle.currentIsOn) return
+        val from = workerPlacePx()
+        val kind = WorkerThumbSettle.kind(axis, releasedPermille, cancelled)
+        val to = WorkerThumbSettle.target(kind, axis, travel)
+        if (!WorkerThumbSettle.animates(ValueAnimator.areAnimatorsEnabled(), from, to)) return
+        settleJob?.cancel()
+        settling = true
+        settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                settle.snapTo(from)
+                val spec = if (kind == WorkerThumbSettle.Kind.END) SettleToEnd else SpringBackOffset
+                settle.animateTo(to, spec)
+            } finally {
+                settling = false
+            }
+        }
+    }
+
+    /** A new drag takes the thumb over at once. */
+    fun cutSettleShort() {
+        settleJob?.cancel()
+        settleJob = null
+        settling = false
     }
 
     fun moveTo(x: Float, y: Float, animated: Boolean) {
@@ -276,6 +320,7 @@ internal fun JsGesture(
                             when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
                                 SlideDragDecision.CLAIM -> {
                                     claimed = true
+                                    cutSettleShort()
                                     node.position?.let { position ->
                                         if (pan.moveAction != null) {
                                             moves.clear()
@@ -310,6 +355,10 @@ internal fun JsGesture(
                         moves.clear()
                         when {
                             claimed && pan != null -> {
+                                if (drag == null && node.position != null && pan.moveAction != null) {
+                                    val along = if (pan.axis == JsPanAxis.VERTICAL) y else x
+                                    settleWorkerThumb(pan.axis, GestureRules.permille(along, travel), cancelled = !lifted, travel)
+                                }
                                 val settle = when {
                                     !lifted -> null
                                     drag == null -> GestureSettle.STAY
@@ -346,9 +395,11 @@ internal fun JsGesture(
                         workerPosition?.value,
                         answeredInFrame?.takeIf { it.first === current.position }?.second,
                     )
+                    val workerX = if (settling) settle.value.x else (position?.x ?: 0) / 100f * density
+                    val workerY = if (settling) settle.value.y else (position?.y ?: 0) / 100f * density
                     IntOffset(
-                        (placeX.value.coerceIn(0f, travel) + (position?.x ?: 0) / 100f * density).roundToInt(),
-                        (placeY.value.coerceIn(0f, travel) + (position?.y ?: 0) / 100f * density).roundToInt(),
+                        (placeX.value.coerceIn(0f, travel) + workerX).roundToInt(),
+                        (placeY.value.coerceIn(0f, travel) + workerY).roundToInt(),
                     )
                 },
         ) {
@@ -360,3 +411,5 @@ internal fun JsGesture(
 private const val NANOS_PER_MS = 1_000_000L
 
 private val SpringBack = spring<Float>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
+private val SpringBackOffset = spring<Offset>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
+private val SettleToEnd = tween<Offset>(durationMillis = WorkerThumbSettle.END_MILLIS, easing = LinearOutSlowInEasing)
