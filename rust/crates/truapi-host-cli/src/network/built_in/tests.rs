@@ -1,6 +1,10 @@
 use clap::ValueEnum;
 
-use super::{super::testing::edit_descriptor, *};
+use super::{
+	super::testing::{edit_descriptor, test_access},
+	*,
+};
+use crate::chain::ChainBackend;
 
 /// A bundled copy that no longer opens with its pointer would leave the
 /// built-in network, or the check that tells a Polkadot fork from Polkadot,
@@ -42,6 +46,37 @@ fn test_built_in_runnable_check() {
 		.expect("a stack other than a built-in network checked");
 	ensure_built_in_runnable(&paseo, &Network::PaseoNextV2.built_in_stack().open_bundled())
 		.expect("bundled paseo-next-v2 copy not runnable");
+}
+
+/// A built-in's copy runs on either chain backend, so one without a light
+/// spec is not written: every light-client command would fail on it.
+#[test]
+fn test_built_in_runnable_check_on_the_light_client() {
+	let without_people_spec = super::super::testing::edit_chain("People", |chain| {
+		chain.as_object_mut().unwrap().remove("lightSpec");
+	});
+	let paseo = Network::PaseoNextV2.built_in_stack().pointer();
+	let error = ensure_built_in_runnable(&paseo, &without_people_spec).unwrap_err();
+	assert!(error.to_string().contains("no lightSpec for People"), "{error}");
+}
+
+/// A light client on a fresh state directory starts from the specs this build
+/// ships, so every spec a built-in's bundled copy names for a chain it runs
+/// must be shipped and pass the check. `scripts/update-stacks.sh` refreshes
+/// both together.
+#[test]
+fn test_bundled_light_specs_match_the_bundled_copies() {
+	for network in Network::value_variants() {
+		let descriptor = network.built_in_stack().open_bundled();
+		for chain in crate::stack_descriptor::light_client_chains(&descriptor) {
+			let named = chain.light_spec.as_ref().expect("a built-in names every light spec");
+			let spec = bundled_light_spec(&named.sha256)
+				.unwrap_or_else(|| panic!("{network:?} ships no light spec for {}", chain.role));
+			chain
+				.check_light_spec(spec.as_bytes())
+				.unwrap_or_else(|error| panic!("{network:?} {}: {error}", chain.role));
+		}
+	}
 }
 
 /// The hint tells the user which copy is in use and why, so a restart on
@@ -91,7 +126,15 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
+	refresh_on(&ChainAccess::Rpc, bundled, fetched)
+}
+
+fn refresh_on(
+	chain_access: &ChainAccess,
+	bundled: &[u8],
+	fetched: Fetched,
+) -> Result<StackRefresh> {
+	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, chain_access)
 }
 
 const NOW: i64 = 1_800_000_000;
@@ -195,6 +238,35 @@ fn test_refresh_unrunnable_copy_bundle() {
 	assert_eq!(refresh.stack.descriptor().sequence, 10);
 	assert!(refresh.notice.is_none());
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
+}
+
+/// The light client runs a newer published copy from the light specs it
+/// names. One that names none for a chain it runs is an error rather than a
+/// fall back to the bundled copy, whose chains may have restarted since; over
+/// RPC the same copy runs.
+#[test]
+fn test_refresh_on_the_light_client() {
+	let light_client = test_access(ChainBackend::LightClient);
+	let bundled = sign_copy(10, "g1");
+	let restarted = sign_copy(11, "g2");
+	let published = refresh_on(&light_client, &bundled, Fetched::Document(&restarted)).unwrap();
+	assert_eq!(published.stack.descriptor().sequence, 11);
+	assert!(published.stack.light_client().is_some());
+
+	let without_people_spec = sign_edited(|descriptor| {
+		descriptor["sequence"] = 11.into();
+		descriptor["generation"] = "g2".into();
+		let chains = descriptor["chains"].as_array_mut().unwrap();
+		let people = chains.iter_mut().find(|chain| chain["role"] == "People").unwrap();
+		people.as_object_mut().unwrap().remove("lightSpec");
+	});
+	let error = refresh_on(&light_client, &bundled, Fetched::Document(&without_people_spec))
+		.err()
+		.expect("a published copy without People's light spec ran on the light client");
+	assert!(format!("{error:#}").contains("no lightSpec for People"), "{error:#}");
+
+	let over_rpc = refresh(&bundled, Fetched::Document(&without_people_spec)).unwrap();
+	assert_eq!(over_rpc.stack.descriptor().sequence, 11);
 }
 
 /// A signed copy with a lower sequence is a replay of an older descriptor.
