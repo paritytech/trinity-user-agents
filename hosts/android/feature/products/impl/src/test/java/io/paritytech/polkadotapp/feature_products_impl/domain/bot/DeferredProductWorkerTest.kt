@@ -1,10 +1,15 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.mockk.every
+import io.mockk.mockk
+import io.parity.truapi.MaterialsResolution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertFalse
@@ -46,6 +51,17 @@ class DeferredProductWorkerTest {
         runCurrent()
 
         assertFalse("a cancelled wait must not return a value", returned)
+    }
+
+    @Test
+    fun `an attached worker hands over the materials of its messages`() = runTest {
+        val resolution: MaterialsResolution = mockk()
+        val attached: ProductWorker = mockk()
+        every { attached.messageMaterials(room, "m1", "type") } returns flowOf(resolution)
+        val worker = DeferredProductWorker()
+        worker.attach(attached)
+
+        assertSame(resolution, worker.messageMaterials(room, "m1", "type").first())
     }
 
     @Test

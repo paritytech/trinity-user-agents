@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.parity.truapi.MaterialsResolution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
@@ -56,6 +57,17 @@ class DeferredProductWorker : ProductWorker {
                 onFailure = { emit(Result.failure(it)) },
             )
         }
+
+    override fun messageMaterials(
+        roomId: ProductChatIdParameter?,
+        messageId: ChatMessageId,
+        messageType: String,
+    ): Flow<MaterialsResolution?> = flow {
+        awaitWorker().fold(
+            onSuccess = { emitAll(it.messageMaterials(roomId, messageId, messageType)) },
+            onFailure = { emit(null) },
+        )
+    }
 
     override fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
         delegate.value?.getOrNull()?.dispatchRoomFooterEvent(roomId, messageType, actionId, eventType)

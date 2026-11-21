@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
+import io.parity.truapi.MaterialsResolution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
@@ -28,6 +29,9 @@ interface ProductWorker : JsEventDispatcher {
     /** Draws the card the product docked in the footer of [roomId]. Only a TrUAPI product docks one, so other runtimes fail. */
     fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> =
         flowOf(Result.failure(UnsupportedOperationException("This runtime cannot draw the $messageType card docked in ${roomId.value}")))
+
+    fun messageMaterials(roomId: ProductChatIdParameter?, messageId: ChatMessageId, messageType: String): Flow<MaterialsResolution?> =
+        flowOf(null)
 
     /** A press inside the card the product docked in the footer of [roomId]. */
     fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
