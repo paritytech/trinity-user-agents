@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
@@ -26,6 +27,7 @@ import uniffi.truapi.BlendingMode
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
+import uniffi.truapi.CoverGridProps
 import uniffi.truapi.Dimensions
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
@@ -48,23 +50,26 @@ import uniffi.truapi.VerticalAlignment
  * Maps a core renderer tree onto the widget model the Compose interpreter draws. `Nil` draws
  * nothing and a `String` child is absorbed as its parent's text, as the chat mapper does.
  */
-fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { null }): JsWidget = when (this) {
+fun RendererNode.toJsWidget(
+    gesturePosition: (String) -> JsGesturePosition? = { null },
+    coverCells: (String) -> JsCoverCells? = { null },
+): JsWidget = when (this) {
     is RendererNode.Nil, is RendererNode.SetOffset, is RendererNode.ClearCells -> JsWidget.Spacer()
     is RendererNode.String -> JsWidget.Text(text = text)
     is RendererNode.Box -> JsWidget.Box(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition),
+        children = children.toJsChildren(gesturePosition, coverCells),
         contentAlignment = props.contentAlignment?.toJs(),
     )
     is RendererNode.Column -> JsWidget.Column(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition),
+        children = children.toJsChildren(gesturePosition, coverCells),
         horizontalAlignment = props.horizontalAlignment?.toJs(),
         verticalArrangement = props.verticalArrangement?.toJs(),
     )
     is RendererNode.Row -> JsWidget.Row(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition),
+        children = children.toJsChildren(gesturePosition, coverCells),
         verticalAlignment = props.verticalAlignment?.toJs(),
         horizontalArrangement = props.horizontalArrangement?.toJs(),
     )
@@ -99,9 +104,7 @@ fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { 
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    // The Android cover grid layer draws the cover; until then its children draw in a plain box.
-    is RendererNode.CoverGrid -> JsWidget.Box(children = children.toJsChildren(gesturePosition))
-    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren(gesturePosition))
+    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren(gesturePosition, coverCells))
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,
         secondaryText = props.secondaryText,
@@ -122,10 +125,26 @@ fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { 
         enabled = props.enabled ?: true,
         hapticOnComplete = props.hapticOnComplete ?: false,
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition),
+        children = children.toJsChildren(gesturePosition, coverCells),
         key = props.key,
         feel = props.feel?.toJs(),
     )
+    is RendererNode.CoverGrid -> JsWidget.CoverGrid(
+        cells = coverCells(props.key),
+        key = props.key,
+        columns = props.columns.toInt(),
+        rows = props.rows.toInt(),
+        cleared = props.toJsCleared(),
+        modifiers = modifiers.toJsModifiers(),
+        children = children.toJsChildren(gesturePosition, coverCells),
+    )
+}
+
+private fun CoverGridProps.toJsCleared(): List<Int> = buildList {
+    cleared.forEachIndexed { index, byte ->
+        val bits = byte.toInt() and 0xff
+        for (bit in 0 until 8) if (bits and (1 shl bit) != 0) add(index * 8 + bit)
+    }
 }
 
 private fun PanFeel.toJs(): JsPanFeel = JsPanFeel(
@@ -147,6 +166,7 @@ private fun PanGesture.toJs(): JsPanGesture = JsPanGesture(
     moveAction = moveAction,
     moveIntervalMs = moveIntervalMs?.toInt() ?: 0,
     endAction = endAction,
+    location = location ?: false,
 )
 
 private fun PanAxis.toJs(): JsPanAxis = when (this) {
@@ -169,8 +189,12 @@ private fun PanDrag.toJs(): JsPanDrag = JsPanDrag(
     holdAtEnd = holdAtEnd ?: true,
 )
 
-private fun List<RendererNode>.toJsChildren(gesturePosition: (String) -> JsGesturePosition?): List<JsWidget> =
-    filterNot { it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset }.map { it.toJsWidget(gesturePosition) }
+private fun List<RendererNode>.toJsChildren(
+    gesturePosition: (String) -> JsGesturePosition?,
+    coverCells: (String) -> JsCoverCells?,
+): List<JsWidget> =
+    filterNot { it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset || it is RendererNode.ClearCells }
+        .map { it.toJsWidget(gesturePosition, coverCells) }
 
 private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
     var width: Int? = null

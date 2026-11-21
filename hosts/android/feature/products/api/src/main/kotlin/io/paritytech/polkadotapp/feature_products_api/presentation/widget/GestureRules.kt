@@ -74,6 +74,12 @@ internal object GestureRules {
     fun movesNow(nowMs: Long, lastSentMs: Long?, intervalMs: Int): Boolean =
         lastSentMs == null || nowMs - lastSentMs >= intervalMs.coerceAtLeast(0)
 
+    /** A finger's place inside a node of [widthPx] x [heightPx], from its top-start corner and clamped to it. */
+    fun inside(x: Float, y: Float, widthPx: Int, heightPx: Int, rtl: Boolean): Pair<Float, Float> {
+        val along = x.coerceIn(0f, widthPx.coerceAtLeast(0).toFloat())
+        return (if (rtl) widthPx - along else along) to y.coerceIn(0f, heightPx.coerceAtLeast(0).toFloat())
+    }
+
     /** A node takes a gesture while enabled, and a drag held at the end takes no more. */
     fun accepts(enabled: Boolean, heldAtEnd: Boolean): Boolean = enabled && !heldAtEnd
 }

@@ -118,6 +118,24 @@ sealed interface JsWidget {
     ) : JsWidget
 
     /**
+     * A cover drawn by its children, cut into [columns] x [rows] cells; every cleared cell cuts a round hole through it.
+     * @param cells The cells the worker cleared since this tree, until the next tree
+     * @param key Names the cover for cleared-cells updates
+     * @param cleared The cells this tree clears, `row * columns + column`
+     */
+    @Serializable
+    @SerialName("coverGrid")
+    data class CoverGrid(
+        @Transient val cells: JsCoverCells? = null,
+        val key: String,
+        val columns: Int,
+        val rows: Int,
+        val cleared: List<Int> = emptyList(),
+        val modifiers: List<JsModifier> = emptyList(),
+        val children: List<JsWidget> = emptyList(),
+    ) : JsWidget
+
+    /**
      * Text input field widget.
      * @param value Current text value
      * @param onValueChange Action ID invoked when text changes (receives new value in payload)

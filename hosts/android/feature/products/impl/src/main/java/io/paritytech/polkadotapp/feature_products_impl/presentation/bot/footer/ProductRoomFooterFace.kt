@@ -28,6 +28,7 @@ internal enum class ProductRoomFooterFace {
             is JsWidget.Box -> children.any { it.holdsSlide() }
             is JsWidget.Column -> children.any { it.holdsSlide() }
             is JsWidget.Row -> children.any { it.holdsSlide() }
+            is JsWidget.CoverGrid -> children.any { it.holdsSlide() }
             else -> false
         }
     }

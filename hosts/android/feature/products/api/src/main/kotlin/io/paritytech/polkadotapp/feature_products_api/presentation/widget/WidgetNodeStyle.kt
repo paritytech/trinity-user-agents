@@ -278,6 +278,7 @@ internal fun JsWidget.modifiers(): List<JsModifier> = when (this) {
     is JsWidget.Button -> modifiers
     is JsWidget.SlideToConfirm -> modifiers
     is JsWidget.Gesture -> modifiers
+    is JsWidget.CoverGrid -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
 }

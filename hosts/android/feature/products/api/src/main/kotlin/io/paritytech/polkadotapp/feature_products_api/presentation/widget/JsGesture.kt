@@ -368,6 +368,83 @@ internal fun JsGesture(
                         if (ValueAnimator.areAnimatorsEnabled() && popJob?.isActive != true && hitsChild(down.position)) press(feel)
                     }
                     val drag = pan?.drag
+                    if (pan != null && pan.location) {
+                        // Where the finger is, not how far it moved: Started carries the touch-down point, every move
+                        // the finger's place (paced like any keyed pan), and the end the place it lifted. Nothing is
+                        // clamped to travel and nothing completes.
+                        val width = nodeWidth.toFloat()
+                        fun at(point: Offset): Offset =
+                            GestureRules.inside(point.x, point.y, nodeWidth, nodeHeight, rtl).let { Offset(it.first, it.second) }
+                        var total = Offset.Zero
+                        var claimed = false
+                        var lifted = false
+                        var last = at(down.position)
+                        var lastMoveAt: Long? = null
+                        var moveJob: Job? = null
+                        fun offer(point: Offset, at: Long) {
+                            pan.moveAction ?: return
+                            if (node.position != null) {
+                                moves.offer(point)
+                            } else if (GestureRules.movesNow(at, lastMoveAt, pan.moveIntervalMs)) {
+                                lastMoveAt = at
+                                send(pan.moveAction, JsGesturePhase.MOVED, point.x, point.y, width)
+                            }
+                        }
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (change.changedToUpIgnoreConsumed()) {
+                                    lifted = true
+                                    if (claimed) {
+                                        last = at(change.position)
+                                        change.consume()
+                                    }
+                                    break
+                                }
+                                if (claimed) {
+                                    last = at(change.position)
+                                    offer(last, change.uptimeMillis)
+                                    change.consume()
+                                    continue
+                                }
+                                total += change.positionChangeIgnoreConsumed()
+                                when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
+                                    SlideDragDecision.CLAIM -> {
+                                        claimed = true
+                                        node.position?.let { position ->
+                                            if (pan.moveAction != null) {
+                                                moves.clear()
+                                                moveJob = scope.launchGestureMoves(moves, position, pan.moveIntervalMs) { point ->
+                                                    if (current.enabled && current.position === position) {
+                                                        send(pan.moveAction, JsGesturePhase.MOVED, point.x, point.y, width)
+                                                    } else {
+                                                        moves.clear()
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        val start = at(down.position)
+                                        send(pan.startAction, JsGesturePhase.STARTED, start.x, start.y, width)
+                                        last = at(change.position)
+                                        offer(last, change.uptimeMillis)
+                                        change.consume()
+                                    }
+                                    SlideDragDecision.RELEASE -> break
+                                    SlideDragDecision.WAIT -> Unit
+                                }
+                            }
+                        } finally {
+                            moveJob?.cancel()
+                            moves.clear()
+                            if (claimed) {
+                                send(pan.endAction, if (lifted) JsGesturePhase.ENDED else JsGesturePhase.CANCELLED, last.x, last.y, width)
+                            } else if (lifted && total.getDistance() <= slop) {
+                                send(node.tapAction, JsGesturePhase.TAP, 0f, 0f, width)
+                            }
+                        }
+                        return@awaitEachGesture
+                    }
                     val travel = travelNow()
                     // Without a drag the product owns the place, so every pan starts from zero, as on iOS.
                     val originX = if (drag != null) placeX.value else 0f

@@ -7,8 +7,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.BoxProps
+import uniffi.truapi.CoverGridProps
 import uniffi.truapi.GestureProps
 import uniffi.truapi.RendererNode
 
@@ -117,6 +119,58 @@ class RendererGestureOffsetsTest {
 
         assertEquals(before.copy(attached = false), position.value.value)
     }
+
+    @Test
+    fun `cleared cells reach their cover, emit no tree and answer the pan under way`() {
+        val offsets = RendererGestureOffsets()
+        val box = offsets.receive(scratch()) as JsWidget.Box
+        val gesture = box.children[0] as JsWidget.Gesture
+        val cover = box.children[1] as JsWidget.CoverGrid
+        val position = requireNotNull(gesture.position)
+        val cells = requireNotNull(cover.cells)
+        val answer = position.value.value.answer
+
+        assertNull(offsets.receive(RendererNode.ClearCells("foil", listOf(3u.toUShort(), 4u.toUShort()))))
+
+        assertEquals(listOf(3, 4), cells.value.value.cells.stream().toArray().toList())
+        assertEquals(answer + 1, position.value.value.answer)
+        assertEquals(0, position.value.value.x)
+    }
+
+    @Test
+    fun `a tree after cleared cells wins and keeps the same cover`() {
+        val offsets = RendererGestureOffsets()
+        val first = (offsets.receive(scratch()) as JsWidget.Box).children[1] as JsWidget.CoverGrid
+        offsets.receive(RendererNode.ClearCells("foil", listOf(7u.toUShort())))
+
+        val next = (offsets.receive(scratch()) as JsWidget.Box).children[1] as JsWidget.CoverGrid
+
+        assertSame(first.cells, next.cells)
+        assertTrue(requireNotNull(next.cells).value.value.cells.isEmpty)
+    }
+
+    @Test
+    fun `cells outside any grid and unknown covers are ignored`() {
+        val offsets = RendererGestureOffsets()
+        val cover = (offsets.receive(scratch()) as JsWidget.Box).children[1] as JsWidget.CoverGrid
+        offsets.receive(RendererNode.ClearCells("other", listOf(1u.toUShort())))
+        offsets.receive(RendererNode.ClearCells("foil", listOf(65535u.toUShort())))
+
+        assertTrue(requireNotNull(cover.cells).value.value.cells.isEmpty)
+    }
+
+    private fun scratch() = RendererNode.Box(
+        modifiers = emptyList(),
+        props = BoxProps(contentAlignment = null),
+        children = listOf(
+            gesture("scratch"),
+            RendererNode.CoverGrid(
+                modifiers = emptyList(),
+                props = CoverGridProps(key = "foil", columns = 4u, rows = 4u, cleared = ByteArray(0)),
+                children = emptyList(),
+            ),
+        ),
+    )
 
     private fun gesture(key: String) = RendererNode.Gesture(
         modifiers = emptyList(),

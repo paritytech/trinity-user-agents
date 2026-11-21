@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
@@ -15,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVari
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.Background
@@ -24,6 +26,7 @@ import uniffi.truapi.ButtonProps
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
+import uniffi.truapi.CoverGridProps
 import uniffi.truapi.Dimensions
 import uniffi.truapi.DropShadow
 import uniffi.truapi.Fill
@@ -344,5 +347,65 @@ class RendererNodeMappingTest {
             ),
             widget.feel,
         )
+    }
+
+    @Test
+    fun `a cover grid carries its grid, its cleared cells and the worker's cells`() {
+        val cells = JsCoverCells()
+        val node = RendererNode.CoverGrid(
+            modifiers = listOf(Modifier.FillWidth(true)),
+            props = CoverGridProps(key = "foil", columns = 35u, rows = 37u, cleared = byteArrayOf(0b1001, 0, 0x80.toByte())),
+            children = listOf(RendererNode.Box(modifiers = emptyList(), props = BoxProps(contentAlignment = null), children = emptyList())),
+        )
+
+        val widget = node.toJsWidget(coverCells = { key -> cells.takeIf { key == "foil" } }) as JsWidget.CoverGrid
+
+        assertSame(cells, widget.cells)
+        assertEquals("foil", widget.key)
+        assertEquals(35, widget.columns)
+        assertEquals(37, widget.rows)
+        assertEquals(listOf(0, 3, 23), widget.cleared)
+        assertEquals(1, widget.children.size)
+    }
+
+    @Test
+    fun `cleared cells inside a tree draw nothing`() {
+        val node = RendererNode.Box(
+            modifiers = emptyList(),
+            props = BoxProps(contentAlignment = null),
+            children = listOf(RendererNode.ClearCells(key = "foil", cells = listOf(1u.toUShort()))),
+        )
+
+        assertEquals(emptyList<JsWidget>(), (node.toJsWidget() as JsWidget.Box).children)
+    }
+
+    @Test
+    fun `a location pan reports where the finger is`() {
+        val node = RendererNode.Gesture(
+            modifiers = emptyList(),
+            props = GestureProps(
+                key = "scratch",
+                tapAction = null,
+                pan = PanGesture(
+                    axis = PanAxis.FREE,
+                    drag = null,
+                    startAction = "start",
+                    moveAction = "move",
+                    moveIntervalMs = null,
+                    endAction = "end",
+                    location = true,
+                ),
+                accessibilityLabel = null,
+                enabled = null,
+                hapticOnComplete = null,
+                feel = null,
+            ),
+            children = emptyList(),
+        )
+
+        val pan = requireNotNull((node.toJsWidget() as JsWidget.Gesture).pan)
+
+        assertTrue(pan.location)
+        assertEquals(JsPanAxis.FREE, pan.axis)
     }
 }

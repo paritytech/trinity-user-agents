@@ -93,6 +93,7 @@ private fun JsWidgetContent(
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
         is JsWidget.SlideToConfirm -> JsSlideToConfirmRenderer(widget, modifier)
         is JsWidget.Gesture -> JsGestureRenderer(widget, modifier)
+        is JsWidget.CoverGrid -> JsCoverGridRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
     }
@@ -300,6 +301,7 @@ private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.Button -> modifiers
     is JsWidget.SlideToConfirm -> modifiers
     is JsWidget.Gesture -> modifiers
+    is JsWidget.CoverGrid -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
 }.any { it is JsModifier.FillMaxHeight }
@@ -438,6 +440,16 @@ private fun JsGestureRenderer(
         modifier = modifier.then(widget.modifiers.toComposeModifier()),
     ) {
         ExitFadeChildren(widget) { child -> JsWidgetContent(widget = child) }
+    }
+}
+
+@Composable
+private fun JsCoverGridRenderer(
+    widget: JsWidget.CoverGrid,
+    modifier: Modifier = Modifier,
+) {
+    JsCoverGrid(widget = widget, modifier = modifier.then(widget.modifiers.toComposeModifier())) {
+        widget.children.forEach { child -> JsWidgetContent(widget = child) }
     }
 }
 
