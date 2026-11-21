@@ -91,6 +91,36 @@ struct ChatRequestOutgoingStoreTests {
         #expect(candidates.map(\.period) == [100, 99])
         #expect(candidates.first?.input.session.peer.accountId == Data(repeating: 2, count: 32))
     }
+
+    @Test func cancelledRequestIsAcknowledgedAndNoLongerPending() async throws {
+        let store = makeStore()
+        try await recordRequest(requestId, peer: 9, timestamp: 1)
+        _ = try await store.markPublished(input(requestId), period: 20_000)
+        _ = try await facade.databaseService.performWrite { [requestId] context in
+            try context.cancelOutgoingChatRequest(requestId)
+        }
+
+        #expect(try await store.isAcknowledged(input(requestId)))
+        #expect(try await !store.isAwaitingFirstDelivery(input(requestId)))
+        #expect(try await store.renewalCandidates().isEmpty)
+        #expect(try await store.pendingRequest(requestId: requestId) == nil)
+    }
+
+    @Test func publishLandingAfterCancelRecordsNoPeriod() async throws {
+        let store = makeStore()
+        try await recordRequest(requestId, peer: 9, timestamp: 1)
+        _ = try await facade.databaseService.performWrite { [requestId] context in
+            try context.cancelOutgoingChatRequest(requestId)
+        }
+
+        let publication = try await store.markPublished(input(requestId), period: 20_000)
+
+        let period = try await facade.databaseService.performRead { [requestId] context in
+            try context.outgoingStatementPeriod(for: requestId)
+        }
+        #expect(publication == StatementPublication(period: 20_000, isFirst: false))
+        #expect(period == nil)
+    }
 }
 
 private extension ChatRequestOutgoingStoreTests {
@@ -124,7 +154,7 @@ private extension ChatRequestOutgoingStoreTests {
 
             let request = CDChatRequest(context: context)
             request.identifier = requestId
-            request.status = Chat.RequestStatus.outgoing.rawValue
+            request.status = Chat.RequestStatus.outgoing(.pending).rawValue
             request.message = message
             request.contact = linkedToContact ? contact : nil
         }

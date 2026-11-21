@@ -163,7 +163,9 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			(
 				None,
 				ManifestSource::LookupFailed {
-					reason: "Asset Hub follow stopped before initialization".to_string(),
+					reason: "Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
+					         reason: \"fixture serves no chain\" }"
+						.to_string(),
 				},
 			),
 			(None, ManifestSource::TimedOut),
@@ -172,9 +174,9 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 }
 
 /// Lookups for one product that start while none has finished share one
-/// lookup, so a burst of them holds one Asset Hub follow, not one each.
+/// read of Asset Hub, not one each.
 #[test]
-fn concurrent_lookups_for_one_product_open_one_follow() {
+fn concurrent_lookups_for_one_product_read_asset_hub_once() {
 	let platform = std::sync::Arc::new(crate::test_support::StubPlatform::default());
 	let services = RuntimeServices::new(
 		platform.clone(),
@@ -194,7 +196,49 @@ fn concurrent_lookups_for_one_product_open_one_follow() {
 	));
 
 	assert_eq!(
-		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow"),
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getBlockHash"),
 		1
+	);
+}
+
+/// A live read goes to dotNS past a fresh cached entry and replaces it, so a
+/// funding provider republished within the cache's lifetime is seen at once;
+/// a cached read still answers from the entry, and then from the new one.
+#[test]
+fn a_live_read_replaces_a_fresh_cached_entry() {
+	use crate::platform::CoreStorage;
+	let platform = crate::test_support::StubPlatform::default();
+	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let read = |policy: CachePolicy| {
+		cached_dotns_json(&platform, key.clone(), policy, || async {
+			Ok::<_, String>(Some("republished".to_string()))
+		})
+	};
+
+	let (before, live, after) = futures::executor::block_on(async {
+		platform
+			.write_core_storage(
+				key.clone(),
+				encode_cached_root_manifest(Some("published"), current_unix_secs()),
+			)
+			.await
+			.expect("seeded");
+		let before = read(CachePolicy::UseCache).await.expect("cached");
+		let live = read(CachePolicy::Refresh).await.expect("live");
+		let after = read(CachePolicy::UseCache).await.expect("cached");
+		(before, live, after)
+	});
+
+	assert_eq!(
+		[
+			(before.0, matches!(before.1, DotnsRead::Cached { .. })),
+			(live.0, matches!(live.1, DotnsRead::Fetched)),
+			(after.0, matches!(after.1, DotnsRead::Cached { .. })),
+		],
+		[
+			(Some("published".to_string()), true),
+			(Some("republished".to_string()), true),
+			(Some("republished".to_string()), true),
+		]
 	);
 }

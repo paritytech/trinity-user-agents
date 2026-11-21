@@ -8,7 +8,7 @@ enum SearchContactModuleFactory {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
         guard
             let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
-                RootDependencyLocator.getDependency(),
+            RootDependencyLocator.getDependency(),
             let ownAccountId = try? walletRepo.main().getRawPublicKey()
         else {
             assertionFailure()

@@ -10,7 +10,7 @@
 //! *permission* named `ChainSubmit` — a policy question the platform answers
 //! locally, not an RPC — so the only host calls on the path are ones the mock
 //! already implements. This drives a real `signing_sign_raw` product frame
-//! through the dispatcher into a `SigningHostRuntime` whose entire platform is
+//! through the dispatcher into a `HostRuntime<SigningHost>` whose entire platform is
 //! the mock, and verifies the returned sr25519 signature against a key derived
 //! independently from the activation entropy. Nothing is stubbed between the
 //! seed and the signature.
@@ -26,14 +26,14 @@ use parity_scale_codec::{Decode, Encode};
 use schnorrkel::Signature;
 
 use truapi::{
-	FrameSink, SigningHostRuntime,
+	FrameSink, HostRuntime, SigningHost,
 	frame::{
 		MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START,
 		Payload, ProtocolMessage, request_ids, subscription_ids,
 	},
-	host_logic::product_account::{
-		SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair,
-		derive_root_keypair_from_entropy,
+	host_logic::{
+		product_account::{SR25519_SIGNING_CONTEXT, derivation_index_bytes},
+		root_entropy::RootEntropy,
 	},
 	platform::{
 		HostInfo, PlatformInfo, ProductContext, ProductId, SigningHostConfig,
@@ -126,8 +126,9 @@ fn account() -> v01::ProductAccountId {
 #[test]
 fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	let platform = Arc::new(MockPlatform::new());
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("a signing host activates a local session from raw entropy");
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
@@ -173,13 +174,12 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	// The signature has to verify against the key the activation entropy
 	// derives, not merely against whatever the runtime happens to hold: that is
 	// what makes this a signature by *the user's* product account.
-	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root keypair derives");
-	let keypair = derive_product_keypair(
-		&root,
-		&ProductId::for_test(PRODUCT_ID),
-		derivation_index_bytes(&v01::DerivationIndex::Index(0)),
-	)
-	.expect("product keypair derives");
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(
+			&ProductId::for_test(PRODUCT_ID),
+			derivation_index_bytes(&v01::DerivationIndex::Index(0)),
+		)
+		.expect("product keypair derives");
 
 	// `sign_raw` watermarks the payload before signing, so the signed message
 	// is the wrapped form rather than the bytes the product handed over.
@@ -206,19 +206,21 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	// fail it. Asserting that signing sent nothing is what distinguishes
 	// "signing is local" from "signing got lucky".
 	let platform = Arc::new(MockPlatform::new());
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("local activation succeeds");
 	// Activation looks the session's username up on Asset Hub in the
-	// background. Nothing answers its follow, so once that is sent the lookup
-	// waits out its step budget, seconds longer than signing takes.
+	// background. Nothing answers its request for the best block, so once
+	// that is sent the lookup waits out its step budget, seconds longer than
+	// signing takes.
 	let sent_by_activation = first_sent_rpc(&platform, Duration::from_secs(5));
 	assert!(
 		matches!(
 			sent_by_activation.as_slice(),
-			[follow] if follow.contains(r#""method":"chainHead_v1_follow""#)
+			[head] if head.contains(r#""method":"chain_getBlockHash""#)
 		),
-		"the username lookup must send one follow and then wait, or what it sends next can \
+		"the username lookup must send one best block request and then wait, or what it sends next can \
 		 land while signing and be counted against it; it sent {sent_by_activation:?}",
 	);
 
@@ -257,8 +259,9 @@ fn a_declined_confirmation_withholds_the_signature() {
 		confirm_user_actions: false,
 		..MockConfig::default()
 	}));
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("local activation succeeds");
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
@@ -320,7 +323,8 @@ fn a_seeded_preimage_is_reachable_through_the_core() {
 	let platform = Arc::new(MockPlatform::new());
 	let key = platform.insert_preimage(PREIMAGE.to_vec());
 
-	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
+	let runtime =
+		HostRuntime::<SigningHost>::new(platform.clone(), signing_config(), test_spawner());
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink.clone());

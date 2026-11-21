@@ -48,9 +48,10 @@ final class ChatAccountFunding: @unchecked Sendable {
 extension ChatAccountFunding: PeerSessionSignerResolving {
     func signer(for request: MessageExchange.SessionRequest) async throws -> StatementStoreSigning {
         let signer = try signerManager.makeSigner(with: request.peer.accountId)
+        let signerKeyId = try signerManager.statementSignerKeyId(with: request.peer.accountId)
 
         do {
-            try await awaitFunded(accountId: signer.accountId)
+            try await awaitFunded(accountId: signer.accountId, signerKeyId: signerKeyId)
             return signer
         } catch StatementStoreAllowanceError.noEvictableSlots {
             return try await identityFallback.identitySigner(
@@ -62,7 +63,7 @@ extension ChatAccountFunding: PeerSessionSignerResolving {
 }
 
 extension ChatAccountFunding {
-    func awaitFunded(accountId: AccountId) async throws {
+    func awaitFunded(accountId: AccountId, signerKeyId: String) async throws {
         while try await !isFundedForCurrentPeriod(accountId) {
             let period = await currentPeriod()
 
@@ -71,7 +72,7 @@ extension ChatAccountFunding {
             }
 
             do {
-                try await fundingTask(for: accountId).value
+                try await fundingTask(for: accountId, signerKeyId: signerKeyId).value
                 return
             } catch StatementStoreAllowanceError.noEvictableSlots {
                 throw StatementStoreAllowanceError.noEvictableSlots
@@ -92,23 +93,27 @@ private extension ChatAccountFunding {
         try await funding.hasAllocation(accountId: accountId, coveringPeriod: currentPeriod())
     }
 
-    func fundingTask(for accountId: AccountId) -> Task<Void, Error> {
+    func fundingTask(for accountId: AccountId, signerKeyId: String) -> Task<Void, Error> {
         state.withLock { state in
             if let existing = state.inFlight[accountId] {
                 return existing
             }
 
-            let task = Task { try await fund(accountId) }
+            let task = Task { try await fund(accountId, signerKeyId: signerKeyId) }
             state.inFlight[accountId] = task
             return task
         }
     }
 
-    func fund(_ accountId: AccountId) async throws {
+    func fund(_ accountId: AccountId, signerKeyId: String) async throws {
         do {
             // A caller may have read the record just before a previous funding finished.
             if try await !isFundedForCurrentPeriod(accountId) {
-                try await funding.ensureFunded(accountId: accountId, priority: .critical, domain: .chat)
+                try await funding.ensureFunded(
+                    holder: .local(accountId: accountId, signerKeyId: signerKeyId),
+                    priority: .critical,
+                    domain: .chat
+                )
             }
 
             state.withLock { state in

@@ -50,7 +50,8 @@ Follow the plan step by step. For each step:
    - Protocols.swift when adding inter-layer methods
    - ViewFactory when changing view construction
    - Wireframe when adding navigation
-   - Tests for new logic
+   - Tests for new risky logic only: follow the `tester` skill (Mode A). No tests for
+     humble objects or trivial mapping.
    - Localization for new user-visible strings
 4. Mark the step complete
 
@@ -65,7 +66,7 @@ These files are implicitly in scope when their counterpart is in `files_touched`
 | ViewLayout                  | ViewController + ViewFactory      |
 | Wireframe navigation        | Protocols.swift                   |
 | New user-visible string     | Localization files                |
-| New public type             | Tests (if test target exists)     |
+| New or changed Tier 1/2 logic (per `tester` triage) | Tests, written per the `tester` skill |
 
 ### Step 4: Self-Review
 

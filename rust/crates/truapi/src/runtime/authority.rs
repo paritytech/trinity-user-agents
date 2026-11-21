@@ -581,6 +581,14 @@ pub trait AccountHolder: Send + Sync + 'static {
 		session: &AuthoritySession,
 	) -> Result<SessionInfo, AuthorityError>;
 
+	/// This device's X25519 encryption secret, the key behind
+	/// [`crate::platform::SessionUiInfo::device_enc_public_key`] that the
+	/// user's other devices and contacts encrypt to.
+	///
+	/// `None` when the holder has no key for this device yet, such as a paired
+	/// host before pairing.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError>;
+
 	/// Issue the grants of an explicit request the caller confirmed.
 	///
 	/// The stream yields their outcomes in request order. A holder that issues

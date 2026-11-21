@@ -5,10 +5,8 @@ use crate::{
 		RemoteMessage, RemoteMessageData, decode_incoming_sso_request, v1,
 	},
 	host_logic::{
-		product_account::derive_identity_keypair,
-		sso::pairing::{
-			PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-		},
+		root_entropy::RootEntropy,
+		sso::pairing::{PairingBootstrap, establish_sso_session_info},
 		statement_store::SUBMIT_STATEMENT_METHOD,
 		worker::WorkerTransition,
 		x25519_seal::X25519PrivateKey,
@@ -35,7 +33,7 @@ impl FrameSink for RecordingSink {
 	}
 }
 
-fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
+fn activated_signing_runtime(platform: Arc<StubPlatform>) -> HostRuntime<SigningHost> {
 	use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 	let config = SigningHostConfig::new(
@@ -49,8 +47,8 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime 
 		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], [0xcc; 32]),
 	)
 	.expect("signing host config is valid");
-	let runtime = SigningHostRuntime::new(platform, config, Spawner::for_test());
-	futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
+	let runtime = HostRuntime::<SigningHost>::new(platform, config, Spawner::for_test());
+	futures::executor::block_on(runtime.activate_local_session(RootEntropy::new([0xab; 32])))
 		.expect("activation succeeds");
 	runtime
 }
@@ -70,7 +68,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	let runtime = activated_signing_runtime(platform.clone());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let access = || {
-		futures::executor::block_on(runtime.signing_host.accounts().consent().account_access(
+		futures::executor::block_on(runtime.role.accounts().consent().account_access(
 			&requester,
 			&target,
 			platform.as_ref(),
@@ -97,7 +95,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 /// Install `session` once the boot reconcile has reported the empty
 /// session store, so its clear cannot land on top of the session.
 fn install_session_after_boot(
-	runtime: &PairingHostRuntime,
+	runtime: &HostRuntime<PairingHost>,
 	platform: &StubPlatform,
 	session: crate::host_logic::session::SessionInfo,
 ) {
@@ -105,7 +103,7 @@ fn install_session_after_boot(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"the boot reconcile did not report the empty session store",
 	);
-	runtime.pairing_host.session().session_state().set_session(session);
+	runtime.role.session().session_state().set_session(session);
 }
 
 fn assert_send<T: Send>(_: T) {}
@@ -125,7 +123,8 @@ fn network_access_reuses_product_grants_and_prompts_only_for_new_domains() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let (config, _) = runtime_config("fetch.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
+		let runtime =
+			HostRuntime::<PairingHost>::new(platform.clone(), config, Spawner::for_test());
 		let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 		let cx = CallContext::default();
 		let request = network_permission(&["api.example.com"]);
@@ -243,7 +242,8 @@ fn network_access_honors_wildcard_precedence_revocation_and_product_isolation() 
 		let platform =
 			Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 		let (config, _) = runtime_config("fetch.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
+		let runtime =
+			HostRuntime::<PairingHost>::new(platform.clone(), config, Spawner::for_test());
 		let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 		let cx = CallContext::default();
 		admin
@@ -324,7 +324,8 @@ fn network_access_trusted_products_ignore_recorded_denials() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let (config, _) = runtime_config("peopl.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
+		let runtime =
+			HostRuntime::<PairingHost>::new(platform.clone(), config, Spawner::for_test());
 		let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
 		let cx = CallContext::default();
 		let request = network_permission(&["api.example.com"]);
@@ -367,10 +368,11 @@ fn network_access_trusted_products_ignore_recorded_denials() {
 fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host_config, _) = runtime_config("myapp.dot");
-	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
 	let session = crate::test_support::sso_session_info();
 	install_session_after_boot(&runtime, &platform, session.clone());
-	runtime.pairing_host.accounts().cache_product_subtree_for_test(
+	runtime.role.accounts().cache_product_subtree_for_test(
 		&session,
 		&crate::platform::ProductId::for_test("myapp.dot"),
 		[9; 32],
@@ -392,7 +394,8 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 fn a_timeout_bounds_the_wait_for_the_account_holder() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host_config, _) = runtime_config("myapp.dot");
-	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
 	install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
 
 	// Nothing answers the wallet request, and wait_for_sso_remote_response exits
@@ -1120,6 +1123,84 @@ fn poll_render(
 }
 
 #[test]
+fn a_back_press_reaches_only_a_connection_that_drew_that_back() {
+	// A product whose SDK cannot decode a back press would lose every later
+	// press, so a connection gets one only for a back it has drawn.
+	let (runtime, sink) = render_runtime();
+	let host = runtime.admin.product_runtime().clone();
+	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+		host.as_ref(),
+		&CallContext::with_request_id("renderer:1".to_string()),
+		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
+	));
+	let press = |card_id: &str| truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCardBack { card_id: card_id.to_string() },
+		action_id: "stamp".into(),
+		payload: vec![],
+	};
+	let publish = |card_id: &str| {
+		runtime
+			.control()
+			.publish_renderer_action(press(card_id))
+			.expect("a Worker may publish");
+	};
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+
+	publish("stamps");
+	assert!(actions.poll_next_unpin(&mut cx).is_pending(), "a back not yet drawn takes no press");
+
+	let mut back = runtime
+		.control()
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCardBack { card_id: "stamps".into() },
+			payload: vec![],
+		})
+		.expect("a Worker connection may render");
+	let item = truapi::versioned::renderer::ProductRendererRenderItem::V1(v01::RendererNode::Nil);
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_RECEIVE,
+		item.encode(),
+	);
+	assert!(matches!(poll_render(&mut back), core::task::Poll::Ready(Some(Ok(_)))));
+	publish("other");
+	publish("stamps");
+
+	let delivered = match actions.poll_next_unpin(&mut cx) {
+		core::task::Poll::Ready(Some(Ok(item))) => item,
+		other => panic!("the press on the drawn back must be ready, got {other:?}"),
+	};
+	assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), press("stamps"));
+	assert!(actions.poll_next_unpin(&mut cx).is_pending(), "a back never drawn takes no press");
+}
+
+/// Every host draws the trees the core hands it, so the core refuses an
+/// inline image once for all of them.
+#[test]
+fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
+	let (runtime, sink) = render_runtime();
+	let mut render = start_render(&runtime, "loyalty");
+	let image = |bytes: Vec<u8>| v01::RendererNode::Image {
+		modifiers: Vec::new(),
+		props: v01::ImageProps { source: v01::ImageSource::Inline(bytes), fit: None },
+	};
+
+	let item = truapi::versioned::renderer::ProductRendererRenderItem::V1(image(b"<svg/>".to_vec()));
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_RECEIVE,
+		item.encode(),
+	);
+
+	assert!(matches!(
+		poll_render(&mut render),
+		core::task::Poll::Ready(Some(Ok(node))) if node == image(Vec::new())
+	));
+}
+
+#[test]
 fn a_render_the_product_ends_releases_its_worker_reference() {
 	let (runtime, sink) = render_runtime();
 	let services = runtime.admin.product_runtime().connection().services().clone();
@@ -1630,8 +1711,11 @@ fn the_device_pairing_observer_is_installed_once() {
 		crate::test_support::paseo_test_stack(),
 	)
 	.expect("signing host config is valid");
-	let runtime =
-		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
+	let runtime = HostRuntime::<SigningHost>::new(
+		Arc::new(StubPlatform::default()),
+		config,
+		Spawner::for_test(),
+	);
 
 	assert!(runtime.set_device_pairing_observer(Arc::new(Inert)));
 	assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
@@ -1639,7 +1723,7 @@ fn the_device_pairing_observer_is_installed_once() {
 
 /// A signing host runtime over a stub platform, with no core database.
 #[cfg(not(target_arch = "wasm32"))]
-fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
+fn test_signing_runtime() -> (HostRuntime<SigningHost>, Arc<StubPlatform>) {
 	use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 	let host = HostInfo {
@@ -1656,7 +1740,7 @@ fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
 	)
 	.expect("signing host config is valid");
 	let platform = Arc::new(StubPlatform::default());
-	(SigningHostRuntime::new(platform.clone(), config, Spawner::for_test()), platform)
+	(HostRuntime::<SigningHost>::new(platform.clone(), config, Spawner::for_test()), platform)
 }
 
 /// Every durable consumer shares one core database: a second installer
@@ -1757,6 +1841,159 @@ fn the_durable_engine_starts_without_an_installation_provider() {
 	assert!(runtime.services.durable_engine().is_some());
 }
 
+/// Products ask the materials question as they connect, which can be before
+/// the core database opens. The answer follows the host's configuration, so a
+/// product never keeps a no the host did not mean.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_materials_answer_does_not_wait_for_the_core_database() {
+	let (runtime, _platform) = test_signing_runtime();
+	runtime.services.enable_materials();
+
+	assert!(runtime.services.draws_materials(1, &[]));
+}
+
+/// The CLI resolves faces from material files, so a material kept by hand
+/// draws in the first update, without Bulletin. A file the core cannot read is refused
+/// with the reason a fetched one would get.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_material_kept_by_hand_draws_without_bulletin() {
+	use truapi::latest::{MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
+	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
+	let no_entry_point = b"// @material 1\nfloat shade(vec2 uv) {\n  return 1.0;\n}\n";
+	let keep = |runtime: &HostRuntime<SigningHost>, text: &[u8]| match futures::executor::block_on(
+		runtime.keep_material(text.to_vec()),
+	) {
+		Err(crate::KeepMaterialError::Refused(failure)) => Err(failure),
+		kept => Ok(kept.expect("the database saves it")),
+	};
+	let (without_database, _platform) = test_signing_runtime();
+	without_database.services.enable_materials();
+	assert_eq!(keep(&without_database, text), Err(MaterialFailure::Unsupported));
+
+	let (runtime, _platform) = test_signing_runtime();
+	runtime.set_core_db(crate::store::open_memory_core_db());
+	runtime.start_core_services();
+	assert_eq!(
+		keep(&runtime, text),
+		Err(MaterialFailure::Unsupported),
+		"a host that draws no materials keeps none"
+	);
+	runtime.services.enable_materials();
+	let id = keep(&runtime, text).expect("a material is kept");
+	assert_eq!(id, crate::host_internal::bulletin::preimage_key(text));
+	assert_eq!(keep(&runtime, no_entry_point), Err(MaterialFailure::InvalidMaterial));
+
+	let face = RendererNode::Materials {
+		props: MaterialsProps { layers: vec![MaterialInstance { material: id, args: Vec::new() }] },
+		children: Vec::new(),
+	};
+	let card = truapi::latest::RenderContext::PocketCard { card_id: "card".to_string() };
+	let language = crate::ShaderLanguage::GlslEs;
+	let mut resolution = runtime.resolve_materials(&face, &card, language, true, Box::new(|_| {}));
+	let materials = crate::test_support::next(&mut resolution).expect("an update");
+	assert!(
+		matches!(materials.nodes[..], [crate::NodeMaterials::Ready { .. }]),
+		"{:?}",
+		materials.nodes
+	);
+}
+
+/// A Rust host that resolves a body its product rendered reports what falls back
+/// to that product, as a native execution does. A report is not a tap.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_resolved_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
+	use truapi::{
+		latest::{
+			HostRendererFailureSubscribeItem, MaterialFailure, MaterialInstance, MaterialsProps,
+			RenderContext, RendererNode,
+		},
+		versioned::IntoLatest,
+	};
+	let (signing, _platform) = test_signing_runtime();
+	signing.set_core_db(crate::store::open_memory_core_db());
+	signing.start_core_services();
+	signing.services.enable_materials();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("cards.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let runtime = signing.product_runtime(product, Arc::new(RecordingSink::default()));
+	let mut failures = futures::executor::block_on(truapi::api::Renderer::failure_subscribe(
+		runtime.admin.product_runtime().as_ref(),
+		&truapi::CallContext::with_request_id("failures-1".to_string()),
+		truapi::versioned::renderer::HostRendererFailureSubscribeRequest::V1,
+	));
+	let over_the_layer_limit = (0..17)
+		.map(|_| MaterialInstance { material: [7; 32], args: Vec::new() })
+		.collect();
+	let tree = RendererNode::Materials {
+		props: MaterialsProps { layers: over_the_layer_limit },
+		children: Vec::new(),
+	};
+	let context = RenderContext::PocketCard { card_id: "stamps".to_string() };
+
+	let _resolution = runtime
+		.control()
+		.resolve_materials(&tree, &context, crate::ShaderLanguage::GlslEs, true)
+		.expect("an open connection resolves");
+	let delivered = crate::test_support::next(&mut failures)
+		.expect("a failure report")
+		.expect("a failure item")
+		.into_latest();
+
+	assert_eq!(
+		delivered,
+		HostRendererFailureSubscribeItem {
+			context,
+			node: 0,
+			material: None,
+			reason: MaterialFailure::LimitExceeded,
+		}
+	);
+	assert!(!runtime.admin.product_runtime().connection().recently_tapped());
+}
+
+/// A material reported kept has to draw on later runs without Bulletin, so one
+/// the database does not save is an error rather than an ID.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_material_the_database_does_not_save_is_not_reported_kept() {
+	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
+	let (runtime, _platform) = test_signing_runtime();
+	let db = crate::store::open_memory_core_db();
+	runtime.set_core_db(db.clone());
+	runtime.start_core_services();
+	runtime.services.enable_materials();
+	futures::executor::block_on(db.write(|tx| {
+		Ok(tx.execute_batch(
+			"CREATE TRIGGER fail BEFORE INSERT ON material
+				BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+		)?)
+	}))
+	.expect("trigger created");
+
+	let kept = futures::executor::block_on(runtime.keep_material(text.to_vec()));
+
+	assert!(matches!(kept, Err(crate::KeepMaterialError::NotSaved(_))), "{kept:?}");
+}
+
+/// The runtime keeps one set of materials, so every renderer tree shares
+/// the fetches the start-up fetch began, and a second start begins none.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn core_services_install_the_materials_once() {
+	let (runtime, _platform) = test_signing_runtime();
+	let db = crate::store::open_memory_core_db();
+	runtime.set_core_db(db.clone());
+	runtime.start_core_services();
+	runtime.start_core_services();
+
+	assert!(!runtime.services.install_materials(materials(&runtime.services, db)));
+}
+
 #[test]
 fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer() {
 	let platform = Arc::new(StubPlatform {
@@ -1771,10 +2008,11 @@ fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer(
 		statement_account_id: [0x31; 32],
 		encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 	};
-	let identity =
-		derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
-	let (_, responder_encryption_public_key) =
-		derive_x25519_keypair_from_entropy(&[0xab; 32], b"sso");
+	let entropy = RootEntropy::new([0xab; 32]);
+	let identity = entropy
+		.derive_identity_keypair("testnet")
+		.expect("identity derivation succeeds");
+	let (_, responder_encryption_public_key) = entropy.derive_x25519_keypair(b"sso");
 	let pairing_session = establish_sso_session_info(
 		&PairingBootstrap {
 			deeplink: String::new(),
@@ -1867,7 +2105,7 @@ fn a_signing_host_runtime_carries_its_asset_hub_for_manifest_resolution() {
 	// Without this the signing role resolves no manifest and refuses every
 	// uncached grant. A seeded cache entry is served before the hash is
 	// consulted, which is why a seeded CLI looked healthy.
-	let runtime = SigningHostRuntime::new(
+	let runtime = HostRuntime::<SigningHost>::new(
 		Arc::new(StubPlatform::default()),
 		signing_config_with_asset_hub([0xcc; 32]),
 		Spawner::for_test(),
@@ -1897,8 +2135,11 @@ fn a_pairing_host_runtime_carries_its_asset_hub_too() {
 		"polkadotapp".to_string(),
 	)
 	.expect("pairing host config is valid");
-	let runtime =
-		PairingHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
+	let runtime = HostRuntime::<PairingHost>::new(
+		Arc::new(StubPlatform::default()),
+		config,
+		Spawner::for_test(),
+	);
 	assert_eq!(
 		runtime.services.asset_hub_chain_genesis_hash(),
 		[0xdd; 32],
@@ -1942,10 +2183,10 @@ struct ManifestLookup {
 fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
-	// The stub serves no dotNS, so end the follow rather than
+	// The stub serves no dotNS, so end its responses rather than
 	// wait out `dotns_lookup::OPERATION_TIMEOUT` for the same refusal.
 	let platform = Arc::new(StubPlatform { chain_responses_end: true, ..StubPlatform::default() });
-	let runtime = SigningHostRuntime::new(
+	let runtime = HostRuntime::<SigningHost>::new(
 		platform.clone(),
 		signing_config_with_asset_hub(asset_hub),
 		Spawner::for_test(),
@@ -1953,8 +2194,8 @@ fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	let host = ProductRuntimeHost::from_services(
 		runtime.services.clone(),
 		ConnectionAdapters::from_services(&runtime.services),
-		runtime.signing_host.accounts().clone(),
-		runtime.signing_host.clone(),
+		runtime.role.accounts().clone(),
+		runtime.role.clone(),
 		ProductContext::new(ProductId::for_test("unknown.dot")),
 	);
 	// Nothing is cached for `wallet.dot`, so resolution reaches dotNS.
@@ -1988,4 +2229,53 @@ fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
 		"the manifest lookup dials Asset Hub, not People ([0xaa; 32]) or \
          Bulletin ([0xbb; 32])"
 	);
+}
+
+/// Write a value for each of two products, so a clear can show it removed
+/// only the cleared product's. The kept id starts with the cleared one, so
+/// matching on the bare id would remove both.
+fn seed_two_products(platform: &StubPlatform) -> (String, String) {
+	use crate::platform::{ProductStorage, ProductStorageKey};
+
+	let cleared = ProductStorageKey::new(ProductId::for_test("myapp.dot"), "theme").encode();
+	let kept = ProductStorageKey::new(ProductId::for_test("myapp.dotapp.dot"), "theme").encode();
+	futures::executor::block_on(async {
+		platform.write(cleared.clone(), vec![1]).await.expect("seed write");
+		platform.write(kept.clone(), vec![2]).await.expect("seed write");
+	});
+	(cleared, kept)
+}
+
+fn stored_values(platform: &StubPlatform, keys: [&str; 2]) -> [Option<Vec<u8>>; 2] {
+	let storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+	keys.map(|key| storage.get(key).cloned())
+}
+
+/// Forgetting a product on a pairing host takes the values it wrote with
+/// its grants, so the product opened again starts from nothing.
+#[test]
+fn forgetting_a_product_on_a_pairing_host_clears_its_storage() {
+	let platform = Arc::new(StubPlatform::default());
+	let (host_config, _) = runtime_config("myapp.dot");
+	let runtime =
+		HostRuntime::<PairingHost>::new(platform.clone(), host_config, Spawner::for_test());
+	let (cleared, kept) = seed_two_products(&platform);
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+		.expect("clear product state");
+
+	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
+}
+
+/// The same on a signing host, whose grants live in its local activation.
+#[test]
+fn forgetting_a_product_on_a_signing_host_clears_its_storage() {
+	let platform = Arc::new(StubPlatform::default());
+	let runtime = activated_signing_runtime(platform.clone());
+	let (cleared, kept) = seed_two_products(&platform);
+
+	futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+		.expect("clear product state");
+
+	assert_eq!(stored_values(&platform, [&cleared, &kept]), [None, Some(vec![2])]);
 }

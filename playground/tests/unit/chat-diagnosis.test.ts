@@ -6,7 +6,8 @@ import { WORKER_DIAGNOSIS_METHODS, ChatDiagnosis } from "../../worker/diagnosis"
 /**
  * Worker-pinned methods the playground deliberately leaves out of its
  * diagnosis. The CLI battery drives Pocket and the funding provider over the
- * real wire instead, and no host serves the renderer's failure stream yet.
+ * real wire instead, and the renderer's failure stream reports only on faces a
+ * host draws, which a diagnosis cannot make it draw.
  * Naming each method rather than the whole service keeps the guard on the rest
  * of it, so a new method fails the check below until it is either diagnosed or
  * listed here.

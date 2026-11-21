@@ -162,3 +162,66 @@ fn tree_round_trips_through_uniffi() {
 
 	assert_eq!(lifted, node);
 }
+
+fn inline_image(bytes: Vec<u8>) -> RendererNode {
+	RendererNode::Image {
+		modifiers: vec![Modifier::Width(Compact(40))],
+		props: ImageProps { source: ImageSource::Inline(bytes), fit: None },
+	}
+}
+
+/// Every host refuses the same inline images, so a body draws alike
+/// everywhere: raster formats recognised by their first bytes, nothing over
+/// 64 KiB, and never SVG, which can load outside addresses.
+#[test]
+fn only_small_raster_inline_images_keep_their_bytes() {
+	let png = b"\x89PNG\r\n\x1a\n".to_vec();
+	let padded = |mut bytes: Vec<u8>, len: usize| {
+		bytes.resize(len, 0);
+		bytes
+	};
+	let cases = [
+		(png.clone(), true),
+		(vec![0xff, 0xd8, 0xff, 0xe0], true),
+		(b"RIFF\0\0\0\0WEBPVP8 ".to_vec(), true),
+		(padded(png.clone(), 64 * 1024), true),
+		(padded(png, 64 * 1024 + 1), false),
+		(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(), false),
+		(b"not an image".to_vec(), false),
+	];
+
+	for (bytes, allowed) in cases {
+		let mut node = inline_image(bytes.clone());
+		node.clear_refused_inline_images();
+		let expected = inline_image(if allowed { bytes } else { Vec::new() });
+		assert_eq!(node, expected, "allowed: {allowed}");
+	}
+}
+
+/// A refused image keeps its node and modifiers, so it still takes its
+/// place as empty space, wherever in the tree it sits, sampler arguments
+/// included.
+#[test]
+fn refused_inline_images_are_emptied_throughout_the_tree() {
+	let svg = b"<svg/>".to_vec();
+	let tree = |image: Vec<u8>| RendererNode::Column {
+		modifiers: Vec::new(),
+		props: ColumnProps { horizontal_alignment: None, vertical_arrangement: None },
+		children: vec![RendererNode::Materials {
+			props: MaterialsProps {
+				layers: vec![MaterialInstance {
+					material: [7; 32],
+					args: vec![Parameter::SamplerVec4(ImageRef::Source(ImageSource::Inline(
+						image.clone(),
+					)))],
+				}],
+			},
+			children: vec![inline_image(image)],
+		}],
+	};
+
+	let mut node = tree(svg);
+	node.clear_refused_inline_images();
+
+	assert_eq!(node, tree(Vec::new()));
+}

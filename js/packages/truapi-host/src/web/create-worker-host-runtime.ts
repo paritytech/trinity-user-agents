@@ -124,6 +124,14 @@ export interface WorkerPairingHostRuntime {
    * {@link WorkerPairingHostRuntime.activateStoredSession} does.
    */
   resetSessionState(): Promise<void>;
+  /**
+   * Forget one product: revoke its grants, Allow once answers and keys, and
+   * remove the values it wrote to product storage through
+   * `productStorage.clearProduct`. The session and other products are kept.
+   * Rejects on a disposed runtime, as
+   * {@link WorkerPairingHostRuntime.activateStoredSession} does.
+   */
+  clearProductState(productId: ProductId): Promise<void>;
   getPermissionAuthorizationStatus(
     productId: ProductId,
     request: PermissionAuthorizationRequest,
@@ -139,7 +147,7 @@ export interface WorkerPairingHostRuntime {
   ): Promise<void>;
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
-  getDeviceEncryptionKey(): Promise<Uint8Array>;
+  getDeviceEncryptionKey(): Promise<Uint8Array | undefined>;
   /** Validate and normalize a product identifier through the Rust core. */
   parseProductId(value: string): Promise<ProductId>;
   getProductSubtreePublicKey(
@@ -264,7 +272,10 @@ interface RuntimeState {
   >;
   pendingDeviceEncryptionKeys: Map<
     number,
-    { resolve: (key: Uint8Array) => void; reject: (error: Error) => void }
+    {
+      resolve: (key: Uint8Array | undefined) => void;
+      reject: (error: Error) => void;
+    }
   >;
   pendingProductSubtreePublicKeys: Map<
     number,
@@ -890,7 +901,7 @@ function handleProductSubtreePublicKeyResponse(
 function handleDeviceEncryptionKeyResponse(
   state: RuntimeState,
   msg:
-    | { requestId: number; ok: true; key: Uint8Array }
+    | { requestId: number; ok: true; key: Uint8Array | undefined }
     | { requestId: number; ok: false; error: string },
 ): void {
   settlePending(
@@ -1314,6 +1325,10 @@ export function createWebWorkerPairingHostRuntime(
         resolve(runtime);
       } else if (msg.kind === "fatalError") {
         failInit(new Error(`worker init reported error: ${msg.error}`));
+      } else {
+        // Building the runtime reads core storage through the host, so the
+        // worker's requests are answered before it is ready.
+        onMessage(ev);
       }
     };
 
@@ -1471,18 +1486,12 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         (requestId) => ({ kind: "getDeviceStatementKey", requestId }),
       );
     },
-    getDeviceEncryptionKey(): Promise<Uint8Array> {
-      // A key has no safe empty value: callers encrypt with what they get back,
-      // so a disposed runtime must fail rather than hand out a zero-length one.
-      // The check is synchronous with the send, so the fallback is unreachable.
-      if (state.disposed) {
-        return Promise.reject(new Error("worker host runtime is disposed"));
-      }
-      return sendWorkerRequest<Uint8Array>(
+    getDeviceEncryptionKey(): Promise<Uint8Array | undefined> {
+      return sendWorkerRequest<Uint8Array | undefined>(
         state,
         state.pendingDeviceEncryptionKeys,
         () => ++nextDeviceEncryptionKeyRequestId,
-        new Uint8Array(),
+        undefined,
         (requestId) => ({ kind: "getDeviceEncryptionKey", requestId }),
       );
     },
@@ -1579,6 +1588,13 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       return sendSessionActivationRequest(state, (requestId) => ({
         kind: "resetSessionState",
         requestId,
+      }));
+    },
+    clearProductState(productId: ProductId): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "clearProductState",
+        requestId,
+        productId,
       }));
     },
     getPermissionAuthorizationStatus(productId, request) {
@@ -1803,11 +1819,10 @@ function buildProvider(
       if (core.disposed) return undefined;
       return runtime.getDeviceStatementKey();
     },
-    async getDeviceEncryptionKey(): Promise<Bytes32> {
-      if (core.disposed) {
-        throw new Error("product connection is closed");
-      }
-      return bytesToHex(await runtime.getDeviceEncryptionKey());
+    async getDeviceEncryptionKey(): Promise<Bytes32 | undefined> {
+      if (core.disposed) return undefined;
+      const key = await runtime.getDeviceEncryptionKey();
+      return key && bytesToHex(key);
     },
     async getProductSubtreePublicKey(
       productId: ProductId,

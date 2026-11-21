@@ -19,6 +19,11 @@
 //! error is forwarded too, under a marker naming its level, so a host's log
 //! does not depend on anyone lowering the level for everything else.
 //!
+//! The same sink carries [`CoreEvent`], which names each field it carries
+//! instead of writing them into a detail line, so a host can hand them to its
+//! reporter as attributes rather than as prose. Both paths refuse a marker the
+//! table does not list.
+//!
 //! On wasm each level maps to the matching `console` method
 //! (`error`/`warn`/`info`/`debug`); on native everything goes to stderr.
 //! In Chrome, `debug`/`trace` land on `console.debug`, which the DevTools
@@ -52,10 +57,81 @@ use tracing_subscriber::{
 
 static RELOAD_HANDLE: OnceLock<reload::Handle<LevelFilter, Registry>> = OnceLock::new();
 static TRACE_SPANS: AtomicBool = AtomicBool::new(false);
-static HOST_SINK: RwLock<Option<HostSink>> = RwLock::new(None);
+static HOST_SINK: RwLock<Option<HostSinkHandle>> = RwLock::new(None);
 
-/// Takes a marker and a detail line for the native host log.
-type HostSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// One attribute of a core event: a stable key and a typed value.
+///
+/// Keys are written in the core's own source and never built from runtime
+/// text, so the set a host can be handed is the set the core names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoreAttribute {
+	/// What the value measures.
+	pub key: String,
+	/// The value itself.
+	pub value: CoreAttributeValue,
+}
+
+/// A core event attribute's value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CoreAttributeValue {
+	/// A label, either one the core chooses from a fixed set or a runtime
+	/// identifier. The builder only bounds its length, so a caller passing a
+	/// runtime identifier gates it first, admitting a short plain value and
+	/// collapsing anything else to a fallback. Free text a provider, a product
+	/// or a manifest wrote does not belong here.
+	Text {
+		/// The label.
+		value: String,
+	},
+	/// A count, or a duration in milliseconds.
+	Count {
+		/// The count.
+		value: u64,
+	},
+	/// A condition that either held or did not.
+	Flag {
+		/// Whether it held.
+		value: bool,
+	},
+}
+
+impl fmt::Display for CoreAttributeValue {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Text { value } => f.write_str(value),
+			Self::Count { value } => write!(f, "{value}"),
+			Self::Flag { value } => write!(f, "{value}"),
+		}
+	}
+}
+
+/// The sink a host installs, which both kinds of core traffic reach.
+///
+/// A host that keeps only a console implements [`Self::log`] and leaves
+/// [`Self::event`] alone, so a closure of the log signature is a sink on its
+/// own.
+pub trait HostSink: Send + Sync {
+	/// A marker and its free-form detail line.
+	fn log(&self, marker: &str, detail: &str);
+
+	/// A marker and the attributes it carries, each already bounded. Dropping
+	/// them is the default, so a sink carries structured traffic only once it
+	/// asks to.
+	fn event(&self, marker: &str, attributes: Vec<CoreAttribute>) {
+		let _ = (marker, attributes);
+	}
+}
+
+impl<F: Fn(&str, &str) + Send + Sync> HostSink for F {
+	fn log(&self, marker: &str, detail: &str) {
+		self(marker, detail)
+	}
+}
+
+/// An installed [`HostSink`].
+type HostSinkHandle = Arc<dyn HostSink>;
 
 /// Targets this crate family owns, whether a module path (`truapi::chain_runtime`)
 /// or a marker addressed to the host (`truapi.chain.follow_budget_reached`). A
@@ -250,7 +326,7 @@ pub fn init() {
 
 fn subscriber(
 	filter: reload::Layer<LevelFilter, Registry>,
-	slot: &'static RwLock<Option<HostSink>>,
+	slot: &'static RwLock<Option<HostSinkHandle>>,
 ) -> impl Subscriber {
 	Registry::default().with(ConsoleLayer.with_filter(filter)).with(
 		HostSinkLayer { sink: slot }.with_filter(
@@ -264,10 +340,7 @@ fn subscriber(
 					return false;
 				}
 				if meta.target().starts_with(markers::HOST_MARKER_PREFIX) {
-					// A host-addressed target the table does not list is a
-					// mistake, not a line to pass on: nothing downstream knows
-					// what its detail carries.
-					return markers::class_of(meta.target()).is_some();
+					return admits_host_marker(meta.target());
 				}
 				// A module path reaches a host only for being a warning, and
 				// arrives under the `truapi.tracing.*` markers the layer builds.
@@ -285,8 +358,135 @@ fn subscriber(
 /// returned registration removes the sink unless a later one replaced it.
 /// Between a registration dropping and the next one installing, no sink is
 /// set, so build one runtime per process.
-pub fn set_host_sink(sink: HostSink) -> HostSinkRegistration {
+pub fn set_host_sink(sink: HostSinkHandle) -> HostSinkRegistration {
 	HostSinkRegistration::install(&HOST_SINK, sink)
+}
+
+/// Longest text attribute a core event carries, in characters.
+///
+/// An attribute is a label the core chose, so this bounds a mistake rather
+/// than a message: prose belongs in a log line, under
+/// [`HOST_SINK_DETAIL_MAX_CHARS`].
+pub const CORE_EVENT_TEXT_MAX_CHARS: usize = 128;
+
+/// Most attributes one core event carries.
+///
+/// A host indexes these, so an event that grew a key per iteration would cost
+/// its marker whatever a host can group or filter by, not just its own line.
+pub const CORE_EVENT_MAX_ATTRIBUTES: usize = 32;
+
+/// Whether `target` is a host-addressed marker the table lists.
+///
+/// Both ways out of the core ask this: the layer that forwards tracing events
+/// and [`CoreEvent::emit`]. A host-addressed target the table does not list is
+/// a mistake rather than something to pass on, because nothing downstream
+/// knows what it carries.
+fn admits_host_marker(target: &str) -> bool {
+	target.starts_with(markers::HOST_MARKER_PREFIX) && markers::class_of(target).is_some()
+}
+
+/// A structured fact the core addresses to a host.
+///
+/// Where a log line spends its detail on prose a host can only store, an event
+/// names each field it carries, so a host hands them to its reporter as
+/// attributes it can group and filter by. The marker is a constant from
+/// [`markers`] and every key is written in the core's own source, so neither
+/// can be built from runtime text.
+///
+/// Values may be: a label the core chose from a fixed set, a count, or a
+/// condition. A string a provider, a product or a manifest wrote is none of
+/// those and does not belong in one, for the same reason it does not belong in
+/// a detail line.
+#[must_use = "an event reaches no host until it is emitted"]
+pub struct CoreEvent {
+	marker: markers::Marker,
+	attributes: Vec<CoreAttribute>,
+}
+
+impl CoreEvent {
+	/// An event of `marker`, carrying nothing yet.
+	pub fn new(marker: markers::Marker) -> Self {
+		Self { marker, attributes: Vec::new() }
+	}
+
+	/// Carry `key` as a label, bounded to [`CORE_EVENT_TEXT_MAX_CHARS`].
+	pub fn text(self, key: &'static str, value: impl Into<String>) -> Self {
+		let value = value.into();
+		let value = truncate_to_chars(&value, CORE_EVENT_TEXT_MAX_CHARS).to_string();
+		self.push(key, CoreAttributeValue::Text { value })
+	}
+
+	/// Carry `key` as a count, or as a duration in milliseconds.
+	pub fn count(self, key: &'static str, value: u64) -> Self {
+		self.push(key, CoreAttributeValue::Count { value })
+	}
+
+	/// Carry `key` as a condition that either held or did not.
+	pub fn flag(self, key: &'static str, value: bool) -> Self {
+		self.push(key, CoreAttributeValue::Flag { value })
+	}
+
+	fn push(mut self, key: &'static str, value: CoreAttributeValue) -> Self {
+		debug_assert!(
+			self.attributes.len() < CORE_EVENT_MAX_ATTRIBUTES,
+			"{} carries more than {CORE_EVENT_MAX_ATTRIBUTES} attributes",
+			self.marker.target,
+		);
+		if self.attributes.len() < CORE_EVENT_MAX_ATTRIBUTES {
+			self.attributes.push(CoreAttribute { key: key.to_string(), value });
+		}
+		self
+	}
+
+	/// Write this event to the core's own console and hand it to the sink a
+	/// host installed. A marker the table does not list is dropped, as it is on
+	/// the tracing path.
+	pub fn emit(self) {
+		let Self { marker, attributes } = self;
+		if !admits_host_marker(marker.target) {
+			return;
+		}
+		// Written before the sink is consulted, so a build with no sink to
+		// install still says what it is doing: the browser host and the CLI
+		// reach a marker only this way.
+		console(&marker, &attributes);
+		if IN_HOST_SINK.with(Cell::get) {
+			return;
+		}
+		// Cloned out so a sink that logs again cannot deadlock on the lock.
+		let sink = HOST_SINK.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+		let Some(sink) = sink else {
+			return;
+		};
+		IN_HOST_SINK.with(|inside| inside.set(true));
+		let _reentry = HostSinkReentry;
+		sink.event(marker.target, attributes);
+	}
+}
+
+/// Write `marker` and its attributes to the core's own console, under the live
+/// level, in the shape the tracing path writes a line.
+///
+/// A marker's class carries the level here, because an event is raised without
+/// one.
+fn console(marker: &markers::Marker, attributes: &[CoreAttribute]) {
+	let level = match marker.class {
+		markers::MarkerClass::Export { severity: markers::Severity::Error } => Level::ERROR,
+		markers::MarkerClass::Export { severity: markers::Severity::Warn } => Level::WARN,
+		_ => Level::INFO,
+	};
+	let live = RELOAD_HANDLE
+		.get()
+		.and_then(reload::Handle::clone_current)
+		.and_then(LevelFilter::into_level);
+	if !live.is_some_and(|live| level <= live) {
+		return;
+	}
+	let mut line = format!("[truapi] {level} {}", marker.target);
+	for CoreAttribute { key, value } in attributes {
+		let _ = write!(line, " {key}={value}");
+	}
+	emit(level, &line);
 }
 
 /// Whether any host still has a sink installed.
@@ -303,13 +503,13 @@ pub(crate) fn host_sink_installed() -> bool {
 /// starting leaves the one already running still logging.
 #[must_use = "dropping the registration puts back the sink it displaced"]
 pub struct HostSinkRegistration {
-	slot: &'static RwLock<Option<HostSink>>,
-	sink: HostSink,
-	displaced: Option<HostSink>,
+	slot: &'static RwLock<Option<HostSinkHandle>>,
+	sink: HostSinkHandle,
+	displaced: Option<HostSinkHandle>,
 }
 
 impl HostSinkRegistration {
-	fn install(slot: &'static RwLock<Option<HostSink>>, sink: HostSink) -> Self {
+	fn install(slot: &'static RwLock<Option<HostSinkHandle>>, sink: HostSinkHandle) -> Self {
 		// `replace` hands the previous sink back rather than dropping it here,
 		// so no host code runs under the write lock.
 		let displaced = slot
@@ -439,7 +639,7 @@ where
 
 /// Hands each event to the sink installed by [`set_host_sink`].
 struct HostSinkLayer {
-	sink: &'static RwLock<Option<HostSink>>,
+	sink: &'static RwLock<Option<HostSinkHandle>>,
 }
 
 impl<S: Subscriber> Layer<S> for HostSinkLayer {
@@ -468,7 +668,7 @@ impl<S: Subscriber> Layer<S> for HostSinkLayer {
 		};
 		IN_HOST_SINK.with(|inside| inside.set(true));
 		let _reentry = HostSinkReentry;
-		sink(&marker, truncate_to_chars(&detail, HOST_SINK_DETAIL_MAX_CHARS));
+		sink.log(&marker, truncate_to_chars(&detail, HOST_SINK_DETAIL_MAX_CHARS));
 	}
 }
 
@@ -583,11 +783,11 @@ pub mod testing {
 		init();
 		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
 		let recorded = lines.clone();
-		let sink: HostSink = Arc::new(move |marker, detail| {
+		let sink: HostSinkHandle = Arc::new(move |marker: &str, detail: &str| {
 			recorded.lock().unwrap().push(format!("{marker} {detail}"));
 		});
 		// Leaked so each call gets its own slot and parallel tests cannot share a sink.
-		let slot: &'static RwLock<Option<HostSink>> = Box::leak(Box::new(RwLock::new(Some(sink))));
+		let slot: &'static RwLock<Option<HostSinkHandle>> = Box::leak(Box::new(RwLock::new(Some(sink))));
 		tracing::subscriber::with_default(
 			subscriber(reload::Layer::new(LevelFilter::OFF).0, slot),
 			emit,
@@ -597,7 +797,7 @@ pub mod testing {
 
 	/// Calls the sink `registration` holds, wherever the process-wide slot points now.
 	pub fn forward(registration: &HostSinkRegistration, marker: &str, detail: &str) {
-		(registration.sink)(marker, detail);
+		registration.sink.log(marker, detail);
 	}
 }
 

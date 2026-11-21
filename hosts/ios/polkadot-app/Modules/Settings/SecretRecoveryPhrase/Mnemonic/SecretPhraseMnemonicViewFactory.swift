@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import Keystore_iOS
 import NovaCrypto
 import KeyDerivation
@@ -15,7 +16,10 @@ enum SecretPhraseMnemonicViewFactory {
 
         let presenter = SecretPhraseMnemonicPresenter(interactor: interactor, wireframe: wireframe)
 
-        let view = SecretPhraseMnemonicViewController(presenter: presenter)
+        let view = SecretPhraseMnemonicViewController(
+            presenter: presenter,
+            screenCaptureProtector: ScreenCaptureProtector(appStateStreamFactory: ApplicationStateStreamFactory())
+        )
 
         presenter.view = view
         interactor.presenter = presenter

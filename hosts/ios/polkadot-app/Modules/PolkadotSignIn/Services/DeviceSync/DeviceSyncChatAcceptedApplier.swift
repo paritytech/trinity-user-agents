@@ -98,8 +98,8 @@ private extension DeviceSyncChatAcceptedApplier {
         contactId: AccountId,
         peerDevice: Chat.PeerDevice?
     ) async throws {
-        guard request.isOutgoing else {
-            peerLogger.debug("Synced incoming accept \(requestId) doesn't match outgoing request, skipping")
+        guard request.status == .outgoing(.pending) else {
+            peerLogger.debug("Synced incoming accept \(requestId) doesn't match a pending outgoing request, skipping")
             return
         }
 

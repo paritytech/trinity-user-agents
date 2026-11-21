@@ -138,14 +138,50 @@ An unregistered target is caught three times over, in this order:
 | Where | What happens |
 |---|---|
 | compile time | every call site names a table constant, so a misspelled marker does not build |
-| `HostSinkLayer` | a target the table does not list is refused, a literal or a runtime-built one alike |
+| `admits_host_marker` | a target the table does not list is refused on either way out of the core, a literal or a runtime-built one alike |
 | host | a target absent from the table it read is treated as `Local` |
 
-The layer is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
+That predicate is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
 
 **What the table decides.** A marker absent from it is local, because lookup is exact. `MarkerClass::Export { severity }` is what carries a core error to Sentry as an error rather than as info. The rule exists once, in the core, whatever the host count.
 
 The two tag filters stay. They are the only gate on host-originated lines such as `truapi.payments`, which the core table says nothing about. Deleting them would ship every host debug line on any tag.
+
+## Core events
+
+A marker can name the fields it carries instead of writing them into a detail line. `CoreEvent` builds one in the core and `HostCallbacks::on_core_event` hands it to a host, which gives its reporter attributes it can group and filter by rather than prose it can only store.
+
+```rust
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoreAttribute {
+    pub key: String,
+    pub value: CoreAttributeValue,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CoreAttributeValue {
+    Text { value: String },
+    Count { value: u64 },
+    Flag { value: bool },
+}
+
+// Any marker the table lists.
+CoreEvent::new(markers::SOME_MARKER)
+    .text("outcome", "sent")
+    .count("age_ms", age)
+    .flag("money_moved", true)
+    .emit();
+```
+
+Keys are `&'static str` on the builder, so a key is written in the core's own source and nothing at a call site can build one from runtime text. A value is a label, a count, or a condition. A label may be a runtime identifier such as a provider, an asset or a dotNS name, which is why the type cannot be `&'static str` too, so the rule for those is the gate rather than the signature: the caller admits a short plain value and collapses anything else to a fallback, the way an unlisted provider is `other` and an untrusted product is `third_party`. Free text a provider, a product or a manifest wrote goes through that gate or it does not go, for the same reason it does not belong in a detail line.
+
+One marker table gates both paths. `admits_host_marker` is the single predicate the tracing layer's filter and `CoreEvent::emit` ask, so a marker nobody declared reaches a host on neither, and the class the table carries decides what a host may do with an event exactly as it does for a line.
+
+`CoreEvent::emit` writes to the core's own console before it consults the sink, under the live level and at the level the marker's class carries, so a marker reads the same on a build that installs no sink. The browser host and the CLI reach a marker only that way. It also holds the reentrancy flag across the sink call and honours it on the way in, so a host whose two callbacks share one lock cannot be re-entered from inside either.
+
+An attribute's text is bounded by `CORE_EVENT_TEXT_MAX_CHARS` and an event by `CORE_EVENT_MAX_ATTRIBUTES`. The second bound is about cardinality rather than size: a host indexes these, so an event that grew a key per iteration would cost its marker whatever a host can group by, not just its own line.
+
+`HostBridge` defaults the callback to nothing on both hosts, so a host carries structured traffic once it says it wants it.
 
 ## Trade-offs
 
@@ -158,7 +194,7 @@ The benefit is that the number of places the rule is written stays at one as hos
 ## Open questions
 
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
-2. Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?
+2. Do metrics want the same treatment that events have, or is a count on an event enough?
 3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
 4. Does Android route an info host event to Sentry Logs the way iOS does, which means `HostEvent` grows a level there?
 

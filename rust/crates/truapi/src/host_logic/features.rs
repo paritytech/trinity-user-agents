@@ -9,15 +9,18 @@
 use crate::platform::Features;
 use truapi::latest::{GenericError, HostFeatureSupportedRequest, HostFeatureSupportedResponse};
 
-/// Forward a feature-support query to the platform implementation. The core
-/// draws no materials yet, so it answers that question itself.
+/// Forward a feature-support query to the platform implementation, except
+/// the materials question, which `draws_materials` answers from the core.
 pub async fn feature_supported<P: Features + ?Sized>(
 	platform: &P,
+	draws_materials: impl FnOnce(u32, &[String]) -> bool,
 	request: HostFeatureSupportedRequest,
 ) -> Result<HostFeatureSupportedResponse, GenericError> {
 	match request {
-		HostFeatureSupportedRequest::Materials { .. } => {
-			Ok(HostFeatureSupportedResponse { supported: false })
+		HostFeatureSupportedRequest::Materials { format_version, features } => {
+			Ok(HostFeatureSupportedResponse {
+				supported: draws_materials(format_version, &features),
+			})
 		},
 		request => platform.feature_supported(request).await,
 	}

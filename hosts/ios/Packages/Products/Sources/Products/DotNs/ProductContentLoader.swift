@@ -77,11 +77,11 @@ public actor ProductContentLoader {
 extension ProductContentLoader: ProductContentLoading {
     public func open(
         _ productId: ProductId,
-        kind: ExecutableKind,
+        strategy: ExecutableKindStrategy,
         policy: ProductLoadPolicy,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent {
-        if let cached = await cachedContent(productId, kind: kind) {
+        if let cached = await cachedContent(productId, strategy: strategy) {
             scheduleRefresh(productId)
             return cached
         }
@@ -97,6 +97,7 @@ extension ProductContentLoader: ProductContentLoading {
             onPhase(.resolving)
 
             let manifest = try await fetcher.fetchManifest(productId)
+            let kind = try manifest.product.servedKind(for: strategy)
 
             let archive = try await fetcher.stage(manifest.product.contentId(for: kind), onPhase: onPhase)
 
@@ -169,9 +170,10 @@ private extension ProductManifest {
 }
 
 private extension ProductContentLoader {
-    func cachedContent(_ productId: ProductId, kind: ExecutableKind) async -> ProductContent? {
+    func cachedContent(_ productId: ProductId, strategy: ExecutableKindStrategy) async -> ProductContent? {
         guard
             let manifest = try? await cache.manifest(productId),
+            let kind = try? manifest.product.servedKind(for: strategy),
             let contentId = try? manifest.product.contentId(for: kind),
             let archive = await cache.appliedArchive(of: contentId)
         else {

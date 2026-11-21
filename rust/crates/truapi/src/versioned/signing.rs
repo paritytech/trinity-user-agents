@@ -23,7 +23,7 @@ truapi_macros::versioned_type! {
 	pub enum HostSignPayloadWithLegacyAccountRequest { V1 => v01::HostSignPayloadWithLegacyAccountRequest }
 	pub enum HostSignPayloadWithLegacyAccountResponse { V1 => v01::HostSignPayloadResponse }
 	pub enum HostSignPayloadWithLegacyAccountError { V1 => v01::HostSignPayloadError }
-	pub enum HostCreateTransactionRequest {
+	pub enum ProductAccountTxPayload {
 		V1 => v01::ProductAccountTxPayload,
 		V2 => v01::ProductAccountTxPayload,
 	}
@@ -35,7 +35,7 @@ truapi_macros::versioned_type! {
 		V1 => v01::HostCreateTransactionError,
 		V2 => v02::HostCreateTransactionError,
 	}
-	pub enum HostCreateTransactionWithLegacyAccountRequest { V1 => v01::LegacyAccountTxPayload }
+	pub enum LegacyAccountTxPayload { V1 => v01::LegacyAccountTxPayload }
 	pub enum HostCreateTransactionWithLegacyAccountResponse { V1 => v01::HostCreateTransactionWithLegacyAccountResponse }
 	pub enum HostCreateTransactionWithLegacyAccountError { V1 => v01::HostCreateTransactionError }
 }
@@ -44,7 +44,7 @@ truapi_macros::versioned_type! {
 // variant, because a method's version is uniform across its request, response
 // and error.
 
-impl IntoLatest for HostCreateTransactionRequest {
+impl IntoLatest for ProductAccountTxPayload {
 	fn into_latest(self) -> Self::Latest {
 		match self {
 			Self::V1(payload) | Self::V2(payload) => payload,
@@ -166,7 +166,7 @@ mod tests {
 		// hide the V2 error from every caller.
 		assert_eq!(
 			[
-				HostCreateTransactionRequest::LATEST,
+				ProductAccountTxPayload::LATEST,
 				HostCreateTransactionResponse::LATEST,
 				HostCreateTransactionError::LATEST,
 			],
@@ -178,7 +178,7 @@ mod tests {
 	fn create_transaction_with_legacy_account_stays_on_v01() {
 		// A V2 request would fail on every host that does not serve one, so a
 		// product that calls only this method keeps reaching older hosts.
-		assert_eq!(HostCreateTransactionWithLegacyAccountRequest::LATEST, 1);
+		assert_eq!(LegacyAccountTxPayload::LATEST, 1);
 	}
 
 	#[test]

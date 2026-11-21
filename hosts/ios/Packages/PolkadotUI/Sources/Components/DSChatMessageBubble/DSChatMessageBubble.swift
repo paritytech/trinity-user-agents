@@ -19,12 +19,14 @@ public struct DSChatMessageBubble: View {
         case pending
         case sent
         case delivered
+        case seen
 
         var icon: ImageResource {
             switch self {
             case .pending: .messagePending
-            case .sent: .messageSent
-            case .delivered: .messageDelivered
+            case .sent,
+                 .delivered: .messageSent
+            case .seen: .messageDelivered
             }
         }
     }

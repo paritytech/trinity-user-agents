@@ -26,7 +26,7 @@ use tokio::{
 	sync::Mutex as AsyncMutex,
 };
 use truapi::{
-	latest as api,
+	BulletinLookup, latest as api,
 	platform::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
@@ -39,7 +39,7 @@ use truapi::{
 };
 
 use crate::{
-	bulletin_lookup::{BitswapRpc, BulletinLookup},
+	bulletin_lookup::BitswapRpc,
 	chain::CliChainProvider,
 	stack_descriptor::Roles,
 	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
@@ -77,6 +77,9 @@ pub enum StorageError {
 	#[cfg(windows)]
 	#[display("replace {}", path.display())]
 	Replace { path: PathBuf, source: std::io::Error },
+	/// A storage file could not be removed.
+	#[display("remove {}", path.display())]
+	Remove { path: PathBuf, source: std::io::Error },
 	/// A completed write could not be moved to its destination.
 	#[display("persist {}", path.display())]
 	Persist { path: PathBuf, source: std::io::Error },
@@ -99,6 +102,7 @@ impl std::error::Error for StorageError {
 			Self::Create { source, .. } |
 			Self::Write { source, .. } |
 			Self::Sync { source, .. } |
+			Self::Remove { source, .. } |
 			Self::Persist { source, .. } |
 			Self::RecordNavigation { source, .. } => Some(source),
 			#[cfg(windows)]
@@ -183,7 +187,7 @@ pub struct CliPlatform {
 	device_storage_path: Option<PathBuf>,
 	state_dir: Mutex<Option<PathBuf>>,
 	pairing_scope: Option<PairingStorageScope>,
-	bulletin: Arc<BulletinLookup<BitswapRpc>>,
+	bulletin: BulletinLookup<BitswapRpc>,
 	next_notification_id: AtomicU32,
 	scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
 	approval: Mutex<ApprovalPolicy>,
@@ -268,7 +272,7 @@ impl CliPlatform {
 			device_storage_path,
 			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
 			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-			bulletin: Arc::new(BulletinLookup::new(bitswap)),
+			bulletin: BulletinLookup::new(Arc::new(bitswap), Arc::new(truapi::time::RealTimer)),
 			next_notification_id: AtomicU32::new(1),
 			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
 			approval: Mutex::new(approval),
@@ -308,6 +312,24 @@ impl CliPlatform {
 			return Ok(());
 		};
 		save_product_storage(&directory, product_id, values)
+	}
+
+	fn remove_product_storage(&self, product_id: &ProductId) -> Result<(), StorageError> {
+		let Some(directory) = self
+			.product_storage_dir
+			.lock()
+			.expect("product storage path mutex poisoned")
+			.clone()
+		else {
+			return Ok(());
+		};
+		let path = product_storage_path(&directory, product_id);
+		match fs::remove_file(&path) {
+			Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
+				Err(StorageError::Remove { path, source })
+			},
+			_ => Ok(()),
+		}
 	}
 
 	/// Whether a slot belongs to the install rather than the signed-in user.
@@ -526,6 +548,16 @@ impl ProductStorage for CliPlatform {
 		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
 		self.persist_product_storage(scoped.product_id(), values)?;
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
+		storage.remove(&product_id);
+		self.remove_product_storage(&product_id)?;
 		Ok(())
 	}
 
@@ -1063,7 +1095,7 @@ impl PreimageHost for CliPlatform {
 		&self,
 		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
-		self.bulletin.subscribe(key)
+		self.bulletin.lookup_preimage(key)
 	}
 }
 
