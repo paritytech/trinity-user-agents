@@ -27,11 +27,17 @@ class RealTokenAmountFormatter @Inject constructor(
     private val tokenAmountFormatterHigh = createTokenAmountFormatter(RoundPrecision.HIGH)
 
     private val tokenAmountFormatterDigitalDollar = createTokenAmountFormatter(RoundPrecision.FIAT, padTrailingZeros = true)
+    private val wholeDigitalDollarInFull = createTokenAmountFormatter(RoundPrecision.DEFAULT, abbreviate = false)
+    private val digitalDollarInFull = createTokenAmountFormatter(RoundPrecision.FIAT, padTrailingZeros = true, abbreviate = false)
 
-    private fun createTokenAmountFormatter(roundPrecision: RoundPrecision, padTrailingZeros: Boolean = false) =
+    private fun createTokenAmountFormatter(
+        roundPrecision: RoundPrecision,
+        padTrailingZeros: Boolean = false,
+        abbreviate: Boolean = true,
+    ) =
         numberFormatterFactory.createFormatter(
             params = Params(
-                includedAbbreviations = KnownAbbreviation.all(),
+                includedAbbreviations = if (abbreviate) KnownAbbreviation.all() else listOf(KnownAbbreviation.THOUSAND),
                 unabbreviatedTotalDecimals = roundPrecision.digits,
                 unabbreviatedMinTotalDecimals = roundPrecision.minDigits,
                 abbreviatedTotalDecimals = 2,
@@ -65,12 +71,13 @@ class RealTokenAmountFormatter @Inject constructor(
         tokenAmount: TokenAmountModel,
         precision: RoundPrecision,
         approx: Boolean,
-        withSymbol: Boolean
+        withSymbol: Boolean,
+        abbreviate: Boolean,
     ): String {
         val formatter = precision.formatter()
         return buildString {
             val number = when (tokenAmount.appearance) {
-                TokenSymbolAppearance.DigitalDollar -> tokenAmount.amount.formatAsDigitalDollar()
+                TokenSymbolAppearance.DigitalDollar -> tokenAmount.amount.formatAsDigitalDollar(abbreviate)
 
                 is TokenSymbolAppearance.Symbol -> formatter.format(tokenAmount.amount)
             }
@@ -81,12 +88,13 @@ class RealTokenAmountFormatter @Inject constructor(
         }
     }
 
-    private fun BigDecimal.formatAsDigitalDollar(): String {
+    private fun BigDecimal.formatAsDigitalDollar(abbreviate: Boolean): String {
         val isWhole = stripTrailingZeros().scale() <= 0
-        return if (isWhole) {
-            tokenAmountFormatterDefault.format(this)
-        } else {
-            tokenAmountFormatterDigitalDollar.format(this)
+        return when {
+            isWhole && abbreviate -> tokenAmountFormatterDefault.format(this)
+            isWhole -> wholeDigitalDollarInFull.format(this)
+            abbreviate -> tokenAmountFormatterDigitalDollar.format(this)
+            else -> digitalDollarInFull.format(this)
         }
     }
 

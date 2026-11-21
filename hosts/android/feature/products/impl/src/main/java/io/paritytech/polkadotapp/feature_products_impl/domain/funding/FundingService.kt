@@ -25,10 +25,10 @@ interface FundingService {
      * Session [id] as it changes, current state first, with the options and quotes for it. Completes after the
      * session ended, and without a value once it is gone: dropped by the core or left before it started.
      */
-    fun entryState(id: String): Flow<FundingEntry>
+    fun entryState(id: FundingSessionId): Flow<FundingEntry>
 
     /** The screens of session [id] are up, so the core no longer takes it as dismissed when they do not appear. */
-    fun shown(id: String)
+    fun shown(id: FundingSessionId)
 
     /** Starts the core, which resumes the sessions it holds. */
     suspend fun resume(): Result<Unit>
@@ -37,53 +37,53 @@ interface FundingService {
      * Opens a session on the host's own behalf, for [amount] in the balance asset's planks or what the user types when
      * `null`. Its screens are asked for through [events]; answers its id, or `null` once the user left it.
      */
-    suspend fun open(direction: FundingDirection, amount: U128?): Result<String?>
+    suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?>
 
     /** Tells the core what the user picked, in order with the asks after it. What it leads to comes back as options. */
-    fun select(selection: FundingSelection, id: String)
+    fun select(selection: FundingSelection, id: FundingSessionId)
 
     /** Asks every provider for the selection to quote [amount], or drops the quotes on screen when `null`. */
-    fun quote(amount: U128?, id: String)
+    fun quote(amount: U128?, id: FundingSessionId)
 
     /** Why [amount] cannot go ahead for the reported selection, given what a withdrawal can spend. */
-    suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?>
+    suspend fun amountIssue(amount: U128, spendable: U128?, id: FundingSessionId): Result<FundingAmountIssue?>
 
     /**
      * Hands the session to [provider] on the quote on screen. With no provider the core hands it to the latest ask's
      * best quote once every provider answered, and the session's state says when it did. Fails with a
      * [FundingStartError] when the provider did not take it.
      */
-    suspend fun start(id: String, provider: ProductId?): Result<Unit>
+    suspend fun start(id: FundingSessionId, provider: ProductId?): Result<Unit>
 
     /** The user left the screen that started the session on its best quote: the core no longer starts it. */
-    fun stopStarting(id: String)
+    fun stopStarting(id: FundingSessionId)
 
     /** The user left the session's screens. One that never started is dropped; one in flight runs on. */
-    fun leave(id: String)
+    fun leave(id: FundingSessionId)
 
     /**
      * Cancels a session. One that never started is dropped at once, as when the user leaves it; one in flight goes to
      * the core, which ends it or asks the provider.
      */
-    suspend fun cancel(id: String): Result<CancelOutcome>
+    suspend fun cancel(id: FundingSessionId): Result<CancelOutcome>
 
     /** Answers the provider's cancel offer: [terms] are the ones the user accepted, as shown, or `null` to keep going. */
-    suspend fun answerCancelOffer(id: String, terms: CancelTerms?): Result<CancelConfirmation>
+    suspend fun answerCancelOffer(id: FundingSessionId, terms: CancelTerms?): Result<CancelConfirmation>
 
     /** The user was shown how session [id] ended. */
-    suspend fun acknowledge(id: String)
+    suspend fun acknowledge(id: FundingSessionId)
 
     /** What the core asks of the app's screens. One consumer reads it; events wait until it does. */
     val events: Flow<FundingEvent>
 
     /**
-     * Lets the provider of session [entryId] show the screen it asked for, once the session is on screen or the user
+     * Lets the provider of session [sessionId] show the screen it asked for, once the session is on screen or the user
      * tapped the notice. The screen then comes as [FundingEvent.FrameOpened]; answers whether one was waiting.
      */
-    suspend fun openProviderFrame(entryId: String): Result<Boolean>
+    suspend fun openProviderFrame(sessionId: FundingSessionId): Result<Boolean>
 
-    /** Whether the provider of session [entryId] waits for its screen to be opened, so the notice can show again. */
-    suspend fun isFrameWaiting(entryId: String): Result<Boolean>
+    /** Whether the provider of session [sessionId] waits for its screen to be opened, so the notice can show again. */
+    suspend fun isFrameWaiting(sessionId: FundingSessionId): Result<Boolean>
 
     /** Answers the provider's screen [request], once it is gone. */
     fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome)
@@ -94,25 +94,25 @@ sealed interface FundingEvent {
     data class PresentationRequested(val entry: FundingEntry) : FundingEvent
 
     /**
-     * Provider [providerId] wants to show one of its screens for session [entryId]. The core holds it until the app
+     * Provider [providerId] wants to show one of its screens for session [sessionId]. The core holds it until the app
      * opens it through [FundingService.openProviderFrame].
      */
-    data class FrameRequested(val entryId: String, val providerId: ProductId) : FundingEvent
+    data class FrameRequested(val sessionId: FundingSessionId, val providerId: ProductId) : FundingEvent
 
     /** The core presents a provider's screen now, answered through [FundingService.answerFrame]. */
     data class FrameOpened(val request: FundingFrameRequest) : FundingEvent
 
     /** The provider's screens for a session are done: take them down and show the session in their place. */
-    data class FrameClosed(val entryId: String) : FundingEvent
+    data class FrameClosed(val sessionId: FundingSessionId) : FundingEvent
 
     /** A provider's worker keeps crashing while the core restarts it. */
     data class ProviderNotWorking(val productId: ProductId) : FundingEvent
 }
 
-/** A provider's screen the core presents for session [entryId], showing [target]. */
+/** A provider's screen the core presents for session [sessionId], showing [target]. */
 data class FundingFrameRequest(
-    val id: String,
-    val entryId: String,
+    val id: FundingFrameRequestId,
+    val sessionId: FundingSessionId,
     val providerId: ProductId,
     val target: FundingFrameTarget,
 )

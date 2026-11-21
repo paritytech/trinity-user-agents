@@ -21,8 +21,7 @@ enum class FundingPhase {
 
 /** One funding session as the screens draw it: what the core holds for it, and the quotes of the latest ask on it. */
 data class FundingEntry(
-    /** The session's intent. */
-    val id: String,
+    val id: FundingSessionId,
     val direction: FundingDirection,
     val amount: U128?,
     val openedAtMs: ULong,
@@ -56,7 +55,7 @@ data class FundingEntry(
 
     companion object {
         fun of(
-            id: String,
+            id: FundingSessionId,
             fallbackDirection: FundingDirection,
             fallbackAmount: U128?,
             session: FundingSession?,

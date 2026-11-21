@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingFrameOutcome
@@ -29,26 +30,26 @@ class AppFundingHostBridge @Inject constructor(
         intent: String,
         direction: CoreFundingDirection,
         amount: U128?,
-    ): FundingPresentOutcome = funding.get().present(intent, direction, amount)
+    ): FundingPresentOutcome = funding.get().present(FundingSessionId(intent), direction, amount)
 
     override fun providerFrameRequested(providerId: ProductId, intent: String) {
-        funding.get().frameRequested(providerId, intent)
+        funding.get().frameRequested(providerId, FundingSessionId(intent))
     }
 
     override suspend fun presentProviderFrame(
         providerId: ProductId,
         intent: String,
         target: FundingFrameTarget,
-    ): FundingFrameOutcome = funding.get().presentFrame(providerId, intent, target)
+    ): FundingFrameOutcome = funding.get().presentFrame(providerId, FundingSessionId(intent), target)
 
     override fun closeProviderFrame(providerId: ProductId, intent: String) {
-        funding.get().closeFrames(providerId, intent)
+        funding.get().closeFrames(providerId, FundingSessionId(intent))
     }
 
     override suspend fun detectedCountry(): String? = countryDetector.detect()
 
     override fun fundingChanged(intent: String?, kind: FundingChangeKind) {
-        funding.get().changed(intent, kind)
+        funding.get().changed(intent?.let(::FundingSessionId), kind)
     }
 }
 
