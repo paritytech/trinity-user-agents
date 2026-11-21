@@ -1,0 +1,9 @@
+[package]
+name = "qjs-runner-pulley"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+wasmtime = { version = "=51.0.0", default-features = false, features = ["cranelift", "pulley", "runtime", "std"] }
+getrandom = "0.3"

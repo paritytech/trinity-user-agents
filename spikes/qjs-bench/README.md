@@ -96,6 +96,35 @@ executed. Evidence:
 The core's release profile uses `opt-level = "z"`, so phase 2 must give the
 wasmi crates `opt-level = 3`. The behaviour looks worth reporting to wasmi.
 
+## T5: wasmtime, Pulley and Cranelift
+
+`runner-pulley/` runs the same guest, imports, WASI set, fuel and memory
+cap on wasmtime 51. By default it compiles to Pulley bytecode
+(`Config::target("pulley64")`), wasmtime's interpreter and the only wasmtime
+backend iOS allows. `--native` compiles for the host CPU with Cranelift
+instead, which is what Android could use.
+
+| Mac | QuickJS native | wasm, Cranelift JIT | wasm, wasmi | wasm, Pulley |
+|---|---|---|---|---|
+| Worker bundle, evaluate to idle | 6.9 ms | 13.8 ms | 97 ms | 341 ms |
+| W3 codec, round trips/s | 4 597 | 1 772 | 149 | 51 |
+| W4 rxjs, events/s | 304 652 | 119 352 | 9 776 | 3 493 |
+| W5 ping-pong 64 B, p50 | 1 µs | | 41 µs | 110 µs |
+| Module compile at startup | | 535 ms | 3 ms (lazy) | 588 ms |
+
+- Pulley is about three times slower than wasmi on every workload, so wasmi
+  stays the iOS engine and E4 drops out of the device runs.
+- Cranelift runs the wasm about 2.6 times slower than native QuickJS, the
+  cost of the sandbox's checks and of losing computed-goto dispatch. On
+  Android, where JIT is allowed, that is a usable engine. Its 535 ms compile
+  would move to build time with `Engine::precompile_module`.
+- wasmi is about 12 times slower than Cranelift, the usual gap between an
+  interpreter and a JIT. Together that gives the ~30 times between native
+  QuickJS and wasmi; nothing in the guest build looks pathological.
+- Fuel metering costs nothing measurable in wasmi (151 against 149 codec
+  round trips per second with `--fuel-per-turn 0`), so fuel stays the way to
+  stop runaway scripts.
+
 ## T2: the corpus
 
 The M0 plan proposed recording a Pocket battery run. That does not work as a

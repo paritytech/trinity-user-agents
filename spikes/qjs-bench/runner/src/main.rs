@@ -94,7 +94,11 @@ impl Guest {
         self.instance.get_typed_func::<P, R>(&self.store, name)
     }
 
+    /// `--fuel-per-turn 0` turns metering off, to measure what it costs.
     fn refuel(&mut self) -> Result<(), Error> {
+        if self.fuel_per_turn == 0 {
+            return Ok(());
+        }
         self.store.set_fuel(self.fuel_per_turn)
     }
 
@@ -160,7 +164,7 @@ fn run(options: &Options) -> Result<(), Error> {
     let source = std::fs::read(&options.script).map_err(|error| Error::new(format!("{}: {error}", options.script)))?;
 
     let mut config = Config::default();
-    config.consume_fuel(true);
+    config.consume_fuel(options.fuel_per_turn > 0);
     if std::env::var_os("QJS_EAGER").is_some() {
         config.compilation_mode(wasmi::CompilationMode::Eager);
     }
@@ -184,7 +188,9 @@ fn run(options: &Options) -> Result<(), Error> {
     link_wasi(&mut linker, &module)?;
 
     let instantiate_started = Instant::now();
-    store.set_fuel(options.fuel_per_turn)?;
+    if options.fuel_per_turn > 0 {
+        store.set_fuel(options.fuel_per_turn)?;
+    }
     let instance = linker.instantiate_and_start(&mut store, &module)?;
     let instantiated_in = instantiate_started.elapsed();
     let memory = instance
