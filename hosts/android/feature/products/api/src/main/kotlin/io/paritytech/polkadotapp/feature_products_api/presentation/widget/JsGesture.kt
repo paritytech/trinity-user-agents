@@ -162,7 +162,8 @@ internal fun JsGesture(
             // #2099's loop: it reads every move itself, consumed or not, and consumes what it uses, so a drag that
             // starts on the node is the node's alone and swipe to reply and the feed's scroll stand down.
             .pointerInput(Unit) {
-                val slop = viewConfiguration.touchSlop
+                // Lower than the system slop by default, so the thumb follows after about 1 mm (GestureDragThreshold).
+                val slop = GestureDragThreshold.currentPx(viewConfiguration.touchSlop, density)
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     val node = current
