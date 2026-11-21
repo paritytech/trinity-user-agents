@@ -14,3 +14,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The interpreter is the hot path; the guest's own size profile stays "s".
+[profile.release.package.wasmi]
+opt-level = 3
+[profile.release.package.wasmi_core]
+opt-level = 3
+[profile.release.package.wasmi_ir]
+opt-level = 3

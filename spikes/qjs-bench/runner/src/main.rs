@@ -33,6 +33,7 @@ struct Options {
     script: String,
     fuel_per_turn: u64,
     memory_bytes: usize,
+    native_stack_mib: usize,
 }
 
 fn main() -> ExitCode {
@@ -43,7 +44,15 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         },
     };
-    match run(&options) {
+    let stack_bytes = options.native_stack_mib << 20;
+    let outcome = std::thread::Builder::new()
+        .name("guest".into())
+        .stack_size(stack_bytes)
+        .spawn(move || run(&options))
+        .expect("spawn guest thread")
+        .join()
+        .expect("guest thread panicked");
+    match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("[runner] guest stopped: {error}");
@@ -53,17 +62,20 @@ fn main() -> ExitCode {
 }
 
 fn parse_options() -> Result<Options, String> {
-    let usage = "usage: qjs-runner <guest.wasm> <script.js> [--fuel-per-turn N] [--memory-mib N]".to_string();
+    let usage = "usage: qjs-runner <guest.wasm> <script.js> [--fuel-per-turn N] [--memory-mib N] [--native-stack-mib N]"
+        .to_string();
     let mut args = std::env::args().skip(1);
     let guest = args.next().ok_or_else(|| usage.clone())?;
     let script = args.next().ok_or_else(|| usage.clone())?;
-    let mut options = Options { guest, script, fuel_per_turn: 2_000_000_000, memory_bytes: 64 << 20 };
+    let mut options =
+        Options { guest, script, fuel_per_turn: 2_000_000_000, memory_bytes: 64 << 20, native_stack_mib: 8 };
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| usage.clone())?;
         let number: u64 = value.parse().map_err(|_| usage.clone())?;
         match flag.as_str() {
             "--fuel-per-turn" => options.fuel_per_turn = number,
             "--memory-mib" => options.memory_bytes = (number as usize) << 20,
+            "--native-stack-mib" => options.native_stack_mib = number as usize,
             _ => return Err(usage),
         }
     }
@@ -149,6 +161,9 @@ fn run(options: &Options) -> Result<(), Error> {
 
     let mut config = Config::default();
     config.consume_fuel(true);
+    if std::env::var_os("QJS_EAGER").is_some() {
+        config.compilation_mode(wasmi::CompilationMode::Eager);
+    }
     let engine = Engine::new(&config);
 
     let compile_started = Instant::now();

@@ -34,7 +34,7 @@ function handshakePing(): Uint8Array {
     VersionedHostHandshakeRequest.enc({ tag: "V1", value: { codecVersion: TRUAPI_CODEC_VERSION } }));
 }
 
-function renderRequest(requestId: string, step: number): Uint8Array {
+export function renderRequest(requestId: string, step: number): Uint8Array {
   const payload: RenderPayload = { step, passed: step % (DIAGNOSIS_METHOD_COUNT + 1) };
   const value = VersionedProductRendererRenderRequest.enc({
     tag: "V1",

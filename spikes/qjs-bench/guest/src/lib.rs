@@ -9,7 +9,7 @@ use std::cell::RefCell;
 
 use rquickjs::{CatchResultExt, Context, Ctx, Function, Object, Runtime, TypedArray};
 
-mod host;
+pub mod host;
 
 const PRELUDE: &str = include_str!("../js/prelude.js");
 const MEMORY_LIMIT_BYTES: usize = 24 << 20;

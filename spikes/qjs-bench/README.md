@@ -37,6 +37,58 @@ bun run corpus   # rebuild corpus/corpus.bin
 bun run verify   # T2 done-when check
 ```
 
+## T3: the workload bundle
+
+`bun run check` builds `dist/workloads.js` (the bench worker, W3 to W5 and
+the client, one minified IIFE of 117 KB, as a product would ship it),
+`dist/webview-shim.js` for E1, and one `dist/w-<name>.js` wrapper per
+workload that sets `__BENCH` first, so an engine only ever evaluates one
+file. It then runs every wrapper under Bun, one process each; the worker
+replays the corpus with zero mismatches.
+
+The native probe (`cargo run -p qjs-guest --release --bin native-probe --
+workloads/dist/w-codec.js`) compiles the same guest code (prelude, bindings,
+QuickJS) for the Mac instead of wasm. That is the E2 engine, early.
+
+### Mac results
+
+| Workload | Bun (JIT) | QuickJS native (E2) | QuickJS in wasm on wasmi (E3) |
+|---|---|---|---|
+| Worker bundle, evaluate to idle | 7.7 ms | 6.9 ms | 97 to 117 ms |
+| W3 codec, render round trips/s | 33 840 | 4 597 | 149 (6.7 ms each) |
+| W4 rxjs, events/s | 2 057 000 | 304 652 | 9 776 |
+| W5 frame ping-pong, 64 B and 4 KB, p50 | under 1 µs | 1 µs | 41 to 43 µs |
+
+- QuickJS itself is about 7 times slower than a JIT, which is what an
+  interpreter costs.
+- The wasm layer on wasmi costs a further factor of about 30, against the
+  plan's estimate of 3 to 10. This, not QuickJS, is what puts the gate at
+  risk on iOS, where no JIT is allowed.
+- The host boundary is cheap: 41 µs per round trip including the JS promise
+  machinery, flat between 64 B and 4 KB.
+- Building the guest (QuickJS's C code included) at `opt-level = 3` instead
+  of `"s"` gains about 9% and grows the module from 882 KB to 1.29 MB, so the
+  guest stays at `"s"`.
+
+### Finding: wasmi needs `opt-level = 3` or its dispatch grows the native stack
+
+At the workspace's `opt-level = "s"`, evaluating the 117 KB bundle overflows
+a 16 MiB native thread stack (it needs between 16 and 32 MiB), while the
+tiny T1 scripts never did. wasmi 2.0 dispatches instructions with tail calls
+and its build script enables that at `"s"`, but LLVM does not reliably turn
+them into jumps at that level, so the stack grows with every instruction
+executed. Evidence:
+
+- Eager compilation succeeds on 8 MiB, so translation is not the cause.
+- With wasmi's `portable-dispatch` feature the bundle runs on 1 MiB, but
+  evaluation takes 250 ms instead of 117 ms.
+- With tail-call dispatch and wasmi alone at `opt-level = 3` (the profile
+  overrides in `Cargo.toml`), the bundle runs on 1 MiB and evaluation takes
+  97 ms.
+
+The core's release profile uses `opt-level = "z"`, so phase 2 must give the
+wasmi crates `opt-level = 3`. The behaviour looks worth reporting to wasmi.
+
 ## T2: the corpus
 
 The M0 plan proposed recording a Pocket battery run. That does not work as a
