@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.app.BuildConfig
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
@@ -15,11 +16,16 @@ import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.sentry.Sentry
+import io.sentry.SentryAttributes
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
+import io.sentry.SentryLogLevel
+import io.sentry.logger.ILoggerApi
+import io.sentry.logger.SentryLogParameters
 import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
+import javax.inject.Provider
 
 internal fun interface HostTelemetryEnabledProvider {
     fun isEnabled(): Boolean
@@ -39,13 +45,31 @@ internal class RealSentryEventCapture @Inject constructor() : SentryEventCapture
     }
 }
 
+internal fun interface SentryLogCapture {
+    fun log(level: SentryLogLevel, parameters: SentryLogParameters, body: String)
+}
+
+// A Provider, so the logger is read once Sentry has started rather than when this is built.
+internal class RealSentryLogCapture @Inject constructor(
+    private val logger: Provider<ILoggerApi>,
+) : SentryLogCapture {
+    override fun log(level: SentryLogLevel, parameters: SentryLogParameters, body: String) {
+        logger.get().log(level, parameters, body)
+    }
+}
+
 internal class RealHostEventCapture @Inject constructor(
     private val enabledProvider: HostTelemetryEnabledProvider,
     private val sentryCapture: SentryEventCapture,
+    private val sentryLog: SentryLogCapture,
 ) : HostEventCapture {
     override fun capture(event: () -> HostEvent) {
         if (enabledProvider.isEnabled()) {
-            sentryCapture.capture(event().toSentryEvent())
+            val hostEvent = event()
+            when (hostEvent.level) {
+                HostEventLevel.INFO -> sentryLog.log(SentryLogLevel.INFO, hostEvent.toLogParameters(), hostEvent.name)
+                HostEventLevel.WARNING, HostEventLevel.ERROR -> sentryCapture.capture(hostEvent.toSentryEvent())
+            }
         }
     }
 }
@@ -83,6 +107,7 @@ internal class HostProcessTelemetryInitializer @Inject constructor(
 
 private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = HostEvent(
     name = "host.process.started",
+    level = HostEventLevel.INFO,
     tags = baseTags() + ("host.os_version" to osVersion),
     extras = baseExtras() + mapOf(
         "app.launch_id" to launchId.toString(),
@@ -95,8 +120,22 @@ private fun HostEvent.toSentryEvent() = SentryEvent().apply {
     // One group per event name. Sentry would otherwise group these by the stack
     // trace it attaches, which splits one name across several groups.
     fingerprints = listOf(this@toSentryEvent.name)
-    level = SentryLevel.INFO
-    logger = "host.telemetry"
+    level = this@toSentryEvent.level.toSentryLevel()
+    logger = HOST_TELEMETRY_LOGGER
     this@toSentryEvent.tags.forEach(::setTag)
     this@toSentryEvent.extras.forEach(::setExtra)
 }
+
+private fun HostEventLevel.toSentryLevel() = when (this) {
+    HostEventLevel.INFO -> SentryLevel.INFO
+    HostEventLevel.WARNING -> SentryLevel.WARNING
+    HostEventLevel.ERROR -> SentryLevel.ERROR
+}
+
+// Tags and extras share one attribute namespace on a log line, so an extra wins
+// over a tag of the same key. `tag` matches the attribute SentryLogTree sets.
+private fun HostEvent.toLogParameters() = SentryLogParameters.create(
+    SentryAttributes.fromMap(tags + extras + mapOf("event.name" to name, "tag" to HOST_TELEMETRY_LOGGER)),
+)
+
+private const val HOST_TELEMETRY_LOGGER = "host.telemetry"

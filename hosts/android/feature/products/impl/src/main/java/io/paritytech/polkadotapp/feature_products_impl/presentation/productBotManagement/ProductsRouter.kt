@@ -48,6 +48,9 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
 
     suspend fun closeFundingEnded(sessionId: FundingSessionId)
 
+    /** Every funding session, in flight and ended, over whatever is on screen. */
+    suspend fun openFundingHistory()
+
     /** Whether the funding sheet for [sessionId] is on top, alone or under its own provider screen. */
     suspend fun isFundingOverlayShown(sessionId: FundingSessionId): Boolean
 

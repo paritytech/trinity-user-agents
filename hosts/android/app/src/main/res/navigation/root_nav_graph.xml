@@ -76,11 +76,6 @@
         android:label="SpaBrowserFragment" />
 
     <dialog
-        android:id="@+id/spaSheetBottomSheet"
-        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.spaSheet.SpaSheetBottomSheet"
-        android:label="SpaSheetBottomSheet" />
-
-    <dialog
         android:id="@+id/pocketAddCardBottomSheet"
         android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.pocketAddCard.PocketAddCardBottomSheet"
         android:label="PocketAddCardBottomSheet" />
@@ -114,6 +109,11 @@
         android:id="@+id/fundingEndedBottomSheet"
         android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended.FundingEndedBottomSheet"
         android:label="FundingEndedBottomSheet" />
+
+    <dialog
+        android:id="@+id/fundingHistoryBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingHistoryBottomSheet"
+        android:label="FundingHistoryBottomSheet" />
 
     <dialog
         android:id="@+id/fundingProviderFrameBottomSheet"
@@ -268,10 +268,6 @@
         app:destination="@id/scan_graph" />
 
     <action
-        android:id="@+id/action_global_to_spaSheetBottomSheet"
-        app:destination="@id/spaSheetBottomSheet" />
-
-    <action
         android:id="@+id/action_global_to_pocketAddCardBottomSheet"
         app:destination="@id/pocketAddCardBottomSheet" />
 
@@ -302,6 +298,10 @@
     <action
         android:id="@+id/action_global_to_fundingEndedBottomSheet"
         app:destination="@id/fundingEndedBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_fundingHistoryBottomSheet"
+        app:destination="@id/fundingHistoryBottomSheet" />
 
     <action
         android:id="@+id/action_global_to_fundingProviderFrameBottomSheet"

@@ -132,6 +132,10 @@ class ProductsNavigator @Inject constructor(
         popIfOnTop(R.id.fundingEndedBottomSheet, FundingEndedBottomSheet.SESSION_ID, sessionId.value)
     }
 
+    override suspend fun openFundingHistory() = withContext(dispatchers.main) {
+        performNavigation(R.id.action_global_to_fundingHistoryBottomSheet)
+    }
+
     override suspend fun isFundingOverlayShown(sessionId: FundingSessionId): Boolean = withContext(dispatchers.main) {
         sessionOnTop(R.id.fundingBottomSheet, FundingBottomSheet.SESSION_ID, sessionId)
     }

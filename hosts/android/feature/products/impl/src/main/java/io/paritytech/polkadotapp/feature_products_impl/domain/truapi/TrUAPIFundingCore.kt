@@ -24,6 +24,8 @@ class TrUAPIFundingCore @Inject constructor(
 ) : FundingCore {
     override suspend fun start(): Result<Unit> = runtimeProvider.runtime().map { }
 
+    override suspend fun available(): Result<Boolean> = runtimeProvider.runtime().mapCatching { it.fundingAvailable() }
+
     override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> =
         runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.openFunding(direction, amount) } }
 
