@@ -15,9 +15,67 @@ const PRELUDE: &str = include_str!("../js/prelude.js");
 const MEMORY_LIMIT_BYTES: usize = 24 << 20;
 const MAX_STACK_BYTES: usize = 256 << 10;
 
-struct Engine {
+/// One QuickJS runtime and context with the host bindings and prelude
+/// installed. The wasm exports drive a single engine; native harnesses (E2)
+/// can create several.
+pub struct Engine {
     runtime: Runtime,
     context: Context,
+}
+
+impl Engine {
+    /// Create an engine and evaluate `source`. The status is 0 on success
+    /// and 1 if the script threw.
+    pub fn new(source: Vec<u8>) -> (Self, i32) {
+        let runtime = Runtime::new().expect("QuickJS runtime");
+        runtime.set_memory_limit(MEMORY_LIMIT_BYTES);
+        runtime.set_max_stack_size(MAX_STACK_BYTES);
+        let context = Context::full(&runtime).expect("QuickJS context");
+        let status = context.with(|ctx| {
+            let evaluated = install_host(&ctx)
+                .and_then(|()| ctx.eval::<(), _>(PRELUDE))
+                .and_then(|()| ctx.eval::<(), _>(source));
+            report(&ctx, evaluated)
+        });
+        (Self { runtime, context }, status)
+    }
+
+    /// Deliver one inbound frame to the script's frame listener.
+    pub fn deliver(&self, frame: Vec<u8>) {
+        self.context.with(|ctx| {
+            let delivered = TypedArray::<u8>::new(ctx.clone(), frame)
+                .and_then(|bytes| global_function(&ctx, "__truapi_deliver")?.call::<_, ()>((bytes,)));
+            report(&ctx, delivered);
+        });
+    }
+
+    /// Fire the timer the host scheduled with `timer_set`.
+    pub fn fire_timer(&self, id: u32) {
+        self.context.with(|ctx| {
+            let fired = global_function(&ctx, "__truapi_fire_timer").and_then(|fire| fire.call::<_, ()>((id,)));
+            report(&ctx, fired);
+        });
+    }
+
+    /// Run every pending promise job. Returns how many ran, or -1 if any threw.
+    pub fn run_jobs(&self) -> i32 {
+        let mut ran = 0;
+        let mut failed = false;
+        loop {
+            match self.runtime.execute_pending_job() {
+                Ok(true) => ran += 1,
+                Ok(false) => break,
+                Err(exception) => {
+                    failed = true;
+                    exception.0.with(|ctx| {
+                        let caught = ctx.catch();
+                        host::log(host::LEVEL_ERROR, &format!("uncaught in job: {caught:?}"));
+                    });
+                },
+            }
+        }
+        if failed { -1 } else { ran }
+    }
 }
 
 thread_local! {
@@ -54,17 +112,8 @@ pub unsafe extern "C" fn init(pointer: *const u8, len: usize) -> i32 {
         if slot.is_some() {
             return 2;
         }
-        let runtime = Runtime::new().expect("QuickJS runtime");
-        runtime.set_memory_limit(MEMORY_LIMIT_BYTES);
-        runtime.set_max_stack_size(MAX_STACK_BYTES);
-        let context = Context::full(&runtime).expect("QuickJS context");
-        let status = context.with(|ctx| {
-            let evaluated = install_host(&ctx)
-                .and_then(|()| ctx.eval::<(), _>(PRELUDE))
-                .and_then(|()| ctx.eval::<(), _>(source));
-            report(&ctx, evaluated)
-        });
-        *slot = Some(Engine { runtime, context });
+        let (engine, status) = Engine::new(source);
+        *slot = Some(engine);
         status
     })
 }
@@ -76,52 +125,27 @@ pub unsafe extern "C" fn init(pointer: *const u8, len: usize) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn on_frame(pointer: *const u8, len: usize) {
     let frame = std::slice::from_raw_parts(pointer, len).to_vec();
-    with_context(|ctx| {
-        let delivered = TypedArray::<u8>::new(ctx.clone(), frame)
-            .and_then(|bytes| global_function(ctx, "__truapi_deliver")?.call::<_, ()>((bytes,)));
-        report(ctx, delivered);
+    ENGINE.with_borrow(|slot| {
+        if let Some(engine) = slot {
+            engine.deliver(frame);
+        }
     });
 }
 
 /// Fire the timer the host scheduled with `timer_set`.
 #[no_mangle]
 pub extern "C" fn on_timer(id: u32) {
-    with_context(|ctx| {
-        let fired = global_function(ctx, "__truapi_fire_timer").and_then(|fire| fire.call::<_, ()>((id,)));
-        report(ctx, fired);
+    ENGINE.with_borrow(|slot| {
+        if let Some(engine) = slot {
+            engine.fire_timer(id);
+        }
     });
 }
 
 /// Run every pending promise job. Returns how many ran, or -1 if any threw.
 #[no_mangle]
 pub extern "C" fn run_jobs() -> i32 {
-    ENGINE.with_borrow(|slot| {
-        let Some(engine) = slot else { return 0 };
-        let mut ran = 0;
-        let mut failed = false;
-        loop {
-            match engine.runtime.execute_pending_job() {
-                Ok(true) => ran += 1,
-                Ok(false) => break,
-                Err(exception) => {
-                    failed = true;
-                    exception.0.with(|ctx| {
-                        let caught = ctx.catch();
-                        host::log(host::LEVEL_ERROR, &format!("uncaught in job: {caught:?}"));
-                    });
-                },
-            }
-        }
-        if failed { -1 } else { ran }
-    })
-}
-
-fn with_context(f: impl FnOnce(&Ctx<'_>)) {
-    ENGINE.with_borrow(|slot| {
-        if let Some(engine) = slot {
-            engine.context.with(|ctx| f(&ctx));
-        }
-    });
+    ENGINE.with_borrow(|slot| slot.as_ref().map_or(0, Engine::run_jobs))
 }
 
 fn global_function<'js>(ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Function<'js>> {

@@ -29,6 +29,8 @@ struct HostState {
     limits: StoreLimits,
     timers: BTreeMap<u32, Instant>,
     outbound: Vec<Vec<u8>>,
+    /// Echo outbound frames back to the guest (ping-pong); off for replay.
+    echo: bool,
 }
 
 struct Options {
@@ -37,6 +39,8 @@ struct Options {
     fuel_per_turn: u64,
     memory_bytes: usize,
     native: bool,
+    replay: Option<String>,
+    instances: usize,
 }
 
 fn main() -> ExitCode {
@@ -62,16 +66,28 @@ fn parse_options() -> Result<Options, String> {
     let mut args = std::env::args().skip(1);
     let guest = args.next().ok_or_else(|| usage.clone())?;
     let script = args.next().ok_or_else(|| usage.clone())?;
-    let mut options =
-        Options { guest, script, fuel_per_turn: 2_000_000_000, memory_bytes: 64 << 20, native: false };
+    let mut options = Options {
+        guest,
+        script,
+        fuel_per_turn: 2_000_000_000,
+        memory_bytes: 64 << 20,
+        native: false,
+        replay: None,
+        instances: 0,
+    };
     while let Some(flag) = args.next() {
         if flag == "--native" {
             options.native = true;
             continue;
         }
         let value = args.next().ok_or_else(|| usage.clone())?;
+        if flag == "--replay" {
+            options.replay = Some(value);
+            continue;
+        }
         let number: u64 = value.parse().map_err(|_| usage.clone())?;
         match flag.as_str() {
+            "--instances" => options.instances = number as usize,
             "--fuel-per-turn" => options.fuel_per_turn = number,
             "--memory-mib" => options.memory_bytes = (number as usize) << 20,
             _ => return Err(usage),
@@ -141,6 +157,9 @@ impl Guest {
     fn settle(&mut self) -> Result<()> {
         loop {
             self.run_jobs()?;
+            if !self.store.data().echo {
+                return Ok(());
+            }
             let outbound = std::mem::take(&mut self.store.data_mut().outbound);
             if outbound.is_empty() {
                 return Ok(());
@@ -163,41 +182,75 @@ fn run(options: &Options) -> Result<()> {
     }
     let engine = Engine::new(&config)?;
 
+    let footprint_before = bench_common::footprint_bytes();
     let compile_started = Instant::now();
     let module = Module::new(&engine, &wasm)?;
     let compiled_in = compile_started.elapsed();
 
-    let state = HostState {
-        started: Instant::now(),
-        limits: StoreLimitsBuilder::new().memory_size(options.memory_bytes).build(),
-        timers: BTreeMap::new(),
-        outbound: Vec::new(),
-    };
-    let mut store = Store::new(&engine, state);
-    store.limiter(|state| &mut state.limits);
-
     let mut linker = Linker::<HostState>::new(&engine);
     link_truapi(&mut linker)?;
     link_wasi(&mut linker, &module)?;
+    let backend = if options.native { "cranelift" } else { "pulley" };
+    let host = Host { engine, module, linker, fuel_per_turn: options.fuel_per_turn, memory_bytes: options.memory_bytes };
 
-    let instantiate_started = Instant::now();
-    store.set_fuel(options.fuel_per_turn)?;
-    let instance = linker.instantiate(&mut store, &module)?;
-    let instantiated_in = instantiate_started.elapsed();
-    let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| anyhow!("guest exports no memory"))?;
-
-    let mut guest = Guest { store, instance, memory, fuel_per_turn: options.fuel_per_turn };
-    let init_started = Instant::now();
-    let status = guest.init(&source)?;
-    guest.settle()?;
-    let init_in = init_started.elapsed();
-    let backend = if options.native { "cranelift native" } else { "pulley" };
-    eprintln!(
-        "[pulley] {backend}: compile {compiled_in:?}, instantiate {instantiated_in:?}, init to idle {init_in:?}, status {status}"
-    );
-    if status != 0 {
-        bail!("init returned {status}");
+    if options.instances > 0 {
+        let after_compile = bench_common::footprint_bytes();
+        let mut guests = Vec::new();
+        let mut boot_ms = Vec::new();
+        let mut footprints = Vec::new();
+        for _ in 0..options.instances {
+            let (guest, booted_in) = host.boot(&source, false)?;
+            boot_ms.push(booted_in.as_secs_f64() * 1000.0);
+            footprints.push(bench_common::footprint_bytes());
+            guests.push(guest);
+        }
+        let count = options.instances;
+        let first_mib = bench_common::mib(footprints[0] - after_compile);
+        let rest_mib = bench_common::mib(footprints[count - 1] - footprints[0]) / (count - 1).max(1) as f64;
+        let first_ms = boot_ms[0];
+        let (warm_p50, _) = bench_common::percentiles(&mut boot_ms[1..].to_vec());
+        let linear_kib = guests[0].memory.data_size(&guests[0].store) / 1024;
+        println!(
+            "RESULT {{\"engine\":\"{backend}\",\"compileMs\":{:.1},\"moduleMiB\":{:.2},\"firstBootMs\":{first_ms:.1},\"bootP50Ms\":{warm_p50:.1},\"firstInstanceMiB\":{first_mib:.2},\"perInstanceMiB\":{rest_mib:.2},\"linearMemoryKiB\":{linear_kib},\"instances\":{count}}}",
+            compiled_in.as_secs_f64() * 1000.0,
+            bench_common::mib(after_compile - footprint_before),
+        );
+        return Ok(());
     }
+
+    if let Some(corpus) = &options.replay {
+        let (mut guest, booted_in) = host.boot(&source, false)?;
+        let steps = bench_common::load_corpus(corpus);
+        let mut render_ms = Vec::new();
+        let mut mismatches = 0;
+        for step in &steps {
+            let started = Instant::now();
+            guest.deliver(&step.inbound)?;
+            guest.settle()?;
+            let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+            let sent = std::mem::take(&mut guest.store.data_mut().outbound);
+            if sent != step.outbound {
+                mismatches += 1;
+            }
+            if bench_common::is_render_start(&step.inbound) {
+                render_ms.push(elapsed);
+            }
+        }
+        let (p50, p95) = bench_common::percentiles(&mut render_ms);
+        println!(
+            "RESULT {{\"engine\":\"{backend}\",\"bootMs\":{:.1},\"steps\":{},\"mismatches\":{mismatches},\"renderSamples\":{},\"renderP50Ms\":{p50:.3},\"renderP95Ms\":{p95:.3}}}",
+            booted_in.as_secs_f64() * 1000.0,
+            steps.len(),
+            render_ms.len(),
+        );
+        if mismatches > 0 {
+            bail!("{mismatches} steps did not match the corpus");
+        }
+        return Ok(());
+    }
+
+    let (mut guest, init_in) = host.boot(&source, true)?;
+    eprintln!("[pulley] {backend}: compile {compiled_in:?}, instantiate and init to idle {init_in:?}");
 
     while let Some((id, due)) = next_timer(&guest.store) {
         let now = Instant::now();
@@ -211,6 +264,40 @@ fn run(options: &Options) -> Result<()> {
     let bytes = guest.memory.data_size(&guest.store);
     eprintln!("[pulley] idle, no timers left; linear memory {} KiB", bytes / 1024);
     Ok(())
+}
+
+/// One compiled module plus a linker, from which any number of guests boot.
+struct Host {
+    engine: Engine,
+    module: Module,
+    linker: Linker<HostState>,
+    fuel_per_turn: u64,
+    memory_bytes: usize,
+}
+
+impl Host {
+    fn boot(&self, source: &[u8], echo: bool) -> Result<(Guest, Duration)> {
+        let started = Instant::now();
+        let state = HostState {
+            started: Instant::now(),
+            limits: StoreLimitsBuilder::new().memory_size(self.memory_bytes).build(),
+            timers: BTreeMap::new(),
+            outbound: Vec::new(),
+            echo,
+        };
+        let mut store = Store::new(&self.engine, state);
+        store.limiter(|state| &mut state.limits);
+        store.set_fuel(self.fuel_per_turn)?;
+        let instance = self.linker.instantiate(&mut store, &self.module)?;
+        let memory = instance.get_memory(&mut store, "memory").ok_or_else(|| anyhow!("guest exports no memory"))?;
+        let mut guest = Guest { store, instance, memory, fuel_per_turn: self.fuel_per_turn };
+        let status = guest.init(source)?;
+        guest.settle()?;
+        if status != 0 {
+            bail!("init returned {status}");
+        }
+        Ok((guest, started.elapsed()))
+    }
 }
 
 fn next_timer(store: &Store<HostState>) -> Option<(u32, Instant)> {

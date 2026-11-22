@@ -96,6 +96,31 @@ executed. Evidence:
 The core's release profile uses `opt-level = "z"`, so phase 2 must give the
 wasmi crates `opt-level = 3`. The behaviour looks worth reporting to wasmi.
 
+## Engine comparison on the Mac, web view included
+
+`scripts/compare-mac.sh` runs four engines three times each on the worker
+bundle and the corpus; raw lines are in `results/mac/`. The web view is a
+real WKWebView (`webview-mac/WebViewBench.swift`), set up as
+`WKWebViewJSEngine` does on iOS, with JavaScript in a separate WebContent
+process with the JIT. Medians of three runs:
+
+| Mac | WKWebView | QuickJS native | wasm, Cranelift (Android) | wasm, wasmi (iOS) |
+|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.18 / 0.28 ms | 0.15 / 0.20 ms | 0.39 / 0.41 ms | 4.44 / 4.90 ms |
+| First boot to idle | 115 ms | 7.3 ms | 14.0 ms | 99.7 ms |
+| Later boots to idle, p50 | 54 ms | 6.6 ms | 13.6 ms | 94.3 ms |
+| Memory per instance | 17.2 MiB (15.2 in its WebContent process) | 2.1 MiB | 2.5 MiB | 3.7 MiB |
+| Once per process | | | 26.6 MiB and 550 ms to compile | 1.5 MiB and 3 ms to compile |
+| W3 codec, round trips/s | 29 412 | 4 597 | 1 772 | 149 |
+
+- Memory per instance is the growth of the app's physical footprint across
+  10 live instances; for the web view it adds each instance's own
+  WebContent process.
+- The web view's render round trip is mostly the trip to its process and
+  back, which is why native QuickJS beats it on this small render.
+- Cranelift's compile cost moves to build time with a precompiled module.
+
 ## T5: wasmtime, Pulley and Cranelift
 
 `runner-pulley/` runs the same guest, imports, WASI set, fuel and memory

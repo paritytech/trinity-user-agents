@@ -2,7 +2,7 @@
 # Its own workspace so nothing here reaches the main workspace, its lints or CI.
 [workspace]
 resolver = "2"
-members = ["guest", "runner", "runner-pulley"]
+members = ["bench-common", "guest", "runner", "runner-pulley"]
 
 [workspace.package]
 edition = "2021"

@@ -26,6 +26,8 @@ struct HostState {
     limits: StoreLimits,
     timers: BTreeMap<u32, Instant>,
     outbound: Vec<Vec<u8>>,
+    /// Echo outbound frames back to the guest (ping-pong); off for replay.
+    echo: bool,
 }
 
 struct Options {
@@ -34,6 +36,8 @@ struct Options {
     fuel_per_turn: u64,
     memory_bytes: usize,
     native_stack_mib: usize,
+    replay: Option<String>,
+    instances: usize,
 }
 
 fn main() -> ExitCode {
@@ -62,17 +66,29 @@ fn main() -> ExitCode {
 }
 
 fn parse_options() -> Result<Options, String> {
-    let usage = "usage: qjs-runner <guest.wasm> <script.js> [--fuel-per-turn N] [--memory-mib N] [--native-stack-mib N]"
+    let usage = "usage: qjs-runner <guest.wasm> <script.js> [--fuel-per-turn N] [--memory-mib N] [--native-stack-mib N] [--replay corpus.bin] [--instances N]"
         .to_string();
     let mut args = std::env::args().skip(1);
     let guest = args.next().ok_or_else(|| usage.clone())?;
     let script = args.next().ok_or_else(|| usage.clone())?;
-    let mut options =
-        Options { guest, script, fuel_per_turn: 2_000_000_000, memory_bytes: 64 << 20, native_stack_mib: 8 };
+    let mut options = Options {
+        guest,
+        script,
+        fuel_per_turn: 2_000_000_000,
+        memory_bytes: 64 << 20,
+        native_stack_mib: 8,
+        replay: None,
+        instances: 0,
+    };
     while let Some(flag) = args.next() {
         let value = args.next().ok_or_else(|| usage.clone())?;
+        if flag == "--replay" {
+            options.replay = Some(value);
+            continue;
+        }
         let number: u64 = value.parse().map_err(|_| usage.clone())?;
         match flag.as_str() {
+            "--instances" => options.instances = number as usize,
             "--fuel-per-turn" => options.fuel_per_turn = number,
             "--memory-mib" => options.memory_bytes = (number as usize) << 20,
             "--native-stack-mib" => options.native_stack_mib = number as usize,
@@ -144,10 +160,14 @@ impl Guest {
         run_jobs.call(&mut self.store, ())
     }
 
-    /// Run jobs and echo frames until nothing is left to do right now.
+    /// Run jobs (and echo frames, if echoing) until nothing is left to do
+    /// right now. Without echo, outbound frames stay queued for the caller.
     fn settle(&mut self) -> Result<(), Error> {
         loop {
             self.run_jobs()?;
+            if !self.store.data().echo {
+                return Ok(());
+            }
             let outbound = std::mem::take(&mut self.store.data_mut().outbound);
             if outbound.is_empty() {
                 return Ok(());
@@ -159,10 +179,49 @@ impl Guest {
     }
 }
 
+/// One compiled module plus a linker, from which any number of guests boot.
+struct Host {
+    engine: Engine,
+    module: Module,
+    linker: Linker<HostState>,
+    fuel_per_turn: u64,
+    memory_bytes: usize,
+}
+
+impl Host {
+    /// Instantiate a fresh guest and evaluate `source` until it is idle.
+    /// Returns the guest and the time it took, from instantiation to idle.
+    fn boot(&self, source: &[u8], echo: bool) -> Result<(Guest, Duration), Error> {
+        let started = Instant::now();
+        let state = HostState {
+            started: Instant::now(),
+            limits: StoreLimitsBuilder::new().memory_size(self.memory_bytes).build(),
+            timers: BTreeMap::new(),
+            outbound: Vec::new(),
+            echo,
+        };
+        let mut store = Store::new(&self.engine, state);
+        store.limiter(|state| &mut state.limits);
+        if self.fuel_per_turn > 0 {
+            store.set_fuel(self.fuel_per_turn)?;
+        }
+        let instance = self.linker.instantiate_and_start(&mut store, &self.module)?;
+        let memory = instance.get_memory(&store, "memory").ok_or_else(|| Error::new("guest exports no memory"))?;
+        let mut guest = Guest { store, instance, memory, fuel_per_turn: self.fuel_per_turn };
+        let status = guest.init(source)?;
+        guest.settle()?;
+        if status != 0 {
+            return Err(Error::new(format!("init returned {status}")));
+        }
+        Ok((guest, started.elapsed()))
+    }
+}
+
 fn run(options: &Options) -> Result<(), Error> {
     let wasm = std::fs::read(&options.guest).map_err(|error| Error::new(format!("{}: {error}", options.guest)))?;
     let source = std::fs::read(&options.script).map_err(|error| Error::new(format!("{}: {error}", options.script)))?;
 
+    let footprint_before = bench_common::footprint_bytes();
     let mut config = Config::default();
     config.consume_fuel(options.fuel_per_turn > 0);
     if std::env::var_os("QJS_EAGER").is_some() {
@@ -174,40 +233,27 @@ fn run(options: &Options) -> Result<(), Error> {
     let module = Module::new(&engine, &wasm)?;
     let compiled_in = compile_started.elapsed();
 
-    let state = HostState {
-        started: Instant::now(),
-        limits: StoreLimitsBuilder::new().memory_size(options.memory_bytes).build(),
-        timers: BTreeMap::new(),
-        outbound: Vec::new(),
-    };
-    let mut store = Store::new(&engine, state);
-    store.limiter(|state| &mut state.limits);
-
     let mut linker = Linker::<HostState>::new(&engine);
     link_truapi(&mut linker)?;
     link_wasi(&mut linker, &module)?;
+    let host = Host {
+        engine,
+        module,
+        linker,
+        fuel_per_turn: options.fuel_per_turn,
+        memory_bytes: options.memory_bytes,
+    };
 
-    let instantiate_started = Instant::now();
-    if options.fuel_per_turn > 0 {
-        store.set_fuel(options.fuel_per_turn)?;
+    if options.instances > 0 {
+        return measure_instances(&host, &source, options.instances, compiled_in, footprint_before);
     }
-    let instance = linker.instantiate_and_start(&mut store, &module)?;
-    let instantiated_in = instantiate_started.elapsed();
-    let memory = instance
-        .get_memory(&store, "memory")
-        .ok_or_else(|| Error::new("guest exports no memory"))?;
+    if let Some(corpus) = &options.replay {
+        let (mut guest, booted_in) = host.boot(&source, false)?;
+        return replay(&mut guest, corpus, booted_in);
+    }
 
-    let mut guest = Guest { store, instance, memory, fuel_per_turn: options.fuel_per_turn };
-    let init_started = Instant::now();
-    let status = guest.init(&source)?;
-    guest.settle()?;
-    let init_in = init_started.elapsed();
-    eprintln!(
-        "[runner] compile {compiled_in:?}, instantiate {instantiated_in:?}, init to idle {init_in:?}, status {status}"
-    );
-    if status != 0 {
-        return Err(Error::new(format!("init returned {status}")));
-    }
+    let (mut guest, init_in) = host.boot(&source, true)?;
+    eprintln!("[runner] compile {compiled_in:?}, instantiate and init to idle {init_in:?}");
 
     while let Some((id, due)) = next_timer(&guest.store) {
         let now = Instant::now();
@@ -220,6 +266,71 @@ fn run(options: &Options) -> Result<(), Error> {
     }
     let pages = guest.memory.size(&guest.store);
     eprintln!("[runner] idle, no timers left; linear memory {} KiB", pages * 64);
+    Ok(())
+}
+
+/// Boot `count` guests on the worker bundle, keeping each alive, and report
+/// cold start and the memory each one adds to the process.
+fn measure_instances(
+    host: &Host,
+    source: &[u8],
+    count: usize,
+    compiled_in: Duration,
+    footprint_before: u64,
+) -> Result<(), Error> {
+    let after_compile = bench_common::footprint_bytes();
+    let mut guests = Vec::with_capacity(count);
+    let mut boot_ms = Vec::with_capacity(count);
+    let mut footprints = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (guest, booted_in) = host.boot(source, false)?;
+        boot_ms.push(booted_in.as_secs_f64() * 1000.0);
+        footprints.push(bench_common::footprint_bytes());
+        guests.push(guest);
+    }
+    let first_ms = boot_ms[0];
+    let first_mib = bench_common::mib(footprints[0] - after_compile);
+    let rest_mib = bench_common::mib(footprints[count - 1] - footprints[0]) / (count - 1).max(1) as f64;
+    let (warm_p50, _) = bench_common::percentiles(&mut boot_ms[1..].to_vec());
+    let linear_kib = guests[0].memory.size(&guests[0].store) * 64;
+    println!(
+        "RESULT {{\"engine\":\"wasmi\",\"compileMs\":{:.1},\"moduleMiB\":{:.2},\"firstBootMs\":{first_ms:.1},\"bootP50Ms\":{warm_p50:.1},\"firstInstanceMiB\":{first_mib:.2},\"perInstanceMiB\":{rest_mib:.2},\"linearMemoryKiB\":{linear_kib},\"instances\":{count}}}",
+        compiled_in.as_secs_f64() * 1000.0,
+        bench_common::mib(after_compile - footprint_before),
+    );
+    Ok(())
+}
+
+/// Replay the corpus against a booted guest, checking every outbound frame
+/// byte for byte and timing each render request until its tree comes back.
+fn replay(guest: &mut Guest, corpus: &str, booted_in: Duration) -> Result<(), Error> {
+    let steps = bench_common::load_corpus(corpus);
+    let mut render_ms = Vec::new();
+    let mut mismatches = 0;
+    for step in &steps {
+        let started = Instant::now();
+        guest.deliver(&step.inbound)?;
+        guest.settle()?;
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        let sent = std::mem::take(&mut guest.store.data_mut().outbound);
+        if sent != step.outbound {
+            mismatches += 1;
+        }
+        if bench_common::is_render_start(&step.inbound) {
+            render_ms.push(elapsed);
+        }
+    }
+    let (p50, p95) = bench_common::percentiles(&mut render_ms);
+    println!(
+        "RESULT {{\"engine\":\"wasmi\",\"bootMs\":{:.1},\"steps\":{},\"mismatches\":{mismatches},\"renderSamples\":{},\"renderP50Ms\":{p50:.3},\"renderP95Ms\":{p95:.3},\"linearMemoryKiB\":{}}}",
+        booted_in.as_secs_f64() * 1000.0,
+        steps.len(),
+        render_ms.len(),
+        guest.memory.size(&guest.store) * 64,
+    );
+    if mismatches > 0 {
+        return Err(Error::new(format!("{mismatches} steps did not match the corpus")));
+    }
     Ok(())
 }
 

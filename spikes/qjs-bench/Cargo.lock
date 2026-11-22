@@ -41,6 +41,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench-common"
+version = "0.0.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -617,6 +624,7 @@ dependencies = [
 name = "qjs-guest"
 version = "0.0.0"
 dependencies = [
+ "bench-common",
  "getrandom",
  "rquickjs",
 ]
@@ -625,6 +633,7 @@ dependencies = [
 name = "qjs-runner"
 version = "0.0.0"
 dependencies = [
+ "bench-common",
  "getrandom",
  "wasmi",
 ]
@@ -633,6 +642,7 @@ dependencies = [
 name = "qjs-runner-pulley"
 version = "0.0.0"
 dependencies = [
+ "bench-common",
  "getrandom",
  "wasmtime",
 ]

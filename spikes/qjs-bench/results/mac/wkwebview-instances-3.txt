@@ -1,0 +1,1 @@
+RESULT {"engine":"wkwebview","firstBootMs":114.9,"bootP50Ms":53.2,"webContentProcesses":10,"webContentMiBTotal":151.96,"perInstanceMiB":17.16,"appProcessGrowthMiB":19.66,"instances":10}

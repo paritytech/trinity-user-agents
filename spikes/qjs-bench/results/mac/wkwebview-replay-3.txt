@@ -1,0 +1,1 @@
+RESULT {"engine":"wkwebview","bootMs":113.1,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.186,"renderP95Ms":0.283,"webContentMiB":38.24}

@@ -1,0 +1,1 @@
+RESULT {"engine":"cranelift","compileMs":560.4,"moduleMiB":26.67,"firstBootMs":14.0,"bootP50Ms":13.5,"firstInstanceMiB":2.47,"perInstanceMiB":2.49,"linearMemoryKiB":3520,"instances":10}
