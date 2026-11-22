@@ -33,6 +33,15 @@ internal object WorkerThumbSettle {
         Kind.END -> if (axis == JsPanAxis.VERTICAL) Offset(0f, travelPx) else Offset(travelPx, 0f)
     }
 
+    /**
+     * Where a settling thumb is drawn: kept on its lane, so the spring's overshoot past home (or the end) is not drawn,
+     * as the native slider and host drags draw their return spring.
+     */
+    fun onLane(place: Offset, travelPx: Float): Offset {
+        val lane = travelPx.coerceAtLeast(0f)
+        return Offset(place.x.coerceIn(0f, lane), place.y.coerceIn(0f, lane))
+    }
+
     /** A settle is drawn only with animations on and somewhere to go. */
     fun animates(animatorsEnabled: Boolean, from: Offset, to: Offset): Boolean = animatorsEnabled && from != to
 }

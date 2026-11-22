@@ -395,8 +395,9 @@ internal fun JsGesture(
                         workerPosition?.value,
                         answeredInFrame?.takeIf { it.first === current.position }?.second,
                     )
-                    val workerX = if (settling) settle.value.x else (position?.x ?: 0) / 100f * density
-                    val workerY = if (settling) settle.value.y else (position?.y ?: 0) / 100f * density
+                    val settled = WorkerThumbSettle.onLane(settle.value, travel)
+                    val workerX = if (settling) settled.x else (position?.x ?: 0) / 100f * density
+                    val workerY = if (settling) settled.y else (position?.y ?: 0) / 100f * density
                     IntOffset(
                         (placeX.value.coerceIn(0f, travel) + workerX).roundToInt(),
                         (placeY.value.coerceIn(0f, travel) + workerY).roundToInt(),

@@ -45,4 +45,12 @@ class WorkerThumbSettleTest {
         assertTrue(WorkerThumbSettle.isOn(null))
         assertFalse(WorkerThumbSettle.isOn("0"))
     }
+
+    @Test
+    fun `a settling thumb is never drawn past either end of its lane`() {
+        assertEquals(Offset(0f, 0f), WorkerThumbSettle.onLane(Offset(-4.6f, 0f), 240f))
+        assertEquals(Offset(240f, 0f), WorkerThumbSettle.onLane(Offset(251f, 0f), 240f))
+        assertEquals(Offset(120f, 0f), WorkerThumbSettle.onLane(Offset(120f, 0f), 240f))
+        assertEquals(Offset.Zero, WorkerThumbSettle.onLane(Offset(30f, 0f), 0f))
+    }
 }
