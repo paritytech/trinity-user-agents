@@ -2112,23 +2112,6 @@ fn old_permission_storage_never_authorizes_jam_or_balance() {
 	});
 }
 
-#[async_trait::async_trait]
-impl UserConfirmation for ScriptedPrompt {
-	async fn confirm_permission(
-		&self,
-		_review: UserConfirmationReview,
-	) -> Result<PermissionDecision, GenericError> {
-		Ok(self.remote_answers.lock().await.remove(0))
-	}
-
-	async fn confirm_user_action(
-		&self,
-		_review: UserConfirmationReview,
-	) -> Result<bool, GenericError> {
-		unreachable!("permission confirmation uses its decision callback")
-	}
-}
-
 #[test]
 fn administration_cancels_pending_identity_and_chat_consent() {
 	futures::executor::block_on(async {
