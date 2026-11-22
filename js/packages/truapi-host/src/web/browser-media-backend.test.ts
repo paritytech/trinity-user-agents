@@ -59,7 +59,7 @@ class TestTrack {
 }
 
 class TestSender {
-  replaceTrack = mock(async (_track: unknown) => {});
+  async replaceTrack(_track: unknown) {}
 }
 
 class TestPeerConnection extends EventTarget {
