@@ -1125,7 +1125,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
                 configuration,
             )
         return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter, media, storageGroup).also {
-            CoreStorageAccess.register(it, bridge.coreStorage.storageIdentifier, storageGroup, execution.productContext().productId)
+            CoreStorageAccess.register(it, bridge.coreStorage.storageIdentifier, storageGroup, configuration.productId)
         }
     }
 

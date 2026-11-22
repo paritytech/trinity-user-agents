@@ -390,7 +390,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     /** Settings use the same callbacks/storage and process runtime, without a second backend. */
     fun openPermissionExecution(runtime: TrUAPIHostRuntime, productId: ProductId): TrUAPIProductExecution =
         runtime.openProductExecution(
-            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }),
+            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }, card = null),
             ProductExecutionConfig(productId, ExecutableKind.APP),
         )
 

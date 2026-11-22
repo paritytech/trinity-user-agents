@@ -1218,7 +1218,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             mediaRetainer: media,
             coreGroup: coreGroup,
             storageIdentifier: bridge.coreStorage.storageIdentifier,
-            productId: execution.productContext().productId
+            productId: configuration.productId
         )
     }
 
@@ -1583,9 +1583,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     public func callingPermissionAuthorizationRequest() async throws -> PermissionAuthorizationRequest {
         try await inner.callingPermissionAuthorizationRequest()
     }
-
-    /// Immutable executable identity canonicalized by the core.
-    public func productContext() -> ProductContext { inner.productContext() }
 
     /// Updates the product decision and awaits deferred refresh outside the core gate.
     public func setPermissionAuthorizationStatus(
