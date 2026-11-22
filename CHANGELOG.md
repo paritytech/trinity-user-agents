@@ -33,6 +33,16 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- embed gathered Media candidates in the existing V1 description after up to
+  one second, then send at most six late candidates per link lifetime. Normal
+  two-party setup and teardown fit within ten statements per side, leaving
+  room in the shared 50-statement account allowance. ICE restarts keep the
+  lifetime trickle budget and carry newly gathered candidates in SDP.
+- accept Statement Store priority bits without changing Media's authenticated
+  expiry or V1 encoding. Senders retain zero priority for compatibility with
+  deployed hosts; control-message prioritization requires a later coordinated
+  rollout after receivers have been upgraded.
+
 - publish repeated session activation atomically while invalidating previous
   capability owners, without exposing a transient disconnected snapshot.
   Unchanged storage notifications preserve the active authority generation and

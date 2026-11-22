@@ -34,6 +34,12 @@ const MAX_CANDIDATE: usize = 4096;
 const MAX_MID: usize = 256;
 const MAX_LINK_BUFFER: usize = 256 * 1024;
 const MAX_BUFFER: usize = 1024 * 1024;
+// A two-party call sends at most six late candidates per endpoint, plus its
+// description and invite/accept/commit/leave (at most ten statements per side).
+// Half-trickle embeds initial candidates in SDP. Keep this lifetime budget
+// across renegotiation/restarts: resetting it would refill the 50-live-statement
+// account allowance, which is also shared with other product traffic.
+const MAX_TRICKLED_CANDIDATES: u8 = 6;
 
 type Id = [u8; 32];
 type EndpointKey = (Id, Id);
@@ -136,6 +142,7 @@ struct Link {
 	commit_seen: bool,
 	started: bool,
 	ended: bool,
+	trickled_candidates: u8,
 	buffered: Vec<Buffered>,
 	buffered_bytes: usize,
 }
@@ -388,6 +395,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: false,
+			trickled_candidates: 0,
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -741,6 +749,7 @@ impl GroupEngine {
 		if candidate.candidate.len() <= MAX_CANDIDATE &&
 			candidate.mid.as_ref().is_none_or(|mid| mid.len() <= MAX_MID) &&
 			let Some(link) = self.started_link(session, participant) &&
+			link.trickled_candidates < MAX_TRICKLED_CANDIDATES &&
 			let Some(remote) = &link.remote
 		{
 			send(
@@ -756,6 +765,7 @@ impl GroupEngine {
 					},
 				},
 			);
+			link.trickled_candidates += 1;
 		}
 		candidate.candidate.zeroize();
 		if let Some(mid) = &mut candidate.mid {
@@ -1019,11 +1029,11 @@ impl GroupEngine {
 	}
 
 	fn started_link(
-		&self,
+		&mut self,
 		session: MediaSessionId,
 		participant: MediaParticipantId,
-	) -> Option<&Link> {
-		self.links.iter().find(|link| {
+	) -> Option<&mut Link> {
+		self.links.iter_mut().find(|link| {
 			!link.ended &&
 				link.started && link.session == Some(session) &&
 				link.participant == Some(participant)
@@ -1110,6 +1120,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: false,
+			trickled_candidates: 0,
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -1229,6 +1240,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: false,
+			trickled_candidates: 0,
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -1686,6 +1698,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: true,
+			trickled_candidates: 0,
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -2004,7 +2017,21 @@ mod tests {
 		for generation in 0..4 {
 			let mut received = Vec::new();
 			for candidate in super::super::state::multi_interface_candidates(generation) {
-				let sent = caller.local_candidate([10; 32], [11; 32], candidate);
+				// An unpatched V1 peer can still send a full trickled burst.
+				let mut sent = Vec::new();
+				send(
+					&mut sent,
+					&b,
+					&Wire::IceCandidate {
+						group_id: caller.links[0].group,
+						link_id: caller.links[0].id,
+						candidate: CandidateWire {
+							candidate: &candidate.candidate,
+							mid: candidate.mid.as_deref(),
+							mline_index: candidate.mline_index,
+						},
+					},
+				);
 				received.extend(relay(&a, &sent, &mut callee));
 			}
 			if generation == 0 {
@@ -2041,6 +2068,170 @@ mod tests {
 			assert_eq!(callee.buffered_messages, 0);
 			assert_eq!(callee.buffered_bytes, 0);
 			assert!(!callee.links[0].ended);
+		}
+	}
+
+	#[test]
+	fn multi_candidate_call_uses_at_most_ten_statements_per_side() {
+		fn statements(actions: &[GroupAction]) -> usize {
+			actions
+				.iter()
+				.filter(|action| matches!(action, GroupAction::Send { .. }))
+				.count()
+		}
+		let a = advertisement(1, 11);
+		let b = advertisement(2, 21);
+		let mut caller = GroupEngine::new(a.clone());
+		let mut callee = GroupEngine::new(b.clone());
+		caller.create_session([10; 32]).unwrap();
+		let invite = caller
+			.invite([10; 32], [11; 32], peer(&b), vec![b.clone()], &tracks(), NOW)
+			.unwrap();
+		let offer = incoming(&relay(&a, &invite, &mut callee));
+		let accept = callee.accept(offer, [20; 32], [21; 32], &tracks(), NOW).unwrap();
+		let commit = relay(&b, &accept, &mut caller);
+		relay(&a, &commit, &mut callee);
+		let mut caller_count = statements(&invite) + statements(&commit);
+		let mut callee_count = statements(&accept);
+		for (engine, session, participant, kind, count) in [
+			(&mut caller, [10; 32], [11; 32], MediaDescriptionKind::Offer, &mut caller_count),
+			(&mut callee, [20; 32], [21; 32], MediaDescriptionKind::Answer, &mut callee_count),
+		] {
+			*count += statements(&engine.local_description(
+				session,
+				participant,
+				MediaDescription { kind, sdp: "v=0\r\n".into() },
+			));
+			for candidate in super::super::state::multi_interface_candidates(0) {
+				*count += statements(&engine.local_candidate(session, participant, candidate));
+			}
+			*count += statements(&engine.end_session(session));
+		}
+		// Each Send is one sealed packet and one statement submission, including
+		// setup and independent teardown from each side, even under a late burst.
+		assert_eq!(caller_count, 10);
+		assert_eq!(callee_count, 9);
+	}
+
+	#[test]
+	fn frozen_v1_vectors_are_shared_by_025_and_030() {
+		let group_id = [1; 32];
+		let link_id = [2; 32];
+		let vectors = [
+			(
+				Wire::Invite { group_id, link_id, expires_at: 60, tracks: off() },
+				0,
+				"3c00000000000000000000",
+			),
+			(Wire::Accept { group_id, link_id, tracks: off() }, 1, "000000"),
+			(Wire::Commit { group_id, link_id }, 2, ""),
+			(Wire::Resolve { group_id, link_id, reason: Reason::Busy }, 3, "01"),
+			(
+				Wire::Introduce {
+					group_id,
+					introduction_id: link_id,
+					expires_at: 60,
+					peer_advertisement: &[3],
+				},
+				4,
+				"3c000000000000000403",
+			),
+			(
+				Wire::Propose { group_id, introduction_id: link_id, expires_at: 60, tracks: off() },
+				5,
+				"3c00000000000000000000",
+			),
+			(
+				Wire::Description {
+					group_id,
+					link_id,
+					description: DescriptionWire {
+						kind: MediaDescriptionKind::Offer,
+						sdp: "v=0\r\n",
+					},
+				},
+				6,
+				"0014763d300d0a",
+			),
+			(
+				Wire::Description {
+					group_id,
+					link_id,
+					description: DescriptionWire {
+						kind: MediaDescriptionKind::Answer,
+						sdp: "v=0\r\n",
+					},
+				},
+				6,
+				"0114763d300d0a",
+			),
+			(
+				Wire::IceCandidate {
+					group_id,
+					link_id,
+					candidate: CandidateWire {
+						candidate: "candidate:x",
+						mid: Some("0"),
+						mline_index: Some(0),
+					},
+				},
+				7,
+				"2c63616e6469646174653a78010430010000",
+			),
+			(Wire::Leave { group_id, link_id }, 8, ""),
+			(Wire::Refresh { group_id, link_id }, 9, ""),
+		];
+		for (wire, ordinal, suffix) in vectors {
+			// Explicit V1 fixture bytes, independent of the encoder. Both host
+			// lines pin this same profile; embedded SDP needs no new variant.
+			let mut golden = vec![1, 0, ordinal];
+			golden.extend_from_slice(&[1; 32]);
+			golden.extend_from_slice(&[2; 32]);
+			golden.extend(hex::decode(suffix).unwrap());
+			assert_eq!((VERSION, &wire).encode(), golden);
+			let decoded = decode_wire(&golden).expect("frozen V1 fixture");
+			assert_eq!((VERSION, decoded).encode(), golden);
+		}
+	}
+
+	#[test]
+	fn trickle_budget_is_per_link_and_survives_restarts() {
+		let a = advertisement(1, 11);
+		let b = advertisement(2, 21);
+		let mut caller = GroupEngine::new(a.clone());
+		let mut callee = GroupEngine::new(b.clone());
+		for id in [10, 20] {
+			caller.create_session([id; 32]).unwrap();
+			let invite = caller
+				.invite([id; 32], [id; 32], peer(&b), vec![b.clone()], &tracks(), NOW)
+				.unwrap();
+			let offer = incoming(&relay(&a, &invite, &mut callee));
+			let accept = callee.accept(offer, [id; 32], [id; 32], &tracks(), NOW).unwrap();
+			let commit = relay(&b, &accept, &mut caller);
+			relay(&a, &commit, &mut callee);
+			let mut sent = 0;
+			for generation in 0..4 {
+				assert_eq!(
+					caller
+						.local_description(
+							[id; 32],
+							[id; 32],
+							MediaDescription {
+								kind: MediaDescriptionKind::Offer,
+								sdp: "v=0\r\n".into(),
+							},
+						)
+						.len(),
+					1,
+				);
+				for candidate in super::super::state::multi_interface_candidates(generation) {
+					sent += caller.local_candidate([id; 32], [id; 32], candidate).len();
+				}
+				assert_eq!(sent, usize::from(MAX_TRICKLED_CANDIDATES));
+			}
+			// A new independent link gets its own budget.
+			caller.end_session([id; 32]);
+			callee.end_session([id; 32]);
 		}
 	}
 

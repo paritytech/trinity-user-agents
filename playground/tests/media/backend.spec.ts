@@ -49,8 +49,8 @@ type CandidateCounts = {
 };
 
 // Snapshot only the initial call, after native gathering completes and before
-// renegotiation or teardown. Each observed Description/IceCandidate maps to one
-// private StatementStore message; the fixture does not publish to that service.
+// renegotiation or teardown. These are backend events, not actual statement
+// submissions: the fixture does not instantiate core admission or control traffic.
 async function reportInitialCallSignaling(page: Page, testInfo: TestInfo) {
   await expect.poll(() => page.evaluate<string[]>(
     "mediaFixture.nativeIceSnapshot().map(peer => peer.gatheringState)",
@@ -66,11 +66,12 @@ async function reportInitialCallSignaling(page: Page, testInfo: TestInfo) {
   const candidates = await page.evaluate<{
     signaled: CandidateCounts;
     descriptions: CandidateCounts[];
+    uniqueDelivered: number;
+    embeddedAndTrickled: number;
   }[]>("mediaFixture.iceCounts()");
   const signaling = await page.evaluate<{
     peers: { peer: number; Description: number; IceCandidate: number; total: number }[];
     totals: { Description: number; IceCandidate: number; total: number };
-    privateStatementStoreMessagesForSignaling: number;
   }>("mediaFixture.callSignalingCounts()");
   await testInfo.attach("initial-call-host-signaling", {
     body: JSON.stringify({ phase: "initial-call-gathering-complete", signaling, candidates, native }, null, 2),
@@ -91,21 +92,21 @@ async function reportInitialCallSignaling(page: Page, testInfo: TestInfo) {
     expect(peer.candidates.total).toBeGreaterThan(0);
   }
   for (const [index, peer] of signaling.peers.entries()) {
-    expect(peer.Description).toBeGreaterThan(0);
+    expect(peer.Description).toBe(1);
     expect(peer.IceCandidate).toBe(candidates[index].signaled.total);
-    expect(peer.IceCandidate).toBeGreaterThan(0);
-    expect(Object.keys(candidates[index].signaled.byMid)).toEqual(["0"]);
+    expect(Object.keys(candidates[index].signaled.byMid).every((mid) => mid === "0")).toBe(true);
+    expect(candidates[index].descriptions[0].total).toBeGreaterThan(0);
+    expect(candidates[index].embeddedAndTrickled).toBe(0);
     expect(peer.total).toBe(peer.Description + peer.IceCandidate);
   }
-  expect(signaling.totals.IceCandidate).toBe(
+  // Native peers are constructed answerer-first; backend nodes are caller-first.
+  expect(candidates.reduce((sum, peer) => sum + peer.uniqueDelivered, 0)).toBe(
     native.reduce((sum, peer) => sum + peer.candidates.total, 0),
   );
   expect(signaling.totals.Description).toBe(
     signaling.peers.reduce((sum, peer) => sum + peer.Description, 0),
   );
-  expect(signaling.privateStatementStoreMessagesForSignaling).toBe(
-    signaling.totals.Description + signaling.totals.IceCandidate,
-  );
+  return { signaling, candidates, native };
 }
 
 test("a receive-only session opens without a screen capture API", async ({
@@ -177,7 +178,7 @@ test("trusted hosts can explicitly force the TURN fallback", async ({
   await reportInitialCallSignaling(page, testInfo);
 });
 
-test("three transceivers share one ICE transport without tripling candidates when TURN is available", async ({
+test("multi-candidate direct call stays within the initial signaling budget with TURN available", async ({
   page,
 }, testInfo) => {
   await page.evaluate((servers) => {
@@ -192,11 +193,34 @@ test("three transceivers share one ICE transport without tripling candidates whe
       peers: ["Connected", "Connected"],
       remoteCameras: ["Off", "Live"],
     });
-  await reportInitialCallSignaling(page, testInfo);
-  const counts = await page.evaluate<{ signaled: CandidateCounts }[]>("mediaFixture.iceCounts()");
-  for (const peer of counts) {
-    expect(peer.signaled.byType.host).toBeGreaterThan(0);
-    // Direct nomination can finish gathering before a TURN allocation arrives.
+  const { signaling, candidates, native } = await reportInitialCallSignaling(page, testInfo);
+  const routes = await page.evaluate("mediaFixture.selectedRoutes()");
+  await testInfo.attach("initial-call-selected-routes", {
+    body: JSON.stringify(routes, null, 2),
+    contentType: "application/json",
+  });
+  expect(routes).toEqual([
+    { state: "succeeded", localType: "host", remoteType: "host" },
+    { state: "succeeded", localType: "host", remoteType: "host" },
+  ]);
+  for (const [index, peer] of signaling.peers.entries()) {
+    // Real native gathering (including the loopback TURN allocation), never
+    // injected candidate events. A one-candidate machine must not pass silently.
+    expect(native[index].candidates.total).toBeGreaterThan(1);
+    expect(candidates[index].descriptions[0].byType.host).toBeGreaterThan(0);
+    // Reserve three of ten statement slots for invitation/acceptance, commit,
+    // and leave. Core separately caps late trickle at six per link lifetime;
+    // this backend-only regression must satisfy the budget without that cap.
+    expect(peer.IceCandidate).toBeLessThanOrEqual(6);
+    expect(peer.total).toBeLessThanOrEqual(7);
+  }
+  expect(await page.evaluate("mediaFixture.descriptionSnapshot()")).toContain("host");
+  const products = page.frames().filter((frame) => frame.parentFrame());
+  expect(products).toHaveLength(2);
+  for (const product of products) {
+    expect(await product.evaluate(() => {
+      try { return !!Reflect.get(parent, "mediaFixture"); } catch { return false; }
+    })).toBe(false);
   }
 });
 
@@ -214,7 +238,8 @@ test("peers connect directly without TURN and host signaling preserves host cand
       remoteCameras: ["Off", "Live"],
     });
   await reportInitialCallSignaling(page, testInfo);
-  // Renegotiate after gathering so descriptions embed gathered candidates too.
+  // Initial offer and answer already embedded host candidates before renegotiation.
+  expect(await page.evaluate("mediaFixture.descriptionSnapshot()")).toEqual(["host"]);
   await page.evaluate("mediaFixture.setAnswererCamera(true)");
   await expect
     .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
@@ -226,7 +251,7 @@ test("peers connect directly without TURN and host signaling preserves host cand
   await expect
     .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
     .toBeGreaterThan(0);
-  const counts = await page.evaluate<{ signaled: { byType: Record<string, number> } }[]>(
+  const counts = await page.evaluate<{ descriptions: CandidateCounts[] }[]>(
     "mediaFixture.iceCounts()",
   );
   await testInfo.attach("host-ice-candidate-counts", {
@@ -234,7 +259,7 @@ test("peers connect directly without TURN and host signaling preserves host cand
     contentType: "application/json",
   });
   expect(counts).toHaveLength(2);
-  for (const peer of counts) expect(peer.signaled.byType.host).toBeGreaterThan(0);
+  for (const peer of counts) expect(peer.descriptions[0].byType.host).toBeGreaterThan(0);
 });
 
 test("rejected optional TURN credentials still allow a direct call", async ({ page }, testInfo) => {

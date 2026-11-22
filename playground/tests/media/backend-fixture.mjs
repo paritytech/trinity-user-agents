@@ -85,6 +85,7 @@ async function observe(node) {
           signaled.add(candidateType(candidate.candidate));
           countCandidate(node.ice.signaled, candidate.candidate,
             candidate.mid ?? String(candidate.mlineIndex ?? "unknown"));
+          node.trickledCandidates.add(candidate.candidate.trim());
         } else {
           const counts = candidateCounts();
           let mid = "unknown";
@@ -94,6 +95,7 @@ async function observe(node) {
             signaled.add(candidateType(line));
             descriptions.add(candidateType(line));
             countCandidate(counts, line, mid);
+            node.embeddedCandidates.add(line.slice(2).trim());
           }
           node.ice.descriptions.push(counts);
         }
@@ -127,7 +129,8 @@ function createNode(index) {
   const node = { index, runtime: BigInt(index + 1), session: id(100 + index), intentRevision: 0n,
     mount, signals: new Map(), revocations: [], viewports: [],
     signaling: { Description: 0, IceCandidate: 0 },
-    ice: { signaled: candidateCounts(), descriptions: [] } };
+    ice: { signaled: candidateCounts(), descriptions: [] },
+    embeddedCandidates: new Set(), trickledCandidates: new Set() };
   node.backend = createBrowserMediaBackend({
     window, document, productId: product.productId,
     getProductElement: () => frame,
@@ -421,7 +424,12 @@ window.mediaFixture = {
   },
   // Counts only: transport addresses remain in the trusted signaling path.
   iceCounts() {
-    return nodes.map((node) => node.ice);
+    return nodes.map((node) => ({
+      ...node.ice,
+      uniqueDelivered: new Set([...node.embeddedCandidates, ...node.trickledCandidates]).size,
+      embeddedAndTrickled: [...node.trickledCandidates]
+        .filter((candidate) => node.embeddedCandidates.has(candidate)).length,
+    }));
   },
   nativeIceSnapshot() {
     return nativePeers.map(({ pc, candidates }) => {
@@ -440,6 +448,21 @@ window.mediaFixture = {
       };
     });
   },
+  async selectedRoutes() {
+    return Promise.all(nativePeers.map(async ({ pc }) => {
+      const stats = await pc.getStats();
+      const transport = [...stats.values()].find((entry) =>
+        entry.type === "transport" && entry.selectedCandidatePairId);
+      const pair = transport && stats.get(transport.selectedCandidatePairId);
+      if (!pair) return null;
+      // Deliberately omit SDP, addresses, ports, credentials and stats IDs.
+      return {
+        state: pair.state,
+        localType: stats.get(pair.localCandidateId)?.candidateType,
+        remoteType: stats.get(pair.remoteCandidateId)?.candidateType,
+      };
+    }));
+  },
   callSignalingCounts() {
     const peers = nodes.map(({ index, signaling }) => ({
       peer: index, ...signaling,
@@ -450,9 +473,9 @@ window.mediaFixture = {
       IceCandidate: sum.IceCandidate + peer.IceCandidate,
       total: sum.total + peer.total,
     }), { Description: 0, IceCandidate: 0, total: 0 });
-    // Count actual emitted backend events, not fabricated product events or
-    // StatementStore deliveries: the core maps each to one private message.
-    return { peers, totals, privateStatementStoreMessagesForSignaling: totals.total };
+    // Backend events only: this harness does not instantiate the runtime or
+    // submit statements. Core admission/budgeting may suppress late trickle.
+    return { peers, totals };
   },
   createPeerTimes() {
     return createPeerDurations;

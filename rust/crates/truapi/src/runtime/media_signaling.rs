@@ -972,7 +972,8 @@ fn verified_payload(
 		return None;
 	}
 	let expiry = shape.expiry?;
-	if expiry & u32::MAX as u64 != 0 || expiry >> 32 < now {
+	// The low word is the sender's store priority, not part of V1 media framing.
+	if expiry >> 32 < now {
 		return None;
 	}
 	if shape.data.as_ref()?.len() > limit {
@@ -1041,6 +1042,33 @@ mod tests {
 			.drain(..)
 			.filter(|event| matches!(event, MediaSignalingEvent::Message(_)))
 			.count()
+	}
+
+	#[test]
+	fn statement_priority_does_not_change_authenticated_media_expiry() {
+		use crate::host_logic::statement_store::{StatementField, sign_statement_fields};
+
+		let signer = MiniSecretKey::from_bytes(&[42; 32])
+			.unwrap()
+			.expand_to_keypair(ExpansionMode::Ed25519);
+		let now = 1_800_000_000;
+		let topic = [7; 32];
+		for priority in [0, 1, u32::MAX] {
+			let fields = vec![
+				StatementField::Expiry(((now + 60) << 32) | u64::from(priority)),
+				StatementField::Topic1(topic),
+				StatementField::Data(vec![1, 2, 3]),
+			];
+			let statement =
+				sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields)
+					.unwrap()
+					.encode();
+			assert_eq!(
+				verified_payload(&statement, &topic, MAX_PACKET_BYTES, now),
+				Some((vec![1, 2, 3], now + 60)),
+			);
+			assert!(verified_payload(&statement, &topic, MAX_PACKET_BYTES, now + 61).is_none());
+		}
 	}
 
 	#[test]

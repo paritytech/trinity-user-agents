@@ -1038,6 +1038,11 @@ pub trait ProductAuthority: Send + Sync {
 	) -> Result<Vec<u8>, AuthorityError>;
 }
 
+// Phase 1 accepts priorities on receive but sends zero for deployed V1 hosts.
+// Phase 2 can prioritize control over candidates once every receiver accepts
+// the low word; the high word remains the authenticated expiry in UTC seconds.
+const MEDIA_STATEMENT_PRIORITY: u32 = 0;
+
 /// Bound the private transport independently of the eventual network submit.
 /// No channel is set: multiple live packets on one inbox must not replace one another.
 pub(super) fn media_statement_fields(
@@ -1061,7 +1066,7 @@ pub(super) fn media_statement_fields(
 		return Err(AuthorityError::Rejected);
 	}
 	statement_fields_from_v01(truapi::latest::Statement {
-		expiry: Some(expires_at << 32),
+		expiry: Some((expires_at << 32) | u64::from(MEDIA_STATEMENT_PRIORITY)),
 		topics,
 		data: Some(payload),
 		proof: None,
