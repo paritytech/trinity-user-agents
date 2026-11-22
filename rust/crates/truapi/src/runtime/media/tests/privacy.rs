@@ -136,3 +136,130 @@ fn backend_errors_never_disclose_private_transport_details() {
 	.unwrap_err();
 	assert_eq!(error, CallError::HostFailure { reason: "media host failure".into() });
 }
+
+struct ExistingDeviceGrantBackend {
+	calling_prompts: AtomicUsize,
+	device_prompts: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl MediaPlatform for ExistingDeviceGrantBackend {
+	async fn media_backend_capabilities(
+		&self,
+		product: &ProductContext,
+	) -> std::result::Result<MediaBackendCapabilities, v::GenericError> {
+		Backend.media_backend_capabilities(product).await
+	}
+
+	fn media_backend_events(
+		&self,
+		product: &ProductContext,
+		generation: u64,
+	) -> BoxStream<'static, std::result::Result<MediaBackendEvent, v::GenericError>> {
+		Backend.media_backend_events(product, generation)
+	}
+
+	async fn media_backend_command(
+		&self,
+		product: &ProductContext,
+		generation: u64,
+		command: MediaBackendCommand,
+	) -> std::result::Result<MediaBackendResponse, v::GenericError> {
+		if let MediaBackendCommand::RequestConsent { request, .. } = &command {
+			match request {
+				crate::platform::MediaConsentRequest::Calling { .. } => {
+					self.calling_prompts.fetch_add(1, Ordering::SeqCst);
+				},
+				_ => {
+					self.device_prompts.fetch_add(1, Ordering::SeqCst);
+					return Ok(MediaBackendResponse::Consent { granted: false });
+				},
+			}
+		}
+		Backend.media_backend_command(product, generation, command).await
+	}
+}
+
+fn microphone_session_with_existing_device_grant(product: &str, allow_once: bool) {
+	use crate::{
+		api::permissions::Permissions,
+		platform::PermissionDecision,
+		test_support::StubPlatform,
+		versioned::permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
+	};
+	let platform = Arc::new(StubPlatform {
+		device_permission_decisions: Mutex::new([PermissionDecision::AllowOnce].into()),
+		..Default::default()
+	});
+	let (mut host, _) = ProductRuntimeHost::new_pairing_for_tests(
+		platform.clone(),
+		ProductRuntimeHost::compat_host_config(),
+		ProductContext::new(crate::ProductId::for_test(product)),
+		test_spawner(),
+	);
+	host.test_session_state().set_session(session_info());
+	let backend = Arc::new(ExistingDeviceGrantBackend {
+		calling_prompts: AtomicUsize::new(0),
+		device_prompts: AtomicUsize::new(0),
+	});
+	Arc::get_mut(&mut host.connection).unwrap().media_platform = Some(backend.clone());
+	assert!(
+		host.connection
+			.media
+			.set(MediaService::with_signaling(
+				&host.connection,
+				backend.clone(),
+				released(
+					Arc::new(AtomicBool::new(true)),
+					Arc::new(AtomicUsize::new(0)),
+					advertisement(1, 11),
+					Arc::new(Mutex::new(None)),
+				),
+				Backoff::DEFAULT,
+			))
+			.is_ok()
+	);
+	futures::executor::block_on(async {
+		let cx = CallContext::default();
+		if allow_once {
+			assert_eq!(
+				host.request_device_permission(
+					&cx,
+					HostDevicePermissionRequest::V1(v::HostDevicePermissionRequest::Microphone),
+				)
+				.await
+				.unwrap(),
+				HostDevicePermissionResponse::V1(v::HostDevicePermissionResponse { granted: true }),
+			);
+		}
+		let mut tracks = state::off_tracks();
+		tracks.microphone = true;
+		host.create_session(
+			&cx,
+			wire::HostMediaCreateSessionRequest::V1(v::HostMediaCreateSessionRequest {
+				operation_id: [9; 32],
+				tracks,
+			}),
+		)
+		.await
+		.unwrap();
+	});
+	assert_eq!(backend.device_prompts.load(Ordering::SeqCst), 0);
+	assert_eq!(
+		backend.calling_prompts.load(Ordering::SeqCst),
+		1,
+		"trusted products and device grants never bypass scoped Calling consent"
+	);
+	assert_eq!(platform.device_permission_requests.lock().unwrap().len(), usize::from(allow_once));
+	host.close_media();
+}
+
+#[test]
+fn trusted_product_microphone_session_does_not_repeat_device_consent() {
+	microphone_session_with_existing_device_grant("peopl.dot", false);
+}
+
+#[test]
+fn allow_once_microphone_grant_is_honored_by_create_session() {
+	microphone_session_with_existing_device_grant(PRODUCT, true);
+}

@@ -107,6 +107,11 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
 6. **Works as one account across devices.** Pair with Polkadot Desktop or Polkadot Web by scanning a QR code: your phone becomes the signer that approves their transactions, and contacts and chats sync between devices over the same encrypted channels.
 
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
+
 ### What it doesn't do
 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.

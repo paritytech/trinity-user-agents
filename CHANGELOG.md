@@ -11,8 +11,10 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 - connect Media peers directly when possible, with optional TURN fallback;
   keep SDP, ICE candidates, network addresses and statistics inside hosts,
-  never in product-facing responses or events. Bound optional TURN discovery
-  to two seconds and continue directly when its configuration is invalid.
+  never in product-facing responses or events. Bound each peer's optional TURN
+  wait to two seconds and continue directly when its configuration is invalid;
+  keep shared credential discovery alive for later peers until its longer
+  timeout or cancellation by the last caller.
 - bound bundled multi-interface Media ICE bursts to 66 pending messages per
   peer (64 candidates plus two description/control messages) and 264 per
   runtime queue, retaining the 256 KiB peer, 1 MiB queue and per-message byte
@@ -25,6 +27,14 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   across eight interfaces on one bundled transport over four drain cycles.
   Stalled or flooded queues still fail closed; signaling is neither batched
   nor changed on the wire.
+
+### Fixed
+
+- reuse existing trusted or one-use microphone/camera authorization for Media
+  sessions without prompting again; Calling still requires exact-scoped consent.
+- allow legacy unscoped Calling entries to be reset without granting access.
+- restore permission-generation, stale-consent and private signaling regressions
+  on the 0.30 host port.
 
 ## [0.30.0] - 2026-11-09
 

@@ -792,18 +792,31 @@ impl MediaService {
 		consent: MediaConsentRequest,
 	) -> Result<()> {
 		let (cancel, remaining) = self.operation_window(id, false)?;
-		let (snapshot, revision) = self
+		let pending = self
 			.bounded(&cancel, remaining, false, async {
 				let _guard = self.services.media_permission_gate.lock().await;
+				if matches!(request, PermissionAuthorizationRequest::Device(_)) &&
+					self.permissions_service()
+						.authorization_status(request)
+						.await
+						.map_err(|_| host_failure())? ==
+						PermissionAuthorizationStatus::Authorized
+				{
+					self.operation_window(id, false)?;
+					return Ok(None);
+				}
 				let snapshot = self
 					.permissions_service()
 					.authorization_snapshot(request)
 					.await
 					.map_err(|_| host_failure())?;
 				self.operation_window(id, false)?;
-				Ok((snapshot, self.services.media_permission_revision()))
+				Ok(Some((snapshot, self.services.media_permission_revision())))
 			})
 			.await?;
+		let Some((snapshot, revision)) = pending else {
+			return Ok(());
+		};
 		match snapshot.status {
 			PermissionAuthorizationStatus::Authorized => return Ok(()),
 			PermissionAuthorizationStatus::Denied => return Err(CallError::Denied),

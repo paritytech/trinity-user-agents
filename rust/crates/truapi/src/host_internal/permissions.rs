@@ -684,7 +684,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 
 	/// Update the stored authorization status for a permission request.
 	///
-	/// Setting `NotDetermined` clears the stored value, restoring the default.
+	/// Setting `NotDetermined` restores the default. Device and Calling slots
+	/// retain a new generation so an outstanding prompt cannot revive a grant.
 	pub async fn set_authorization_status(
 		&self,
 		request: &PermissionAuthorizationRequest,
@@ -698,7 +699,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 				CoreStorageKey::device_permission_authorization(self.product_id(), permission)
 			},
 			PermissionAuthorizationRequest::Remote(request) => {
-				if matches!(request.permission, RemotePermission::Calling) {
+				if matches!(request.permission, RemotePermission::Calling) &&
+					status == PermissionAuthorizationStatus::Authorized
+				{
 					return Err(GenericError {
 						reason: "Calling authorization requires network and account scope".into(),
 					});

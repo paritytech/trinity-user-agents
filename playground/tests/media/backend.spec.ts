@@ -255,33 +255,58 @@ test("rejected optional TURN credentials still allow a direct call", async ({ pa
   await reportInitialCallSignaling(page, testInfo);
 });
 
-test("hanging optional TURN credentials connect both peers within the five-second core budget", async ({
+test("hanging optional TURN credentials finish each create-peer within the five-second core budget", async ({
   page,
 }, testInfo) => {
   await page.evaluate("mediaFixture.hangTurnCredentials()");
   await page.evaluate("mediaFixture.startPair()");
   await expect
-    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 5_000 })
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
     .toEqual({
       failures: [],
       captureRequests: 1,
       peers: ["Connected", "Connected"],
       remoteCameras: ["Off", "Live"],
     });
-  // Measure in the host from before the first CreatePeer, not from after the
-  // two sequential credential lookups have already consumed their deadlines.
+  const createPeerTimes = await page.evaluate<number[]>("mediaFixture.createPeerTimes()");
+  expect(createPeerTimes).toHaveLength(2);
+  for (const elapsed of createPeerTimes) {
+    expect(elapsed).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(5_000);
+  }
+  // Connection includes two sequential credential waits plus ICE negotiation;
+  // only each individual command is subject to the core's five-second budget.
   const connectionTimes = await page.evaluate<number[]>("mediaFixture.connectionTimes()");
   expect(connectionTimes).toHaveLength(2);
   for (const elapsed of connectionTimes) {
     expect(elapsed).toBeGreaterThan(0);
-    expect(elapsed).toBeLessThan(5_000);
+    expect(elapsed).toBeLessThan(15_000);
   }
   expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual(["host"]);
   await testInfo.attach("hanging-credentials-connection-times", {
-    body: JSON.stringify(connectionTimes),
+    body: JSON.stringify({ createPeerTimes, connectionTimes }),
     contentType: "application/json",
   });
   await reportInitialCallSignaling(page, testInfo);
+});
+
+test("slow TURN discovery leaves the first peer direct and supplies the next peer", async ({
+  page,
+}) => {
+  expect(turnServers.length, "TRUAPI_MEDIA_ICE_SERVERS must configure the TURN fixture").toBeGreaterThan(0);
+  await page.evaluate((servers) => {
+    Reflect.get(window, "mediaFixture").slowTurnCredentials(servers);
+  }, turnServers);
+  await page.evaluate("mediaFixture.startPair()");
+  await expect.poll(() => page.evaluate("mediaFixture.snapshot().peers"), {
+    timeout: 15_000,
+  }).toEqual(["Connected", "Connected"]);
+  expect(await page.evaluate("mediaFixture.nativeIceSnapshot().map(peer => peer.iceServerCount)"))
+    .toEqual([0, turnServers.length]);
+  const createPeerTimes = await page.evaluate<number[]>("mediaFixture.createPeerTimes()");
+  expect(createPeerTimes).toHaveLength(2);
+  expect(createPeerTimes[0]).toBeGreaterThanOrEqual(1_900);
+  for (const elapsed of createPeerTimes) expect(elapsed).toBeLessThan(5_000);
 });
 
 const malformedIceConfigurations: { name: string; iceServers: unknown }[] = [

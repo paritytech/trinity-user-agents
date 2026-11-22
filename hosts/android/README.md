@@ -173,6 +173,11 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 
 A modular **Kotlin** / **Jetpack Compose** codebase: features are split into `api` and `impl` modules wired with Hilt, performance-critical crypto is compiled from **Rust** via the NDK ([`bindings/`](./bindings)), and chain access goes through [substrate-sdk-android](https://github.com/novasamatech/substrate-sdk-android) (JSON-RPC, storage subscriptions, extrinsics).
 
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
+
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time
 configuration and the steps to sign and publish the app are documented in
