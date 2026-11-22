@@ -1,23 +1,42 @@
 import SwiftUI
 
 public extension CustomMessageWidgetNode {
-    /// A cover cut into `columns` x `rows` cells (`RendererNode.CoverGrid`), with the cells its tree already clears.
+    /// A cover cut into `columns` x `rows` cells (`RendererNode.CoverGrid`), with the cells its tree already clears
+    /// and the brush, if any, that draws the cells cleared since.
     struct CoverGridProps {
         public let key: String
         public let columns: Int
         public let rows: Int
         public let cleared: CoverCells
+        public let brush: CoverBrush?
 
-        public init(key: String, columns: Int, rows: Int, cleared: CoverCells = CoverCells()) {
+        public init(
+            key: String, columns: Int, rows: Int, cleared: CoverCells = CoverCells(), brush: CoverBrush? = nil
+        ) {
             self.key = key
             self.columns = min(max(columns, 1), CoverCells.maxSide)
             self.rows = min(max(rows, 1), CoverCells.maxSide)
             self.cleared = cleared
+            self.brush = brush
         }
 
         /// From a tree's node: its sides as sent, and its cleared cells as a bitset (`CoverCells(bits:)`).
-        public init(key: String, columns: some BinaryInteger, rows: some BinaryInteger, bits: Data) {
-            self.init(key: key, columns: Int(columns), rows: Int(rows), cleared: CoverCells(bits: bits))
+        public init(
+            key: String, columns: some BinaryInteger, rows: some BinaryInteger, bits: Data, brush: CoverBrush? = nil
+        ) {
+            self.init(key: key, columns: Int(columns), rows: Int(rows), cleared: CoverCells(bits: bits), brush: brush)
+        }
+    }
+
+    /// The brush a cover draws its newly cleared cells with (`RendererNode.CoverGrid`'s `brush`): a line `width`
+    /// points wide, with round caps and joins, along the finger on the location pan keyed `pan`.
+    struct CoverBrush: Equatable {
+        public let pan: String
+        public let width: CGFloat
+
+        public init(pan: String, width: some BinaryInteger) {
+            self.pan = pan
+            self.width = CGFloat(width)
         }
     }
 }
@@ -104,6 +123,37 @@ public final class CoverGridChannel {
     }
 }
 
+/// The finger's strokes on one keyed location pan since the current tree, in the pan's own frame (from its top-left
+/// corner, whatever the layout direction), for a cover whose brush follows that pan. A tree drops them, as it drops
+/// the cells cleared since.
+@Observable
+public final class PanTrail {
+    public private(set) var strokes: [[CGPoint]] = []
+
+    /// The name of the pan's frame, which a cover inside it reads its own place in.
+    static func space(_ pan: String) -> String { "coverBrush.pan.\(pan)" }
+
+    public var isEmpty: Bool { strokes.isEmpty }
+
+    /// A new stroke, from where the finger touched down.
+    @MainActor
+    func begin(at point: CGPoint) {
+        strokes.append([point])
+    }
+
+    /// The finger reached `point` on the current stroke; one with no stroke begun starts one.
+    @MainActor
+    func extend(to point: CGPoint) {
+        guard let last = strokes.indices.last else { strokes.append([point]); return }
+        if strokes[last].last != point { strokes[last].append(point) }
+    }
+
+    @MainActor
+    func reset() {
+        if !strokes.isEmpty { strokes = [] }
+    }
+}
+
 enum CoverGridShape {
     /// One round hole per cleared cell: centred on the cell, its radius half the cell's diagonal, so it reaches the
     /// cell's corners and neighbouring holes merge into one soft-edged scratch with no cover left between them.
@@ -147,47 +197,125 @@ enum CoverGridShape {
         matrix.a5 = 0.5 * (1 - edgeGain)
         return matrix
     }
+
+    /// Where a brush may cut: a circle one cell's diagonal wide around each of `cells`, so a stroke whose worker
+    /// cleared every cell within half the brush of the finger's path is cut whole, and nothing is cut more than a
+    /// diagonal from a cleared cell.
+    static func brushGate(
+        _ cells: CoverCells, columns: Int, rows: Int, in size: CGSize, mirrored: Bool = false
+    ) -> Path {
+        var path = Path()
+        guard columns > 0, rows > 0, size.width > 0, size.height > 0 else { return path }
+        let width = size.width / CGFloat(columns)
+        let height = size.height / CGFloat(rows)
+        let radius = (width * width + height * height).squareRoot()
+        cells.forEach(below: columns * rows) { cell in
+            let centreX = (CGFloat(cell % columns) + 0.5) * width
+            let centre = CGPoint(
+                x: mirrored ? size.width - centreX : centreX, y: (CGFloat(cell / columns) + 0.5) * height
+            )
+            path.addEllipse(in: CGRect(
+                x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2
+            ))
+        }
+        return path
+    }
+
+    /// The finger's strokes as one path, moved from the pan's frame into the cover's (`origin` is the cover's top-left
+    /// corner in the pan's frame). A stroke of one point is a dot: a line too short to see, which round caps draw as a
+    /// circle the brush's width, as the existing card does.
+    static func brushStrokes(_ strokes: [[CGPoint]], origin: CGPoint = .zero) -> Path {
+        var path = Path()
+        for stroke in strokes {
+            guard let first = stroke.first else { continue }
+            let start = CGPoint(x: first.x - origin.x, y: first.y - origin.y)
+            path.move(to: stroke.count == 1 ? CGPoint(x: start.x - 0.1, y: start.y) : start)
+            if stroke.count == 1 {
+                path.addLine(to: start)
+            } else {
+                for point in stroke.dropFirst() {
+                    path.addLine(to: CGPoint(x: point.x - origin.x, y: point.y - origin.y))
+                }
+            }
+        }
+        return path
+    }
+
+    /// The brush's line: its width, with round caps and joins.
+    static func brushStyle(_ brush: CustomMessageWidgetNode.CoverBrush) -> StrokeStyle {
+        StrokeStyle(lineWidth: brush.width, lineCap: .round, lineJoin: .round)
+    }
 }
 
 /// Draws its children as a cover, with a round hole cut for every cleared cell: those of the tree, plus those the
 /// worker cleared since (until the next tree, which always wins). The holes' edge is smoothed as it is drawn
-/// (`CoverGridShape.softening`), so cells read as one scratch, not as steps.
+/// (`CoverGridShape.softening`), so cells read as one scratch, not as steps. With a brush, the cells cleared since the
+/// tree are drawn as the brush's strokes along the finger instead, cut only near those cells
+/// (`CoverGridShape.brushGate`), while the host holds a stroke of the brush's pan.
 struct NodeCoverGridView<Content: View>: View {
     let props: CustomMessageWidgetNode.CoverGridProps
     let modifiers: CustomMessageWidgetNode.Modifiers
     @ViewBuilder let content: () -> Content
 
     @Environment(\.gestureOffsets) private var updates
+    @State private var origin = CGPoint.zero
 
     var body: some View {
         content()
             .applyWidgetNodeModifiers(modifiers, alignment: .topLeading)
-            .mask { CoverGridMask(props: props, channel: updates?.cover(for: props.key)) }
+            .onGeometryChange(for: CGPoint.self) { proxy in
+                props.brush.map { proxy.frame(in: .named(PanTrail.space($0.pan))).origin } ?? .zero
+            } action: { origin = $0 }
+            .mask {
+                CoverGridMask(
+                    props: props,
+                    channel: updates?.cover(for: props.key),
+                    trail: props.brush.flatMap { updates?.trail(for: $0.pan) },
+                    origin: origin
+                )
+            }
     }
 }
 
 private struct CoverGridMask: View {
     let props: CustomMessageWidgetNode.CoverGridProps
     let channel: CoverGridChannel?
+    let trail: PanTrail?
+    let origin: CGPoint
 
     @Environment(\.layoutDirection) private var layoutDirection
 
     var body: some View {
-        let cells = props.cleared.union(channel?.cleared ?? CoverCells())
+        let since = channel?.cleared ?? CoverCells()
+        let brushed = props.brush != nil && trail?.isEmpty == false && !since.isEmpty
+        let holes = brushed ? props.cleared : props.cleared.union(since)
+        let strokes = brushed ? trail?.strokes ?? [] : []
         let mirrored = layoutDirection == .rightToLeft
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
-            guard !cells.isEmpty else { return }
+            guard !holes.isEmpty || brushed else { return }
             context.blendMode = .destinationOut
-            let holes = CoverGridShape.holes(
-                cells, columns: props.columns, rows: props.rows, in: size, mirrored: mirrored
-            )
-            let softening = CoverGridShape.softening(columns: props.columns, rows: props.rows, in: size)
-            context.drawLayer { layer in
-                // A layer's filters run last added first: the holes are softened, then their edge is sharpened again.
-                layer.addFilter(.colorMatrix(CoverGridShape.sharpenEdge))
-                layer.addFilter(.blur(radius: softening))
-                layer.fill(holes, with: .color(.black))
+            if !holes.isEmpty {
+                let shape = CoverGridShape.holes(
+                    holes, columns: props.columns, rows: props.rows, in: size, mirrored: mirrored
+                )
+                let softening = CoverGridShape.softening(columns: props.columns, rows: props.rows, in: size)
+                context.drawLayer { layer in
+                    // A layer's filters run last added first: the holes are softened, then their edge is sharpened.
+                    layer.addFilter(.colorMatrix(CoverGridShape.sharpenEdge))
+                    layer.addFilter(.blur(radius: softening))
+                    layer.fill(shape, with: .color(.black))
+                }
+            }
+            if brushed, let brush = props.brush {
+                context.clip(to: CoverGridShape.brushGate(
+                    since, columns: props.columns, rows: props.rows, in: size, mirrored: mirrored
+                ))
+                context.stroke(
+                    CoverGridShape.brushStrokes(strokes, origin: origin),
+                    with: .color(.black),
+                    style: CoverGridShape.brushStyle(brush)
+                )
             }
         }
     }

@@ -30,7 +30,8 @@ extension RendererNode {
                 key: props.key,
                 columns: props.columns,
                 rows: props.rows,
-                bits: props.cleared
+                bits: props.cleared,
+                brush: props.brush.map { CustomMessageWidgetNode.CoverBrush(pan: $0.pan, width: $0.width) }
             )
             return CustomMessageWidgetNode(
                 content: .coverGrid(cover, children: children.widgetNodes(resolver: resolver)),

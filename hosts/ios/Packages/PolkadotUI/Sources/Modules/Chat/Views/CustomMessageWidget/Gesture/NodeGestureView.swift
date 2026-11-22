@@ -44,6 +44,7 @@ struct NodeGestureView<Content: View>: View {
         }
         .id(settleGeneration)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .coordinateSpace(.named(PanTrail.space(props.key ?? "")))
         .onGeometryChange(for: CGSize.self, of: \.size) { width = $0.width; height = $0.height }
         .onChange(of: width) { updatePlace() }
         .onChange(of: childWidth) { updatePlace() }
@@ -82,6 +83,18 @@ private extension NodeGestureView {
     var shown: CGPoint {
         let set = channel?.offset ?? .zero
         return CGPoint(x: offset.x + set.x, y: offset.y + set.y)
+    }
+
+    /// The finger's strokes on this keyed location pan, for a cover whose brush follows it.
+    var trail: PanTrail? {
+        guard props.pan?.reportsLocation == true else { return nil }
+        return props.key.flatMap { gestureOffsets?.trail(for: $0) }
+    }
+
+    /// A place the surface reports (from its top-start corner) in the pan's frame from its top-left corner, where a
+    /// cover's brush draws.
+    func leftToRight(_ point: CGPoint) -> CGPoint {
+        layoutDirection == .rightToLeft ? CGPoint(x: width - point.x, y: point.y) : point
     }
 
     /// A keyed pan whose worker hears its moves: those are paced instead of sent one by one.
@@ -172,17 +185,21 @@ private extension NodeGestureView {
             lastMove = 0
             startPacing(pan)
             position = sample.touchDown
+            trail?.begin(at: leftToRight(sample.touchDown))
             emit(pan.startAction, .started)
             position = sample.location
+            trail?.extend(to: leftToRight(sample.location))
             offerMove(pan)
         case .moved:
             guard dragging else { return }
             position = sample.location
+            trail?.extend(to: leftToRight(sample.location))
             offerMove(pan)
         case .ended,
              .cancelled:
             guard dragging else { return }
             position = sample.location
+            trail?.extend(to: leftToRight(sample.location))
             dragging = false
             stopPacing()
             emit(pan.endAction, phase)

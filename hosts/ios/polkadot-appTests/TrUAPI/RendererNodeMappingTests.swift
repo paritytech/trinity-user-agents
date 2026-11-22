@@ -353,7 +353,7 @@ struct RendererNodeMappingTests {
     @Test func coverGridCarriesItsGridAndClearedCells() throws {
         let node = RendererNode.coverGrid(
             modifiers: [.fillWidth(true)],
-            props: CoverGridProps(key: "foil", columns: 35, rows: 37, cleared: Data([0b1001])),
+            props: CoverGridProps(key: "foil", columns: 35, rows: 37, cleared: Data([0b1001]), brush: nil),
             children: [.spacer(modifiers: [])]
         )
         let widget = try #require(node.toWidgetNode(resolver: resolver))
@@ -364,6 +364,23 @@ struct RendererNodeMappingTests {
         #expect(props.key == "foil" && props.columns == 35 && props.rows == 37)
         #expect(props.cleared.count == 2 && props.cleared.contains(0) && props.cleared.contains(3))
         #expect(children.count == 1)
+        #expect(props.brush == nil)
+    }
+
+    @Test func aCoverGridsBrushNamesItsPanAndWidth() throws {
+        let node = RendererNode.coverGrid(
+            modifiers: [],
+            props: CoverGridProps(
+                key: "foil", columns: 36, rows: 47, cleared: Data(), brush: CoverBrush(pan: "pan", width: 52)
+            ),
+            children: []
+        )
+        let widget = try #require(node.toWidgetNode(resolver: resolver))
+        guard case let .coverGrid(props, _) = widget.content else {
+            Issue.record("a cover grid did not map to one")
+            return
+        }
+        #expect(props.brush == CustomMessageWidgetNode.CoverBrush(pan: "pan", width: 52))
     }
 
     @Test func clearedCellsInsideATreeDrawNothing() {

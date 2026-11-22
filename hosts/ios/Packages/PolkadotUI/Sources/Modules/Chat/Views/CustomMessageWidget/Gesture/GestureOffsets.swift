@@ -3,7 +3,8 @@ import UIKit
 import SwiftUI
 
 /// What a worker changes on its keyed nodes between trees: gesture offsets (`RendererNode.SetOffset`) and cleared
-/// cover cells (`RendererNode.ClearCells`).
+/// cover cells (`RendererNode.ClearCells`); and the finger's strokes on keyed location pans, which a cover's brush
+/// draws with those cells.
 ///
 /// An update changes one node straight away: it is not a tree, so nothing is decoded, mapped or diffed, and only the
 /// view reading that key's channel draws again. A new tree drops every update, because the tree always wins.
@@ -16,6 +17,7 @@ public final class GestureOffsets {
     private var places: [String: GesturePanPlace] = [:]
     private var covers: [String: CoverGridChannel] = [:]
     let answers = GestureAnswerMailbox()
+    private var trails: [String: PanTrail] = [:]
 
     public init() {}
 
@@ -48,6 +50,15 @@ public final class GestureOffsets {
         let cover = CoverGridChannel()
         covers[key] = cover
         return cover
+    }
+
+    /// The finger's strokes on the location pan keyed `key` since the current tree.
+    @MainActor
+    public func trail(for key: String) -> PanTrail {
+        if let trail = trails[key] { return trail }
+        let trail = PanTrail()
+        trails[key] = trail
+        return trail
     }
 
     /// A `ClearCells` item for `key`. It is the worker's answer to a paced move, whichever gesture is under way.
@@ -91,6 +102,9 @@ public final class GestureOffsets {
         }
         for cover in covers.values {
             cover.reset()
+        }
+        for trail in trails.values {
+            trail.reset()
         }
     }
 }
