@@ -1,13 +1,16 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
+import { CoreStorageKey } from "./generated/host-callbacks.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
 
 type HostCallbackOverrides = {
-  [K in keyof RequiredHostCallbacks]?: Partial<RequiredHostCallbacks[K]>;
+  [K in keyof RequiredHostCallbacks]?: K extends "media"
+    ? RequiredHostCallbacks[K]
+    : Partial<RequiredHostCallbacks[K]>;
 };
 
-/** Default no-op host callbacks with optional per-test overrides. */
+/** In-memory core storage and default host callbacks with per-test overrides. */
 export function makeHostCallbacks(
   overrides: HostCallbackOverrides = {},
 ): CompleteHostCallbacks {
@@ -15,6 +18,10 @@ export function makeHostCallbacks(
   // per call rather than a constant: the core keys the worker reference it
   // holds by that id, and a shared id loses all but the first.
   let nextOperationId = 1;
+  const coreValues = new Map<string, Uint8Array>();
+  const storageChanges: CoreStorageKey[] = [];
+  const storageKey = (key: CoreStorageKey): string =>
+    CoreStorageKey.enc(key).toString();
   const defaults: CompleteHostCallbacks = {
     navigation: { navigateTo: async () => {} },
     notifications: {
@@ -43,9 +50,42 @@ export function makeHostCallbacks(
       endOperation: async () => {},
     },
     coreStorage: {
-      readCoreStorage: async () => undefined,
-      writeCoreStorage: async () => {},
-      clearCoreStorage: async () => {},
+      readCoreStorage: async (key) => coreValues.get(storageKey(key))?.slice(),
+      writeCoreStorage: async (key, value) => {
+        coreValues.set(storageKey(key), value.slice());
+      },
+      clearCoreStorage: async (key) => {
+        coreValues.delete(storageKey(key));
+      },
+      compareExchangeCoreStorage: async (
+        key,
+        expected,
+        replacement,
+        notifyOnSuccess,
+      ) => {
+        const slot = storageKey(key);
+        const current = coreValues.get(slot);
+        if (
+          current === undefined
+            ? expected !== undefined
+            : expected === undefined ||
+              current.length !== expected.length ||
+              current.some((byte, index) => byte !== expected[index])
+        ) {
+          return false;
+        }
+        coreValues.set(slot, replacement.slice());
+        if (notifyOnSuccess) {
+          (
+            overrides.coreStorage?.coreStorageChanged ??
+            defaults.coreStorage.coreStorageChanged
+          )(key);
+        }
+        return true;
+      },
+      coreStorageChanged: (key) => {
+        storageChanges.push(key);
+      },
     },
     auth: { authStateChanged: () => {} },
     userConfirmation: {
@@ -102,6 +142,7 @@ export function makeHostCallbacks(
     theme: { ...defaults.theme, ...overrides.theme },
     locale: { ...defaults.locale, ...overrides.locale },
     chain: { ...defaults.chain, ...overrides.chain },
+    ...(overrides.media === undefined ? {} : { media: overrides.media }),
     // Chat is an optional capability: only fixtures that ask for it get the
     // group, so the default fixture is a host that does not serve chat.
     ...(overrides.chat

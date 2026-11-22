@@ -148,6 +148,12 @@ export type MainToWorker =
       request: Uint8Array;
       status: PermissionAuthorizationStatus;
     }
+  | {
+      kind: "refreshPermissionAuthorization";
+      productId: ProductId;
+      requestId: number;
+      request: Uint8Array;
+    }
   | { kind: "getSessionChatIdentityKey"; requestId: number }
   | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
@@ -265,6 +271,17 @@ export type WorkerToMain =
       error: string;
     }
   | {
+      kind: "refreshPermissionAuthorizationResponse";
+      requestId: number;
+      ok: true;
+    }
+  | {
+      kind: "refreshPermissionAuthorizationResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
       kind: "sessionChatIdentityKeyResponse";
       requestId: number;
       ok: true;
@@ -358,9 +375,11 @@ export type WorkerToMain =
       kind: "subscriptionStart";
       subId: number;
       name: SubscriptionName;
-      payload: Uint8Array | string | null;
+      args: readonly unknown[];
     }
   | { kind: "subscriptionStop"; subId: number }
+  /** A trusted Media item reached the worker; bounds in-flight private data. */
+  | { kind: "mediaSubscriptionAck"; subId: number }
   | { kind: "chainConnectStart"; connId: number; genesisHash: string }
   | { kind: "chainSend"; connId: number; request: string }
   | { kind: "chainClose"; connId: number };

@@ -7,3 +7,10 @@ export type {
   WorkerPairingHostRuntime,
 } from "./create-worker-host-runtime.js";
 export { createWebWorkerPairingHostRuntime } from "./create-worker-host-runtime.js";
+export type {
+  BrowserMediaBackend,
+  BrowserMediaBackendOptions,
+  BrowserMediaConsentContext,
+  BrowserMediaGeometry,
+} from "./browser-media-backend.js";
+export { createBrowserMediaBackend } from "./browser-media-backend.js";

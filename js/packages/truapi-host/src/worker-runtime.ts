@@ -22,6 +22,7 @@ import {
   handleGetPermissionAuthorizationStatus,
   handleGetPermissionAuthorizationStatuses,
   handleSetPermissionAuthorizationStatus,
+  handleRefreshPermissionAuthorization,
 } from "./worker-permission-authorization.js";
 import type {
   WasmModuleShape,
@@ -96,7 +97,7 @@ function callbackRequest(
 
 function startSubscription<T>(
   name: SubscriptionName,
-  payload: Uint8Array | string | null,
+  args: readonly unknown[],
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
 ): () => void {
@@ -104,8 +105,20 @@ function startSubscription<T>(
   subscriptionListeners.set(subId, {
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
+    privateMedia: name === "mediaBackendEvents",
   });
-  postToMain({ kind: "subscriptionStart", subId, name, payload });
+  try {
+    postToMain({
+      kind: "subscriptionStart",
+      subId,
+      name,
+      args,
+    });
+  } catch {
+    subscriptionListeners.delete(subId);
+    sendError({ reason: "Host subscription transport is unavailable" });
+    return () => {};
+  }
   return () => {
     subscriptionListeners.delete(subId);
     postToMain({ kind: "subscriptionStop", subId });
@@ -909,6 +922,15 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.requestId,
         msg.request,
         msg.status,
+      );
+      break;
+    case "refreshPermissionAuthorization":
+      void handleRefreshPermissionAuthorization(
+        host?.runtime ?? null,
+        postToMain,
+        msg.productId,
+        msg.requestId,
+        msg.request,
       );
       break;
     case "callbackResponse": {
