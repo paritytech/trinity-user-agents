@@ -62,7 +62,17 @@ fn unchanged_storage_notification_preserves_authority_and_live_media() {
 	let snapshot = service.current_session().unwrap();
 	let media = host.connection.media.get().unwrap();
 	let session_id = *media.lock().sessions.keys().next().unwrap();
-	service.clone().start_session_store_sync_for_tests(test_spawner());
+	// Register the storage listener before sending the notification; the
+	// normal thread spawner may not have polled its task yet.
+	let background = test_spawner();
+	let primed: crate::subscription::Spawner = Arc::new(move |mut task| {
+		futures::executor::block_on(futures::future::poll_fn(|cx| {
+			assert!(task.as_mut().poll(cx).is_pending());
+			std::task::Poll::Ready(())
+		}));
+		background(task);
+	});
+	service.clone().start_session_store_sync_for_tests(primed);
 	let ticks = service.session_store_change_ticks_for_tests();
 	service.notify_session_store_changed();
 	assert!(
