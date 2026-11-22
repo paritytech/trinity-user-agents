@@ -564,12 +564,7 @@ impl SsoRequestService {
 			// Snapshots read while activation was resolving still belong to
 			// the previous selection, even when persisted SSO IDs are reused.
 			lifecycle.advance();
-			if previous.as_ref() == Some(&session) {
-				// A new activation with identical persisted IDs must still wake
-				// live capability owners so they drop the previous authority.
-				self.session_state.clear_session();
-			}
-			self.session_state.set_session(session.clone());
+			self.session_state.activate_session(session.clone());
 			lifecycle.external_session_active = external_session;
 			previous
 		};

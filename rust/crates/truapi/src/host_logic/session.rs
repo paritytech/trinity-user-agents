@@ -296,6 +296,20 @@ impl SessionState {
 		}
 	}
 
+	/// Publish a new activation without exposing a disconnected snapshot.
+	/// Reused session IDs still invalidate subscribers' previous authority.
+	pub(crate) fn activate_session(&self, info: SessionInfo) {
+		let mut inner = self.inner.lock().expect("session-state mutex poisoned");
+		if inner.current.as_ref() == Some(&info) {
+			broadcast(
+				&mut inner.subscribers,
+				HostAccountConnectionStatusSubscribeItem::Disconnected,
+			);
+		}
+		inner.current = Some(info);
+		broadcast(&mut inner.subscribers, HostAccountConnectionStatusSubscribeItem::Connected);
+	}
+
 	/// Replace the active session only when it still matches `expected`.
 	pub fn replace_session_if_current(&self, expected: &SessionInfo, info: SessionInfo) -> bool {
 		let mut inner = self.inner.lock().expect("session-state mutex poisoned");

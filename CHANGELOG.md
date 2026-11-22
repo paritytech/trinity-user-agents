@@ -30,6 +30,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- publish repeated session activation atomically while invalidating previous
+  capability owners, without exposing a transient disconnected snapshot.
 - reuse existing trusted or one-use microphone/camera authorization for Media
   sessions without prompting again; Calling still requires exact-scoped consent.
 - allow legacy unscoped Calling entries to be reset without granting access.
