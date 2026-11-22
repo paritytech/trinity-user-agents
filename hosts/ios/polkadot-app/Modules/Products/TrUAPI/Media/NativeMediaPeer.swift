@@ -3,6 +3,24 @@ import WebRTC
 import TrUAPIHost
 import StructuredConcurrency
 
+/// Retry only peer construction: failures after a peer exists must still close that peer normally.
+func makeNativeMediaPeerConnection(
+    configuration: RTCConfiguration,
+    create: (RTCConfiguration) throws -> RTCPeerConnection?
+) throws -> RTCPeerConnection? {
+    try Task.checkCancellation()
+    do {
+        if let connection = try create(configuration) { return connection }
+    } catch {
+        try Task.checkCancellation()
+        guard !configuration.iceServers.isEmpty else { throw error }
+    }
+    try Task.checkCancellation()
+    guard !configuration.iceServers.isEmpty else { return nil }
+    configuration.iceServers = []
+    return try create(configuration)
+}
+
 /// Only this trusted adapter sees descriptions/candidates. The existing low-level
 /// wrapper supplies serialized peer operations; no Chat signaling is involved.
 actor NativeMediaPeer {

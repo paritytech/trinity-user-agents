@@ -14,6 +14,7 @@ import android.webkit.WebView
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.tools_media_connection_impl.WebRtcCore
+import io.paritytech.polkadotapp.tools_media_connection_impl.models.ExternalRtcConfig
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.toIceServers
 import io.paritytech.polkadotapp.tools_media_connection_impl.turn.ExternalRtcConfigProvider
 import kotlinx.coroutines.*
@@ -190,9 +191,8 @@ class NativeMediaBackend internal constructor(
                     if (!session.committed) throw MediaDomainFailure(NativeMediaDomainError.InvalidState)
                     if (session.peers.size >= 5) throw MediaDomainFailure(NativeMediaDomainError.CapacityExceeded(5u))
                     if (session.peers.containsKey(command.participantId.key())) throw MediaDomainFailure(NativeMediaDomainError.InvalidState)
-                    val config = rtcConfig.getConfig()
+                    val servers = nativeMediaIceServers { rtcConfig.getConfig() }
                     if (runtime.closed || runtime.sessions[session.key] !== session) throw MediaDomainFailure(NativeMediaDomainError.SessionEnded)
-                    val servers = config.toIceServers()
                     val peer = NativeMediaPeer(core, servers, command.offerer, scope, { emit(runtime, it) }, session.id,
                         command.participantId.copyOf(), runtime.compositor::refresh, { session.peers.remove(command.participantId.key()) })
                     session.peers[command.participantId.key()] = peer
@@ -481,3 +481,17 @@ class NativeMediaBackend internal constructor(
 }
 
 internal fun ByteArray.key(): String = joinToString("") { "%02x".format(it) }
+
+/** Optional credentials must leave room within the core's five-second CreatePeer deadline. */
+internal suspend fun nativeMediaIceServers(
+    getConfig: suspend () -> ExternalRtcConfig,
+): List<PeerConnection.IceServer> {
+    currentCoroutineContext().ensureActive()
+    return try {
+        withTimeoutOrNull(2_000L) { getConfig().toIceServers() } ?: emptyList()
+    } catch (failure: Exception) {
+        // Provider-local cancellation is a service failure, not cancellation of this command.
+        currentCoroutineContext().ensureActive()
+        emptyList()
+    }
+}

@@ -1,5 +1,6 @@
 import Foundation
 import WebRTC
+import StructuredConcurrency
 
 protocol WebRTCConfigMaking: Sendable {
     func makeConnectionConfiguration() async throws -> RTCConfiguration
@@ -25,12 +26,15 @@ final class WebRTCConfigFactory: WebRTCConfigMaking {
         try Task.checkCancellation()
         let iceServers: [RTCIceServer]
         do {
-            iceServers = makeIceServers(from: try await turnService.issueCredentials())
+            let credentials: TURNCredentials
+            if allowsDirectFallback {
+                credentials = try await issueOptionalCredentials()
+            } else {
+                credentials = try await turnService.issueCredentials()
+            }
+            iceServers = makeIceServers(from: credentials)
         } catch {
             try Task.checkCancellation()
-            if error is CancellationError || (error as? URLError)?.code == .cancelled {
-                throw error
-            }
             guard allowsDirectFallback else { throw error }
             // Media can connect directly when the optional TURN service is unavailable.
             iceServers = []
@@ -58,6 +62,39 @@ final class WebRTCConfigFactory: WebRTCConfigMaking {
 }
 
 private extension WebRTCConfigFactory {
+    /// A task group waits for cancelled children, so it cannot bound an uncooperative provider.
+    /// The stream races completion against the deadline without waiting for the losing task.
+    func issueOptionalCredentials() async throws -> TURNCredentials {
+        let (stream, continuation) = AsyncThrowingStream<TURNCredentials, Error>.makeStream()
+        let provider = Task { [turnService] in
+            do {
+                continuation.yield(try await turnService.issueCredentials())
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        let deadline = Task {
+            do {
+                // Leave time for peer construction inside the core's five-second deadline.
+                try await Task.sleep(for: .seconds(2))
+                continuation.finish(throwing: TimeoutError())
+            } catch {
+                // Completion or outer cancellation has already ended the race.
+            }
+        }
+        defer {
+            provider.cancel()
+            deadline.cancel()
+        }
+        var iterator = stream.makeAsyncIterator()
+        guard let credentials = try await iterator.next() else {
+            try Task.checkCancellation()
+            throw TimeoutError()
+        }
+        return credentials
+    }
+
     func makeIceServers(from credentials: TURNCredentials) -> [RTCIceServer] {
         var result: [RTCIceServer] = []
 

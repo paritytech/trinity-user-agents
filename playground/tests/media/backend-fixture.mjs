@@ -23,6 +23,16 @@ const signaled = new Set();
 const descriptions = new Set();
 let transportOptions = {};
 const candidateType = (line) => / typ (\S+)/.exec(line)?.[1] ?? "unknown";
+let pairStartedAt;
+
+function countCandidate(counts, candidate, mid) {
+  const type = candidateType(candidate);
+  counts.total += 1;
+  counts.byType[type] = (counts.byType[type] ?? 0) + 1;
+  if (mid !== undefined) counts.byMid[mid] = (counts.byMid[mid] ?? 0) + 1;
+}
+
+const candidateCounts = () => ({ total: 0, byType: {}, byMid: {} });
 
 const nodes = [];
 const failures = [];
@@ -51,12 +61,26 @@ async function observe(node) {
       if (item.isErr()) throw new Error("Backend observation failed");
       const event = item.value;
       if (event.tag === "Description" || event.tag === "IceCandidate") {
-        if (event.tag === "IceCandidate") signaled.add(candidateType(event.value.candidate.candidate));
-        else for (const line of event.value.description.sdp.split("\r\n"))
-          if (line.startsWith("a=candidate:")) descriptions.add(candidateType(line));
+        if (event.tag === "IceCandidate") {
+          const candidate = event.value.candidate;
+          signaled.add(candidateType(candidate.candidate));
+          countCandidate(node.ice.signaled, candidate.candidate,
+            candidate.mid ?? String(candidate.mlineIndex ?? "unknown"));
+        } else {
+          const counts = candidateCounts();
+          let mid = "unknown";
+          for (const line of event.value.description.sdp.split("\r\n")) {
+            if (line.startsWith("a=mid:")) mid = line.slice(6);
+            if (!line.startsWith("a=candidate:")) continue;
+            descriptions.add(candidateType(line));
+            countCandidate(counts, line, mid);
+          }
+          node.ice.descriptions.push(counts);
+        }
         signal(nodes[Number(BigInt(event.value.participantId)) - 1], node, event);
       } else if (event.tag === "PeerStateChanged") {
         node.peer = event.value.state;
+        if (node.peer === "Connected") node.connectedAt ??= performance.now();
       } else if (event.tag === "RemoteStateChanged") {
         node.remote = event.value.state;
       } else if (event.tag === "ViewportChanged") {
@@ -81,7 +105,8 @@ function createNode(index) {
   mount.append(frame);
   document.body.append(mount);
   const node = { index, runtime: BigInt(index + 1), session: id(100 + index), intentRevision: 0n,
-    mount, signals: new Map(), revocations: [], viewports: [] };
+    mount, signals: new Map(), revocations: [], viewports: [],
+    ice: { signaled: candidateCounts(), descriptions: [] } };
   node.backend = createBrowserMediaBackend({
     window, document, productId: product.productId,
     getProductElement: () => frame,
@@ -120,6 +145,7 @@ async function openPair() {
   }
 }
 async function connectPair() {
+  pairStartedAt = performance.now();
   await command(nodes[1], "CreatePeer", { sessionId: nodes[1].session, participantId: id(1), offerer: false });
   await command(nodes[0], "CreatePeer", { sessionId: nodes[0].session, participantId: id(2), offerer: true });
 }
@@ -321,9 +347,16 @@ window.mediaFixture = {
   forceTurn(iceServers) {
     transportOptions = { iceServers, iceTransportPolicy: "relay" };
   },
-  rejectTurnCredentials() {
+  configureIceServers(iceServers, iceTransportPolicy = "all") {
+    transportOptions = { iceServers, iceTransportPolicy };
+  },
+  hangTurnCredentials(iceTransportPolicy = "all") {
+    transportOptions = { iceServers: () => new Promise(() => {}), iceTransportPolicy };
+  },
+  rejectTurnCredentials(iceTransportPolicy = "all") {
     transportOptions = {
       iceServers: async () => { throw new Error("TURN credentials unavailable at 192.0.2.42"); },
+      iceTransportPolicy,
     };
   },
   async rejectCapture() {
@@ -343,6 +376,13 @@ window.mediaFixture = {
   },
   iceSnapshot() {
     return { signaled: [...signaled].sort(), descriptions: [...descriptions].sort() };
+  },
+  // Counts only: transport addresses remain in the trusted signaling path.
+  iceCounts() {
+    return nodes.map((node) => node.ice);
+  },
+  connectionTimes() {
+    return nodes.map((node) => node.connectedAt === undefined ? null : node.connectedAt - pairStartedAt);
   },
   snapshot() {
     return { failures, captureRequests: captures.length,

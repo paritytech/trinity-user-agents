@@ -16,6 +16,7 @@ use crate::host_logic::media_protocol::{
     VerifiedAdvertisement, decode_advertisement,
 };
 use crate::runtime::media_signaling::AuthenticatedMediaMessage;
+use super::state::{MEDIA_MESSAGE_LIMIT, MEDIA_PEER_MESSAGE_LIMIT};
 
 const VERSION: u16 = 1;
 const INVITATION_SECONDS: u64 = 60;
@@ -31,8 +32,6 @@ const MAX_CANDIDATE: usize = 4096;
 const MAX_MID: usize = 256;
 const MAX_LINK_BUFFER: usize = 256 * 1024;
 const MAX_BUFFER: usize = 1024 * 1024;
-const MAX_LINK_MESSAGES: usize = 66;
-const MAX_BUFFER_MESSAGES: usize = 256;
 
 type Id = [u8; 32];
 type EndpointKey = (Id, Id);
@@ -924,7 +923,7 @@ impl GroupEngine {
             return;
         }
         let bytes = value.bytes();
-        if link.buffered.len() >= MAX_LINK_MESSAGES || self.buffered_messages >= MAX_BUFFER_MESSAGES
+        if link.buffered.len() >= MEDIA_PEER_MESSAGE_LIMIT || self.buffered_messages >= MEDIA_MESSAGE_LIMIT
             || link.buffered_bytes + bytes > MAX_LINK_BUFFER || self.buffered_bytes + bytes > MAX_BUFFER
         {
             self.leave(index, actions);
@@ -1183,6 +1182,121 @@ mod tests {
     use schnorrkel::{ExpansionMode, MiniSecretKey};
 
     const NOW: u64 = 1_800_000_000;
+
+    fn buffered_group(peers: u8) -> GroupEngine {
+        let a = advertisement(1, 11);
+        let b = advertisement(2, 21);
+        let mut caller = GroupEngine::new(a.clone());
+        let mut callee = GroupEngine::new(b.clone());
+        for peer_id in 1..=peers {
+            caller.create_session([peer_id; 32]).unwrap();
+            let invite = caller.invite([peer_id; 32], [peer_id; 32], peer(&b), vec![b.clone()], &tracks(), NOW).unwrap();
+            let offer = incoming(&relay(&a, &invite, &mut callee));
+            callee.accept(offer, [peer_id; 32], [peer_id; 32], &tracks(), NOW).unwrap();
+        }
+        callee
+    }
+
+    #[test]
+    fn multi_interface_ice_survives_commit_reordering_and_continual_gathering() {
+        let a = advertisement(1, 11);
+        let b = advertisement(2, 21);
+        let mut caller = GroupEngine::new(a.clone());
+        let mut callee = GroupEngine::new(b.clone());
+        caller.create_session([10; 32]).unwrap();
+        let invite = caller.invite([10; 32], [11; 32], peer(&b), vec![b.clone()], &tracks(), NOW).unwrap();
+        let offer = incoming(&relay(&a, &invite, &mut callee));
+        let accept = callee.accept(offer, [20; 32], [21; 32], &tracks(), NOW).unwrap();
+        let commit = relay(&b, &accept, &mut caller);
+        let description = caller.local_description([10; 32], [11; 32],
+            MediaDescription { kind: MediaDescriptionKind::Offer, sdp: IP_SDP.into() });
+        assert!(relay(&a, &description, &mut callee).is_empty());
+        for generation in 0..4 {
+            let mut received = Vec::new();
+            for candidate in super::super::state::multi_interface_candidates(generation) {
+                let sent = caller.local_candidate([10; 32], [11; 32], candidate);
+                received.extend(relay(&a, &sent, &mut callee));
+            }
+            if generation == 0 {
+                assert!(received.is_empty());
+                assert_eq!(callee.buffered_messages, 193);
+                let mut started = relay(&a, &commit, &mut callee).into_iter();
+                assert!(matches!(started.next(), Some(GroupAction::Resolved { resolution: MediaIncomingResolution::Accepted, .. })));
+                assert!(matches!(started.next(), Some(GroupAction::StartPeer { offerer: false, .. })));
+                assert!(matches!(started.next(), Some(GroupAction::Description { description, .. }) if description.sdp == IP_SDP));
+                received.extend(started);
+            }
+            assert_eq!(received.len(), 192);
+            for (action, expected) in received.iter().zip(super::super::state::multi_interface_candidates(generation)) {
+                assert!(matches!(action, GroupAction::IceCandidate { session_id, participant_id, candidate }
+                    if *session_id == [20; 32] && *participant_id == [21; 32]
+                        && candidate.candidate == expected.candidate
+                        && candidate.mid == expected.mid && candidate.mline_index == expected.mline_index));
+            }
+            assert_eq!(callee.buffered_messages, 0);
+            assert_eq!(callee.buffered_bytes, 0);
+            assert!(!callee.links[0].ended);
+        }
+    }
+
+    #[test]
+    fn precommit_peer_and_runtime_message_limits_still_fail_closed() {
+        for peers in [1, 4] {
+            let mut group = buffered_group(peers + 1);
+            let mut actions = Vec::new();
+            for index in 0..usize::from(peers) {
+                for _ in 0..MEDIA_PEER_MESSAGE_LIMIT {
+                    group.receive_media(index, group.links[index].peer, BufferedValue::Candidate(
+                        MediaIceCandidate { candidate: String::new(), mid: None, mline_index: Some(0) },
+                    ), &mut actions);
+                }
+                assert!(!group.links[index].ended);
+            }
+            assert!(actions.is_empty());
+            assert_eq!(group.buffered_messages, usize::from(peers) * MEDIA_PEER_MESSAGE_LIMIT);
+            let overflow = if peers == 1 { 0 } else { 4 };
+            group.receive_media(overflow, group.links[overflow].peer, BufferedValue::Candidate(
+                MediaIceCandidate { candidate: String::new(), mid: None, mline_index: Some(0) },
+            ), &mut actions);
+            assert!(group.links[overflow].ended);
+            assert!(group.links[overflow].buffered.is_empty());
+            assert!(actions.iter().any(|action| matches!(action,
+                GroupAction::EndPeer { outcome: MediaCallOutcome::HostFailed, .. })));
+            assert_eq!(group.buffered_messages, if peers == 1 { 0 } else { MEDIA_MESSAGE_LIMIT });
+            assert_eq!(group.buffered_bytes, 0);
+            for index in 0..usize::from(peers) {
+                if index != overflow { assert!(!group.links[index].ended); }
+            }
+        }
+    }
+
+    #[test]
+    fn precommit_peer_and_runtime_byte_limits_remain_independent() {
+        for peers in [1, 4] {
+            let mut group = buffered_group(peers + 1);
+            let mut actions = Vec::new();
+            for index in 0..usize::from(peers) {
+                for _ in 0..MAX_LINK_BUFFER / MAX_SDP {
+                    group.receive_media(index, group.links[index].peer, BufferedValue::Description(
+                        MediaDescription { kind: MediaDescriptionKind::Offer, sdp: "s".repeat(MAX_SDP) },
+                    ), &mut actions);
+                }
+                assert_eq!(group.links[index].buffered_bytes, MAX_LINK_BUFFER);
+            }
+            assert!(actions.is_empty());
+            let overflow = if peers == 1 { 0 } else { 4 };
+            group.receive_media(overflow, group.links[overflow].peer, BufferedValue::Candidate(
+                MediaIceCandidate { candidate: "x".into(), mid: None, mline_index: Some(0) },
+            ), &mut actions);
+            assert!(group.links[overflow].ended);
+            assert!(group.links[overflow].buffered.is_empty());
+            assert_eq!(group.links[overflow].buffered_bytes, 0);
+            assert_eq!(group.buffered_bytes, if peers == 1 { 0 } else { MAX_BUFFER });
+            assert!(actions.iter().any(|action| matches!(action,
+                GroupAction::EndPeer { outcome: MediaCallOutcome::HostFailed, .. })));
+        }
+    }
+
 
     fn advertisement(account_seed: u8, endpoint_seed: u8) -> VerifiedAdvertisement {
         let account = MiniSecretKey::from_bytes(&[account_seed; 32]).unwrap()
