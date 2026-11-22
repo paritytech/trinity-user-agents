@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.models.ProductPermissionsUiModel
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -33,11 +34,13 @@ class ProductPermissionsViewModel @Inject constructor(
 
     val state: StateFlow<LoadingState<ProductPermissionsUiModel>> = combine(
         productFlow,
-        interactor.observePermissions(productId)
-    ) { product, permissions ->
+        interactor.observePermissions(productId),
+        interactor.observeMediaPermissions(productId),
+    ) { product, permissions, mediaPermissions ->
         ProductPermissionsUiModel(
             productName = product?.name.orEmpty(),
-            permissions = permissions
+            permissions = permissions,
+            mediaPermissions = mediaPermissions,
         )
     }
         .withLoading()
@@ -49,6 +52,14 @@ class ProductPermissionsViewModel @Inject constructor(
 
     fun onPermissionToggle(permissionStatus: ProductPermissionStatus) = launchUnit {
         runCatching { interactor.togglePermission(productId, permissionStatus) }
+            .onFailure {
+                if (it is CancellationException) throw it
+                showPresentationError(UnexpectedPresentationError(it))
+            }
+    }
+
+    fun onMediaPermissionToggle(permissionStatus: NativeMediaPermissionStatus) = launchUnit {
+        runCatching { interactor.toggleMediaPermission(productId, permissionStatus) }
             .onFailure {
                 if (it is CancellationException) throw it
                 showPresentationError(UnexpectedPresentationError(it))

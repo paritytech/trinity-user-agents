@@ -21,6 +21,7 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod media;
 mod platform;
 mod pocket;
 mod renderer;
@@ -48,6 +49,7 @@ pub use errors::{
 };
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
+pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 	PermissionAuthorizationEntry,
@@ -178,6 +180,8 @@ pub struct NativeCoreStorageKeyDescription {
 	pub product_id: Option<String>,
 	/// Bare product label owning a slot shared by its executable subnames.
 	pub product_label: Option<String>,
+	/// Scoped authorization represented by this slot, absent for other storage.
+	pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
 }
 
 /// Describe exactly one encoded storage key without duplicating SCALE in hosts.
@@ -199,7 +203,7 @@ impl From<crate::platform::CoreStorageKeyDescription> for NativeCoreStorageKeyDe
 			Some(crate::platform::CoreStorageKeyOwner::ProductLabel(label)) => (None, Some(label)),
 			None => (None, None),
 		};
-		Self { kind: description.kind.to_owned(), product_id, product_label }
+		Self { kind: description.kind.to_owned(), product_id, product_label, permission_request: description.permission_request }
 	}
 }
 
@@ -225,6 +229,7 @@ pub fn describe_epoca026_core_storage_key(
 		kind: description.kind.to_owned(),
 		product_id: description.product_id,
 		product_label: None,
+		permission_request: None,
 	})
 }
 
@@ -241,6 +246,7 @@ pub fn migrate_epoca026_core_storage_key(
 			kind: migrated.legacy_description.kind.to_owned(),
 			product_id: migrated.legacy_description.product_id,
 			product_label: None,
+		permission_request: None,
 		},
 		description: migrated.current_description.into(),
 	})

@@ -29,6 +29,9 @@ internal fun createFakeTokenStore(): JWTTokenStore {
     val prefs = object : io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences {
         private val storage = mutableMapOf<String, String>()
         override fun keys(): Set<String> = storage.keys
+        override val storageIdentifier = "test-jwt-${java.util.UUID.randomUUID()}"
+        override fun putEncryptedStringCommitted(field: String, value: String) { storage[field] = value }
+        override fun removeKeyCommitted(field: String) { storage.remove(field) }
         override fun putEncryptedString(field: String, value: String) { storage[field] = value }
         override fun putEncryptedStringNow(field: String, value: String): Boolean {
             storage[field] = value

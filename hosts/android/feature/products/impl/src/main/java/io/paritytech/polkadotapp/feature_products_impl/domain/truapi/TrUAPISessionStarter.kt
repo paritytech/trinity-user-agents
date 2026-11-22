@@ -90,9 +90,11 @@ class TrUAPISessionStarter @Inject constructor(
                     if (webViewEventReported.compareAndSet(false, true)) {
                         hostWebViewCreatedTelemetry.report(hostSessionId)
                     }
+                    bridge.attachMediaView(webView)
                 }
             }
             .mapCatching { execution ->
+                provider.bindTrUAPILifecycle(bridge)
                 provider.useTrUAPIPermissions(productId, execution)
                 provider.loadInitialContent()
             }

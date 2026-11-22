@@ -6,48 +6,20 @@ import TrUAPIHost
 @testable import polkadot_app
 
 struct TrUAPIProductExecutionDeviceCapabilityTests {
-    @Test(arguments: [JSDeviceCapability.camera, .microphone])
-    func allowedWithoutRepeatingProductConsent(capability: JSDeviceCapability) async throws {
+    @Test(
+        arguments: [JSDeviceCapability.camera, .microphone],
+        [OSPermissionStatus.allowed, .denied, .notDetermined]
+    )
+    func directCaptureRemainsDenied(capability: JSDeviceCapability, status: OSPermissionStatus) async throws {
         let osAsker = MockOSPermissionAsker()
-        osAsker.statusToReturn = .allowed
-        let handler = osAsker.makeDeviceCapabilityHandler(execution: MockProductExecution())
-
-        #expect(try await handler(capability) == .allowed)
-        #expect(osAsker.checkedCapabilities == [capability.deviceCapabilityType])
-        #expect(osAsker.requestedCapabilities.isEmpty)
-    }
-
-    @Test(arguments: [JSDeviceCapability.camera, .microphone])
-    func deniedByOSWithoutPrompting(capability: JSDeviceCapability) async throws {
-        let osAsker = MockOSPermissionAsker()
-        osAsker.statusToReturn = .denied
-        let handler = osAsker.makeDeviceCapabilityHandler(execution: MockProductExecution())
+        osAsker.statusToReturn = status
+        let execution = MockProductExecution()
+        execution.devicePermissionGranted = true
+        let handler = osAsker.makeDeviceCapabilityHandler(execution: execution)
 
         #expect(try await handler(capability) == .denied)
-        #expect(osAsker.checkedCapabilities == [capability.deviceCapabilityType])
-        #expect(osAsker.requestedCapabilities.isEmpty)
-    }
-
-    @Test(arguments: [JSDeviceCapability.camera, .microphone], [true, false])
-    func requestsOnlyUndeterminedOSConsent(capability: JSDeviceCapability, granted: Bool) async throws {
-        let osAsker = MockOSPermissionAsker()
-        osAsker.requestResult = granted
-        let handler = osAsker.makeDeviceCapabilityHandler(execution: MockProductExecution())
-
-        #expect(try await handler(capability) == (granted ? .allowed : .denied))
-        #expect(osAsker.requestedCapabilities == [capability.deviceCapabilityType])
-    }
-
-    @Test func observesOSRevocation() async throws {
-        let osAsker = MockOSPermissionAsker()
-        osAsker.statusToReturn = .allowed
-        let handler = osAsker.makeDeviceCapabilityHandler(execution: MockProductExecution())
-        let first = try await handler(.camera)
-
-        osAsker.statusToReturn = .denied
-        let second = try await handler(.camera)
-
-        #expect([first, second] == [.allowed, .denied])
+        #expect(execution.devicePermissionRequests.isEmpty)
+        #expect(osAsker.checkedCapabilities.isEmpty)
         #expect(osAsker.requestedCapabilities.isEmpty)
     }
 

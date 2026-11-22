@@ -12,7 +12,7 @@ use std::{
 	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
 	sync::{
-		Arc, Mutex,
+		Arc, Mutex, Weak,
 		atomic::{AtomicU32, Ordering},
 	},
 	time::{Duration, SystemTime, UNIX_EPOCH},
@@ -49,6 +49,24 @@ use crate::{
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
+static CORE_STORAGE_OBSERVERS: Mutex<Vec<CoreStorageObserver>> = Mutex::new(Vec::new());
+
+#[derive(Clone, PartialEq, Eq)]
+enum CoreStorageNamespace {
+    File(PathBuf),
+    Memory(usize),
+}
+
+#[derive(Clone)]
+pub struct CoreStorageChange {
+    pub key: CoreStorageKey,
+    namespace: CoreStorageNamespace,
+}
+
+struct CoreStorageObserver {
+    platform: Weak<CliPlatform>,
+    sender: tokio::sync::mpsc::UnboundedSender<CoreStorageChange>,
+}
 
 /// A persistence failure with its filesystem operation or serialization cause.
 #[derive(derive_more::Display, derive_more::From, Debug)]
@@ -174,7 +192,8 @@ pub struct CliPlatform {
 	chains: truapi::platform::HostChainSet,
 	extension_versions: truapi::platform::ExtensionVersionMap,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
-	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,	
+	core_storage_gate: Mutex<()>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
 	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
 	/// by the key held here, so a user switch must not regenerate it.
@@ -234,7 +253,6 @@ impl CliPlatform {
 			.unwrap_or((None, None));
 		let product_storage =
 			product_storage_dir.as_deref().map(load_product_storage).unwrap_or_default();
-		let core_storage = core_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 		// Anchored to the role-level bootstrap directory rather than the active
 		// user's, so switching users keeps this install's device identity.
 		let device_storage_path = storage.as_ref().map(|paths| {
@@ -252,8 +270,6 @@ impl CliPlatform {
 			}
 			directory.join("device-storage.json")
 		});
-		let device_storage =
-			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
 		let chain = Arc::new(CliChainProvider::new(network));
 		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.genesis().bulletin);
@@ -262,8 +278,9 @@ impl CliPlatform {
 			chains: network.host_chain_set(),
 			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
-			core_storage: Mutex::new(core_storage),
-			device_storage: Mutex::new(device_storage),
+			core_storage: Mutex::new(HashMap::new()),
+			core_storage_gate: Mutex::new(()),
+			device_storage: Mutex::new(HashMap::new()),
 			product_storage_dir: Mutex::new(product_storage_dir),
 			core_storage_path: Mutex::new(core_storage_path),
 			device_storage_path,
@@ -317,23 +334,128 @@ impl CliPlatform {
 		matches!(key, CoreStorageKey::DeviceEncryptionKey)
 	}
 
-	fn persist_device_storage(&self) -> Result<(), StorageError> {
-		let Some(path) = self.device_storage_path.as_deref() else {
-			return Ok(());
-		};
-		let storage = self.device_storage.lock().expect("device storage mutex poisoned");
-		save_hex_key_map(path, &storage)
-	}
+    /// Serialize the whole physical map, including disk completion, across
+    /// independent platforms/processes. No await can drop the lock mid-write.
+    fn with_core_storage<R>(
+        &self,
+        key: &CoreStorageKey,
+        notify_on_change: bool,
+        operation: impl FnOnce(&mut HashMap<Vec<u8>, Vec<u8>>) -> (R, bool),
+    ) -> Result<R, String> {
+        let (result, notification) = {
+            let _gate = self
+                .core_storage_gate
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let path_guard = self
+                .core_storage_path
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let (store, path) = if Self::is_device_scoped(key) {
+                (&self.device_storage, self.device_storage_path.as_deref())
+            } else {
+                (&self.core_storage, path_guard.as_deref())
+            };
+            let mut memory = store.lock().map_err(|error| error.to_string())?;
+            if let Some(path) = path {
+                let _file_lock = lock_core_storage_file(path)?;
+                let mut current = read_hex_key_map(path)?;
+                let (result, changed) = operation(&mut current);
+                let notification = if changed && notify_on_change {
+                    Some(self.storage_namespace(Some(path))?)
+                } else {
+                    None
+                };
+                if changed {
+                    save_hex_key_map(path, &current).map_err(|error| format!("{:#}", anyhow::Error::new(error)))?;
+                }
+                *memory = current;
+                (result, notification)
+            } else {
+                let (result, changed) = operation(&mut memory);
+                let notification = (changed && notify_on_change)
+                    .then_some(CoreStorageNamespace::Memory(self as *const Self as usize));
+                (result, notification)
+            }
+        };
+        // Commit and enqueue are synchronous and cannot be split by cancellation.
+        // The captured physical namespace survives a concurrent user switch, and
+        // every storage/file lock is released before touching the observer list.
+        if let Some(namespace) = notification {
+            self.publish_core_storage_change(CoreStorageChange {
+                key: key.clone(),
+                namespace,
+            });
+        }
+        Ok(result)
+    }
 
-	fn persist_core_storage(&self) -> Result<(), StorageError> {
-		let Some(path) =
-			self.core_storage_path.lock().expect("core storage path mutex poisoned").clone()
-		else {
-			return Ok(());
-		};
-		let storage = self.core_storage.lock().expect("core storage mutex poisoned");
-		save_hex_key_map(&path, &storage)
-	}
+    fn storage_namespace(&self, path: Option<&Path>) -> Result<CoreStorageNamespace, String> {
+        let Some(path) = path else {
+            return Ok(CoreStorageNamespace::Memory(self as *const Self as usize));
+        };
+        let parent = path
+            .parent()
+            .ok_or_else(|| "Core storage path has no parent".to_string())?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| "Core storage path has no filename".to_string())?;
+        fs::canonicalize(parent)
+            .map(|parent| CoreStorageNamespace::File(parent.join(name)))
+            .map_err(|error| format!("resolve core storage namespace: {error}"))
+    }
+
+    fn core_storage_namespace(&self, key: &CoreStorageKey) -> Result<CoreStorageNamespace, String> {
+        if Self::is_device_scoped(key) {
+            return self.storage_namespace(self.device_storage_path.as_deref());
+        }
+        let path = self
+            .core_storage_path
+            .lock()
+            .map_err(|error| error.to_string())?;
+        self.storage_namespace(path.as_deref())
+    }
+
+    pub fn matches_core_storage_change(&self, change: &CoreStorageChange) -> Result<bool, String> {
+        self.core_storage_namespace(&change.key)
+            .map(|namespace| namespace == change.namespace)
+    }
+
+    fn publish_core_storage_change(&self, change: CoreStorageChange) {
+        CORE_STORAGE_OBSERVERS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|observer| {
+                let Some(platform) = observer.platform.upgrade() else {
+                    return false;
+                };
+                if observer.sender.is_closed() {
+                    return false;
+                }
+                // Namespace failures are delivered too: the deferred consumer reports
+                // them and refreshes fail-closed, rather than losing an invalidation.
+                if platform.matches_core_storage_change(&change) != Ok(false) {
+                    return observer.sender.send(change.clone()).is_ok();
+                }
+                true
+            });
+    }
+
+    /// Reliable host-private invalidations shared by every live platform in the
+    /// same physical namespace. Raw writes and unsuccessful CAS never emit.
+    pub fn subscribe_core_storage_changes(
+        self: &Arc<Self>,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<CoreStorageChange> {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        CORE_STORAGE_OBSERVERS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(CoreStorageObserver {
+                platform: Arc::downgrade(self),
+                sender,
+            });
+        receiver
+    }
 
 	/// Current identity-owned state directory (or the pairing bootstrap before
 	/// a user has connected).
@@ -353,79 +475,115 @@ impl CliPlatform {
 		Ok(())
 	}
 
-	fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), StorageError> {
-		let Some(scope) = &self.pairing_scope else {
-			return Ok(());
-		};
-		let user_id = pairing_storage_name(user_id);
-		let user_id = user_id.as_ref();
-		let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
-		let current_state = self.state_dir.lock().expect("state path mutex poisoned").clone();
-		if current_state.as_ref() == Some(&target_state) {
-			persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
-			return Ok(());
-		}
+    fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
+        let Some(scope) = &self.pairing_scope else {
+            return Ok(());
+        };
+        let _gate = self
+            .core_storage_gate
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let user_id = pairing_storage_name(user_id);
+        let user_id = user_id.as_ref();
+        let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
+        let current_state = self
+            .state_dir
+            .lock()
+            .expect("state path mutex poisoned")
+            .clone();
+        if current_state.as_ref() == Some(&target_state) {
+            persist_current_pairing_user(&scope.bootstrap_dir, user_id).map_err(|error| format!("{:#}", anyhow::Error::new(error)))?;
+            return Ok(());
+        }
 
-		fs::create_dir_all(&target_state)
-			.map_err(|source| StorageError::Create { path: target_state.clone(), source })?;
-		let target_product_dir = target_state.join("storage");
-		let target_core_path = target_state.join("core-storage.json");
-		let migrating_bootstrap = current_state.as_ref() == Some(&scope.bootstrap_dir);
+        fs::create_dir_all(&target_state)
+            .map_err(|error| format!("create {}: {error}", target_state.display()))?;
+        let target_product_dir = target_state.join("storage");
+        let target_core_path = target_state.join("core-storage.json");
+        let migrating_bootstrap = current_state.as_ref() == Some(&scope.bootstrap_dir);
 
-		// A fresh login writes these values before its username is known.
-		// Carry only that pairing bootstrap across namespaces; permissions,
-		// allowances, and product KV remain isolated to their previous user.
-		let transient_keys = [
-			CoreStorageKey::AuthSession,
-			CoreStorageKey::PairingDeviceIdentity,
-			CoreStorageKey::LastProcessedPairingStatement,
-		]
-		.map(|key| Self::core_key(&key));
-		let carried = {
-			// Keep the same path -> storage lock order used by persistence so
-			// an auth transition cannot deadlock with a concurrent core write.
-			let current_path =
-				self.core_storage_path.lock().expect("core storage path mutex poisoned");
-			let mut current = self.core_storage.lock().expect("core storage mutex poisoned");
-			if migrating_bootstrap {
-				current.drain().collect::<Vec<_>>()
-			} else {
-				let carried = transient_keys
-					.iter()
-					.filter_map(|key| current.remove(key).map(|value| (key.clone(), value)))
-					.collect::<Vec<_>>();
-				if let Some(path) = current_path.as_deref() {
-					save_hex_key_map(path, &current)?;
-				}
-				carried
-			}
-		};
+        // A fresh login writes these values before its username is known.
+        // Carry only that pairing bootstrap across namespaces; permissions,
+        // allowances, and product KV remain isolated to their previous user.
+        let transient_keys = [
+            CoreStorageKey::AuthSession,
+            CoreStorageKey::PairingDeviceIdentity,
+            CoreStorageKey::LastProcessedPairingStatement,
+        ]
+        .map(|key| Self::core_key(&key));
+        let carried = {
+            // Keep the same path -> storage lock order used by persistence so
+            // an auth transition cannot deadlock with a concurrent core write.
+            let current_path = self
+                .core_storage_path
+                .lock()
+                .expect("core storage path mutex poisoned");
+            let mut current = self
+                .core_storage
+                .lock()
+                .expect("core storage mutex poisoned");
+            let _file_lock = current_path
+                .as_deref()
+                .map(lock_core_storage_file)
+                .transpose()?;
+            if let Some(path) = current_path.as_deref() {
+                *current = read_hex_key_map(path)?;
+            }
+            if migrating_bootstrap {
+                current.drain().collect::<Vec<_>>()
+            } else {
+                let carried = transient_keys
+                    .iter()
+                    .filter_map(|key| current.remove(key).map(|value| (key.clone(), value)))
+                    .collect::<Vec<_>>();
+                if let Some(path) = current_path.as_deref() {
+                    save_hex_key_map(path, &current).map_err(|error| format!("{:#}", anyhow::Error::new(error)))?;
+                }
+                carried
+            }
+        };
 
-		let mut target_core = load_hex_key_map(&target_core_path);
-		target_core.extend(carried);
-		let mut target_products = load_product_storage(&target_product_dir);
-		if migrating_bootstrap {
-			target_products.extend(
-				self.product_storage.lock().expect("product storage mutex poisoned").clone(),
-			);
-			for (product_id, values) in &target_products {
-				save_product_storage(&target_product_dir, product_id, values)?;
-			}
-		}
-		{
-			let mut core_storage_path =
-				self.core_storage_path.lock().expect("core storage path mutex poisoned");
-			let mut core_storage = self.core_storage.lock().expect("core storage mutex poisoned");
-			*core_storage = target_core;
-			*core_storage_path = Some(target_core_path);
-		}
-		*self.product_storage.lock().expect("product storage mutex poisoned") = target_products;
-		*self.product_storage_dir.lock().expect("product storage path mutex poisoned") =
-			Some(target_product_dir);
-		*self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
-		self.persist_core_storage()?;
-		persist_current_pairing_user(&scope.bootstrap_dir, user_id)
-	}
+        let _target_lock = lock_core_storage_file(&target_core_path)?;
+        let mut target_core = read_hex_key_map(&target_core_path)?;
+        target_core.extend(carried);
+        save_hex_key_map(&target_core_path, &target_core).map_err(|error| format!("{:#}", anyhow::Error::new(error)))?;
+        let mut target_products = load_product_storage(&target_product_dir);
+        if migrating_bootstrap {
+            target_products.extend(
+                self.product_storage
+                    .lock()
+                    .expect("product storage mutex poisoned")
+                    .clone(),
+            );
+            for (product_id, values) in &target_products {
+                save_product_storage(&target_product_dir, product_id, values).map_err(|error| format!("{:#}", anyhow::Error::new(error)))?;
+            }
+        }
+        {
+            let mut core_storage_path = self
+                .core_storage_path
+                .lock()
+                .expect("core storage path mutex poisoned");
+            let mut core_storage = self
+                .core_storage
+                .lock()
+                .expect("core storage mutex poisoned");
+            *core_storage = target_core;
+            *core_storage_path = Some(target_core_path);
+        }
+        *self
+            .product_storage
+            .lock()
+            .expect("product storage mutex poisoned") = target_products;
+        *self
+            .product_storage_dir
+            .lock()
+            .expect("product storage path mutex poisoned") = Some(target_product_dir);
+        *self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
+        persist_current_pairing_user(&scope.bootstrap_dir, user_id)
+            .map_err(|error| format!("{:#}", anyhow::Error::new(error)))
+    }
+
 
 	pub async fn decide(&self, action: &str, detail: String) -> bool {
 		self.decide_with(action, detail, ApprovalKind::Action).await != PermissionDecision::Deny
@@ -692,45 +850,62 @@ impl ProductOperations for CliPlatform {
 
 #[async_trait::async_trait]
 impl CoreStorage for CliPlatform {
-	async fn read_core_storage(
-		&self,
-		key: CoreStorageKey,
-	) -> Result<Option<Vec<u8>>, api::GenericError> {
-		let store =
-			if Self::is_device_scoped(&key) { &self.device_storage } else { &self.core_storage };
-		Ok(store
-			.lock()
-			.expect("core storage mutex poisoned")
-			.get(&Self::core_key(&key))
-			.cloned())
-	}
+    async fn read_core_storage(
+        &self,
+        key: CoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, api::GenericError> {
+        self.with_core_storage(&key, false, |storage| {
+            (storage.get(&Self::core_key(&key)).cloned(), false)
+        })
+        .map_err(|reason| api::GenericError { reason })
+    }
 
-	async fn write_core_storage(
-		&self,
-		key: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), api::GenericError> {
-		let device_scoped = Self::is_device_scoped(&key);
-		{
-			let store = if device_scoped { &self.device_storage } else { &self.core_storage };
-			store
-				.lock()
-				.expect("core storage mutex poisoned")
-				.insert(Self::core_key(&key), value);
-		}
-		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }?;
-		Ok(())
-	}
+    async fn write_core_storage(
+        &self,
+        key: CoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), api::GenericError> {
+        self.with_core_storage(&key, false, |storage| {
+            storage.insert(Self::core_key(&key), value);
+            ((), true)
+        })
+        .map_err(|reason| api::GenericError { reason })
+    }
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
-		let device_scoped = Self::is_device_scoped(&key);
-		{
-			let store = if device_scoped { &self.device_storage } else { &self.core_storage };
-			store.lock().expect("core storage mutex poisoned").remove(&Self::core_key(&key));
-		}
-		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }?;
-		Ok(())
-	}
+    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
+        self.with_core_storage(&key, false, |storage| {
+            let changed = storage.remove(&Self::core_key(&key)).is_some();
+            ((), changed)
+        })
+        .map_err(|reason| api::GenericError { reason })
+    }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, api::GenericError> {
+        self.with_core_storage(&key, notify_on_success, |storage| {
+            let key = Self::core_key(&key);
+            if storage.get(&key) != expected.as_ref() {
+                return (false, false);
+            }
+            storage.insert(key, replacement);
+            (true, true)
+        })
+        .map_err(|reason| api::GenericError { reason })
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        match self.core_storage_namespace(&key) {
+            Ok(namespace) => self.publish_core_storage_change(CoreStorageChange { key, namespace }),
+            Err(reason) => {
+                tracing::warn!(%reason, "could not resolve core storage notification namespace")
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -1195,6 +1370,14 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             format!(
                 "Product {} requested permission to share a reference to your profile with every Chat contact. Contacts who receive it can read that profile.",
                 review.product_id
+
+            ),
+        ),
+        UserConfirmationReview::Calling(review) => (
+            "allow calling",
+            format!(
+                "Allow calls in {}. Microphone and camera access are separate choices.",
+                review.product_id.as_str().chars().take(255).flat_map(char::escape_default).collect::<String>(),
             ),
         ),
     }
@@ -1369,48 +1552,6 @@ fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
-/// Extension appended to a storage file that could not be read, so its contents
-/// survive for manual recovery.
-const UNREADABLE_SUFFIX: &str = "unreadable";
-
-/// Load a storage file, treating an unreadable one as empty.
-///
-/// `read_string_map` collects into a `Result`, so one undecodable value fails the
-/// whole file. Returning an empty map on that would be silently destructive: the
-/// caller's next write persists the empty map over the file, taking every intact
-/// entry with it — including keys this run never touched. So the file is first
-/// moved aside to `<name>.unreadable`, which keeps the data recoverable and makes
-/// the warning actionable.
-fn load_string_map(path: &Path) -> HashMap<String, Vec<u8>> {
-	match read_string_map(path) {
-		Ok(values) => values,
-		Err(err) if err.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-		Err(err) => {
-			let preserved = path.with_extension(UNREADABLE_SUFFIX);
-			match fs::rename(path, &preserved) {
-				Ok(()) => {
-					tracing::warn!(
-						path = %path.display(),
-						preserved = %preserved.display(),
-						%err,
-						"could not read CLI storage; moved it aside and started empty"
-					)
-				},
-				Err(rename_err) => {
-					tracing::warn!(
-						path = %path.display(),
-						%err,
-						%rename_err,
-						"could not read CLI storage, and could not move it aside; \
-						 the next write will overwrite it"
-					)
-				},
-			}
-			HashMap::new()
-		},
-	}
-}
-
 fn read_string_map(path: &Path) -> std::io::Result<HashMap<String, Vec<u8>>> {
 	let text = fs::read_to_string(path)?;
 	let json = serde_json::from_str::<JsonMap>(&text)
@@ -1466,11 +1607,39 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 	Ok(())
 }
 
-fn load_hex_key_map(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
-	load_string_map(path)
-		.into_iter()
-		.filter_map(|(key, value)| hex::decode(key).ok().map(|decoded| (decoded, value)))
-		.collect()
+/// Lock a stable sidecar inode: atomic rename replaces the data inode itself.
+fn lock_core_storage_file(path: &Path) -> Result<fs::File, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Core storage path has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(|error| error.to_string())?;
+    fs2::FileExt::lock_exclusive(&file).map_err(|error| error.to_string())?;
+    Ok(file)
+}
+
+/// Missing is empty; malformed or unavailable policy storage is an error,
+/// never a reason to discard permission generations and accept stale consent.
+fn read_hex_key_map(path: &Path) -> Result<HashMap<Vec<u8>, Vec<u8>>, String> {
+    let values = match read_string_map(path) {
+        Ok(values) => values,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            hex::decode(key)
+                .map(|key| (key, value))
+                .map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
 /// Directory-safe name for one paired identity's storage namespace.

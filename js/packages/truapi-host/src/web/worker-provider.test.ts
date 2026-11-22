@@ -285,6 +285,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
         game: false,
         contacts: false,
         scanner: false,
+        media: false,
       },
       // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
       // so no dial resolves and the worker builds no tap.
@@ -465,6 +466,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       game: false,
       contacts: false,
       scanner: false,
+      media: false,
     });
   });
 
@@ -492,6 +494,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       game: false,
       contacts: false,
       scanner: false,
+      media: false,
     });
   });
 
@@ -776,6 +779,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       coinageWallet: false,
       contacts: false,
       scanner: false,
+      media: false,
     });
   });
 
@@ -801,6 +805,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       identityBackend: false,
       coinageWallet: false,
       scanner: false,
+      media: false,
     });
     const provider = await finishProviderReady(worker, providerPromise);
     provider.dispose();
@@ -1193,6 +1198,12 @@ describe("createWebWorkerPairingHostRuntime", () => {
         { tag: "Device", value: "Camera" },
         "Denied",
       ),
+    ).rejects.toThrow();
+    await expect(
+      provider.refreshPermissionAuthorization({
+        tag: "Device",
+        value: "Camera",
+      }),
     ).rejects.toThrow();
   });
 
@@ -1871,7 +1882,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "subscriptionStart",
       subId: 1,
       name: "subscribeTheme",
-      payload: null,
+      args: [],
     });
     worker.emit({
       kind: "chainConnectStart",
@@ -2140,7 +2151,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "subscriptionStart",
       subId: 4,
       name: "lookupPreimage",
-      payload: new Uint8Array([9, 9]),
+      args: [new Uint8Array([9, 9])],
     });
 
     await settle();
@@ -2152,6 +2163,65 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     provider.dispose();
+  });
+
+  it("bounds unacknowledged Media events and closes the private stream", async () => {
+    const worker = new FakeWorker();
+    let closes = 0;
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        media: {
+          mediaBackendCapabilities: async () => ({
+            supported: true,
+            maxSessions: 1,
+            maxRemoteParticipants: 5,
+            maxSurfacesPerSession: 12,
+          }),
+          mediaBackendCommand: async () => ({ tag: "Done" }),
+          async *mediaBackendEvents() {
+            try {
+              for (let index = 0; index < 129; index++) {
+                yield ok({
+                  tag: "PermissionRevoked" as const,
+                  value: {
+                    permission: "Camera" as const,
+                    source: "Product" as const,
+                  },
+                });
+              }
+            } finally {
+              closes++;
+            }
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    worker.emit({
+      kind: "subscriptionStart",
+      subId: 8,
+      name: "mediaBackendEvents",
+      args: [
+        ProductContext.enc({ productId: asProductId("media.dot"), executionKind: "App" }),
+        1n,
+      ],
+    });
+    await settle();
+    expect(
+      worker.messages.filter((message) => message.kind === "subscriptionItem"),
+    ).toHaveLength(128);
+    expect(worker.messages.at(-1)).toEqual({
+      kind: "subscriptionError",
+      subId: 8,
+      error: "media event overflow",
+    });
+    expect(closes).toBe(1);
+    runtime.dispose();
+    expect(closes).toBe(1);
   });
 
   it("propagates host subscription stream errors to the worker", async () => {
@@ -2177,7 +2247,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "subscriptionStart",
       subId: 7,
       name: "subscribeTheme",
-      payload: null,
+      args: [],
     });
 
     await settle();
@@ -2214,7 +2284,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "subscriptionStart",
       subId: 5,
       name: "someFutureSubscribe",
-      payload: new Uint8Array([1, 2, 3]),
+      args: [new Uint8Array([1, 2, 3])],
     });
 
     expect(preimageStarts).toBe(0);
@@ -2225,7 +2295,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
-  it("does not dispatch a payload-carrying subscription without payload", async () => {
+  it("does not dispatch a subscription with missing arguments", async () => {
     const worker = new FakeWorker();
     let preimageStarts = 0;
     const providerPromise = createProviderFromRuntime(
@@ -2248,7 +2318,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "subscriptionStart",
       subId: 6,
       name: "lookupPreimage",
-      payload: null,
+      args: [],
     });
 
     expect(preimageStarts).toBe(0);

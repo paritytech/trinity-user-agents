@@ -96,7 +96,7 @@ private func makeBridge(
         ? FailingProductStorage()
         : TrUAPILocalStorage.createProductLocalStorage(
             productId: productId,
-            defaults: makeTestDefaults()
+            defaults: makeTestDefaults(), storageDomain: UUID().uuidString
         )
     return RustProductExecutionBridge(dependencies: .init(
         productId: productId,
@@ -109,7 +109,7 @@ private func makeBridge(
         chainRegistry: chainRegistry,
         chainConnections: pool,
         productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults(), storageDomain: UUID().uuidString),
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
@@ -678,9 +678,11 @@ struct RustRuntimeBridgeTests {
             chainConnections: pool,
             productStorage: TrUAPILocalStorage.createProductLocalStorage(
                 productId: try! ProductId("test.dot"),
-                defaults: makeTestDefaults()
+                defaults: makeTestDefaults(), storageDomain: UUID().uuidString
             ),
-            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+            coreStorage: TrUAPILocalStorage.createCoreLocalStorage(
+                defaults: makeTestDefaults(), storageDomain: UUID().uuidString
+            ),
             confirmationPresenter: MockConfirmationPresenter(),
             chatFiles: UnavailableNativeChatFiles(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
@@ -690,12 +692,11 @@ struct RustRuntimeBridgeTests {
         ))
 
         #expect(pool.eventHandler == nil)
-
         let execution = MockProductExecution()
         bridge.attach(execution)
-
         #expect(pool.eventHandler === bridge)
     }
+
 
     /// After `attach`, chain notify-backs route to the opened execution.
     @Test func chainEventForwardingRoutesToAttachedExecution() {

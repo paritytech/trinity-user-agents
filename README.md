@@ -439,6 +439,17 @@ authentication and storage remain core-owned. See the [host SDK](js/packages/tru
 - `@parity/truapi-host/markers` carries `CORE_MARKERS`, the core's table of which log markers may
   leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 
+### Host-owned calling
+
+The optional `Media` service uses prototype wire trait 218. Products receive opaque
+session handles, call state and picture rectangles. Capture, SDP, ICE, credentials,
+transport statistics and video rendering stay in the trusted host.
+
+Browser, Android and iOS backends connect directly when possible, with host-configured
+TURN as a fallback. STUN and TURN are optional; products never supply ICE servers or
+receive peer network details. Calling consent is scoped to the authenticated product,
+account and network, independently of microphone and camera permission.
+
 ### Chain transport
 
 The runtime registers each live product before it starts chain work. Pending and

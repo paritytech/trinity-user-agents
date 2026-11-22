@@ -29,6 +29,9 @@ mod funding_quotes;
 mod host_grants;
 mod host_session;
 mod identity;
+mod media;
+mod media_identity;
+mod media_signaling;
 pub mod login_failure;
 mod native_chat;
 /// Transport-independent authenticated notification frames.
@@ -381,6 +384,10 @@ pub struct ProductRuntimeHost {
 
 /// Per-connection adapters, permissions, channels and open operation demand.
 pub struct ProductConnection {
+	media_platform: Option<Arc<dyn crate::platform::MediaPlatform>>,
+	media: std::sync::OnceLock<Arc<media::MediaService>>,
+	media_closed: std::sync::atomic::AtomicBool,
+	authority: Arc<dyn ProductAuthority>,
 	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
 	chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
@@ -416,6 +423,7 @@ pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
 impl Drop for ProductConnection {
 	fn drop(&mut self) {
+		self.close_media();
 		// This runtime owns its chain connections outright, so they go with it.
 		self.chain.release_scope();
 		self.release_open_operations();
@@ -425,6 +433,52 @@ impl Drop for ProductConnection {
 }
 
 impl ProductConnection {
+	/// Host-minted execution identifier for private backend routing.
+	pub fn runtime_id(&self) -> u64 { self.core_instance }
+
+    /// Apply a stored policy notification without prompting, writing
+    /// storage, consulting the OS, or starting Media.
+    #[instrument(skip_all, fields(runtime.method = "permissions.refresh_authorization"))]
+    pub(crate) async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), latest::GenericError> {
+        if !matches!(
+            &request,
+            PermissionAuthorizationRequest::Calling { .. }
+                | PermissionAuthorizationRequest::Device(
+                    latest::HostDevicePermissionRequest::Microphone
+                        | latest::HostDevicePermissionRequest::Camera
+                )
+        ) {
+            return Ok(());
+        }
+        let _guard = self.services.media_permission_gate.lock().await;
+        let product_id = self.product_id();
+        let status = self.permissions_service()
+            .stored_authorization_status(request.clone()).await;
+        if matches!(&status, Ok(PermissionAuthorizationStatus::Authorized)) {
+            // Origin notifications include successful grants. Advancing here
+            // would invalidate the next device dialog in the same operation;
+            // exact-byte CAS already rejects stale decisions in other cores.
+            return Ok(());
+        }
+        let revision = self.services.advance_media_permission_revision();
+        // Denied, unanswered, or unreadable policy fails closed only for this
+        // precise product/capability or Calling network/account, even if the
+        // original CAS requester disappeared before locally fencing its denial.
+        self.services.notify_media_permission_revoked(&product_id, &request);
+        status?;
+        revision
+    }
+
+
+	/// Resolve the active calling scope without opening the backend.
+	pub async fn calling_permission_authorization_request(&self) -> Result<PermissionAuthorizationRequest, latest::GenericError> {
+		let (_, identity) = media_identity::resolve_identity(&self.services, self.authority.as_ref(), &self.product, &CallContext::default()).await.map_err(|_| latest::GenericError { reason: "Calling identity is unavailable".into() })?;
+		Ok(PermissionAuthorizationRequest::Calling { network: identity.network, account: identity.account })
+	}
+
 	/// Whether the host published a renderer action, which only the user
 	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
 	/// shortly after one, because it has no screen the user could be looking at.
@@ -515,7 +569,11 @@ impl ProductConnection {
 		if contacts_changed {
 			self.services.invalidate_contacts();
 		}
+		if status != PermissionAuthorizationStatus::Authorized { self.services.notify_media_permission_revoked(self.product_id(), &request); }
+		let _guard = self.services.media_permission_gate.lock().await;
+		self.services.advance_media_permission_revision()?;
 		let result = self.permissions_service().set_authorization_status(&request, status).await;
+		if status != PermissionAuthorizationStatus::Authorized { self.services.notify_media_permission_revoked(self.product_id(), &request); }
 		if contacts_changed {
 			self.services.invalidate_contacts();
 		}
@@ -841,8 +899,12 @@ impl ProductRuntimeHost {
 	) -> Self {
 		let core_instance = services.next_core_instance();
 		let chain = services.chain.for_product(core_instance);
-		let accounts = ProductAccounts::new(authority, product.clone());
+		let accounts = ProductAccounts::new(authority.clone(), product.clone());
 		let connection = Arc::new(ProductConnection {
+			media: std::sync::OnceLock::new(),
+			media_closed: std::sync::atomic::AtomicBool::new(false),
+			authority,
+			media_platform: adapters.media_platform,
 			services,
 			platform: adapters.platform,
 			chat_platform: adapters.chat_platform,
@@ -982,6 +1044,10 @@ impl ProductRuntimeHost {
 		let chat = Arc::new(ActionChannel::chat());
 		let renderer = Arc::new(ActionChannel::renderer());
 		let connection = Arc::new(ProductConnection {
+			media: std::sync::OnceLock::new(),
+			media_closed: std::sync::atomic::AtomicBool::new(false),
+			authority: pairing_host.clone(),
+			media_platform: None,
 			services,
 			platform,
 			chat_platform: None,

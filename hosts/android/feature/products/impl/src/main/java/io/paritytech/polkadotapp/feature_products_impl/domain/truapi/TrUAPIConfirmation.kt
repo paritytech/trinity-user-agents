@@ -117,4 +117,8 @@ sealed interface TrUAPIConfirmation {
             data object Refund : Destination
         }
     }
+
+    class Calling(
+        override val requesterProductId: ProductId,
+    ) : TrUAPIConfirmation.Prompt
 }

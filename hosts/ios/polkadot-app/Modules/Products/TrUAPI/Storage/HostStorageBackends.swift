@@ -30,6 +30,7 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
 /// Plain Swift errors (including ambiguous durable writes) become HostRejection.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
+    var storageIdentifier: String { storage.storageIdentifier }
 
     init(storage: TrUAPILocalStoring) {
         self.storage = storage
@@ -61,6 +62,7 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
         }
         try withHostRejection { try storage.clear(key: key.toHex()) }
     }
+
 }
 
 /// No-op product storage for host-level bridges that have no product scope.

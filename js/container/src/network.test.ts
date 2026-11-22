@@ -462,95 +462,16 @@ describe('container fetch authorization', () => {
     });
   });
 
-  it('authorizes each capture through the internal SDK client', async () => {
-    for (const transport of ['ready', 'connecting'] as const) {
-      const decisions: HostDevicePermissionRequest[] = [];
-      const grants = [true, true, false, true, false];
-      const realm = browser(() => false, undefined, transport, (bytes) => bytes,
-        () => false, (request) => {
-          decisions.push(request);
-          return grants[decisions.length - 1]!;
-        });
-      const capture = (audio: boolean, video: boolean) => runInContext(
-        `navigator.mediaDevices.getUserMedia({ audio: ${audio}, video: ${video} })`, realm.context);
-      expect(await capture(true, true)).toBe('capture');
-      await expect(capture(true, true)).rejects.toMatchObject({ name: 'NotAllowedError' });
-      expect(await capture(true, false)).toBe('capture');
-      await expect(capture(false, true)).rejects.toMatchObject({ name: 'NotAllowedError' });
-      expect({ decisions, captures: realm.context.mediaCalls }).toEqual({
-        decisions: ['Camera', 'Microphone', 'Camera', 'Microphone', 'Camera'],
-        captures: [{ audio: true, video: true }, { audio: true, video: false }],
-      });
-    }
-  });
-
-  it('cancels whichever media permission is pending without continuing capture', async () => {
-    for (const cancelAfterCamera of [false, true]) {
-      const frames: Uint8Array[] = [];
-      const connection = permissionConnection(frames);
-      const { media } = createPermissionAuthorization(
-        permissionWindow(), connection.client,
-      );
-      if (!media) throw new Error('Expected media authorization transport');
-      const decisions: boolean[] = [];
-      const cancel = media(true, true, (allowed) => decisions.push(allowed));
-      await settle();
-      if (cancelAfterCamera) connection.receive(grant(frames[0]!));
-      await settle();
-      cancel();
-      const requests = frames.filter(frame => decodeWireMessage(frame)._unsafeUnwrap().payload.messageType === 0);
-      connection.receive(grant(requests[requests.length - 1]!));
-      await settle();
-      expect({
-        decisions,
-        requested: requests.map((frame) =>
-          VersionedHostDevicePermissionRequest.dec(
-            decodeWireMessage(frame)._unsafeUnwrap().payload.value,
-          ).value,
-        ),
-      }).toEqual({
-        decisions: [],
-        requested: cancelAfterCamera ? ['Camera', 'Microphone'] : ['Camera'],
-      });
-      media(false, false, (allowed) => decisions.push(allowed));
-      await settle();
-      expect(decisions).toEqual([false]);
-    }
-  });
-
-  it('keeps completed camera consent while authorizing the microphone after reconnect', async () => {
-    const connection = permissionConnection();
-    const { media } = createPermissionAuthorization(permissionWindow(), connection.client);
-    if (!media) throw new Error('Expected media authorization transport');
-    const decisions: boolean[] = [];
-    media(true, true, allowed => decisions.push(allowed));
-    await settle();
-    connection.receive(grant(connection.sent[0]!));
-    connection.disconnect();
-    connection.open();
-    await settle();
-    connection.receive(grant(connection.sent[1]!));
-    await settle();
-    expect({ decisions, requested: connection.sent.map(frame =>
-      VersionedHostDevicePermissionRequest.dec(decodeWireMessage(frame)._unsafeUnwrap().payload.value).value),
-    }).toEqual({ decisions: [true], requested: ['Camera', 'Microphone'] });
-  });
-
-  it('authorizes each peer connection through the internal SDK client', async () => {
-    let authorizations = 0;
-    const realm = browser(() => false, undefined, 'ready', (bytes) => bytes,
-      () => ++authorizations === 1);
-    const first = runInContext('new RTCPeerConnection()', realm.context);
-    expect(await first.createOffer()).toEqual({ type: 'offer', sdp: 'native' });
-    expect(await first.createOffer()).toEqual({ type: 'offer', sdp: 'native' });
-    const second = runInContext('new RTCPeerConnection()', realm.context);
-    await expect(second.createOffer()).rejects.toThrow('WebRTC access is not allowed');
-    expect({ authorizations, fetches: realm.requests.length }).toEqual({
-      authorizations: 2,
-      fetches: 0,
-    });
-    first.close();
-    second.close();
+  it('keeps raw capture and RTC unavailable after network grants', async () => {
+    const realm = browser(
+      () => true, undefined, 'ready', undefined, () => true, () => true,
+    );
+    await realm.fetch('https://api.example/allowed');
+    await expect(runInContext(
+      'navigator.mediaDevices.getUserMedia({ audio: true, video: true })',
+      realm.context,
+    )).rejects.toMatchObject({ name: 'NotAllowedError' });
+    expect(() => runInContext('new RTCPeerConnection()', realm.context)).toThrow();
   });
 
   it('sends authorization through the internal SDK client without replacing the legacy port', async () => {

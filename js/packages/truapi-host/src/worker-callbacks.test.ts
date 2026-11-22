@@ -13,7 +13,7 @@ import type { RawCallbacks } from "./generated/host-callbacks-adapter.js";
 
 function stubBridge() {
   const requests: { name: string; args: readonly unknown[] }[] = [];
-  const subscriptions: { name: string; payload: Uint8Array | null }[] = [];
+  const subscriptions: { name: string; args: readonly unknown[] }[] = [];
   return {
     requests,
     subscriptions,
@@ -22,8 +22,8 @@ function stubBridge() {
         requests.push({ name, args });
         return new Uint8Array();
       },
-      startSubscription: (name: string, payload: Uint8Array | null) => {
-        subscriptions.push({ name, payload });
+      startSubscription: (name: string, args: readonly unknown[]) => {
+        subscriptions.push({ name, args });
         return () => {};
       },
       chainConnect: async () => null,
@@ -84,7 +84,7 @@ describe("worker raw callbacks", () => {
 
     expect(requests.map((r) => r.name)).toContain("createChatRoom");
     expect(subscriptions).toEqual([
-      { name: "subscribeChatRooms", payload: product },
+      { name: "subscribeChatRooms", args: [product] },
     ]);
   });
 
@@ -97,7 +97,7 @@ describe("worker raw callbacks", () => {
     const stop = startRawSubscription(
       callbacks,
       "subscribeChatRooms",
-      new Uint8Array([1]),
+      [new Uint8Array([1])],
       () => {},
       () => {},
     );
@@ -146,7 +146,7 @@ describe("worker raw callbacks", () => {
 
     expect(requests.map((r) => r.name)).toContain("removePocketCard");
     expect(subscriptions).toEqual([
-      { name: "subscribePocketCards", payload: product },
+      { name: "subscribePocketCards", args: [product] },
     ]);
   });
 });

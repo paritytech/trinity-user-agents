@@ -104,6 +104,15 @@ pub enum RemotePermission {
 		/// Whose purses.
 		owner: NftPurseOwner,
 	},
+    /// Host-owned Media calling, scoped to authenticated product/account/network.
+    ///
+    /// Distinct from browser-realm WebRtc. Receive-only sessions still require
+    /// this grant; microphone and camera additionally require device grants.
+    /// Screen selection is exclusively a trusted host picker, not a permission
+    /// to enumerate or name capture sources. Revocation ends affected sessions.
+    #[codec(index = 7)]
+    #[display("media calling")]
+    Calling,
 	/// Peer access over JAMNP-S QUIC/WebTransport, scoped to the genesis hash.
 	/// This conveys no account, signing or submission authority. The guest
 	/// still verifies chain membership and chain data itself.

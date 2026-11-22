@@ -20,6 +20,7 @@ class InertHostBridge(
     )
     override val coreStorage = PrefsHostCoreStorage(
         context.getSharedPreferences("truapi_inert_bridge_core", Context.MODE_PRIVATE),
+        "${context.applicationInfo.dataDir}/shared_prefs/truapi_inert_bridge_core.xml",
     )
 
     override suspend fun navigateTo(url: String) = Unit

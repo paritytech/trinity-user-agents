@@ -1,6 +1,7 @@
 //! Pairing role: product calls reach a wallet on a paired phone.
 
 mod remote_calls;
+mod media;
 
 #[cfg(test)]
 mod tests;
@@ -18,7 +19,7 @@ use super::{
 		CreateTransactionAuthorityRequest, GrantKeeping, PaymentTopUpAuthorityError,
 		ProductAuthority, ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
 		SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
-		authority_session, require_current_session,
+		
 	},
 	host_grants::HostGrantStore,
 	product_consent::ProductConsent,
@@ -45,6 +46,7 @@ use crate::{
 	runtime::vrf,
 	subscription::Spawner,
 };
+use crate::host_logic::media_protocol::UnsignedAdvertisement;
 
 use crate::platform::{
 	PairingHostConfig, Platform, ProductContext, ProductId, SignVrfReview, UserConfirmationReview,
@@ -152,7 +154,7 @@ impl PairingHost {
 	}
 
 	fn current_session(&self) -> Option<AuthoritySession> {
-		self.session_state.current().as_ref().map(authority_session)
+		self.session.current_session()
 	}
 
 	/// Providers registered for this ring under the active account.
@@ -245,7 +247,7 @@ impl PairingHost {
 		&self,
 		session: &AuthoritySession,
 	) -> Result<SessionInfo, AuthorityError> {
-		require_current_session(&self.session_state, session)
+		self.session.with_current_session(session, |current| Ok(current.clone()))
 	}
 
 	/// Whether `calling_product_id` may act on `handle`'s ring-VRF key.
@@ -1094,4 +1096,24 @@ impl ProductAuthority for PairingHost {
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
 		PairingHost::contacts_handle_key(self, session)
 	}
+    async fn certify_media_endpoint(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        unsigned: UnsignedAdvertisement,
+    ) -> Result<[u8; 64], AuthorityError> {
+        self.certify_paired_media_endpoint(cx, session, unsigned).await
+    }
+
+    fn sign_media_statement(
+        &self,
+        session: &AuthoritySession,
+        payload: Vec<u8>,
+        topics: Vec<[u8; 32]>,
+        expires_at: u64,
+    ) -> Result<Vec<u8>, AuthorityError> {
+        self.sign_paired_media_statement(session, payload, topics, expires_at)
+    }
+
+
 }

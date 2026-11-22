@@ -6,6 +6,7 @@ mod allowance_renewal;
 mod local_identity;
 mod pairing;
 pub use local_identity::{LocalIdentity, LocalIdentityContext};
+mod media;
 #[cfg(test)]
 mod tests;
 mod wallet_allowances;

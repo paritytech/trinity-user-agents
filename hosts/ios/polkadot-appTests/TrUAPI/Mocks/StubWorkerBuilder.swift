@@ -99,7 +99,8 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
             executionModel: RustRuntimeEnvironment.ExecutionModel(
                 execution: execution,
                 chainConnections: MockChainConnections(),
-                osPermissionAsker: OSPermissionAsker()
+                osPermissionAsker: OSPermissionAsker(),
+                media: NativeMediaBackend(productId: productId)
             ),
             engineFactory: { [weak self] in
                 if engineFails { return FailingJSEngine() }

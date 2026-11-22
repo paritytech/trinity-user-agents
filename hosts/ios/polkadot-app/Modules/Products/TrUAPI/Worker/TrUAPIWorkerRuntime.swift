@@ -67,6 +67,7 @@ actor TrUAPIWorkerRuntime {
 
         engineMonitor?.stop()
         engineMonitor = nil
+        await executionModel.media.close()
 
         let moduleBridge = moduleBridge
         self.moduleBridge = nil
@@ -83,8 +84,8 @@ actor TrUAPIWorkerRuntime {
         logger.debug("[truapi] worker stopped: \(productUrl)")
     }
 
-    /// The capability handler is installed before the page exists, so a script
-    /// that asks for a camera on its first line is prompted rather than denied.
+    /// Install the product boundary before script code: Media owns capture,
+    /// while motion retains its native user-gesture permission gate.
     private func bootEngine(
         scripts: [JSEngineScript],
         onEngineLost: @escaping @Sendable () -> Void
@@ -96,7 +97,10 @@ actor TrUAPIWorkerRuntime {
                     execution: executionModel.execution
                 )
             )
-            await jsEngine.onTermination(onEngineLost)
+            await jsEngine.onTermination { [media = executionModel.media] in
+                media.authorityLost()
+                onEngineLost()
+            }
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }

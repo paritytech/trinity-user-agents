@@ -282,109 +282,143 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 	);
 }
 
-/// One undecodable value in `core-storage.json` must not cost the host the
-/// entries it never touched. Before the file was moved aside, a real
-/// `CliPlatform` discarded `PairingDeviceIdentity` and then overwrote it on
-/// the next unrelated write.
-///
-/// Keys on disk are hex of the SCALE-encoded `CoreStorageKey`, so
-/// `AuthSession` is `00` and `PairingDeviceIdentity` is `01`.
+/// Unreadable permission generations must never become an empty store or
+/// be overwritten by an unrelated write, clear, or compare-exchange.
 #[tokio::test]
 async fn cli_platform_preserves_unreadable_core_storage() {
-	use truapi::platform::CoreStorage;
+    use truapi::platform::CoreStorage;
 
-	let dir = tempdir().expect("tempdir");
-	let state_dir = dir.path().join("state");
-	let product_dir = dir.path().join("products");
-	std::fs::create_dir_all(&state_dir).expect("state dir");
-	let core_path = state_dir.join("core-storage.json");
+    let dir = tempdir().expect("tempdir");
+    let state_dir = dir.path().join("state");
+    let product_dir = dir.path().join("products");
+    std::fs::create_dir_all(&state_dir).expect("state dir");
+    let core_path = state_dir.join("core-storage.json");
 
-	std::fs::write(&core_path, r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#)
-		.expect("seed core storage");
+    let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
+    std::fs::write(&core_path, original).expect("seed core storage");
 
-	let platform = CliPlatform::new(
-		&test_network(),
-		Some(CliStoragePaths::new(state_dir, product_dir)),
-		ApprovalPolicy::AutoAccept,
-		None,
-	);
+    let platform = CliPlatform::new(
+        &test_network(),
+        Some(CliStoragePaths::new(state_dir, product_dir)),
+        ApprovalPolicy::AutoAccept,
+        None,
+    );
 
-	// Nothing loaded: the good entries went with the bad one.
-	assert_eq!(
-		platform.read_core_storage(CoreStorageKey::AuthSession).await.expect("read"),
-		None,
-		"AuthSession should have loaded but the file was discarded"
-	);
-	assert_eq!(
-		platform
-			.read_core_storage(CoreStorageKey::PairingDeviceIdentity)
-			.await
-			.expect("read"),
-		None
-	);
-
-	// The host writes one unrelated key. That persists the whole map.
-	platform
-		.write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
-		.await
-		.expect("write");
-
-	let after = std::fs::read_to_string(&core_path).expect("read back");
-	assert!(after.contains("42"), "the new AuthSession value should be persisted: {after}");
-
-	// The unreadable original is preserved beside it, so nothing is lost.
-	let preserved = std::fs::read_to_string(core_path.with_extension(UNREADABLE_SUFFIX))
-		.expect("the unreadable file should have been moved aside");
-	assert!(
-		preserved.contains("deadbeef") && preserved.contains("cafebabe"),
-		"the moved-aside file should still hold the original entries: {preserved}"
-	);
+    assert!(
+        platform
+            .read_core_storage(CoreStorageKey::AuthSession)
+            .await
+            .is_err()
+    );
+    assert!(
+        platform
+            .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+            .await
+            .is_err()
+    );
+    assert!(
+        platform
+            .clear_core_storage(CoreStorageKey::AuthSession)
+            .await
+            .is_err()
+    );
+    assert!(
+        platform
+            .compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![0x42], true,)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&core_path).expect("read original"),
+        original
+    );
 }
 
-/// `read_string_map` collects into a `Result`, so one undecodable value fails
-/// the whole file and the load yields nothing. That is survivable only
-/// because the file is moved aside first — otherwise the next write persists
-/// the empty map over it and every intact entry is gone.
 #[test]
-fn an_unreadable_storage_file_is_moved_aside_before_the_next_write() {
-	let dir = tempdir().expect("tempdir");
-	let path = dir.path().join("core-storage.json");
-
-	// Two entries the host cares about, plus one whose value is not hex.
-	let raw = r#"{"values":{
-        "6175746853657373696f6e":"cafebabe",
-        "70616972696e674964656e74697479":"deadbeef",
-        "62726f6b656e":"zzzz"
-    }}"#;
-	std::fs::write(&path, raw).expect("seed");
-
-	// The two good entries are readable in isolation, so nothing about them
-	// is malformed — they are collateral.
-	assert!(raw.contains("cafebabe") && raw.contains("deadbeef"));
-
-	// Load: everything is dropped, not just the bad entry.
-	let loaded = load_hex_key_map(&path);
-	assert!(
-		loaded.is_empty(),
-		"expected the whole file to be discarded, got {} entries",
-		loaded.len()
-	);
-
-	// A later write persists the empty map plus whatever is new. The original
-	// is no longer at `path`, so this must not be able to destroy it.
-	let mut next: HashMap<Vec<u8>, Vec<u8>> = loaded;
-	next.insert(b"fresh".to_vec(), b"\x01".to_vec());
-	save_hex_key_map(&path, &next).expect("save");
-
-	let after = std::fs::read_to_string(&path).expect("read back");
-	assert!(after.contains(&hex::encode(b"fresh")));
-
-	let preserved = std::fs::read_to_string(path.with_extension(UNREADABLE_SUFFIX))
-		.expect("the unreadable file should have been moved aside");
-	assert!(
-		preserved.contains("cafebabe") && preserved.contains("deadbeef"),
-		"the moved-aside file should still hold the original entries: {preserved}"
-	);
+fn independent_file_stores_compare_exchange_one_shared_slot() {
+    let dir = tempdir().expect("tempdir");
+    let platforms = [0, 1].map(|_| {
+        CliPlatform::new(
+            &test_network(),
+            Some(CliStoragePaths::new(
+                dir.path().join("state"),
+                dir.path().join("products"),
+            )),
+            ApprovalPolicy::AutoAccept,
+            None,
+        )
+    });
+    let mut changes = platforms
+        .each_ref()
+        .map(|platform| platform.subscribe_core_storage_changes());
+    let start = Arc::new(std::sync::Barrier::new(2));
+    let workers = platforms.each_ref().map(|platform| {
+        let platform = platform.clone();
+        let start = start.clone();
+        std::thread::spawn(move || {
+            start.wait();
+            futures::executor::block_on(platform.compare_exchange_core_storage(
+                CoreStorageKey::AuthSession,
+                None,
+                vec![1],
+                true,
+            ))
+            .expect("compare exchange")
+        })
+    });
+    let results = workers.map(|worker| worker.join().expect("storage thread"));
+    assert_eq!(results.into_iter().filter(|won| *won).count(), 1);
+    for receiver in &mut changes {
+        assert_eq!(
+            receiver.try_recv().unwrap().key,
+            CoreStorageKey::AuthSession
+        );
+    }
+    futures::executor::block_on(async {
+        platforms[0]
+            .write_core_storage(CoreStorageKey::AuthSession, Vec::new())
+            .await
+            .unwrap();
+        assert!(!platforms[1].compare_exchange_core_storage(
+            CoreStorageKey::AuthSession, None, vec![2], true,
+        ).await.unwrap());
+        assert!(
+            platforms[1]
+                .compare_exchange_core_storage(
+                    CoreStorageKey::AuthSession,
+                    Some(Vec::new()),
+                    vec![3],
+                    false,
+                )
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            platforms[0]
+                .read_core_storage(CoreStorageKey::AuthSession)
+                .await
+                .unwrap(),
+            Some(vec![3]),
+        );
+        platforms[0]
+            .clear_core_storage(CoreStorageKey::AuthSession)
+            .await
+            .unwrap();
+        assert!(platforms[1].compare_exchange_core_storage(
+            CoreStorageKey::AuthSession, None, vec![4], true,
+        ).await.unwrap());
+        for receiver in &mut changes {
+            assert_eq!(
+                receiver.try_recv().unwrap().key,
+                CoreStorageKey::AuthSession
+            );
+        }
+        assert!(
+            changes
+                .iter_mut()
+                .all(|receiver| receiver.try_recv().is_err())
+        );
+    });
 }
 
 fn test_storage_paths(root: &Path, session: &str) -> CliStoragePaths {
