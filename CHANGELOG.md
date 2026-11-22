@@ -11,8 +11,11 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 - connect Media peers directly when possible, with optional TURN fallback;
   keep SDP, ICE candidates, network addresses and statistics inside hosts,
-  never in product-facing responses or events. Bound optional TURN discovery
-  to two seconds and continue directly when its configuration is invalid.
+  never in product-facing responses or events. Bound the wait for optional TURN
+  discovery to two seconds and continue directly when its configuration is
+  invalid. Shared credential requests may finish within their own longer timeout
+  and populate the cache for subsequent peers without delaying the first peer
+  or cancelling concurrent Chat requests.
 - bound bundled multi-interface Media ICE bursts to 66 pending messages per
   peer (64 candidates plus two description/control messages) and 264 per
   runtime queue, retaining the 256 KiB peer, 1 MiB queue and per-message byte
