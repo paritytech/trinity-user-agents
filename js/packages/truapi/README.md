@@ -108,6 +108,8 @@ defined in the [protocol specification](../../../docs/design/truapi-protocol.md#
 - **TrUAPI transport** that handles request, response, subscription, and handshake framing.
 - **Generated domain clients and types** produced from the Rust API contract.
 - **SCALE codec helpers** used by the generated code, also re-exported for direct use.
+- **`ringCollectionId(name)`**, which encodes a ring collection name as the 32-byte `CollectionId`
+  junction of a `RingLocation`.
 - **Sandbox bootstrap** (`@parity/truapi/sandbox`) that detects the host environment, builds the
   matching provider, and exposes a cached client - see below.
 
