@@ -130,7 +130,8 @@ export interface BrowserMediaBackendOptions {
   /**
    * Optional host-owned ICE configuration. SDP, candidates and credentials stay
    * between trusted hosts, never in product values. Direct calls need no server.
-   * Failed server discovery falls back to direct ICE unless relay is required.
+   * Discovery has a two-second deadline. Missing, failed, malformed or timed-out
+   * configuration falls back to direct ICE unless relay is explicitly required.
    */
   iceServers?:
     | readonly RTCIceServer[]
@@ -1301,6 +1302,27 @@ export function createBrowserMediaBackend(
     }
     peer.slots = slots;
   }
+  async function iceServersForPeer(runtimeId: bigint): Promise<RTCIceServer[]> {
+    let timer: number | undefined;
+    try {
+      const servers = await Promise.race([
+        Promise.resolve().then(() =>
+          typeof options.iceServers === "function"
+            ? options.iceServers(runtimeId)
+            : options.iceServers,
+        ),
+        new Promise<RTCIceServer[]>((resolve) => {
+          timer = win.setTimeout(() => resolve([]), 2_000);
+        }),
+      ]);
+      return Array.isArray(servers) ? servers : [];
+    } catch {
+      return [];
+    } finally {
+      if (timer !== undefined) win.clearTimeout(timer);
+    }
+  }
+
   async function createPeer(
     session: Session,
     id: ParticipantId,
@@ -1353,25 +1375,26 @@ export function createBrowserMediaBackend(
       tag: "PeerStateChanged",
       value: { sessionId: session.id, participantId: id, state: "Connecting" },
     });
-    peer.ready = Promise.resolve()
-      .then(() =>
-        typeof options.iceServers === "function"
-          ? options.iceServers(session.runtime.id)
-          : (options.iceServers ?? []),
-      )
-      .catch((error) => {
-        if (options.iceTransportPolicy === "relay") throw error;
-        return [];
-      })
+    peer.ready = iceServersForPeer(session.runtime.id)
       .then((iceServers) =>
         serializeSession(session, async () => {
           if (!peerAlive(peer)) throw failure("SessionEnded");
-          const pc = new win.RTCPeerConnection(
-            webIdl<RTCConfiguration>({
-              iceServers: [...iceServers],
-              iceTransportPolicy: options.iceTransportPolicy ?? "all",
-            }),
-          );
+          // Signalling is host-to-host; products never receive transport details.
+          const iceTransportPolicy = options.iceTransportPolicy ?? "all";
+          if (iceTransportPolicy === "relay" && iceServers.length === 0)
+            throw failure();
+          let pc: RTCPeerConnection;
+          try {
+            pc = new win.RTCPeerConnection(
+              webIdl<RTCConfiguration>({ iceServers, iceTransportPolicy, bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" }),
+            );
+          } catch (error) {
+            if (iceTransportPolicy === "relay" || iceServers.length === 0)
+              throw error;
+            pc = new win.RTCPeerConnection(
+              webIdl<RTCConfiguration>({ iceServers: [], iceTransportPolicy, bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" }),
+            );
+          }
           peer.pc = pc;
           // Only the offerer creates slots. An answerer's addTransceiver() slots
           // are not reused by setRemoteDescription(), which would create extras.

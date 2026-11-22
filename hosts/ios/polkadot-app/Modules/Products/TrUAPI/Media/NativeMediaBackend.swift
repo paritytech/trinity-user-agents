@@ -315,10 +315,10 @@ private final class NativeMediaRuntime {
         guard capture != nil, peers[participantId] == nil, peers.count < 5 else {
             throw NativeMediaFailure.domain(.invalidState)
         }
-        guard let connection = factory.peerConnection(with: configuration,
-            constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil) else {
-            throw NativeMediaFailure.domain(.deviceUnavailable)
-        }
+        guard let connection = try makeNativeMediaPeerConnection(configuration: configuration, create: {
+            factory.peerConnection(with: $0,
+                constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil)
+        }) else { throw NativeMediaFailure.domain(.deviceUnavailable) }
         let generation = UUID()
         peerGenerations[participantId] = generation
         let peer = NativeMediaPeer(connection: connection, sessionId: sessionId, participantId: participantId,

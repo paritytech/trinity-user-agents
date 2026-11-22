@@ -20,9 +20,7 @@ use super::{
 use crate::{host_logic::media_protocol::VerifiedAdvertisement,
     runtime::media_signaling::{MediaSignaling, MediaSignalingEvent}};
 
-const MAX_PEER_MESSAGES: usize = 66;
 const MAX_PEER_BYTES: usize = 256 * 1024;
-const MAX_MESSAGES: usize = 256;
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_DESCRIPTION: usize = 64 * 1024;
 const MAX_CANDIDATE: usize = 4096;
@@ -187,7 +185,7 @@ fn enqueue_input(state: &mut State, sid: MediaSessionId, pid: MediaParticipantId
         .fold((0usize, 0usize), |(messages, bytes), participant|
             (messages + participant.pending_input.len(), bytes + participant.pending_input_bytes));
     let participant = state.sessions.get_mut(&sid).unwrap().participants.get_mut(&pid).unwrap();
-    if !valid || participant.pending_input.len() >= MAX_PEER_MESSAGES || messages >= MAX_MESSAGES
+    if !valid || participant.pending_input.len() >= MEDIA_PEER_MESSAGE_LIMIT || messages >= MEDIA_MESSAGE_LIMIT
         || bytes > MAX_PEER_BYTES.saturating_sub(participant.pending_input_bytes)
         || bytes > MAX_BYTES.saturating_sub(total_bytes)
     {
@@ -200,6 +198,19 @@ fn enqueue_input(state: &mut State, sid: MediaSessionId, pid: MediaParticipantId
         participant.draining = true;
         vec![Effect::DrainPeer { session_id: sid, participant_id: pid, epoch: state.epoch }]
     } else { Vec::new() }
+}
+
+fn dequeue_input(participant: &mut Participant) -> Option<PeerInput> {
+    let input = if participant.remote_description_ready {
+        participant.pending_input.pop_front()
+    } else {
+        // Authenticated transport can deliver ICE before SDP. RTC cannot
+        // consume it before a remote description is installed.
+        participant.pending_input.iter().position(|input| matches!(input, PeerInput::Description(_)))
+            .and_then(|position| participant.pending_input.remove(position))
+    }?;
+    participant.pending_input_bytes -= input_bytes(&input);
+    Some(input)
 }
 
 pub(super) fn apply_actions_locked(state: &mut State, actions: Vec<GroupAction>) -> Vec<Effect> {
@@ -216,7 +227,7 @@ pub(super) fn apply_actions_locked(state: &mut State, actions: Vec<GroupAction>)
         match action {
             GroupAction::Send { recipient, payload } => {
                 let Some(signaling) = state.signaling.clone() else { continue; };
-                if state.pending_signals.len() >= MAX_MESSAGES || payload.len() > MAX_BYTES.saturating_sub(state.pending_signal_bytes) {
+                if state.pending_signals.len() >= MEDIA_MESSAGE_LIMIT || payload.len() > MAX_BYTES.saturating_sub(state.pending_signal_bytes) {
                     let failures = state.group.as_mut().map(|group| group.send_failed(&recipient, &payload)).unwrap_or_default();
                     actions.extend(failures);
                     continue;
@@ -391,16 +402,7 @@ impl MediaService {
                 let mut state = self.lock();
                 if !peer_is_current(&state, sid, pid, epoch) || !self.current_authority(&state) { return; }
                 let participant = state.sessions.get_mut(&sid).unwrap().participants.get_mut(&pid).unwrap();
-                let input = if participant.remote_description_ready {
-                    participant.pending_input.pop_front()
-                } else {
-                    // Authenticated transport can deliver ICE before SDP. RTC
-                    // cannot consume it before a remote description is installed.
-                    participant.pending_input.iter().position(|input| matches!(input, PeerInput::Description(_)))
-                        .and_then(|position| participant.pending_input.remove(position))
-                };
-                let Some(input) = input else { participant.draining = false; return; };
-                participant.pending_input_bytes -= input_bytes(&input);
+                let Some(input) = dequeue_input(participant) else { participant.draining = false; return; };
                 input
             };
             let description = matches!(input, PeerInput::Description(_));
@@ -451,7 +453,7 @@ impl MediaService {
                 let effects = {
                     let mut state = self.lock();
                     if state.epoch != pending.epoch { continue; }
-                    let room = state.pending_signals.len() < MAX_MESSAGES
+                    let room = state.pending_signals.len() < MEDIA_MESSAGE_LIMIT
                         && pending.payload.len() <= MAX_BYTES.saturating_sub(state.pending_signal_bytes);
                     if pending.attempts < SIGNAL_ATTEMPTS && room
                         && state.group.as_ref().is_some_and(|group| group.retries_send(&pending.recipient, &pending.payload))
@@ -689,6 +691,119 @@ impl MediaService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn buffered_state(peers: u8) -> State {
+        let mut state = State::new();
+        let mut session = Session::new([1; 32], state.epoch);
+        session.visible = true;
+        for peer in 1..=peers {
+            let mut participant = Participant::new([peer; 32], MediaPeer {
+                network: MediaNetwork { genesis_hash: [5; 32] },
+                product_id: "vox.dot".into(),
+                account: MediaAccount::Sr25519([peer; 32]),
+            });
+            participant.visible = true;
+            participant.backend_started = true;
+            session.participants.insert([peer; 32], participant);
+        }
+        state.sessions.insert([1; 32], session);
+        state
+    }
+
+    fn candidate_input(candidate: String, mid: Option<String>) -> PeerInput {
+        PeerInput::Candidate(crate::platform::MediaIceCandidate { candidate, mid, mline_index: Some(0) })
+    }
+
+    #[test]
+    fn multi_interface_ice_drains_in_order_and_continual_gathering_reuses_capacity() {
+        let mut state = buffered_state(1);
+        for generation in 0..4 {
+            for candidate in multi_interface_candidates(generation) {
+                assert!(enqueue_input(&mut state, [1; 32], [1; 32], PeerInput::Candidate(candidate)).is_empty());
+            }
+            let participant = state.sessions.get_mut(&[1; 32]).unwrap().participants.get_mut(&[1; 32]).unwrap();
+            assert!(participant.live());
+            assert_eq!(participant.pending_input.len(), 192);
+            if generation == 0 {
+                assert!(dequeue_input(participant).is_none());
+                assert!(enqueue_input(&mut state, [1; 32], [1; 32], PeerInput::Description(
+                    crate::platform::MediaDescription { kind: crate::platform::MediaDescriptionKind::Offer, sdp: "v=0\r\n".into() },
+                )).is_empty());
+                let participant = state.sessions.get_mut(&[1; 32]).unwrap().participants.get_mut(&[1; 32]).unwrap();
+                assert!(matches!(dequeue_input(participant), Some(PeerInput::Description(_))));
+                assert!(dequeue_input(participant).is_none());
+                participant.remote_description_ready = true;
+            }
+            let participant = state.sessions.get_mut(&[1; 32]).unwrap().participants.get_mut(&[1; 32]).unwrap();
+            for expected in multi_interface_candidates(generation) {
+                let Some(PeerInput::Candidate(actual)) = dequeue_input(participant) else { panic!("candidate expected"); };
+                assert_eq!(actual.candidate, expected.candidate);
+                assert_eq!(actual.mid, expected.mid);
+                assert_eq!(actual.mline_index, expected.mline_index);
+            }
+            assert!(dequeue_input(participant).is_none());
+            assert_eq!(participant.pending_input_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn peer_and_runtime_message_limits_still_fail_closed() {
+        for peers in [1, 4] {
+            let mut state = buffered_state(peers + 1);
+            for peer in 1..=peers {
+                for _ in 0..MEDIA_PEER_MESSAGE_LIMIT {
+                    assert!(enqueue_input(&mut state, [1; 32], [peer; 32], candidate_input(String::new(), None)).is_empty());
+                }
+                assert!(state.sessions[&[1; 32]].participants[&[peer; 32]].live());
+            }
+            let overflow_peer = if peers == 1 { 1 } else { 5 };
+            let effects = enqueue_input(&mut state, [1; 32], [overflow_peer; 32], candidate_input(String::new(), None));
+            assert!(matches!(effects.as_slice(), [Effect::Command(MediaBackendCommand::RemovePeer { participant_id, .. })]
+                if *participant_id == [overflow_peer; 32]));
+            let participant = &state.sessions[&[1; 32]].participants[&[overflow_peer; 32]];
+            assert_eq!(participant.snapshot.outcome, Some(MediaCallOutcome::HostFailed));
+            assert!(participant.pending_input.is_empty());
+            assert_eq!(participant.pending_input_bytes, 0);
+            for peer in 1..=peers {
+                if peer != overflow_peer { assert!(state.sessions[&[1; 32]].participants[&[peer; 32]].live()); }
+            }
+        }
+    }
+
+    #[test]
+    fn peer_and_runtime_byte_limits_remain_independent_of_message_limits() {
+        for peers in [1, 4] {
+            let mut state = buffered_state(peers + 1);
+            for peer in 1..=peers {
+                for _ in 0..MAX_PEER_BYTES / MAX_DESCRIPTION {
+                    assert!(enqueue_input(&mut state, [1; 32], [peer; 32], PeerInput::Description(
+                        crate::platform::MediaDescription { kind: crate::platform::MediaDescriptionKind::Offer, sdp: "s".repeat(MAX_DESCRIPTION) },
+                    )).is_empty());
+                }
+                assert_eq!(state.sessions[&[1; 32]].participants[&[peer; 32]].pending_input_bytes, MAX_PEER_BYTES);
+            }
+            let overflow_peer = if peers == 1 { 1 } else { 5 };
+            assert!(!enqueue_input(&mut state, [1; 32], [overflow_peer; 32], candidate_input("x".into(), None)).is_empty());
+            let participant = &state.sessions[&[1; 32]].participants[&[overflow_peer; 32]];
+            assert_eq!(participant.snapshot.outcome, Some(MediaCallOutcome::HostFailed));
+            assert_eq!(participant.pending_input_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn oversized_media_fields_still_fail_closed() {
+        for input in [
+            candidate_input("x".repeat(MAX_CANDIDATE + 1), None),
+            candidate_input(String::new(), Some("m".repeat(MAX_MID + 1))),
+            PeerInput::Description(crate::platform::MediaDescription {
+                kind: crate::platform::MediaDescriptionKind::Offer, sdp: "s".repeat(MAX_DESCRIPTION + 1),
+            }),
+        ] {
+            let mut state = buffered_state(1);
+            assert!(!enqueue_input(&mut state, [1; 32], [1; 32], input).is_empty());
+            assert_eq!(state.sessions[&[1; 32]].participants[&[1; 32]].snapshot.outcome, Some(MediaCallOutcome::HostFailed));
+        }
+    }
 
     #[test]
     fn capture_denial_preserves_receive_and_fences_only_affected_capture() {
