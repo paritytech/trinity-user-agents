@@ -37,8 +37,10 @@ final class WebRTCConfigFactory: WebRTCConfigMaking {
         let configuration = RTCConfiguration()
         configuration.iceServers = credentials.map { makeIceServers(from: $0) } ?? []
         configuration.sdpSemantics = .unifiedPlan
-        configuration.bundlePolicy = .maxBundle
-        configuration.rtcpMuxPolicy = .require
+        if allowsDirectFallback {
+            configuration.bundlePolicy = .maxBundle
+            configuration.rtcpMuxPolicy = .require
+        }
         configuration.iceCandidatePoolSize = iceCandidatePoolSize
         configuration.iceTransportPolicy = .all
         // recommended by WebRTC team to avoid complexity explosion

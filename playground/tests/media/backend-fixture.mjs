@@ -33,6 +33,22 @@ function countCandidate(counts, candidate, mid) {
 
 const candidateCounts = () => ({ total: 0, byType: {}, byMid: {} });
 
+// Observe real native connections without changing their configuration, events,
+// SDP or candidates. Nothing from this host-only probe reaches the product.
+const nativePeerConnection = window.RTCPeerConnection;
+const nativePeers = [];
+window.RTCPeerConnection = class extends nativePeerConnection {
+  constructor(...args) {
+    super(...args);
+    const observation = { pc: this, candidates: candidateCounts() };
+    nativePeers.push(observation);
+    this.addEventListener("icecandidate", ({ candidate }) => {
+      if (candidate) countCandidate(observation.candidates, candidate.candidate,
+        candidate.sdpMid ?? String(candidate.sdpMLineIndex ?? "unknown"));
+    });
+  }
+};
+
 const nodes = [];
 const failures = [];
 async function command(node, tag, value) {
@@ -60,6 +76,7 @@ async function observe(node) {
       if (item.isErr()) throw new Error("Backend observation failed");
       const event = item.value;
       if (event.tag === "Description" || event.tag === "IceCandidate") {
+        node.signaling[event.tag] += 1;
         if (event.tag === "IceCandidate") {
           const candidate = event.value.candidate;
           signaled.add(candidateType(candidate.candidate));
@@ -106,6 +123,7 @@ function createNode(index) {
   document.body.append(mount);
   const node = { index, runtime: BigInt(index + 1), session: id(100 + index), intentRevision: 0n,
     mount, signals: new Map(), revocations: [], viewports: [],
+    signaling: { Description: 0, IceCandidate: 0 },
     ice: { signaled: candidateCounts(), descriptions: [] } };
   node.backend = createBrowserMediaBackend({
     window, document, productId: product.productId,
@@ -395,6 +413,36 @@ window.mediaFixture = {
   // Counts only: transport addresses remain in the trusted signaling path.
   iceCounts() {
     return nodes.map((node) => node.ice);
+  },
+  nativeIceSnapshot() {
+    return nativePeers.map(({ pc, candidates }) => {
+      const transceivers = pc.getTransceivers();
+      const transports = transceivers.flatMap(({ sender, receiver }) =>
+        [sender.transport, receiver.transport].filter(Boolean));
+      return {
+        gatheringState: pc.iceGatheringState,
+        bundlePolicy: pc.getConfiguration().bundlePolicy,
+        rtcpMuxPolicy: pc.getConfiguration().rtcpMuxPolicy,
+        transceiverMids: transceivers.map(({ mid }) => mid),
+        dtlsTransportCount: new Set(transports).size,
+        iceTransportCount: new Set(transports.map((transport) => transport.iceTransport)).size,
+        candidates,
+      };
+    });
+  },
+  callSignalingCounts() {
+    const peers = nodes.map(({ index, signaling }) => ({
+      peer: index, ...signaling,
+      total: signaling.Description + signaling.IceCandidate,
+    }));
+    const totals = peers.reduce((sum, peer) => ({
+      Description: sum.Description + peer.Description,
+      IceCandidate: sum.IceCandidate + peer.IceCandidate,
+      total: sum.total + peer.total,
+    }), { Description: 0, IceCandidate: 0, total: 0 });
+    // Count actual emitted backend events, not fabricated product events or
+    // StatementStore deliveries: the core maps each to one private message.
+    return { peers, totals, privateStatementStoreMessagesForSignaling: totals.total };
   },
   connectionTimes() {
     return nodes.map((node) => node.connectedAt === undefined ? null : node.connectedAt - pairStartedAt);
