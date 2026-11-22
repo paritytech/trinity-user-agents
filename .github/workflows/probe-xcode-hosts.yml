@@ -1,0 +1,35 @@
+name: Probe Xcode on the Parity Macs (temporary)
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: ${{ matrix.pool }} ${{ matrix.n }}
+    runs-on: ${{ matrix.pool }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        pool: [parity-macos, parity-macos-large]
+        n: [1, 2, 3]
+    steps:
+      - name: Report every Xcode on the host
+        run: |
+          echo "runner: ${RUNNER_NAME}"
+          sw_vers
+          echo "selected: $(xcode-select -p)"
+          echo "--- /Applications"
+          ls -d /Applications/Xcode*.app 2>/dev/null || echo "none"
+          echo "--- every Xcode by bundle id"
+          mdfind "kMDItemCFBundleIdentifier == 'com.apple.dt.Xcode'" 2>/dev/null |
+            while IFS= read -r app; do
+              printf '%s: %s\n' "${app}" "$(defaults read "${app}/Contents/Info" CFBundleShortVersionString 2>/dev/null)"
+            done
+          echo "--- xip archives"
+          find "${HOME}" /Users/Shared /tmp -maxdepth 3 -name 'Xcode*.xip' 2>/dev/null || true
+          echo "--- disk"
+          df -h / | tail -1
