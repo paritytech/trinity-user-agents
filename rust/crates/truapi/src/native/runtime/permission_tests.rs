@@ -39,6 +39,7 @@ fn open(
 		callbacks.clone(),
 		None,
 		None,
+		None,
 		native_execution_config(product, ExecutableKind::App),
 	)
 	.unwrap()

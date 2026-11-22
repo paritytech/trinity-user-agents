@@ -2002,6 +2002,7 @@ impl StoredPermissionRequest {
 				}
 			},
 			Self::ProfileDisclosure => PermissionAuthorizationRequest::ProfileDisclosure,
+            Self::Calling { network, account } => PermissionAuthorizationRequest::Calling { network: *network, account: *account },
 		})
 	}
 }

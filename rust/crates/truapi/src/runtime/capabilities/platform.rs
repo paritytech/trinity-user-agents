@@ -350,7 +350,7 @@ impl Permissions for ProductRuntimeHost {
         let decision = if matches!(inner.permission, latest::RemotePermission::Calling) {
             let (session, identity) = crate::runtime::media_identity::resolve_identity(
                 &self.connection.services,
-                self.accounts.authority(),
+                self.accounts.authority().as_ref(),
                 &self.connection.product,
                 cx,
             )

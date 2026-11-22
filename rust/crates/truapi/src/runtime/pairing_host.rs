@@ -1061,7 +1061,7 @@ impl ProductAuthority for PairingHost {
 		session: &AuthoritySession,
 		request: PaymentTopUpRequest,
 	) -> Result<(), PaymentTopUpAuthorityError> {
-		let current = require_current_session(&self.session_state, session)?;
+		let current = self.current_private_session(session)?;
 		self.remote_payment_top_up(cx, &current, request).await
 	}
 

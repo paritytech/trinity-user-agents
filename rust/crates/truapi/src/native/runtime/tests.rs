@@ -71,6 +71,7 @@ fn native_wallet_dependency_survives_failure_and_product_replacement() {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
+				None,
 				native_execution_config("wallet.dot", ExecutableKind::Worker),
 			)
 			.expect("product opens without supplying wallet callbacks")
