@@ -118,7 +118,7 @@ test("trusted hosts can explicitly force the TURN fallback", async ({
 
 test("peers connect directly without TURN and host signaling preserves host candidates", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.evaluate("mediaFixture.startPairWithEarlyPicture()");
   await expect
     .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
@@ -139,21 +139,15 @@ test("peers connect directly without TURN and host signaling preserves host cand
   await expect
     .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
     .toBeGreaterThan(0);
-  // The real sandboxed product cannot read the trusted host's signaling,
-  // peer statistics or compositor, even though host candidates now carry IPs.
-  for (const frame of page.frames().slice(1)) {
-    expect(await frame.evaluate(() => {
-      let hostReadable = false;
-      try {
-        hostReadable = !!parent.document;
-      } catch {}
-      return {
-        hostReadable,
-        backend: typeof Reflect.get(window, "mediaFixture"),
-        mediaElements: document.querySelectorAll("video, audio").length,
-      };
-    })).toEqual({ hostReadable: false, backend: "undefined", mediaElements: 0 });
-  }
+  const counts = await page.evaluate<{ signaled: { byType: Record<string, number> } }[]>(
+    "mediaFixture.iceCounts()",
+  );
+  await testInfo.attach("host-ice-candidate-counts", {
+    body: JSON.stringify(counts, null, 2),
+    contentType: "application/json",
+  });
+  expect(counts).toHaveLength(2);
+  for (const peer of counts) expect(peer.signaled.byType.host).toBeGreaterThan(0);
 });
 
 test("rejected optional TURN credentials still allow a direct call", async ({ page }) => {
@@ -172,6 +166,108 @@ test("rejected optional TURN credentials still allow a direct call", async ({ pa
     .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
     .toBeGreaterThan(0);
 });
+
+test("hanging optional TURN credentials connect both peers within the five-second core budget", async ({
+  page,
+}, testInfo) => {
+  await page.evaluate("mediaFixture.hangTurnCredentials()");
+  await page.evaluate("mediaFixture.startPair()");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 5_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  // Measure in the host from before the first CreatePeer, not from after the
+  // two sequential credential lookups have already consumed their deadlines.
+  const connectionTimes = await page.evaluate<number[]>("mediaFixture.connectionTimes()");
+  expect(connectionTimes).toHaveLength(2);
+  for (const elapsed of connectionTimes) {
+    expect(elapsed).toBeGreaterThan(0);
+    expect(elapsed).toBeLessThan(5_000);
+  }
+  expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual(["host"]);
+  await testInfo.attach("hanging-credentials-connection-times", {
+    body: JSON.stringify(connectionTimes),
+    contentType: "application/json",
+  });
+});
+
+const malformedIceConfigurations: { name: string; iceServers: unknown }[] = [
+  { name: "non-array ICE configuration", iceServers: { urls: "turn:127.0.0.1:3478" } },
+  { name: "invalid TURN URL", iceServers: [{ urls: "turn:", username: "test", credential: "test" }] },
+  { name: "TURN entry without credentials", iceServers: [{ urls: "turn:127.0.0.1:3478" }] },
+];
+
+for (const { name, iceServers } of malformedIceConfigurations) {
+  test(`${name} rejected by native RTC still allows a direct call`, async ({ page }) => {
+    const constructorFailure = await page.evaluate((servers) => {
+      Reflect.get(window, "mediaFixture").configureIceServers(servers);
+      // Exercise Chromium's real WebIDL/RTC validation, not a constructor mock.
+      try {
+        const peer = new RTCPeerConnection({ iceServers: servers as RTCIceServer[] });
+        peer.close();
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.name : String(error);
+      }
+    }, iceServers);
+    expect(constructorFailure).not.toBeNull();
+    await page.evaluate("mediaFixture.startPairWithEarlyPicture()");
+    await expect
+      .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 5_000 })
+      .toEqual({
+        failures: [],
+        captureRequests: 1,
+        peers: ["Connected", "Connected"],
+        remoteCameras: ["Off", "Live"],
+      });
+    expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual(["host"]);
+    await expect
+      .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
+      .toBeGreaterThan(0);
+  });
+
+  test(`trusted relay-only policy does not bypass ${name}`, async ({ page }) => {
+    await page.evaluate((servers) => {
+      Reflect.get(window, "mediaFixture").configureIceServers(servers, "relay");
+    }, iceServers);
+    expect(await page.evaluate(async () => {
+      try {
+        await Reflect.get(window, "mediaFixture").startPair();
+        return "Done";
+      } catch {
+        return "Rejected";
+      }
+    })).toBe("Rejected");
+    await expect
+      .poll(() => page.evaluate("mediaFixture.snapshot().peers[1]"))
+      .toBe("Failed");
+    expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual([]);
+  });
+}
+
+for (const provider of ["rejectTurnCredentials", "hangTurnCredentials"]) {
+  test(`trusted relay-only policy fails closed with ${provider}`, async ({ page }) => {
+    await page.evaluate((method) => {
+      Reflect.get(window, "mediaFixture")[method]("relay");
+    }, provider);
+    expect(await page.evaluate(async () => {
+      try {
+        await Reflect.get(window, "mediaFixture").startPair();
+        return "Done";
+      } catch {
+        return "Rejected";
+      }
+    })).toBe("Rejected");
+    await expect
+      .poll(() => page.evaluate("mediaFixture.snapshot().peers[1]"))
+      .toBe("Failed");
+    expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual([]);
+  });
+}
 
 test("capture failures expose only a typed error, not engine network details", async ({ page }) => {
   expect(await page.evaluate("mediaFixture.rejectCapture()")).toEqual({

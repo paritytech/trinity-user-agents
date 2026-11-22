@@ -22,17 +22,20 @@ actor TURNCredentialsService: TURNCredentialsProviding {
     }
 
     func issueCredentials() async throws -> TURNCredentials {
+        try Task.checkCancellation()
         let request = TURNIssueRequest(regionHint: nil)
 
         if let cached = store[request], !isExpired(cached) {
             return cached.credentials
         }
         if let existing = inflight[request] {
-            return try await existing.value
+            return try await credentials(from: existing)
         }
 
         let task = Task { [requestFactory, tokenProvider] in
-            try await tokenProvider.withAuthorizedToken { token in
+            try Task.checkCancellation()
+            return try await tokenProvider.withAuthorizedToken { token in
+                try Task.checkCancellation()
                 let modifier = BearerTokenRequestModifier(token: token)
                 return try await requestFactory.issueCredentials(request: request, modifier: modifier)
             }
@@ -40,7 +43,7 @@ actor TURNCredentialsService: TURNCredentialsProviding {
         inflight[request] = task
 
         do {
-            let credentials = try await task.value
+            let credentials = try await self.credentials(from: task)
             let expiresAt = Date().addingTimeInterval(TimeInterval(credentials.ttl))
             store[request] = CachedCredentials(credentials: credentials, expiresAt: expiresAt)
             inflight[request] = nil
@@ -53,6 +56,17 @@ actor TURNCredentialsService: TURNCredentialsProviding {
 }
 
 private extension TURNCredentialsService {
+    func credentials(from task: Task<TURNCredentials, Error>) async throws -> TURNCredentials {
+        try await withTaskCancellationHandler {
+            let credentials = try await task.value
+            try Task.checkCancellation()
+            return credentials
+        } onCancel: {
+            // Task.value alone does not propagate cancellation to URLSession's request.
+            task.cancel()
+        }
+    }
+
     struct CachedCredentials {
         let credentials: TURNCredentials
         let expiresAt: Date

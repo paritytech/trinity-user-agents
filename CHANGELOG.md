@@ -11,8 +11,17 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 - connect Media peers directly when possible, with optional TURN fallback;
   keep SDP, ICE candidates, network addresses and statistics inside hosts,
-  never in product-facing responses or events
-
+  never in product-facing responses or events. Bound optional TURN discovery
+  to two seconds and continue directly when its configuration is invalid.
+- allow multi-interface Media ICE bursts: 258 queued messages per peer and
+  1,032 per runtime queue, retaining the 256 KiB peer and 1 MiB queue byte
+  limits. Capacity is released on delivery, not charged over the call lifetime.
+  Workstation browser qualification observed 27 offerer / 9 answerer trickled
+  host candidates without TURN (renegotiated SDP also contained 27 / 9).
+  The larger source-informed sizing envelope is 192 candidates (eight networks,
+  three unbundled transports, eight routes), allowing reflexive and relay
+  candidates as well. It is not a universal WebRTC maximum; mobile gathering
+  churn remains unmeasured. See the shared runtime limits for source references.
 - isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
   server and browser asset distribution independent, and pin cooperative update
   deadlines, multi-touch input, and image clipboard output (#540)

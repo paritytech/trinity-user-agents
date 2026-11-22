@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia
 
 import io.paritytech.polkadotapp.tools_media_connection_impl.WebRtcCore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -39,13 +40,7 @@ internal class NativeMediaPeer(
     private var applyingRemoteDescription = false
 
     init {
-        val config = PeerConnection.RTCConfiguration(servers).apply {
-            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            // TURN augments direct connectivity; it is never required for Media.
-            iceTransportsType = PeerConnection.IceTransportsType.ALL
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-        }
-        connection = requireNotNull(core.peerConnectionFactory.createPeerConnection(config, object : PeerConnection.Observer {
+        val observer = object : PeerConnection.Observer {
             override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
@@ -86,7 +81,10 @@ internal class NativeMediaPeer(
                     picturesChanged()
                 }
             }
-        }))
+        }
+        connection = createNativeMediaPeerConnection(servers) { config ->
+            core.peerConnectionFactory.createPeerConnection(config, observer)
+        }
         if (initialOfferer) slots = try {
             listOf(MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO)
                 .map { requireNotNull(connection.addTransceiver(it, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY))) }
@@ -247,4 +245,26 @@ internal class NativeMediaPeer(
         runCatching { connection.close() }
         runCatching { connection.dispose() }
     }
+}
+
+internal inline fun <T : Any> createNativeMediaPeerConnection(
+    servers: List<PeerConnection.IceServer>,
+    create: (PeerConnection.RTCConfiguration) -> T?,
+): T {
+    val config = PeerConnection.RTCConfiguration(servers).apply {
+        sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+        // TURN augments direct connectivity; it is never required for Media.
+        iceTransportsType = PeerConnection.IceTransportsType.ALL
+        continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+    }
+    try {
+        return requireNotNull(create(config))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        if (servers.isEmpty()) throw failure
+    }
+    // Native WebRTC can reject otherwise well-formed optional server configuration.
+    config.iceServers = emptyList()
+    return requireNotNull(create(config))
 }
