@@ -10,8 +10,11 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.BoxProps
+import uniffi.truapi.CoverBrush
 import uniffi.truapi.CoverGridProps
 import uniffi.truapi.GestureProps
+import uniffi.truapi.PanAxis
+import uniffi.truapi.PanGesture
 import uniffi.truapi.RendererNode
 
 class RendererGestureOffsetsTest {
@@ -159,6 +162,32 @@ class RendererGestureOffsetsTest {
         assertTrue(requireNotNull(cover.cells).value.value.cells.isEmpty)
     }
 
+    @Test
+    fun `a cover's brush shares the strokes of the pan it follows`() {
+        val offsets = RendererGestureOffsets()
+        val box = offsets.receive(scratch()) as JsWidget.Box
+        val gesture = box.children[0] as JsWidget.Gesture
+        val brush = requireNotNull((box.children[1] as JsWidget.CoverGrid).brush)
+
+        assertSame(gesture.trail, brush.trail)
+        assertEquals(52, brush.width)
+        assertEquals("scratch", brush.pan)
+    }
+
+    @Test
+    fun `a tree drops the strokes with the cells cleared since, and keeps the same trail`() {
+        val offsets = RendererGestureOffsets()
+        val gesture = (offsets.receive(scratch()) as JsWidget.Box).children[0] as JsWidget.Gesture
+        val trail = requireNotNull(gesture.trail)
+        trail.begin(1f, 2f)
+        trail.extend(30f, 2f)
+
+        val next = (offsets.receive(scratch()) as JsWidget.Box).children[0] as JsWidget.Gesture
+
+        assertSame(trail, next.trail)
+        assertTrue(trail.value.value.strokes.isEmpty())
+    }
+
     private fun scratch() = RendererNode.Box(
         modifiers = emptyList(),
         props = BoxProps(contentAlignment = null),
@@ -166,7 +195,13 @@ class RendererGestureOffsetsTest {
             gesture("scratch"),
             RendererNode.CoverGrid(
                 modifiers = emptyList(),
-                props = CoverGridProps(key = "foil", columns = 4u, rows = 4u, cleared = ByteArray(0)),
+                props = CoverGridProps(
+                    key = "foil",
+                    columns = 4u,
+                    rows = 4u,
+                    cleared = ByteArray(0),
+                    brush = CoverBrush(pan = "scratch", width = 52uL),
+                ),
                 children = emptyList(),
             ),
         ),
@@ -176,7 +211,15 @@ class RendererGestureOffsetsTest {
         modifiers = emptyList(),
         props = GestureProps(
             tapAction = null,
-            pan = null,
+            pan = PanGesture(
+                axis = PanAxis.FREE,
+                drag = null,
+                startAction = null,
+                moveAction = "move",
+                moveIntervalMs = null,
+                endAction = null,
+                location = true,
+            ),
             accessibilityLabel = null,
             enabled = null,
             hapticOnComplete = null,

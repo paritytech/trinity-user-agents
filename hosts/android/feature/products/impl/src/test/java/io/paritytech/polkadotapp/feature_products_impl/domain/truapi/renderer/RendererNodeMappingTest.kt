@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
@@ -10,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
@@ -26,6 +28,7 @@ import uniffi.truapi.ButtonProps
 import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
+import uniffi.truapi.CoverBrush
 import uniffi.truapi.CoverGridProps
 import uniffi.truapi.Dimensions
 import uniffi.truapi.DropShadow
@@ -354,7 +357,13 @@ class RendererNodeMappingTest {
         val cells = JsCoverCells()
         val node = RendererNode.CoverGrid(
             modifiers = listOf(Modifier.FillWidth(true)),
-            props = CoverGridProps(key = "foil", columns = 35u, rows = 37u, cleared = byteArrayOf(0b1001, 0, 0x80.toByte())),
+            props = CoverGridProps(
+                key = "foil",
+                columns = 35u,
+                rows = 37u,
+                cleared = byteArrayOf(0b1001, 0, 0x80.toByte()),
+                brush = null,
+            ),
             children = listOf(RendererNode.Box(modifiers = emptyList(), props = BoxProps(contentAlignment = null), children = emptyList())),
         )
 
@@ -366,6 +375,27 @@ class RendererNodeMappingTest {
         assertEquals(37, widget.rows)
         assertEquals(listOf(0, 3, 23), widget.cleared)
         assertEquals(1, widget.children.size)
+    }
+
+    @Test
+    fun `a cover's brush names its pan, its width and that pan's strokes`() {
+        val trail = JsPanTrail()
+        val node = RendererNode.CoverGrid(
+            modifiers = emptyList(),
+            props = CoverGridProps(
+                key = "foil",
+                columns = 36u,
+                rows = 47u,
+                cleared = ByteArray(0),
+                brush = CoverBrush(pan = "pan", width = 52uL),
+            ),
+            children = emptyList(),
+        )
+
+        val widget = node.toJsWidget(panTrail = { key -> trail.takeIf { key == "pan" } }) as JsWidget.CoverGrid
+
+        assertEquals(JsCoverBrush(pan = "pan", width = 52, trail = trail), widget.brush)
+        assertSame(trail, widget.brush?.trail)
     }
 
     @Test

@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
+import io.paritytech.polkadotapp.feature_products_api.model.JsCoverBrush
 import io.paritytech.polkadotapp.feature_products_api.model.JsCoverCells
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
@@ -16,6 +17,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
@@ -53,23 +55,24 @@ import uniffi.truapi.VerticalAlignment
 fun RendererNode.toJsWidget(
     gesturePosition: (String) -> JsGesturePosition? = { null },
     coverCells: (String) -> JsCoverCells? = { null },
+    panTrail: (String) -> JsPanTrail? = { null },
 ): JsWidget = when (this) {
     is RendererNode.Nil, is RendererNode.SetOffset, is RendererNode.ClearCells -> JsWidget.Spacer()
     is RendererNode.String -> JsWidget.Text(text = text)
     is RendererNode.Box -> JsWidget.Box(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition, coverCells),
+        children = children.toJsChildren(gesturePosition, coverCells, panTrail),
         contentAlignment = props.contentAlignment?.toJs(),
     )
     is RendererNode.Column -> JsWidget.Column(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition, coverCells),
+        children = children.toJsChildren(gesturePosition, coverCells, panTrail),
         horizontalAlignment = props.horizontalAlignment?.toJs(),
         verticalArrangement = props.verticalArrangement?.toJs(),
     )
     is RendererNode.Row -> JsWidget.Row(
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition, coverCells),
+        children = children.toJsChildren(gesturePosition, coverCells, panTrail),
         verticalAlignment = props.verticalAlignment?.toJs(),
         horizontalArrangement = props.horizontalArrangement?.toJs(),
     )
@@ -104,7 +107,7 @@ fun RendererNode.toJsWidget(
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren(gesturePosition, coverCells))
+    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren(gesturePosition, coverCells, panTrail))
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,
         secondaryText = props.secondaryText,
@@ -119,24 +122,26 @@ fun RendererNode.toJsWidget(
     )
     is RendererNode.Gesture -> JsWidget.Gesture(
         position = props.key?.let(gesturePosition),
+        trail = props.key?.takeIf { props.pan?.location == true }?.let(panTrail),
         tapAction = props.tapAction,
         pan = props.pan?.toJs(),
         accessibilityLabel = props.accessibilityLabel,
         enabled = props.enabled ?: true,
         hapticOnComplete = props.hapticOnComplete ?: false,
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition, coverCells),
+        children = children.toJsChildren(gesturePosition, coverCells, panTrail),
         key = props.key,
         feel = props.feel?.toJs(),
     )
     is RendererNode.CoverGrid -> JsWidget.CoverGrid(
         cells = coverCells(props.key),
+        brush = props.brush?.let { JsCoverBrush(pan = it.pan, width = it.width.toDp(), trail = panTrail(it.pan)) },
         key = props.key,
         columns = props.columns.toInt(),
         rows = props.rows.toInt(),
         cleared = props.toJsCleared(),
         modifiers = modifiers.toJsModifiers(),
-        children = children.toJsChildren(gesturePosition, coverCells),
+        children = children.toJsChildren(gesturePosition, coverCells, panTrail),
     )
 }
 
@@ -192,9 +197,10 @@ private fun PanDrag.toJs(): JsPanDrag = JsPanDrag(
 private fun List<RendererNode>.toJsChildren(
     gesturePosition: (String) -> JsGesturePosition?,
     coverCells: (String) -> JsCoverCells?,
+    panTrail: (String) -> JsPanTrail?,
 ): List<JsWidget> =
     filterNot { it is RendererNode.Nil || it is RendererNode.String || it is RendererNode.SetOffset || it is RendererNode.ClearCells }
-        .map { it.toJsWidget(gesturePosition, coverCells) }
+        .map { it.toJsWidget(gesturePosition, coverCells, panTrail) }
 
 private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
     var width: Int? = null

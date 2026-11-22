@@ -34,6 +34,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -339,6 +340,8 @@ internal fun JsGesture(
                 nodeWidth = it.width
                 nodeHeight = it.height
             }
+            // Where a cover's brush that follows this pan places its strokes.
+            .onPlaced { current.trail?.frame = it }
             .semantics {
                 label?.let { contentDescription = it }
                 role = Role.Button
@@ -379,6 +382,13 @@ internal fun JsGesture(
                         val width = nodeWidth.toFloat()
                         fun at(point: Offset): Offset =
                             GestureRules.inside(point.x, point.y, nodeWidth, nodeHeight, rtl).let { Offset(it.first, it.second) }
+                        // The finger's strokes for a cover's brush, in the pan's frame from its top-left corner.
+                        val trail = node.trail
+                        fun traced(point: Offset, begin: Boolean = false) {
+                            trail ?: return
+                            val (x, y) = GestureRules.inside(point.x, point.y, nodeWidth, nodeHeight, false)
+                            if (begin) trail.begin(x, y) else trail.extend(x, y)
+                        }
                         var total = Offset.Zero
                         var claimed = false
                         var lifted = false
@@ -412,12 +422,14 @@ internal fun JsGesture(
                                     lifted = true
                                     if (claimed) {
                                         last = at(change.position)
+                                        traced(change.position)
                                         change.consume()
                                     }
                                     break
                                 }
                                 if (claimed) {
                                     last = at(change.position)
+                                    traced(change.position)
                                     offer(last, change.uptimeMillis)
                                     change.consume()
                                     continue
@@ -440,8 +452,10 @@ internal fun JsGesture(
                                             }
                                         }
                                         val start = at(down.position)
+                                        traced(down.position, begin = true)
                                         send(pan.startAction, JsGesturePhase.STARTED, start.x, start.y, width)
                                         last = at(change.position)
+                                        traced(change.position)
                                         offer(last, change.uptimeMillis)
                                         change.consume()
                                     }

@@ -105,6 +105,7 @@ sealed interface JsWidget {
     @SerialName("gesture")
     data class Gesture(
         @Transient val position: JsGesturePosition? = null,
+        @Transient val trail: JsPanTrail? = null,
         val tapAction: String? = null,
         val pan: JsPanGesture? = null,
         val accessibilityLabel: String? = null,
@@ -122,6 +123,7 @@ sealed interface JsWidget {
      * @param cells The cells the worker cleared since this tree, until the next tree
      * @param key Names the cover for cleared-cells updates
      * @param cleared The cells this tree clears, `row * columns + column`
+     * @param brush Draws the cells cleared since this tree as strokes along a pan's finger; absent draws round holes
      */
     @Serializable
     @SerialName("coverGrid")
@@ -131,6 +133,7 @@ sealed interface JsWidget {
         val columns: Int,
         val rows: Int,
         val cleared: List<Int> = emptyList(),
+        val brush: JsCoverBrush? = null,
         val modifiers: List<JsModifier> = emptyList(),
         val children: List<JsWidget> = emptyList(),
     ) : JsWidget
@@ -163,3 +166,15 @@ sealed interface JsWidget {
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget
 }
+
+/**
+ * The brush a cover draws its newly cleared cells with: a line [width] dp wide, with round caps and joins, along the
+ * finger on the location pan keyed [pan].
+ * @param trail That pan's strokes since the tree
+ */
+@Serializable
+data class JsCoverBrush(
+    val pan: String,
+    val width: Int,
+    @Transient val trail: JsPanTrail? = null,
+)
