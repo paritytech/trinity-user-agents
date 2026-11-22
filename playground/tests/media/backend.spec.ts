@@ -1,4 +1,4 @@
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type Page, type TestInfo } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { startTurnServer } from "./turn-server";
 
@@ -47,6 +47,72 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ page }) => {
   await page.evaluate("window.mediaFixture?.dispose()");
 });
+
+type CandidateCounts = {
+  total: number;
+  byType: Record<string, number>;
+  byMid: Record<string, number>;
+};
+
+// Snapshot only the initial call, after native gathering completes and before
+// renegotiation or teardown. Each observed Description/IceCandidate maps to one
+// private StatementStore message; the fixture does not publish to that service.
+async function reportInitialCallSignaling(page: Page, testInfo: TestInfo) {
+  await expect.poll(() => page.evaluate<string[]>(
+    "mediaFixture.nativeIceSnapshot().map(peer => peer.gatheringState)",
+  ), { timeout: 15_000 }).toEqual(["complete", "complete"]);
+  const native = await page.evaluate<{
+    bundlePolicy: string;
+    rtcpMuxPolicy: string;
+    transceiverMids: string[];
+    dtlsTransportCount: number;
+    iceTransportCount: number;
+    candidates: CandidateCounts;
+  }[]>("mediaFixture.nativeIceSnapshot()");
+  const candidates = await page.evaluate<{
+    signaled: CandidateCounts;
+    descriptions: CandidateCounts[];
+  }[]>("mediaFixture.iceCounts()");
+  const signaling = await page.evaluate<{
+    peers: { peer: number; Description: number; IceCandidate: number; total: number }[];
+    totals: { Description: number; IceCandidate: number; total: number };
+    privateStatementStoreMessagesForSignaling: number;
+  }>("mediaFixture.callSignalingCounts()");
+  await testInfo.attach("initial-call-host-signaling", {
+    body: JSON.stringify({ phase: "initial-call-gathering-complete", signaling, candidates, native }, null, 2),
+    contentType: "application/json",
+  });
+  expect(native).toHaveLength(2);
+  expect(candidates).toHaveLength(2);
+  expect(signaling.peers).toHaveLength(2);
+  for (const peer of native) {
+    expect(peer.bundlePolicy).toBe("max-bundle");
+    expect(peer.rtcpMuxPolicy).toBe("require");
+    expect(peer.transceiverMids).toEqual(["0", "1", "2"]);
+    expect(peer.dtlsTransportCount).toBe(1);
+    expect(peer.iceTransportCount).toBe(1);
+    // Three audio/camera/screen m-lines must gather only for the bundle's mid,
+    // not emit a separate copy of every candidate for each transceiver.
+    expect(Object.keys(peer.candidates.byMid)).toEqual(["0"]);
+    expect(peer.candidates.total).toBeGreaterThan(0);
+  }
+  for (const [index, peer] of signaling.peers.entries()) {
+    expect(peer.Description).toBeGreaterThan(0);
+    expect(peer.IceCandidate).toBe(candidates[index].signaled.total);
+    expect(peer.IceCandidate).toBeGreaterThan(0);
+    expect(Object.keys(candidates[index].signaled.byMid)).toEqual(["0"]);
+    expect(peer.total).toBe(peer.Description + peer.IceCandidate);
+  }
+  expect(signaling.totals.IceCandidate).toBe(
+    native.reduce((sum, peer) => sum + peer.candidates.total, 0),
+  );
+  expect(signaling.totals.Description).toBe(
+    signaling.peers.reduce((sum, peer) => sum + peer.Description, 0),
+  );
+  expect(signaling.privateStatementStoreMessagesForSignaling).toBe(
+    signaling.totals.Description + signaling.totals.IceCandidate,
+  );
+}
 
 test("a receive-only session opens without a screen capture API", async ({
   page,
@@ -100,7 +166,7 @@ test("a screen request fails when the browser has no screen capture API", async 
 
 test("trusted hosts can explicitly force the TURN fallback", async ({
   page, turnServers,
-}) => {
+}, testInfo) => {
   await page.evaluate((servers) => {
     Reflect.get(window, "mediaFixture").forceTurn(servers);
   }, turnServers);
@@ -114,6 +180,30 @@ test("trusted hosts can explicitly force the TURN fallback", async ({
       remoteCameras: ["Off", "Live"],
     });
   expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual(["relay"]);
+  await reportInitialCallSignaling(page, testInfo);
+});
+
+test("three transceivers share one ICE transport without tripling candidates when TURN is available", async ({
+  page, turnServers,
+}, testInfo) => {
+  await page.evaluate((servers) => {
+    Reflect.get(window, "mediaFixture").configureIceServers(servers);
+  }, turnServers);
+  await page.evaluate("mediaFixture.startPair()");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  await reportInitialCallSignaling(page, testInfo);
+  const counts = await page.evaluate<{ signaled: CandidateCounts }[]>("mediaFixture.iceCounts()");
+  for (const peer of counts) {
+    expect(peer.signaled.byType.host).toBeGreaterThan(0);
+    expect(peer.signaled.byType.relay).toBeGreaterThan(0);
+  }
 });
 
 test("peers connect directly without TURN and host signaling preserves host candidates", async ({
@@ -128,6 +218,7 @@ test("peers connect directly without TURN and host signaling preserves host cand
       peers: ["Connected", "Connected"],
       remoteCameras: ["Off", "Live"],
     });
+  await reportInitialCallSignaling(page, testInfo);
   // Renegotiate after gathering so descriptions embed gathered candidates too.
   await page.evaluate("mediaFixture.setAnswererCamera(true)");
   await expect
@@ -150,7 +241,7 @@ test("peers connect directly without TURN and host signaling preserves host cand
   for (const peer of counts) expect(peer.signaled.byType.host).toBeGreaterThan(0);
 });
 
-test("rejected optional TURN credentials still allow a direct call", async ({ page }) => {
+test("rejected optional TURN credentials still allow a direct call", async ({ page }, testInfo) => {
   await page.evaluate("mediaFixture.rejectTurnCredentials()");
   await page.evaluate("mediaFixture.startPairWithEarlyPicture()");
   await expect
@@ -165,6 +256,7 @@ test("rejected optional TURN credentials still allow a direct call", async ({ pa
   await expect
     .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
     .toBeGreaterThan(0);
+  await reportInitialCallSignaling(page, testInfo);
 });
 
 test("hanging optional TURN credentials connect both peers within the five-second core budget", async ({
@@ -193,6 +285,7 @@ test("hanging optional TURN credentials connect both peers within the five-secon
     body: JSON.stringify(connectionTimes),
     contentType: "application/json",
   });
+  await reportInitialCallSignaling(page, testInfo);
 });
 
 const malformedIceConfigurations: { name: string; iceServers: unknown }[] = [
@@ -202,7 +295,7 @@ const malformedIceConfigurations: { name: string; iceServers: unknown }[] = [
 ];
 
 for (const { name, iceServers } of malformedIceConfigurations) {
-  test(`${name} rejected by native RTC still allows a direct call`, async ({ page }) => {
+  test(`${name} rejected by native RTC still allows a direct call`, async ({ page }, testInfo) => {
     const constructorFailure = await page.evaluate((servers) => {
       Reflect.get(window, "mediaFixture").configureIceServers(servers);
       // Exercise Chromium's real WebIDL/RTC validation, not a constructor mock.
@@ -228,6 +321,7 @@ for (const { name, iceServers } of malformedIceConfigurations) {
     await expect
       .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
       .toBeGreaterThan(0);
+    await reportInitialCallSignaling(page, testInfo);
   });
 
   test(`trusted relay-only policy does not bypass ${name}`, async ({ page }) => {

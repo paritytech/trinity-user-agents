@@ -44,6 +44,10 @@ final class WebRTCConfigFactory: WebRTCConfigMaking {
         let configuration = RTCConfiguration()
         configuration.iceServers = iceServers
         configuration.sdpSemantics = .unifiedPlan
+        if allowsDirectFallback {
+            configuration.bundlePolicy = .maxBundle
+            configuration.rtcpMuxPolicy = .require
+        }
         configuration.iceCandidatePoolSize = iceCandidatePoolSize
         // recommended by WebRTC team to avoid complexity explosion
         configuration.maxIPv6Networks = 1

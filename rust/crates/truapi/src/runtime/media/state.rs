@@ -22,36 +22,34 @@ pub(super) const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const CONSENT_TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Outstanding messages, not a lifetime ICE-candidate quota. Allow 256
-/// candidates plus a description and end-of-candidates marker per peer, and
-/// four such bursts across each runtime queue. Byte limits remain independent.
+/// Outstanding messages, not a lifetime ICE-candidate quota. Allow 64
+/// candidates plus two description/control messages per peer, and four such
+/// bursts across each runtime queue. Byte limits remain independent:
+/// 256 KiB per peer and 1 MiB per queue, with existing per-message limits.
 ///
-/// Workstation Playwright qualification (Ethernet, Wi-Fi, Tailscale and Docker
-/// bridges; no TURN) observed 27 trickled host candidates at the offerer
-/// (9 each on mids 0/1/2) and 9 at the answerer (mid 0). Renegotiated SDP
-/// contained 27/9 respectively; those embedded candidates are description
-/// bytes, not additional queued candidate messages. This direct-only baseline
-/// does not measure srflx/relay bursts or mobile continuous-gathering churn.
+/// Standalone Chromium qualification with three transceivers, STUN and coturn
+/// measured complete gathering at 90 candidates before max-bundle
+/// (54 host, 12 srflx, 24 relay), and 30 after (18 host, 4 srflx, 8 relay),
+/// with no errors. The 64-candidate allowance gives about twice that measured
+/// bundled burst's headroom. Synthetic coverage uses eight networks and eight
+/// routes on one bundled transport, not three unbundled transports.
 ///
-/// Sizing envelope (not a measured device maximum): 3 IPv4 + 5 IPv6 networks,
-/// 3 media transports before BUNDLE, and 8 candidates per transport/network
-/// (UDP/TCP host, 2 reflexive, 4 relay) = 192 candidates, with 64 spare slots.
-/// WebRTC caps IPv6 networks at 5 by default, not IPv4 networks; it allocates
-/// per network and TURN endpoint and regathers after network changes:
+/// This is not a universal WebRTC maximum or mobile qualification. WebRTC caps
+/// IPv6 networks at 5 by default, not IPv4 networks; it allocates per network
+/// and TURN endpoint and regathers after network changes:
 /// <https://github.com/webrtc-mirror/webrtc/blob/3710345e71ad3a7c1f4ed4efef152fd4fc24869a/p2p/base/port_allocator.h>
 /// <https://github.com/webrtc-mirror/webrtc/blob/3710345e71ad3a7c1f4ed4efef152fd4fc24869a/p2p/client/basic_port_allocator.cc>
-/// Thus no finite universal or lifetime bound follows from WebRTC. These are
-/// backpressure limits: draining releases capacity, while a stalled/flooded
-/// peer still fails closed. Never coalesce distinct candidates by interface or
-/// type: that can discard the only working direct or relay route.
-pub(super) const MEDIA_PEER_MESSAGE_LIMIT: usize = 256 + 2;
+/// These are backpressure limits: draining releases capacity, while a
+/// stalled/flooded peer still fails closed. Embedded SDP candidates consume
+/// description bytes, not additional queued messages. Never coalesce distinct
+/// candidates by interface or type: that can discard the only working route.
+pub(super) const MEDIA_PEER_MESSAGE_LIMIT: usize = 64 + 2;
 pub(super) const MEDIA_MESSAGE_LIMIT: usize = 4 * MEDIA_PEER_MESSAGE_LIMIT;
 
 #[cfg(test)]
 pub(super) fn multi_interface_candidates(generation: u16) -> impl Iterator<Item = MediaIceCandidate> {
-    // Synthetic sizing envelope above, deliberately larger than the old 66
-    // message queue. This is source-informed test input, not device telemetry.
-    (0..8u16).flat_map(move |network| (0..3u16).flat_map(move |transport| (0..8u16).map(move |route| {
+    // Synthetic bundled burst with multiple interfaces, not device telemetry.
+    (0..8u16).flat_map(move |network| (0..8u16).map(move |route| {
         let address = if network < 3 { format!("192.0.2.{}", network + 1) }
             else { format!("2001:db8::{network}") };
         let (protocol, kind, extension) = match route {
@@ -61,11 +59,11 @@ pub(super) fn multi_interface_candidates(generation: u16) -> impl Iterator<Item 
             _ => ("udp", "relay", " raddr 0.0.0.0 rport 0"),
         };
         MediaIceCandidate {
-            candidate: format!("candidate:{network}{transport}{route} 1 {protocol} 2122260223 {address} {} typ {kind}{extension} generation {generation}",
-                49152 + generation * 192 + network * 24 + transport * 8 + route),
-            mid: Some(transport.to_string()), mline_index: Some(transport),
+            candidate: format!("candidate:{network}{route} 1 {protocol} 2122260223 {address} {} typ {kind}{extension} generation {generation}",
+                49152 + generation * 64 + network * 8 + route),
+            mid: Some("0".into()), mline_index: Some(0),
         }
-    })))
+    }))
 }
 
 pub(super) fn domain(error: HostMediaError) -> Error { CallError::Domain(error) }

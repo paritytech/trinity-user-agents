@@ -25,6 +25,8 @@ struct WebRTCConfigFactoryTests {
         #expect(configuration.iceServers.isEmpty)
         #expect(configuration.iceTransportPolicy == .all)
         #expect(configuration.sdpSemantics == .unifiedPlan)
+        #expect(configuration.bundlePolicy == .maxBundle)
+        #expect(configuration.rtcpMuxPolicy == .require)
         #expect(configuration.iceCandidatePoolSize == 8)
     }
 

@@ -253,6 +253,8 @@ internal inline fun <T : Any> createNativeMediaPeerConnection(
 ): T {
     val config = PeerConnection.RTCConfiguration(servers).apply {
         sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+        bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+        rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         // TURN augments direct connectivity; it is never required for Media.
         iceTransportsType = PeerConnection.IceTransportsType.ALL
         continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY

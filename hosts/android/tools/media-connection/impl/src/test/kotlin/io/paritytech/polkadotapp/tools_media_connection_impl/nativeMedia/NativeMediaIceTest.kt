@@ -89,6 +89,8 @@ class NativeMediaIceTest {
                 attempts += 1
                 assertEquals(PeerConnection.IceTransportsType.ALL, configuration.iceTransportsType)
                 assertEquals(PeerConnection.SdpSemantics.UNIFIED_PLAN, configuration.sdpSemantics)
+                assertEquals(PeerConnection.BundlePolicy.MAXBUNDLE, configuration.bundlePolicy)
+                assertEquals(PeerConnection.RtcpMuxPolicy.REQUIRE, configuration.rtcpMuxPolicy)
                 if (attempts == 1) {
                     assertFalse(configuration.iceServers.isEmpty())
                     if (throws) throw IllegalArgumentException("optional server rejected")
