@@ -251,7 +251,8 @@ test("peers connect directly without TURN and host signaling preserves host cand
     .toMatchObject({ remoteCameras: ["Live", "Live"] });
   await expect
     .poll(() => page.evaluate("mediaFixture.iceSnapshot()"))
-    .toEqual({ signaled: ["host"], descriptions: ["host"] });
+    .toEqual({ signaled: ["host"] });
+  expect(await page.evaluate("mediaFixture.descriptionSnapshot()")).toEqual(["host"]);
   await expect
     .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
     .toBeGreaterThan(0);

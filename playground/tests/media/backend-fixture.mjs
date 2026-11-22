@@ -18,6 +18,7 @@ navigator.mediaDevices.getUserMedia = async (constraints) => {
   }
   return stream;
 };
+// Every candidate type that left a backend, in IceCandidate events or SDP.
 // These observations belong to the trusted host, never the product frame.
 const signaled = new Set();
 const descriptions = new Set();
@@ -93,6 +94,7 @@ async function observe(node) {
           for (const line of event.value.description.sdp.split("\r\n")) {
             if (line.startsWith("a=mid:")) mid = line.slice(6);
             if (!line.startsWith("a=candidate:")) continue;
+            signaled.add(candidateType(line));
             descriptions.add(candidateType(line));
             countCandidate(counts, line, mid);
             node.embeddedCandidates.add(line.slice(2).trim());
@@ -407,7 +409,10 @@ window.mediaFixture = {
     });
   },
   iceSnapshot() {
-    return { signaled: [...signaled].sort(), descriptions: [...descriptions].sort() };
+    return { signaled: [...signaled].sort() };
+  },
+  descriptionSnapshot() {
+    return [...descriptions].sort();
   },
   // Counts only: transport addresses remain in the trusted signaling path.
   iceCounts() {
