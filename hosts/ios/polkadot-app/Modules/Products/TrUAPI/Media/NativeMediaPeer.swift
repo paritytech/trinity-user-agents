@@ -21,6 +21,91 @@ func makeNativeMediaPeerConnection(
     return try create(configuration)
 }
 
+let nativeMediaIceGatheringDeadline: Duration = .seconds(1)
+let nativeMediaLocalCandidateLimit = 256
+
+/// Actor-confined. A description carries the gathered candidates; only candidates
+/// absent from that snapshot may subsequently become individual V1 ICE messages.
+/// Continual gathering has a per-description budget; optional excess is dropped.
+struct NativeMediaLocalIce {
+    private struct Key: Hashable {
+        let mline: Int32
+        let fields: [String]
+    }
+    private var active = true
+    private var buffering = true
+    private var pending: [RTCIceCandidate] = []
+    private var advertised: Set<Key> = []
+    private var ufrags: [Int32: String] = [:]
+
+    mutating func begin() {
+        active = true
+        buffering = true
+        pending.removeAll()
+    }
+
+    mutating func candidate(_ candidate: RTCIceCandidate) -> Bool {
+        guard active else { return false }
+        if buffering {
+            if pending.count < nativeMediaLocalCandidateLimit { pending.append(candidate) }
+            return false
+        }
+        guard advertised.count < nativeMediaLocalCandidateLimit else { return false }
+        let fields = candidate.sdp.split(whereSeparator: \.isWhitespace)
+        if let index = fields.firstIndex(of: "ufrag"), index + 1 < fields.count,
+           let expected = ufrags[candidate.sdpMLineIndex], fields[index + 1] != expected {
+            return false // Delayed callback from the generation replaced by a restart.
+        }
+        return advertised.insert(Self.key(candidate.sdpMLineIndex, fields)).inserted
+    }
+
+    mutating func publish(_ sdp: String) -> [RTCIceCandidate] {
+        advertised.removeAll(keepingCapacity: true)
+        ufrags.removeAll(keepingCapacity: true)
+        var mline: Int32 = -1
+        var sessionUfrag: String?
+        for line in sdp.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("m=") {
+                mline += 1
+                ufrags[mline] = sessionUfrag
+            } else if line.hasPrefix("a=ice-ufrag:") {
+                let ufrag = String(line.dropFirst("a=ice-ufrag:".count))
+                if mline < 0 { sessionUfrag = ufrag } else { ufrags[mline] = ufrag }
+            } else if mline >= 0, line.hasPrefix("a=candidate:"),
+                      advertised.count < nativeMediaLocalCandidateLimit {
+                advertised.insert(Self.key(mline, line.dropFirst(2).split(whereSeparator: \.isWhitespace)))
+            }
+        }
+        buffering = false
+        let candidates = pending
+        pending = []
+        return candidates.filter { candidate($0) }
+    }
+
+    mutating func cancel() {
+        active = false
+        pending.removeAll()
+        advertised.removeAll()
+        ufrags.removeAll()
+    }
+
+    private static func key(_ mline: Int32, _ fields: [Substring]) -> Key {
+        // SDP and callback serializers differ in ufrag/generation/network
+        // metadata. Credentials are checked separately; retain ICE identity.
+        var identity = fields.prefix(8).map(String.init)
+        var index = 8
+        while index + 1 < fields.count {
+            let name = fields[index]
+            if name == "raddr" || name == "rport" || name == "tcptype" {
+                identity.append(String(name))
+                identity.append(String(fields[index + 1]))
+            }
+            index += 2
+        }
+        return Key(mline: mline, fields: identity)
+    }
+}
+
 /// Only this trusted adapter sees descriptions/candidates. The existing low-level
 /// wrapper supplies serialized peer operations; no Chat signaling is involved.
 actor NativeMediaPeer {
@@ -46,6 +131,8 @@ actor NativeMediaPeer {
     private var negotiatedMids: [String] = []
     private var packetObservations: [String: (UInt64, TimeInterval)] = [:]
     private var lastRemoteState: NativeMediaRemoteState?
+    private var localIce = NativeMediaLocalIce()
+    private var gatheringWait: Task<Void, Error>?
 
     init(connection: RTCPeerConnection, sessionId: Data, participantId: Data, offerer: Bool,
          emit: @escaping @Sendable (NativeMediaBackendEvent) -> Void,
@@ -148,10 +235,7 @@ actor NativeMediaPeer {
         defer { makingOffer = false }
         let description = try await wrapper.offer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
         guard !closed else { throw NativeMediaFailure.cancelled }
-        try await wrapper.setLocalDescription(description)
-        guard !closed else { throw NativeMediaFailure.cancelled }
-        emit(.description(sessionId: sessionId, participantId: participantId,
-            description: NativeMediaDescription(kind: .offer, sdp: description.sdp)))
+        try await publishLocalDescription(description, kind: .offer)
     }
 
     func apply(_ description: NativeMediaDescription) async throws {
@@ -169,6 +253,7 @@ actor NativeMediaPeer {
         observationRevision += 1
         defer { applyingDescription = false }
         if collision {
+            localIce.cancel()
             try await wrapper.setLocalDescription(RTCSessionDescription(type: .rollback, sdp: ""))
         }
         guard !closed else { throw NativeMediaFailure.cancelled }
@@ -182,10 +267,7 @@ actor NativeMediaPeer {
         if offer {
             let answer = try await wrapper.answer(for: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil))
             guard !closed else { throw NativeMediaFailure.cancelled }
-            try await wrapper.setLocalDescription(answer)
-            guard !closed else { throw NativeMediaFailure.cancelled }
-            emit(.description(sessionId: sessionId, participantId: participantId,
-                description: NativeMediaDescription(kind: .answer, sdp: answer.sdp)))
+            try await publishLocalDescription(answer, kind: .answer)
         }
         applyingDescription = false
         await publishRemote()
@@ -206,6 +288,59 @@ actor NativeMediaPeer {
             guard pendingCandidates.count < 128 else { throw NativeMediaError.EventOverflow }
             pendingCandidates.append(value)
         }
+    }
+
+    private func publishLocalDescription(_ description: RTCSessionDescription, kind: NativeMediaDescriptionKind) async throws {
+        localIce.begin()
+        var published = false
+        defer { if !published { localIce.cancel() } }
+        try await wrapper.setLocalDescription(description)
+        guard !closed else { throw NativeMediaFailure.cancelled }
+        try Task.checkCancellation()
+        try await waitForGathering()
+        var current: RTCSessionDescription?
+        try await wrapper.modify { connection in current = connection.localDescription }
+        try Task.checkCancellation()
+        guard !closed else { throw NativeMediaFailure.cancelled }
+        guard let current else { throw NativeMediaFailure.domain(.invalidState) }
+        let late = localIce.publish(current.sdp)
+        emit(.description(sessionId: sessionId, participantId: participantId,
+            description: NativeMediaDescription(kind: kind, sdp: current.sdp)))
+        published = true
+        for candidate in late { emitCandidate(candidate) }
+    }
+
+    private func waitForGathering() async throws {
+        let wait = Task { [wrapper] in
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                defer { group.cancelAll() }
+                group.addTask {
+                    try await Task.sleep(for: nativeMediaIceGatheringDeadline)
+                }
+                group.addTask {
+                    var complete = false
+                    try await wrapper.modify { connection in complete = connection.iceGatheringState == .complete }
+                    if complete { return }
+                    for try await state in wrapper.iceGatheringState.eraseToAnyAsyncSequence() {
+                        try Task.checkCancellation()
+                        guard state == .complete else { continue }
+                        // The subject can still contain Complete from before a
+                        // restart. Only the live native state finishes this wait.
+                        try await wrapper.modify { connection in complete = connection.iceGatheringState == .complete }
+                        if complete { return }
+                    }
+                }
+                try await group.next()
+            }
+        }
+        gatheringWait = wait
+        defer { gatheringWait = nil; wait.cancel() }
+        try await withTaskCancellationHandler {
+            try await wait.value
+        } onCancel: {
+            wait.cancel()
+        }
+        try Task.checkCancellation()
     }
 
     private func observe() {
@@ -242,7 +377,12 @@ actor NativeMediaPeer {
     }
 
     private func candidate(_ candidate: RTCIceCandidate) {
-        guard !closed, candidate.sdpMLineIndex >= 0, candidate.sdpMLineIndex < 3 else { return }
+        guard !closed, candidate.sdpMLineIndex >= 0, candidate.sdpMLineIndex < 3,
+              localIce.candidate(candidate) else { return }
+        emitCandidate(candidate)
+    }
+
+    private func emitCandidate(_ candidate: RTCIceCandidate) {
         emit(.iceCandidate(sessionId: sessionId, participantId: participantId,
             candidate: NativeMediaIceCandidate(candidate: candidate.sdp, mid: candidate.sdpMid,
                 mlineIndex: UInt16(candidate.sdpMLineIndex))))
@@ -324,6 +464,9 @@ actor NativeMediaPeer {
     func close() async {
         guard !closed else { return }
         closed = true
+        gatheringWait?.cancel()
+        gatheringWait = nil
+        localIce.cancel()
         for observer in observers { observer.cancel() }
         observers.removeAll(); pendingCandidates.removeAll()
         localTracks = [nil, nil, nil]; slots.removeAll(); negotiatedMids.removeAll()
