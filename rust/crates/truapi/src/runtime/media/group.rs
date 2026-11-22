@@ -14,8 +14,8 @@ use zeroize::{Zeroize, Zeroizing};
 use super::state::{MEDIA_MESSAGE_LIMIT, MEDIA_PEER_MESSAGE_LIMIT};
 use crate::{
 	host_logic::media_protocol::{
-		MAX_ADVERTISEMENT_BYTES, MAX_PLAINTEXT_BYTES, MediaIdentity, VerifiedAdvertisement,
-		decode_advertisement,
+		MAX_ADVERTISEMENT_BYTES, MAX_PACKET_LIFETIME, MAX_PLAINTEXT_BYTES, MediaIdentity,
+		VerifiedAdvertisement, decode_advertisement,
 	},
 	runtime::media_signaling::AuthenticatedMediaMessage,
 };
@@ -34,12 +34,13 @@ const MAX_CANDIDATE: usize = 4096;
 const MAX_MID: usize = 256;
 const MAX_LINK_BUFFER: usize = 256 * 1024;
 const MAX_BUFFER: usize = 1024 * 1024;
-// A two-party call sends at most six late candidates per endpoint, plus its
-// description and invite/accept/commit/leave (at most ten statements per side).
-// Half-trickle embeds initial candidates in SDP. Keep this lifetime budget
-// across renegotiation/restarts: resetting it would refill the 50-live-statement
-// account allowance, which is also shared with other product traffic.
-const MAX_TRICKLED_CANDIDATES: u8 = 6;
+// Half-trickle embeds the initial burst in SDP. Six late candidates per link
+// per MAX_PACKET_LIFETIME leave room in the shared 50-live-statement allowance:
+// normal two-party setup/teardown uses at most ten statements per side, excluding
+// advertisements, renewal, retries and multi-endpoint invites. Reserve two slots
+// for relay candidates so a slow TURN allocation cannot lose to host/srflx.
+const MAX_TRICKLED_CANDIDATES: usize = 6;
+const RESERVED_RELAY_CANDIDATES: usize = 2;
 
 type Id = [u8; 32];
 type EndpointKey = (Id, Id);
@@ -142,7 +143,7 @@ struct Link {
 	commit_seen: bool,
 	started: bool,
 	ended: bool,
-	trickled_candidates: u8,
+	trickle_expiries: [u64; MAX_TRICKLED_CANDIDATES],
 	buffered: Vec<Buffered>,
 	buffered_bytes: usize,
 }
@@ -395,7 +396,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: false,
-			trickled_candidates: 0,
+			trickle_expiries: [0; MAX_TRICKLED_CANDIDATES],
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -744,12 +745,23 @@ impl GroupEngine {
 		session: MediaSessionId,
 		participant: MediaParticipantId,
 		mut candidate: MediaIceCandidate,
+		now: u64,
 	) -> Vec<GroupAction> {
 		let mut actions = Vec::new();
+		self.now = self.now.max(now);
+		let now = self.now;
+		// RFC 5245 candidate grammar fixes "typ" and its value after the first
+		// six fields; do not mistake an extension value for the candidate type.
+		let mut fields = candidate.candidate.split_ascii_whitespace().skip(6);
+		let relay = fields.next() == Some("typ") && fields.next() == Some("relay");
 		if candidate.candidate.len() <= MAX_CANDIDATE &&
 			candidate.mid.as_ref().is_none_or(|mid| mid.len() <= MAX_MID) &&
 			let Some(link) = self.started_link(session, participant) &&
-			link.trickled_candidates < MAX_TRICKLED_CANDIDATES &&
+			let Some(slot) = link
+				.trickle_expiries
+				.iter_mut()
+				.skip(if relay { 0 } else { RESERVED_RELAY_CANDIDATES })
+				.find(|expires_at| **expires_at <= now) &&
 			let Some(remote) = &link.remote
 		{
 			send(
@@ -765,7 +777,7 @@ impl GroupEngine {
 					},
 				},
 			);
-			link.trickled_candidates += 1;
+			*slot = now.saturating_add(MAX_PACKET_LIFETIME);
 		}
 		candidate.candidate.zeroize();
 		if let Some(mid) = &mut candidate.mid {
@@ -1120,7 +1132,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: false,
-			trickled_candidates: 0,
+			trickle_expiries: [0; MAX_TRICKLED_CANDIDATES],
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -1240,7 +1252,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: false,
-			trickled_candidates: 0,
+			trickle_expiries: [0; MAX_TRICKLED_CANDIDATES],
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -1698,7 +1710,7 @@ impl GroupEngine {
 			commit_seen: false,
 			started: false,
 			ended: true,
-			trickled_candidates: 0,
+			trickle_expiries: [0; MAX_TRICKLED_CANDIDATES],
 			buffered: Vec::new(),
 			buffered_bytes: 0,
 		});
@@ -2103,7 +2115,7 @@ mod tests {
 				MediaDescription { kind, sdp: "v=0\r\n".into() },
 			));
 			for candidate in super::super::state::multi_interface_candidates(0) {
-				*count += statements(&engine.local_candidate(session, participant, candidate));
+				*count += statements(&engine.local_candidate(session, participant, candidate, NOW));
 			}
 			*count += statements(&engine.end_session(session));
 		}
@@ -2111,6 +2123,51 @@ mod tests {
 		// setup and independent teardown from each side, even under a late burst.
 		assert_eq!(caller_count, 10);
 		assert_eq!(callee_count, 9);
+	}
+
+	#[test]
+	fn description_and_call_bytes_fit_statement_allowance() {
+		let mut sdp = IP_SDP.to_owned();
+		for index in 0..79 {
+			sdp.push_str(&format!(
+				"a=candidate:{index} 1 udp 2122260223 2001:db8:1234:5678:abcd:ef01:2345:6789 49152 typ relay raddr 2001:db8:1234:5678:abcd:ef01:2345:6788 rport 49153 generation 0\r\n"
+			));
+		}
+		sdp.push_str("m=video 9 UDP/TLS/RTP/SAVPF 96\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n");
+		assert!(sdp.len() < MAX_SDP / 4);
+		let description_bytes = (
+			VERSION,
+			Wire::Description {
+				group_id: [1; 32],
+				link_id: [2; 32],
+				description: DescriptionWire { kind: MediaDescriptionKind::Offer, sdp: &sdp },
+			},
+		)
+			.encoded_size();
+		let candidate_bytes = (
+			VERSION,
+			Wire::IceCandidate {
+				group_id: [1; 32],
+				link_id: [2; 32],
+				candidate: CandidateWire {
+					candidate: &"x".repeat(MAX_CANDIDATE),
+					mid: Some(&"x".repeat(MAX_MID)),
+					mline_index: Some(0),
+				},
+			},
+		)
+			.encoded_size();
+		// A conservative 2 KiB per statement covers the maximum endpoint
+		// certificate, packet header, HPKE tag, signatures and statement fields.
+		// Four 128-byte controls also overcount the answerer's three controls.
+		let call_bytes = 2 * (description_bytes + 6 * candidate_bytes + 4 * 128 + 10 * 2048);
+		assert!(call_bytes < 512_000 / 4);
+		let maximum_sdp_call_bytes = call_bytes + 2 * (MAX_SDP - sdp.len());
+		assert!(maximum_sdp_call_bytes < 512_000 / 2);
+		println!(
+			"79-candidate SDP: {} bytes; two-sided call bound: {call_bytes} bytes; maximum-SDP call bound: {maximum_sdp_call_bytes} bytes",
+			sdp.len()
+		);
 	}
 
 	#[test]
@@ -2195,7 +2252,7 @@ mod tests {
 	}
 
 	#[test]
-	fn trickle_budget_is_per_link_and_survives_restarts() {
+	fn trickle_budget_is_per_link_and_slides_across_restarts() {
 		let a = advertisement(1, 11);
 		let b = advertisement(2, 21);
 		let mut caller = GroupEngine::new(a.clone());
@@ -2225,13 +2282,68 @@ mod tests {
 					1,
 				);
 				for candidate in super::super::state::multi_interface_candidates(generation) {
-					sent += caller.local_candidate([id; 32], [id; 32], candidate).len();
+					sent += caller.local_candidate([id; 32], [id; 32], candidate, NOW).len();
 				}
-				assert_eq!(sent, usize::from(MAX_TRICKLED_CANDIDATES));
+				assert_eq!(sent, MAX_TRICKLED_CANDIDATES);
 			}
 			// A new independent link gets its own budget.
 			caller.end_session([id; 32]);
 			callee.end_session([id; 32]);
+		}
+		// Each slot expires independently, including across backward ticks.
+		let mut group = buffered_group(1);
+		let link = &mut group.links[0];
+		link.started = true;
+		link.trickle_expiries = [NOW + MAX_PACKET_LIFETIME; MAX_TRICKLED_CANDIDATES];
+		link.trickle_expiries[0] += 10;
+		let session = link.session.unwrap();
+		let participant = link.participant.unwrap();
+		for (now, expected) in [
+			(NOW + MAX_PACKET_LIFETIME - 1, 0),
+			(NOW + MAX_PACKET_LIFETIME, 5),
+			(NOW, 0),
+			(NOW + MAX_PACKET_LIFETIME + 10, 1),
+		] {
+			let sent: usize = super::super::state::multi_interface_candidates(4)
+				.map(|candidate| group.local_candidate(session, participant, candidate, now).len())
+				.sum();
+			assert_eq!(sent, expected);
+		}
+	}
+
+	#[test]
+	fn late_relay_keeps_reserved_slots_after_host_and_srflx_bursts() {
+		let mut group = buffered_group(1);
+		let link = &mut group.links[0];
+		link.started = true;
+		let session = link.session.unwrap();
+		let participant = link.participant.unwrap();
+		for (kind, count) in [("host", 6), ("srflx", 6), ("relay", 3)] {
+			let mut sent = 0;
+			for index in 0..count {
+				sent += group
+					.local_candidate(
+						session,
+						participant,
+						MediaIceCandidate {
+							candidate: format!(
+								"candidate:{index} 1 udp 100 192.0.2.1 5000 typ {kind}"
+							),
+							mid: Some("0".into()),
+							mline_index: Some(0),
+						},
+						NOW,
+					)
+					.len();
+			}
+			assert_eq!(
+				sent,
+				match kind {
+					"host" => 4,
+					"srflx" => 0,
+					_ => 2,
+				}
+			);
 		}
 	}
 
@@ -2626,6 +2738,7 @@ mod tests {
 					mid: Some("audio".into()),
 					mline_index: Some(0),
 				},
+				NOW,
 			));
 		}
 		for message in &messages {
