@@ -2728,6 +2728,109 @@ async fn persist_calling_decision<P: Permissions + ?Sized>(
 }
 
 #[test]
+fn calling_consent_is_scoped_to_product_network_and_account_even_for_trusted_products() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt =
+			ScriptedPrompt::new(vec![], vec![]).with_calling_answers(vec![Ok(false), Ok(true)]);
+		let service = trusted_service(&storage, &prompt);
+		let network = [1; 32];
+		let account = [2; 32];
+		let request = PermissionAuthorizationRequest::Calling { network, account };
+
+		assert_eq!(
+			service
+				.check_or_prompt_calling(network, account, |snapshot, status| {
+					persist_calling_decision(&service, network, account, snapshot, status)
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		// Reconstructing the service must retain exactly this scope's answer.
+		let restored = trusted_service(&storage, &prompt);
+		assert_eq!(
+			restored
+				.check_or_prompt_calling(network, account, |_, _| async {
+					panic!("cached decision must not commit")
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		for (product_id, network, account) in [
+			("other.dot", network, account),
+			("peopl.dot", [3; 32], account),
+			("peopl.dot", network, [4; 32]),
+		] {
+			let product = ProductContext::new(ProductId::for_test(product_id));
+			let isolated = PermissionsService::new(&storage, &prompt, &product);
+			assert_eq!(
+				isolated
+					.authorization_status(&PermissionAuthorizationRequest::Calling {
+						network,
+						account,
+					})
+					.await
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+			);
+		}
+		assert_eq!(
+			service
+				.check_or_prompt_calling(network, [4; 32], |snapshot, status| {
+					persist_calling_decision(&service, network, [4; 32], snapshot, status)
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(
+			service
+				.check_or_prompt_calling(network, [4; 32], |_, _| async {
+					panic!("cached decision must not commit")
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert_eq!(
+			*prompt.calling_reviews.lock().await,
+			vec![
+				CallingReview { product_id: ProductId::for_test("peopl.dot"), network, account },
+				CallingReview {
+					product_id: ProductId::for_test("peopl.dot"),
+					network,
+					account: [4; 32],
+				},
+			],
+		);
+		// A host reset clears only the selected account's consent.
+		service
+			.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined)
+			.await
+			.unwrap();
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined,
+		);
+		assert_eq!(
+			service
+				.check_or_prompt_calling(network, [4; 32], |_, _| async {
+					panic!("cached decision must not commit")
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+	});
+}
+
+#[test]
 fn another_execution_reset_invalidates_an_unconsumed_device_grant() {
 	futures::executor::block_on(async {
 		let storage = MemStorage::default();
