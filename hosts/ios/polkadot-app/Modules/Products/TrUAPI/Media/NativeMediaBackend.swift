@@ -169,7 +169,8 @@ private final class NativeMediaRuntime {
     private let audioDevice = NativeMediaAudioDevice()
     private lazy var factory = WebRTCPeerConnectionFactoryProvider.make(audioDevice: audioDevice)
     private let configuration = WebRTCConfigFactory(turnService: TURNCredentialsService(
-        requestFactory: TURNCredentialsRequestFactory(), tokenProvider: JWTTokenManager.shared))
+        requestFactory: TURNCredentialsRequestFactory(), tokenProvider: JWTTokenManager.shared),
+        allowsDirectFallback: true)
     private let presentation: NativeMediaPresentation
     let compositor = NativeMediaCompositor()
     private var sessionId: Data?

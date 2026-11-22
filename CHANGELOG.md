@@ -9,6 +9,10 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- connect Media peers directly when possible, with optional TURN fallback;
+  keep SDP, ICE candidates, network addresses and statistics inside hosts,
+  never in product-facing responses or events
+
 - isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
   server and browser asset distribution independent, and pin cooperative update
   deadlines, multi-touch input, and image clipboard output (#540)

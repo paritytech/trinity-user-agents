@@ -1,5 +1,17 @@
-import { test, expect } from "@playwright/test";
+import { test as base, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { startTurnServer } from "./turn-server";
+
+const test = base.extend<{ turnServers: RTCIceServer[] }>({
+  turnServers: async ({}, use) => {
+    const turn = await startTurnServer();
+    try {
+      await use(turn.iceServers);
+    } finally {
+      await turn.stop();
+    }
+  },
+});
 
 const core = new URL("../../../", import.meta.url);
 const resources = new Map([
@@ -17,13 +29,9 @@ const html = `<!doctype html><div id="controls"></div>
 <script type="importmap">{"imports":{"neverthrow":"/neverthrow.mjs"}}</script>
 <script type="module" src="/fixture.mjs"></script>`;
 
-// Routes serve real compiled backend code; no peer/capture/signaling APIs are
-// mocked, and peers relay through the loopback TURN server from turn-server.ts.
+// Routes serve real compiled backend code. Native peers connect directly with
+// no ICE servers unless a test explicitly requests the loopback TURN fixture.
 test.beforeEach(async ({ page }) => {
-  const iceServers = JSON.parse(process.env.TRUAPI_MEDIA_ICE_SERVERS ?? "[]");
-  await page.addInitScript((servers) => {
-    Reflect.set(window, "mediaIceServers", servers);
-  }, iceServers);
   await page.route("http://localhost:48196/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const source = resources.get(path);
@@ -90,9 +98,12 @@ test("a screen request fails when the browser has no screen capture API", async 
   });
 });
 
-test("peers connect through TURN and signal only relay candidates", async ({
-  page,
+test("trusted hosts can explicitly force the TURN fallback", async ({
+  page, turnServers,
 }) => {
+  await page.evaluate((servers) => {
+    Reflect.get(window, "mediaFixture").forceTurn(servers);
+  }, turnServers);
   await page.evaluate("mediaFixture.startPair()");
   await expect
     .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
@@ -102,17 +113,13 @@ test("peers connect through TURN and signal only relay candidates", async ({
       peers: ["Connected", "Connected"],
       remoteCameras: ["Off", "Live"],
     });
-  expect(await page.evaluate("mediaFixture.iceSnapshot()")).toEqual({
-    gathered: [],
-    signaled: ["relay"],
-  });
+  expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual(["relay"]);
 });
 
-test("host and reflexive candidates never leave the backend even if the engine gathers them", async ({
+test("peers connect directly without TURN and host signaling preserves host candidates", async ({
   page,
 }) => {
-  await page.evaluate("mediaFixture.ignoreRelayPolicy()");
-  await page.evaluate("mediaFixture.startPair()");
+  await page.evaluate("mediaFixture.startPairWithEarlyPicture()");
   await expect
     .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
     .toEqual({
@@ -126,11 +133,53 @@ test("host and reflexive candidates never leave the backend even if the engine g
   await expect
     .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
     .toMatchObject({ remoteCameras: ["Live", "Live"] });
-  const ice = await page.evaluate<{ gathered: string[]; signaled: string[] }>(
-    "mediaFixture.iceSnapshot()",
-  );
-  expect(ice.gathered).toContain("host");
-  expect(ice.signaled).toEqual(["relay"]);
+  await expect
+    .poll(() => page.evaluate("mediaFixture.iceSnapshot()"))
+    .toEqual({ signaled: ["host"], descriptions: ["host"] });
+  await expect
+    .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
+    .toBeGreaterThan(0);
+  // The real sandboxed product cannot read the trusted host's signaling,
+  // peer statistics or compositor, even though host candidates now carry IPs.
+  for (const frame of page.frames().slice(1)) {
+    expect(await frame.evaluate(() => {
+      let hostReadable = false;
+      try {
+        hostReadable = !!parent.document;
+      } catch {}
+      return {
+        hostReadable,
+        backend: typeof Reflect.get(window, "mediaFixture"),
+        mediaElements: document.querySelectorAll("video, audio").length,
+      };
+    })).toEqual({ hostReadable: false, backend: "undefined", mediaElements: 0 });
+  }
+});
+
+test("rejected optional TURN credentials still allow a direct call", async ({ page }) => {
+  await page.evaluate("mediaFixture.rejectTurnCredentials()");
+  await page.evaluate("mediaFixture.startPairWithEarlyPicture()");
+  await expect
+    .poll(() => page.evaluate("mediaFixture.snapshot()"), { timeout: 15_000 })
+    .toEqual({
+      failures: [],
+      captureRequests: 1,
+      peers: ["Connected", "Connected"],
+      remoteCameras: ["Off", "Live"],
+    });
+  expect(await page.evaluate("mediaFixture.iceSnapshot().signaled")).toEqual(["host"]);
+  await expect
+    .poll(() => page.evaluate("mediaFixture.decodedFrames()"))
+    .toBeGreaterThan(0);
+});
+
+test("capture failures expose only a typed error, not engine network details", async ({ page }) => {
+  expect(await page.evaluate("mediaFixture.rejectCapture()")).toEqual({
+    tag: "Rejected",
+    value: {
+      failure: { tag: "Domain", value: { error: { tag: "DeviceUnavailable" } } },
+    },
+  });
 });
 
 test("an initially receive-only answerer connects and resumes camera after stopping", async ({

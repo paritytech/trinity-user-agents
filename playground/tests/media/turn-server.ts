@@ -6,7 +6,7 @@ import { createSocket } from "node:dgram";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Media peers are relay-only, so these specs need a real loopback TURN relay.
+// Only the explicit forced-TURN regression starts a real loopback relay.
 // TRUAPI_MEDIA_TURNSERVER names a coturn `turnserver` binary (default: PATH).
 async function freeUdpPort(): Promise<number> {
   const socket = createSocket("udp4");
@@ -18,7 +18,7 @@ async function freeUdpPort(): Promise<number> {
   return port;
 }
 
-export default async function globalSetup(): Promise<() => Promise<void>> {
+export async function startTurnServer() {
   const binary = process.env.TRUAPI_MEDIA_TURNSERVER ?? "turnserver";
   const state = mkdtempSync(join(tmpdir(), "truapi-media-turn-"));
   const port = await freeUdpPort();
@@ -66,19 +66,25 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   server.once("exit", (code) =>
     ready.reject(new Error(`${binary} exited (${code}):\n${log}`)),
   );
-  try {
-    await ready.promise;
-  } finally {
-    clearTimeout(timer);
-  }
-  process.env.TRUAPI_MEDIA_ICE_SERVERS = JSON.stringify([
-    { urls: [`turn:127.0.0.1:${port}?transport=udp`], username, credential },
-  ]);
-  return async () => {
-    if (server.exitCode === null) {
+  const stop = async () => {
+    if (server.exitCode === null && server.pid) {
       server.kill("SIGTERM");
       await once(server, "exit");
     }
     rmSync(state, { recursive: true, force: true });
+  };
+  try {
+    await ready.promise;
+  } catch (error) {
+    await stop();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+  return {
+    iceServers: [
+      { urls: [`turn:127.0.0.1:${port}?transport=udp`], username, credential },
+    ],
+    stop,
   };
 }
