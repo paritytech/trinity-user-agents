@@ -367,6 +367,42 @@ describe("browser Media half-trickle", () => {
     ]);
   });
 
+  it("answers five slow-gathering peers in one second, not five session-locked seconds", async () => {
+    const f = await fixture();
+    const ids = Array.from({ length: 5 }, (_, index) =>
+      `0x${(index + 10).toString(16).padStart(2, "0").repeat(32)}` as const,
+    );
+    for (const id of ids) {
+      expect(await f.command({
+        tag: "CreatePeer",
+        value: { sessionId, participantId: id, offerer: false },
+      })).toEqual({ tag: "Done" });
+    }
+    let elapsed = 0;
+    const completed: number[] = [];
+    const answers = ids.map(async (id) => {
+      const result = await f.command({
+        tag: "ApplyDescription",
+        value: {
+          sessionId, participantId: id,
+          description: { kind: "Offer", sdp: sdp("remote") },
+        },
+      });
+      completed.push(elapsed);
+      expect(result).toEqual({ tag: "Done" });
+    });
+    await flushMicrotasks();
+    // None of these connections completes gathering. All deadlines must be
+    // armed concurrently before the fake clock advances even once.
+    expect(completed).toEqual([]);
+    expect(f.gatheringTimers()).toHaveLength(ids.length);
+    elapsed = 1_000;
+    for (const timer of f.gatheringTimers()) timer.callback();
+    await Promise.all(answers);
+    expect(completed).toEqual(ids.map(() => 1_000));
+    expect(f.signals().filter((event) => event.tag === "Description")).toHaveLength(ids.length);
+  });
+
   it("starts a new gathering window for an ICE restart and drops stale-generation candidates", async () => {
     const f = await fixture();
     const pc = await f.createPeer();

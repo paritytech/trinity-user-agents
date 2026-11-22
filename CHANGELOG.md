@@ -64,10 +64,20 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 ### Fixed
 
 - embed gathered Media candidates in the existing V1 description after up to
-  one second, then send at most six late candidates per link lifetime. Normal
-  two-party setup and teardown fit within ten statements per side, leaving
-  room in the shared 50-statement account allowance. ICE restarts keep the
-  lifetime trickle budget and carry newly gathered candidates in SDP.
+  one second, then send at most six late candidates per link in a sliding
+  60-second packet-lifetime window, reserving two slots for relay candidates.
+  ICE restarts retain the live budget but expired slots become reusable.
+  Normal two-party setup and teardown fit within ten statements per side
+  (excluding advertisements, renewals, retries and multi-endpoint invites),
+  leaving room in the shared 50-statement account allowance. A synthetic
+  79-candidate IPv6 SDP is 12,638 bytes, below the 65,536-byte description limit;
+  the two-sided call bound is 120,524 bytes with maximum-size late candidates
+  and 2 KiB overhead per statement (226,320 bytes with maximum-size SDPs),
+  below the 512,000-byte account allowance. These are per-call bounds, not
+  a quota reserved against concurrent calls or other product traffic.
+- release the browser session lock before answer gathering, keeping only the
+  per-peer negotiation lock: five slow-gathering peers finish in one deadline
+  window rather than serializing into the core's five-second operation timeout.
 - accept Statement Store priority bits without changing Media's authenticated
   expiry or V1 encoding. Senders retain zero priority for compatibility with
   deployed hosts; control-message prioritization requires a later coordinated
