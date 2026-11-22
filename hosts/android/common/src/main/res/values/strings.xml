@@ -1004,6 +1004,7 @@
     <string name="truapi_confirm_title_account_access">Allow account access?</string>
     <string name="truapi_confirm_title_product_subtree">Allow own-account access?</string>
     <string name="truapi_confirm_title_nft_purse_drain">Move NFT items?</string>
+    <string name="truapi_confirm_title_calling">Allow calls?</string>
     <string name="truapi_confirm_label_request">Request</string>
     <string name="truapi_confirm_label_call">Call</string>
     <string name="truapi_confirm_label_call_data">Call data</string>

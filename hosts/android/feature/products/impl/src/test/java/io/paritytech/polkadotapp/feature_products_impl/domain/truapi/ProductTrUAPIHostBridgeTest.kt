@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.Context
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -54,6 +55,11 @@ class ProductTrUAPIHostBridgeTest {
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
         scope = scope,
+        context = mock(Context::class.java),
+        mediaFactory = mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory::class.java).also {
+            org.mockito.Mockito.`when`(it.create("game.dot"))
+                .thenReturn(mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend::class.java))
+        },
     )
 
     @Test
@@ -80,7 +86,7 @@ class ProductTrUAPIHostBridgeTest {
             every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
         }
         val runtime = mockk<TrUAPIHostRuntime> {
-            every { openProductExecution(any(), any(), any(), any()) } returns execution
+            every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
         }
         val bridge = bridge(scope, hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() })
 

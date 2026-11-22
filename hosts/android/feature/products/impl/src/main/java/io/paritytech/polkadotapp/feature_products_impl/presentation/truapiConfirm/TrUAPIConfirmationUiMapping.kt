@@ -45,6 +45,7 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.ProductSubtree -> build(
         RCommon.string.truapi_confirm_title_product_subtree,
     )
+    is TrUAPIConfirmation.Calling -> build(RCommon.string.truapi_confirm_title_calling)
 
     is TrUAPIConfirmation.NftPurseDrain -> build(
         RCommon.string.truapi_confirm_title_nft_purse_drain,

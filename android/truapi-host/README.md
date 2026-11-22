@@ -332,11 +332,16 @@ class MyStorage : HostStorage {
     override suspend fun clear(key: String) { map.remove(key) }
 }
 
-// Core-owned storage: keyed by SCALE-encoded CoreStorageKey bytes. Back it with
-// real persistence (e.g. EncryptedSharedPreferences); an in-memory map is shown
-// for brevity.
+// Core-owned storage: the bytes remain opaque. Back it with real persistence;
+// writes/clears must finish durably before returning. The SDK serializes all
+// callbacks and implements cancellation-safe CAS plus cross-core refreshes.
+// Every adapter sharing a physical store/prefix MUST use the same identifier.
+// This process-wide in-memory store is shown only for brevity.
 class MyCoreStorage : HostCoreStorage {
-    private val map = HashMap<String, ByteArray>()
+    override val storageIdentifier = "example-process-memory"
+    private companion object {
+        val map = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    }
     private fun k(key: ByteArray) = key.joinToString("") { "%02x".format(it) }
     override suspend fun read(key: ByteArray) = map[k(key)]
     override suspend fun write(key: ByteArray, value: ByteArray) { map[k(key)] = value }
@@ -466,6 +471,26 @@ main.post {
 // On logout:
 runtime.disconnect()
 ```
+
+## Native Media
+
+Pass a host-owned `NativeMediaCallbacks` backend as `media` when opening an execution.
+The Android application implements capture, SDP/ICE negotiation and video composition natively;
+product WebViews cannot use raw capture, device enumeration, WebRTC or fullscreen APIs.
+Media uses prototype wire trait 218 and host-owned direct-first ICE with optional TURN fallback.
+Trusted hosts may learn peer addresses; product APIs never expose addresses, SDP or ICE candidates.
+Missing or failed TURN provisioning yields an empty credential list rather than refusing calls;
+direct calls also work without STUN.
+The existing encrypted core store supplies durable policy writes and cross-execution refreshes;
+the removed `AndroidHostCoreStorage` adapter is not required.
+
+The Android `NativeMediaPeerInstrumentedTest` runs without STUN or TURN by default and
+asserts direct candidates while exercising receive-only negotiation and camera renegotiation.
+An optional owned TURN fixture can be supplied with `mediaTurnUrl`, `mediaTurnUsername`
+and `mediaTurnPassword` instrumentation arguments
+(for Gradle, `-Pandroid.testInstrumentationRunnerArguments.<name>=<value>`).
+This adds server coverage without forcing relay-only ICE. `NativeMediaJniInstrumentedTest`
+exercises the offline trait-218 callback path without TURN or an account.
 
 ## The cdylib
 

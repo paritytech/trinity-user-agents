@@ -90,6 +90,8 @@ fun UserConfirmationReview.toConfirmation(callingProductId: ProductId?): TrUAPIC
 
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
+    is UserConfirmationReview.Calling ->
+        TrUAPIConfirmation.Calling(v1.productId)
 
     is UserConfirmationReview.NftPurseDrain ->
         TrUAPIConfirmation.NftPurseDrain(
@@ -185,11 +187,8 @@ private fun RawPayload.toContent(): RawPayloadContent = when (this) {
 }
 
 /**
- * An unwatermarked payload carries no `<Bytes>` protection, so a signature over it can authorize a
- * transaction; the core requires a host to say so. This sheet shows a raw payload as an ordinary
- * message and has nowhere to put that warning, and carrying the flag into the domain model would
- * reach the SSO SCALE mappers, which encode a wire message to the paired wallet. So the request is
- * refused rather than presented as the harmless thing it is not; a sheet that can warn lifts this.
+ * Without `<Bytes>` protection a signature can authorize a transaction. The
+ * existing signing sheet cannot present that risk, so preserve its refusal.
  */
 private fun SignRawReview.toSigningRequestBody(): SigningRequestBody = when (this) {
     is SignRawReview.Product -> {
