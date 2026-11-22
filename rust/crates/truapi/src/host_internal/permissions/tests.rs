@@ -3342,10 +3342,7 @@ fn canonical_media_resets_keep_generations_and_block_legacy_reimport() {
 					.unwrap()
 			);
 			admin
-				.import_authorization_status(
-					&request,
-					PermissionAuthorizationStatus::Authorized,
-				)
+				.import_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
 				.await
 				.unwrap();
 			let raw = storage

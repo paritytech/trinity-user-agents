@@ -27,14 +27,22 @@ struct DurableSlot {
 
 #[async_trait::async_trait]
 impl CoreStorage for DurableSlot {
-    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, _notify_on_success: bool) -> Result<bool, GenericError> {
-        let mut values = self.values.lock();
-        let key = key.encode();
-        if values.get(&key) != expected.as_ref() { return Ok(false); }
-        values.insert(key, replacement);
-        Ok(true)
-    }
-    fn core_storage_changed(&self, _key: CoreStorageKey) {}
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		_notify_on_success: bool,
+	) -> Result<bool, GenericError> {
+		let mut values = self.values.lock();
+		let key = key.encode();
+		if values.get(&key) != expected.as_ref() {
+			return Ok(false);
+		}
+		values.insert(key, replacement);
+		Ok(true)
+	}
+	fn core_storage_changed(&self, _key: CoreStorageKey) {}
 	async fn read_core_storage(
 		&self,
 		key: CoreStorageKey,

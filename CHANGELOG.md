@@ -35,6 +35,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - allow legacy unscoped Calling entries to be reset without granting access.
 - restore permission-generation, stale-consent and private signaling regressions
   on the 0.30 host port.
+- retain the active authority epoch when Epoca allocates product Statement Store
+  or smart-contract resources, preserving session invalidation checks.
 
 ## [0.30.0] - 2026-11-09
 

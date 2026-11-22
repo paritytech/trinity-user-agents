@@ -20,12 +20,12 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	platform::{
 		BalancePlatform, ChatPlatform, CoinageWalletHost, ContactsPlatform, GamePlatform, HostInfo,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
+		PaymentPlatform, PermissionAuthorizationRequest, PermissionStatusHost, Platform,
+		PocketPlatform, ScannerPlatform, TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
-		statement_store_rpc::StatementStoreRpc,
+		bulletin_rpc::BulletinRpc, media::MediaService,
+		sso_responder_service::DevicePairingObserver, statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,
 };
@@ -37,7 +37,6 @@ use crate::{
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
 use truapi::latest;
-use crate::{runtime::media::MediaService, platform::PermissionAuthorizationRequest};
 
 /// Upper bound on the in-core preimage cache. The cache is a bridge until
 /// content propagates to the lookup backend, not a store, so it stays small.
@@ -49,16 +48,16 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
 /// Infrastructure shared by all product runtimes created from one host role.
 pub struct RuntimeServices {
-    /// Complete optional capture/RTC/compositor backend; absent is Unsupported.
-    media_platform: OnceLock<Arc<dyn crate::platform::MediaPlatform>>,
-    /// Serializes Media's final authorization/commit with administrative revocation.
-    /// Never held while presenting consent UI.
-    pub(crate) media_permission_gate: futures::lock::Mutex<()>,
-    /// Invalidates outstanding consent on every permission mutation, including
-    /// an undetermined-to-undetermined administrative reset.
-    media_permission_revision: AtomicU64,
-    /// Live product Media services, without retaining product runtimes.
-    media: Mutex<Vec<Weak<MediaService>>>,
+	/// Complete optional capture/RTC/compositor backend; absent is Unsupported.
+	media_platform: OnceLock<Arc<dyn crate::platform::MediaPlatform>>,
+	/// Serializes Media's final authorization/commit with administrative revocation.
+	/// Never held while presenting consent UI.
+	pub(crate) media_permission_gate: futures::lock::Mutex<()>,
+	/// Invalidates outstanding consent on every permission mutation, including
+	/// an undetermined-to-undetermined administrative reset.
+	media_permission_revision: AtomicU64,
+	/// Live product Media services, without retaining product runtimes.
+	media: Mutex<Vec<Weak<MediaService>>>,
 
 	/// Host platform backing all syscalls.
 	pub platform: Arc<dyn Platform>,
@@ -179,65 +178,62 @@ pub struct RuntimeServices {
 }
 
 impl RuntimeServices {
-    /// Install the complete Media backend once, before serving products.
-    pub(crate) fn install_media_platform(
-        &self,
-        platform: Arc<dyn crate::platform::MediaPlatform>,
-    ) -> bool {
-        self.media_platform.set(platform).is_ok()
-    }
+	/// Install the complete Media backend once, before serving products.
+	pub(crate) fn install_media_platform(
+		&self,
+		platform: Arc<dyn crate::platform::MediaPlatform>,
+	) -> bool {
+		self.media_platform.set(platform).is_ok()
+	}
 
-    /// The complete host Media backend, when installed.
-    pub(crate) fn media_platform(&self) -> Option<Arc<dyn crate::platform::MediaPlatform>> {
-        self.media_platform.get().cloned()
-    }
+	/// The complete host Media backend, when installed.
+	pub(crate) fn media_platform(&self) -> Option<Arc<dyn crate::platform::MediaPlatform>> {
+		self.media_platform.get().cloned()
+	}
 
-    pub(crate) fn register_media(&self, media: &Arc<MediaService>) {
-        let mut registry = self.media.lock().expect("media registry mutex poisoned");
-        registry.retain(|entry| entry.strong_count() != 0);
-        let media = Arc::downgrade(media);
-        if !registry.iter().any(|entry| entry.ptr_eq(&media)) {
-            registry.push(media);
-        }
-    }
+	pub(crate) fn register_media(&self, media: &Arc<MediaService>) {
+		let mut registry = self.media.lock().expect("media registry mutex poisoned");
+		registry.retain(|entry| entry.strong_count() != 0);
+		let media = Arc::downgrade(media);
+		if !registry.iter().any(|entry| entry.ptr_eq(&media)) {
+			registry.push(media);
+		}
+	}
 
-    pub(crate) fn media_permission_revision(&self) -> u64 {
-        self.media_permission_revision.load(Ordering::Acquire)
-    }
+	pub(crate) fn media_permission_revision(&self) -> u64 {
+		self.media_permission_revision.load(Ordering::Acquire)
+	}
 
-    /// Reserve a fresh revision before a permission write while holding the
-    /// gate. Exhaustion fails closed rather than wrapping to an old prompt.
-    pub(crate) fn advance_media_permission_revision(&self) -> Result<(), latest::GenericError> {
-        self.media_permission_revision
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |revision| revision.checked_add(1))
-            .map(|_| ())
-            .map_err(|_| latest::GenericError {
-                reason: "Permission revision exhausted".into(),
-            })
-    }
+	/// Reserve a fresh revision before a permission write while holding the
+	/// gate. Exhaustion fails closed rather than wrapping to an old prompt.
+	pub(crate) fn advance_media_permission_revision(&self) -> Result<(), latest::GenericError> {
+		self.media_permission_revision
+			.try_update(Ordering::AcqRel, Ordering::Acquire, |revision| revision.checked_add(1))
+			.map(|_| ())
+			.map_err(|_| latest::GenericError { reason: "Permission revision exhausted".into() })
+	}
 
-    /// Called after a successful administrative denial/reset, with the permission
-    /// gate still held. Each service synchronously fences matching resources
-    /// before arranging asynchronous backend cleanup.
-    pub(crate) fn notify_media_permission_revoked(
-        &self,
-        product_id: &crate::ProductId,
-        request: &PermissionAuthorizationRequest,
-    ) {
-        let media = {
-            let mut registry = self.media.lock().expect("media registry mutex poisoned");
-            registry.retain(|entry| entry.strong_count() != 0);
-            registry.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
-        };
-        // Cleanup may invoke the host's spawner. Do not hold the registry mutex
-        // across callbacks or destruction of the last strong runtime reference.
-        for media in media {
-            if media.product_id() == product_id {
-                media.permissions_revoked(request);
-            }
-        }
-    }
-
+	/// Called after a successful administrative denial/reset, with the permission
+	/// gate still held. Each service synchronously fences matching resources
+	/// before arranging asynchronous backend cleanup.
+	pub(crate) fn notify_media_permission_revoked(
+		&self,
+		product_id: &crate::ProductId,
+		request: &PermissionAuthorizationRequest,
+	) {
+		let media = {
+			let mut registry = self.media.lock().expect("media registry mutex poisoned");
+			registry.retain(|entry| entry.strong_count() != 0);
+			registry.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+		};
+		// Cleanup may invoke the host's spawner. Do not hold the registry mutex
+		// across callbacks or destruction of the last strong runtime reference.
+		for media in media {
+			if media.product_id() == product_id {
+				media.permissions_revoked(request);
+			}
+		}
+	}
 
 	/// The host reports that `product_id`'s worker stopped without being
 	/// asked to. While something holds it, it is started again once the
@@ -370,10 +366,10 @@ impl RuntimeServices {
 			spawner,
 			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
- media_platform: OnceLock::new(),
- media_permission_gate: futures::lock::Mutex::new(()),
- media_permission_revision: AtomicU64::new(0),
- media: Mutex::new(Vec::new()),
+			media_platform: OnceLock::new(),
+			media_permission_gate: futures::lock::Mutex::new(()),
+			media_permission_revision: AtomicU64::new(0),
+			media: Mutex::new(Vec::new()),
 		})
 	}
 

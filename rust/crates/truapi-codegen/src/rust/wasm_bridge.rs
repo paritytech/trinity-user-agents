@@ -299,8 +299,12 @@ fn emit_method(
 	private_media: bool,
 ) -> Result<String> {
 	match &method.return_shape.inner {
-		PlatformInner::Result { ok, err } => emit_result_method(method, ok, err, ctx, private_media),
-		PlatformInner::Stream(item) => emit_stream_method(method, item, ctx, parse_fns, private_media),
+		PlatformInner::Result { ok, err } => {
+			emit_result_method(method, ok, err, ctx, private_media)
+		},
+		PlatformInner::Stream(item) => {
+			emit_stream_method(method, item, ctx, parse_fns, private_media)
+		},
 		PlatformInner::Unit => emit_unit_method(method, ctx),
 		PlatformInner::Plain(ok) => emit_plain_method(method, ok, ctx),
 		PlatformInner::TraitObject(_) => {
@@ -372,8 +376,12 @@ fn emit_result_method(
 		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
 	};
 	let body = if private_media {
-		format!("let result: {ret} = async {{\n{body}\n}}.await;\nresult.map_err(|_| \"media backend failure\".to_string().into())")
-	} else { body };
+		format!(
+			"let result: {ret} = async {{\n{body}\n}}.await;\nresult.map_err(|_| \"media backend failure\".to_string().into())"
+		)
+	} else {
+		body
+	};
 
 	Ok(format!(
 		"{header}\n{body}\n    }}\n",
@@ -417,43 +425,34 @@ fn emit_unit_method(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<Stri
 }
 
 fn emit_stream_method(
-    method: &PlatformMethod,
-    item: &TypeRef,
-    ctx: &BridgeCtx<'_>,
-    parse_fns: &mut BTreeMap<String, String>,
-    private_media: bool,
+	method: &PlatformMethod,
+	item: &TypeRef,
+	ctx: &BridgeCtx<'_>,
+	parse_fns: &mut BTreeMap<String, String>,
+	private_media: bool,
 ) -> Result<String> {
-    let raw = raw_callback_name(method);
-    let TypeRef::Named { name, args } = item else {
-        bail!("stream `{raw}` must yield Result<T, E>");
-    };
-    if name != "Result" || args.len() != 2 {
-        bail!("stream `{raw}` must yield Result<T, E>");
-    }
-    let ok = stream_item(item);
-    let err = &args[1];
-    let ret = format!(
-        "BoxStream<'static, Result<{}, {}>>",
-        rust_type(ok, ctx)?,
-        rust_type(err, ctx)?
-    );
-    let params = rust_params(method, ctx)?;
-    let args = js_args(method, ctx)?.join(", ");
-    let parser = stream_parser(ok, ctx, parse_fns)?;
-    let helper = if private_media {
-        "invoke_js_media_subscription"
-    } else {
-        "invoke_js_subscription_args"
-    };
-    let body = format!(
-        "{helper}(&self.bridge.{}, &[{args}], {parser})",
-        method.name,
-    );
-    Ok(format!(
-        "{header}\n{body}\n    }}\n",
-        header = method_header("", &method.name, &params, Some(&ret)),
-        body = indent_body(&body, 8),
-    ))
+	let raw = raw_callback_name(method);
+	let TypeRef::Named { name, args } = item else {
+		bail!("stream `{raw}` must yield Result<T, E>");
+	};
+	if name != "Result" || args.len() != 2 {
+		bail!("stream `{raw}` must yield Result<T, E>");
+	}
+	let ok = stream_item(item);
+	let err = &args[1];
+	let ret =
+		format!("BoxStream<'static, Result<{}, {}>>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
+	let params = rust_params(method, ctx)?;
+	let args = js_args(method, ctx)?.join(", ");
+	let parser = stream_parser(ok, ctx, parse_fns)?;
+	let helper =
+		if private_media { "invoke_js_media_subscription" } else { "invoke_js_subscription_args" };
+	let body = format!("{helper}(&self.bridge.{}, &[{args}], {parser})", method.name,);
+	Ok(format!(
+		"{header}\n{body}\n    }}\n",
+		header = method_header("", &method.name, &params, Some(&ret)),
+		body = indent_body(&body, 8),
+	))
 }
 
 fn formatdoc_decode_result(

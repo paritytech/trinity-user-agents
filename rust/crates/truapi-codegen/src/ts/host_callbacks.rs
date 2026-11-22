@@ -341,20 +341,20 @@ fn emit_wasm_adapter(
 		let optional = optional_traits.contains(&trait_def.name);
 		let namespace = callback_namespace(&trait_def.name);
 		if optional {
-            let available = if trait_def.name == "MediaPlatform" {
-                trait_def
-                    .methods
-                    .iter()
-                    .map(|method| {
-                        let name = raw_callback_wire_name(trait_def, method, &trait_names);
-                        format!("typeof {namespace}?.{name} === \"function\"")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" && ")
-            } else {
-                namespace.clone()
-            };
-            writeln!(out, "    ...({available}").unwrap();
+			let available = if trait_def.name == "MediaPlatform" {
+				trait_def
+					.methods
+					.iter()
+					.map(|method| {
+						let name = raw_callback_wire_name(trait_def, method, &trait_names);
+						format!("typeof {namespace}?.{name} === \"function\"")
+					})
+					.collect::<Vec<_>>()
+					.join(" && ")
+			} else {
+				namespace.clone()
+			};
+			writeln!(out, "    ...({available}").unwrap();
 
 			out.push_str("      ? {\n");
 		}
@@ -400,9 +400,9 @@ fn optional_host_adapter(trait_name: &str) -> Option<&'static str> {
 /// name, arity, host-hook installation and subscription metadata that already
 /// exists in the parsed `platform` trait surface.
 fn emit_worker_callbacks(
-    definition: &PlatformDefinition,
-    codec_types: &BTreeSet<String>,
-    local_codec_types: &BTreeSet<String>,
+	definition: &PlatformDefinition,
+	codec_types: &BTreeSet<String>,
+	local_codec_types: &BTreeSet<String>,
 ) -> Result<String> {
 	let traits = composed_traits(definition);
 	let trait_names = platform_trait_names(definition);
@@ -485,26 +485,26 @@ fn emit_worker_callbacks(
 	out.push_str(&const_name_array("SUBSCRIPTION_NAMES", &all_subscriptions));
 	out.push_str("export type SubscriptionName = typeof SUBSCRIPTION_NAMES[number];\n\n");
 
-    out.push_str("export interface WorkerCallbackBridge {\n");
-    out.push_str(
-        "  callbackRequest(name: CallbackName, args: readonly unknown[]): Promise<unknown>;\n",
-    );
-    out.push_str("  startSubscription<T>(\n");
-    out.push_str("    name: SubscriptionName,\n");
-    out.push_str("    args: readonly unknown[],\n");
-    out.push_str("    sendItem: (value: T) => void,\n");
-    out.push_str("    sendError: (error: GenericError) => void,\n");
-    out.push_str("  ): () => void;\n");
-    for (trait_def, method) in &trait_object_callbacks {
-        writeln!(
-            out,
-            "  {}: {};",
-            raw_callback_wire_name(trait_def, method, &trait_names),
-            raw_callback_type_name(trait_def, method, &trait_names)
-        )
-        .unwrap();
-    }
-    out.push_str("}\n\n");
+	out.push_str("export interface WorkerCallbackBridge {\n");
+	out.push_str(
+		"  callbackRequest(name: CallbackName, args: readonly unknown[]): Promise<unknown>;\n",
+	);
+	out.push_str("  startSubscription<T>(\n");
+	out.push_str("    name: SubscriptionName,\n");
+	out.push_str("    args: readonly unknown[],\n");
+	out.push_str("    sendItem: (value: T) => void,\n");
+	out.push_str("    sendError: (error: GenericError) => void,\n");
+	out.push_str("  ): () => void;\n");
+	for (trait_def, method) in &trait_object_callbacks {
+		writeln!(
+			out,
+			"  {}: {};",
+			raw_callback_wire_name(trait_def, method, &trait_names),
+			raw_callback_type_name(trait_def, method, &trait_names)
+		)
+		.unwrap();
+	}
+	out.push_str("}\n\n");
 
 	let required_names = callbacks
 		.iter()
@@ -602,20 +602,20 @@ fn emit_worker_callbacks(
           sendError: (error: GenericError) => void,
         ): (() => void) | void {{
         "#
-    )
-    .unwrap();
-    out.push_str(&emit_start_raw_subscription_switch(
-        &all_subscriptions,
-        &optional_groups
-            .iter()
-            .flat_map(|(_, methods)| methods.iter().map(|m| raw_callback_name(m)))
-            .collect(),
-        codec_types,
-        local_codec_types,
-    )?);
-    writedoc!(
-        out,
-        r#"
+	)
+	.unwrap();
+	out.push_str(&emit_start_raw_subscription_switch(
+		&all_subscriptions,
+		&optional_groups
+			.iter()
+			.flat_map(|(_, methods)| methods.iter().map(|m| raw_callback_name(m)))
+			.collect(),
+		codec_types,
+		local_codec_types,
+	)?);
+	writedoc!(
+		out,
+		r#"
         }}
         "#
 	)
@@ -722,19 +722,15 @@ fn emit_worker_callback_entry(method: &PlatformMethod) -> Result<String> {
 }
 
 fn emit_worker_subscription_entry(method: &PlatformMethod) -> Result<String> {
-    let raw = raw_callback_name(method);
-    let args = method
-        .params
-        .iter()
-        .map(|param| to_camel_case(&param.name))
-        .collect::<Vec<_>>();
-    let payload = args.join(", ");
-    let mut params = args;
-    params.extend(["sendItem".to_string(), "sendError".to_string()]);
-    Ok(format!(
-        "    {raw}: ({params}) =>\n      bridge.startSubscription(\"{raw}\", [{payload}], sendItem, sendError),\n",
-        params = params.join(", "),
-    ))
+	let raw = raw_callback_name(method);
+	let args = method.params.iter().map(|param| to_camel_case(&param.name)).collect::<Vec<_>>();
+	let payload = args.join(", ");
+	let mut params = args;
+	params.extend(["sendItem".to_string(), "sendError".to_string()]);
+	Ok(format!(
+		"    {raw}: ({params}) =>\n      bridge.startSubscription(\"{raw}\", [{payload}], sendItem, sendError),\n",
+		params = params.join(", "),
+	))
 }
 
 fn emit_worker_subscription_factory(
@@ -757,84 +753,78 @@ fn emit_worker_subscription_factory(
 }
 
 fn emit_start_raw_subscription_switch(
-    methods: &[&PlatformMethod],
-    optional_names: &BTreeSet<String>,
-    codec_types: &BTreeSet<String>,
-    local_codec_types: &BTreeSet<String>,
+	methods: &[&PlatformMethod],
+	optional_names: &BTreeSet<String>,
+	codec_types: &BTreeSet<String>,
+	local_codec_types: &BTreeSet<String>,
 ) -> Result<String> {
-    let mut out = String::new();
-    out.push_str("  switch (name) {\n");
-    for method in methods {
-        let raw = raw_callback_name(method);
-        // An optional capability's subscription is absent when the host does
-        // not serve it, and the core never asks for it.
-        let call = if optional_names.contains(&raw) {
-            format!("callbacks.{raw}?.")
-        } else {
-            format!("callbacks.{raw}")
-        };
-        let count = method.params.len();
-        let mut guards = vec![format!("args.length !== {count}")];
-        guards.extend(
-            method
-                .params
-                .iter()
-                .enumerate()
-                .filter_map(|(index, param)| {
-                    subscription_argument_guard(
-                        &param.type_ref,
-                        &format!("args[{index}]"),
-                        codec_types,
-                        local_codec_types,
-                    )
-                }),
-        );
-        let mut args = (0..count)
-            .map(|index| {
-                format!("args[{index}] as Parameters<Required<RawCallbacks>[\"{raw}\"]>[{index}]")
-            })
-            .collect::<Vec<_>>();
-        args.extend(["sendItem".to_string(), "sendError".to_string()]);
-        out.push_str(&format!(
+	let mut out = String::new();
+	out.push_str("  switch (name) {\n");
+	for method in methods {
+		let raw = raw_callback_name(method);
+		// An optional capability's subscription is absent when the host does
+		// not serve it, and the core never asks for it.
+		let call = if optional_names.contains(&raw) {
+			format!("callbacks.{raw}?.")
+		} else {
+			format!("callbacks.{raw}")
+		};
+		let count = method.params.len();
+		let mut guards = vec![format!("args.length !== {count}")];
+		guards.extend(method.params.iter().enumerate().filter_map(|(index, param)| {
+			subscription_argument_guard(
+				&param.type_ref,
+				&format!("args[{index}]"),
+				codec_types,
+				local_codec_types,
+			)
+		}));
+		let mut args = (0..count)
+			.map(|index| {
+				format!("args[{index}] as Parameters<Required<RawCallbacks>[\"{raw}\"]>[{index}]")
+			})
+			.collect::<Vec<_>>();
+		args.extend(["sendItem".to_string(), "sendError".to_string()]);
+		out.push_str(&format!(
             "    case \"{raw}\":\n      if ({guard}) {{\n        sendError({{ reason: \"invalid subscription arguments\" }});\n        return undefined;\n      }}\n      return {call}({args});\n",
             args = args.join(", "),
             guard = guards.join(" || "),
         ));
-    }
-    out.push_str("  }\n");
-    Ok(out)
+	}
+	out.push_str("  }\n");
+	Ok(out)
 }
 
 /// Keep string/blob validation when subscription payloads become positional
 /// arguments; primitive runtime identities cross in their native JS form.
 fn subscription_argument_guard(
-    ty: &TypeRef,
-    arg: &str,
-    codec_types: &BTreeSet<String>,
-    local_codec_types: &BTreeSet<String>,
+	ty: &TypeRef,
+	arg: &str,
+	codec_types: &BTreeSet<String>,
+	local_codec_types: &BTreeSet<String>,
 ) -> Option<String> {
-    match ty {
-        TypeRef::Primitive(_) => Some(format!(
-            "typeof {arg} !== {:?}",
-            raw_param_ts(ty, codec_types, local_codec_types),
-        )),
-        TypeRef::Named { name, .. } if name == "String" => {
-            Some(format!("typeof {arg} !== \"string\""))
-        }
-        TypeRef::Named { name, .. }
-            if codec_types.contains(name) || local_codec_types.contains(name) =>
-        {
-            Some(format!("!({arg} instanceof Uint8Array)"))
-        }
-        TypeRef::Vec(inner) | TypeRef::Array(inner, _) if matches!(inner.as_ref(), TypeRef::Primitive(name) if name == "u8") => {
-            Some(format!("!({arg} instanceof Uint8Array)"))
-        }
-        TypeRef::Option(inner) => {
-            subscription_argument_guard(inner, arg, codec_types, local_codec_types)
-                .map(|guard| format!("({arg} != null && {guard})"))
-        }
-        _ => None,
-    }
+	match ty {
+		TypeRef::Primitive(_) => Some(format!(
+			"typeof {arg} !== {:?}",
+			raw_param_ts(ty, codec_types, local_codec_types),
+		)),
+		TypeRef::Named { name, .. } if name == "String" => {
+			Some(format!("typeof {arg} !== \"string\""))
+		},
+		TypeRef::Named { name, .. }
+			if codec_types.contains(name) || local_codec_types.contains(name) =>
+		{
+			Some(format!("!({arg} instanceof Uint8Array)"))
+		},
+		TypeRef::Vec(inner) | TypeRef::Array(inner, _) if matches!(inner.as_ref(), TypeRef::Primitive(name) if name == "u8") => {
+			Some(format!("!({arg} instanceof Uint8Array)"))
+		},
+		TypeRef::Option(inner) => {
+			subscription_argument_guard(inner, arg, codec_types, local_codec_types)
+				.map(|guard| format!("({arg} != null && {guard})"))
+		},
+		_ => None,
+	}
 }
 
 fn collect_local_codec_names(
@@ -1147,9 +1137,14 @@ fn emit_adapter_entry(
 		return Ok(format!("{raw}: {adapter}({host}),"));
 	}
 	let impl_expr = match &method.return_shape.inner {
-		PlatformInner::Stream(item) => {
-			adapter_stream_impl(&host_method, method, item, codec_types, local_codec_types, trait_def.name == "MediaPlatform")?
-		},
+		PlatformInner::Stream(item) => adapter_stream_impl(
+			&host_method,
+			method,
+			item,
+			codec_types,
+			local_codec_types,
+			trait_def.name == "MediaPlatform",
+		)?,
 		PlatformInner::Result { ok, .. } => {
 			adapter_unary_impl(&host_method, method, ok, codec_types, local_codec_types)?
 		},
@@ -1321,46 +1316,42 @@ fn adapter_unary_impl(
 /// The adapter implementation expression for a subscription callback: drive
 /// the host's stream into `sendItem`, SCALE-encoding each codec item.
 fn adapter_stream_impl(
-    host_method: &str,
-    method: &PlatformMethod,
-    item: &TypeRef,
-    codec_types: &BTreeSet<String>,
-    local_codec_types: &BTreeSet<String>,
-    private_media: bool,
+	host_method: &str,
+	method: &PlatformMethod,
+	item: &TypeRef,
+	codec_types: &BTreeSet<String>,
+	local_codec_types: &BTreeSet<String>,
+	private_media: bool,
 ) -> Result<String> {
-    let args = method
-        .params
-        .iter()
-        .map(|p| adapter_arg(p, codec_types, local_codec_types))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let item_ty = stream_item(item);
-    let is_unit = matches!(item_ty, TypeRef::Unit)
-        || matches!(item_ty, TypeRef::Tuple(items) if items.is_empty());
-    let item_expr = match item_ty {
-        // Tick subscription: the item carries no value, so ignore it and emit
-        // a bare tick to the core's sink.
-        _ if is_unit => "() => sendItem()".to_string(),
-        TypeRef::Named { name: ty, .. }
-            if codec_types.contains(ty) || local_codec_types.contains(ty) =>
-        {
-            format!("(item) => sendItem({ty}.enc(item))")
-        }
-        _ => "sendItem".to_string(),
-    };
-    let mut names: Vec<String> = method
-        .params
-        .iter()
-        .map(|p| to_camel_case(&p.name))
-        .collect();
-    names.push("sendItem".to_string());
-    names.push("sendError".to_string());
-    let params = names.join(", ");
-    let call = format!("{host_method}({args})");
-    Ok(format!(
-        "({params}) => driveResultStream({call}, {item_expr}, sendError{})",
-        if private_media { ", true" } else { "" },
-    ))
+	let args = method
+		.params
+		.iter()
+		.map(|p| adapter_arg(p, codec_types, local_codec_types))
+		.collect::<Vec<_>>()
+		.join(", ");
+	let item_ty = stream_item(item);
+	let is_unit = matches!(item_ty, TypeRef::Unit) ||
+		matches!(item_ty, TypeRef::Tuple(items) if items.is_empty());
+	let item_expr = match item_ty {
+		// Tick subscription: the item carries no value, so ignore it and emit
+		// a bare tick to the core's sink.
+		_ if is_unit => "() => sendItem()".to_string(),
+		TypeRef::Named { name: ty, .. }
+			if codec_types.contains(ty) || local_codec_types.contains(ty) =>
+		{
+			format!("(item) => sendItem({ty}.enc(item))")
+		},
+		_ => "sendItem".to_string(),
+	};
+	let mut names: Vec<String> = method.params.iter().map(|p| to_camel_case(&p.name)).collect();
+	names.push("sendItem".to_string());
+	names.push("sendError".to_string());
+	let params = names.join(", ");
+	let call = format!("{host_method}({args})");
+	Ok(format!(
+		"({params}) => driveResultStream({call}, {item_expr}, sendError{})",
+		if private_media { ", true" } else { "" },
+	))
 }
 
 fn collect_from_type_def(type_def: &TypeDef, out: &mut BTreeSet<String>) {

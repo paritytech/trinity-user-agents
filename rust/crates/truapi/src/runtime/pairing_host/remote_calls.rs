@@ -4,8 +4,8 @@ use super::{
 	super::{
 		allowances::AllowanceResource,
 		authority::{
-			AccountGrant, Allowance, AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
-			CreateTransactionAuthorityRequest, PaymentTopUpAuthorityError,
+			AccountGrant, Allowance, AuthorityError, AuthoritySession, AutoSigningKey,
+			BulletinAllowanceKey, CreateTransactionAuthorityRequest, PaymentTopUpAuthorityError,
 			ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},

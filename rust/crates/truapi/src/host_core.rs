@@ -20,10 +20,10 @@ use std::{
 
 use crate::platform::{
 	BalancePlatform, ChatPlatform, CoinageWalletHost, ContactsPlatform, CoreAdmin, ExecutableKind,
-	ExpandedCardHost, FundingPlatform, GamePlatform, MediaPlatform, PairingHostAdmin, PairingHostConfig,
-	PaymentPlatform, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	PermissionStatusHost, Platform, PocketPlatform, ProductContext, ProductId, ProfilePlatform,
-	ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	ExpandedCardHost, FundingPlatform, GamePlatform, MediaPlatform, PairingHostAdmin,
+	PairingHostConfig, PaymentPlatform, PermissionAuthorizationRequest,
+	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
+	ProductId, ProfilePlatform, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -338,12 +338,11 @@ impl PairingHostRuntime {
 		self.services.open_host_funding(direction, amount).await
 	}
 
-    /// Install the complete Media backend once, before serving products.
-    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_media_platform"))]
-    pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
-        self.services.install_media_platform(platform)
-    }
-
+	/// Install the complete Media backend once, before serving products.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_media_platform"))]
+	pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
+		self.services.install_media_platform(platform)
+	}
 
 	/// Install the host's [`TopUpPlatform`], which claims funds into the
 	/// balance. Set-once. Returns whether this call installed it.
@@ -542,16 +541,15 @@ impl PairingHostRuntime {
 		self.services.device_encryption_secret().await.map_err(Into::into)
 	}
 
-    /// Resolve the current immutable Calling slot for trusted host settings.
-    pub async fn calling_permission_authorization_request(
-        &self,
-        product_id: &ProductId,
-    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-        self.product_admin(product_context(product_id))
-            .calling_permission_authorization_request()
-            .await
-    }
-
+	/// Resolve the current immutable Calling slot for trusted host settings.
+	pub async fn calling_permission_authorization_request(
+		&self,
+		product_id: &ProductId,
+	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.calling_permission_authorization_request()
+			.await
+	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
 	/// persisted slot, or the Account Holder. `timeout_ms` bounds that wait.
@@ -672,16 +670,16 @@ impl PairingHostRuntime {
 		}
 		Ok(())
 	}
-    /// Re-read a product's stored authorization after another core changes it.
-    pub async fn refresh_permission_authorization(
-        &self,
-        product_id: &ProductId,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        self.product_admin(product_context(product_id))
-            .refresh_permission_authorization(request)
-            .await
-    }
+	/// Re-read a product's stored authorization after another core changes it.
+	pub async fn refresh_permission_authorization(
+		&self,
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.refresh_permission_authorization(request)
+			.await
+	}
 }
 
 fn pairing_login_error_reason(
@@ -975,12 +973,11 @@ impl SigningHostRuntime {
 		self.services.request_funding_quotes(intent, ask)
 	}
 
-    /// Install the complete Media backend once, before serving products.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_media_platform"))]
-    pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
-        self.services.install_media_platform(platform)
-    }
-
+	/// Install the complete Media backend once, before serving products.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_media_platform"))]
+	pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
+		self.services.install_media_platform(platform)
+	}
 
 	/// Record what the user picked in funding session `intent`'s overlay;
 	/// the options it leads to arrive through
@@ -1116,16 +1113,15 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
-    /// Resolve the current immutable Calling slot for trusted host settings.
-    pub async fn calling_permission_authorization_request(
-        &self,
-        product_id: &ProductId,
-    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-        self.product_admin(product_context(product_id))
-            .calling_permission_authorization_request()
-            .await
-    }
-
+	/// Resolve the current immutable Calling slot for trusted host settings.
+	pub async fn calling_permission_authorization_request(
+		&self,
+		product_id: &ProductId,
+	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.calling_permission_authorization_request()
+			.await
+	}
 
 	/// Install the host storage encrypted at rest, which keeps the secrets the
 	/// core database must not hold. Set-once; returns whether this call
@@ -1177,17 +1173,16 @@ impl SigningHostRuntime {
 		start_holding_tracker(&self.services, ledger);
 	}
 
-    /// Re-read a product's stored authorization after another core changes it.
-    pub async fn refresh_permission_authorization(
-        &self,
-        product_id: &ProductId,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        self.product_admin(product_context(product_id))
-            .refresh_permission_authorization(request)
-            .await
-    }
-
+	/// Re-read a product's stored authorization after another core changes it.
+	pub async fn refresh_permission_authorization(
+		&self,
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.refresh_permission_authorization(request)
+			.await
+	}
 
 	/// The NFT ledger over `db` and `durable`, deriving item keys from the
 	/// signing host, or `None`, logged, without an installation provider or
@@ -1974,12 +1969,15 @@ impl HostAdmin {
 		self.host_session.disconnect().await;
 	}
 
-    /// Resolve Calling's authority-derived scope without prompting or opening Media.
-    pub async fn calling_permission_authorization_request(
-        &self,
-    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-        self.product_runtime.connection().calling_permission_authorization_request().await
-    }
+	/// Resolve Calling's authority-derived scope without prompting or opening Media.
+	pub async fn calling_permission_authorization_request(
+		&self,
+	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+		self.product_runtime
+			.connection()
+			.calling_permission_authorization_request()
+			.await
+	}
 
 	/// Read a stored permission authorization status without prompting.
 	///
@@ -2020,13 +2018,16 @@ impl HostAdmin {
 		self.product_runtime.set_permission_authorization_status(request, status).await
 	}
 
-    /// Re-read stored product authorization without prompting or writing.
-    pub async fn refresh_permission_authorization(
-        &self,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        self.product_runtime.connection().refresh_permission_authorization(request).await
-    }
+	/// Re-read stored product authorization without prompting or writing.
+	pub async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		self.product_runtime
+			.connection()
+			.refresh_permission_authorization(request)
+			.await
+	}
 }
 
 #[async_trait::async_trait]
@@ -2058,12 +2059,12 @@ impl CoreAdmin for HostAdmin {
 		HostAdmin::set_permission_authorization_status(self, request, status).await
 	}
 
-    async fn refresh_permission_authorization(
-        &self,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        HostAdmin::refresh_permission_authorization(self, request).await
-    }
+	async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		HostAdmin::refresh_permission_authorization(self, request).await
+	}
 
 	async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		Ok(self
@@ -2181,26 +2182,26 @@ impl ProductRuntimeControl {
 		Ok(&self.connection)
 	}
 
-    /// Resolve the active connection's immutable Calling scope for host settings.
-    pub async fn calling_permission_authorization_request(
-        &self,
-    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-        let runtime = self.connection().map_err(|_| v01::GenericError {
-            reason: "Product runtime is closed".into(),
-        })?;
-        runtime.calling_permission_authorization_request().await
-    }
+	/// Resolve the active connection's immutable Calling scope for host settings.
+	pub async fn calling_permission_authorization_request(
+		&self,
+	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+		let runtime = self
+			.connection()
+			.map_err(|_| v01::GenericError { reason: "Product runtime is closed".into() })?;
+		runtime.calling_permission_authorization_request().await
+	}
 
-    /// Re-read this connection's stored authorization without starting Media.
-    pub async fn refresh_permission_authorization(
-        &self,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        let runtime = self.connection().map_err(|_| v01::GenericError {
-            reason: "Product runtime is closed".into(),
-        })?;
-        runtime.refresh_permission_authorization(request).await
-    }
+	/// Re-read this connection's stored authorization without starting Media.
+	pub async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		let runtime = self
+			.connection()
+			.map_err(|_| v01::GenericError { reason: "Product runtime is closed".into() })?;
+		runtime.refresh_permission_authorization(request).await
+	}
 
 	/// Publish one host-authored Chat action into this connection's action
 	/// stream, buffering it until the product subscribes.
@@ -2489,10 +2490,10 @@ impl ProductRuntime {
 		}
 	}
 
-    /// Trusted connection identity for binding host-only adapters.
-    pub fn runtime_id(&self) -> u64 {
-        self.admin.product_runtime.connection().runtime_id()
-    }
+	/// Trusted connection identity for binding host-only adapters.
+	pub fn runtime_id(&self) -> u64 {
+		self.admin.product_runtime.connection().runtime_id()
+	}
 
 	/// Push one SCALE-encoded protocol frame into the dispatcher.
 	///
@@ -2570,12 +2571,12 @@ impl ProductRuntime {
 		self.admin.disconnect_session().await;
 	}
 
-    /// Resolve Calling's authority-derived scope without prompting or opening Media.
-    pub async fn calling_permission_authorization_request(
-        &self,
-    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-        self.control().calling_permission_authorization_request().await
-    }
+	/// Resolve Calling's authority-derived scope without prompting or opening Media.
+	pub async fn calling_permission_authorization_request(
+		&self,
+	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+		self.control().calling_permission_authorization_request().await
+	}
 
 	/// Read a stored permission authorization status without prompting.
 	///
@@ -2603,13 +2604,13 @@ impl ProductRuntime {
 		self.admin.permission_authorization_statuses(requests).await
 	}
 
-    /// Re-read stored authorization after a host-private storage notification.
-    pub async fn refresh_permission_authorization(
-        &self,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        self.control().refresh_permission_authorization(request).await
-    }
+	/// Re-read stored authorization after a host-private storage notification.
+	pub async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		self.control().refresh_permission_authorization(request).await
+	}
 
 	/// Update a stored permission authorization status. `NotDetermined`
 	/// clears the stored value so the next product request prompts again.

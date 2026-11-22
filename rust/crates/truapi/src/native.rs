@@ -47,9 +47,9 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
+pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
-pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 	PermissionAuthorizationEntry,
@@ -203,7 +203,12 @@ impl From<crate::platform::CoreStorageKeyDescription> for NativeCoreStorageKeyDe
 			Some(crate::platform::CoreStorageKeyOwner::ProductLabel(label)) => (None, Some(label)),
 			None => (None, None),
 		};
-		Self { kind: description.kind.to_owned(), product_id, product_label, permission_request: description.permission_request }
+		Self {
+			kind: description.kind.to_owned(),
+			product_id,
+			product_label,
+			permission_request: description.permission_request,
+		}
 	}
 }
 
@@ -246,7 +251,7 @@ pub fn migrate_epoca026_core_storage_key(
 			kind: migrated.legacy_description.kind.to_owned(),
 			product_id: migrated.legacy_description.product_id,
 			product_label: None,
-		permission_request: None,
+			permission_request: None,
 		},
 		description: migrated.current_description.into(),
 	})

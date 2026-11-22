@@ -496,7 +496,7 @@ mod tests {
 			Epoca026CoreStorageKeyDescription { kind, product_id: legacy_owner.map(str::to_owned) }
 		);
 		assert_eq!(migrated.current_description.kind, kind);
-        assert_eq!(migrated.current_description.owner, owner);
+		assert_eq!(migrated.current_description.owner, owner);
 	}
 
 	fn product_owner(id: &str) -> Option<CoreStorageKeyOwner> {
