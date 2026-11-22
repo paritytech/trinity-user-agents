@@ -134,6 +134,11 @@ App permission settings use the shared Rust runtime's canonical authorization re
 
 Consent prompts and app settings share permission descriptions and icon metadata, including the exact Statement Store allowance selector. Canonical authorization conversion separates remote permissions from device, identity, Chat and allowance permissions; raw allowance selectors still require exactly 32 bytes. The permission-presentation refactor received Linux Swift syntax parsing and structural mapping checks only. The macOS app build, unit tests and unchanged warning ratchet must pass in CI before this revision is considered iOS-qualified.
 
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
+
 ### What it doesn't do
 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.

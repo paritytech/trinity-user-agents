@@ -258,6 +258,11 @@ requesting product and asks before sharing a profile reference with all Chat
 contacts. Permission and single-action callbacks both await user review; prompt
 failures propagate rather than becoming a persisted permission decision.
 
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
+
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time
 configuration and the steps to sign and publish the app are documented in

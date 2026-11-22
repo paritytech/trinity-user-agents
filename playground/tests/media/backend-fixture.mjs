@@ -52,8 +52,11 @@ window.RTCPeerConnection = class extends nativePeerConnection {
 
 const nodes = [];
 const failures = [];
+const createPeerDurations = [];
 async function command(node, tag, value) {
+  const started = performance.now();
   const result = await node.backend.mediaBackendCommand(product, node.runtime, { tag, value });
+  if (tag === "CreatePeer") createPeerDurations.push(performance.now() - started);
   if (result.tag === "Rejected") throw new Error(`${tag}: ${JSON.stringify(result.value.failure)}`);
   return result;
 }
@@ -371,6 +374,14 @@ window.mediaFixture = {
   hangTurnCredentials(iceTransportPolicy = "all") {
     transportOptions = { iceServers: () => new Promise(() => {}), iceTransportPolicy };
   },
+  slowTurnCredentials(iceServers) {
+    let pending;
+    transportOptions = {
+      iceServers: () => pending ??= new Promise((resolve) => {
+        setTimeout(() => resolve(iceServers), 3_000);
+      }),
+    };
+  },
   rejectTurnCredentials(iceTransportPolicy = "all") {
     transportOptions = {
       iceServers: async () => { throw new Error("TURN credentials unavailable at 192.0.2.42"); },
@@ -407,6 +418,7 @@ window.mediaFixture = {
       return {
         gatheringState: pc.iceGatheringState,
         bundlePolicy: pc.getConfiguration().bundlePolicy,
+        iceServerCount: pc.getConfiguration().iceServers.length,
         rtcpMuxPolicy: pc.getConfiguration().rtcpMuxPolicy,
         transceiverMids: transceivers.map(({ mid }) => mid),
         dtlsTransportCount: new Set(transports).size,
@@ -428,6 +440,9 @@ window.mediaFixture = {
     // Count actual emitted backend events, not fabricated product events or
     // StatementStore deliveries: the core maps each to one private message.
     return { peers, totals, privateStatementStoreMessagesForSignaling: totals.total };
+  },
+  createPeerTimes() {
+    return createPeerDurations;
   },
   connectionTimes() {
     return nodes.map((node) => node.connectedAt === undefined ? null : node.connectedAt - pairStartedAt);

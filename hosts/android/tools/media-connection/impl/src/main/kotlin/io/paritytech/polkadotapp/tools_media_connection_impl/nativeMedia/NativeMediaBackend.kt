@@ -28,6 +28,8 @@ import uniffi.truapi.NativeMediaException
 import uniffi.truapi.ProductContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 @Singleton
 class NativeMediaBackendFactory @Inject internal constructor(
@@ -191,7 +193,7 @@ class NativeMediaBackend internal constructor(
                     if (!session.committed) throw MediaDomainFailure(NativeMediaDomainError.InvalidState)
                     if (session.peers.size >= 5) throw MediaDomainFailure(NativeMediaDomainError.CapacityExceeded(5u))
                     if (session.peers.containsKey(command.participantId.key())) throw MediaDomainFailure(NativeMediaDomainError.InvalidState)
-                    val servers = nativeMediaIceServers { rtcConfig.getConfig() }
+                    val servers = nativeMediaIceServers(rtcConfig::getConfig)
                     if (runtime.closed || runtime.sessions[session.key] !== session) throw MediaDomainFailure(NativeMediaDomainError.SessionEnded)
                     val peer = NativeMediaPeer(core, servers, command.offerer, scope, { emit(runtime, it) }, session.id,
                         command.participantId.copyOf(), runtime.compositor::refresh, { session.peers.remove(command.participantId.key()) })
@@ -484,11 +486,13 @@ internal fun ByteArray.key(): String = joinToString("") { "%02x".format(it) }
 
 /** Optional credentials must leave room within the core's five-second CreatePeer deadline. */
 internal suspend fun nativeMediaIceServers(
-    getConfig: suspend () -> ExternalRtcConfig,
+    getConfig: suspend (Duration) -> ExternalRtcConfig,
 ): List<PeerConnection.IceServer> {
     currentCoroutineContext().ensureActive()
     return try {
-        withTimeoutOrNull(2_000L) { getConfig().toIceServers() } ?: emptyList()
+        val config = getConfig(2.seconds)
+        currentCoroutineContext().ensureActive()
+        config.toIceServers()
     } catch (failure: Exception) {
         // Provider-local cancellation is a service failure, not cancellation of this command.
         currentCoroutineContext().ensureActive()
