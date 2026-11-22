@@ -521,7 +521,7 @@ impl Permissions for ScriptedPrompt {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for ScriptedPrompt {
 	async fn confirm_permission(
 		&self,
@@ -2197,7 +2197,7 @@ impl DeferredCasStorage<'_> {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for DeferredCasStorage<'_> {
 	async fn read_core_storage(
 		&self,
@@ -2582,7 +2582,7 @@ struct PolicyChangingPrompt<'a> {
 	replacement: PermissionAuthorizationStatus,
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl Permissions for PolicyChangingPrompt<'_> {
 	async fn device_permission(
 		&self,
@@ -2607,7 +2607,7 @@ impl Permissions for PolicyChangingPrompt<'_> {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for PolicyChangingPrompt<'_> {
 	async fn confirm_user_action(
 		&self,
