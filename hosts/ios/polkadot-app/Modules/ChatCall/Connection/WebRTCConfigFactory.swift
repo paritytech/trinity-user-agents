@@ -9,19 +9,29 @@ protocol WebRTCConfigMaking: Sendable {
 final class WebRTCConfigFactory: WebRTCConfigMaking {
     private let turnService: TURNCredentialsProviding
     private let iceCandidatePoolSize: Int32
+    private let allowsDirectFallback: Bool
 
-    init(turnService: TURNCredentialsProviding, iceCandidatePoolSize: Int32 = 8) {
+    init(turnService: TURNCredentialsProviding, iceCandidatePoolSize: Int32 = 8, allowsDirectFallback: Bool = false) {
         self.turnService = turnService
         self.iceCandidatePoolSize = iceCandidatePoolSize
+        self.allowsDirectFallback = allowsDirectFallback
     }
 
     func makeConnectionConfiguration() async throws -> RTCConfiguration {
-        let credentials = try await turnService.issueCredentials()
+        let credentials: TURNCredentials?
+        do {
+            credentials = try await turnService.issueCredentials()
+        } catch {
+            try Task.checkCancellation()
+            guard allowsDirectFallback else { throw error }
+            credentials = nil
+        }
 
         let configuration = RTCConfiguration()
-        configuration.iceServers = makeIceServers(from: credentials)
+        configuration.iceServers = credentials.map { makeIceServers(from: $0) } ?? []
         configuration.sdpSemantics = .unifiedPlan
         configuration.iceCandidatePoolSize = iceCandidatePoolSize
+        configuration.iceTransportPolicy = .all
         // recommended by WebRTC team to avoid complexity explosion
         configuration.maxIPv6Networks = 1
 

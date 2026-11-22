@@ -67,6 +67,8 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
 private extension TrUAPIConfirmationPresenter {
     func dispatch(review: UserConfirmationReview, from requesterName: String) async throws -> Bool {
         switch review {
+        case let .calling(calling):
+            await confirmCalling(calling)
         case .signPayload,
              .signRaw,
              .createTransaction:
@@ -95,6 +97,22 @@ private extension TrUAPIConfirmationPresenter {
             try await confirmSignVrf(
                 promptMapper.makeSignVrfRequest(from: vrfReview)
             )
+        }
+    }
+
+    func confirmCalling(_ review: CallingReview) async -> Bool {
+        let presentation = NativeMediaPresentation(productId: review.productId.rawValue)
+        return await withTaskCancellationHandler {
+            do {
+                let result = try await presentation.confirmCalling(network: review.network, account: review.account)
+                await presentation.close()
+                return !Task.isCancelled && result
+            } catch {
+                await presentation.close()
+                return false
+            }
+        } onCancel: {
+            Task { @MainActor in presentation.cancelPrompt() }
         }
     }
 

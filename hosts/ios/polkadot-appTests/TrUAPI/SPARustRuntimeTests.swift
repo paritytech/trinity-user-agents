@@ -64,7 +64,7 @@ private func makeRuntime(
 // MARK: - Tests
 
 struct SPARustRuntimeTests {
-    @Test func startWithDirectURLStartsBridgeAndInitializesEngine() async throws {
+    @Test func startWithDirectURLReturnsProductURL() async throws {
         let directURL = try #require(URL(string: "http://localhost:3000"))
         let configuration = try makeConfiguration(contentSource: .directURL(directURL))
         let execution = MockProductExecution()
@@ -94,6 +94,9 @@ struct SPARustRuntimeTests {
         #expect(engine.initializedScripts[2].content.contains("viewport"))
         #expect(engine.initializedScripts[2].insertionPoint == .atDocEnd)
         #expect(engine.initializedScripts[2].frameScope == .mainFrameOnly)
+        let capture = try #require(engine.deviceCapabilityHandler)
+        #expect(try await capture(.camera) == .denied)
+        #expect(try await capture(.microphone) == .denied)
 
         let webViewEvent = try #require(hostEventRecorder.events.first)
         #expect(webViewEvent.name == "host.webview.created")
@@ -146,8 +149,6 @@ struct SPARustRuntimeTests {
         #expect(url.scheme == productContentScheme())
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
         await runtime.dispose()
     }

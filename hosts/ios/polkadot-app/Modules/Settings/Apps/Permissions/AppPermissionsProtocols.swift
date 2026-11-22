@@ -18,11 +18,13 @@ protocol AppPermissionsPresenterProtocol: AnyObject {
 protocol AppPermissionsInteractorInputProtocol: AnyObject {
     func setup()
     func revokeOnDisappear(permissions: [ProductPermission])
+    func setMediaPermission(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool)
 }
 
 @MainActor
 protocol AppPermissionsInteractorOutputProtocol: AnyObject {
     func didReceive(grants: [ProductPermissionGrant])
+    func didReceive(mediaPermissions: [TrUAPIMediaPermissionSetting])
 }
 
 @MainActor

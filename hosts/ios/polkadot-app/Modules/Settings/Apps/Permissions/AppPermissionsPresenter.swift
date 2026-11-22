@@ -2,6 +2,7 @@ import Foundation
 import PolkadotUI
 import Products
 
+import TrUAPIHost
 final class AppPermissionsPresenter {
     weak var view: AppPermissionsViewProtocol?
 
@@ -13,6 +14,7 @@ final class AppPermissionsPresenter {
 
     private var grantsByItemId: [String: ProductPermissionGrant] = [:]
     private var grants: [ProductPermissionGrant] = []
+    private var mediaPermissions: [TrUAPIMediaPermissionSetting] = []
     private var pendingDeletionIds: Set<String> = []
 
     init(
@@ -37,6 +39,10 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
     }
 
     func toggle(_ item: AppPermissionsViewLayout.Item, isOn: Bool) {
+        if let setting = mediaPermissions.first(where: { $0.id == item.id }) {
+            interactor.setMediaPermission(setting, allowed: isOn)
+            return
+        }
         guard grantsByItemId[item.id] != nil else {
             return
         }
@@ -70,14 +76,29 @@ extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
 
         refreshItems()
     }
+
+    func didReceive(mediaPermissions: [TrUAPIMediaPermissionSetting]) {
+        self.mediaPermissions = mediaPermissions
+        refreshItems()
+    }
 }
 
 private extension AppPermissionsPresenter {
     func refreshItems() {
-        let items = viewModelFactory.createItems(
+        var items = viewModelFactory.createItems(
             from: grants,
             pendingDeletionIds: pendingDeletionIds
         )
+        items.append(contentsOf: mediaPermissions.map { setting in
+            let status: String
+            switch setting.status {
+            case .authorized: status = "Allowed"
+            case .denied: status = "Denied"
+            case .notDetermined: status = "Ask"
+            }
+            return AppPermissionsViewLayout.Item(id: setting.id, title: setting.title,
+                description: "\(status)\n\(setting.detail)", isOn: setting.status == .authorized)
+        })
         view?.didReceive(items: items)
     }
 }

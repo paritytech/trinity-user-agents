@@ -402,11 +402,11 @@ Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Pres
 
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback.
 
-Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
+Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. Direct product `getUserMedia`, `getDisplayMedia` and peer connections are blocked; saved device or legacy WebRTC grants cannot reopen them. Host-owned Media checks Calling authority and separate microphone/camera permissions before capture.
 
 Motion has no container gate: WebKit consults its `requestDeviceOrientationAndMotionPermissionFor` delegate only during the product's user gesture, which a round trip through the container would lose. The embedder's delegate answers it with `TrUAPIProductExecution.authorizeDevicePermission(.motion)`, which resolves the saved decision, consumes a one-use grant, or prompts. WebKit caches the answer per origin in the web view's data store and offers no API to clear it, so within one app launch a product's first motion answer also applies to later requests.
 
-The container enforces product consent, while native media delegates resolve OS permission without consuming product consent again. An OS grant does not establish product consent. This boundary requires the container to run before product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start. Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK replies, collection methods or Promise methods cannot approve a pending capture.
+The Media backend resolves OS consent without granting raw capture to products. An OS grant does not establish product consent. The container runs before product code in every frame, with native methods and prototypes locked; SPA and shared worker engines also deny direct capture.
 
 ## SSO session handling
 
@@ -502,6 +502,21 @@ An account id must be exactly 32 bytes. Anything else is rejected where the bind
 > `cancelNotification`) run inline on the dispatcher thread and must return
 > promptly without blocking.
 
+Core storage backends declare a stable `storageIdentifier` for their physical
+store and namespace. Reuse that identifier across adapters and independent host
+runtimes sharing the same store; different stores need different identifiers.
+Backing operations finish their persistence before returning and must be safe
+for concurrent access to different keys. The SDK owns process-wide per-slot
+serialization and exact-byte compare/exchange, including cancellation-safe
+policy-change enqueueing. Initial unanswered snapshots never emit revocation.
+It refreshes the exact permission scope in every live core sharing that store,
+including the writer's shared runtime. Authorized refreshes do not invalidate
+ongoing consent; denied, unanswered or unreadable policy fences only its exact
+scope. The async
+`setPermissionAuthorizationStatus` waits for this fanout only after its native
+setter returns. `refreshPermissionAuthorization` is a read-only host admin call;
+neither operation exposes storage, SDP, ICE, or media tracks to products.
+
 ```swift
 import Foundation
 import WebKit
@@ -516,11 +531,24 @@ final class MyStorage: HostStorageBackend, @unchecked Sendable {
 }
 
 final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
+    // This example owns a new in-memory store. Persistent adapters instead use
+    // the same stable identifier for every adapter into their physical store.
+    let storageIdentifier = UUID().uuidString
+    private let lock = NSLock()
     private var values: [Data: Data] = [:]
 
-    func read(key: Data) throws -> Data? { values[key] }
-    func write(key: Data, value: Data) throws { values[key] = value }
-    func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func read(key: Data) throws -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        return values[key]
+    }
+    func write(key: Data, value: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        values[key] = value
+    }
+    func clear(key: Data) throws {
+        lock.lock(); defer { lock.unlock() }
+        values.removeValue(forKey: key)
+    }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -649,7 +677,7 @@ try TrUAPIHost.installProductScripts(
 webView.load(URLRequest(url: productURL))
 
 // Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
+try await execution.setPermissionAuthorizationStatus(
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
@@ -672,19 +700,31 @@ A remote `WebSocket` starts in `CONNECTING` while Rust checks the same domain pe
 
 Forwarded WebSocket events and XHR failures before sending are synthetic, with `isTrusted` set to `false`.
 
-WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection. New connections check the current permission without requiring a page reload.
-
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `.webRtc` request and `.denied` before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks.
+Real-time audio, camera and screen sharing use the canonical TrUAPI Media API
+(prototype wire trait 218). Pass a trusted `NativeMediaCallbacks` implementation
+when opening the execution. Its canonical `Media*` values stay host-private:
+the callback owns WebRTC, capture and native compositor views.
+Product JavaScript never receives peer connections, media streams, SDP, ICE or
+native backend handles. Calling consent is scoped to the exact product, network
+and account, independently of microphone, camera and system screen-sharing consent.
+Direct product capture and peer connections remain blocked regardless of saved
+device or legacy WebRTC grants. Motion retains its native user-gesture gate.
+Trusted hosts may use direct, server-reflexive and relayed connectivity; the product
+never receives peer addresses. Missing relay configuration or a failed credential
+lookup leaves direct connectivity available rather than blocking peer creation.
 
 The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script` followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
 
-`Worker`, `WebTransport` and `getDisplayMedia` screen capture are unavailable. Workers would provide a separate realm with unguarded network APIs; WebTransport has no permission wrapper, and screen capture has no product permission.
+`Worker`, `WebTransport` and direct `getDisplayMedia` screen capture are unavailable
+to product pages. Screen sharing is selected through the trusted Media backend's
+ReplayKit extension, not a product-owned capture API. The existing shared worker
+owns Media until the worker is disposed, not until a single Chat holder releases it.
 
 Redirects and stylesheet/font loads retain native WebKit behavior. Redirect destinations are not separately authorized by the fetch/XHR wrappers; direct DOM resource loads remain outside those wrappers. There is no content-rule registration, global settings refresh or installation disposal requirement. Close the execution when its product stops, and maintain the host's existing web-view navigation and teardown behavior.
 
 Build the generated JavaScript SDK before the container: from the repository root, run `npm ci --ignore-scripts`, `npm run build --prefix js/packages/truapi`, then `npm run build --prefix js/container`. A protocol change also requires regenerating the SDK through the repository's normal build pipeline.
 
-`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, WebRTC and media authorization, native redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Media coverage uses a capture stub with the actual private Rust permission transport; it does not require simulator camera hardware. The tests require the built container, current Rust bindings and a real WKWebView in the UIKit test host. These Apple-only tests cannot run on Linux.
+`ProductNetworkAccessTests` exercises network grants, one-use fetch, direct WebRTC/capture denial, native redirects, stylesheet/font requests, and preservation of a persistent store and existing navigation delegate. Capture coverage verifies that product stubs never run; no simulator camera hardware is required. The tests require rebuilt bindings, the matching container and a real WKWebView in the UIKit test host; they cannot run on Linux.
 
 
 ## Build outputs in detail
