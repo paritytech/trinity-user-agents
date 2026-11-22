@@ -43,6 +43,36 @@ class CoverGridRulesTest {
     }
 
     @Test
+    fun `the edge is softened by half the cell's shorter side, and not at all without a grid`() {
+        val ticket = Size(272f, 340f)
+
+        assertEquals(4f, CoverGridRules.softening(34, 42, ticket), 0.001f)
+        assertEquals(2f, CoverGridRules.softening(68, 85, ticket), 0.001f)
+        assertEquals(0f, CoverGridRules.softening(0, 42, ticket), 0f)
+        assertEquals(0f, CoverGridRules.softening(34, 42, Size.Zero), 0f)
+    }
+
+    @Test
+    fun `the blur radius gives the softening as the blur's spread, as Android converts it`() {
+        val radius = CoverGridRules.blurRadius(10.5f)
+
+        assertEquals(10.5f, 0.57735f * radius + 0.5f, 0.001f)
+        assertEquals(0f, CoverGridRules.blurRadius(0.2f), 0f)
+    }
+
+    @Test
+    fun `sharpening keeps the half-clear edge where it is and makes the rest clear or covered`() {
+        val matrix = CoverGridRules.sharpenEdge()
+        val opacity = { alpha: Float -> (matrix[18] * alpha * 255f + matrix[19]).coerceIn(0f, 255f) / 255f }
+        val step = 1f / CoverGridRules.EDGE_GAIN
+
+        assertEquals(0.5f, opacity(0.5f), 0.001f)
+        assertEquals(0f, opacity(0.5f - step), 0f)
+        assertEquals(1f, opacity(0.5f + step), 0f)
+        assertEquals(listOf(1f, 1f, 1f), listOf(matrix[0], matrix[6], matrix[12]))
+    }
+
+    @Test
     fun `a finger's place is kept inside the node and measured from its start edge`() {
         assertEquals(40f to 50f, GestureRules.inside(40f, 50f, widthPx = 280, heightPx = 300, rtl = false))
         assertEquals(0f to 300f, GestureRules.inside(-9f, 400f, widthPx = 280, heightPx = 300, rtl = false))
