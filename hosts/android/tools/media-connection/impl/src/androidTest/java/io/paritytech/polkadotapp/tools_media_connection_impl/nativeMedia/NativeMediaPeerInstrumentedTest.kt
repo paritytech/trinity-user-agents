@@ -56,6 +56,8 @@ class NativeMediaPeerInstrumentedTest {
                         val capture = NativeMediaCapture(context, core)
                         val events = Channel<Pair<Boolean, NativeMediaBackendEvent>>(Channel.UNLIMITED)
                         val connected = mutableSetOf<Boolean>()
+                        val described = mutableSetOf<Boolean>()
+                        val advertisedIce = mapOf(true to NativeMediaLocalIce(), false to NativeMediaLocalIce())
                         val remote = mutableMapOf<Boolean, NativeMediaRemoteState>()
                         val frames = AtomicInteger()
                         var receiving: VideoTrack? = null
@@ -99,11 +101,22 @@ class NativeMediaPeerInstrumentedTest {
                                             event.description.sdp.lineSequence().filter { it.startsWith("m=") }
                                                 .map { it.substringAfter("m=").substringBefore(' ') }.toList(),
                                         )
+                                        described.add(fromCaller)
+                                        advertisedIce.getValue(fromCaller).publish(event.description.sdp)
+                                        assertTrue("Direct candidates must be embedded in the published description",
+                                            event.description.sdp.contains("a=candidate:"))
                                         if (event.description.kind == NativeMediaDescriptionKind.ANSWER) answers++
                                         if (!fromCaller && event.description.kind == NativeMediaDescriptionKind.OFFER) offersFromAnswerer++
                                         destination.description(event.description)
                                     }
-                                    is NativeMediaBackendEvent.IceCandidate -> destination.candidate(event.candidate)
+                                    is NativeMediaBackendEvent.IceCandidate -> {
+                                        assertTrue("A candidate cannot precede its description", fromCaller in described)
+                                        assertTrue("Embedded candidates must not be repeated as ICE messages",
+                                            advertisedIce.getValue(fromCaller).candidate(org.webrtc.IceCandidate(
+                                                event.candidate.mid, event.candidate.mlineIndex?.toInt() ?: -1,
+                                                event.candidate.candidate)))
+                                        destination.candidate(event.candidate)
+                                    }
                                     is NativeMediaBackendEvent.PeerStateChanged -> {
                                         check(event.state != NativeMediaBackendPeerState.FAILED) {
                                             "Native ${if (fromCaller) "caller" else "answerer"} failed"

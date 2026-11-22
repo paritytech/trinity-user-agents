@@ -76,6 +76,15 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.
 - Generated host tagged-union codecs preserve explicit SCALE discriminants, including receiving storage slot 20 when slots 13–19 are absent from the generic runtime.
 - Swift's unsupported receiving callbacks use the generated native rejection case.
+- embed gathered Media candidates in the existing V1 description after up to
+  one second, then send at most six late candidates per link lifetime. Normal
+  two-party setup and teardown fit within ten statements per side, leaving
+  room in the shared 50-statement account allowance. ICE restarts keep the
+  lifetime trickle budget and carry newly gathered candidates in SDP.
+- accept Statement Store priority bits without changing Media's authenticated
+  expiry or V1 encoding. Senders retain zero priority for compatibility with
+  deployed hosts; control-message prioritization requires a later coordinated
+  rollout after receivers have been upgraded.
 
 - persist typed Statement Store allowance approvals and denials per product and
   account selector for implicit, idempotent provisioning; explicit requests for
