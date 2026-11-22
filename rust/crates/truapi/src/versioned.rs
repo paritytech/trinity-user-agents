@@ -50,6 +50,7 @@ pub mod funding_provider;
 pub mod game;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod nft_purse;
 pub mod notifications;
 pub mod payment;

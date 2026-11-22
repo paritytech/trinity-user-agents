@@ -9,6 +9,15 @@
 //! Async capability traits use `async_trait` so the combined [`Platform`]
 //! surface can be used as a trait object by the runtime.
 
+pub mod media;
+
+pub use media::{
+    MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
+    MediaBackendResponse, MediaDescription, MediaDescriptionKind, MediaIceCandidate, MediaPlatform,
+    MediaConsentRequest, MediaRevocationSource,
+    MediaRevokedPermission,
+};
+
 use std::collections::BTreeSet;
 
 use futures::stream::BoxStream;
@@ -130,6 +139,7 @@ pub struct SigningHostConfig {
 /// runtime, each with its own product context.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductContext {
 	/// Product identifier used for account derivation and product-scoped
 	/// storage/permission namespaces.
@@ -987,6 +997,14 @@ pub enum PermissionAuthorizationRequest {
 		/// Kind of signature the user approved.
 		kind: CrossProductSignatureKind,
 	},
+	/// Consent scoped to the authenticated calling network and product account.
+	#[codec(index = 6)]
+	Calling {
+		/// Configured network genesis.
+		network: [u8; 32],
+		/// Authority-derived product account.
+		account: [u8; 32],
+	},
 }
 
 /// A kind of signature a product makes with another product's account.
@@ -1060,6 +1078,9 @@ pub trait CoreAdmin: Send + Sync {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), GenericError>;
+
+	/// Refresh stored policy without prompting and fence revoked Media.
+	async fn refresh_permission_authorization(&self, request: PermissionAuthorizationRequest) -> Result<(), GenericError>;
 
 	/// Read the active session's X25519 chat identity private key, for hosts
 	/// that run their own P2P chat channel for the paired identity.
@@ -1321,11 +1342,20 @@ pub enum StoredPermissionRequest {
 		/// Kind of signature approved.
 		kind: CrossProductSignatureKind,
 	},
+	/// Consent scoped to the authenticated calling network and product account.
+	#[codec(index = 6)]
+	Calling {
+		/// Configured network genesis.
+		network: [u8; 32],
+		/// Authority-derived product account.
+		account: [u8; 32],
+	},
 }
 
 impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
 	fn from(request: PermissionAuthorizationRequest) -> Self {
 		match request {
+			PermissionAuthorizationRequest::Calling { network, account } => Self::Calling { network, account },
 			PermissionAuthorizationRequest::Device(permission) => Self::Device(permission),
 			PermissionAuthorizationRequest::Remote(request) => Self::Remote(request),
 			PermissionAuthorizationRequest::IdentityDisclosure => Self::IdentityDisclosure,
@@ -1349,6 +1379,8 @@ pub struct CoreStorageKeyDescription {
 	pub kind: &'static str,
 	/// Product or manifest label that owns this slot.
 	pub owner: Option<CoreStorageKeyOwner>,
+	/// Exact authorization scope, when the slot controls Media.
+	pub permission_request: Option<PermissionAuthorizationRequest>,
 }
 
 /// The identity used to scope a persisted slot.
@@ -1382,6 +1414,11 @@ pub fn describe_core_storage_key(
 	if !input.is_empty() {
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
+	let permission_request = match &key {
+		CoreStorageKey::PermissionAuthorization { request: StoredPermissionRequest::Calling { network, account }, .. } => Some(PermissionAuthorizationRequest::Calling { network: *network, account: *account }),
+		CoreStorageKey::PermissionAuthorization { request: StoredPermissionRequest::Device(permission), .. } => Some(PermissionAuthorizationRequest::Device(*permission)),
+		_ => None,
+	};
 	let (kind, owner) = match key {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
@@ -1414,10 +1451,15 @@ pub fn describe_core_storage_key(
 		},
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
 	};
-	Ok(CoreStorageKeyDescription { kind, owner })
+	Ok(CoreStorageKeyDescription { kind, owner, permission_request })
 }
 
 impl CoreStorageKey {
+	/// Calling consent for an exact authenticated product/account/network.
+	pub fn calling_authorization(product_id: &ProductId, network: [u8; 32], account: [u8; 32]) -> Self {
+		Self::permission_authorization(product_id, PermissionAuthorizationRequest::Calling { network, account })
+	}
+
 	/// Cache key for `product_id`'s root manifest.
 	///
 	/// Keyed by [`ProductId::bare_label`], which is what the lookup resolves on
@@ -1646,6 +1688,20 @@ pub trait CoreStorage: Send + Sync {
 
 	/// Clear a core-owned value by typed slot.
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+    /// Atomically replace exactly `expected` decoded bytes in this physical slot.
+    /// `None` differs from an empty value. Serialize with every write, clear and
+    /// compare-exchange across all cores sharing the store, through actual
+    /// persistence completion even if the requesting future is dropped.
+    /// On persisted success, `notify_on_success` enqueues `core_storage_changed`
+    /// before completion even if the requester was cancelled. Initial unanswered
+    /// snapshots pass false; explicit policy decisions pass true.
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, GenericError>;
+
+    /// Nonblocking notification after an explicit policy decision or reset.
+    /// Queue deferred refreshes for every core group sharing the store and exact
+    /// product, including the writer. Never await or reenter a core here. Raw
+    /// writes/clears and CAS with `notify_on_success == false` must not emit this.
+    fn core_storage_changed(&self, key: CoreStorageKey);
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -1952,6 +2008,22 @@ pub enum NftPurseDrainDestination {
 	Refund,
 }
 
+/// Immutable calling-consent context resolved by the trusted core.
+///
+/// Approval applies only to this exact canonical product, authenticated network,
+/// and authority-derived account. It neither grants camera/microphone access nor
+/// carries over to another account or network.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CallingReview {
+    /// Canonical product requesting calling authority.
+    pub product_id: ProductId,
+    /// Genesis hash of the authenticated network.
+    pub network: [u8; 32],
+    /// Product's authority-derived `Index(0)` sr25519 public key.
+    pub account: [u8; 32],
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -1986,6 +2058,9 @@ pub enum UserConfirmationReview {
 	/// Move items out of an NFT purse the product does not own.
 	#[codec(index = 12)]
 	NftPurseDrain(NftPurseDrainReview),
+	/// Allow calling for the authenticated product, account and network.
+	#[codec(index = 15)]
+	Calling(CallingReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -2665,6 +2740,7 @@ pub trait OptionalPlatform:
 	+ PocketPlatform
 	+ GamePlatform
 	+ ScannerPlatform
+	+ MediaPlatform
 {
 }
 
@@ -2675,5 +2751,6 @@ impl<T> OptionalPlatform for T where
 		+ PocketPlatform
 		+ GamePlatform
 		+ ScannerPlatform
+		+ MediaPlatform
 {
 }

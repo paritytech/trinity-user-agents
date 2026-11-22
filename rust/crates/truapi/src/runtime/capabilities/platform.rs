@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::platform::{ExecutableKind, PermissionAuthorizationStatus};
+use std::sync::atomic::{AtomicU64, Ordering};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -51,6 +52,48 @@ use crate::{
 	},
 	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost, versioning::version},
 };
+
+
+use crate::platform::{PermissionAuthorizationRequest, PermissionDecision};
+use crate::host_internal::permissions::PermissionAuthorizationSnapshot;
+impl ProductRuntimeHost {
+    async fn commit_permission_answer(
+        &self,
+        product_id: &crate::platform::ProductId,
+        request: &PermissionAuthorizationRequest,
+        snapshot: &PermissionAuthorizationSnapshot,
+        decision: PermissionDecision,
+        revision: &AtomicU64,
+        current: &(impl Fn() -> bool + Sync),
+    ) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
+        let _guard = self.connection.services.media_permission_gate.lock().await;
+        if !current() {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        let service = self.connection.permissions_service();
+        // Recheck the live OS overlay, without rebasing the captured generation.
+        if service.authorization_status(request).await?
+            != PermissionAuthorizationStatus::NotDetermined
+        {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        if !current() {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        // No await between these final guards and CAS dispatch. Cancellation
+        // after dispatch does not roll back an accepted product decision.
+        self.connection.services.advance_media_permission_revision()?;
+        revision.store(self.connection.services.media_permission_revision(), Ordering::Release);
+        let status = service.record_permission_decision_if_unchanged(snapshot, decision, false).await?;
+        if status == PermissionAuthorizationStatus::NotDetermined {
+            return Ok(status);
+        }
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.connection.services.notify_media_permission_revoked(product_id, request);
+        }
+        Ok(status)
+    }
+}
 
 #[async_trait::async_trait]
 impl System for ProductRuntimeHost {
@@ -228,47 +271,129 @@ impl Permissions for ProductRuntimeHost {
 			.await
 	}
 
-	#[instrument(skip_all, fields(runtime.method = "permissions.request_device_permission"))]
-	async fn request_device_permission(
-		&self,
-		_cx: &CallContext,
-		request: HostDevicePermissionRequest,
-	) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
-		version(request)
-			.exec(|inner| async move {
-				let service = self.connection.permissions_service();
-				match service.check_or_prompt_device(inner).await {
-					Ok(decision) => Ok(latest::HostDevicePermissionResponse {
-						granted: decision == PermissionAuthorizationStatus::Authorized,
-					}),
-					Err(err) => Err(CallError::HostFailure {
-						reason: format!("permission storage failed: {err:?}"),
-					}),
-				}
-			})
-			.await
-	}
+    #[instrument(skip_all, fields(runtime.method = "permissions.request_device_permission"))]
+    async fn request_device_permission(
+        &self,
+        cx: &CallContext,
+        request: HostDevicePermissionRequest,
+    ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
+        version(request).exec(|inner| async move {
+        let product_id = self.connection.product_id();
+        let service = self.connection.permissions_service();
+        let request = PermissionAuthorizationRequest::Device(inner);
+        let session = self.accounts.current_session();
+        let revision = {
+            let _guard = self.connection.services.media_permission_gate.lock().await;
+            AtomicU64::new(self.connection.services.media_permission_revision())
+        };
+        let current = || {
+            self.connection.services.media_permission_revision() == revision.load(Ordering::Acquire)
+                && self.accounts.current_session().map(|value| value.validation_id) == session.as_ref().map(|value| value.validation_id.clone())
+                && !cx.cancel().is_cancelled()
+        };
+        let decision = service.check_or_prompt_device_fenced(inner, |snapshot, decision| {
+            let current = &current;
+            let revision = &revision;
+            let request = &request;
+            let product_id = &product_id;
+            async move {
+                self.commit_permission_answer(product_id, request, &snapshot, decision, revision, current).await
+            }
+        }).await;
+        let _guard = self.connection.services.media_permission_gate.lock().await;
+        if !current() {
+            return Err(CallError::Denied);
+        }
+        let decision = match decision {
+            Ok(_) => service.authorization_status(&request).await,
+            Err(error) => Err(error),
+        };
+        if !current() {
+            return Err(CallError::Denied);
+        }
+        match decision {
+            Ok(decision) => Ok(latest::HostDevicePermissionResponse {
+                    granted: decision == PermissionAuthorizationStatus::Authorized,
+                }),
+            Err(err) => Err(CallError::HostFailure {
+                reason: format!("permission storage failed: {err:?}"),
+            }),
+        }
+        }).await
+    }
 
-	#[instrument(skip_all, fields(runtime.method = "permissions.request_remote_permission"))]
-	async fn request_remote_permission(
-		&self,
-		_cx: &CallContext,
-		request: RemotePermissionRequest,
-	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
-		version(request)
-			.exec(|inner| async move {
-				let service = self.connection.permissions_service();
-				match service.check_or_prompt_remote(inner).await {
-					Ok(decision) => Ok(latest::RemotePermissionResponse {
-						granted: decision == PermissionAuthorizationStatus::Authorized,
-					}),
-					Err(err) => Err(CallError::HostFailure {
-						reason: format!("permission storage failed: {err:?}"),
-					}),
-				}
-			})
-			.await
-	}
+    #[instrument(skip_all, fields(runtime.method = "permissions.request_remote_permission"))]
+    async fn request_remote_permission(
+        &self,
+        cx: &CallContext,
+        request: RemotePermissionRequest,
+    ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
+        version(request).exec(|inner| async move {
+        let product_id = self.connection.product_id();
+        let service = self.connection.permissions_service();
+        let decision = if matches!(inner.permission, latest::RemotePermission::Calling) {
+            let (session, identity) = crate::runtime::media_identity::resolve_identity(
+                &self.connection.services,
+                self.accounts.authority(),
+                &self.connection.product,
+                cx,
+            )
+            .await
+            .map_err(|_| CallError::Denied)?;
+            let request = PermissionAuthorizationRequest::Calling {
+                network: identity.network,
+                account: identity.account,
+            };
+            let revision = {
+                let _guard = self.connection.services.media_permission_gate.lock().await;
+                AtomicU64::new(self.connection.services.media_permission_revision())
+            };
+            let current = || {
+                self.connection.services.media_permission_revision() == revision.load(Ordering::Acquire)
+                    && self.accounts.current_session().is_some_and(|value| value.validation_id == session.validation_id)
+                    && !cx.cancel().is_cancelled()
+            };
+            let decision = service
+                .check_or_prompt_calling(identity.network, identity.account, |snapshot, status| {
+                    let request = &request;
+                    let current = &current;
+                    let revision = &revision;
+                    let product_id = &product_id;
+                    async move {
+                        let decision = match status {
+                            PermissionAuthorizationStatus::Authorized => PermissionDecision::AllowAlways,
+                            PermissionAuthorizationStatus::Denied => PermissionDecision::Deny,
+                            PermissionAuthorizationStatus::NotDetermined => return Ok(status),
+                        };
+                        self.commit_permission_answer(product_id, request, &snapshot, decision, revision, current).await
+                    }
+                })
+                .await;
+            let _guard = self.connection.services.media_permission_gate.lock().await;
+            if !current() {
+                return Err(CallError::Denied);
+            }
+            let decision = match decision {
+                Ok(_) => service.authorization_status(&request).await,
+                Err(error) => Err(error),
+            };
+            if !current() {
+                return Err(CallError::Denied);
+            }
+            decision
+        } else {
+            service.check_or_prompt_remote(inner).await
+        };
+        match decision {
+            Ok(decision) => Ok(latest::RemotePermissionResponse {
+                    granted: decision == PermissionAuthorizationStatus::Authorized,
+                }),
+            Err(err) => Err(CallError::HostFailure {
+                reason: format!("permission storage failed: {err:?}"),
+            }),
+        }
+        }).await
+    }
 }
 
 #[async_trait::async_trait]

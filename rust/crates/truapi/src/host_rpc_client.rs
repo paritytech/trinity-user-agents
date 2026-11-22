@@ -62,6 +62,7 @@ pub struct HostRpcClient {
 }
 
 struct HostRpcClientInner {
+	request_id_prefix: &'static str,
 	connection: Arc<dyn JsonRpcConnection>,
 	request_ids: AtomicU64,
 	user_handles: AtomicUsize,
@@ -255,10 +256,20 @@ impl HostRpcClient {
 		spawner: Spawner,
 		silence_deadline: Duration,
 	) -> Self {
+		Self::with_options(connection, spawner, silence_deadline, "truapi:")
+	}
+
+	/// Wrap a dedicated connection with host-recognizable request identifiers.
+	pub fn with_request_id_prefix(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner, prefix: &'static str) -> Self {
+		Self::with_options(connection, spawner, REQUEST_SILENCE_DEADLINE, prefix)
+	}
+
+	fn with_options(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner, silence_deadline: Duration, request_id_prefix: &'static str) -> Self {
 		let (stop_response_tx, stop_response_rx) = oneshot::channel();
 		let client = Self {
 			inner: Arc::new(HostRpcClientInner {
 				connection,
+				request_id_prefix,
 				request_ids: AtomicU64::new(1),
 				user_handles: AtomicUsize::new(1),
 				closed: AtomicBool::new(false),
@@ -368,7 +379,7 @@ impl HostRpcClientInner {
 	}
 
 	fn next_request_id(&self) -> String {
-		format!("truapi:{}", self.request_ids.fetch_add(1, Ordering::Relaxed))
+		format!("{}{}", self.request_id_prefix, self.request_ids.fetch_add(1, Ordering::Relaxed))
 	}
 
 	fn send_request(

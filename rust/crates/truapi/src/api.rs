@@ -33,6 +33,7 @@
 //! | 24 | `FundingProvider` |
 //! | 25 | `Scanner` |
 //! | 26 | `NftPurse` |
+//! | 218 | `Media` (prototype) |
 
 pub mod account;
 pub mod chain;
@@ -46,6 +47,7 @@ pub mod funding_provider;
 pub mod game;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
@@ -73,6 +75,7 @@ pub use funding_provider::FundingProvider;
 pub use game::Game;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use nft_purse::NftPurse;
 pub use notifications::Notifications;
 pub use payment::Payment;
@@ -102,6 +105,7 @@ pub trait TrUApi:
 	+ FundingProvider
 	+ LocalStorage
 	+ Locale
+	+ Media
 	+ NftPurse
 	+ Notifications
 	+ Payment
@@ -134,6 +138,7 @@ impl<T> TrUApi for T where
 		+ FundingProvider
 		+ LocalStorage
 		+ Locale
+		+ Media
 		+ NftPurse
 		+ Notifications
 		+ Payment

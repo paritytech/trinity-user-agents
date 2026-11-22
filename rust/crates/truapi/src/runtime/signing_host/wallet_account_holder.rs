@@ -4,6 +4,7 @@ mod account;
 mod allowance;
 mod allowance_renewal;
 mod pairing;
+mod media;
 #[cfg(test)]
 mod tests;
 

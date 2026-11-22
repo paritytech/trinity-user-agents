@@ -75,6 +75,26 @@ pub struct StatementStoreRpc {
 }
 
 impl StatementStoreRpc {
+    /// Open a statement-store RPC client on its own connection whose request
+    /// ids all start with `request_id_prefix`, so the host can tell this
+    /// traffic apart (see `media_signaling::ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX`).
+    pub(crate) async fn client_with_request_id_prefix(
+        &self,
+        label: &'static str,
+        request_id_prefix: &'static str,
+    ) -> Result<RpcClient, StatementStoreRpcClientError> {
+        let connection = self.connect(label).await?;
+        Ok(RpcClient::new(HostRpcClient::with_request_id_prefix(
+            connection,
+            self.spawner.clone(),
+            request_id_prefix,
+        )))
+    }
+
+
+	/// Authenticated network namespace used by host-owned signaling.
+	pub fn genesis_hash(&self) -> [u8; 32] { self.people_chain_genesis_hash }
+
 	/// Build a helper that opens subscription connections through
 	/// `platform` and sends requests over `chain`'s pooled connection.
 	pub fn new(
@@ -298,7 +318,8 @@ pub async fn subscribe_match_all(
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
 /// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
 /// rejections surface instead of being silently dropped.
-async fn submit(rpc_client: &RpcClient, statement: Vec<u8>) -> Result<(), String> {
+/// Submit a host-owned statement on its existing signaling connection.
+pub async fn submit(rpc_client: &RpcClient, statement: Vec<u8>) -> Result<(), String> {
 	let result = rpc_client
 		.request::<Value>(
 			SUBMIT_STATEMENT_METHOD,

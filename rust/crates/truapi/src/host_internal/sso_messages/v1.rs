@@ -18,6 +18,7 @@ use super::{
 	ResourceAllocationRequest, ResourceAllocationResponse, Response, RingVrfSignResponse,
 	SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
 	SignVrfResponse, Withdrawal,
+    MediaEndpointCertificationRequest, MediaEndpointCertificationResponse,
 };
 
 /// v1 messages exchanged with the paired signing host over the encrypted SSO channel.
@@ -88,4 +89,10 @@ pub enum RemoteMessage {
 	/// the pairing host.
 	#[codec(index = 24)]
 	Cancel(Withdrawal),
+    /// Certify a core-owned endpoint under the private Media account domain.
+    #[codec(index = 30)]
+    MediaEndpointCertificationRequest(MediaEndpointCertificationRequest),
+    /// Account Holder's fixed-domain endpoint signature.
+    #[codec(index = 31)]
+    MediaEndpointCertificationResponse(Response<MediaEndpointCertificationResponse>),
 }

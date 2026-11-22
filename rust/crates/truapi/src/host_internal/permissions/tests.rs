@@ -24,6 +24,7 @@ static PEOPL: LazyLock<ProductContext> =
 
 #[derive(Default)]
 struct MemStorage {
+    changes: std::sync::Mutex<Vec<CoreStorageKey>>,
 	inner: Mutex<HashMap<String, Vec<u8>>>,
 }
 
@@ -47,6 +48,24 @@ impl CoreStorage for MemStorage {
 		self.inner.lock().await.remove(&test_key(key));
 		Ok(())
 	}
+    async fn compare_exchange_core_storage(
+        &self, key: CoreStorageKey, expected: Option<Vec<u8>>,
+        replacement: Vec<u8>, notify_on_success: bool,
+    ) -> Result<bool, GenericError> {
+        let encoded = test_key(key.clone());
+        let mut storage = self.inner.lock().await;
+        if storage.get(&encoded) != expected.as_ref() { return Ok(false); }
+        storage.insert(encoded, replacement);
+        
+        drop(storage);
+        if notify_on_success { self.core_storage_changed(key); }
+        Ok(true)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.changes.lock().expect("changes mutex poisoned").push(key);
+    }
+
 }
 
 fn test_key(key: CoreStorageKey) -> String {
@@ -303,7 +322,8 @@ fn a_one_use_answer_to_an_operation_is_consumed_by_that_operation() {
 				PermissionAuthorizationStatus::NotDetermined,
 				PermissionAuthorizationStatus::Authorized,
 				PermissionAuthorizationStatus::NotDetermined,
-				0,
+                // A generation tombstone is persisted, never the one-use grant.
+				1,
 			),
 		);
 	});
@@ -1503,6 +1523,15 @@ impl CoreStorage for FailingStorage {
 	async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		Err(v01::GenericError { reason: "clear failed".into() })
 	}
+    async fn compare_exchange_core_storage(
+        &self, _key: CoreStorageKey, _expected: Option<Vec<u8>>,
+        _replacement: Vec<u8>, _notify_on_success: bool,
+    ) -> Result<bool, GenericError> {
+        Err(GenericError { reason: "write failed".into() })
+    }
+    fn core_storage_changed(&self, _key: CoreStorageKey) {
+        unreachable!("failed storage cannot notify a successful change")
+    }
 }
 
 #[test]
@@ -1984,4 +2013,52 @@ fn a_signature_approval_is_administered_in_memory_only() {
 fn a_signature_approval_for_a_target_that_names_no_product_is_refused() {
 	let encoded = (4u8, "example.com", CrossProductSignatureKind::Payload).encode();
 	assert!(PermissionAuthorizationRequest::decode(&mut encoded.as_slice()).is_err());
+}
+
+#[test]
+fn calling_is_exact_scoped_and_never_trusted_or_unscoped() {
+    futures::executor::block_on(async {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let service = PermissionsService::new(&storage, &prompt, &PEOPL);
+        let scoped = PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
+        assert_eq!(service.authorization_status(&scoped).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+        let unscoped = RemotePermissionRequest { permission: RemotePermission::Calling };
+        assert_eq!(service.authorize_remote(unscoped).await.unwrap(), PermissionAuthorizationStatus::Denied);
+        service.set_authorization_status(&scoped, PermissionAuthorizationStatus::Authorized).await.unwrap();
+        assert_eq!(service.authorization_status(&scoped).await.unwrap(), PermissionAuthorizationStatus::Authorized);
+        for request in [
+            PermissionAuthorizationRequest::Calling { network: [3; 32], account: [2; 32] },
+            PermissionAuthorizationRequest::Calling { network: [1; 32], account: [3; 32] },
+        ] {
+            assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+        }
+        let executable = PermissionsService::new(&storage, &prompt, &PEOPL_APP);
+        assert_eq!(executable.authorization_status(&scoped).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+    });
+}
+
+#[test]
+fn media_reset_discards_late_answers_and_one_use_device_grants() {
+    futures::executor::block_on(async {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+        for request in [
+            PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
+            PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
+        ] {
+            let pending = service.authorization_snapshot(&request).await.unwrap();
+            service.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined).await.unwrap();
+            assert!(!service.set_authorization_status_if_unchanged(&request, &pending, PermissionAuthorizationStatus::Authorized).await.unwrap());
+            assert_eq!(service.record_permission_decision_if_unchanged(&pending, PermissionDecision::AllowOnce, false).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+        }
+        let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+        let pending = service.authorization_snapshot(&request).await.unwrap();
+        assert_eq!(service.record_permission_decision_if_unchanged(&pending, PermissionDecision::AllowOnce, false).await.unwrap(), PermissionAuthorizationStatus::Authorized);
+        assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::Authorized);
+        let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
+        admin.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined).await.unwrap();
+        assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+    });
 }

@@ -97,6 +97,11 @@ pub type StorageWriteHook = Arc<dyn Fn() + Send + Sync>;
 /// can exercise its delegation paths without pulling in a real backend.
 #[derive(Default)]
 pub struct StubPlatform {
+    pub calling_confirmed: bool,
+    pub calling_error: Option<&'static str>,
+    pub calling_reviews: Arc<Mutex<Vec<crate::platform::CallingReview>>>,
+    pub core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
+    pub session_storage: Mutex<Option<Option<Vec<u8>>>>,
 	pub device_permission_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
 	pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
@@ -1105,7 +1110,7 @@ impl PlatformCoreStorage for StubPlatform {
 			if let Some(reason) = self.session_error {
 				return Err(v01::GenericError { reason: reason.to_string() });
 			}
-			return Ok(self.session_blob.clone());
+			return Ok(self.session_storage.lock().unwrap().as_ref().unwrap_or(&self.session_blob).clone());
 		}
 		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
@@ -1132,6 +1137,7 @@ impl PlatformCoreStorage for StubPlatform {
 			return storage.write_core_storage(key, value).await;
 		}
 		if let CoreStorageKey::AuthSession = key {
+            *self.session_storage.lock().unwrap() = Some(Some(value.clone()));
 			self.session_writes
 				.lock()
 				.expect("session write list mutex poisoned")
@@ -1161,6 +1167,7 @@ impl PlatformCoreStorage for StubPlatform {
 			return storage.clear_core_storage(key).await;
 		}
 		if let CoreStorageKey::AuthSession = key {
+            *self.session_storage.lock().unwrap() = Some(None);
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
@@ -1173,6 +1180,55 @@ impl PlatformCoreStorage for StubPlatform {
 			.remove(&core_storage_test_key(key));
 		Ok(())
 	}
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, v01::GenericError> {
+        if let Some(storage) = &self.core_storage_override { return storage.compare_exchange_core_storage(key, expected, replacement, notify_on_success).await; }
+        if self.core_storage_pending { futures::future::pending::<()>().await; }
+        if let CoreStorageKey::AuthSession = key {
+        if let Some(reason) = self.session_error {
+            return Err(v01::GenericError { reason: reason.into() });
+        }
+        {
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            if storage.as_ref().unwrap_or(&self.session_blob) != &expected {
+                return Ok(false);
+            }
+            *storage = Some(Some(replacement.clone()));
+            self.session_writes.lock().expect("session write list mutex poisoned")
+                .push(replacement);
+            if notify_on_success {
+                self.core_storage_changed(key);
+            }
+        }
+        let hook = self.on_auth_session_write.lock()
+            .expect("auth session write hook mutex poisoned").clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+        return Ok(true);
+    }
+    if let Some(reason) = self.local_storage_error {
+        return Err(v01::GenericError { reason: reason.into() });
+    }
+    if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
+        (&key, self.permission_storage_error)
+    {
+        return Err(v01::GenericError { reason: reason.into() });
+    }
+    let encoded = core_storage_test_key(key.clone());
+    let mut storage = self.local_storage.lock().expect("local storage mutex poisoned");
+    if storage.get(&encoded) != expected.as_ref() {
+        return Ok(false);
+    }
+    storage.insert(encoded, replacement);
+    if notify_on_success {
+        self.core_storage_changed(key);
+    }
+    Ok(true) }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        if let Some(storage) = &self.core_storage_override { storage.core_storage_changed(key); return; }
+        self.core_storage_changes.lock().expect("storage changes mutex poisoned").push(key);
+    }
 }
 
 /// Stable string key used by the stub core-storage map.
@@ -1939,6 +1995,7 @@ impl UserConfirmation for StubPlatform {
 		review: UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
 		let (error, confirmed) = match review {
+            UserConfirmationReview::Calling(review) => { self.calling_reviews.lock().unwrap().push(review); (self.calling_error, self.calling_confirmed) },
 			UserConfirmationReview::SignPayload(review) => {
 				self.sign_payload_reviews
 					.lock()
