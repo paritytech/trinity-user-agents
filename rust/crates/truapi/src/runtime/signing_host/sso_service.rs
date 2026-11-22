@@ -18,11 +18,12 @@ use crate::{
 			CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
 			CreateTransactionRequest, CreateTransactionResponse,
 			CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse,
-			ListRingVrfKeysResponse, ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse,
-			RegisterRingVrfKeyResponse, RemoteMessage, ResourceAllocationRequest,
-			ResourceAllocationResponse, RingVrfSignResponse, SignRawWithLegacyAccountRequest,
-			SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse,
-			SsoAllocatedResource, SsoAllocationOutcome,
+			ListRingVrfKeysResponse, MediaEndpointCertificationError,
+			MediaEndpointCertificationRequest, MediaEndpointCertificationResponse, ProductRequest,
+			ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
+			RemoteMessage, ResourceAllocationRequest, ResourceAllocationResponse,
+			RingVrfSignResponse, SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse,
+			SignRequest, SignResponse, SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome,
 		},
 		sso_wire::ResponseOutcome,
 	},
@@ -36,7 +37,6 @@ use crate::{
 		sso_service::{Dispatch, SsoReply, SsoRequestContext},
 	},
 };
-use crate::host_internal::sso_messages::{MediaEndpointCertificationError, MediaEndpointCertificationRequest, MediaEndpointCertificationResponse};
 
 /// SSO handlers served by a locally activated [`SigningHost`].
 pub struct SigningHostSsoService {
@@ -316,25 +316,25 @@ impl SigningHostSsoService {
 			)
 			.await
 	}
-    /// Consent-free private certification; no generic raw-signing or Chat path.
-    async fn media_endpoint_certification(
-        &self,
-        cx: &SsoRequestContext,
-        request: MediaEndpointCertificationRequest,
-    ) -> MediaEndpointCertificationResponse {
-        self.signing_host
-            .wallet()
-            .certify_encoded_media_endpoint(
-                &cx.session,
-                &request.product_id,
-                &request.unsigned_advertisement,
-            )
-            .map_err(|error| match error {
-                AuthorityError::Disconnected => MediaEndpointCertificationError::Disconnected,
-                AuthorityError::Rejected => MediaEndpointCertificationError::Rejected,
-                _ => MediaEndpointCertificationError::Unavailable,
-            })
-    }
+	/// Consent-free private certification; no generic raw-signing or Chat path.
+	async fn media_endpoint_certification(
+		&self,
+		cx: &SsoRequestContext,
+		request: MediaEndpointCertificationRequest,
+	) -> MediaEndpointCertificationResponse {
+		self.signing_host
+			.wallet()
+			.certify_encoded_media_endpoint(
+				&cx.session,
+				&request.product_id,
+				&request.unsigned_advertisement,
+			)
+			.map_err(|error| match error {
+				AuthorityError::Disconnected => MediaEndpointCertificationError::Disconnected,
+				AuthorityError::Rejected => MediaEndpointCertificationError::Rejected,
+				_ => MediaEndpointCertificationError::Unavailable,
+			})
+	}
 
 	/// Allocate SSO-backed resources for a product.
 	async fn resource_allocation(

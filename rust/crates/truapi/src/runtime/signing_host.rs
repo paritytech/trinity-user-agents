@@ -34,12 +34,14 @@ use super::{
 };
 use crate::{
 	host_internal::sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
-	host_logic::session::{SessionInfo, SessionState},
+	host_logic::{
+		media_protocol::UnsignedAdvertisement,
+		session::{SessionInfo, SessionState},
+	},
 	runtime::{auth_state::AuthStateMachine, sso_service::SsoWithdrawals, statement_allowance},
 };
 use futures::StreamExt;
 use ring_vrf::{ChainRingResolver, RingResolver};
-use crate::host_logic::media_protocol::UnsignedAdvertisement;
 
 /// The network suffix the unit tests configure their signing host for. `dot`
 /// keeps the `peopl.dot` handles the RFC examples use meaningful; the
@@ -734,26 +736,24 @@ impl ProductAuthority for SigningHost {
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
 		self.wallet.contact_handles(session).map(|handles| handles.handle_key())
 	}
-    async fn certify_media_endpoint(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        unsigned: UnsignedAdvertisement,
-    ) -> Result<[u8; 64], AuthorityError> {
-        self.wallet.certify_local_media_endpoint(session, unsigned)
-    }
+	async fn certify_media_endpoint(
+		&self,
+		_cx: &CallContext,
+		session: &AuthoritySession,
+		unsigned: UnsignedAdvertisement,
+	) -> Result<[u8; 64], AuthorityError> {
+		self.wallet.certify_local_media_endpoint(session, unsigned)
+	}
 
-    fn sign_media_statement(
-        &self,
-        session: &AuthoritySession,
-        payload: Vec<u8>,
-        topics: Vec<[u8; 32]>,
-        expires_at: u64,
-    ) -> Result<Vec<u8>, AuthorityError> {
-        self.wallet.sign_local_media_statement(session, payload, topics, expires_at)
-    }
-
-
+	fn sign_media_statement(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+		topics: Vec<[u8; 32]>,
+		expires_at: u64,
+	) -> Result<Vec<u8>, AuthorityError> {
+		self.wallet.sign_local_media_statement(session, payload, topics, expires_at)
+	}
 }
 
 #[cfg(not(target_arch = "wasm32"))]

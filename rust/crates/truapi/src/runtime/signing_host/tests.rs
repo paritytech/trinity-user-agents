@@ -2659,146 +2659,200 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 }
 
 mod media {
-    use super::*;
-    use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
-    use crate::runtime::sso_service::Dispatch;
-    fn media_advertisement(services: &RuntimeServices) -> crate::host_logic::media_protocol::UnsignedAdvertisement {
-        use crate::host_logic::media_protocol::{MediaIdentity, RuntimeSecrets};
-        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-        let account = derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
-        let keys = RuntimeSecrets::generate(MediaIdentity {
-            network: services.statement_store.genesis_hash(),
-            product_id: "myapp.dot".to_string(),
-            account: account.public.to_bytes(),
-        }, 8).unwrap();
-        let now = crate::unix_time::current_unix_secs();
-        keys.unsigned_advertisement(now, now + 60).unwrap()
-    }
+	use super::*;
+	use crate::{
+		host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
+		runtime::sso_service::Dispatch,
+	};
+	fn media_advertisement(
+		services: &RuntimeServices,
+	) -> crate::host_logic::media_protocol::UnsignedAdvertisement {
+		use crate::host_logic::media_protocol::{MediaIdentity, RuntimeSecrets};
+		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+		let account =
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+				.unwrap();
+		let keys = RuntimeSecrets::generate(
+			MediaIdentity {
+				network: services.statement_store.genesis_hash(),
+				product_id: "myapp.dot".to_string(),
+				account: account.public.to_bytes(),
+			},
+			8,
+		)
+		.unwrap();
+		let now = crate::unix_time::current_unix_secs();
+		keys.unsigned_advertisement(now, now + 60).unwrap()
+	}
 
-    #[test]
-    fn media_certification_requires_slot_zero_and_is_not_public_raw_signing() {
-        let (services, authority) = signing_runtime();
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.current_session().unwrap();
-        let cx = CallContext::default();
-        let unsigned = media_advertisement(&services);
-        let signature = futures::executor::block_on(authority.certify_media_endpoint(
-            &cx, &session, unsigned.clone(),
-        )).unwrap();
-        unsigned.clone().authenticate(signature, unsigned.issued_at).unwrap();
+	#[test]
+	fn media_certification_requires_slot_zero_and_is_not_public_raw_signing() {
+		let (services, authority) = signing_runtime();
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let session = authority.current_session().unwrap();
+		let cx = CallContext::default();
+		let unsigned = media_advertisement(&services);
+		let signature = futures::executor::block_on(authority.certify_media_endpoint(
+			&cx,
+			&session,
+			unsigned.clone(),
+		))
+		.unwrap();
+		unsigned.clone().authenticate(signature, unsigned.issued_at).unwrap();
 
-        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-        let mut wrong_account = unsigned.clone();
-        wrong_account.account = derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(1))
-            .unwrap().public.to_bytes();
-        assert_eq!(
-            futures::executor::block_on(authority.certify_media_endpoint(&cx, &session, wrong_account)),
-            Err(AuthorityError::Rejected),
-        );
-        let mut wrong_network = unsigned.clone();
-        wrong_network.network[0] ^= 1;
-        assert_eq!(
-            futures::executor::block_on(authority.certify_media_endpoint(&cx, &session, wrong_network)),
-            Err(AuthorityError::Rejected),
-        );
-        let mut wrong_product = unsigned.clone();
-        wrong_product.product_id = "other.dot".to_string();
-        assert_eq!(
-            futures::executor::block_on(authority.certify_media_endpoint(&cx, &session, wrong_product)),
-            Err(AuthorityError::Rejected),
-        );
+		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+		let mut wrong_account = unsigned.clone();
+		wrong_account.account =
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(1))
+				.unwrap()
+				.public
+				.to_bytes();
+		assert_eq!(
+			futures::executor::block_on(authority.certify_media_endpoint(
+				&cx,
+				&session,
+				wrong_account
+			)),
+			Err(AuthorityError::Rejected),
+		);
+		let mut wrong_network = unsigned.clone();
+		wrong_network.network[0] ^= 1;
+		assert_eq!(
+			futures::executor::block_on(authority.certify_media_endpoint(
+				&cx,
+				&session,
+				wrong_network
+			)),
+			Err(AuthorityError::Rejected),
+		);
+		let mut wrong_product = unsigned.clone();
+		wrong_product.product_id = "other.dot".to_string();
+		assert_eq!(
+			futures::executor::block_on(authority.certify_media_endpoint(
+				&cx,
+				&session,
+				wrong_product
+			)),
+			Err(AuthorityError::Rejected),
+		);
 
-        let runtime = product_runtime(services, authority);
-        let HostSignRawResponse::V1(raw) = futures::executor::block_on(runtime.sign_raw(
-            &cx,
-            HostSignRawRequest::V1(v01::HostSignRawRequest {
-                account: v01::ProductAccountId {
-                    dot_ns_identifier: unsigned.product_id.parse().unwrap(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                payload: v01::RawPayload::Bytes { bytes: unsigned.account_signing_input() },
-            }),
-        )).unwrap();
-        let now = unsigned.issued_at;
-        assert!(unsigned.authenticate(raw.signature.try_into().unwrap(), now).is_err());
-    }
+		let runtime = product_runtime(services, authority);
+		let HostSignRawResponse::V1(raw) = futures::executor::block_on(runtime.sign_raw(
+			&cx,
+			HostSignRawRequest::V1(v01::HostSignRawRequest {
+				account: v01::ProductAccountId {
+					dot_ns_identifier: unsigned.product_id.parse().unwrap(),
+					derivation_index: v01::DerivationIndex::Index(0),
+				},
+				payload: v01::RawPayload::Bytes { bytes: unsigned.account_signing_input() },
+			}),
+		))
+		.unwrap();
+		let now = unsigned.issued_at;
+		assert!(unsigned.authenticate(raw.signature.try_into().unwrap(), now).is_err());
+	}
 
-    #[test]
-    fn media_sso_certification_checks_the_outer_product_and_exact_encoding() {
-        use parity_scale_codec::Encode;
-        use crate::host_internal::sso_messages::MediaEndpointCertificationRequest;
-        let (services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.current_session().unwrap();
-        let unsigned = media_advertisement(&services);
-        let payload = unsigned.encode();
-        let service = super::super::SigningHostSsoService::new(authority.clone());
-        let request = RemoteMessage::request("media-certificate".to_string(), MediaEndpointCertificationRequest {
-            product_id: unsigned.product_id.clone(),
-            unsigned_advertisement: payload.clone(),
-        });
-        let Dispatch::Response(answer) = futures::executor::block_on(
-            service.answer(request),
-        ) else { panic!("expected a certification response"); };
-        let RemoteMessageData::V1(v1::RemoteMessage::MediaEndpointCertificationResponse(response)) =
-            answer.message.data else { panic!("expected the private Media response"); };
-        unsigned.clone().authenticate(response.payload.unwrap(), unsigned.issued_at).unwrap();
-        assert_eq!(
-            authority.wallet().certify_encoded_media_endpoint(&session, "other.dot", &payload),
-            Err(AuthorityError::Rejected),
-        );
-        let mut trailing = payload;
-        trailing.push(0);
-        assert_eq!(
-            authority.wallet().certify_encoded_media_endpoint(&session, &unsigned.product_id, &trailing),
-            Err(AuthorityError::Rejected),
-        );
-    }
+	#[test]
+	fn media_sso_certification_checks_the_outer_product_and_exact_encoding() {
+		use crate::host_internal::sso_messages::MediaEndpointCertificationRequest;
+		use parity_scale_codec::Encode;
+		let (services, authority) =
+			signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let session = authority.current_session().unwrap();
+		let unsigned = media_advertisement(&services);
+		let payload = unsigned.encode();
+		let service = super::super::SigningHostSsoService::new(authority.clone());
+		let request = RemoteMessage::request(
+			"media-certificate".to_string(),
+			MediaEndpointCertificationRequest {
+				product_id: unsigned.product_id.clone(),
+				unsigned_advertisement: payload.clone(),
+			},
+		);
+		let Dispatch::Response(answer) = futures::executor::block_on(service.answer(request))
+		else {
+			panic!("expected a certification response");
+		};
+		let RemoteMessageData::V1(v1::RemoteMessage::MediaEndpointCertificationResponse(response)) =
+			answer.message.data
+		else {
+			panic!("expected the private Media response");
+		};
+		unsigned
+			.clone()
+			.authenticate(response.payload.unwrap(), unsigned.issued_at)
+			.unwrap();
+		assert_eq!(
+			authority
+				.wallet()
+				.certify_encoded_media_endpoint(&session, "other.dot", &payload),
+			Err(AuthorityError::Rejected),
+		);
+		let mut trailing = payload;
+		trailing.push(0);
+		assert_eq!(
+			authority.wallet().certify_encoded_media_endpoint(
+				&session,
+				&unsigned.product_id,
+				&trailing
+			),
+			Err(AuthorityError::Rejected),
+		);
+	}
 
-    #[test]
-    fn media_authority_stops_on_logout_and_rejects_stale_reactivation() {
-        use crate::host_logic::media_protocol::MAX_PACKET_BYTES;
-        use crate::host_logic::statement_store::decode_verified_statement_data;
-        let (services, authority) = signing_runtime();
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.current_session().unwrap();
-        let unsigned = media_advertisement(&services);
-        let expiry = unsigned.expires_at;
-        let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-        let statement = authority.sign_media_statement(
-            &session, vec![1, 2, 3], vec![[7; 32]], expiry,
-        ).unwrap();
-        let verified = decode_verified_statement_data(&statement, Some(identity.public.to_bytes())).unwrap();
-        assert_eq!(verified.data, vec![1, 2, 3]);
-        assert_eq!(verified.expiry, Some(expiry << 32));
-        assert_eq!(
-            authority.sign_media_statement(&session, vec![0; MAX_PACKET_BYTES + 1], vec![[7; 32]], expiry),
-            Err(AuthorityError::Rejected),
-        );
-        assert_eq!(
-            authority.sign_media_statement(&session, vec![1], vec![[7; 32]; 5], expiry),
-            Err(AuthorityError::Rejected),
-        );
-        assert_eq!(
-            authority.sign_media_statement(&session, vec![1], vec![[7; 32]], u64::MAX),
-            Err(AuthorityError::Rejected),
-        );
-        futures::executor::block_on(authority.disconnect());
-        assert_eq!(
-            authority.sign_media_statement(&session, vec![1], vec![[7; 32]], expiry),
-            Err(AuthorityError::Disconnected),
-        );
-        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        assert_eq!(
-            futures::executor::block_on(authority.certify_media_endpoint(
-                &CallContext::default(), &session, unsigned,
-            )),
-            Err(AuthorityError::Disconnected),
-        );
-        assert_eq!(
-            authority.sign_media_statement(&session, vec![1], vec![[7; 32]], expiry),
-            Err(AuthorityError::Disconnected),
-        );
-    }
-
+	#[test]
+	fn media_authority_stops_on_logout_and_rejects_stale_reactivation() {
+		use crate::host_logic::{
+			media_protocol::MAX_PACKET_BYTES, statement_store::decode_verified_statement_data,
+		};
+		let (services, authority) = signing_runtime();
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		let session = authority.current_session().unwrap();
+		let unsigned = media_advertisement(&services);
+		let expiry = unsigned.expires_at;
+		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+		let statement = authority
+			.sign_media_statement(&session, vec![1, 2, 3], vec![[7; 32]], expiry)
+			.unwrap();
+		let verified =
+			decode_verified_statement_data(&statement, Some(identity.public.to_bytes())).unwrap();
+		assert_eq!(verified.data, vec![1, 2, 3]);
+		assert_eq!(verified.expiry, Some(expiry << 32));
+		assert_eq!(
+			authority.sign_media_statement(
+				&session,
+				vec![0; MAX_PACKET_BYTES + 1],
+				vec![[7; 32]],
+				expiry
+			),
+			Err(AuthorityError::Rejected),
+		);
+		assert_eq!(
+			authority.sign_media_statement(&session, vec![1], vec![[7; 32]; 5], expiry),
+			Err(AuthorityError::Rejected),
+		);
+		assert_eq!(
+			authority.sign_media_statement(&session, vec![1], vec![[7; 32]], u64::MAX),
+			Err(AuthorityError::Rejected),
+		);
+		futures::executor::block_on(authority.disconnect());
+		assert_eq!(
+			authority.sign_media_statement(&session, vec![1], vec![[7; 32]], expiry),
+			Err(AuthorityError::Disconnected),
+		);
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		assert_eq!(
+			futures::executor::block_on(authority.certify_media_endpoint(
+				&CallContext::default(),
+				&session,
+				unsigned,
+			)),
+			Err(AuthorityError::Disconnected),
+		);
+		assert_eq!(
+			authority.sign_media_statement(&session, vec![1], vec![[7; 32]], expiry),
+			Err(AuthorityError::Disconnected),
+		);
+	}
 }

@@ -47,9 +47,9 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
+pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
-pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
@@ -173,32 +173,29 @@ pub fn parse_dev_server(input: String) -> Result<DevServerProduct, DevServerErro
 /// Strictly decoded storage metadata for host-private namespace routing.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct NativeCoreStorageKeyDescription {
-    /// Stable core storage slot kind.
-    pub kind: String,
-    /// Product owning this slot, absent for wallet-owned state.
-    pub product_id: Option<ProductId>,
-    /// Scoped authorization represented by this slot, absent for other storage.
-    pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
+	/// Stable core storage slot kind.
+	pub kind: String,
+	/// Product owning this slot, absent for wallet-owned state.
+	pub product_id: Option<ProductId>,
+	/// Scoped authorization represented by this slot, absent for other storage.
+	pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
 }
 
 /// Describe exactly one encoded storage key without duplicating SCALE in hosts.
 #[uniffi::export]
 pub fn native_describe_core_storage_key(
-    encoded: Vec<u8>,
+	encoded: Vec<u8>,
 ) -> Result<NativeCoreStorageKeyDescription, HostRejection> {
-    let description = crate::platform::describe_core_storage_key(&encoded).map_err(|error| {
-        HostRejection::Rejected {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok(NativeCoreStorageKeyDescription {
-        kind: description.kind.to_owned(),
-        product_id: match description.owner {
-            Some(crate::platform::CoreStorageKeyOwner::Product(product_id)) => Some(product_id),
-            _ => None,
-        },
-        permission_request: description.permission_request,
-    })
+	let description = crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
+	Ok(NativeCoreStorageKeyDescription {
+		kind: description.kind.to_owned(),
+		product_id: match description.owner {
+			Some(crate::platform::CoreStorageKeyOwner::Product(product_id)) => Some(product_id),
+			_ => None,
+		},
+		permission_request: description.permission_request,
+	})
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`

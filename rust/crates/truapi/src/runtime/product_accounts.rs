@@ -40,7 +40,9 @@ pub struct ProductAccounts {
 
 impl ProductAccounts {
 	/// Shared account authority for host-owned services.
-	pub fn authority(&self) -> &dyn ProductAuthority { self.authority.as_ref() }
+	pub fn authority(&self) -> &dyn ProductAuthority {
+		self.authority.as_ref()
+	}
 
 	/// Bind the host's account authority to the product of one connection.
 	pub fn new(authority: Arc<dyn ProductAuthority>, product: ProductContext) -> Self {

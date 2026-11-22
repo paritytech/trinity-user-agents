@@ -255,38 +255,42 @@ impl SsoRequestService {
 	}
 
 	/// Selected remote account identity.
-    pub fn current_session(&self) -> Option<AuthoritySession> {
-        let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-        let current = self.session_state.current()?;
-        let mut session = authority_session(&current);
-        session.validation_id.extend_from_slice(&lifecycle.epoch.to_le_bytes());
-        Some(session)
-    }
+	pub fn current_session(&self) -> Option<AuthoritySession> {
+		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+		let current = self.session_state.current()?;
+		let mut session = authority_session(&current);
+		session.validation_id.extend_from_slice(&lifecycle.epoch.to_le_bytes());
+		Some(session)
+	}
 
-    /// Keep the selected activation unchanged through a private key operation.
-    pub(crate) fn with_current_session<T>(
-        &self,
-        session: &AuthoritySession,
-        operation: impl FnOnce(&SessionInfo) -> Result<T, crate::runtime::authority::AuthorityError>,
-    ) -> Result<T, crate::runtime::authority::AuthorityError> {
-        use crate::runtime::authority::AuthorityError;
-        let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-        let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
-        let epoch = lifecycle.epoch.to_le_bytes();
-        let id = session.validation_id.as_slice();
-        let current_id_matches = if let Some(sso) = &current.sso {
-            id.len() == 75 && id[..3] == *b"sso" &&
-                id[3..35] == sso.session_id_own && id[35..67] == sso.session_id_peer &&
-                id[67..] == epoch
-        } else {
-            id.len() == 45 && id[..5] == *b"local" &&
-                id[5..37] == current.public_key && id[37..] == epoch
-        };
-        if !current_id_matches {
-            return Err(AuthorityError::Disconnected);
-        }
-        operation(&current)
-    }
+	/// Keep the selected activation unchanged through a private key operation.
+	pub(crate) fn with_current_session<T>(
+		&self,
+		session: &AuthoritySession,
+		operation: impl FnOnce(&SessionInfo) -> Result<T, crate::runtime::authority::AuthorityError>,
+	) -> Result<T, crate::runtime::authority::AuthorityError> {
+		use crate::runtime::authority::AuthorityError;
+		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+		let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
+		let epoch = lifecycle.epoch.to_le_bytes();
+		let id = session.validation_id.as_slice();
+		let current_id_matches = if let Some(sso) = &current.sso {
+			id.len() == 75 &&
+				id[..3] == *b"sso" &&
+				id[3..35] == sso.session_id_own &&
+				id[35..67] == sso.session_id_peer &&
+				id[67..] == epoch
+		} else {
+			id.len() == 45 &&
+				id[..5] == *b"local" &&
+				id[5..37] == current.public_key &&
+				id[37..] == epoch
+		};
+		if !current_id_matches {
+			return Err(AuthorityError::Disconnected);
+		}
+		operation(&current)
+	}
 
 	/// Start the disconnect monitor when a session is already active.
 	#[cfg(test)]
@@ -557,14 +561,14 @@ impl SsoRequestService {
 			{
 				owner.session_ended(previous.as_ref(), false);
 			}
-            // Snapshots read while activation was resolving still belong to
-            // the previous selection, even when persisted SSO IDs are reused.
-            lifecycle.advance();
-            if previous.as_ref() == Some(&session) {
-                // A new activation with identical persisted IDs must still wake
-                // live capability owners so they drop the previous authority.
-                self.session_state.clear_session();
-            }
+			// Snapshots read while activation was resolving still belong to
+			// the previous selection, even when persisted SSO IDs are reused.
+			lifecycle.advance();
+			if previous.as_ref() == Some(&session) {
+				// A new activation with identical persisted IDs must still wake
+				// live capability owners so they drop the previous authority.
+				self.session_state.clear_session();
+			}
 			self.session_state.set_session(session.clone());
 			lifecycle.external_session_active = external_session;
 			previous

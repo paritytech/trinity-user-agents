@@ -38,7 +38,6 @@ use crate::{
 	subscription::Spawner,
 };
 
-use super::media::{MediaCallbackPlatform, NativeMediaCallbacks};
 #[cfg(doc)]
 use super::parse_pairing_deeplink;
 use super::{
@@ -54,6 +53,7 @@ use super::{
 	errors::{HostRejection, NativeCoreDatabaseError},
 	events::NativeEventBus,
 	executor::shared_native_executor,
+	media::{MediaCallbackPlatform, NativeMediaCallbacks},
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
@@ -453,18 +453,15 @@ impl NativeTrUApiHostRuntime {
 	pub fn get_funding_quote(&self, intent: String, ask: latest::FundingQuoteAsk) -> u64 {
 		self.runtime.request_funding_quotes(&intent, ask)
 	}
-    /// Refresh exactly one product's stored policy after another host core writes it.
-    pub async fn refresh_permission_authorization(
-        &self,
-        product_id: ProductId,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), HostRejection> {
-        self.runtime
-            .refresh_permission_authorization(&product_id, request)
-            .await?;
-        Ok(())
-    }
-
+	/// Refresh exactly one product's stored policy after another host core writes it.
+	pub async fn refresh_permission_authorization(
+		&self,
+		product_id: ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), HostRejection> {
+		self.runtime.refresh_permission_authorization(&product_id, request).await?;
+		Ok(())
+	}
 
 	/// Report what the user picked so far in session `intent`'s overlay. The
 	/// countries and amount limits it leads to arrive through
@@ -1051,18 +1048,16 @@ impl NativeProductExecution {
 		Ok(response.into_latest().granted)
 	}
 
-    /// Resolve the current authority-derived Calling settings slot, without
-    /// consent UI, backend initialization or signaling.
-    pub async fn calling_permission_authorization_request(
-        &self,
-    ) -> Result<PermissionAuthorizationRequest, HostRejection> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err(HostRejection::Rejected {
-                reason: "Product execution is closed".into(),
-            });
-        }
-        Ok(self.admin().calling_permission_authorization_request().await?)
-    }
+	/// Resolve the current authority-derived Calling settings slot, without
+	/// consent UI, backend initialization or signaling.
+	pub async fn calling_permission_authorization_request(
+		&self,
+	) -> Result<PermissionAuthorizationRequest, HostRejection> {
+		if self.closed.load(Ordering::Acquire) {
+			return Err(HostRejection::Rejected { reason: "Product execution is closed".into() });
+		}
+		Ok(self.admin().calling_permission_authorization_request().await?)
+	}
 
 	/// Read a product-scoped permission authorization without prompting.
 	///
@@ -1089,14 +1084,14 @@ impl NativeProductExecution {
 		Ok(())
 	}
 
-    /// Re-read stored product authorization without prompting or OS queries.
-    pub async fn refresh_permission_authorization(
-        &self,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), HostRejection> {
-        self.admin().refresh_permission_authorization(request).await?;
-        Ok(())
-    }
+	/// Re-read stored product authorization without prompting or OS queries.
+	pub async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), HostRejection> {
+		self.admin().refresh_permission_authorization(request).await?;
+		Ok(())
+	}
 
 	/// Read the active session's X25519 chat identity private key, or `None`
 	/// when no session is active.
