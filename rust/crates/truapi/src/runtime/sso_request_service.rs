@@ -84,14 +84,22 @@ impl Drop for LoginInFlightOwner<'_> {
 #[derive(Default)]
 struct SessionLifecycle {
 	epoch: u64,
+	/// Active identity generation; storage hints only cancel pending installation.
+	authority_epoch: u64,
 	external_session_active: bool,
 }
 
 impl SessionLifecycle {
-	fn advance(&mut self) -> u64 {
+	fn invalidate_pending(&mut self) -> u64 {
 		self.epoch = self.epoch.checked_add(1).expect("session lifecycle epoch exhausted");
 		self.external_session_active = false;
 		self.epoch
+	}
+
+	fn advance(&mut self) -> u64 {
+		self.authority_epoch =
+			self.authority_epoch.checked_add(1).expect("session authority epoch exhausted");
+		self.invalidate_pending()
 	}
 }
 
@@ -189,7 +197,10 @@ impl SsoRequestService {
 	/// Signal that the persisted auth session may have changed; the sync task
 	/// re-reads it.
 	pub fn notify_session_store_changed(&self) {
-		self.advance_session_lifecycle();
+		self.session_lifecycle
+			.lock()
+			.expect("session lifecycle mutex poisoned")
+			.invalidate_pending();
 		self.session_store_changes.notify();
 	}
 
@@ -259,7 +270,9 @@ impl SsoRequestService {
 		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
 		let current = self.session_state.current()?;
 		let mut session = authority_session(&current);
-		session.validation_id.extend_from_slice(&lifecycle.epoch.to_le_bytes());
+		session
+			.validation_id
+			.extend_from_slice(&lifecycle.authority_epoch.to_le_bytes());
 		Some(session)
 	}
 
@@ -272,7 +285,7 @@ impl SsoRequestService {
 		use crate::runtime::authority::AuthorityError;
 		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
 		let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
-		let epoch = lifecycle.epoch.to_le_bytes();
+		let epoch = lifecycle.authority_epoch.to_le_bytes();
 		let id = session.validation_id.as_slice();
 		let current_id_matches = if let Some(sso) = &current.sso {
 			id.len() == 75 &&
@@ -402,6 +415,17 @@ impl SsoRequestService {
 				.platform
 				.write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
 				.await;
+		}
+		// A storage hint is not a fresh selection. Keep live authority and its
+		// subscribers when reconciliation merely confirms the current identity.
+		{
+			let lifecycle =
+				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+			if !lifecycle.external_session_active &&
+				self.session_state.current().as_ref() == Some(&resolved)
+			{
+				return Ok(());
+			}
 		}
 		self.set_connected_session(resolved).await;
 		Ok(())

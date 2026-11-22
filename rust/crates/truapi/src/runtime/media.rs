@@ -973,6 +973,7 @@ impl Media for ProductRuntimeHost {
 #[cfg(test)]
 mod tests {
 	mod privacy;
+	mod storage_reconcile;
 	use super::*;
 	use crate::{
 		host_logic::media_protocol::{
