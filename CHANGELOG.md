@@ -13,13 +13,18 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   keep SDP, ICE candidates, network addresses and statistics inside hosts,
   never in product-facing responses or events. Bound optional TURN discovery
   to two seconds and continue directly when its configuration is invalid.
-- allow multi-interface Media ICE bursts: 258 queued messages per peer and
-  1,032 per runtime queue, retaining the 256 KiB peer and 1 MiB queue byte
-  limits. Capacity is released on delivery, not charged over the call lifetime.
-  The source-informed sizing envelope is 192 candidates (eight networks,
-  three unbundled transports, eight routes), allowing reflexive and relay
-  candidates as well. It is not a universal WebRTC maximum; mobile gathering
-  churn remains unmeasured. See the shared runtime limits for source references.
+- bound bundled multi-interface Media ICE bursts to 66 pending messages per
+  peer (64 candidates plus two description/control messages) and 264 per
+  runtime queue, retaining the 256 KiB peer, 1 MiB queue and per-message byte
+  protections. Delivery releases capacity; this is not a lifetime quota.
+  Standalone Chromium complete gathering with three transceivers, STUN and
+  coturn measured 90 candidates before max-bundle (54 host, 12 srflx, 24 relay)
+  and 30 after (18 host, 4 srflx, 8 relay), with no errors. The candidate budget
+  provides about twice the measured bundled burst's headroom, not a universal
+  WebRTC maximum or mobile qualification. Synthetic tests cover 64 candidates
+  across eight interfaces on one bundled transport over four drain cycles.
+  Stalled or flooded queues still fail closed; signaling is neither batched
+  nor changed on the wire.
 
 ## [0.30.0] - 2026-11-09
 

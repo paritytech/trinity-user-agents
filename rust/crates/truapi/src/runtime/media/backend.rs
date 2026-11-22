@@ -723,7 +723,7 @@ mod tests {
             }
             let participant = state.sessions.get_mut(&[1; 32]).unwrap().participants.get_mut(&[1; 32]).unwrap();
             assert!(participant.live());
-            assert_eq!(participant.pending_input.len(), 192);
+            assert_eq!(participant.pending_input.len(), 64);
             if generation == 0 {
                 assert!(dequeue_input(participant).is_none());
                 assert!(enqueue_input(&mut state, [1; 32], [1; 32], PeerInput::Description(
