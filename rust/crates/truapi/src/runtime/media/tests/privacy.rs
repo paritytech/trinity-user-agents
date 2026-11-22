@@ -219,6 +219,11 @@ fn microphone_session_with_existing_device_grant(product: &str, allow_once: bool
 			))
 			.is_ok()
 	);
+	let mut subscription = subscribe(&host);
+	assert!(matches!(
+		event(next_within(&mut subscription, Duration::from_secs(1))),
+		v::MediaEvent::Snapshot { .. }
+	));
 	futures::executor::block_on(async {
 		let cx = CallContext::default();
 		if allow_once {
