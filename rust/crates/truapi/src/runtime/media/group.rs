@@ -1199,6 +1199,7 @@ mod tests {
 
     #[test]
     fn multi_interface_ice_survives_commit_reordering_and_continual_gathering() {
+        const IP_SDP: &str = "v=0\r\nc=IN IP4 192.0.2.42\r\n";
         let a = advertisement(1, 11);
         let b = advertisement(2, 21);
         let mut caller = GroupEngine::new(a.clone());
