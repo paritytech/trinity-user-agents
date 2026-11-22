@@ -71,6 +71,7 @@ fn product_account_allocation_neither_creates_nor_replaces_delegated_allowance_k
 						.retain_grant(
 							&CallContext::default(),
 							&session,
+							&pairing_host.current_session().unwrap(),
 							revision,
 							owner,
 							decode_grant(SsoAllocatedResource::StatementStoreAllowance {
@@ -85,7 +86,7 @@ fn product_account_allocation_neither_creates_nor_replaces_delegated_allowance_k
 			let mapped = pairing_host
 				.remote_allocate_resources(
 					&CallContext::with_request_id("product-allocation".to_string()),
-					&session,
+					&pairing_host.current_session().unwrap(),
 					revision,
 					&product_id,
 					latest::HostRequestResourceAllocationRequest {
@@ -245,7 +246,7 @@ fn remote_allocation_keeps_delegated_keys_private_and_product_scoped() {
 		let response = pairing_host
 			.remote_allocate_resources(
 				&CallContext::with_request_id("delegated-allocation".to_string()),
-				&session,
+				&pairing_host.current_session().unwrap(),
 				revision,
 				&product_id,
 				latest::HostRequestResourceAllocationRequest {
@@ -322,7 +323,7 @@ fn remote_allocation_rejects_a_product_revision_revoked_before_submission() {
 		let error = pairing_host
 			.remote_allocate_resources(
 				&CallContext::default(),
-				&session,
+				&pairing_host.current_session().unwrap(),
 				revision,
 				&product_id,
 				latest::HostRequestResourceAllocationRequest {

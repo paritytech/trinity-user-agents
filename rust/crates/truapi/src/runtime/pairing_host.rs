@@ -730,8 +730,7 @@ impl PairingHost {
 		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-		let session = self.current_private_session(session)?;
-		self.remote_allocate_resources(cx, &session, grant_revision, product_id, request)
+		self.remote_allocate_resources(cx, session, grant_revision, product_id, request)
 			.await
 	}
 

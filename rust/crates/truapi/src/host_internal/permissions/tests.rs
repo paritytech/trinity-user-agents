@@ -2553,3 +2553,105 @@ fn media_reset_discards_late_answers_and_one_use_device_grants() {
         assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
     });
 }
+
+#[test]
+fn shared_policy_invalidation_discards_media_snapshots_without_changing_their_slot() {
+	futures::executor::block_on(async {
+		for request in [
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone),
+		] {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::new(vec![], vec![]);
+			let authority = Arc::new(PermissionAuthority::default());
+			let pending = PermissionsService::new(&storage, &prompt, &PRODUCT)
+				.with_authority(authority.clone());
+			let admin =
+				PermissionsService::new(&storage, &prompt, &PRODUCT).with_authority(authority);
+			let snapshot = pending.authorization_snapshot(&request).await.unwrap();
+			admin
+				.set_authorization_status(
+					&PermissionAuthorizationRequest::IdentityDisclosure,
+					PermissionAuthorizationStatus::Denied,
+				)
+				.await
+				.unwrap();
+			assert!(
+				!pending
+					.set_authorization_status_if_unchanged(
+						&request,
+						&snapshot,
+						PermissionAuthorizationStatus::Authorized,
+					)
+					.await
+					.unwrap()
+			);
+			assert_eq!(
+				pending
+					.record_permission_decision_if_unchanged(
+						&snapshot,
+						PermissionDecision::AllowOnce,
+						false,
+					)
+					.await
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+			);
+			assert_eq!(
+				pending.authorization_status(&request).await.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined
+			);
+		}
+	});
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn canonical_media_resets_keep_generations_and_block_legacy_reimport() {
+	futures::executor::block_on(async {
+		for request in [
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
+		] {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::new(vec![], vec![]);
+			let pending = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let snapshot = pending.authorization_snapshot(&request).await.unwrap();
+			admin
+				.set_canonical_authorization_status(
+					&request,
+					PermissionAuthorizationStatus::NotDetermined,
+				)
+				.await
+				.unwrap();
+			assert!(
+				!pending
+					.set_authorization_status_if_unchanged(
+						&request,
+						&snapshot,
+						PermissionAuthorizationStatus::Authorized,
+					)
+					.await
+					.unwrap()
+			);
+			admin
+				.import_authorization_status(
+					&request,
+					PermissionAuthorizationStatus::Authorized,
+				)
+				.await
+				.unwrap();
+			let raw = storage
+				.read_core_storage(authorization_key(&PRODUCT.product_id, &request))
+				.await
+				.unwrap()
+				.unwrap();
+			assert_eq!(raw.len(), 34);
+			assert_eq!(
+				decode_authorization(&raw),
+				Some(PermissionAuthorizationStatus::NotDetermined)
+			);
+		}
+	});
+}

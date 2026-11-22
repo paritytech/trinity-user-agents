@@ -4,7 +4,7 @@ use super::{
 	super::{
 		allowances::AllowanceResource,
 		authority::{
-			AccountGrant, Allowance, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
+			AccountGrant, Allowance, AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, PaymentTopUpAuthorityError,
 			ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
@@ -318,17 +318,18 @@ impl PairingHost {
 	pub async fn remote_allocate_resources(
 		&self,
 		cx: &CallContext,
-		session: &SessionInfo,
+		authority_session: &AuthoritySession,
 		grant_revision: u64,
 		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
 		self.grants.lifecycle().require_product_revision(grant_revision, product_id)?;
+		let session = self.current_private_session(authority_session)?;
 		let outcomes = self
 			.session
 			.call(
 				cx,
-				session,
+				&session,
 				ResourceAllocationRequest {
 					calling_product_id: product_id.clone(),
 					resources: request.resources,
@@ -343,7 +344,8 @@ impl PairingHost {
 				SsoAllocationOutcome::Allocated(resource) => {
 					self.retain_grant(
 						cx,
-						session,
+						&session,
+						authority_session,
 						grant_revision,
 						product_id,
 						decode_grant(resource)?,
@@ -525,6 +527,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
+		authority_session: &AuthoritySession,
 		grant_revision: u64,
 		product_id: &ProductId,
 		grant: AccountGrant,
@@ -544,7 +547,7 @@ impl PairingHost {
 			},
 			AccountGrant::SmartContract | AccountGrant::ProductStatementStore => {
 				let lifecycle = self.grants.lifecycle();
-				self.current_private_session(&super::super::authority::authority_session(session))?;
+				self.current_private_session(authority_session)?;
 				lifecycle.require_product_revision(grant_revision, product_id)
 			},
 		}
