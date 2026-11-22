@@ -1219,14 +1219,14 @@ mod tests {
             }
             if generation == 0 {
                 assert!(received.is_empty());
-                assert_eq!(callee.buffered_messages, 193);
+                assert_eq!(callee.buffered_messages, 65);
                 let mut started = relay(&a, &commit, &mut callee).into_iter();
                 assert!(matches!(started.next(), Some(GroupAction::Resolved { resolution: MediaIncomingResolution::Accepted, .. })));
                 assert!(matches!(started.next(), Some(GroupAction::StartPeer { offerer: false, .. })));
                 assert!(matches!(started.next(), Some(GroupAction::Description { description, .. }) if description.sdp == IP_SDP));
                 received.extend(started);
             }
-            assert_eq!(received.len(), 192);
+            assert_eq!(received.len(), 64);
             for (action, expected) in received.iter().zip(super::super::state::multi_interface_candidates(generation)) {
                 assert!(matches!(action, GroupAction::IceCandidate { session_id, participant_id, candidate }
                     if *session_id == [20; 32] && *participant_id == [21; 32]

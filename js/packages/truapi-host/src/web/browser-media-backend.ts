@@ -1384,13 +1384,19 @@ export function createBrowserMediaBackend(
           let pc: RTCPeerConnection;
           try {
             pc = new win.RTCPeerConnection(
-              webIdl<RTCConfiguration>({ iceServers, iceTransportPolicy }),
+              webIdl<RTCConfiguration>({
+                iceServers, iceTransportPolicy,
+                bundlePolicy: "max-bundle", rtcpMuxPolicy: "require",
+              }),
             );
           } catch (error) {
             if (iceTransportPolicy === "relay" || iceServers.length === 0)
               throw error;
             pc = new win.RTCPeerConnection(
-              webIdl<RTCConfiguration>({ iceServers: [], iceTransportPolicy }),
+              webIdl<RTCConfiguration>({
+                iceServers: [], iceTransportPolicy,
+                bundlePolicy: "max-bundle", rtcpMuxPolicy: "require",
+              }),
             );
           }
           peer.pc = pc;
