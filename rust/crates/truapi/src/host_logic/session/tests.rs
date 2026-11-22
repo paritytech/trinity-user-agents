@@ -15,6 +15,39 @@ fn info(pubkey_byte: u8) -> SessionInfo {
 	}
 }
 
+#[test]
+fn reactivation_invalidates_subscribers_without_a_disconnected_snapshot() {
+	let state = SessionState::new();
+	let session = info(7);
+	state.set_session(session.clone());
+	let mut events = state.subscribe();
+	let connected = VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected);
+	let disconnected = VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Disconnected);
+	assert_eq!(block_on(events.next()), Some(connected.clone()));
+	state.activate_session(session.clone());
+	assert_eq!(block_on(events.next()), Some(disconnected));
+	assert_eq!(state.current(), Some(session.clone()));
+	assert_eq!(block_on(events.next()), Some(connected));
+	assert!(events.next().now_or_never().is_none());
+	drop(events);
+
+	let reader = state.clone();
+	let expected = session.clone();
+	let barrier = Arc::new(std::sync::Barrier::new(2));
+	let reader_barrier = barrier.clone();
+	let observer = std::thread::spawn(move || {
+		reader_barrier.wait();
+		for _ in 0..10_000 {
+			assert_eq!(reader.current(), Some(expected.clone()));
+		}
+	});
+	barrier.wait();
+	for _ in 0..10_000 {
+		state.activate_session(session.clone());
+	}
+	observer.join().unwrap();
+}
+
 /// The leading four fields every untagged layout shares.
 ///
 /// Both helpers lay bytes down field by field rather than encoding a struct.
