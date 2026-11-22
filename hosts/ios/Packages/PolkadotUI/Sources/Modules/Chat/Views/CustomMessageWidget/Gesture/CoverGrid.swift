@@ -127,10 +127,31 @@ enum CoverGridShape {
         }
         return path
     }
+
+    /// How far the holes' edge is softened before it is sharpened again: half the cell's shorter side. That melts the
+    /// steps between neighbouring cells and the scallops between round holes into one round edge, and the edge stays
+    /// where the softened holes are half clear, so a scratch keeps its width.
+    static func softening(columns: Int, rows: Int, in size: CGSize) -> CGFloat {
+        guard columns > 0, rows > 0, size.width > 0, size.height > 0 else { return 0 }
+        return 0.5 * min(size.width / CGFloat(columns), size.height / CGFloat(rows))
+    }
+
+    /// How steeply the softened edge is sharpened: opacity is stretched this many times about one half, so the edge
+    /// ends about a point wide, smooth but not blurred.
+    static let edgeGain: Float = 16
+
+    /// Leaves colour alone and stretches opacity `edgeGain` times about one half.
+    static var sharpenEdge: ColorMatrix {
+        var matrix = ColorMatrix()
+        matrix.a4 = edgeGain
+        matrix.a5 = 0.5 * (1 - edgeGain)
+        return matrix
+    }
 }
 
 /// Draws its children as a cover, with a round hole cut for every cleared cell: those of the tree, plus those the
-/// worker cleared since (until the next tree, which always wins).
+/// worker cleared since (until the next tree, which always wins). The holes' edge is smoothed as it is drawn
+/// (`CoverGridShape.softening`), so cells read as one scratch, not as steps.
 struct NodeCoverGridView<Content: View>: View {
     let props: CustomMessageWidgetNode.CoverGridProps
     let modifiers: CustomMessageWidgetNode.Modifiers
@@ -161,7 +182,13 @@ private struct CoverGridMask: View {
             let holes = CoverGridShape.holes(
                 cells, columns: props.columns, rows: props.rows, in: size, mirrored: mirrored
             )
-            context.fill(holes, with: .color(.black))
+            let softening = CoverGridShape.softening(columns: props.columns, rows: props.rows, in: size)
+            context.drawLayer { layer in
+                // A layer's filters run last added first: the holes are softened, then their edge is sharpened again.
+                layer.addFilter(.colorMatrix(CoverGridShape.sharpenEdge))
+                layer.addFilter(.blur(radius: softening))
+                layer.fill(holes, with: .color(.black))
+            }
         }
     }
 }

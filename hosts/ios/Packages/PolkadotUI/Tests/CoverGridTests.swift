@@ -84,6 +84,25 @@ struct CoverGridShapeTests {
         cells.insert(8)
         #expect(CoverGridShape.holes(cells, columns: 4, rows: 2, in: CGSize(width: 40, height: 20)).isEmpty)
     }
+
+    @Test("The edge is softened by half the cell's shorter side, and not at all without a grid")
+    func softensByHalfACell() {
+        let ticket = CGSize(width: 272, height: 340)
+        #expect(abs(CoverGridShape.softening(columns: 34, rows: 42, in: ticket) - 4) < 0.001)
+        #expect(abs(CoverGridShape.softening(columns: 68, rows: 85, in: ticket) - 2) < 0.001)
+        #expect(CoverGridShape.softening(columns: 0, rows: 42, in: ticket) == 0)
+        #expect(CoverGridShape.softening(columns: 34, rows: 42, in: .zero) == 0)
+    }
+
+    @Test("Sharpening keeps the half-clear edge where it is and makes the rest clear or covered")
+    func sharpensAboutOneHalf() {
+        let matrix = CoverGridShape.sharpenEdge
+        let opacity = { (alpha: Float) in min(max(matrix.a4 * alpha + matrix.a5, 0), 1) }
+        #expect(abs(opacity(0.5) - 0.5) < 0.0001)
+        #expect(opacity(0.5 - 1 / CoverGridShape.edgeGain) == 0)
+        #expect(opacity(0.5 + 1 / CoverGridShape.edgeGain) == 1)
+        #expect(matrix.r1 == 1 && matrix.g2 == 1 && matrix.b3 == 1)
+    }
 }
 
 @MainActor
