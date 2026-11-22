@@ -5,6 +5,22 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Changed
+
+- connect Media peers directly when possible, with optional TURN fallback;
+  keep SDP, ICE candidates, network addresses and statistics inside hosts,
+  never in product-facing responses or events. Bound optional TURN discovery
+  to two seconds and continue directly when its configuration is invalid.
+- allow multi-interface Media ICE bursts: 258 queued messages per peer and
+  1,032 per runtime queue, retaining the 256 KiB peer and 1 MiB queue byte
+  limits. Capacity is released on delivery, not charged over the call lifetime.
+  The source-informed sizing envelope is 192 candidates (eight networks,
+  three unbundled transports, eight routes), allowing reflexive and relay
+  candidates as well. It is not a universal WebRTC maximum; mobile gathering
+  churn remains unmeasured. See the shared runtime limits for source references.
+
 ## [0.30.0] - 2026-11-09
 
 ### Added
