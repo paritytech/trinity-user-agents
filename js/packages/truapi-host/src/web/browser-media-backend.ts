@@ -51,6 +51,7 @@ const MAX_SUBSCRIPTIONS = 8;
 const MAX_RUNTIMES = 64;
 const MAX_ICE_CANDIDATES = 256;
 const CONNECTION_TIMEOUT = 30_000;
+const ICE_GATHERING_TIMEOUT = 1_000;
 
 /** Coordinates are in the trusted compositor mount's CSS coordinate system. */
 export interface BrowserMediaGeometry {
@@ -283,6 +284,7 @@ interface Peer {
   remote: Tracks;
   seen: Set<TrackKind>;
   candidates: RTCIceCandidateInit[];
+  localIce?: LocalIce;
   offerer: boolean;
   makingOffer: boolean;
   ignoreOffer: boolean;
@@ -291,6 +293,15 @@ interface Peer {
   audio: HTMLAudioElement;
   playbackBlocked: boolean;
   timer?: number;
+}
+interface LocalIce {
+  pending: RTCIceCandidate[];
+  media?: {
+    mid?: string;
+    usernameFragment?: string;
+    candidates: Set<string>;
+  }[];
+  finishGathering?: () => void;
 }
 
 class CommandRejected extends Error {
@@ -1240,14 +1251,108 @@ export function createBrowserMediaBackend(
     peer.serial = next.catch(() => undefined);
     return next;
   }
-  function emitDescription(peer: Peer): void {
-    if (!peerAlive(peer)) return;
-    const description = peer.pc?.localDescription;
+  function candidateKey(candidate: string): string {
+    // Browsers can put the generation's ufrag in events but not SDP candidates.
+    return candidate.replace(/ ufrag \S+/g, "");
+  }
+  function emitCandidate(peer: Peer, candidate: RTCIceCandidate): void {
+    if (!peerAlive(peer) || !candidate.candidate) return;
+    const ice = peer.localIce;
+    if (!ice) return;
+    if (!ice.media) {
+      if (ice.pending.length >= MAX_ICE_CANDIDATES) {
+        failPeer(peer);
+        return;
+      }
+      ice.pending.push(candidate);
+      return;
+    }
+    const media =
+      candidate.sdpMid !== null
+        ? ice.media.find((section) => section.mid === candidate.sdpMid)
+        : ice.media[candidate.sdpMLineIndex ?? -1];
+    if (
+      media?.candidates.has(candidateKey(candidate.candidate)) ||
+      (candidate.usernameFragment &&
+        media?.usernameFragment &&
+        candidate.usernameFragment !== media.usernameFragment)
+    )
+      return;
+    emit(peer.session.runtime, {
+      tag: "IceCandidate",
+      value: {
+        sessionId: peer.session.id,
+        participantId: peer.id,
+        candidate: {
+          candidate: candidate.candidate,
+          mid: candidate.sdpMid ?? undefined,
+          mlineIndex: candidate.sdpMLineIndex ?? undefined,
+        },
+      },
+    });
+  }
+  async function setLocalDescription(
+    peer: Peer,
+    description: RTCSessionDescriptionInit,
+  ): Promise<void> {
+    const pc = peer.pc!;
+    const ice: LocalIce = { pending: [] };
+    peer.localIce = ice;
+    try {
+      await pc.setLocalDescription(webIdl(description));
+      if (!peerAlive(peer)) return;
+      // Embed the initial gathering burst in one statement, but never wait on
+      // a slow TURN server indefinitely. Later candidates retain V1 trickle.
+      if (pc.iceGatheringState !== "complete") {
+        await new Promise<void>((resolve) => {
+          const finish = () => {
+            win.clearTimeout(timer);
+            pc.removeEventListener("icegatheringstatechange", changed);
+            ice.finishGathering = undefined;
+            resolve();
+          };
+          const changed = () => {
+            if (pc.iceGatheringState === "complete") finish();
+          };
+          const timer = win.setTimeout(finish, ICE_GATHERING_TIMEOUT);
+          ice.finishGathering = finish;
+          pc.addEventListener("icegatheringstatechange", changed);
+          changed();
+        });
+      }
+      if (!peerAlive(peer)) return;
+      emitDescription(peer, ice);
+    } catch (error) {
+      peer.localIce = undefined;
+      throw error;
+    }
+  }
+  function emitDescription(peer: Peer, ice: LocalIce): void {
+    const description = peer.pc!.localDescription;
     if (
       !description ||
       (description.type !== "offer" && description.type !== "answer")
     )
-      return;
+      throw failure("InvalidDescription");
+    const media: NonNullable<LocalIce["media"]> = [];
+    let section: (typeof media)[number] | undefined;
+    let usernameFragment: string | undefined;
+    for (const line of description.sdp.split(/\r?\n/)) {
+      if (line.startsWith("m=")) {
+        section = { usernameFragment, candidates: new Set() };
+        media.push(section);
+      } else if (line.startsWith("a=ice-ufrag:")) {
+        if (section) section.usernameFragment = line.slice(12);
+        else usernameFragment = line.slice(12);
+      } else if (section) {
+        if (line.startsWith("a=mid:")) section.mid = line.slice(6);
+        else if (line.startsWith("a=candidate:"))
+          section.candidates.add(candidateKey(line.slice(2)));
+      }
+    }
+    // Keep the published snapshot, not the live SDP, so candidates gathered
+    // after the deadline are still delivered and delayed embedded events are not.
+    ice.media = media;
     emit(peer.session.runtime, {
       tag: "Description",
       value: {
@@ -1259,6 +1364,8 @@ export function createBrowserMediaBackend(
         },
       },
     });
+    for (const candidate of ice.pending) emitCandidate(peer, candidate);
+    ice.pending.length = 0;
   }
   function negotiate(peer: Peer): void {
     void serializePeer(peer, async () => {
@@ -1272,13 +1379,10 @@ export function createBrowserMediaBackend(
       try {
         const offer = await pc.createOffer();
         if (!peerAlive(peer) || pc.signalingState !== "stable") return;
-        await pc.setLocalDescription(
-          webIdl<RTCSessionDescriptionInit>({
-            type: offer.type,
-            sdp: offer.sdp,
-          }),
-        );
-        emitDescription(peer);
+        await setLocalDescription(peer, {
+          type: offer.type,
+          sdp: offer.sdp,
+        });
       } finally {
         peer.makingOffer = false;
       }
@@ -1417,20 +1521,7 @@ export function createBrowserMediaBackend(
             );
           }
           pc.onicecandidate = (event) => {
-            if (!peerAlive(peer) || !event.candidate) return;
-            const candidate = event.candidate;
-            emit(session.runtime, {
-              tag: "IceCandidate",
-              value: {
-                sessionId: session.id,
-                participantId: id,
-                candidate: {
-                  candidate: candidate.candidate,
-                  mid: candidate.sdpMid ?? undefined,
-                  mlineIndex: candidate.sdpMLineIndex ?? undefined,
-                },
-              },
-            });
+            if (event.candidate) emitCandidate(peer, event.candidate);
           };
           pc.onnegotiationneeded = () => {
             if (peerAlive(peer)) negotiate(peer);
@@ -1532,10 +1623,12 @@ export function createBrowserMediaBackend(
           offer && (peer.makingOffer || pc.signalingState !== "stable");
         peer.ignoreOffer = peer.offerer && collision;
         if (peer.ignoreOffer) return;
-        if (collision)
+        if (collision) {
+          peer.localIce = undefined;
           await pc.setLocalDescription(
             webIdl<RTCSessionDescriptionInit>({ type: "rollback" }),
           );
+        }
         if (!peerAlive(peer)) return;
         await pc.setRemoteDescription(
           webIdl<RTCSessionDescriptionInit>({
@@ -1570,13 +1663,10 @@ export function createBrowserMediaBackend(
         if (offer) {
           const answer = await pc.createAnswer();
           if (!peerAlive(peer)) return;
-          await pc.setLocalDescription(
-            webIdl<RTCSessionDescriptionInit>({
-              type: answer.type,
-              sdp: answer.sdp,
-            }),
-          );
-          emitDescription(peer);
+          await setLocalDescription(peer, {
+            type: answer.type,
+            sdp: answer.sdp,
+          });
         }
         publishRemote(peer);
       }),
@@ -1616,6 +1706,8 @@ export function createBrowserMediaBackend(
     if (peer.closed) return;
     peer.closed = true;
     if (peer.timer !== undefined) win.clearTimeout(peer.timer);
+    peer.localIce?.finishGathering?.();
+    peer.localIce = undefined;
     if (peer.pc) {
       peer.pc.onicecandidate = null;
       peer.pc.ontrack = null;

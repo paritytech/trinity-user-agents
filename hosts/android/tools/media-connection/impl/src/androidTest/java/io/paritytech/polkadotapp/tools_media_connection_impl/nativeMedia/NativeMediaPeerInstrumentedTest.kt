@@ -68,6 +68,8 @@ class NativeMediaPeerInstrumentedTest {
                         val events = Channel<Pair<Boolean, MediaBackendEvent>>(Channel.UNLIMITED)
                         val connected = mutableSetOf<Boolean>()
                         val directCandidates = mutableSetOf<Boolean>()
+                        val described = mutableSetOf<Boolean>()
+                        val advertisedIce = mapOf(true to NativeMediaLocalIce(), false to NativeMediaLocalIce())
                         val remote = mutableMapOf<Boolean, MediaRemoteState>()
                         val frames = AtomicInteger()
                         var receiving: VideoTrack? = null
@@ -113,11 +115,25 @@ class NativeMediaPeerInstrumentedTest {
                                             event.description.sdp.lineSequence().filter { it.startsWith("m=") }
                                                 .map { it.substringAfter("m=").substringBefore(' ') }.toList(),
                                         )
+                                        described.add(fromCaller)
+                                        advertisedIce.getValue(fromCaller).publish(event.description.sdp)
+                                        if (event.description.sdp.lineSequence().any {
+                                            it.startsWith("a=candidate:") && it.contains(" typ host")
+                                        }) directCandidates.add(fromCaller)
+                                        if (servers.isEmpty()) {
+                                            assertTrue("Direct candidates must be embedded in the published description",
+                                                event.description.sdp.contains("a=candidate:"))
+                                        }
                                         if (event.description.kind == MediaDescriptionKind.ANSWER) answers++
                                         if (!fromCaller && event.description.kind == MediaDescriptionKind.OFFER) offersFromAnswerer++
                                         destination.description(event.description)
                                     }
                                     is MediaBackendEvent.IceCandidate -> {
+                                        assertTrue("A candidate cannot precede its description", fromCaller in described)
+                                        assertTrue("Embedded candidates must not be repeated as ICE messages",
+                                            advertisedIce.getValue(fromCaller).candidate(org.webrtc.IceCandidate(
+                                                event.candidate.mid, event.candidate.mlineIndex?.toInt() ?: -1,
+                                                event.candidate.candidate)))
                                         if (event.candidate.candidate.contains(" typ host")) directCandidates.add(fromCaller)
                                         destination.candidate(event.candidate)
                                     }
