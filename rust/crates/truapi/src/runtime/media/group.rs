@@ -1399,6 +1399,116 @@ mod tests {
         assert!(!caller.retries_send(&to, &description_payload));
     }
 
+    const IP_SDP: &str = "v=0\r\no=- 1 1 IN IP4 192.0.2.10\r\ns=-\r\nt=0 0\r\nc=IN IP4 192.0.2.10\r\nm=audio 49170 UDP/TLS/RTP/SAVPF 111\r\n";
+    const IP_CANDIDATES: [&str; 3] = [
+        "candidate:1 1 udp 2130706431 192.168.1.10 49170 typ host",
+        "candidate:2 1 udp 1694498815 198.51.100.10 49171 typ srflx raddr 192.168.1.10 rport 49170",
+        "candidate:3 1 udp 16777215 203.0.113.10 49172 typ relay raddr 198.51.100.10 rport 49171",
+    ];
+
+    fn ip_signaling(caller: &mut GroupEngine) -> Vec<Vec<GroupAction>> {
+        let mut messages = vec![caller.local_description([10; 32], [11; 32],
+            MediaDescription { kind: MediaDescriptionKind::Offer, sdp: IP_SDP.into() })];
+        for candidate in IP_CANDIDATES {
+            messages.push(caller.local_candidate([10; 32], [11; 32],
+                MediaIceCandidate { candidate: candidate.into(), mid: Some("audio".into()), mline_index: Some(0) }));
+        }
+        for message in &messages {
+            // Outbound transport remains private, with no product notification.
+            assert!(matches!(message.as_slice(), [GroupAction::Send { .. }]));
+        }
+        messages
+    }
+
+    fn assert_private_ip_signaling(actions: &[GroupAction]) {
+        // Exact action lists deliberately reject extra product-facing actions,
+        // not just check that a private action happens to be present.
+        assert_eq!(actions.len(), 4);
+        assert!(matches!(&actions[0], GroupAction::Description {
+            session_id, participant_id, description,
+        } if *session_id == [20; 32] && *participant_id == [21; 32]
+            && matches!(description.kind, MediaDescriptionKind::Offer)
+            && description.sdp == IP_SDP));
+        for (action, expected) in actions[1..].iter().zip(IP_CANDIDATES) {
+            assert!(matches!(action, GroupAction::IceCandidate {
+                session_id, participant_id, candidate,
+            } if *session_id == [20; 32] && *participant_id == [21; 32]
+                && candidate.candidate == expected && candidate.mid.as_deref() == Some("audio")
+                && candidate.mline_index == Some(0)));
+        }
+    }
+
+    #[test]
+    fn direct_and_relay_signaling_stays_private_before_and_after_commit() {
+        let a = advertisement(12, 121);
+        let b = advertisement(13, 131);
+        let mut caller = GroupEngine::new(a.clone());
+        let mut callee = GroupEngine::new(b.clone());
+        caller.create_session([10; 32]).unwrap();
+        let invite = caller.invite([10; 32], [11; 32], peer(&b), vec![b.clone()], &tracks(), NOW).unwrap();
+        let offer = incoming(&relay(&a, &invite, &mut callee));
+        let accept = callee.accept(offer, [20; 32], [21; 32], &tracks(), NOW).unwrap();
+        let commit = relay(&b, &accept, &mut caller);
+        assert!(starts(&commit, [10; 32], [11; 32], true));
+        let messages = ip_signaling(&mut caller);
+
+        // Signaling can overtake Commit: no transport data or public event
+        // escapes while the accepted endpoint waits for winner selection.
+        for message in &messages {
+            assert!(relay(&a, message, &mut callee).is_empty());
+        }
+        assert_eq!(callee.buffered_messages, 4);
+        let started = relay(&a, &commit, &mut callee);
+        assert_eq!(started.len(), 6);
+        assert!(matches!(&started[0], GroupAction::Resolved {
+            incoming_id, resolution: MediaIncomingResolution::Accepted,
+        } if *incoming_id == offer));
+        assert!(matches!(&started[1], GroupAction::StartPeer {
+            session_id, participant_id, offerer: false,
+        } if *session_id == [20; 32] && *participant_id == [21; 32]));
+        assert_private_ip_signaling(&started[2..]);
+        assert_eq!(callee.buffered_messages, 0);
+        assert_eq!(callee.buffered_bytes, 0);
+
+        let mut live = Vec::new();
+        for message in &messages {
+            live.extend(relay(&a, message, &mut callee));
+        }
+        assert_private_ip_signaling(&live);
+    }
+
+    #[test]
+    fn failed_ip_signaling_exposes_only_fixed_call_outcomes() {
+        // Exercise SDP and each candidate independently: the first failure
+        // ends its link, so later failures on that link would be no-ops.
+        for failed_message in 0..=IP_CANDIDATES.len() {
+            let a = advertisement(14, 141);
+            let b = advertisement(15, 151);
+            let mut caller = GroupEngine::new(a.clone());
+            let mut callee = GroupEngine::new(b.clone());
+            caller.create_session([10; 32]).unwrap();
+            let invite = caller.invite([10; 32], [11; 32], peer(&b), vec![b.clone()], &tracks(), NOW).unwrap();
+            let offer = incoming(&relay(&a, &invite, &mut callee));
+            let accept = callee.accept(offer, [20; 32], [21; 32], &tracks(), NOW).unwrap();
+            let commit = relay(&b, &accept, &mut caller);
+            assert!(starts(&relay(&a, &commit, &mut callee), [20; 32], [21; 32], false));
+            let messages = ip_signaling(&mut caller);
+            let GroupAction::Send { recipient, payload } = &messages[failed_message][0] else { unreachable!() };
+            let failed = caller.send_failed(recipient, payload);
+            assert_eq!(failed.len(), 2);
+            let GroupAction::Send { payload: leave, .. } = &failed[0] else { panic!("private leave expected") };
+            assert!(matches!(decode_wire(leave), Some(Wire::Leave { .. })));
+            assert!(matches!(&failed[1], GroupAction::EndPeer {
+                session_id, participant_id, outcome: MediaCallOutcome::ConnectivityLost,
+            } if *session_id == [10; 32] && *participant_id == [11; 32]));
+            let remote = relay(&a, &failed, &mut callee);
+            assert!(matches!(remote.as_slice(), [GroupAction::EndPeer {
+                session_id, participant_id, outcome: MediaCallOutcome::RemoteEnded,
+            }] if *session_id == [20; 32] && *participant_id == [21; 32]));
+            assert!(relay(&a, &messages[failed_message], &mut callee).is_empty());
+        }
+    }
+
     #[test]
     fn the_old_failure_path_drops_a_late_accept_and_retries_stop_after_the_link_ends() {
         let a = advertisement(10, 101);

@@ -18,11 +18,10 @@ navigator.mediaDevices.getUserMedia = async (constraints) => {
   }
   return stream;
 };
-// Candidate types the native agent gathered, observed beside the backend's own
-// listener. Only set by `ignoreRelayPolicy()`.
-const gathered = new Set();
-// Every candidate type that left a backend, in IceCandidate events or SDP.
+// These observations belong to the trusted host, never the product frame.
 const signaled = new Set();
+const descriptions = new Set();
+let transportOptions = {};
 const candidateType = (line) => / typ (\S+)/.exec(line)?.[1] ?? "unknown";
 
 const nodes = [];
@@ -54,7 +53,7 @@ async function observe(node) {
       if (event.tag === "Description" || event.tag === "IceCandidate") {
         if (event.tag === "IceCandidate") signaled.add(candidateType(event.value.candidate.candidate));
         else for (const line of event.value.description.sdp.split("\r\n"))
-          if (line.startsWith("a=candidate:")) signaled.add(candidateType(line));
+          if (line.startsWith("a=candidate:")) descriptions.add(candidateType(line));
         signal(nodes[Number(BigInt(event.value.participantId)) - 1], node, event);
       } else if (event.tag === "PeerStateChanged") {
         node.peer = event.value.state;
@@ -89,8 +88,7 @@ function createNode(index) {
     getCompositorMount: () => mount,
     isProductIsolated: () => !frame.sandbox.contains("allow-same-origin"),
     indicatorMount: document.querySelector("#controls"),
-    // Relay-only peers need the loopback TURN relay started by turn-server.ts.
-    iceServers: window.mediaIceServers,
+    ...transportOptions,
     requestConsent: async () => { throw new Error("Unexpected consent request"); },
   });
   return node;
@@ -320,21 +318,31 @@ window.mediaFixture = {
     await new Promise((resolve) => setTimeout(resolve, 0));
     return { result: result.tag, tracks: captures.flatMap((stream) => stream.getTracks().map((track) => track.readyState)) };
   },
-  // Models an engine that ignores `iceTransportPolicy: "relay"`: the native
-  // agent then gathers host candidates, which the backend must never signal.
-  ignoreRelayPolicy() {
-    const Native = window.RTCPeerConnection;
-    window.RTCPeerConnection = class extends Native {
-      constructor(config) {
-        super({ ...config, iceTransportPolicy: "all" });
-        this.addEventListener("icecandidate", (event) => {
-          if (event.candidate?.candidate) gathered.add(candidateType(event.candidate.candidate));
-        });
-      }
+  forceTurn(iceServers) {
+    transportOptions = { iceServers, iceTransportPolicy: "relay" };
+  },
+  rejectTurnCredentials() {
+    transportOptions = {
+      iceServers: async () => { throw new Error("TURN credentials unavailable at 192.0.2.42"); },
     };
   },
+  async rejectCapture() {
+    navigator.mediaDevices.getUserMedia = async () => {
+      throw new DOMException(
+        "capture failed: SDP candidate:1 1 udp 1 192.0.2.42 1234 typ host",
+        "NotReadableError",
+      );
+    };
+    const node = createNode(0);
+    nodes.push(node);
+    node.backend.attach(node.runtime);
+    return node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession",
+      value: { sessionId: node.session, operationId: id(701), tracks: { ...off, camera: true } },
+    });
+  },
   iceSnapshot() {
-    return { gathered: [...gathered].sort(), signaled: [...signaled].sort() };
+    return { signaled: [...signaled].sort(), descriptions: [...descriptions].sort() };
   },
   snapshot() {
     return { failures, captureRequests: captures.length,

@@ -41,6 +41,8 @@ internal class NativeMediaPeer(
     init {
         val config = PeerConnection.RTCConfiguration(servers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            // TURN augments direct connectivity; it is never required for Media.
+            iceTransportsType = PeerConnection.IceTransportsType.ALL
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
         }
         connection = requireNotNull(core.peerConnectionFactory.createPeerConnection(config, object : PeerConnection.Observer {
