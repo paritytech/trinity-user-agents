@@ -13,9 +13,11 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   keep SDP, ICE candidates, network addresses and statistics inside hosts,
   never in product-facing responses or events. Bound the wait for optional TURN
   discovery to two seconds and continue directly when its configuration is
-  invalid. Shared credential requests may finish within their own longer timeout
-  and populate the cache for subsequent peers without delaying the first peer
-  or cancelling concurrent Chat requests.
+  invalid. Shared credential requests may finish within their own 15-second
+  timeout and populate the cache for subsequent peers without delaying the first
+  peer or cancelling concurrent Chat requests. Android Chat keeps its 5-second
+  TURN wait. iOS Chat now fails a TURN request that takes longer than 15 seconds
+  (previously the 60-second URLSession default).
 - bound bundled multi-interface Media ICE bursts to 66 pending messages per
   peer (64 candidates plus two description/control messages) and 264 per
   runtime queue, retaining the 256 KiB peer, 1 MiB queue and per-message byte
