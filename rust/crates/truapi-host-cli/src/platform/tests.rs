@@ -286,139 +286,112 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 /// be overwritten by an unrelated write, clear, or compare-exchange.
 #[tokio::test]
 async fn cli_platform_preserves_unreadable_core_storage() {
-    use truapi::platform::CoreStorage;
+	use truapi::platform::CoreStorage;
 
-    let dir = tempdir().expect("tempdir");
-    let state_dir = dir.path().join("state");
-    let product_dir = dir.path().join("products");
-    std::fs::create_dir_all(&state_dir).expect("state dir");
-    let core_path = state_dir.join("core-storage.json");
+	let dir = tempdir().expect("tempdir");
+	let state_dir = dir.path().join("state");
+	let product_dir = dir.path().join("products");
+	std::fs::create_dir_all(&state_dir).expect("state dir");
+	let core_path = state_dir.join("core-storage.json");
 
-    let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
-    std::fs::write(&core_path, original).expect("seed core storage");
+	let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
+	std::fs::write(&core_path, original).expect("seed core storage");
 
-    let platform = CliPlatform::new(
-        &test_network(),
-        Some(CliStoragePaths::new(state_dir, product_dir)),
-        ApprovalPolicy::AutoAccept,
-        None,
-    );
+	let platform = CliPlatform::new(
+		&test_network(),
+		Some(CliStoragePaths::new(state_dir, product_dir)),
+		ApprovalPolicy::AutoAccept,
+		None,
+	);
 
-    assert!(
-        platform
-            .read_core_storage(CoreStorageKey::AuthSession)
-            .await
-            .is_err()
-    );
-    assert!(
-        platform
-            .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
-            .await
-            .is_err()
-    );
-    assert!(
-        platform
-            .clear_core_storage(CoreStorageKey::AuthSession)
-            .await
-            .is_err()
-    );
-    assert!(
-        platform
-            .compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![0x42], true,)
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        std::fs::read_to_string(&core_path).expect("read original"),
-        original
-    );
+	assert!(platform.read_core_storage(CoreStorageKey::AuthSession).await.is_err());
+	assert!(
+		platform
+			.write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+			.await
+			.is_err()
+	);
+	assert!(platform.clear_core_storage(CoreStorageKey::AuthSession).await.is_err());
+	assert!(
+		platform
+			.compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![0x42], true,)
+			.await
+			.is_err()
+	);
+	assert_eq!(std::fs::read_to_string(&core_path).expect("read original"), original);
 }
 
 #[test]
 fn independent_file_stores_compare_exchange_one_shared_slot() {
-    let dir = tempdir().expect("tempdir");
-    let platforms = [0, 1].map(|_| {
-        CliPlatform::new(
-            &test_network(),
-            Some(CliStoragePaths::new(
-                dir.path().join("state"),
-                dir.path().join("products"),
-            )),
-            ApprovalPolicy::AutoAccept,
-            None,
-        )
-    });
-    let mut changes = platforms
-        .each_ref()
-        .map(|platform| platform.subscribe_core_storage_changes());
-    let start = Arc::new(std::sync::Barrier::new(2));
-    let workers = platforms.each_ref().map(|platform| {
-        let platform = platform.clone();
-        let start = start.clone();
-        std::thread::spawn(move || {
-            start.wait();
-            futures::executor::block_on(platform.compare_exchange_core_storage(
-                CoreStorageKey::AuthSession,
-                None,
-                vec![1],
-                true,
-            ))
-            .expect("compare exchange")
-        })
-    });
-    let results = workers.map(|worker| worker.join().expect("storage thread"));
-    assert_eq!(results.into_iter().filter(|won| *won).count(), 1);
-    for receiver in &mut changes {
-        assert_eq!(
-            receiver.try_recv().unwrap().key,
-            CoreStorageKey::AuthSession
-        );
-    }
-    futures::executor::block_on(async {
-        platforms[0]
-            .write_core_storage(CoreStorageKey::AuthSession, Vec::new())
-            .await
-            .unwrap();
-        assert!(!platforms[1].compare_exchange_core_storage(
-            CoreStorageKey::AuthSession, None, vec![2], true,
-        ).await.unwrap());
-        assert!(
-            platforms[1]
-                .compare_exchange_core_storage(
-                    CoreStorageKey::AuthSession,
-                    Some(Vec::new()),
-                    vec![3],
-                    false,
-                )
-                .await
-                .unwrap()
-        );
-        assert_eq!(
-            platforms[0]
-                .read_core_storage(CoreStorageKey::AuthSession)
-                .await
-                .unwrap(),
-            Some(vec![3]),
-        );
-        platforms[0]
-            .clear_core_storage(CoreStorageKey::AuthSession)
-            .await
-            .unwrap();
-        assert!(platforms[1].compare_exchange_core_storage(
-            CoreStorageKey::AuthSession, None, vec![4], true,
-        ).await.unwrap());
-        for receiver in &mut changes {
-            assert_eq!(
-                receiver.try_recv().unwrap().key,
-                CoreStorageKey::AuthSession
-            );
-        }
-        assert!(
-            changes
-                .iter_mut()
-                .all(|receiver| receiver.try_recv().is_err())
-        );
-    });
+	let dir = tempdir().expect("tempdir");
+	let platforms = [0, 1].map(|_| {
+		CliPlatform::new(
+			&test_network(),
+			Some(CliStoragePaths::new(dir.path().join("state"), dir.path().join("products"))),
+			ApprovalPolicy::AutoAccept,
+			None,
+		)
+	});
+	let mut changes =
+		platforms.each_ref().map(|platform| platform.subscribe_core_storage_changes());
+	let start = Arc::new(std::sync::Barrier::new(2));
+	let workers = platforms.each_ref().map(|platform| {
+		let platform = platform.clone();
+		let start = start.clone();
+		std::thread::spawn(move || {
+			start.wait();
+			futures::executor::block_on(platform.compare_exchange_core_storage(
+				CoreStorageKey::AuthSession,
+				None,
+				vec![1],
+				true,
+			))
+			.expect("compare exchange")
+		})
+	});
+	let results = workers.map(|worker| worker.join().expect("storage thread"));
+	assert_eq!(results.into_iter().filter(|won| *won).count(), 1);
+	for receiver in &mut changes {
+		assert_eq!(receiver.try_recv().unwrap().key, CoreStorageKey::AuthSession);
+	}
+	futures::executor::block_on(async {
+		platforms[0]
+			.write_core_storage(CoreStorageKey::AuthSession, Vec::new())
+			.await
+			.unwrap();
+		assert!(
+			!platforms[1]
+				.compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![2], true,)
+				.await
+				.unwrap()
+		);
+		assert!(
+			platforms[1]
+				.compare_exchange_core_storage(
+					CoreStorageKey::AuthSession,
+					Some(Vec::new()),
+					vec![3],
+					false,
+				)
+				.await
+				.unwrap()
+		);
+		assert_eq!(
+			platforms[0].read_core_storage(CoreStorageKey::AuthSession).await.unwrap(),
+			Some(vec![3]),
+		);
+		platforms[0].clear_core_storage(CoreStorageKey::AuthSession).await.unwrap();
+		assert!(
+			platforms[1]
+				.compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![4], true,)
+				.await
+				.unwrap()
+		);
+		for receiver in &mut changes {
+			assert_eq!(receiver.try_recv().unwrap().key, CoreStorageKey::AuthSession);
+		}
+		assert!(changes.iter_mut().all(|receiver| receiver.try_recv().is_err()));
+	});
 }
 
 fn test_storage_paths(root: &Path, session: &str) -> CliStoragePaths {

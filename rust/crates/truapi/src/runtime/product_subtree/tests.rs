@@ -7,7 +7,7 @@ use crate::test_support::sso_session_info;
 
 #[derive(Default)]
 struct MemStorage {
-    changes: std::sync::Mutex<Vec<CoreStorageKey>>,
+	changes: std::sync::Mutex<Vec<CoreStorageKey>>,
 	inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 }
 
@@ -33,24 +33,30 @@ impl CoreStorage for MemStorage {
 		self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
 		Ok(())
 	}
-    async fn compare_exchange_core_storage(
-        &self, key: CoreStorageKey, expected: Option<Vec<u8>>,
-        replacement: Vec<u8>, notify_on_success: bool,
-    ) -> Result<bool, GenericError> {
-        let encoded = key.encode();
-        let mut storage = self.inner.lock().expect("storage mutex poisoned");
-        if storage.get(&encoded) != expected.as_ref() { return Ok(false); }
-        storage.insert(encoded, replacement);
-        
-        drop(storage);
-        if notify_on_success { self.core_storage_changed(key); }
-        Ok(true)
-    }
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, GenericError> {
+		let encoded = key.encode();
+		let mut storage = self.inner.lock().expect("storage mutex poisoned");
+		if storage.get(&encoded) != expected.as_ref() {
+			return Ok(false);
+		}
+		storage.insert(encoded, replacement);
 
-    fn core_storage_changed(&self, key: CoreStorageKey) {
-        self.changes.lock().expect("changes mutex poisoned").push(key);
-    }
+		drop(storage);
+		if notify_on_success {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
 
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.changes.lock().expect("changes mutex poisoned").push(key);
+	}
 }
 
 #[test]

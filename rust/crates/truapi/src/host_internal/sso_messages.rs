@@ -34,13 +34,13 @@ use truapi::{
 	v01,
 };
 
-use crate::host_logic::media_protocol::{MAX_PRODUCT_ID_BYTES, MAX_UNSIGNED_ADVERTISEMENT_BYTES};
 #[cfg(test)]
 use crate::host_logic::{
 	sso::pairing::encrypt_session_statement_data_with_nonce, x25519_seal::AEAD_NONCE_LEN,
 };
 use crate::{
 	host_logic::{
+		media_protocol::{MAX_PRODUCT_ID_BYTES, MAX_UNSIGNED_ADVERTISEMENT_BYTES},
 		session::SsoSessionInfo,
 		sso::pairing::{
 			SsoStatementData, decrypt_session_statement_data, encrypt_session_statement_data,
@@ -344,54 +344,53 @@ pub type StatementStoreProductSignResponse = Result<[u8; 64], String>;
 #[derive(Clone, PartialEq, Eq, Encode, derive_more::Debug)]
 #[debug("MediaEndpointCertificationRequest(<redacted>)")]
 pub struct MediaEndpointCertificationRequest {
-    pub product_id: String,
-    pub unsigned_advertisement: Vec<u8>,
+	pub product_id: String,
+	pub unsigned_advertisement: Vec<u8>,
 }
 
 impl Decode for MediaEndpointCertificationRequest {
-    fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
-        fn bounded_bytes<I: Input>(
-            input: &mut I,
-            maximum: usize,
-        ) -> Result<Vec<u8>, parity_scale_codec::Error> {
-            let length = Compact::<u32>::decode(input)?.0 as usize;
-            if length == 0 || length > maximum {
-                return Err("Media certification field exceeds its bound".into());
-            }
-            if input.remaining_len()?.is_some_and(|remaining| remaining < length) {
-                return Err("Truncated Media certification field".into());
-            }
-            input.on_before_alloc_mem(length)?;
-            let mut bytes = vec![0; length];
-            input.read(&mut bytes)?;
-            Ok(bytes)
-        }
-        let product_id = String::from_utf8(bounded_bytes(input, MAX_PRODUCT_ID_BYTES)?)
-            .map_err(|_| parity_scale_codec::Error::from("Invalid Media product encoding"))?;
-        let unsigned_advertisement = bounded_bytes(input, MAX_UNSIGNED_ADVERTISEMENT_BYTES)?;
-        Ok(Self { product_id, unsigned_advertisement })
-    }
+	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
+		fn bounded_bytes<I: Input>(
+			input: &mut I,
+			maximum: usize,
+		) -> Result<Vec<u8>, parity_scale_codec::Error> {
+			let length = Compact::<u32>::decode(input)?.0 as usize;
+			if length == 0 || length > maximum {
+				return Err("Media certification field exceeds its bound".into());
+			}
+			if input.remaining_len()?.is_some_and(|remaining| remaining < length) {
+				return Err("Truncated Media certification field".into());
+			}
+			input.on_before_alloc_mem(length)?;
+			let mut bytes = vec![0; length];
+			input.read(&mut bytes)?;
+			Ok(bytes)
+		}
+		let product_id = String::from_utf8(bounded_bytes(input, MAX_PRODUCT_ID_BYTES)?)
+			.map_err(|_| parity_scale_codec::Error::from("Invalid Media product encoding"))?;
+		let unsigned_advertisement = bounded_bytes(input, MAX_UNSIGNED_ADVERTISEMENT_BYTES)?;
+		Ok(Self { product_id, unsigned_advertisement })
+	}
 }
 
 /// Finite diagnostics for the private certification channel.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
 pub enum MediaEndpointCertificationError {
-    #[display("Disconnected")]
-    Disconnected,
-    #[display("Rejected")]
-    Rejected,
-    #[display("Media certification unavailable")]
-    Unavailable,
+	#[display("Disconnected")]
+	Disconnected,
+	#[display("Rejected")]
+	Rejected,
+	#[display("Media certification unavailable")]
+	Unavailable,
 }
 
 impl crate::host_internal::sso_wire::SsoError for MediaEndpointCertificationError {
-    fn not_connected() -> Self {
-        Self::Disconnected
-    }
+	fn not_connected() -> Self {
+		Self::Disconnected
+	}
 }
 
-pub type MediaEndpointCertificationResponse =
-    Result<[u8; 64], MediaEndpointCertificationError>;
+pub type MediaEndpointCertificationResponse = Result<[u8; 64], MediaEndpointCertificationError>;
 
 /// Request sent when a product asks the signing host to create a transaction
 /// for a product-derived account.
@@ -817,16 +816,18 @@ mod tests;
 #[cfg(test)]
 #[test]
 fn media_certification_rejects_oversized_fields_before_dispatch() {
-    for request in [
-        MediaEndpointCertificationRequest {
-            product_id: "a".repeat(MAX_PRODUCT_ID_BYTES + 1),
-            unsigned_advertisement: vec![1],
-        },
-        MediaEndpointCertificationRequest {
-            product_id: "myapp.dot".into(),
-            unsigned_advertisement: vec![1; MAX_UNSIGNED_ADVERTISEMENT_BYTES + 1],
-        },
-    ] {
-        assert!(MediaEndpointCertificationRequest::decode(&mut request.encode().as_slice()).is_err());
-    }
+	for request in [
+		MediaEndpointCertificationRequest {
+			product_id: "a".repeat(MAX_PRODUCT_ID_BYTES + 1),
+			unsigned_advertisement: vec![1],
+		},
+		MediaEndpointCertificationRequest {
+			product_id: "myapp.dot".into(),
+			unsigned_advertisement: vec![1; MAX_UNSIGNED_ADVERTISEMENT_BYTES + 1],
+		},
+	] {
+		assert!(
+			MediaEndpointCertificationRequest::decode(&mut request.encode().as_slice()).is_err()
+		);
+	}
 }

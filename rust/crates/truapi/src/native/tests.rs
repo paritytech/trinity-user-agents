@@ -304,28 +304,28 @@ impl HostCallbacks for EventCallbacks {
 	}
 
 	fn worker_crashing(&self, _product_id: ProductId, _crashes: u32) {}
-    async fn compare_exchange_core_storage(
-        &self,
-        key: Vec<u8>,
-        expected: Option<Vec<u8>>,
-        replacement: Vec<u8>,
-        notify_on_success: bool,
-    ) -> Result<bool, HostRejection> {
-        let mut storage = self.core_storage.lock().unwrap();
-        if storage.get(&key) != expected.as_ref() {
-            return Ok(false);
-        }
-        let notification = notify_on_success.then(|| key.clone());
-        storage.insert(key, replacement);
-        drop(storage);
-        if let Some(key) = notification {
-            self.core_storage_changed(key);
-        }
-        Ok(true)
-    }
-    fn core_storage_changed(&self, key: Vec<u8>) {
-        self.storage_changes.lock().unwrap().push(key);
-    }
+	async fn compare_exchange_core_storage(
+		&self,
+		key: Vec<u8>,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, HostRejection> {
+		let mut storage = self.core_storage.lock().unwrap();
+		if storage.get(&key) != expected.as_ref() {
+			return Ok(false);
+		}
+		let notification = notify_on_success.then(|| key.clone());
+		storage.insert(key, replacement);
+		drop(storage);
+		if let Some(key) = notification {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
+	fn core_storage_changed(&self, key: Vec<u8>) {
+		self.storage_changes.lock().unwrap().push(key);
+	}
 
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.paired_devices.lock().expect("paired device mutex poisoned").push(device);
@@ -2602,7 +2602,9 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			_notify_on_success: bool,
 		) -> Result<bool, HostRejection> {
 			let mut storage = self.storage.lock().unwrap();
-			if storage.get(&key) != expected.as_ref() { return Ok(false); }
+			if storage.get(&key) != expected.as_ref() {
+				return Ok(false);
+			}
 			storage.insert(key, replacement);
 			Ok(true)
 		}

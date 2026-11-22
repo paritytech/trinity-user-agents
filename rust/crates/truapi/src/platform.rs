@@ -12,10 +12,9 @@
 pub mod media;
 
 pub use media::{
-    MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
-    MediaBackendResponse, MediaDescription, MediaDescriptionKind, MediaIceCandidate, MediaPlatform,
-    MediaConsentRequest, MediaRevocationSource,
-    MediaRevokedPermission,
+	MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
+	MediaBackendResponse, MediaConsentRequest, MediaDescription, MediaDescriptionKind,
+	MediaIceCandidate, MediaPlatform, MediaRevocationSource, MediaRevokedPermission,
 };
 
 use std::collections::BTreeSet;
@@ -1210,7 +1209,10 @@ pub trait CoreAdmin: Send + Sync {
 	) -> Result<(), GenericError>;
 
 	/// Refresh stored policy without prompting and fence revoked Media.
-	async fn refresh_permission_authorization(&self, request: PermissionAuthorizationRequest) -> Result<(), GenericError>;
+	async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), GenericError>;
 
 	/// Read the active session's X25519 chat identity private key, for hosts
 	/// that run their own P2P chat channel for the paired identity.
@@ -1944,7 +1946,9 @@ pub enum StoredPermissionRequest {
 impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
 	fn from(request: PermissionAuthorizationRequest) -> Self {
 		match request {
-			PermissionAuthorizationRequest::Calling { network, account } => Self::Calling { network, account },
+			PermissionAuthorizationRequest::Calling { network, account } => {
+				Self::Calling { network, account }
+			},
 			PermissionAuthorizationRequest::Device(permission) => Self::Device(permission),
 			PermissionAuthorizationRequest::Remote(request) => Self::RemoteV2(request),
 			PermissionAuthorizationRequest::IdentityDisclosure => Self::IdentityDisclosure,
@@ -2053,8 +2057,14 @@ pub fn describe_core_storage_key(
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
 	let permission_request = match &key {
-		CoreStorageKey::PermissionAuthorization { request: StoredPermissionRequest::Calling { network, account }, .. } => Some(PermissionAuthorizationRequest::Calling { network: *network, account: *account }),
-		CoreStorageKey::PermissionAuthorization { request: StoredPermissionRequest::Device(permission), .. } => Some(PermissionAuthorizationRequest::Device(*permission)),
+		CoreStorageKey::PermissionAuthorization {
+			request: StoredPermissionRequest::Calling { network, account },
+			..
+		} => Some(PermissionAuthorizationRequest::Calling { network: *network, account: *account }),
+		CoreStorageKey::PermissionAuthorization {
+			request: StoredPermissionRequest::Device(permission),
+			..
+		} => Some(PermissionAuthorizationRequest::Device(*permission)),
 		_ => None,
 	};
 	let (kind, owner) = match key {
@@ -2121,8 +2131,15 @@ pub fn describe_core_storage_key(
 
 impl CoreStorageKey {
 	/// Calling consent for an exact authenticated product/account/network.
-	pub fn calling_authorization(product_id: &ProductId, network: [u8; 32], account: [u8; 32]) -> Self {
-		Self::permission_authorization(product_id, PermissionAuthorizationRequest::Calling { network, account })
+	pub fn calling_authorization(
+		product_id: &ProductId,
+		network: [u8; 32],
+		account: [u8; 32],
+	) -> Self {
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::Calling { network, account },
+		)
 	}
 
 	/// Cache key for `product_id`'s root manifest.
@@ -2377,20 +2394,26 @@ pub trait CoreStorage: Send + Sync {
 
 	/// Clear a core-owned value by typed slot.
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
-    /// Atomically replace exactly `expected` decoded bytes in this physical slot.
-    /// `None` differs from an empty value. Serialize with every write, clear and
-    /// compare-exchange across all cores sharing the store, through actual
-    /// persistence completion even if the requesting future is dropped.
-    /// On persisted success, `notify_on_success` enqueues `core_storage_changed`
-    /// before completion even if the requester was cancelled. Initial unanswered
-    /// snapshots pass false; explicit policy decisions pass true.
-    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, GenericError>;
+	/// Atomically replace exactly `expected` decoded bytes in this physical slot.
+	/// `None` differs from an empty value. Serialize with every write, clear and
+	/// compare-exchange across all cores sharing the store, through actual
+	/// persistence completion even if the requesting future is dropped.
+	/// On persisted success, `notify_on_success` enqueues `core_storage_changed`
+	/// before completion even if the requester was cancelled. Initial unanswered
+	/// snapshots pass false; explicit policy decisions pass true.
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, GenericError>;
 
-    /// Nonblocking notification after an explicit policy decision or reset.
-    /// Queue deferred refreshes for every core group sharing the store and exact
-    /// product, including the writer. Never await or reenter a core here. Raw
-    /// writes/clears and CAS with `notify_on_success == false` must not emit this.
-    fn core_storage_changed(&self, key: CoreStorageKey);
+	/// Nonblocking notification after an explicit policy decision or reset.
+	/// Queue deferred refreshes for every core group sharing the store and exact
+	/// product, including the writer. Never await or reenter a core here. Raw
+	/// writes/clears and CAS with `notify_on_success == false` must not emit this.
+	fn core_storage_changed(&self, key: CoreStorageKey);
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -2749,12 +2772,12 @@ pub enum NftPurseDrainDestination {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CallingReview {
-    /// Canonical product requesting calling authority.
-    pub product_id: ProductId,
-    /// Genesis hash of the authenticated network.
-    pub network: [u8; 32],
-    /// Product's authority-derived `Index(0)` sr25519 public key.
-    pub account: [u8; 32],
+	/// Canonical product requesting calling authority.
+	pub product_id: ProductId,
+	/// Genesis hash of the authenticated network.
+	pub network: [u8; 32],
+	/// Product's authority-derived `Index(0)` sr25519 public key.
+	pub account: [u8; 32],
 }
 
 /// Review shown before a user-confirmed core action continues.

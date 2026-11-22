@@ -1,12 +1,21 @@
 package io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
+import io.paritytech.polkadotapp.common.domain.model.CurrentTimeContext
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.ExternalRtcConfig
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.TurnCredentials
+import io.paritytech.polkadotapp.tools_media_connection_impl.turn.ExternalRtcConfigProvider
+import io.paritytech.polkadotapp.tools_media_connection_impl.turn.TurnApi
+import io.paritytech.polkadotapp.tools_media_connection_impl.turn.TurnCredentialsResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
@@ -18,51 +27,187 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.webrtc.PeerConnection
+import kotlin.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NativeMediaIceTest {
     @Test
-    fun `credential lookup cancels a suspended provider after two seconds`() = runTest {
+    fun `slow TURN response warms the shared cache after Media returns direct ICE`() = runTest {
+        val api = mockk<TurnApi>()
         var cancelled = false
-        val operation = async {
-            nativeMediaIceServers {
-                try {
-                    awaitCancellation()
-                } finally {
-                    cancelled = true
-                }
+        coEvery { api.issueTurnCredentials(any()) } coAnswers {
+            try {
+                delay(3_000)
+                credentials()
+            } catch (failure: CancellationException) {
+                cancelled = true
+                throw failure
             }
         }
+        val provider = provider(api)
+        val firstPeer = async { nativeMediaIceServers(provider::getConfig) }
         runCurrent()
         advanceTimeBy(1_999)
-        assertFalse(operation.isCompleted)
+        assertFalse(firstPeer.isCompleted)
         advanceTimeBy(1)
         runCurrent()
-        assertTrue(operation.await().isEmpty())
-        assertTrue(cancelled)
+        assertTrue(firstPeer.await().isEmpty())
         assertEquals(2_000L, currentTime)
+        assertFalse(cancelled)
+
+        advanceTimeBy(1_000)
+        runCurrent()
+        val secondPeer = nativeMediaIceServers(provider::getConfig)
+        assertTrue(secondPeer.any { "turn:relay.example:3478" in it.urls })
+        assertEquals(3_000L, currentTime)
+        assertFalse(cancelled)
+        coVerify(exactly = 1) { api.issueTurnCredentials(any()) }
+    }
+
+    @Test
+    fun `a suspended shared request stops at its own fifteen second deadline`() = runTest {
+        val api = mockk<TurnApi>()
+        var cancelled = false
+        coEvery { api.issueTurnCredentials(any()) } coAnswers {
+            try {
+                awaitCancellation()
+            } finally {
+                cancelled = true
+            }
+        }
+        val provider = provider(api)
+        val firstPeer = async { nativeMediaIceServers(provider::getConfig) }
+        runCurrent()
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertTrue(firstPeer.await().isEmpty())
+        assertFalse(cancelled)
+        advanceTimeBy(12_999)
+        runCurrent()
+        assertFalse(cancelled)
+        advanceTimeBy(1)
+        runCurrent()
+        assertTrue(cancelled)
+        coVerify(exactly = 1) { api.issueTurnCredentials(any()) }
+
+        coEvery { api.issueTurnCredentials(any()) } returns credentials()
+        assertTrue(nativeMediaIceServers(provider::getConfig).isNotEmpty())
+        coVerify(exactly = 2) { api.issueTurnCredentials(any()) }
     }
 
     @Test
     fun `outer cancellation stops credential lookup without direct fallback`() = runTest {
+        val api = mockk<TurnApi>()
         var cancelled = false
         var returned = false
-        val operation = async {
-            nativeMediaIceServers {
-                try {
-                    awaitCancellation()
-                } finally {
-                    cancelled = true
-                }
+        coEvery { api.issueTurnCredentials(any()) } coAnswers {
+            try {
+                awaitCancellation()
+            } finally {
+                cancelled = true
             }
+        }
+        val provider = provider(api)
+        val operation = async {
+            nativeMediaIceServers(provider::getConfig)
             returned = true
         }
         runCurrent()
         operation.cancelAndJoin()
+        runCurrent()
         assertTrue(operation.isCancelled)
         assertTrue(cancelled)
         assertFalse(returned)
         assertEquals(0L, currentTime)
+    }
+
+    @Test
+    fun `cancelling Media does not cancel a concurrent Chat lookup`() = runTest {
+        val api = mockk<TurnApi>()
+        var cancelled = false
+        coEvery { api.issueTurnCredentials(any()) } coAnswers {
+            try {
+                delay(3_000)
+                credentials()
+            } catch (failure: CancellationException) {
+                cancelled = true
+                throw failure
+            }
+        }
+        val provider = provider(api)
+        val media = async { nativeMediaIceServers(provider::getConfig) }
+        val chat = async { provider.getConfig() }
+        runCurrent()
+        media.cancelAndJoin()
+        runCurrent()
+        assertFalse(cancelled)
+        assertFalse(chat.isCompleted)
+
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertTrue(chat.await().turnCredentials.isNotEmpty())
+        assertTrue(nativeMediaIceServers(provider::getConfig).isNotEmpty())
+        assertFalse(cancelled)
+        coVerify(exactly = 1) { api.issueTurnCredentials(any()) }
+    }
+
+    @Test
+    fun `cancelling Chat does not cancel Media or its cache warmup`() = runTest {
+        val api = mockk<TurnApi>()
+        var cancelled = false
+        coEvery { api.issueTurnCredentials(any()) } coAnswers {
+            try {
+                delay(3_000)
+                credentials()
+            } catch (failure: CancellationException) {
+                cancelled = true
+                throw failure
+            }
+        }
+        val provider = provider(api)
+        val chat = async { provider.getConfig() }
+        val media = async { nativeMediaIceServers(provider::getConfig) }
+        runCurrent()
+        chat.cancelAndJoin()
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertTrue(media.await().isEmpty())
+        assertFalse(cancelled)
+
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertTrue(nativeMediaIceServers(provider::getConfig).isNotEmpty())
+        assertFalse(cancelled)
+        coVerify(exactly = 1) { api.issueTurnCredentials(any()) }
+    }
+
+    @Test
+    fun `cancelling the last consumer stops the shared request`() = runTest {
+        val api = mockk<TurnApi>()
+        var cancelled = false
+        coEvery { api.issueTurnCredentials(any()) } coAnswers {
+            try {
+                awaitCancellation()
+            } finally {
+                cancelled = true
+            }
+        }
+        val provider = provider(api)
+        val media = async { nativeMediaIceServers(provider::getConfig) }
+        val chat = async { provider.getConfig() }
+        runCurrent()
+        media.cancelAndJoin()
+        runCurrent()
+        assertFalse(cancelled)
+        chat.cancelAndJoin()
+        runCurrent()
+        assertTrue(cancelled)
+        assertEquals(0L, currentTime)
+        coVerify(exactly = 1) { api.issueTurnCredentials(any()) }
+
+        coEvery { api.issueTurnCredentials(any()) } returns credentials()
+        assertTrue(provider.getConfig().turnCredentials.isNotEmpty())
+        coVerify(exactly = 2) { api.issueTurnCredentials(any()) }
     }
 
     @Test
@@ -157,6 +302,18 @@ class NativeMediaIceTest {
         assertSame(failure, thrown)
         assertEquals(1, attempts)
     }
+
+    private fun TestScope.provider(api: TurnApi) = ExternalRtcConfigProvider(
+        api,
+        CurrentTimeContext { Instant.fromEpochMilliseconds(currentTime) }
+    )
+
+    private fun credentials() = TurnCredentialsResponse(
+        servers = listOf("turn:relay.example:3478"),
+        username = "test",
+        password = "test",
+        ttl = 60
+    )
 
     private fun servers(): List<PeerConnection.IceServer> =
         listOf(PeerConnection.IceServer.builder("turn:relay.example:3478")

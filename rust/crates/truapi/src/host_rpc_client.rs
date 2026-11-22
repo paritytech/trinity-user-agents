@@ -260,11 +260,20 @@ impl HostRpcClient {
 	}
 
 	/// Wrap a dedicated connection with host-recognizable request identifiers.
-	pub fn with_request_id_prefix(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner, prefix: &'static str) -> Self {
+	pub fn with_request_id_prefix(
+		connection: Arc<dyn JsonRpcConnection>,
+		spawner: Spawner,
+		prefix: &'static str,
+	) -> Self {
 		Self::with_options(connection, spawner, REQUEST_SILENCE_DEADLINE, prefix)
 	}
 
-	fn with_options(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner, silence_deadline: Duration, request_id_prefix: &'static str) -> Self {
+	fn with_options(
+		connection: Arc<dyn JsonRpcConnection>,
+		spawner: Spawner,
+		silence_deadline: Duration,
+		request_id_prefix: &'static str,
+	) -> Self {
 		let (stop_response_tx, stop_response_rx) = oneshot::channel();
 		let client = Self {
 			inner: Arc::new(HostRpcClientInner {

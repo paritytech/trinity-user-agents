@@ -11,11 +11,18 @@ final class WebRTCConfigFactory: WebRTCConfigMaking {
     private let turnService: TURNCredentialsProviding
     private let iceCandidatePoolSize: Int32
     private let allowsDirectFallback: Bool
+    private let clock: any Clock<Duration>
 
-    init(turnService: TURNCredentialsProviding, iceCandidatePoolSize: Int32 = 8, allowsDirectFallback: Bool = false) {
+    init(
+        turnService: TURNCredentialsProviding,
+        iceCandidatePoolSize: Int32 = 8,
+        allowsDirectFallback: Bool = false,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) {
         self.turnService = turnService
         self.iceCandidatePoolSize = iceCandidatePoolSize
         self.allowsDirectFallback = allowsDirectFallback
+        self.clock = clock
     }
 
     func makeConnectionConfiguration() async throws -> RTCConfiguration {
@@ -72,17 +79,18 @@ private extension WebRTCConfigFactory {
                 continuation.finish(throwing: error)
             }
         }
-        let deadline = Task {
+        let deadline = Task { [clock] in
             do {
                 // Leave time for peer construction inside the core's five-second deadline.
-                try await Task.sleep(for: .seconds(2))
+                try await clock.sleep(for: .seconds(2))
                 continuation.finish(throwing: TimeoutError())
             } catch {
                 // Completion or outer cancellation has already ended the race.
             }
         }
         defer {
-            provider.cancel()
+            // A Media deadline leaves the provider's bounded request warming its shared cache.
+            if Task.isCancelled { provider.cancel() }
             deadline.cancel()
         }
         var iterator = stream.makeAsyncIterator()

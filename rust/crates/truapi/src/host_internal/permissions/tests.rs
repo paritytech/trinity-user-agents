@@ -23,7 +23,7 @@ static PEOPL: LazyLock<ProductContext> =
 
 #[derive(Default)]
 struct MemStorage {
-    changes: std::sync::Mutex<Vec<CoreStorageKey>>,
+	changes: std::sync::Mutex<Vec<CoreStorageKey>>,
 	inner: Mutex<HashMap<String, Vec<u8>>>,
 }
 
@@ -47,24 +47,30 @@ impl CoreStorage for MemStorage {
 		self.inner.lock().await.remove(&test_key(key));
 		Ok(())
 	}
-    async fn compare_exchange_core_storage(
-        &self, key: CoreStorageKey, expected: Option<Vec<u8>>,
-        replacement: Vec<u8>, notify_on_success: bool,
-    ) -> Result<bool, GenericError> {
-        let encoded = test_key(key.clone());
-        let mut storage = self.inner.lock().await;
-        if storage.get(&encoded) != expected.as_ref() { return Ok(false); }
-        storage.insert(encoded, replacement);
-        
-        drop(storage);
-        if notify_on_success { self.core_storage_changed(key); }
-        Ok(true)
-    }
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, GenericError> {
+		let encoded = test_key(key.clone());
+		let mut storage = self.inner.lock().await;
+		if storage.get(&encoded) != expected.as_ref() {
+			return Ok(false);
+		}
+		storage.insert(encoded, replacement);
 
-    fn core_storage_changed(&self, key: CoreStorageKey) {
-        self.changes.lock().expect("changes mutex poisoned").push(key);
-    }
+		drop(storage);
+		if notify_on_success {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
 
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.changes.lock().expect("changes mutex poisoned").push(key);
+	}
 }
 
 fn test_key(key: CoreStorageKey) -> String {
@@ -321,7 +327,7 @@ fn a_one_use_answer_to_an_operation_is_consumed_by_that_operation() {
 				PermissionAuthorizationStatus::NotDetermined,
 				PermissionAuthorizationStatus::Authorized,
 				PermissionAuthorizationStatus::NotDetermined,
-                // A generation tombstone is persisted, never the one-use grant.
+				// A generation tombstone is persisted, never the one-use grant.
 				1,
 			),
 		);
@@ -438,6 +444,8 @@ struct ScriptedPrompt {
 	/// Domain bundles the remote callback was actually asked about, in call
 	/// order, so a test can assert which subset reached the user.
 	remote_domains_asked: Mutex<Vec<Vec<String>>>,
+	calling_answers: Mutex<Vec<Result<bool, GenericError>>>,
+	calling_reviews: Mutex<Vec<CallingReview>>,
 }
 
 impl ScriptedPrompt {
@@ -461,7 +469,14 @@ impl ScriptedPrompt {
 			device_calls: AtomicUsize::new(0),
 			remote_calls: AtomicUsize::new(0),
 			remote_domains_asked: Mutex::new(Vec::new()),
+			calling_answers: Mutex::new(Vec::new()),
+			calling_reviews: Mutex::new(Vec::new()),
 		}
+	}
+
+	fn with_calling_answers(mut self, answers: Vec<Result<bool, GenericError>>) -> Self {
+		self.calling_answers = Mutex::new(answers);
+		self
 	}
 
 	fn domains_asked(&self) -> Vec<Vec<String>> {
@@ -502,6 +517,31 @@ impl Permissions for ScriptedPrompt {
 			.pop()
 			.expect("ScriptedPrompt ran out of remote answers");
 		Ok(decision)
+	}
+}
+
+#[async_trait::async_trait]
+impl UserConfirmation for ScriptedPrompt {
+	async fn confirm_permission(
+		&self,
+		_review: UserConfirmationReview,
+	) -> Result<PermissionDecision, GenericError> {
+		Ok(self.remote_answers.lock().await.remove(0))
+	}
+
+	async fn confirm_user_action(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<bool, GenericError> {
+		let UserConfirmationReview::Calling(review) = review else {
+			panic!("unexpected confirmation review");
+		};
+		self.calling_reviews.lock().await.push(review);
+		self.calling_answers
+			.lock()
+			.await
+			.pop()
+			.expect("ScriptedPrompt ran out of calling answers")
 	}
 }
 
@@ -1549,15 +1589,18 @@ impl CoreStorage for FailingStorage {
 	async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		Err(v01::GenericError { reason: "clear failed".into() })
 	}
-    async fn compare_exchange_core_storage(
-        &self, _key: CoreStorageKey, _expected: Option<Vec<u8>>,
-        _replacement: Vec<u8>, _notify_on_success: bool,
-    ) -> Result<bool, GenericError> {
-        Err(GenericError { reason: "write failed".into() })
-    }
-    fn core_storage_changed(&self, _key: CoreStorageKey) {
-        unreachable!("failed storage cannot notify a successful change")
-    }
+	async fn compare_exchange_core_storage(
+		&self,
+		_key: CoreStorageKey,
+		_expected: Option<Vec<u8>>,
+		_replacement: Vec<u8>,
+		_notify_on_success: bool,
+	) -> Result<bool, GenericError> {
+		Err(GenericError { reason: "write failed".into() })
+	}
+	fn core_storage_changed(&self, _key: CoreStorageKey) {
+		unreachable!("failed storage cannot notify a successful change")
+	}
 }
 
 #[test]
@@ -2508,50 +2551,713 @@ fn resetting_a_permission_prevents_reimporting_a_legacy_grant() {
 
 #[test]
 fn calling_is_exact_scoped_and_never_trusted_or_unscoped() {
-    futures::executor::block_on(async {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PEOPL);
-        let scoped = PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
-        assert_eq!(service.authorization_status(&scoped).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-        let unscoped = RemotePermissionRequest { permission: RemotePermission::Calling };
-        assert_eq!(service.authorize_remote(unscoped).await.unwrap(), PermissionAuthorizationStatus::Denied);
-        service.set_authorization_status(&scoped, PermissionAuthorizationStatus::Authorized).await.unwrap();
-        assert_eq!(service.authorization_status(&scoped).await.unwrap(), PermissionAuthorizationStatus::Authorized);
-        for request in [
-            PermissionAuthorizationRequest::Calling { network: [3; 32], account: [2; 32] },
-            PermissionAuthorizationRequest::Calling { network: [1; 32], account: [3; 32] },
-        ] {
-            assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-        }
-        let executable = PermissionsService::new(&storage, &prompt, &PEOPL_APP);
-        assert_eq!(executable.authorization_status(&scoped).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-    });
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PEOPL);
+		let scoped = PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
+		assert_eq!(
+			service.authorization_status(&scoped).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+		let unscoped = RemotePermissionRequest { permission: RemotePermission::Calling };
+		assert_eq!(
+			service.authorize_remote(unscoped).await.unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		service
+			.set_authorization_status(&scoped, PermissionAuthorizationStatus::Authorized)
+			.await
+			.unwrap();
+		assert_eq!(
+			service.authorization_status(&scoped).await.unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+		for request in [
+			PermissionAuthorizationRequest::Calling { network: [3; 32], account: [2; 32] },
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [3; 32] },
+		] {
+			assert_eq!(
+				service.authorization_status(&request).await.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined
+			);
+		}
+		let executable = PermissionsService::new(&storage, &prompt, &PEOPL_APP);
+		assert_eq!(
+			executable.authorization_status(&scoped).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+	});
 }
 
 #[test]
 fn media_reset_discards_late_answers_and_one_use_device_grants() {
-    futures::executor::block_on(async {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        for request in [
-            PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
-            PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
-        ] {
-            let pending = service.authorization_snapshot(&request).await.unwrap();
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined).await.unwrap();
-            assert!(!service.set_authorization_status_if_unchanged(&request, &pending, PermissionAuthorizationStatus::Authorized).await.unwrap());
-            assert_eq!(service.record_permission_decision_if_unchanged(&pending, PermissionDecision::AllowOnce, false).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-        }
-        let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
-        let pending = service.authorization_snapshot(&request).await.unwrap();
-        assert_eq!(service.record_permission_decision_if_unchanged(&pending, PermissionDecision::AllowOnce, false).await.unwrap(), PermissionAuthorizationStatus::Authorized);
-        assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::Authorized);
-        let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        admin.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined).await.unwrap();
-        assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-    });
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		for request in [
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
+		] {
+			let pending = service.authorization_snapshot(&request).await.unwrap();
+			service
+				.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined)
+				.await
+				.unwrap();
+			assert!(
+				!service
+					.set_authorization_status_if_unchanged(
+						&request,
+						&pending,
+						PermissionAuthorizationStatus::Authorized
+					)
+					.await
+					.unwrap()
+			);
+			assert_eq!(
+				service
+					.record_permission_decision_if_unchanged(
+						&pending,
+						PermissionDecision::AllowOnce,
+						false
+					)
+					.await
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined
+			);
+		}
+		let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+		let pending = service.authorization_snapshot(&request).await.unwrap();
+		assert_eq!(
+			service
+				.record_permission_decision_if_unchanged(
+					&pending,
+					PermissionDecision::AllowOnce,
+					false
+				)
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+		let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		admin
+			.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined)
+			.await
+			.unwrap();
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+	});
+}
+
+struct PendingCas {
+	key: CoreStorageKey,
+	expected: Option<Vec<u8>>,
+	replacement: Vec<u8>,
+	notify_on_success: bool,
+	reply: futures::channel::oneshot::Sender<Result<bool, GenericError>>,
+}
+
+/// A foreign host owns dispatched storage work independently of the Rust
+/// future waiting for its reply.
+struct DeferredCasStorage<'a> {
+	inner: &'a MemStorage,
+	pending: Mutex<Option<PendingCas>>,
+}
+
+impl DeferredCasStorage<'_> {
+	async fn complete_host_job(&self) -> Result<bool, GenericError> {
+		let job = self.pending.lock().await.take().expect("CAS was dispatched");
+		let changed = self
+			.inner
+			.compare_exchange_core_storage(
+				job.key,
+				job.expected,
+				job.replacement,
+				job.notify_on_success,
+			)
+			.await?;
+		let _ = job.reply.send(Ok(changed));
+		Ok(changed)
+	}
+}
+
+#[async_trait::async_trait]
+impl CoreStorage for DeferredCasStorage<'_> {
+	async fn read_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, GenericError> {
+		self.inner.read_core_storage(key).await
+	}
+	async fn write_core_storage(
+		&self,
+		key: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), GenericError> {
+		self.inner.write_core_storage(key, value).await
+	}
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+		self.inner.clear_core_storage(key).await
+	}
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, GenericError> {
+		let (reply, receive) = futures::channel::oneshot::channel();
+		*self.pending.lock().await =
+			Some(PendingCas { key, expected, replacement, notify_on_success, reply });
+		receive.await.map_err(|_| GenericError { reason: "host job lost".into() })?
+	}
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.inner.core_storage_changed(key);
+	}
+}
+
+async fn persist_calling_decision<P: Permissions + ?Sized>(
+	service: &PermissionsService<'_, MemStorage, P>,
+	network: [u8; 32],
+	account: [u8; 32],
+	snapshot: PermissionAuthorizationSnapshot,
+	status: PermissionAuthorizationStatus,
+) -> Result<PermissionAuthorizationStatus, GenericError> {
+	if service
+		.set_authorization_status_if_unchanged(
+			&PermissionAuthorizationRequest::Calling { network, account },
+			&snapshot,
+			status,
+		)
+		.await?
+	{
+		Ok(status)
+	} else {
+		Ok(PermissionAuthorizationStatus::NotDetermined)
+	}
+}
+
+#[test]
+fn another_execution_reset_invalidates_an_unconsumed_device_grant() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::decisions(
+			vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
+			vec![],
+		);
+		let execution = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let device = HostDevicePermissionRequest::Camera;
+		assert_eq!(
+			execution.check_or_prompt_device(device).await.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		admin
+			.set_authorization_status(
+				&PermissionAuthorizationRequest::Device(device),
+				PermissionAuthorizationStatus::NotDetermined,
+			)
+			.await
+			.unwrap();
+		assert_eq!(
+			execution.authorize_device(device).await.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 2);
+	});
+}
+
+#[test]
+fn legacy_unscoped_calling_grants_and_trusted_labels_never_authorize_calling() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		for product_id in ["product.dot", "peopl.dot"] {
+			let product = ProductContext::new(ProductId::for_test(product_id));
+			let service = PermissionsService::new(&storage, &prompt, &product);
+			let remote_request = remote(RemotePermission::Calling);
+			let request = PermissionAuthorizationRequest::Remote(remote_request.clone());
+			assert_eq!(
+				service.check_or_prompt_remote(remote_request.clone()).await.unwrap(),
+				PermissionAuthorizationStatus::Denied,
+			);
+			assert!(
+				service
+					.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
+					.await
+					.is_err()
+			);
+			let legacy_key = CoreStorageKey::remote_permission_authorization(
+				&product.product_id,
+				&remote_request,
+			);
+			assert!(storage.read_core_storage(legacy_key.clone()).await.unwrap().is_none());
+			// Simulate an old host that persisted a grant without authenticated scope.
+			storage
+				.write_core_storage(legacy_key, StoredAuthorizationStatus::Authorized.encode())
+				.await
+				.unwrap();
+			assert_eq!(
+				service.authorization_status(&request).await.unwrap(),
+				PermissionAuthorizationStatus::Denied,
+			);
+			assert_eq!(
+				service.check_or_prompt_remote(remote_request).await.unwrap(),
+				PermissionAuthorizationStatus::Denied,
+			);
+			assert_eq!(
+				service
+					.authorization_status(&PermissionAuthorizationRequest::Calling {
+						network: [1; 32],
+						account: [2; 32],
+					})
+					.await
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+			);
+			for status in [
+				PermissionAuthorizationStatus::Denied,
+				PermissionAuthorizationStatus::NotDetermined,
+			] {
+				service.set_authorization_status(&request, status).await.unwrap();
+				assert_eq!(
+					authorization_status(
+						&storage,
+						CoreStorageKey::remote_permission_authorization(
+							&product.product_id,
+							&remote(RemotePermission::Calling)
+						)
+					)
+					.await
+					.unwrap(),
+					status,
+				);
+			}
+		}
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+	});
+}
+
+#[test]
+fn a_transient_calling_prompt_error_does_not_persist_a_denial() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]).with_calling_answers(vec![
+			Ok(true),
+			Err(GenericError { reason: "confirmation channel unavailable".to_string() }),
+		]);
+		let service = trusted_service(&storage, &prompt);
+		let network = [1; 32];
+		let account = [2; 32];
+		assert_eq!(
+			service
+				.check_or_prompt_calling(network, account, |_, _| async {
+					panic!("a failed review must not commit")
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined,
+		);
+		assert_eq!(
+			service
+				.authorization_status(&PermissionAuthorizationRequest::Calling { network, account })
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined,
+		);
+		assert_eq!(
+			service
+				.check_or_prompt_calling(network, account, |snapshot, status| {
+					persist_calling_decision(&service, network, account, snapshot, status)
+				})
+				.await
+				.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+	});
+}
+
+#[test]
+fn independent_permission_services_discard_answers_after_new_policy_generations() {
+	futures::executor::block_on(async {
+		for request in [
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone),
+		] {
+			for replacement in [
+				PermissionAuthorizationStatus::Denied,
+				PermissionAuthorizationStatus::NotDetermined,
+				PermissionAuthorizationStatus::Authorized,
+			] {
+				let storage = MemStorage::default();
+				let prompt = ScriptedPrompt::new(vec![], vec![]);
+				let pending = PermissionsService::new(&storage, &prompt, &PRODUCT);
+				let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
+				let snapshot = pending.authorization_snapshot(&request).await.unwrap();
+				assert_eq!(snapshot.status, PermissionAuthorizationStatus::NotDetermined);
+				assert_eq!(
+					storage.changes.lock().unwrap().len(),
+					0,
+					"initializing unanswered consent must not revoke another core's receive-only call"
+				);
+				admin.set_authorization_status(&request, replacement).await.unwrap();
+				assert!(
+					!pending
+						.set_authorization_status_if_unchanged(
+							&request,
+							&snapshot,
+							PermissionAuthorizationStatus::Authorized,
+						)
+						.await
+						.unwrap()
+				);
+				assert_eq!(pending.authorization_status(&request).await.unwrap(), replacement);
+				assert_eq!(
+					storage.changes.lock().unwrap().len(),
+					1,
+					"only the explicit policy change notifies other cores"
+				);
+			}
+		}
+	});
+}
+
+#[test]
+fn deleting_and_recreating_a_slot_cannot_resurrect_a_pending_consent() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+		let old = service.authorization_snapshot(&request).await.unwrap();
+		let key = CoreStorageKey::device_permission_authorization(
+			&PRODUCT.product_id,
+			&HostDevicePermissionRequest::Camera,
+		);
+		storage.clear_core_storage(key).await.unwrap();
+		assert!(
+			!service
+				.set_authorization_status_if_unchanged(
+					&request,
+					&old,
+					PermissionAuthorizationStatus::Authorized,
+				)
+				.await
+				.unwrap(),
+			"a pre-prompt snapshot never expects a missing slot"
+		);
+		let fresh = service.authorization_snapshot(&request).await.unwrap();
+		assert!(
+			!service
+				.set_authorization_status_if_unchanged(
+					&request,
+					&old,
+					PermissionAuthorizationStatus::Authorized,
+				)
+				.await
+				.unwrap(),
+			"a recreated Ask is a new generation"
+		);
+		assert!(
+			service
+				.set_authorization_status_if_unchanged(
+					&request,
+					&fresh,
+					PermissionAuthorizationStatus::Denied,
+				)
+				.await
+				.unwrap()
+		);
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+	});
+}
+
+#[test]
+fn consent_snapshot_is_bound_to_product_and_request() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let first = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let second = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
+		let camera = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+		let microphone =
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone);
+		let snapshot = first.authorization_snapshot(&camera).await.unwrap();
+		assert!(
+			!second
+				.set_authorization_status_if_unchanged(
+					&camera,
+					&snapshot,
+					PermissionAuthorizationStatus::Authorized,
+				)
+				.await
+				.unwrap()
+		);
+		assert!(
+			!first
+				.set_authorization_status_if_unchanged(
+					&microphone,
+					&snapshot,
+					PermissionAuthorizationStatus::Authorized,
+				)
+				.await
+				.unwrap()
+		);
+		assert_eq!(
+			second.authorization_status(&camera).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+		assert_eq!(
+			first.authorization_status(&microphone).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+		assert!(
+			first
+				.set_authorization_status_if_unchanged(
+					&camera,
+					&snapshot,
+					PermissionAuthorizationStatus::Authorized,
+				)
+				.await
+				.unwrap()
+		);
+	});
+}
+
+#[test]
+fn repeating_an_explicit_grant_still_invalidates_the_previous_generation() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request =
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
+		service
+			.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
+			.await
+			.unwrap();
+		let snapshot = service.authorization_snapshot(&request).await.unwrap();
+		service
+			.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
+			.await
+			.unwrap();
+		assert!(
+			!service
+				.set_authorization_status_if_unchanged(
+					&request,
+					&snapshot,
+					PermissionAuthorizationStatus::Denied,
+				)
+				.await
+				.unwrap()
+		);
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+	});
+}
+
+struct PolicyChangingPrompt<'a> {
+	storage: &'a MemStorage,
+	replacement: PermissionAuthorizationStatus,
+}
+
+#[async_trait::async_trait]
+impl Permissions for PolicyChangingPrompt<'_> {
+	async fn device_permission(
+		&self,
+		product: &ProductContext,
+		request: HostDevicePermissionRequest,
+	) -> Result<PermissionDecision, GenericError> {
+		PermissionsService::new(self.storage, self, product)
+			.set_authorization_status(
+				&PermissionAuthorizationRequest::Device(request),
+				self.replacement,
+			)
+			.await?;
+		Ok(PermissionDecision::AllowAlways)
+	}
+
+	async fn remote_permission(
+		&self,
+		_product: &ProductContext,
+		_request: RemotePermissionRequest,
+	) -> Result<PermissionDecision, GenericError> {
+		panic!("only scoped consent should be prompted");
+	}
+}
+
+#[async_trait::async_trait]
+impl UserConfirmation for PolicyChangingPrompt<'_> {
+	async fn confirm_user_action(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<bool, GenericError> {
+		let UserConfirmationReview::Calling(review) = review else {
+			panic!("only Calling consent should be confirmed");
+		};
+		PermissionsService::new(self.storage, self, &PRODUCT)
+			.set_authorization_status(
+				&PermissionAuthorizationRequest::Calling {
+					network: review.network,
+					account: review.account,
+				},
+				self.replacement,
+			)
+			.await?;
+		Ok(true)
+	}
+}
+
+#[test]
+fn calling_and_direct_device_prompts_capture_policy_before_showing_ui() {
+	futures::executor::block_on(async {
+		for replacement in
+			[PermissionAuthorizationStatus::Denied, PermissionAuthorizationStatus::NotDetermined]
+		{
+			let storage = MemStorage::default();
+			let prompt = PolicyChangingPrompt { storage: &storage, replacement };
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let device =
+				PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+			assert_ne!(
+				service
+					.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+					.await
+					.unwrap(),
+				PermissionAuthorizationStatus::Authorized
+			);
+			assert_eq!(service.authorization_status(&device).await.unwrap(), replacement);
+			let calling =
+				PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
+			assert_eq!(
+				service
+					.check_or_prompt_calling([1; 32], [2; 32], |snapshot, status| {
+						persist_calling_decision(&service, [1; 32], [2; 32], snapshot, status)
+					})
+					.await
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined
+			);
+			assert_eq!(service.authorization_status(&calling).await.unwrap(), replacement);
+		}
+	});
+}
+
+#[test]
+fn authorization_records_reject_trailing_bytes_and_unknown_formats() {
+	assert_eq!(decode_authorization(&[0]), Some(PermissionAuthorizationStatus::Authorized));
+	assert_eq!(decode_authorization(&[1]), Some(PermissionAuthorizationStatus::Denied));
+	assert_eq!(decode_authorization(&[2]), Some(PermissionAuthorizationStatus::NotDetermined));
+	for malformed in [vec![], vec![0, 0], vec![1, 0], vec![2; 33], vec![2; 35], vec![3; 34]] {
+		assert_eq!(decode_authorization(&malformed), None);
+	}
+	let mut record = stamped_authorization(PermissionAuthorizationStatus::Authorized).unwrap();
+	assert_eq!(decode_authorization(&record), Some(PermissionAuthorizationStatus::Authorized));
+	record[33] = 3;
+	assert_eq!(decode_authorization(&record), None);
+}
+
+#[test]
+fn host_refresh_reads_product_policy_without_os_overlay() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let os = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&os));
+		let request =
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone);
+		service
+			.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
+			.await
+			.unwrap();
+		assert_eq!(
+			service.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		assert_eq!(
+			service.stored_authorization_status(request).await.unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+	});
+}
+
+#[test]
+fn accepted_foreign_cas_notifies_after_its_requester_is_dropped() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let reader = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request =
+			PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
+		let snapshot = reader.authorization_snapshot(&request).await.unwrap();
+		let foreign = DeferredCasStorage { inner: &storage, pending: Mutex::new(None) };
+		let requester = PermissionsService::new(&foreign, &prompt, &PRODUCT);
+		let mut decision = Box::pin(requester.set_authorization_status_if_unchanged(
+			&request,
+			&snapshot,
+			PermissionAuthorizationStatus::Denied,
+		));
+		assert!(futures::poll!(decision.as_mut()).is_pending());
+		drop(decision);
+		assert!(foreign.complete_host_job().await.unwrap());
+		assert_eq!(
+			reader.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		assert_eq!(
+			storage.changes.lock().unwrap().len(),
+			1,
+			"persisted revocation must notify even when Rust cannot resume after CAS"
+		);
+	});
+}
+
+#[test]
+fn dropped_foreign_approval_cannot_overwrite_a_newer_reset() {
+	futures::executor::block_on(async {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request =
+			PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone);
+		let snapshot = admin.authorization_snapshot(&request).await.unwrap();
+		let foreign = DeferredCasStorage { inner: &storage, pending: Mutex::new(None) };
+		let requester = PermissionsService::new(&foreign, &prompt, &PRODUCT);
+		let mut decision = Box::pin(requester.set_authorization_status_if_unchanged(
+			&request,
+			&snapshot,
+			PermissionAuthorizationStatus::Authorized,
+		));
+		assert!(futures::poll!(decision.as_mut()).is_pending());
+		drop(decision);
+		admin
+			.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined)
+			.await
+			.unwrap();
+		assert!(!foreign.complete_host_job().await.unwrap());
+		assert_eq!(
+			admin.authorization_status(&request).await.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+		assert_eq!(
+			storage.changes.lock().unwrap().len(),
+			1,
+			"only the newer reset notifies; rejected late approval never does"
+		);
+	});
 }
 
 #[test]

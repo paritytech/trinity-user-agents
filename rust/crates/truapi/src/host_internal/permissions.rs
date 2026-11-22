@@ -947,7 +947,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 				CoreStorageKey::device_permission_authorization(self.product_id(), permission)
 			},
 			PermissionAuthorizationRequest::Remote(request) => {
-                if matches!(request.permission, RemotePermission::Calling) {
+                if matches!(request.permission, RemotePermission::Calling) && status == PermissionAuthorizationStatus::Authorized {
                     return Err(GenericError { reason: "Calling authorization requires network and account scope".into() });
                 }
 				// This is the host's per-domain surface: it names the patterns it

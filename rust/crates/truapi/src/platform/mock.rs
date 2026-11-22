@@ -379,7 +379,6 @@ impl Default for MockPlatform {
 }
 
 impl MockPlatform {
-
 	/// Build a mock platform with default behavior (allow-all permissions,
 	/// feature support on, dark theme, auto-confirm, silent chain, no faults).
 	pub fn new() -> Self {
@@ -429,7 +428,9 @@ impl MockPlatform {
 	}
 
 	/// Explicit policy notifications shared by every clone.
-	pub fn core_storage_changes(&self) -> Vec<CoreStorageKey> { self.core_storage_changes.lock().unwrap().clone() }
+	pub fn core_storage_changes(&self) -> Vec<CoreStorageKey> {
+		self.core_storage_changes.lock().unwrap().clone()
+	}
 
 	/// Notifications the core asked the host to show, in order.
 	pub fn pushed_notifications(&self) -> Vec<latest::HostPushNotificationRequest> {
@@ -1017,36 +1018,34 @@ impl CoreStorage for MockPlatform {
 		self.storage.lock().expect("storage poisoned").remove(&core_key(&key));
 		Ok(())
 	}
-    async fn compare_exchange_core_storage(
-        &self,
-        key: CoreStorageKey,
-        expected: Option<Vec<u8>>,
-        replacement: Vec<u8>,
-        notify_on_success: bool,
-    ) -> Result<bool, latest::GenericError> {
-        if let Some(reason) = &self.config.faults.storage_error {
-            return Err(latest::GenericError {
-                reason: reason.clone(),
-            });
-        }
-        let mut storage = self.storage.lock().expect("storage poisoned");
-        let slot = core_key(&key);
-        if storage.get(&slot) != expected.as_ref() {
-            return Ok(false);
-        }
-        storage.insert(slot, replacement);
-        if notify_on_success {
-            self.core_storage_changed(key);
-        }
-        Ok(true)
-    }
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.storage_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let mut storage = self.storage.lock().expect("storage poisoned");
+		let slot = core_key(&key);
+		if storage.get(&slot) != expected.as_ref() {
+			return Ok(false);
+		}
+		storage.insert(slot, replacement);
+		if notify_on_success {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
 
-    fn core_storage_changed(&self, key: CoreStorageKey) {
-        self.core_storage_changes
-            .lock()
-            .expect("core storage changes poisoned")
-            .push(key);
-    }
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.core_storage_changes
+			.lock()
+			.expect("core storage changes poisoned")
+			.push(key);
+	}
 }
 
 #[async_trait::async_trait]
