@@ -967,11 +967,17 @@ impl MediaService {
 							MediaCallOutcome::HostFailed,
 						)
 					} else {
+						let Some(now) =
+							state.signaling.as_ref().and_then(|signaling| signaling.now().ok())
+						else {
+							discard_input(PeerInput::Candidate(candidate));
+							return;
+						};
 						let actions = state
 							.group
 							.as_mut()
 							.map(|group| {
-								group.local_candidate(session_id, participant_id, candidate)
+								group.local_candidate(session_id, participant_id, candidate, now)
 							})
 							.unwrap_or_default();
 						apply_actions_locked(&mut state, actions)

@@ -1294,13 +1294,22 @@ export function createBrowserMediaBackend(
   async function setLocalDescription(
     peer: Peer,
     description: RTCSessionDescriptionInit,
-  ): Promise<void> {
+  ): Promise<LocalIce | undefined> {
     const pc = peer.pc!;
     const ice: LocalIce = { pending: [] };
     peer.localIce = ice;
     try {
       await pc.setLocalDescription(webIdl(description));
-      if (!peerAlive(peer)) return;
+      return peerAlive(peer) ? ice : undefined;
+    } catch (error) {
+      peer.localIce = undefined;
+      throw error;
+    }
+  }
+  async function publishGatheredDescription(peer: Peer, ice: LocalIce): Promise<void> {
+    if (!peerAlive(peer)) return;
+    const pc = peer.pc!;
+    try {
       // Embed the initial gathering burst in one statement, but never wait on
       // a slow TURN server indefinitely. Later candidates retain V1 trickle.
       if (pc.iceGatheringState !== "complete") {
@@ -1379,10 +1388,11 @@ export function createBrowserMediaBackend(
       try {
         const offer = await pc.createOffer();
         if (!peerAlive(peer) || pc.signalingState !== "stable") return;
-        await setLocalDescription(peer, {
+        const ice = await setLocalDescription(peer, {
           type: offer.type,
           sdp: offer.sdp,
         });
+        if (ice) await publishGatheredDescription(peer, ice);
       } finally {
         peer.makingOffer = false;
       }
@@ -1615,8 +1625,8 @@ export function createBrowserMediaBackend(
       media[2] !== "m=video"
     )
       throw failure("InvalidDescription");
-    await serializePeer(peer, () =>
-      serializeSession(peer.session, async () => {
+    await serializePeer(peer, async () => {
+      const ice = await serializeSession(peer.session, async () => {
         const pc = peer.pc!;
         const offer = description.kind === "Offer";
         const collision =
@@ -1663,14 +1673,19 @@ export function createBrowserMediaBackend(
         if (offer) {
           const answer = await pc.createAnswer();
           if (!peerAlive(peer)) return;
-          await setLocalDescription(peer, {
+          const ice = await setLocalDescription(peer, {
             type: answer.type,
             sdp: answer.sdp,
           });
+          publishRemote(peer);
+          return ice;
         }
         publishRemote(peer);
-      }),
-    );
+      });
+      // Gathering is per-peer work: do not delay other peers' descriptions or
+      // local track commits behind a slow TURN allocation.
+      if (ice) await publishGatheredDescription(peer, ice);
+    });
   }
   async function addCandidate(
     peer: Peer,
