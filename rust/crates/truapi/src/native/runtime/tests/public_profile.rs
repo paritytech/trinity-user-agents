@@ -33,7 +33,7 @@ fn profile_runtime(platform: Arc<StubPlatform>, db: Db) -> Arc<NativeTrUApiHostR
 		stack: crate::test_support::test_stack("paseo", [1; 32], [2; 32], [3; 32]),
 		materials_enabled: false,
 	};
-	let core = SigningHostRuntime::new(platform, signing, Spawner::for_test());
+	let core = HostRuntime::<SigningHost>::new(platform, signing, Spawner::for_test());
 	assert!(core.set_core_db(db));
 	let mut host = native_host_runtime_no_session();
 	Arc::get_mut(&mut host).unwrap().runtime = Arc::new(core);

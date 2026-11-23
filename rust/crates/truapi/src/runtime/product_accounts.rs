@@ -31,7 +31,7 @@ use super::{
 		CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		StatementStoreAllowanceKey,
 	},
-	contacts::ContactHandles,
+	contacts::ContactHandleKey,
 	product_consent::ProductConsent,
 };
 
@@ -55,6 +55,11 @@ impl<H: AccountHolder> ProductAccounts<H> {
 	/// Current account-authority session, if connected.
 	pub fn current_session(&self) -> Option<AuthoritySession> {
 		self.accounts.current_session()
+	}
+
+	/// This device's X25519 encryption secret, as the account holder keeps it.
+	pub async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.accounts.device_encryption_secret().await
 	}
 
 	/// Seed a product subtree for authority tests.
@@ -299,11 +304,11 @@ impl<H: AccountHolder> ProductAccounts<H> {
 			.derive_entropy(session, &self.connection.product.product_id, context)
 	}
 
-	/// Contact handles that stay stable across products.
-	pub fn contact_handles(
+	/// This product's handle key, alike on every host of the user.
+	pub fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<ContactHandles, AuthorityError> {
-		self.accounts.contact_handles(session)
+	) -> Result<ContactHandleKey, AuthorityError> {
+		self.accounts.contact_handle_key(session, &self.connection.product.product_id)
 	}
 }

@@ -260,42 +260,43 @@ private fun ChatFeedScreenInternal(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }
             ) {
-                chatMessagesLoadingState.onLoaded {
-                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
-                        ChatFeed(
-                            chatMessagesState = it,
-                            username = username,
-                            headerRenderer = headerRenderer,
-                            footerRenderer = footerRenderer,
-                            showTimestamps = config.showTimestamps,
-                            highlightEvents = highlightEvents,
-                            scrollToPosition = scrollToPosition,
-                            onMessageAction = onMessageAction,
-                            onUnreadMessageVisible = onUnreadMessageVisible,
-                            onMessageLongPress = onMessageLongPress,
-                            isInputEnabled = canReplyToMessages,
-                            customBubbleStyle = customAppearance?.bubbleStyle,
-                            revealingMessageId = revealingMessageId,
-                            onMessageRevealComplete = onMessageRevealComplete,
-                            slideInNewMessages = customAppearance != null,
-                            showNewMessagesSeparator = config.showNewMessagesSeparator,
-                            dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
-                            onLoadOlderMessages = onLoadOlderMessages,
-                            onLoadNewerMessages = onLoadNewerMessages,
-                            onShowNewestMessages = onShowNewestMessages,
-                        )
-                    }
+                Box(modifier = Modifier.shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }) {
+                    chatMessagesLoadingState.onLoaded {
+                        CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
+                            ChatFeed(
+                                chatMessagesState = it,
+                                username = username,
+                                headerRenderer = headerRenderer,
+                                footerRenderer = footerRenderer,
+                                showTimestamps = config.showTimestamps,
+                                highlightEvents = highlightEvents,
+                                scrollToPosition = scrollToPosition,
+                                onMessageAction = onMessageAction,
+                                onUnreadMessageVisible = onUnreadMessageVisible,
+                                onMessageLongPress = onMessageLongPress,
+                                isInputEnabled = canReplyToMessages,
+                                customBubbleStyle = customAppearance?.bubbleStyle,
+                                revealingMessageId = revealingMessageId,
+                                onMessageRevealComplete = onMessageRevealComplete,
+                                slideInNewMessages = customAppearance != null,
+                                showNewMessagesSeparator = config.showNewMessagesSeparator,
+                                dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                                onLoadOlderMessages = onLoadOlderMessages,
+                                onLoadNewerMessages = onLoadNewerMessages,
+                                onShowNewestMessages = onShowNewestMessages,
+                            )
+                        }
 
-                    if (it.isEmptyRoom && emptyRoomText != null) {
-                        EmptyRoomText(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .padding(bottom = footerHeight)
-                                .padding(horizontal = PolkadotTheme.spacings.extraMedium),
-                            text = emptyRoomText,
-                        )
+                        if (it.isEmptyRoom && emptyRoomText != null) {
+                            EmptyRoomText(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(bottom = footerHeight)
+                                    .padding(horizontal = PolkadotTheme.spacings.extraMedium),
+                                text = emptyRoomText,
+                            )
+                        }
                     }
                 }
 
@@ -318,6 +319,7 @@ private fun ChatFeedScreenInternal(
                         onUnblockUserClick = onUnblockUserClick,
                         onAllowIdentitySigningClick = onAllowIdentitySigningClick,
                         onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
+                        dockletHiddenFraction = { barHiddenFraction.value },
                         onHeightChanged = { footerHeight = it },
                     )
                 }

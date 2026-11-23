@@ -108,7 +108,11 @@ private extension ClaimCoinsService {
     /// What one pass saw of the coins still owed, and whether it saw the chain at all.
     struct CoinsLook {
         let claimable: [PublicKey: ClaimableCoinInfo]
+        let foreign: [PublicKey: CoinageInstanceId]
         let looked: Bool
+
+        /// Every key the look has an answer for: claimable or foreign.
+        var answered: Set<PublicKey> { Set(claimable.keys).union(foreign.keys) }
     }
 
     func runClaim(
@@ -124,7 +128,7 @@ private extension ClaimCoinsService {
         let coins = Set(keypairs.keys)
         guard !coins.isEmpty else { report(.notClaimed); return }
 
-        let onChainUpdates = AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>()
+        let onChainUpdates = AsyncBufferedChannel<CoinInfosSnapshot>()
         let pump = Task {
             await self.pumpCoinInfos(into: onChainUpdates, coins: coins, groupId: groupId)
         }
@@ -159,12 +163,13 @@ private extension ClaimCoinsService {
         groupId: CoinageTxGroupId,
         retryUntil: Date,
         context: DenominationBreakdownContext,
-        onChain: AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>.Iterator,
+        onChain: AsyncBufferedChannel<CoinInfosSnapshot>.Iterator,
         report: @Sendable (CoinageTransferDetection) -> Void
     ) async throws -> [CoinageTxEntry] {
         let coins = Set(keypairs.keys)
         var settled: [CoinageTxEntry] = []
         var hasLooked = false
+        var refused: Set<PublicKey> = []
 
         while !Task.isCancelled {
             logger?.debug("Awaiting settles coins=\(coins.count) with group=\(groupId)")
@@ -181,9 +186,9 @@ private extension ClaimCoinsService {
             // note on `CoinageClaimSubmitting` — and it means no layer retries such a coin: the policy
             // is dead and this loop treats it as handled. It stays on chain, claimable by nobody, until
             // the sender-side reclaim UI exists.
-            let unregistered = coins.subtracting(settled.receivedPublicKeys())
+            let unregistered = coins.subtracting(settled.receivedPublicKeys()).subtracting(refused)
             if unregistered.isEmpty {
-                logger?.debug("Every coin has a claim group=\(groupId)")
+                logger?.debug("Every coin has a claim or was refused group=\(groupId)")
                 break
             }
 
@@ -191,6 +196,7 @@ private extension ClaimCoinsService {
 
             let look = await awaitOnChainWithTimeout(onChain, unclaimed: unregistered)
             hasLooked = hasLooked || look.looked
+            refused.formUnion(refuse(look.foreign, groupId: groupId))
 
             logger?.debug("Claimable \(look.claimable.count) coins for group=\(groupId)")
 
@@ -202,6 +208,8 @@ private extension ClaimCoinsService {
                     groupId: groupId,
                     retryUntil: retryUntil
                 )
+            } else if !look.foreign.isEmpty {
+                continue
             } else if await isWindowClosed(retryUntil, hasLooked: hasLooked, groupId: groupId) {
                 logger?.debug("Claim window closed group=\(groupId) unregistered=\(unregistered.count)")
                 break
@@ -270,16 +278,27 @@ private extension ClaimCoinsService {
     /// ``Timing/detectionTimeout``. Reads the consume-once channel one look at a time, so a failing
     /// submit cannot spin the loop. Settling for the last look is deliberate: a coin that never arrives
     /// is the peer's problem, and holding the others hostage to it would strand money sitting right there.
+    /// A foreign coin answers for its key as well: the pass does not wait on a coin it will refuse.
     func awaitOnChainWithTimeout(
-        _ onChain: AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>.Iterator,
+        _ onChain: AsyncBufferedChannel<CoinInfosSnapshot>.Iterator,
         unclaimed: Set<PublicKey>
     ) async -> CoinsLook {
-        let latest = OSAllocatedUnfairLock<CoinsLook>(initialState: CoinsLook(claimable: [:], looked: false))
+        let latest = OSAllocatedUnfairLock(initialState: CoinsLook(claimable: [:], foreign: [:], looked: false))
         _ = try? await withTimeout(timing.detectionTimeout, clock: timing.clock) {
-            while let look = await onChain.next() {
-                let filtered = look.filter { unclaimed.contains($0.key) }
-                latest.withLock { $0 = CoinsLook(claimable: filtered, looked: true) }
-                if unclaimed.isSubset(of: Set(filtered.keys)) { break }
+            while let snapshot = await onChain.next() {
+                let look = latest.withLock { previous in
+                    // A key once seen foreign stays refused for the pass, whatever a later look says.
+                    let foreign = previous.foreign.merging(
+                        snapshot.foreign.filter { unclaimed.contains($0.key) }
+                    ) { first, _ in first }
+                    previous = CoinsLook(
+                        claimable: snapshot.claimable.filter { unclaimed.contains($0.key) && foreign[$0.key] == nil },
+                        foreign: foreign,
+                        looked: true
+                    )
+                    return previous
+                }
+                if unclaimed.isSubset(of: look.answered) { break }
             }
         }
         return latest.withLock { $0 }
@@ -296,11 +315,20 @@ private extension ClaimCoinsService {
         return true
     }
 
+    /// Logs each foreign coin of a look and returns their keys. A foreign coin is never claimed: the app
+    /// cannot value or recycle a coin of another Coinage instance.
+    func refuse(_ foreign: [PublicKey: CoinageInstanceId], groupId: CoinageTxGroupId) -> Set<PublicKey> {
+        for (key, instanceId) in foreign {
+            logger?.warning("Claim: refused foreign coin \(key.toHex()) of instance \(instanceId) group=\(groupId)")
+        }
+        return Set(foreign.keys)
+    }
+
     /// Feeds every look at the coins into `channel` until cancelled, reopening the subscription after
     /// ``Timing/resubscribeDelay`` whenever it fails or ends — a claim that waits for a look must not
     /// wait on a subscription that is gone.
     func pumpCoinInfos(
-        into channel: AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>,
+        into channel: AsyncBufferedChannel<CoinInfosSnapshot>,
         coins: Set<PublicKey>,
         groupId: CoinageTxGroupId
     ) async {

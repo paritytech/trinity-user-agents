@@ -22,6 +22,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.firstPartyOrigin
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductSource
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -55,8 +58,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     @Assisted private val navigationPolicy: NavigationPolicy,
     @Assisted private val allowIframes: Boolean,
     @Assisted private val scope: CoroutineScope,
-    @Assisted private val fixedProductId: ProductId?,
-    @Assisted("firstPartyOrigin") private val firstPartyOrigin: String?,
+    @Assisted source: ProductSource?,
     @Assisted private val servedExecutable: ExecutableKind,
     @Assisted("waitForInitialTheme") private val waitForInitialTheme: Boolean,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
@@ -67,12 +69,14 @@ class BrowserWebViewProvider @AssistedInject constructor(
             navigationPolicy: NavigationPolicy,
             allowIframes: Boolean,
             scope: CoroutineScope,
-            fixedProductId: ProductId? = null,
-            @Assisted("firstPartyOrigin") firstPartyOrigin: String? = null,
+            source: ProductSource? = null,
             servedExecutable: ExecutableKind = ExecutableKind.APP,
             @Assisted("waitForInitialTheme") waitForInitialTheme: Boolean = false,
         ): BrowserWebViewProvider
     }
+
+    private val fixedProductId = source?.fixedProductId
+    private val firstPartyOrigin = source?.firstPartyOrigin
 
     // A page served from a debug loopback url has no dotNS host to read its product from. The id stays fixed across
     // navigations, so a debug page that navigates to another product's page runs that page as the debug product.
