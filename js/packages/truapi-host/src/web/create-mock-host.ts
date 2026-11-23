@@ -194,6 +194,8 @@ export type PermissionKind = "device" | "remote";
 export interface NotificationLogEntry {
   /** Host-assigned id, the same one `cancelNotification` takes. */
   id: number;
+  /** Title the core let through, or undefined when the host shows the product id. */
+  title: string | undefined;
   /** Notification text. */
   text: string;
   /** Optional URL to open on tap. */
@@ -1201,6 +1203,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const id = nextNotificationId++;
         pushedNotifications.push({
           id,
+          title: notification.title,
           text: notification.text,
           deeplink: notification.deeplink,
           scheduledAt: notification.scheduledAt,
