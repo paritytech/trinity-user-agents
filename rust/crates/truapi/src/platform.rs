@@ -2262,7 +2262,8 @@ pub enum FundingPresentOutcome {
 pub trait FundingPlatform: Send + Sync {
 	/// Show the funding overlay for a session that `product` opened, or the
 	/// host itself when `product` is `None`. A cancel while the overlay is up
-	/// drops this call, and the host takes the overlay down.
+	/// drops this call, and the host takes the overlay down when it is
+	/// dropped.
 	async fn present_funding(
 		&self,
 		product: Option<&ProductContext>,

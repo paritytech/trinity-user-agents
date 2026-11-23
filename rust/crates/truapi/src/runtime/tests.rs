@@ -4087,6 +4087,7 @@ fn cancelling_while_the_overlay_is_up_after_choosing_a_provider_asks_it_to_stop(
 	let cancelled = futures::executor::block_on(services.cancel_funding(&intent));
 	let opened = opening.join().expect("opening thread").ok().map(|session| session.intent);
 	let kept = services.funding().get(&intent);
+	let again = futures::executor::block_on(services.cancel_funding(&intent));
 
 	assert_eq!(
 		(
@@ -4094,13 +4095,61 @@ fn cancelling_while_the_overlay_is_up_after_choosing_a_provider_asks_it_to_stop(
 			answer.is_canceled(),
 			opened,
 			kept.map(|session| (session.is_terminal(), session.cancel)),
+			again,
+			services.funding().get(&intent).map(|session| session.is_terminal()),
 		),
 		(
 			Ok(CancelOutcome::Requested),
 			true,
-			Some(intent),
-			Some((false, Some(FundingCancel::Requested)))
+			Some(intent.clone()),
+			Some((false, Some(FundingCancel::Requested))),
+			Ok(CancelOutcome::Ended),
+			Some(true),
 		)
+	);
+}
+
+// A host may cancel as soon as it can name the session, before the task
+// that shows the overlay ran: the overlay is closed before the host is
+// asked to show it, and the session is gone.
+#[test]
+fn cancelling_before_the_overlay_shows_never_shows_it() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let (_answer, answered) = futures::channel::oneshot::channel();
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = new_intent();
+	let finished = futures::executor::block_on(services.show_funding(
+		None,
+		intent.clone(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("shown");
+
+	let (cancelled, opened) = std::thread::scope(|scope| {
+		let cancelling =
+			scope.spawn(|| futures::executor::block_on(services.cancel_funding(&intent)));
+		wait_until(|| services.funding().overlay_cancelled(&intent), "overlay cancelled");
+		while !cancelling.is_finished() {
+			futures::executor::block_on(tasks.run());
+			std::thread::sleep(Duration::from_millis(5));
+		}
+		(
+			cancelling.join().expect("cancelling thread"),
+			futures::executor::block_on(finished).expect("overlay finished"),
+		)
+	});
+
+	assert_eq!(
+		(
+			cancelled,
+			platform.shown.load(Ordering::Acquire),
+			matches!(opened, Err(super::funding::OpenFundingError::Dismissed)),
+			services.funding().get(&intent).is_none(),
+		),
+		(Ok(CancelOutcome::Ended), false, true, true)
 	);
 }
 

@@ -758,10 +758,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
   showed (`None` declines), which the provider hears through `settleCancel`;
   terms other than the offer's answer `NoOffer`, an inbound session whose
-  credit started answers `TooLate`, and an ended or unknown one `Refused`. A provider asked before money moved
-  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  credit started answers `TooLate`, and an ended or unknown one `Refused`.
+  A provider asked before money moved answers `Stopped`, and the core ends
+  the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
-  money moved.
+  money moved; a cancel after that asks again.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
