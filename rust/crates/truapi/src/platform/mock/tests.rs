@@ -140,6 +140,7 @@ fn navigation_records_and_can_error() {
 fn notifications_record_order_with_unique_ids() {
 	let p = MockPlatform::new();
 	let make = |text: &str| latest::HostPushNotificationRequest {
+		title: None,
 		text: text.to_string(),
 		deeplink: None,
 		scheduled_at: None,
@@ -161,6 +162,7 @@ fn notification_error_injected() {
 		..Default::default()
 	});
 	let request = latest::HostPushNotificationRequest {
+		title: None,
 		text: "x".into(),
 		deeplink: None,
 		scheduled_at: None,

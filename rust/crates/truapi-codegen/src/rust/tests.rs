@@ -31,7 +31,12 @@ fn make_request_method(name: &str, request_id: u8) -> MethodDef {
 				args: vec![TypeRef::Named { name: "ErrWrapper".to_string(), args: vec![] }],
 			},
 		},
-		wire: WireAttrs { host_initiated: false, internal: false, id: Some(request_id) },
+		wire: WireAttrs {
+			host_initiated: false,
+			internal: false,
+			request_fallback: false,
+			id: Some(request_id),
+		},
 		docs: None,
 	}
 }
@@ -48,7 +53,12 @@ fn make_subscription_method(name: &str, start_id: u8) -> MethodDef {
 				args: vec![TypeRef::Named { name: "GenericError".to_string(), args: vec![] }],
 			},
 		},
-		wire: WireAttrs { host_initiated: false, internal: false, id: Some(start_id) },
+		wire: WireAttrs {
+			host_initiated: false,
+			internal: false,
+			request_fallback: false,
+			id: Some(start_id),
+		},
 		docs: None,
 	}
 }
