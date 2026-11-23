@@ -593,6 +593,7 @@ fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
 	let platform = CliPlatform::new(&test_network(), None, ApprovalPolicy::AutoAccept, None);
 	let first =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: None,
 			scheduled_at: None,
@@ -600,6 +601,7 @@ fn cli_notifications_return_stable_ids_and_cancel_idempotently() {
 		.expect("immediate notification");
 	let second =
 		futures::executor::block_on(platform.push_notification(api::HostPushNotificationRequest {
+			title: None,
 			text: "Again".to_string(),
 			deeplink: Some("polkadot://example".to_string()),
 			scheduled_at: None,
