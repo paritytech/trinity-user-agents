@@ -705,8 +705,9 @@ pub enum FundingCancel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum CancelOutcome {
-	/// The session ended as cancelled: no provider serves it, or no money
-	/// moved and its provider was asked once already.
+	/// The session ended as cancelled: it never started and its overlay
+	/// closed, no provider serves it, or no money moved and its provider was
+	/// asked once already.
 	Ended,
 	/// The provider serving it was asked to cancel.
 	Requested,
@@ -714,7 +715,8 @@ pub enum CancelOutcome {
 	Pending,
 	/// Too late: the provider already started crediting the user's balance.
 	TooLate,
-	/// Not cancellable here: the session ended, or its overlay is still up.
+	/// Nothing to cancel: the session ended, or the core holds no such
+	/// session.
 	Refused,
 }
 

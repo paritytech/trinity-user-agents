@@ -3779,6 +3779,8 @@ struct GatedFundingPlatform {
 		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
 	/// Whether the host was told of a session, which it is once started.
 	told: AtomicBool,
+	/// Whether the overlay showed.
+	shown: AtomicBool,
 	/// The options read back on each notice, as a host reads them.
 	options: Mutex<Vec<(String, crate::host_logic::funding_providers::FundingOptions)>>,
 	services: std::sync::Weak<RuntimeServices>,
@@ -3793,6 +3795,7 @@ impl GatedFundingPlatform {
 		Arc::new(Self {
 			answer: Mutex::new(answer),
 			told: AtomicBool::new(false),
+			shown: AtomicBool::new(false),
 			options: Mutex::new(Vec::new()),
 			services: Arc::downgrade(services),
 		})
@@ -3807,6 +3810,7 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 		_session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
 		let answer = self.answer.lock().expect("answer mutex poisoned").take();
+		self.shown.store(true, Ordering::Release);
 		Ok(answer.expect("overlay shown once").await.expect("answered"))
 	}
 	async fn present_provider_frame(
@@ -4004,6 +4008,118 @@ fn a_selection_without_an_asset_goes_by_the_resolved_one() {
 			countries.into_iter().map(|country| country.country).collect::<Vec<_>>()
 		)),
 		Some((Some("EUR".to_string()), vec!["DE".to_string()]))
+	);
+}
+
+/// Opens a host session on `services` whose overlay stays up until `answer`
+/// says how it ended, and waits until it shows. Returns its intent and the
+/// thread waiting on how the overlay ended.
+fn showing_overlay(
+	services: &Arc<RuntimeServices>,
+	answer: futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>,
+) -> (
+	String,
+	std::thread::JoinHandle<Result<crate::host_logic::funding::FundingSession, super::funding::OpenFundingError>>,
+) {
+	let platform = GatedFundingPlatform::new(services, Some(answer));
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = new_intent();
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		let intent = intent.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				intent,
+				v01::FundingDirection::In,
+				None,
+			))
+		}
+	});
+	wait_until(|| platform.shown.load(Ordering::Acquire), "overlay shown");
+	(intent, opening)
+}
+
+// A session whose overlay is up never started, so a cancel closes the
+// overlay as though the user dismissed it: the host's call is dropped, the
+// session is gone, and there is nothing left to cancel.
+#[test]
+fn cancelling_while_the_overlay_is_up_closes_it_and_drops_the_session() {
+	let services = funding_services();
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let (intent, opening) = showing_overlay(&services, answered);
+
+	let cancelled = futures::executor::block_on(services.cancel_funding(&intent));
+	let opened = opening.join().expect("opening thread");
+	let again = futures::executor::block_on(services.cancel_funding(&intent));
+
+	assert_eq!(
+		(
+			cancelled,
+			answer.is_canceled(),
+			matches!(opened, Err(super::funding::OpenFundingError::Dismissed)),
+			services.funding().get(&intent).is_none(),
+			again,
+		),
+		(Ok(CancelOutcome::Ended), true, true, true, Ok(CancelOutcome::Refused))
+	);
+}
+
+// A provider chosen in the overlay may already work on the session, so a
+// cancel while the overlay is up starts it and asks the provider to stop,
+// once, as it would a started session.
+#[test]
+fn cancelling_while_the_overlay_is_up_after_choosing_a_provider_asks_it_to_stop() {
+	let services = funding_services();
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let (intent, opening) = showing_overlay(&services, answered);
+	let quote_id = offer_test_quote(&services, &intent, "ramp.dot");
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&quote_id,
+		))
+		.expect("selected")
+	);
+
+	let cancelled = futures::executor::block_on(services.cancel_funding(&intent));
+	let opened = opening.join().expect("opening thread").ok().map(|session| session.intent);
+	let kept = services.funding().get(&intent);
+
+	assert_eq!(
+		(
+			cancelled,
+			answer.is_canceled(),
+			opened,
+			kept.map(|session| (session.is_terminal(), session.cancel)),
+		),
+		(
+			Ok(CancelOutcome::Requested),
+			true,
+			Some(intent),
+			Some((false, Some(FundingCancel::Requested)))
+		)
+	);
+}
+
+// A session the user started is cancelled by what it went through: with no
+// provider it ends, and once ended, or for a session the core does not
+// hold, there is nothing to cancel.
+#[test]
+fn cancelling_a_started_session_ends_it_then_refuses() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform));
+	let intent = opened_session(&services, &tasks);
+	let cancel = |intent: &str| futures::executor::block_on(services.cancel_funding(intent));
+
+	assert_eq!(
+		(cancel(&intent), cancel(&intent), cancel("fs_unknown")),
+		(Ok(CancelOutcome::Ended), Ok(CancelOutcome::Refused), Ok(CancelOutcome::Refused))
 	);
 }
 

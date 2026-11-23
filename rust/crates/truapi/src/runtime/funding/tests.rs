@@ -979,8 +979,10 @@ fn sessions_of_a_newer_format_make_the_registry_read_only() {
 	);
 }
 
+// A cancel reaches a presented session through its overlay, so one held
+// before its overlay shows is left alone.
 #[test]
-fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
+fn a_session_presented_before_its_overlay_shows_is_not_cancelled() {
 	let db = open_memory_core_db();
 	let registry = registry_on(&db);
 	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
