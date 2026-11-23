@@ -1,8 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -33,7 +35,6 @@ import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
-import uniffi.truapi.U128
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -88,7 +89,7 @@ class RealFundingService @Inject constructor(
 
     override suspend fun resume(): Result<Unit> = core.start()
 
-    override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> = core.open(direction, amount)
+    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<String?> = core.open(direction, amount)
 
     override fun select(selection: FundingSelection, id: String) {
         calls.launch {
@@ -97,7 +98,7 @@ class RealFundingService @Inject constructor(
         }
     }
 
-    override fun quote(amount: U128?, id: String) {
+    override fun quote(amount: Balance?, id: String) {
         if (amount == null) {
             synchronized(lock) { asks[id]?.drop() }
             changed(id)
@@ -114,7 +115,7 @@ class RealFundingService @Inject constructor(
         }
     }
 
-    override suspend fun amountIssue(amount: U128, spendable: U128?, id: String): Result<FundingAmountIssue?> =
+    override suspend fun amountIssue(amount: Balance, spendable: Balance?, id: String): Result<FundingAmountIssue?> =
         core.amountIssue(id, amount, spendable).logFailure("Funding amount check failed")
 
     override suspend fun start(id: String, provider: ProductId?): Result<Unit> {
@@ -183,7 +184,7 @@ class RealFundingService @Inject constructor(
      * The core waits on the session's screens. A session whose screens are not [shown] within [SHOWN_TIMEOUT_MS] is
      * taken as dismissed, so a navigation that silently failed does not hold the core forever.
      */
-    suspend fun present(intent: String, direction: FundingDirection, amount: U128?): FundingPresentOutcome {
+    suspend fun present(intent: String, direction: FundingDirection, amount: Balance?): FundingPresentOutcome {
         val presentation = Presentation(direction, amount)
         synchronized(lock) { presentations[intent] = presentation }
         try {
@@ -326,7 +327,7 @@ class RealFundingService @Inject constructor(
             FundingEntry.of(
                 id = session.intent,
                 fallbackDirection = session.direction,
-                fallbackAmount = session.amount,
+                fallbackAmount = session.amount?.toBalanceOrNull(),
                 session = session,
                 progress = item.progress,
                 // As the history has it, which leaves out a cancel that moved no money.
@@ -341,7 +342,7 @@ class RealFundingService @Inject constructor(
             FundingEntry.of(
                 id = summary.intent,
                 fallbackDirection = summary.direction,
-                fallbackAmount = summary.amount,
+                fallbackAmount = summary.amount?.toBalanceOrNull(),
                 session = null,
                 progress = null,
                 summary = summary,
@@ -364,7 +365,7 @@ class RealFundingService @Inject constructor(
         data class Entry(val id: String) : Change
     }
 
-    private class Presentation(val direction: FundingDirection, val amount: U128?) {
+    private class Presentation(val direction: FundingDirection, val amount: Balance?) {
         val outcome = CompletableDeferred<FundingPresentOutcome>()
 
         val shown = CompletableDeferred<Unit>()
@@ -386,7 +387,7 @@ class RealFundingService @Inject constructor(
 
         private var awaiting = false
 
-        var amount: U128? = null
+        var amount: Balance? = null
             private set
         var shown: FundingQuoteList? = null
             private set
@@ -394,7 +395,7 @@ class RealFundingService @Inject constructor(
         /** The session is handed to the latest ask's best quote once every provider answered. */
         var startsWhenQuoted = false
 
-        fun ask(asked: U128): Int {
+        fun ask(asked: Balance): Int {
             amount = asked
             shown = null
             awaiting = true

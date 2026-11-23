@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -73,8 +74,8 @@ class RealFundingServiceTest {
         presented(service)
         advanceUntilIdle()
 
-        service.quote("100", "intent")
-        service.quote("200", "intent")
+        service.quote(100.intoBalance(), "intent")
+        service.quote(200.intoBalance(), "intent")
         advanceUntilIdle()
         core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
         service.changed("intent", FundingChangeKind.QUOTES)
@@ -87,7 +88,7 @@ class RealFundingServiceTest {
         val entry = service.entryState("intent").first()
 
         assertEquals(2uL, entry.quotes?.requestId)
-        assertEquals("200", entry.askedAmount)
+        assertEquals(200.intoBalance(), entry.askedAmount)
     }
 
     @Test
@@ -96,7 +97,7 @@ class RealFundingServiceTest {
         presented(service)
 
         service.select(FundingSelection(FundingRail.CARD, null, null, "DE", "EUR"), "intent")
-        service.quote("100", "intent")
+        service.quote(100.intoBalance(), "intent")
         advanceUntilIdle()
 
         assertEquals(listOf("select CARD", "quote 100"), core.calls)
@@ -106,7 +107,7 @@ class RealFundingServiceTest {
     fun `starting on a provider's quote hands it the session and answers the core started`() = runTest {
         val service = service()
         val outcome = presented(service)
-        service.quote("100", "intent")
+        service.quote(100.intoBalance(), "intent")
         advanceUntilIdle()
         core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
         service.changed("intent", FundingChangeKind.QUOTES)
@@ -137,7 +138,7 @@ class RealFundingServiceTest {
         val service = service()
         presented(service)
         core.providerTakes = false
-        service.quote("100", "intent")
+        service.quote(100.intoBalance(), "intent")
         advanceUntilIdle()
         core.quotes["intent"] = FakeFundingCore.list(1uL, "100", ramp to FundingQuoteState.Quoted(FakeFundingCore.quote("q-1")))
         service.changed("intent", FundingChangeKind.QUOTES)
@@ -152,7 +153,7 @@ class RealFundingServiceTest {
     fun `starting on the best quote arms the core on the latest ask, and the session's start answers the core`() = runTest {
         val service = service()
         val outcome = presented(service)
-        service.quote("100", "intent")
+        service.quote(100.intoBalance(), "intent")
         advanceUntilIdle()
 
         service.start("intent", null)
@@ -173,7 +174,7 @@ class RealFundingServiceTest {
         advanceUntilIdle()
 
         service.start("intent", null)
-        service.quote("100", "intent")
+        service.quote(100.intoBalance(), "intent")
         advanceUntilIdle()
 
         assertTrue("startWhenQuoted 1" in core.calls)
@@ -183,7 +184,7 @@ class RealFundingServiceTest {
     fun `leaving the start screen disarms the core`() = runTest {
         val service = service()
         presented(service)
-        service.quote("100", "intent")
+        service.quote(100.intoBalance(), "intent")
         service.start("intent", null)
         advanceUntilIdle()
 

@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -10,25 +10,18 @@ import java.text.Collator
 import java.util.Locale
 
 class FundingUnitsTest {
-    private val cash = FundingCash(precision = 6)
-
-    @Test
-    fun `cash units read as the balance's decimals`() {
-        assertEquals(BigDecimal("50.199999"), cash.decimal("50199999"))
-    }
-
     @Test
     fun `the stated decimals count, and a code ISO 4217 knows reads as money`() {
         assertEquals(FundingAssetUnit("EUR", 2, isFiat = true), FundingAssetUnit.of("eur", 2))
         assertEquals(FundingAssetUnit("ETH", 18, isFiat = false), FundingAssetUnit.of("ETH", 18))
-        assertEquals(BigDecimal("1.5"), FundingAssetUnit.of("WETH", 18).decimal("1500000000000000000"))
+        assertEquals(BigDecimal("1.5"), FundingAssetUnit.of("WETH", 18).decimal("1500000000000000000".toBigInteger().intoBalance()))
     }
 
     @Test
     fun `quotes are set as the provider list and deposit screens show them`() {
-        assertEquals("25.10 EUR", FundingAssetUnit.of("EUR", 2).formatWithCode("2510"))
-        assertEquals("51.8 USDT", FundingAssetUnit.of("USDT", 6).format("51800000", Locale.US))
-        assertEquals("€50.05", FundingAssetUnit.of("EUR", 2).format("5005", Locale.US))
+        assertEquals("25.10 EUR", FundingAssetUnit.of("EUR", 2).formatWithCode(2510.intoBalance()))
+        assertEquals("51.8 USDT", FundingAssetUnit.of("USDT", 6).format(51_800_000.intoBalance(), Locale.US))
+        assertEquals("€50.05", FundingAssetUnit.of("EUR", 2).format(5005.intoBalance(), Locale.US))
     }
 
     @Test
