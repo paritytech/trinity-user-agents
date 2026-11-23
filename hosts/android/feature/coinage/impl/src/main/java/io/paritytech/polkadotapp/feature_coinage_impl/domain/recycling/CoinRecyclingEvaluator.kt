@@ -10,8 +10,10 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinRecyclingS
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclingVerdicts
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.BalanceEvaluationMode
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
+import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingParams
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingSnapshot
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
+import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.params
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyCoins
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyVouchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetsUseCase
@@ -19,6 +21,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalan
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageRecyclingUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedCoin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedVoucher
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.CoinagePrivacyConfigProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogD
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +57,7 @@ class CoinRecyclingEvaluator @Inject constructor(
     private val recyclingUseCase: CoinageRecyclingUseCase,
     private val dispatchers: CoroutineDispatchers,
     private val readinessUpdates: VoucherReadinessUpdates,
+    private val privacyConfigProvider: CoinagePrivacyConfigProvider,
 ) {
     private class Assets(
         val coins: List<TrackedCoin>,
@@ -66,6 +70,7 @@ class CoinRecyclingEvaluator @Inject constructor(
     private class Input(
         val assets: Assets,
         val strategyType: RecyclingStrategyType,
+        val params: RecyclingParams,
     )
 
     /**
@@ -79,12 +84,24 @@ class CoinRecyclingEvaluator @Inject constructor(
     context(scope: ComputationalScope)
     fun start() {
         scope.launch(dispatchers.computation) {
-            combine(coinageAssetsUseCase.subscribeCoins(), coinageAssetsUseCase.subscribeVouchers(), ::Assets)
-                .throttleLatest(EVALUATION_INTERVAL)
-                // Outside the throttle: switching strategy should re-judge the wallet at once rather than up
-                // to an interval later. Only the asset churn needs damping.
-                .combine(settings.strategyFlow(), ::Input)
-                .withReadinessUpdates(readinessUpdates, { it.assets.vouchers }, { it.strategyType })
+            val assets = combine(
+                coinageAssetsUseCase.subscribeCoins(),
+                coinageAssetsUseCase.subscribeVouchers(),
+                ::Assets,
+            ).throttleLatest(EVALUATION_INTERVAL)
+
+            // Outside the throttle: switching strategy should re-judge the wallet at once rather than up
+            // to an interval later. Only the asset churn needs damping.
+            val inputs = combine(
+                assets,
+                settings.strategyFlow(),
+                privacyConfigProvider.privacyConfigUpdates(),
+            ) { wallet, strategyType, privacyConfig ->
+                // The preset is kept beside its params for the evaluation log; nothing else reads it.
+                Input(wallet, strategyType, strategyType.params(privacyConfig))
+            }
+
+            inputs.withReadinessUpdates(readinessUpdates, { it.assets.vouchers }, { it.params })
                 .transform { input ->
                     // Both passes run off the same input rather than waiting for the next emission: the
                     // wallet may not change again for minutes, and the immediate verdicts must not stand
@@ -125,7 +142,7 @@ class CoinRecyclingEvaluator @Inject constructor(
             return Result.success(emptyMap())
         }
 
-        val strategy = strategyProvider.strategyFor(input.strategyType)
+        val strategy = strategyProvider.strategyFor(input.params)
         val conversion = balanceConverter.create().getOrElse { return Result.failure(it) }
 
         val denominations = input.assets.vouchers.mapToSet { it.voucher.recyclerValue }

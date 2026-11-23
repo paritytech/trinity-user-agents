@@ -9,6 +9,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ChatPushId
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactChatSession
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.*
 import io.paritytech.polkadotapp.feature_chats_impl.data.model.decodeAlwaysDecodableChatMessagePart
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.isCompactionCommit
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.isTransient
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.partitionTransient
 import io.paritytech.polkadotapp.feature_chats_impl.data.model.toChatMessage
 import io.paritytech.polkadotapp.feature_chats_impl.data.model.toEncodedMessage
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotificationPayloadEncoder
@@ -17,6 +20,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageR
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveConflictStrategy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.seen.SeenMessageProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SyncContactUsernameUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatPushTokenUtils
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.CommunicationSession
@@ -26,6 +30,7 @@ import io.paritytech.polkadotapp.tools_push_notifications_api.NotifyType
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushRule
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -35,10 +40,11 @@ import kotlin.reflect.KClass
 
 private val PUSH_ID_PREFIX = "notification".toByteArray(Charsets.UTF_8)
 
-// Content delivered as one-shot statements outside the sessions (acceptances, by ChatAcceptanceDeliveryService):
+// Delivered as one-shot statements outside the sessions, by ChatRequestDeliveryService and ChatAcceptanceDeliveryService:
 // sessions neither send it nor reset its status when their own statements are missing.
 private val ONE_SHOT_CONTENT_TYPES = listOf<KClass<out ChatMessage.Content>>(
-    ChatMessage.Content.DeviceChatAccepted::class
+    ChatMessage.Content.ChatRequest::class,
+    ChatMessage.Content.DeviceChatAccepted::class,
 )
 
 class RealContactChatSession(
@@ -51,6 +57,8 @@ class RealContactChatSession(
     private val syncContactUsernameUseCase: SyncContactUsernameUseCase,
     private val incomingChatMessageProcessor: IncomingChatMessageProcessor,
     private val notificationPayloadEncoder: ChatNotificationPayloadEncoder,
+    private val seenMessageProvider: SeenMessageProvider,
+    private val transientMessageProcessor: TransientMessageProcessor,
 ) : ContactChatSession, CoroutineScope by scope {
     private val mainCommunicationSession get() = communicationSessions.main
 
@@ -87,6 +95,11 @@ class RealContactChatSession(
         syncContactUsernameUseCase.sync(contact.accountId)
             .logFailure("Failed to sync username for contact ${contact.accountId}")
             .launchIn(this)
+    }
+
+    fun sendSeenMessages(): Flow<EncodedMessage> {
+        return seenMessageProvider.subscribeMessagesToSend(contact.accountId)
+            .onEach(mainCommunicationSession::sendMessage)
     }
 
     override suspend fun sendToken(token: String) {
@@ -128,13 +141,14 @@ class RealContactChatSession(
     }
 
     private fun shouldSend(message: ChatMessage): Boolean {
-        return message.content !is ChatMessage.Content.ChatRequest &&
-            // compaction message is sent internally in Active state of CommunicationSession state machine
-            message.content !is ChatMessage.Content.CompactionCommit &&
+        // compaction message is sent internally in Active state of CommunicationSession state machine
+        return message.content !is ChatMessage.Content.CompactionCommit &&
             message.content::class !in ONE_SHOT_CONTENT_TYPES
     }
 
-    private fun shouldNotify(message: ChatMessage): Boolean = message.content.isDisplayableAsPush()
+    private fun shouldNotify(message: ChatMessage): Boolean {
+        return message.content !is ChatMessage.Content.ChatRequest && message.content.isDisplayableAsPush()
+    }
 
     private fun subscribeSessionEvents(roledSession: RoledCommunicationSession) {
         val session = roledSession.session
@@ -199,6 +213,7 @@ class RealContactChatSession(
         for (unsupportedMessage in unsupportedMessages) {
             val rawContent = (unsupportedMessage.content as? ChatMessage.Content.Unsupported)?.rawContent
                 ?: continue
+            if (rawContent.isTransient()) continue
 
             val parsedMessage = rawContent.toChatMessage(
                 authorAccountId = mainCommunicationSession.remoteAccount.accountId,
@@ -222,14 +237,17 @@ class RealContactChatSession(
     private suspend fun handleResponseReceived(
         messages: List<EncodedMessage>
     ) {
-        for (encodedMessage in messages) {
+        val (transientMessages, chatMessages) = messages.partitionTransient()
+        transientMessageProcessor.processDelivered(contact.accountId, transientMessages)
+
+        for (encodedMessage in chatMessages) {
             val versionedMessage = encodedMessage.decodeAlwaysDecodableChatMessagePart().getOrNull() ?: continue
             chatMessageRepository.updateMessageStatus(
                 messageId = versionedMessage.id,
-                status = ChatMessage.Status.IS_READ
+                status = ChatMessage.Status.IS_DELIVERED
             )
             if (encodedMessage.isCompactionCommit()) {
-                chatMessageRepository.propagateStatusToCompactedMessages(versionedMessage.id, ChatMessage.Status.IS_READ)
+                chatMessageRepository.propagateStatusToCompactedMessages(versionedMessage.id, ChatMessage.Status.IS_DELIVERED)
             }
         }
     }
@@ -237,7 +255,7 @@ class RealContactChatSession(
     private suspend fun handleMessagesSentSuccessfully(
         messages: List<EncodedMessage>
     ) {
-        for (encodedMessage in messages) {
+        for (encodedMessage in messages.filterNot { it.isTransient() }) {
             val messagePart = encodedMessage.decodeAlwaysDecodableChatMessagePart().getOrNull() ?: continue
             chatMessageRepository.updateMessageStatus(
                 messagePart.id,
@@ -247,16 +265,6 @@ class RealContactChatSession(
                 chatMessageRepository.propagateStatusToCompactedMessages(messagePart.id, ChatMessage.Status.IS_SENT)
             }
         }
-    }
-
-    private fun EncodedMessage.isCompactionCommit(): Boolean {
-        val message = toChatMessage(
-            authorAccountId = mainCommunicationSession.localAccount.accountId,
-            contactAccountId = mainCommunicationSession.remoteAccount.accountId,
-            messageStatus = ChatMessage.Status.NEW
-        ).getOrNull()
-
-        return message?.content is ChatMessage.Content.CompactionCommit
     }
 
     private suspend fun handleMessagesCompacted(compacted: EncodedMessage, originals: List<EncodedMessage>) {

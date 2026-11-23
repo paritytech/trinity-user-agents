@@ -905,6 +905,13 @@ A pull request opened from a fork cannot reach the configuration and signing key
 this needs, and is told so rather than handed a build that misleads. Push the
 branch to this repository to get one.
 
+Every Gradle build in the repository, the vendored Android app included,
+resolves Maven Central through Google's mirror of it in place of Central.
+Maven Central rate limits by IP and hosted runners share theirs, so direct
+requests are refused with a 429 often enough to fail builds. The mirror is
+declared in each `settings.gradle.kts`, so local and CI builds resolve the same
+way.
+
 ### The iOS nightly
 
 `ios-nightly-prepare.yml` runs at 20:00 UTC when main has moved since the last
