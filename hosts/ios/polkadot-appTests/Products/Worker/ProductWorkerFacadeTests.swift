@@ -1,8 +1,7 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
-import Products
 import Testing
-import TrUAPIHost
 @testable import polkadot_app
 
 /// A product built for TrUAPI cannot be served by the native container: its
@@ -17,14 +16,17 @@ struct ProductWorkerFacadeTests {
         try await CoreDataProductOperationStore(storageFacade: storage).save(
             ProductOperationRecord(productId: try ProductId("dim2.testnet"), id: 7, label: nil, startedAt: .distantPast)
         )
+        let settings = InMemorySettingsManager()
+        settings.set(value: true, for: .truApiRuntimeEnabled)
         let nativeWorkers = RecordingNativeWorkerFactory()
-        let facade = ProductWorkerFacade(storageFacade: storage, settingsManager: trUAPISettings()) { _ in nativeWorkers }
+        let facade = ProductWorkerFacade(storageFacade: storage, settingsManager: settings) { _ in nativeWorkers }
 
         // When
         facade.setup()
 
         // Then
         #expect(await nativeWorkers.firstStart(within: .seconds(2)) == nil)
+        withExtendedLifetime(facade) {}
     }
 }
 
@@ -48,12 +50,6 @@ private final class RecordingNativeWorkerFactory: ProductWorkerFactory, @uncheck
             return first
         }
     }
-}
-
-private func trUAPISettings() -> SettingsManagerProtocol {
-    let settings = InMemorySettingsManager()
-    settings.set(value: true, for: .truApiRuntimeEnabled)
-    return settings
 }
 
 private struct Unavailable: Error {}

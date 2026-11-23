@@ -2,8 +2,8 @@ import Foundation
 import Keystore_iOS
 import Products
 
-/// Owns the product-worker ref counter and its operations, and keeps a worker
-/// alive for every persisted operation.
+/// Owns the product-worker ref counter and its operations, and on the native
+/// runtime keeps a worker alive for every persisted operation.
 ///
 /// One instance is created and held by `ServiceCoordinator` (alive while the
 /// main tab bar is), so every consumer (the chats screen, a product's full-page
@@ -37,10 +37,11 @@ final class ProductWorkerFacade {
 
     /// Starts keeping workers alive for persisted operations. Call once at launch.
     ///
-    /// Only the native runtime records operations, so on TrUAPI any left in the
-    /// store are from an earlier native run. Reviving them would start the
-    /// product in the native container beside its TrUAPI worker, where a product
-    /// built for TrUAPI gets no answer to anything it asks.
+    /// The reconciler stays off on TrUAPI, since reviving an operation left from a
+    /// native run would start the product in the native container beside its
+    /// TrUAPI worker, where a product built for TrUAPI gets no answer. A chat bot
+    /// that falls back to the native worker on TrUAPI therefore gets no keep-alive
+    /// for an operation it opens.
     func setup() {
         guard !settingsManager.isTrUAPIRuntimeEnabled else { return }
         reconciler.start()
