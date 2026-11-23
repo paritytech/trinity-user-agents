@@ -11,9 +11,11 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.BalanceEva
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinRecyclingStrategy
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingParams
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingSnapshot
+import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.VoucherReadiness
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.VoucherUsabilityContext
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.resolveAgainst
 import java.math.RoundingMode
+import kotlin.time.Instant
 
 /**
  * The only recycling policy there is. The named strategies differ by [params] alone, so an intermediate
@@ -61,11 +63,21 @@ class ParametricRecyclingStrategy(
 
         if (location.recyclerMembers >= requiredMembers) return true
 
-        val requirements = params.voucherReadiness.memberAndAgeRequirements ?: return false
-        val enteredAt = location.enteredAt ?: return false
-        return location.recyclerMembers >= requirements.minimumMembers &&
-            context.now - enteredAt >= requirements.delay
+        val readyAt = params.voucherReadiness.anonymityReadyAt(location) ?: return false
+        return context.now >= readyAt
     }
 
     override fun allowsConfirmedSpend(): Boolean = params.allowsConfirmedSpend
+}
+
+// Valid only for the location's current members and unloads; recompute it when either changes.
+internal fun VoucherReadiness.anonymityReadyAt(location: RecyclerVoucher.Location.InRecycler): Instant? {
+    val requirements = anonymityRequirements ?: return null
+    val enteredAt = location.enteredAt ?: return null
+    val unloaded = location.recyclerUnloaded ?: return null
+
+    val anonymity = location.recyclerMembers - unloaded
+    if (anonymity <= 0) return null
+
+    return enteredAt + requirements.anonymityTime * requirements.anonymityMembers / anonymity
 }

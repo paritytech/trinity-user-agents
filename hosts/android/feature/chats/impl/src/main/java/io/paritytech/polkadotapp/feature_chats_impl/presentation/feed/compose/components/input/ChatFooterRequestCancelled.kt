@@ -9,21 +9,23 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.design.utils.withBold
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
-internal fun WaitingForAcceptLabel(
-    username: String,
-    modifier: Modifier = Modifier
+internal fun ChatFooterRequestCancelled(
+    username: String
 ) {
     NovaText(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
             .padding(
-                horizontal = PolkadotTheme.spacings.mediumIncreased,
-                vertical = PolkadotTheme.spacings.mediumIncreased
+                start = PolkadotTheme.spacings.mediumIncreased,
+                end = PolkadotTheme.spacings.mediumIncreased,
+                top = PolkadotTheme.spacings.mediumIncreased,
+                bottom = PolkadotTheme.spacings.large
             ),
-        text = stringResource(RCommon.string.chat_request_wait_accept_title, username),
+        text = stringResource(RCommon.string.chat_request_cancelled_by_peer, username).withBold(username),
         style = PolkadotTheme.typography.body.medium,
         color = PolkadotTheme.colors.fg.tertiary,
         textAlign = TextAlign.Center
@@ -32,8 +34,8 @@ internal fun WaitingForAcceptLabel(
 
 @Preview(showBackground = true, backgroundColor = 0xFF000000)
 @Composable
-private fun WaitingForAcceptLabelPreview() {
+private fun ChatFooterRequestCancelledPreview() {
     PolkadotTheme {
-        WaitingForAcceptLabel(username = "Julius.87")
+        ChatFooterRequestCancelled(username = "juliuslongname.87")
     }
 }

@@ -120,6 +120,25 @@ export function fromNetworks(
   };
 }
 
+/**
+ * The genesis hashes of every chain in `stack`, as 0x-prefixed lowercase hex.
+ * A test host serves these when the suite names no `servedChains`.
+ */
+export function stackGenesisHashes(stack: TestStack): string[] {
+  const chains = [stack.people, stack.bulletin, stack.assetHub, stack.relay];
+  return chains.flatMap((chain) => {
+    if (!chain) return [];
+    const { genesisHash } = chain;
+    const hex =
+      typeof genesisHash === "string"
+        ? genesisHash.replace(/^0x/i, "")
+        : Array.from(genesisHash, (b) => b.toString(16).padStart(2, "0")).join(
+            "",
+          );
+    return [`0x${hex.toLowerCase()}`];
+  });
+}
+
 /** The chain options a fixture or server accepts, plus explicit overrides. */
 export interface NetworkOptions {
   networks?: NetworkConfig[];

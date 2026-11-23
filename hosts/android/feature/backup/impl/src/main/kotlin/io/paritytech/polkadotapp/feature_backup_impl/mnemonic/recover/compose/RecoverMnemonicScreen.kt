@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_backup_impl.mnemonic.recover.compose
 
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -8,13 +10,17 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -61,6 +67,19 @@ fun RecoverMnemonicScreen(contract: RecoverMnemonicContract) {
     )
 }
 
+private val RecoveryPhraseKeyboardOptions = KeyboardOptions(autoCorrectEnabled = false)
+
+@OptIn(ExperimentalComposeUiApi::class)
+private val RecoveryPhraseInputInterceptor = PlatformTextInputInterceptor { request, nextHandler ->
+    nextHandler.startInputMethod { outAttributes ->
+        request.createInputConnection(outAttributes).also {
+            outAttributes.inputType = outAttributes.inputType or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            outAttributes.imeOptions = outAttributes.imeOptions or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+        }
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun RecoverMnemonicScreenInternal(
     onBackAction: () -> Unit,
@@ -101,16 +120,19 @@ private fun RecoverMnemonicScreenInternal(
 
                     VerticalSpacer { mediumIncreased }
 
-                    NovaTextField(
-                        modifier = Modifier
-                            .heightIn(min = 136.dp)
-                            .fillMaxWidth()
-                            .testTag(RecoverMnemonicTestTags.RECOVERY_PHRASE_INPUT),
-                        value = enteredMnemonic,
-                        onValueChange = onMnemonicEnter,
-                        singleLine = false,
-                        readOnly = inProgress
-                    )
+                    InterceptPlatformTextInput(interceptor = RecoveryPhraseInputInterceptor) {
+                        NovaTextField(
+                            modifier = Modifier
+                                .heightIn(min = 136.dp)
+                                .fillMaxWidth()
+                                .testTag(RecoverMnemonicTestTags.RECOVERY_PHRASE_INPUT),
+                            value = enteredMnemonic,
+                            onValueChange = onMnemonicEnter,
+                            singleLine = false,
+                            readOnly = inProgress,
+                            keyboardOptions = RecoveryPhraseKeyboardOptions
+                        )
+                    }
                 }
             }
 
