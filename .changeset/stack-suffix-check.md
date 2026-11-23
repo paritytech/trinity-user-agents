@@ -3,6 +3,6 @@
 "@parity/truapi": patch
 ---
 
-`StackStatus.mismatches` can list People's `NetworkSuffix` as `networkSuffix` when it is not the descriptor's `tld`. A
-signing host on a bundled stack reports it from the suffix its allowance work reads, and keeps using People. A pairing
-host never lists it.
+People's `NetworkSuffix` should be the same as the `tld` in the stack's descriptor. When a signing host reads a
+different suffix during its allowance work, `StackStatus.mismatches` now lists it as `networkSuffix`. It's only a
+report: the core keeps using People. A pairing host doesn't read the suffix, so it never lists one.
