@@ -9,6 +9,7 @@ import uniffi.truapi.NativeWorkerExecution
 import uniffi.truapi.NativeWorkerExecutionState
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
+import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
 
 /** Open the execution for this WebView startup attempt. */
@@ -30,6 +31,10 @@ class TrUAPIWorkerExecution internal constructor(private val inner: NativeWorker
 
     fun render(request: ProductRendererRenderRequest): Flow<RendererNode> =
         renderFlow { observer -> inner.render(request, observer) }
+
+    /** Resolve a body drawn by this worker so its product receives material failures. */
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 }
 
 /** The latest state of one product's worker, including startup retries. */

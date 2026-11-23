@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use super::{NativeProductExecution, NativeRendererObserver, NativeSubscription};
+use super::{
+	NativeMaterialsObserver, NativeMaterialsResolution, NativeProductExecution,
+	NativeRendererObserver, NativeSubscription,
+};
 use crate::ProductRuntimeError;
 use truapi::latest;
 
@@ -41,6 +44,19 @@ impl NativeWorkerExecution {
 		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, ProductRuntimeError> {
 		self.execution.render(request, observer)
+	}
+
+	/// Follow materials for a tree drawn by this worker.
+	///
+	/// Fallbacks are reported to the execution that rendered the tree.
+	pub fn resolve_materials(
+		&self,
+		tree: latest::RendererNode,
+		context: latest::RenderContext,
+		float_filterable: bool,
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
+		self.execution.resolve_materials(tree, context, float_filterable, observer)
 	}
 
 	/// Deliver a host action to the worker that drew its body.

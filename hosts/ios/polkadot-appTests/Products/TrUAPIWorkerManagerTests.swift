@@ -61,6 +61,21 @@ struct TrUAPIWorkerManagerTests {
         try await withTimeout(.hangGuard) { await view.execution.awaitClose() }
     }
 
+    @Test
+    func reportsABuildFailureSoTheCoreCanRetryWhileClaimed() async throws {
+        struct MissingWorker: Error {}
+
+        let attempt = Attempt(4)
+        let manager = makeManager { _, _, _ in throw MissingWorker() }
+        manager.start(productId: product, attempt: attempt)
+        let reason = try await withTimeout(.hangGuard) {
+            var failures = attempt.failures.stream.makeAsyncIterator()
+            return await failures.next()
+        }
+        #expect(reason == String(describing: MissingWorker()))
+        manager.stop(productId: product, attemptId: attempt.id())
+    }
+
     private func makeManager(build: @escaping TrUAPIWorkerManager.Builder) -> TrUAPIWorkerManager {
         TrUAPIWorkerManager(build: build, runtime: { throw CancellationError() }, presentationFallback: { nil })
     }

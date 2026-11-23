@@ -5,6 +5,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.parity.truapi.MaterialsResolution
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIWorkerExecution
 import io.parity.truapi.WorkerExecutionState
@@ -27,16 +28,22 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.MaterialsProps
 import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.ProductId
+import uniffi.truapi.RenderContext
 import uniffi.truapi.RendererNode
 
 class TrUAPIPocketFaceStreamsTest {
@@ -97,7 +104,7 @@ class TrUAPIPocketFaceStreamsTest {
         coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
         val faces = streams(ScriptedResolver(listOf(Result.success(publishing)))).renderFaces(key)
         val drawn = mutableListOf<RendererNode>()
-        val collector = launch { faces.toList(drawn) }
+        val collector = launch { faces.map { it.tree }.toList(drawn) }
         runCurrent()
         states.value = WorkerExecutionState.Pending
         runCurrent()
@@ -134,5 +141,38 @@ class TrUAPIPocketFaceStreamsTest {
 
         assertEquals(1, resolver.calls)
         coVerify(exactly = 0) { runtimeProvider.runtime() }
+    }
+
+    private val tree = RendererNode.Materials(MaterialsProps(emptyList()), emptyList())
+
+    private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
+    private val context = RenderContext.PocketCard(key.cardId.value)
+
+    private fun drawnBy(execution: TrUAPIWorkerExecution): TrUAPIPocketFaceStreams {
+        every { execution.render(any()) } returns flowOf(tree)
+        every { runtime.workerExecutionState(gameProduct) } returns flowOf(WorkerExecutionState.Running(execution))
+        coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
+        return streams(ScriptedResolver(listOf(Result.success(publishing))))
+    }
+
+    @Test
+    fun `only the execution that drew a live face receives its material reports`() = runTest {
+        val live = mockk<MaterialsResolution>()
+        val kept = mockk<MaterialsResolution>()
+        val execution = mockk<TrUAPIWorkerExecution> { every { resolveMaterials(tree, context, false) } returns live }
+        every { runtime.resolveMaterials(tree, context, false) } returns kept
+        val faces = drawnBy(execution)
+        val drawn = faces.renderFaces(key).first()
+
+        assertEquals(live, drawn.resolveMaterials())
+        assertEquals(kept, faces.resolveKeptMaterials(key, tree))
+        verify(exactly = 0) { runtime.currentWorkerExecution(any()) }
+    }
+
+    @Test
+    fun `a resolution that throws leaves the face plain`() = runTest {
+        val execution = mockk<TrUAPIWorkerExecution> { every { resolveMaterials(any(), any(), any()) } throws IllegalStateException() }
+
+        assertNull(drawnBy(execution).renderFaces(key).first().resolveMaterials())
     }
 }
