@@ -147,7 +147,7 @@ class CallSessionManager @Inject constructor(
                 }
 
                 else -> when (callDirection) {
-                    CallDirection.Outgoing -> externalCallSignaling.observeOfferReadStatus(offerId)
+                    CallDirection.Outgoing -> externalCallSignaling.observeOfferDeliveredStatus(offerId)
                         .map { isRead -> if (isRead) CallStatus.Ringing else CallStatus.Requesting }
                     CallDirection.Incoming -> flowOf(CallStatus.Connecting)
                 }

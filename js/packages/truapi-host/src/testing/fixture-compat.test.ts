@@ -12,6 +12,7 @@ import { createMockClient } from "./create-mock-client.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 import { PASEO_ASSET_HUB, LIVE_CHAINS } from "./dev-accounts.js";
 import { MOCK_GENESIS, mockTestStack } from "../web/create-mock-host.js";
+import { stackGenesisHashes } from "./networks.js";
 
 const SAMPLE_CHAIN = {
   id: "paseo-asset-hub",
@@ -587,5 +588,25 @@ describe("withholding one resource while the rest stay granted", () => {
   it("sets nothing when the option is absent", async () => {
     const url = new URL(await hostPageUrlFor({}));
     expect(url.searchParams.has("withheld")).toBe(false);
+  });
+});
+
+describe("the chains a test host serves by default", () => {
+  it("are every chain in its test stack", () => {
+    // A suite that writes its own stack without naming servedChains is
+    // answering for those chains, so featureSupported has to agree.
+    const relay = new Uint8Array(32).fill(0xab);
+    expect(
+      stackGenesisHashes({
+        ...mockTestStack(),
+        assetHub: { genesisHash: "0xCAFE" },
+        relay: { genesisHash: relay },
+      }),
+    ).toEqual([
+      mockTestStack().people.genesisHash,
+      mockTestStack().bulletin.genesisHash,
+      "0xcafe",
+      `0x${"ab".repeat(32)}`,
+    ]);
   });
 });

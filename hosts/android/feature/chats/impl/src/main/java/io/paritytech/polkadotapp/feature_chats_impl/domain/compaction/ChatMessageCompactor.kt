@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.HopTicket
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.compaction.CompactionBatchStore
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.isTransient
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageStatement
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageStatementContent
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageV1
@@ -25,6 +26,8 @@ class ChatMessageCompactor @Inject constructor(
     private val compactionBatchStore: CompactionBatchStore,
     private val hopNodeUrlProvider: HopNodeUrlProvider
 ) : MessageCompactor {
+    override fun canCompact(message: EncodedMessage): Boolean = !message.isTransient()
+
     override suspend fun compact(messages: List<EncodedMessage>): Result<List<CompactedBatch>> {
         return runCatching { compactionBatchStore.packBatches(messages) }
             .flatMap { chunks -> uploadChunks(chunks) }
