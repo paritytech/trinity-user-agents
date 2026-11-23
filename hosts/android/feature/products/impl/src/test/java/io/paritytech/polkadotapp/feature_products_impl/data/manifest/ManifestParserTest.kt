@@ -181,8 +181,21 @@ class ManifestParserTest {
             "Loyalty",
             PocketCardPreview.Archive("faces/loyalty.json"),
             faceShown = true,
+            back = null,
         )
         assertEquals(listOf(expected), worker?.pocketCards)
+    }
+
+    @Test
+    fun `a card with a published back has two live sides when expanded`() {
+        val worker = parser.parseExecutable(
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"pocket":true},
+               "pocket":{"cards":[{"id":"loyalty","title":"Loyalty","preview":"front.json","back":"back.json"}]}}""",
+            ExecutableKind.WORKER,
+            host("worker.coinflip.dot"),
+        ).getOrThrow() as ProductExecutable.Worker
+
+        assertEquals(PocketCardPreview.Archive("back.json"), worker.pocketCards.single().back)
     }
 
     /**
@@ -230,6 +243,8 @@ class ManifestParserTest {
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"","preview":"a.json"}]}"""))
         publishesNoCards(worker("""{}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":42}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":""}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
         // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
         publishesNoCards(

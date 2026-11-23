@@ -7,13 +7,27 @@ import SwiftUI
 struct PocketCollectionCardView: View {
     let card: PocketCardViewModel
     let pocket: ProductPocketService?
+    let expanded: Bool
+    let exposed: Bool
 
-    init(card: PocketCardViewModel, pocket: ProductPocketService? = nil) {
+    init(card: PocketCardViewModel, pocket: ProductPocketService? = nil, expanded: Bool = false, exposed: Bool = true) {
         self.card = card
         self.pocket = pocket ?? .current
+        self.expanded = expanded
+        self.exposed = exposed
     }
 
     @State private var streamed: CustomMessageWidgetNode?
+
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var inViewport = false
+    @State private var appeared = false
+    @State private var dismiss: (@MainActor () -> Void)?
+
+    private var visible: Bool { exposed && scenePhase == .active && (expanded || inViewport) }
+    private var drawing: DrawingKey {
+        DrawingKey(cardId: card.id, installation: pocket?.installation ?? 0, visible: visible)
+    }
 
     private let resolver = WidgetDesignTokenResolver()
 
@@ -32,10 +46,33 @@ struct PocketCollectionCardView: View {
             },
             onAction: { action, value in send(action, value) }
         )
-        // Keyed on the Pocket as well as the card: a session that installed a
-        // new one ended the stream this card was drawing, and a key of its own
-        // id alone would never start another.
-        .task(id: DrawingKey(cardId: card.id, installation: pocket?.installation ?? 0)) { await draw() }
+        .onGeometryChange(for: Bool.self) { proxy in
+            guard let viewport = proxy.bounds(of: .scrollView) else { return false }
+            return viewport.intersects(CGRect(origin: .zero, size: proxy.size))
+        } action: { inViewport = $0 }
+        .onAppear {
+            appeared = true
+            updatePresentation()
+        }
+        .onChange(of: drawing) { if appeared { updatePresentation() } }
+        .onDisappear {
+            appeared = false
+            dismiss?()
+            dismiss = nil
+        }
+        .task(id: drawing) {
+            if visible { await draw() }
+        }
+    }
+
+    private func updatePresentation() {
+        let previous = dismiss
+        if visible, let pocket {
+            dismiss = pocket.present(card.key, expanded: expanded)
+        } else {
+            dismiss = nil
+        }
+        previous?()
     }
 
     /// What a card's drawing task is keyed on: the card, and the Pocket it is
@@ -43,6 +80,7 @@ struct PocketCollectionCardView: View {
     private struct DrawingKey: Equatable {
         let cardId: String
         let installation: Int
+        let visible: Bool
     }
 
     private func draw() async {

@@ -59,8 +59,7 @@ class PocketInteractor @Inject constructor(
 
     suspend fun faceShownOnOpen(key: PocketCardKey): Boolean = pocketCardFaceOnOpen.faceShownOnOpen(key)
 
-    /** Collect only while the face is on screen: collecting keeps the backing product's worker running. */
-    fun observeFace(key: PocketCardKey): Flow<PocketFace> = pocketFaceSource.observeFace(key)
+    fun bindVisibleCard(key: PocketCardKey, expanded: Flow<Boolean>): Flow<PocketFace> = pocketFaceSource.bindVisibleCard(key, expanded)
 
     suspend fun removeProductCard(key: PocketCardKey): Result<Unit> = pocketCollection.removeCard(key)
 

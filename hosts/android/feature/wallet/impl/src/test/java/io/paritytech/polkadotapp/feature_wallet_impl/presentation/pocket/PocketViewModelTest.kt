@@ -60,7 +60,7 @@ class PocketViewModelTest {
     private val interactor: PocketInteractor = mockk {
         every { observeDigitalDollarBalance() } returns emptyFlow()
         every { observeProductCards() } returns emptyFlow()
-        every { observeFace(any()) } returns emptyFlow()
+        every { bindVisibleCard(any(), any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
         coEvery { faceShownOnOpen(any()) } returns true
     }
@@ -466,7 +466,7 @@ class PocketViewModelTest {
         val card = productCard("loyalty")
         val face = PocketFace(JsWidget.Text(text = "Loyalty"), materials = null)
         every { interactor.observeProductCards() } returns flowOf(listOf(card))
-        every { interactor.observeFace(card.key) } returns flowOf(face)
+        every { interactor.bindVisibleCard(card.key, any()) } returns flowOf(face)
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
@@ -475,6 +475,35 @@ class PocketViewModelTest {
 
         assertEquals(face, viewModel.bindingsOf(uiCard).face.value)
         listCopy.cancel()
+    }
+
+    @Test
+    fun `two presentations share the card binding until the last one leaves and its grace expires`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        val changes = mutableListOf<String>()
+        every { interactor.bindVisibleCard(card.key, any()) } returns flow {
+            changes += "started"
+            try {
+                awaitCancellation()
+            } finally {
+                changes += "stopped"
+            }
+        }
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        val list = launch { viewModel.bindingsOf(uiCard).face.collect {} }
+        val expanded = launch { viewModel.bindingsOf(uiCard).face.collect {} }
+        runCurrent()
+        list.cancel()
+        advanceTimeBy(5_000)
+        expanded.cancel()
+        advanceTimeBy(4_999)
+        assertEquals(listOf("started"), changes)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(listOf("started", "stopped"), changes)
     }
 
     // A link can name a card before the Pocket tab has ever been shown, and a tab shown for the first

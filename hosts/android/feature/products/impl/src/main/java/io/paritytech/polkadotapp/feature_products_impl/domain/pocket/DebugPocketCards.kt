@@ -106,4 +106,5 @@ fun DebugPocketCard.toDefinition(): PocketCardDefinition = PocketCardDefinition(
     title = title,
     preview = PocketCardPreview.Url(previewUrl),
     faceShown = faceShown,
+    back = null,
 )

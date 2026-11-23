@@ -2,15 +2,13 @@ import Foundation
 import Products
 import TrUAPIHost
 
-/// Which handler is drawing a product's cards.
+/// Routes drawing and actions only for a live, published card.
 protocol PocketFaceStreamsResolving: Sendable {
-    /// The handler running right now, or nil if none is.
-    func streams(of productId: ProductId) -> (any PocketFaceStreaming)?
+    /// The renderer for this visible card, when available.
+    func streams(for key: PocketCardKey) -> (any PocketFaceStreaming)?
 
-    /// The same, waited for. A card is on screen before the collection has been
-    /// reconciled and its worker booted, and answering none then would leave it
-    /// on the face it was last drawn with.
-    func awaitStreams(of productId: ProductId) async -> (any PocketFaceStreaming)?
+    /// Wait for the card's eligibility check or the end of the session.
+    func awaitStreams(for key: PocketCardKey) async -> (any PocketFaceStreaming)?
 }
 
 /// Where a card's face comes from: what the host already holds, then everything
@@ -50,10 +48,8 @@ struct RealPocketFaceSource: PocketFaceSourcing {
                     continuation.yield(kept)
                 }
 
-                // Waited for rather than asked once: the card is drawn before
-                // the collection has been reconciled, and the only thing that
-                // would start it again is its own identity changing.
-                guard let streams = await streams.awaitStreams(of: key.productId) else {
+                // The cached face is already visible while its manifest is being checked.
+                guard let streams = await streams.awaitStreams(for: key) else {
                     continuation.finish()
                     return
                 }
@@ -73,6 +69,6 @@ struct RealPocketFaceSource: PocketFaceSourcing {
     }
 
     func send(action: String, payload: Data, for key: PocketCardKey) {
-        streams.streams(of: key.productId)?.send(action: action, payload: payload, for: key)
+        streams.streams(for: key)?.send(action: action, payload: payload, for: key)
     }
 }

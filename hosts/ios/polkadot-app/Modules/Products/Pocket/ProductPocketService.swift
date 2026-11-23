@@ -121,9 +121,12 @@ final class ProductPocketService: @unchecked Sendable {
         return drawing.productImages.resolver(contentId: { await name.resolve() })
     }
 
-    /// Starts the worker manager the core runs on, then follows the collection:
-    /// a product the user holds cards for gets a handler, and loses it when the
-    /// last of its cards goes.
+    /// Holds Pocket's visible sides until this presentation ends.
+    @MainActor
+    func present(_ key: PocketCardKey, expanded: Bool) -> (@MainActor () -> Void)? {
+        handlers?.present(key, expanded: expanded)
+    }
+
     func start(
         runtimeProvider: any TrUAPIHostRuntimeProviding,
         flowState: SPAFlowState,
@@ -215,7 +218,6 @@ private extension ProductPocketService {
             if manager != nil { running.installations += 1 }
 
             guard let previousWorkers else {
-                previousHandlers?.stop()
                 return nil
             }
             return (previousWorkers, previousHandlers)
@@ -223,17 +225,19 @@ private extension ProductPocketService {
 
         guard let previous else { return }
 
-        previous.1?.stop()
-        Task { await previous.0.shutdown() }
+        Task {
+            await previous.1?.stop()
+            await previous.0.shutdown()
+        }
     }
 
     func follow() {
-        let task = Task { [weak self, collection, logger] in
+        guard let handlers else { return }
+        let task = Task { [collection, logger] in
             do {
                 for try await cards in collection.observeCards() {
-                    guard let self else { return }
-
-                    handlers?.settle(cards)
+                    guard !Task.isCancelled else { return }
+                    await handlers.settle(cards)
                 }
             } catch {
                 logger.error("[pocket] the Pocket stopped following the collection: \(error)")

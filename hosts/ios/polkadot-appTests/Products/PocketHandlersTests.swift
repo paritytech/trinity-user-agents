@@ -1,117 +1,138 @@
 import Foundation
 import Products
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
 private let gameProductId = try! ProductId("game.paseo")
 
-/// A handler is what asks for a product's worker, so what starts one decides
-/// which web views the session runs. A handler too many burns one for a product
-/// that draws nothing; one too few leaves its cards on the face they were last
-/// drawn with.
+@MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct PocketHandlersTests {
-    @Test
-    func runsOneHandlerForAProductHoldingTheCardsItOffers() async throws {
-        let workers = workersRunning(gameProductId)
+    @Test func storingCardsDoesNotStartTheirWorker() {
+        let workers = StubWorkerManager()
         let handlers = makeHandlers(workers: workers)
-
-        #expect(await handlers.reconcile([loyalty, streak]))
-
-        #expect(handlers.handler(of: gameProductId) != nil)
-        #expect(workers.references.acquired == [gameProductId])
+        handlers.settle([loyalty, streak])
+        #expect(workers.references.log.isEmpty)
     }
 
-    /// A product that offers no such card draws nothing, and a handler for it
-    /// would boot a worker anyway. The host-placed card every Pocket carries
-    /// sits on a product like that.
-    @Test
-    func runsNoHandlerForACardTheProductDoesNotOffer() async throws {
+    @Test func twoPresentationsShareAFrontClaimEvenWithNoRenderStream() async throws {
+        let workers = StubWorkerManager()
+        let handlers = makeHandlers(workers: workers)
+        let dismissWallet = handlers.present(loyalty.key, expanded: false)
+        handlers.settle([loyalty])
+        _ = try #require(await handlers.awaitStreams(for: loyalty.key))
+        let dismissOpened = handlers.present(loyalty.key, expanded: true)
+        dismissWallet()
+        dismissWallet()
+        #expect(workers.references.log == ["acquire \(gameProductId)"])
+        dismissOpened()
+        #expect(workers.references.log == ["acquire \(gameProductId)", "release \(gameProductId)"])
+    }
+
+    @Test func chatAndPocketOwnTheirWorkAcrossARenderRestart() async throws {
+        let workers = StubWorkerManager()
+        let execution = MockProductExecution()
+        execution.keepsRenderStreamOpen = true
+        workers.publish([gameProductId: execution])
+        let handlers = makeHandlers(workers: workers)
+        handlers.settle([loyalty])
+        let leavePocket = handlers.present(loyalty.key, expanded: false)
+        defer { leavePocket() }
+        let streams = try #require(await handlers.awaitStreams(for: loyalty.key))
+        let chat = TrUAPIChatHandler(productId: gameProductId, workers: workers)
+        try await chat.start(messagingSupport: .init(bot: nil, context: nil))
+        let drawing = Task { for try await _ in streams.renderFaces(for: loyalty.key) {} }
+        defer { drawing.cancel() }
+
+        do {
+            try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
+            let first = try #require(execution.renderContinuations.first)
+            first.finish(throwing: URLError(.networkConnectionLost))
+            try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
+            #expect(workers.references.acquired == [gameProductId, gameProductId])
+            #expect(workers.references.released.isEmpty)
+            leavePocket()
+            #expect(workers.references.released == [gameProductId])
+        } catch {
+            await chat.dispose()
+            throw error
+        }
+        await chat.dispose()
+        #expect(workers.references.released == workers.references.acquired)
+    }
+
+    @Test func expandedCardWithABackHoldsBothSidesUntilCollapse() async throws {
+        let published = StubPublishedCards()
+        published.back = "back.json"
+        let workers = StubWorkerManager()
+        let handlers = makeHandlers(workers: workers, published: published)
+        handlers.settle([loyalty])
+        let dismissOpened = handlers.present(loyalty.key, expanded: true)
+        _ = try #require(await handlers.awaitStreams(for: loyalty.key))
+        let dismissWallet = handlers.present(loyalty.key, expanded: false)
+        #expect(workers.references.acquired == [gameProductId, gameProductId])
+        dismissOpened()
+        #expect(workers.references.released == [gameProductId])
+        dismissWallet()
+        #expect(workers.references.released == [gameProductId, gameProductId])
+    }
+
+    @Test func removingOneCardReleasesOnlyItsClaimAndShutdownReturnsTheRest() async throws {
+        let workers = StubWorkerManager()
+        let handlers = makeHandlers(workers: workers)
+        handlers.settle([loyalty, streak])
+        let dismissFirst = handlers.present(loyalty.key, expanded: false)
+        let dismissSecond = handlers.present(streak.key, expanded: false)
+        _ = try #require(await handlers.awaitStreams(for: loyalty.key))
+        _ = try #require(await handlers.awaitStreams(for: streak.key))
+        handlers.settle([streak])
+        #expect(workers.references.released == [gameProductId])
+        handlers.stop()
+        dismissFirst()
+        dismissSecond()
+        #expect(workers.references.released == workers.references.acquired)
+    }
+
+    @Test func anUnpublishedVisibleCardKeepsItsCachedFaceWithoutTakingAClaim() async {
+        let workers = StubWorkerManager()
         let published = StubPublishedCards()
         published.failures = [PocketPublishError.noPocket]
-        let workers = workersRunning(gameProductId)
         let handlers = makeHandlers(workers: workers, published: published)
-
-        #expect(await handlers.reconcile([loyalty]))
-
-        #expect(handlers.handler(of: gameProductId) == nil)
-        #expect(workers.references.acquired.isEmpty)
+        handlers.settle([loyalty])
+        let dismiss = handlers.present(loyalty.key, expanded: false)
+        #expect(await handlers.awaitStreams(for: loyalty.key) == nil)
+        dismiss()
+        #expect(workers.references.log.isEmpty)
     }
 
-    /// Looking a card up is a chain read. A read that did not land is not the
-    /// product saying no, so it is reported as unsettled and asked again;
-    /// treating it as a no would leave the card on its kept face until the
-    /// collection next moves, which may be never.
-    @Test
-    func reportsALookupThatDidNotLandAsUnsettled() async throws {
+    @Test func withdrawingAnOfferReleasesTheVisibleSides() async throws {
+        let workers = StubWorkerManager()
+        let published = StubPublishedCards()
+        published.back = "back.json"
+        let handlers = makeHandlers(workers: workers, published: published)
+        handlers.settle([loyalty])
+        let dismiss = handlers.present(loyalty.key, expanded: true)
+        _ = try #require(await handlers.awaitStreams(for: loyalty.key))
+        published.failures = [PocketPublishError.unknownCard]
+        handlers.settle([loyalty])
+        try await waitUntil { workers.references.released.count == 2 }
+        dismiss()
+        #expect(workers.references.released == workers.references.acquired)
+    }
+
+    @Test func aTransientManifestFailureIsRetriedWhileTheCardIsVisible() async throws {
+        let workers = StubWorkerManager()
         let published = StubPublishedCards()
         published.failures = [URLError(.notConnectedToInternet)]
-        let workers = workersRunning(gameProductId)
         let handlers = makeHandlers(workers: workers, published: published)
-
-        #expect(await !handlers.reconcile([loyalty]))
-        #expect(handlers.handler(of: gameProductId) == nil)
-
-        #expect(await handlers.reconcile([loyalty]))
-        #expect(handlers.handler(of: gameProductId) != nil)
-    }
-
-    /// A read that did not land is not the product saying its card is gone.
-    /// Stopping a handler on one would take down a card that is drawing, and
-    /// the retry a moment later would boot the worker all over again.
-    @Test
-    func keepsAHandlerWhoseCardLookupDidNotLand() async throws {
-        let published = StubPublishedCards()
-        let workers = workersRunning(gameProductId)
-        let handlers = makeHandlers(workers: workers, published: published)
-        _ = await handlers.reconcile([loyalty])
-
-        published.failures = [URLError(.notConnectedToInternet)]
-        #expect(await !handlers.reconcile([loyalty]))
-
-        #expect(handlers.handler(of: gameProductId) != nil)
-        #expect(workers.references.released.isEmpty)
-    }
-
-    /// The request is what keeps the worker alive, so a product whose last card
-    /// has gone must give it back rather than hold a web view for a Pocket that
-    /// no longer draws it.
-    @Test
-    func givesTheWorkerBackWhenTheLastOfAProductsCardsGoes() async throws {
-        let workers = workersRunning(gameProductId)
-        let handlers = makeHandlers(workers: workers)
-        _ = await handlers.reconcile([loyalty])
-
-        _ = await handlers.reconcile([])
-
-        #expect(handlers.handler(of: gameProductId) == nil)
-        #expect(workers.references.released == [gameProductId])
-    }
-
-    /// A card already drawn must not be asked for twice: a second request for
-    /// the same product is one the core counts and nothing gives back.
-    @Test
-    func doesNotAskAgainForAProductItIsAlreadyRunning() async throws {
-        let workers = workersRunning(gameProductId)
-        let handlers = makeHandlers(workers: workers)
-        _ = await handlers.reconcile([loyalty])
-
-        _ = await handlers.reconcile([loyalty, streak])
-
+        handlers.settle([loyalty])
+        let dismiss = handlers.present(loyalty.key, expanded: false)
+        _ = try #require(await handlers.awaitStreams(for: loyalty.key))
+        dismiss()
         #expect(workers.references.acquired == [gameProductId])
-    }
-
-    /// Nothing else holds a way back to the handlers, so a session that ended
-    /// has to be what gives their requests back.
-    @Test
-    func givesEveryRequestBackWhenTheSessionStops() async throws {
-        let workers = workersRunning(gameProductId)
-        let handlers = makeHandlers(workers: workers)
-        _ = await handlers.reconcile([loyalty])
-
-        handlers.stop()
-
-        #expect(workers.references.released == [gameProductId])
     }
 }
 
@@ -129,12 +150,6 @@ private let streak = PocketCardEntry(
     privileged: false
 )
 
-private func workersRunning(_ productId: ProductId) -> StubWorkerManager {
-    let workers = StubWorkerManager()
-    workers.publish([productId: MockProductExecution()])
-    return workers
-}
-
 private func makeHandlers(
     workers: StubWorkerManager,
     published: StubPublishedCards = StubPublishedCards()
@@ -147,17 +162,21 @@ final class StubPublishedCards: PublishedPocketCardsResolving, @unchecked Sendab
     /// Errors thrown by successive lookups, consumed in order; once empty the
     /// lookup succeeds.
     var failures: [any Error] = []
-    private(set) var lookups = 0
+    var back: String?
 
     func find(productId: ProductId, cardId: PocketCardId) async throws -> PublishedPocketCard {
-        lookups += 1
         if !failures.isEmpty { throw failures.removeFirst() }
 
         return PublishedPocketCard(
             productId: productId,
             productName: productId.rawValue,
             workerContentId: productId,
-            definition: PocketCardDefinition(id: cardId, title: "Card", preview: .archive(path: "face.json"))
+            definition: PocketCardDefinition(
+                id: cardId,
+                title: "Card",
+                preview: .archive(path: "face.json"),
+                back: back
+            )
         )
     }
 }

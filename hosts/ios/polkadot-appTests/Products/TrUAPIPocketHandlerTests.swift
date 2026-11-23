@@ -7,9 +7,7 @@ import TrUAPIHost
 
 private let gameProductId = try! ProductId("game.paseo")
 
-/// The render stream is what makes a card live. Both ways it goes wrong are
-/// invisible on screen: a stream nothing reopens, and a stream torn down for a
-/// worker that never moved.
+/// Visible cards keep receiving trees across execution changes.
 struct TrUAPIPocketHandlerTests {
     /// The manager publishes every product's execution in one value, so it
     /// re-sends whenever any worker starts or stops. Reopening on those would
@@ -79,5 +77,5 @@ struct TrUAPIPocketHandlerTests {
 private let loyalty = PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
 private func makeStreams(workers: StubWorkerManager) -> TrUAPIPocketHandler {
-    TrUAPIPocketHandler(productId: gameProductId, workers: workers)
+    TrUAPIPocketHandler(workers: workers)
 }

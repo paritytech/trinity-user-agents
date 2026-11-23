@@ -93,9 +93,9 @@ private struct RunningHandler: PocketFaceStreamsResolving {
         self.handler = handler
     }
 
-    func streams(of _: ProductId) -> (any PocketFaceStreaming)? { handler }
+    func streams(for _: PocketCardKey) -> (any PocketFaceStreaming)? { handler }
 
-    func awaitStreams(of _: ProductId) async -> (any PocketFaceStreaming)? { handler }
+    func awaitStreams(for _: PocketCardKey) async -> (any PocketFaceStreaming)? { handler }
 }
 
 /// A product with no handler running: it only starts after the card has
@@ -107,9 +107,9 @@ private final class LateHandlers: PocketFaceStreamsResolving, @unchecked Sendabl
         arrivals.continuation.yield(streams)
     }
 
-    func streams(of _: ProductId) -> (any PocketFaceStreaming)? { nil }
+    func streams(for _: PocketCardKey) -> (any PocketFaceStreaming)? { nil }
 
-    func awaitStreams(of _: ProductId) async -> (any PocketFaceStreaming)? {
+    func awaitStreams(for _: PocketCardKey) async -> (any PocketFaceStreaming)? {
         for await streams in arrivals.stream {
             return streams
         }

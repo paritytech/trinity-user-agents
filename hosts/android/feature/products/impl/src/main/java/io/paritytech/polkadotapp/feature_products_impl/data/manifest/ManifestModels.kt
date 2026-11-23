@@ -52,6 +52,7 @@ internal class PocketCardRemote(
     val preview: String? = null,
     // Kept raw: Gson's boolean adapter reads the string "no" as false instead of refusing it.
     val faceShown: JsonElement? = null,
+    val back: JsonElement? = null,
 )
 
 internal class DimensionsRemote(

@@ -11,4 +11,5 @@ data class PocketCardDefinition(
     val title: String,
     val preview: PocketCardPreview,
     val faceShown: Boolean,
+    val back: PocketCardPreview.Archive?,
 )

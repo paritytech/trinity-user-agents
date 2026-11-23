@@ -167,8 +167,8 @@ class PocketViewModel @Inject constructor(
 
     /**
      * One set of bindings per card, however many copies of it are drawn: expanding a card draws a
-     * second one over the first, and two streams would take two worker references and leave the new
-     * copy empty until the product drew again. The newest face is replayed to whichever copy asks next.
+     * second one over the first, and an independent stream would leave the new copy empty until
+     * the product drew again. The newest face is replayed to whichever copy asks next.
      *
      * The stream outlives a short gap in subscribers, so scrolling the card off screen or leaving the
      * app for a moment does not tear the product's worker down and boot it again on the way back.
@@ -191,7 +191,7 @@ class PocketViewModel @Inject constructor(
         return CardBinding(
             scope = scope,
             bindings = ProductFaceBindings(
-                face = interactor.observeFace(card.key)
+                face = interactor.bindVisibleCard(card.key, selectedCardId.map { it == card.id })
                     .stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null),
                 onFaceAction = { actionId, type -> onFaceAction(card, actionId, type) },
                 imageResolver = imageResolver,

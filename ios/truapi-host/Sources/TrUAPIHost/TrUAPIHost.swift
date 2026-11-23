@@ -180,7 +180,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// the per-execution bridge passed to
     /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``.
     /// Can arrive on any thread, including synchronously on the calling
-    /// thread during `acquireWorker`/`releaseWorker`, often the main thread
+    /// thread when a worker claim is acquired or released, often the main thread
     /// and re-entrantly: hand the transition off rather than blocking on
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
@@ -1443,19 +1443,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.disconnect()
     }
 
-    /// Take one reference on the product's worker for a modality holder that
-    /// is on screen or in flight. The first one reports `.start` to
-    /// ``HostBridge/requestWorkerTransition(productId:transition:)``, which is
-    /// where the host starts the worker. Pair every call with one
-    /// ``releaseWorker(productId:)``.
-    public func acquireWorker(productId: ProductId) {
-        inner.acquireWorker(productId: productId)
-    }
-
-    /// Release one reference. The last one reports `.stop`, after which the
-    /// host may stop the worker. Releasing with none held is a no-op.
-    public func releaseWorker(productId: ProductId) {
-        inner.releaseWorker(productId: productId)
+    /// Take one reference on the worker until this consumer releases its claim.
+    public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
+        inner.claimWorker(productId: productId)
     }
 
     /// Report that the product's worker stopped without the host asking, as

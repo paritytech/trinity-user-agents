@@ -227,7 +227,9 @@ struct ProductManifestParserTests {
         let missingTitle = #"[{"id":"loyalty","preview":"faces/loyalty.json"}]"#
         let blankPreview = #"[{"id":"loyalty","title":"Loyalty","preview":"  "}]"#
 
-        for cards in [missingTitle, blankPreview] {
+        let blankBack = #"[{"id":"loyalty","title":"Loyalty","preview":"face.json","back":" "}]"#
+
+        for cards in [missingTitle, blankPreview, blankBack] {
             let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
 
             #expect(worker.serves(.chat))
@@ -252,6 +254,15 @@ struct ProductManifestParserTests {
         #expect(worker.entrypoint == "src/worker.js")
         #expect(worker.serves(.chat))
         #expect(worker.pocketCards.isEmpty)
+    }
+
+    @Test func aCardDeclaresAnOptionalBackInItsArchive() throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"front.json","back":"back.json"},
+         {"id":"trophy","title":"Trophy","preview":"trophy.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+        #expect(worker.pocketCards.map(\.back) == ["back.json", nil])
     }
 
     /// The request is the card's own, so one card asking for its face away

@@ -72,7 +72,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * A product-backed card: the frame is the host's, the face inside it is the product's tree. The
- * face flow is collected only while this card is composed, which is what keeps its worker running.
+ * shared card binding owns the worker reference while the card is visible.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

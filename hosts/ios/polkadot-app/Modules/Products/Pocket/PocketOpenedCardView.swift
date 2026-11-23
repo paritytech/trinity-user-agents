@@ -10,7 +10,7 @@ struct PocketOpenedCardView: View {
     let card: PocketCardViewModel
 
     var body: some View {
-        PocketCollectionCardView(card: card)
+        PocketCollectionCardView(card: card, expanded: true)
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.vertical, Self.verticalInset)
     }

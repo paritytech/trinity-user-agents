@@ -93,6 +93,7 @@ import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
@@ -374,7 +375,7 @@ interface HostBridge {
      * [TrUAPIHostRuntime] was built with, never on the per-execution bridge
      * passed to [TrUAPIHostRuntime.openProductExecution]. Can arrive on any
      * thread, including synchronously on the calling thread during
-     * `acquireWorker`/`releaseWorker`, often the main thread and
+     * `claimWorker` or a claim's `release`, often the main thread and
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
@@ -1159,23 +1160,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
-    /**
-     * Take one reference on the product's worker for a modality holder that is
-     * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.requestWorkerTransition], which is where the host starts the
-     * worker. Pair every call with one [releaseWorker].
-     */
-    fun acquireWorker(productId: ProductId) {
-        inner.acquireWorker(productId)
-    }
-
-    /**
-     * Release one reference. The last one reports a stop transition, after
-     * which the host may stop the worker. Releasing with none held is a no-op.
-     */
-    fun releaseWorker(productId: ProductId) {
-        inner.releaseWorker(productId)
-    }
+    /** The first claim requests a worker start. Releasing the last claim requests a stop. */
+    fun claimWorker(productId: ProductId): NativeWorkerClaim = inner.claimWorker(productId)
 
     /**
      * Forget one product: revoke its grants and Allow once answers, then
