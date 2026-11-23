@@ -5,9 +5,10 @@ Network transport for the TrUAPI `ChainProvider` contract: an embedded
 WebSocket JSON-RPC node, behind one API. This package is the WebAssembly build,
 for browser and desktop (webview) hosts.
 
-You connect to a network by its genesis hash, and everything else is handled for
-you: the bundled catalog provides the spec and relay wiring, so clients never
-ship or refresh specs of their own. One light client is shared across all
+You connect to a chain by its genesis hash. A provider built for a Trinity stack
+(`setStack`) runs the chains of the stack's descriptor from the light specs you
+fetched for it. Without a stack, the bundled catalog provides the spec and relay
+wiring of `paseo-next-v2` and `previewnet`. One light client is shared across all
 connections, and its synced state is kept between launches, so a launch resumes
 from finalized state instead of syncing from scratch. It holds at most 32 of them
 at once and rejects a `connect` past that, so a client that leaks connections
@@ -43,24 +44,84 @@ const response = await connection.nextResponse(); // undefined once closed
 connection.close();
 ```
 
+To run a Trinity stack, give the builder the stack's link and its descriptor as
+served, the same pair the host gives the core. The builder then lists where
+each chain's light spec is published:
+
+```js
+const builder = new ChainProviderBuilder();
+builder.setStack(link, descriptorBytes);
+for (const { genesisHash, url } of builder.lightSpecs()) {
+  const response = await fetch(url);
+  if (!response.ok) continue; // the chain stays unknown; add its spec later
+  builder.addLightSpec(genesisHash, new Uint8Array(await response.arrayBuffer()));
+}
+const provider = builder.build();
+```
+
+- `setStack` throws when the link is malformed or the descriptor is refused
+  under it. A link with a key accepts only a descriptor signed with that key.
+  See [`LightStack::open`](../../../rust/crates/truapi-provider/src/stack.rs)
+  for which copy of the descriptor to pass.
+- `addLightSpec` throws when the bytes differ from the descriptor's `sha256` or
+  imply another genesis hash, and names the chain's role. Pass the bytes as
+  served, because the digest covers them. A wrong spec is what a stale
+  descriptor looks like after a wipe, so fetch the descriptor again before
+  refusing the stack.
+- A chain is unknown to the provider until its spec is added, and a parachain
+  also until the relay's is; `connect` rejects for it meanwhile, and the chains
+  that have what they need run. `provider.addLightSpec(genesisHash, bytes)`
+  supplies a spec later.
+- The descriptor decides the relay every other chain syncs through, and which
+  chains run the statement-store protocol. The bundled catalog is not used.
+- Build one provider per stack, and a new one when the stack's `generation`
+  changes. The light client keys a chain by its genesis hash, which a fork
+  shares with its source. Before building the new one, close every connection
+  of the previous provider and call its `free()`. Until then its snapshots
+  are stored under the same stack and genesis hash and replace the new
+  provider's state.
+
 Warm start is opt-in, because this package stores nothing itself. Hand
 `setStorage` a client to storage you already own:
 
 ```js
 builder.setStorage({
-  async load(genesisHash) {
-    return (await myStore.get(genesisHash)) ?? null;
+  async load(genesisHash, stack) {
+    return (await myStore.get(key(genesisHash, stack))) ?? null;
   },
-  async save(genesisHash, blob) {
-    await myStore.put(genesisHash, blob);
+  async save(genesisHash, blob, stack) {
+    await myStore.put(key(genesisHash, stack), blob);
   },
 });
+
+function key(genesisHash, stack) {
+  return stack === undefined ? genesisHash : `${stack}:${genesisHash}`;
+}
 ```
 
-Both are called with a `0x`-prefixed lowercase genesis hash. A client that cannot
+Both are called with a `0x`-prefixed lowercase genesis hash. `stack` identifies
+the stack given to `setStack`, as `stackId(decodeLink(link))` from
+`@parity/trinity-stack` gives it: its key in hex when the link has one,
+otherwise its normalised descriptor URL. It is `undefined` on a provider
+without a stack. Key the store
+on `stack` and genesis hash, and return a blob unchanged. A stack's provider
+starts each blob with a line naming the stack and its `generation`, and reads
+back only its own, so a fork never resumes from its source's state and a wiped
+stack starts fresh. A store keyed on the genesis hash alone is not safe to
+share between two stacks all the same: each provider replaces the other's blob
+on every save, so on the next launch only the one that saved last resumes and
+the other starts cold. A stack's provider and a provider without one sharing
+such a store do the same. A client that cannot
 answer must reject rather than resolve `null`, which means "nothing stored yet"
 and would let the next write replace good state. Without a client every chain
 syncs from the checkpoint in the chain spec on every run.
+
+The provider never deletes a blob, and one can reach 8 MB. A blob of an older
+`generation` under a genesis hash the stack still has is replaced by the next
+save. Anything else no provider reads again stays until you delete it: the
+blobs of a stack you no longer run, those of a genesis hash the stack's
+`lightSpecs()` no longer lists, and, once every provider you build has a stack,
+those stored with `stack` undefined.
 
 `setDatabaseContent(genesisHash, blob)` seeds one chain for this run and beats
 anything the client would load for it. `saveDatabase(genesisHash)` forces a write

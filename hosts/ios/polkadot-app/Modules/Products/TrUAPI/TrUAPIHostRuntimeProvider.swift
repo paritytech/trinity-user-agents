@@ -46,7 +46,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
     private let deviceEncryptionKeys: DeviceEncryptionKeyManager
-    private let logger: LoggerProtocol
+    private let logger: CoreEventLoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
@@ -71,7 +71,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         deviceEncryptionKeys: DeviceEncryptionKeyManager = .shared,
-        logger: LoggerProtocol
+        logger: CoreEventLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.entropyManager = entropyManager

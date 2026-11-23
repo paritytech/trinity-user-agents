@@ -429,11 +429,18 @@ fn a_genesis_hash_of_the_wrong_length_is_rejected() {
 	assert!(matches!(error, ChainProviderError::BadGenesis));
 }
 
+/// A call a [`RecordingStore`] received, with every argument.
+#[derive(Debug, PartialEq)]
+enum StoreCall {
+	Load { genesis_hash: [u8; 32], stack: Option<String> },
+	Save { genesis_hash: [u8; 32], blob: String, stack: Option<String> },
+}
+
 /// Foreign storage stand-in. The real one lives in Swift or Kotlin, so
 /// this exercises the same trait the bindings implement.
-/// Each call records its genesis hash, and the blob when it was a save.
+/// Each call is recorded, and a load answers a blob no stack stored.
 struct RecordingStore {
-	calls: Mutex<Vec<(Vec<u8>, Option<String>)>>,
+	calls: Mutex<Vec<StoreCall>>,
 	failure: Option<String>,
 }
 
@@ -448,20 +455,30 @@ impl RecordingStore {
 			None => Ok(()),
 		}
 	}
+
+	fn calls(&self) -> std::sync::MutexGuard<'_, Vec<StoreCall>> {
+		self.calls.lock().expect("not poisoned")
+	}
 }
 
 #[async_trait::async_trait]
 impl StorageClient for RecordingStore {
-	async fn load(&self, genesis_hash: [u8; 32]) -> Result<Option<String>, StorageClientError> {
-		self.calls.lock().expect("not poisoned").push((genesis_hash.to_vec(), None));
+	async fn load(
+		&self,
+		genesis_hash: [u8; 32],
+		stack: Option<String>,
+	) -> Result<Option<String>, StorageClientError> {
+		self.calls().push(StoreCall::Load { genesis_hash, stack });
 		self.answer().map(|()| Some("blob".to_owned()))
 	}
 
-	async fn save(&self, genesis_hash: [u8; 32], blob: String) -> Result<(), StorageClientError> {
-		self.calls
-			.lock()
-			.expect("not poisoned")
-			.push((genesis_hash.to_vec(), Some(blob)));
+	async fn save(
+		&self,
+		genesis_hash: [u8; 32],
+		blob: String,
+		stack: Option<String>,
+	) -> Result<(), StorageClientError> {
+		self.calls().push(StoreCall::Save { genesis_hash, blob, stack });
 		self.answer()
 	}
 }
@@ -480,7 +497,7 @@ fn a_wrong_length_genesis_is_rejected_before_storage_is_asked() {
 	] {
 		assert!(matches!(outcome, Err(ChainProviderError::BadGenesis)), "got {outcome:?}");
 	}
-	assert!(store.calls.lock().expect("not poisoned").is_empty());
+	assert!(store.calls().is_empty());
 }
 
 #[test]
@@ -586,4 +603,99 @@ fn a_catalog_chain_answers_on_the_listener_and_closes() {
 	closed
 		.recv_timeout(Duration::from_secs(30))
 		.expect("disconnecting ends the stream and fires on_closed");
+}
+
+/// A native host fetches each spec itself, so a wrong one has to come back
+/// naming its chain, and a spec that arrives late has to bring its chain up on
+/// the provider the host already holds.
+#[test]
+fn a_stack_provider_checks_its_specs_and_takes_one_later() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_LINK, descriptor_bytes, genesis};
+
+	let link = STACK_LINK.to_owned();
+	let descriptor = descriptor_bytes("one");
+	let (relay, people) = (genesis(RELAY_SPEC).to_vec(), genesis(PEOPLE_SPEC).to_vec());
+	let spec = |genesis_hash: &Vec<u8>, spec: &str| LightSpec {
+		genesis_hash: genesis_hash.clone(),
+		spec: spec.as_bytes().to_vec(),
+	};
+
+	let listed = stack_light_specs(link.clone(), descriptor.clone()).expect("the link opens");
+	assert_eq!(
+		listed.iter().map(|listed| listed.genesis_hash.to_vec()).collect::<Vec<_>>()[..2],
+		[relay.clone(), people.clone()],
+		"a host reads what to fetch from the binding"
+	);
+
+	let refused =
+		ChainProvider::for_stack(link.clone(), descriptor.clone(), vec![spec(&relay, PEOPLE_SPEC)])
+			.err()
+			.expect("People's spec is not the relay's");
+	assert!(
+		matches!(&refused, ChainProviderError::LightSpec { genesis_hash, reason }
+			if *genesis_hash == relay && reason.contains("Relay")),
+		"got {refused:?}"
+	);
+
+	let provider = ChainProvider::for_stack(link, descriptor, vec![spec(&relay, RELAY_SPEC)])
+		.expect("the relay's spec matches the descriptor");
+	let (listener, _messages, _closed) = Collector::new();
+	assert!(
+		matches!(
+			provider.connect(people.clone(), listener.clone()),
+			Err(ChainProviderError::Connect { .. })
+		),
+		"People has no spec yet"
+	);
+	provider
+		.add_light_spec(people.clone(), PEOPLE_SPEC.as_bytes().to_vec())
+		.expect("the spec matches the descriptor");
+	provider
+		.connect(people, listener)
+		.expect("People syncs through the stack's relay");
+}
+
+/// A native store keeps a blob per stack, so every call through the bindings
+/// has to name the provider's stack, and a save has to hand over the blob in
+/// its own argument, sealed under the stack's header.
+#[test]
+fn a_stack_provider_names_its_stack_to_the_store() {
+	use crate::test_stack::{RELAY_SPEC, STACK_ID, STACK_LINK, descriptor_bytes, genesis};
+
+	let relay = genesis(RELAY_SPEC);
+	let store = RecordingStore::new(None);
+	let provider = ChainProvider::for_stack_with_storage(
+		STACK_LINK.to_owned(),
+		descriptor_bytes("one"),
+		vec![LightSpec { genesis_hash: relay.to_vec(), spec: RELAY_SPEC.as_bytes().to_vec() }],
+		store.clone(),
+	)
+	.expect("the relay's spec matches the descriptor");
+
+	assert!(
+		!block_on(provider.load_database(relay.to_vec())).expect("the store answers"),
+		"a blob no stack stored is not this stack's"
+	);
+	let (listener, _messages, _closed) = Collector::new();
+	let _connection = provider.connect(relay.to_vec(), listener).expect("the relay runs");
+	assert!(block_on(provider.save_database(relay.to_vec())).expect("the store accepts it"));
+
+	let calls = store.calls();
+	let named: Vec<_> = calls
+		.iter()
+		.map(|call| match call {
+			StoreCall::Load { genesis_hash, stack } |
+			StoreCall::Save { genesis_hash, stack, .. } => (*genesis_hash, stack.clone()),
+		})
+		.collect();
+	assert_eq!(named, vec![(relay, Some(STACK_ID.to_owned())); calls.len()]);
+	let Some(StoreCall::Save { blob, .. }) = calls.last() else {
+		panic!("the snapshot was not saved: {calls:?}");
+	};
+	assert!(
+		crate::storage::Header { stack: STACK_ID, generation: "one" }
+			.unseal(blob.clone())
+			.is_some(),
+		"the stack's provider reads back what it saved"
+	);
 }

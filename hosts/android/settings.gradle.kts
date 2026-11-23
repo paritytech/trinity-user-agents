@@ -2,7 +2,9 @@ pluginManagement {
     includeBuild("build-logic")
     repositories {
         google()
-        mavenCentral()
+        // Google's mirror of Maven Central. Central rate limits by IP, which CI
+        // runners share.
+        maven("https://maven-central.storage-download.googleapis.com/maven2/")
         mavenLocal()
         gradlePluginPortal()
     }
@@ -11,7 +13,9 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
-        mavenCentral()
+        // Google's mirror of Maven Central. Central rate limits by IP, which CI
+        // runners share.
+        maven("https://maven-central.storage-download.googleapis.com/maven2/")
         mavenLocal()
         maven("https://jitpack.io")
     }
