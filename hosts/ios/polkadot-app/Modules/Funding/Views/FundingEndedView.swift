@@ -8,7 +8,7 @@ import TrUAPIHost
 /// on and why, with a way to start a new session.
 struct FundingEndedView: View {
     let ended: FundingEndedSession
-    let cash: FundingCash
+    let viewModel: FundingEndedViewModel
     let branding: FundingProviderBranding
     var onFees: (() -> Void)?
     let onClose: () -> Void
@@ -44,11 +44,10 @@ private extension FundingEndedView {
     var headline: some View {
         VStack(spacing: DSSpacings.small) {
             statusIcon
-            if let value = cash.decimal(ended.cashAmount) {
-                let figure = ended.succeeded ? signedFigure(value) : cash.figure(value)
+            if let figure = viewModel.figure {
                 DSAmount(
                     amount: figure,
-                    symbol: cash.symbol,
+                    symbol: viewModel.symbol,
                     typography: .fundingFigure(digits: figure.filter(\.isNumber).count)
                 )
                 .foregroundStyle(amountColor)
@@ -107,17 +106,17 @@ private extension FundingEndedView {
     /// does not hold has no row.
     var rows: some View {
         VStack(spacing: DSSpacings.extraSmall) {
-            if let paid = ended.quotedAmount {
+            if let paid = viewModel.quoted {
                 FundingValueRow(title: amountCaption, action: ended.quote == nil ? nil : onFees) {
                     value(paid)
                 }
             }
 
-            if let settled = ended.settledAmount.flatMap({ cash.label(units: $0) }) {
+            if let settled = viewModel.settled {
                 FundingValueRow(title: settledCaption) {
                     VStack(alignment: .trailing, spacing: DSSpacings.extraSmall) {
                         value(settled)
-                        if let requested = ended.differingRequestedAmount.flatMap({ cash.label(units: $0) }) {
+                        if let requested = viewModel.requested {
                             Text(verbatim: String(localized: .Funding.endedRequested(amount: requested)))
                                 .typography(.bodySmall)
                                 .foregroundStyle(.fgSecondary)
@@ -241,7 +240,7 @@ private extension FundingEndedView {
              .succeeded:
             return ""
         case let .payoutFailed(reason):
-            if let refunded = ended.summary.refunded.flatMap({ cash.label(units: $0) }) {
+            if let refunded = viewModel.refunded {
                 return String(localized: .Funding.endedWithdrawRefunded(amount: refunded))
             }
             switch ended.rail {
@@ -251,7 +250,7 @@ private extension FundingEndedView {
                  nil: return String(localized: .Funding.endedPayoutFailed)
             }
         case .failed(.cancelled):
-            if let refunded = ended.summary.refunded.flatMap({ cash.label(units: $0) }) {
+            if let refunded = viewModel.refunded {
                 return String(localized: .Funding.activityRefundedAmount(amount: refunded))
             }
             return ended.direction == .in ? topUpNote(.cancelled) : withdrawNote(.cancelled)
@@ -283,7 +282,7 @@ private extension FundingEndedView {
     }
 
     var refundedNote: String {
-        let paid = ended.quotedAmount
+        let paid = viewModel.quoted
         switch ended.rail {
         case .bank:
             return paid.map { String(localized: .Funding.endedRefundedBank(amount: $0)) }
@@ -298,7 +297,7 @@ private extension FundingEndedView {
     }
 
     func withdrawNote(_ failure: FundingFailure) -> String {
-        let amount = ended.cashAmount.flatMap { cash.label(units: $0) } ?? "$\(cash.symbol)"
+        let amount = viewModel.amount
         switch failure {
         case .refunded:
             return String(localized: .Funding.endedWithdrawRefunded(amount: amount))
@@ -364,10 +363,6 @@ private extension FundingEndedView {
     func nonEmpty(_ text: String?) -> String? {
         guard let text, !text.isEmpty else { return nil }
         return text
-    }
-
-    func signedFigure(_ value: Decimal) -> String {
-        (ended.direction == .in ? "+" : "-") + cash.figure(value)
     }
 
     func value(_ text: String) -> some View {

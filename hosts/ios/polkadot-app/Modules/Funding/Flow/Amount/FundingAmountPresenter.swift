@@ -4,7 +4,7 @@ import TrUAPIHost
 /// The flow's first screen: which rail, and how much. A keypad change asks
 /// for quotes once the user pauses, so the screen can show a provider's
 /// limit before Continue.
-final class FundingAmountPresenter: FundingScreenPresenter {
+final class FundingAmountPresenter: FundingScreenPresenter<FundingAmountViewModel> {
     private let interactor: FundingAmountInteractorInputProtocol
     private let wireframe: FundingAmountWireframeProtocol
     private let clock: any Clock<Duration>
@@ -15,12 +15,13 @@ final class FundingAmountPresenter: FundingScreenPresenter {
         context: FundingFlowContext,
         interactor: FundingAmountInteractor,
         wireframe: FundingAmountWireframeProtocol,
+        viewModelFactory: FundingViewModelFactoryProtocol,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
         self.clock = clock
-        super.init(context: context, interactor: interactor)
+        super.init(context: context, interactor: interactor) { viewModelFactory.makeAmountViewModel(for: $0) }
     }
 
     override func setup() {
@@ -98,7 +99,7 @@ private extension FundingAmountPresenter {
     /// replacing the ask waiting on the pause before it.
     func askAfterPause() {
         pause?.cancel()
-        guard context.draft.rail != .crypto, state.amount > 0 else { return }
+        guard context.draft.rail != .crypto, (state.amount ?? 0) > 0 else { return }
 
         pause = Task { [clock] in
             try? await clock.sleep(for: .milliseconds(600))
@@ -110,7 +111,7 @@ private extension FundingAmountPresenter {
 
     /// Reads the core's issue with the typed amount again.
     func refreshAmountIssue() {
-        let spendable = context.draft.spendable.flatMap { context.cash.units($0) }
-        activity.amountIssue = state.amountUnits.flatMap { interactor.amountIssue($0, spendable: spendable) }
+        let spendable = context.draft.spendable
+        activity.amountIssue = state.amount.flatMap { interactor.amountIssue($0, spendable: spendable) }
     }
 }

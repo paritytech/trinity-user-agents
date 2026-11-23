@@ -2,7 +2,7 @@ import Foundation
 
 /// Which token a crypto session pays in or receives; the summary shows the
 /// provider, fees and total before the user starts.
-final class FundingTokenPresenter: FundingScreenPresenter {
+final class FundingTokenPresenter: FundingScreenPresenter<Void> {
     private let wireframe: FundingTokenWireframeProtocol
 
     init(
@@ -11,7 +11,7 @@ final class FundingTokenPresenter: FundingScreenPresenter {
         wireframe: FundingTokenWireframeProtocol
     ) {
         self.wireframe = wireframe
-        super.init(context: context, interactor: interactor)
+        super.init(context: context, interactor: interactor) { _ in }
     }
 }
 

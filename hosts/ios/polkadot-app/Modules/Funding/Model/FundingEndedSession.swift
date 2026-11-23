@@ -1,5 +1,6 @@
 import Foundation
 import FoundationExt
+import SubstrateSdk
 import TrUAPIHost
 
 /// An ended session as its detail screen draws it: the core's summary, whose
@@ -7,6 +8,13 @@ import TrUAPIHost
 /// steps the core reported while it still holds the session. Without them
 /// the steps are the direction's milestones.
 struct FundingEndedSession: Equatable {
+    /// What the user paid or receives, in the quote's asset.
+    struct QuotedAmount: Equatable {
+        let amount: Balance
+        let asset: String
+        let decimals: UInt8
+    }
+
     let summary: FundingSessionSummary
     var quote: FundingQuote?
     /// The crypto network the value moved on: the one the provider named for
@@ -50,10 +58,10 @@ extension FundingEndedSession {
     }
 
     /// The CASH credited or debited, once it was.
-    var settledAmount: U128? {
+    var settledAmount: Balance? {
         switch summary.stage {
-        case let .delivered(credited, _): credited
-        case let .released(debited, _): debited
+        case let .delivered(credited, _): Balance(units: credited)
+        case let .released(debited, _): Balance(units: debited)
         case .open,
              .failed: nil
         }
@@ -69,21 +77,22 @@ extension FundingEndedSession {
 
     /// The CASH that moved, or for a session that did not go through, the
     /// CASH it was for.
-    var cashAmount: U128? {
-        summary.ended.cashAmount
+    var cashAmount: Balance? {
+        Balance(units: summary.ended.cashAmount)
     }
 
     /// What the user paid for value in, or receives for value out, in the
     /// asset of the quote the session ran on.
-    var quotedAmount: String? {
-        guard let quote, let asset = summary.choice?.asset else { return nil }
-        let units = direction == .in ? quote.sendAmount : quote.receiveAmount
-        return AssetBalanceDisplayInfo.from(assetCode: asset, decimals: Int16(quote.assetDecimals)).amount(units: units)
+    var quotedAmount: QuotedAmount? {
+        guard let quote, let asset = summary.choice?.asset,
+              let amount = Balance(units: direction == .in ? quote.sendAmount : quote.receiveAmount)
+        else { return nil }
+        return QuotedAmount(amount: amount, asset: asset, decimals: quote.assetDecimals)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.
-    var differingRequestedAmount: U128? {
-        summary.ended.differingRequested
+    var differingRequestedAmount: Balance? {
+        Balance(units: summary.ended.differingRequested)
     }
 
     /// The payout state of value out that the provider released.

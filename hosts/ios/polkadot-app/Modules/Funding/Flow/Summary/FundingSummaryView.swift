@@ -6,7 +6,7 @@ import TrUAPIHost
 /// What the chosen provider will charge and pay, before the session is handed
 /// to it.
 struct FundingSummaryView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingSummaryViewModel>
     let presenter: FundingSummaryPresenterProtocol
 
     var body: some View {
@@ -28,7 +28,7 @@ struct FundingSummaryView: View {
                 arrivesRow
             }
 
-            if let problem {
+            if let problem = model.viewModel.problem {
                 Text(problem)
                     .typography(.bodySmall)
                     .foregroundStyle(.fgError)
@@ -58,9 +58,7 @@ private extension FundingSummaryView {
     /// What the user pays for value in, what they receive for value out.
     @ViewBuilder
     var headline: some View {
-        if let quote = model.selectedQuote,
-           let figure = model.state.quoteUnit(quote)
-           .amount(units: model.direction == .in ? quote.sendAmount : quote.receiveAmount) {
+        if let figure = model.viewModel.headline {
             Text(verbatim: figure)
                 .typography(.displayLarge)
                 .foregroundStyle(.fgPrimary)
@@ -149,7 +147,7 @@ private extension FundingSummaryView {
             }
 
         return FundingValueRow(title: title) {
-            if let quote = model.selectedQuote, let payout = payout(quote) {
+            if let payout = model.viewModel.payout {
                 Text(verbatim: payout)
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
@@ -157,13 +155,6 @@ private extension FundingSummaryView {
                 FundingSkeleton()
             }
         }
-    }
-
-    /// The CASH value in adds, or what value out pays in the provider's asset.
-    func payout(_ quote: FundingQuote) -> String? {
-        model.direction == .in
-            ? model.cash.label(units: quote.receiveAmount)
-            : model.state.quoteUnit(quote).amount(units: quote.receiveAmount)
     }
 
     var arrivesRow: some View {
@@ -181,30 +172,10 @@ private extension FundingSummaryView {
                 }
             }
             if model.rail == .bank, model.direction == .in {
-                Text(.Funding.summaryBankRateNote(symbol: model.cash.symbol))
+                Text(verbatim: model.viewModel.bankRateNote)
                     .typography(.captionSmall)
                     .foregroundStyle(.fgSecondary)
             }
-        }
-    }
-
-    var problem: String? {
-        if let failure = model.failure {
-            return failure.failedText
-        }
-        if let startError = model.startError {
-            return startError
-        }
-        guard model.noProviderQuoted else { return nil }
-
-        switch model.unavailableIssue {
-        case let .belowMinimum(minimum):
-            return String(localized: .Funding.errorMinimum(amount: model.cash.label(units: minimum) ?? ""))
-        case let .aboveMaximum(maximum):
-            return String(localized: .Funding.errorMaximum(amount: model.cash.label(units: maximum) ?? ""))
-        case .notEnoughBalance,
-             nil:
-            return model.quoteFailureText ?? String(localized: .Funding.errorNoProvider)
         }
     }
 }

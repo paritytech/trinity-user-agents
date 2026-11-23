@@ -1,6 +1,8 @@
 import Foundation
 import FoundationExt
+import SubstrateSdk
 import TrUAPIHost
+import UIKit
 
 /// What the user picked so far in one funding flow, shared by its screens.
 struct FundingDraft: Equatable {
@@ -15,7 +17,7 @@ struct FundingDraft: Equatable {
     var asset: String?
     var chosenProviderId: ProductId?
     /// What a payment can spend now, once the app has read it.
-    var spendable: Decimal?
+    var spendable: Balance?
 
     /// The selection the core is told of for the draft.
     var selection: FundingSelection {
@@ -34,9 +36,12 @@ struct FundingDraft: Equatable {
 struct FundingFlowState {
     var entry: FundingEntry
     var draft: FundingDraft
-    let cash: FundingCash
+    /// The payment balance's asset, which typed amounts are counted in.
+    let cashInfo: AssetBalanceDisplayInfo
     let branding: FundingProviderBranding
     var brands: [ProductId: FundingProviderBrand] = [:]
+    /// The network and token icons read so far.
+    var icons: [FundingIconKey: UIImage] = [:]
     /// Why the typed amount cannot go ahead, as the core decides it.
     var amountIssue: FundingAmountIssue?
     var isStarting = false
@@ -57,15 +62,20 @@ extension FundingFlowState {
     var detectedCountry: PaymentCountry? { draft.detectedCountry }
     var network: String? { draft.network }
     var asset: String? { entry.session?.choice?.asset ?? draft.asset }
-    var spendable: Decimal? { draft.spendable }
+    var spendable: Balance? { draft.spendable }
 
-    /// The typed amount in CASH units: nil while the text is not a number.
-    var amountUnits: U128? {
-        cash.units(text: draft.amountText)
-    }
+    /// The typed amount, rounded down to the payment asset's units so the
+    /// host never asks for more than the user typed; nil while the text is
+    /// not a number.
+    var amount: Balance? {
+        let text = draft.amountText
+        guard text.contains(where: \.isASCIIDigit),
+              text.allSatisfy({ $0.isASCIIDigit || $0 == "." }),
+              text.filter({ $0 == "." }).count <= 1,
+              let value = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX"))
+        else { return nil }
 
-    var amount: Decimal {
-        cash.decimal(amountUnits) ?? 0
+        return value.toSubstrateAmount(precision: cashInfo.assetPrecision)
     }
 
     func brand(for providerId: ProductId) -> FundingProviderBrand {
@@ -82,7 +92,7 @@ extension FundingFlowState {
     var ended: FundingEndedSession? { entry.ended }
     var hasStarted: Bool { entry.hasStarted }
     var isUnpaidTopUp: Bool { entry.isUnpaidTopUp(rail: draft.rail) }
-    var cancelOffer: (fee: U128, refund: U128)? { entry.cancelOffer }
+    var cancelOffer: (fee: Balance, refund: Balance)? { entry.cancelOffer }
     var canRequestCancel: Bool { entry.canRequestCancel }
     var cancelTitle: String { entry.cancelTitle }
 
@@ -117,14 +127,14 @@ extension FundingFlowState {
     }
 
     var canContinue: Bool {
-        amount > 0 && amountIssue == nil && availableRails.contains(draft.rail)
+        (amount ?? 0) > 0 && amountIssue == nil && availableRails.contains(draft.rail)
     }
 
     /// The range the core says the reported selection takes across every
     /// provider, product floor included.
-    var amountLimits: (min: Decimal, max: Decimal?) {
+    var amountLimits: (min: Balance, max: Balance?) {
         let limits = entry.options?.limits
-        return (min: cash.decimal(limits?.min) ?? 0, max: cash.decimal(limits?.max))
+        return (min: Balance(units: limits?.min) ?? 0, max: Balance(units: limits?.max))
     }
 
     /// The networks the core says a crypto route takes, named as it names them.
@@ -134,8 +144,8 @@ extension FundingFlowState {
 
     /// The smallest amount the core says this network takes for the
     /// reported selection.
-    func minimum(network id: String) -> Decimal? {
-        cash.decimal(entry.options?.networks.first { $0.network == id }?.limits.min)
+    func minimum(network id: String) -> Balance? {
+        Balance(units: entry.options?.networks.first { $0.network == id }?.limits.min)
     }
 
     /// The tokens the core says a session can use on the picked network.
@@ -152,10 +162,10 @@ extension FundingFlowState {
     }
 
     /// The smallest amount a provider showed it takes in `code`, when one did.
-    func minimum(country code: String) -> Decimal? {
+    func minimum(country code: String) -> Balance? {
         let support = entry.options?.countries.last { $0.country.uppercased() == code.uppercased() }?.support
         guard case let .supported(min)? = support, let min else { return nil }
-        return cash.decimal(min)
+        return Balance(units: min)
     }
 }
 
@@ -219,4 +229,8 @@ extension FundingFlowState {
              nil: nil
         }
     }
+}
+
+private extension Character {
+    var isASCIIDigit: Bool { isASCII && isNumber }
 }

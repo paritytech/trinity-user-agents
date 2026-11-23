@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 import UIKit
 import UIKit_iOS
@@ -6,12 +7,19 @@ import UIKit_iOS
 /// What a funding flow needs from the app around it.
 @MainActor
 protocol FundingFlowEnvironment: AnyObject {
-    var cash: FundingCash { get }
+    /// The payment balance's asset, as the app draws the digital dollar
+    /// figure.
+    var cashInfo: AssetBalanceDisplayInfo { get }
+    /// The payment balance's symbol, set after its figure.
+    var cashSymbol: String { get }
     var branding: FundingProviderBranding { get }
+    /// Reads network and token icons from the providers' archives; nil
+    /// when the app cannot, and the marks keep their monogram.
+    var iconLoader: FundingIconLoader? { get }
     /// Calls `onChange` with what a payment can spend, now and on every
     /// balance change, until the calling task is cancelled. Returns without
     /// calling it when the balance cannot be followed.
-    func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async
+    func followSpendable(_ onChange: @escaping @MainActor (Balance) -> Void) async
 }
 
 /// Moves between one funding flow's screens, on the sheet the flow is shown
@@ -22,6 +30,7 @@ final class FundingFlowWireframe {
     let context: FundingFlowContext
     let service: FundingServiceProtocol
     let environment: FundingFlowEnvironment
+    let viewModelFactory: FundingViewModelFactoryProtocol
     private(set) weak var navigation: FundingFlowNavigationController?
 
     /// The flow's sheet went away.
@@ -31,10 +40,16 @@ final class FundingFlowWireframe {
     /// Leaves the flow for a new session the same way.
     var onStartOver: ((FundingDirection) -> Void)?
 
-    init(context: FundingFlowContext, service: FundingServiceProtocol, environment: FundingFlowEnvironment) {
+    init(
+        context: FundingFlowContext,
+        service: FundingServiceProtocol,
+        environment: FundingFlowEnvironment,
+        viewModelFactory: FundingViewModelFactoryProtocol
+    ) {
         self.context = context
         self.service = service
         self.environment = environment
+        self.viewModelFactory = viewModelFactory
     }
 
     /// The sheet with `screens` on it, the last one showing.

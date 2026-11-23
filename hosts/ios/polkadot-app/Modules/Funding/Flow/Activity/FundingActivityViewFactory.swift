@@ -5,23 +5,28 @@ import UIKit
 enum FundingActivityViewFactory {
     static func createView(
         mode: FundingActivityMode,
-        cash: FundingCash,
+        viewModelFactory: FundingViewModelFactoryProtocol,
         service: FundingServiceProtocol,
         router: FundingFlowRouting
     ) -> UIViewController {
         let interactor = FundingActivityInteractor(service: service)
         let wireframe = FundingActivityWireframe(router: router)
-        let presenter = FundingActivityPresenter(mode: mode, interactor: interactor, wireframe: wireframe)
+        let presenter = FundingActivityPresenter(
+            mode: mode,
+            interactor: interactor,
+            wireframe: wireframe,
+            viewModelFactory: viewModelFactory
+        )
         interactor.presenter = presenter
 
         let model = FundingActivityViewModel()
         let content =
             switch mode {
             case .history:
-                AnyView(FundingHistoryView(model: model, presenter: presenter, cash: cash).fundingScreen())
+                AnyView(FundingHistoryView(model: model, presenter: presenter).fundingScreen())
             case let .pending(direction):
                 AnyView(
-                    FundingPendingView(direction: direction, model: model, presenter: presenter, cash: cash)
+                    FundingPendingView(direction: direction, model: model, presenter: presenter)
                         .fundingScreen()
                 )
             }

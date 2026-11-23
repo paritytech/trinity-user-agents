@@ -1,6 +1,7 @@
 import DesignSystem
 import FoundationExt
 import PolkadotUI
+import SubstrateSdk
 import SwiftUI
 import TrUAPIHost
 
@@ -8,17 +9,17 @@ import TrUAPIHost
 /// its direction and rail, and what the user may still need, such as the bank
 /// details to pay to. Once the session ends it shows the ended screen.
 struct FundingProgressView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingProgressViewModel>
     let presenter: FundingProgressPresenterProtocol
 
     @State private var copied: String?
 
     var body: some View {
         Group {
-            if let ended = model.ended {
+            if let ended = model.ended, let endedViewModel = model.viewModel.ended {
                 FundingEndedView(
                     ended: ended,
-                    cash: model.cash,
+                    viewModel: endedViewModel,
                     branding: model.branding,
                     onFees: presenter.showFees,
                     onClose: presenter.close,
@@ -30,8 +31,8 @@ struct FundingProgressView: View {
         }
         .task(id: model.progress?.longerAtMs) { await follow() }
         .sheet(isPresented: offerShown) {
-            if let offer = model.cancelOffer {
-                FundingCancelOfferView(model: model, presenter: presenter, fee: offer.fee, refund: offer.refund)
+            if let offer = model.cancelOffer, let text = model.viewModel.cancelOffer {
+                FundingCancelOfferView(model: model, presenter: presenter, terms: offer, text: text)
                     .presentationDetents([.medium])
                     .interactiveDismissDisabled()
             }
@@ -42,11 +43,6 @@ struct FundingProgressView: View {
 // MARK: - State
 
 private extension FundingProgressView {
-    /// The CASH card row for the session, for its amount.
-    var item: FundingActivityItem? {
-        model.session.map { FundingActivityItem(session: $0, progress: model.progress) }
-    }
-
     /// The band line, worded for the session's rail and amount.
     var band: (text: String, isWarning: Bool)? {
         guard let progress = model.progress else { return nil }
@@ -55,19 +51,13 @@ private extension FundingProgressView {
             direction: model.direction,
             rail: model.rail,
             asset: model.asset,
-            amount: cashAmount.map { model.cash.label($0) }
+            amount: model.viewModel.amount
         )
     }
 
     /// Retrying or delayed: the session's dot and line turn amber.
     var isSlow: Bool {
         model.progress.map { [.retrying, .delayed].contains($0.band) } ?? false
-    }
-
-    /// The CASH the session is for.
-    var cashAmount: Decimal? {
-        if let balance = item?.amount { return model.cash.decimal(fromPlanks: balance) }
-        return model.cash.decimal(model.chosenQuote.map { model.direction == .in ? $0.receiveAmount : $0.sendAmount })
     }
 
     var steps: [FundingStepBar.Step] {
@@ -102,10 +92,6 @@ private extension FundingProgressView {
         }
         return band.map { ($0.text, $0.isWarning ? .fgWarning : .fgSecondary) }
     }
-
-    var quotedSendAmount: String? {
-        model.chosenQuote.flatMap { model.state.quoteUnit($0).amount(units: $0.sendAmount) }
-    }
 }
 
 // MARK: - Sections
@@ -137,11 +123,10 @@ private extension FundingProgressView {
                 .foregroundStyle(isSlow ? Color.fgWarning : Color.fgPrimary)
                 .frame(width: 40, height: 40)
                 .background(.bgSurfaceMain, in: Circle())
-            if let value = cashAmount {
-                let figure = model.cash.figure(value)
+            if let figure = model.viewModel.figure {
                 DSAmount(
                     amount: figure,
-                    symbol: model.cash.symbol,
+                    symbol: model.viewModel.symbol,
                     typography: .fundingFigure(digits: figure.filter(\.isNumber).count)
                 )
                 .foregroundStyle(.fgPrimary)
@@ -185,7 +170,7 @@ private extension FundingProgressView {
         VStack(spacing: DSSpacings.extraSmall) {
             switch (model.direction, model.rail) {
             case (.in, .card):
-                feesRow(String(localized: .Funding.progressYouSent), quotedSendAmount)
+                feesRow(String(localized: .Funding.progressYouSent), model.viewModel.quotedSend)
                 arrivesRow
             case (.in, .bank):
                 bankRows
@@ -193,10 +178,7 @@ private extension FundingProgressView {
                 cryptoRow
                 arrivesRow
             case (.out, _):
-                feesRow(
-                    String(localized: .Funding.summaryWithdrawCaption),
-                    model.chosenQuote.flatMap { model.state.quoteUnit($0).amount(units: $0.receiveAmount) }
-                )
+                feesRow(String(localized: .Funding.summaryWithdrawCaption), model.viewModel.quotedReceive)
                 arrivesRow
             }
         }
@@ -211,18 +193,14 @@ private extension FundingProgressView {
 
     @ViewBuilder
     var bankRows: some View {
-        if case let .bank(amount, currency, decimals, beneficiary, account, bankCode, reference, _)? =
-            model.progress?.deposit {
-            feesRow(
-                bankAmountTitle,
-                AssetBalanceDisplayInfo.from(assetCode: currency, decimals: Int16(decimals)).amount(units: amount)
-            )
+        if case let .bank(_, _, _, beneficiary, account, bankCode, reference, _)? = model.progress?.deposit {
+            feesRow(bankAmountTitle, model.viewModel.deposit)
             beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
             account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
             bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }
             copyRow(String(localized: .Funding.depositReference), reference)
         } else {
-            feesRow(bankAmountTitle, quotedSendAmount)
+            feesRow(bankAmountTitle, model.viewModel.quotedSend)
             if let reference = model.progress?.reference {
                 copyRow(String(localized: .Funding.depositReference), reference)
             } else if !model.state.hasReached(.received) {
@@ -236,15 +214,12 @@ private extension FundingProgressView {
     @ViewBuilder
     var cryptoRow: some View {
         if !model.state.hasReached(.received) {
-            if case let .crypto(_, _, asset, amount, decimals, exact, _, _)? = model.progress?.deposit {
+            if case let .crypto(_, _, _, _, _, exact, _, _)? = model.progress?.deposit {
                 FundingValueRow(
                     title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
                     action: presenter.showDeposit
                 ) {
-                    AssetBalanceDisplayInfo
-                        .from(assetCode: asset, decimals: Int16(decimals))
-                        .amount(units: amount)
-                        .map { value($0) }
+                    model.viewModel.deposit.map { value($0) }
                 }
             } else {
                 pending(.Funding.depositPreparing)
@@ -261,7 +236,7 @@ private extension FundingProgressView {
                     value(FundingEta.text(seconds: eta))
                 }
                 if model.direction == .in, model.rail != .card {
-                    Text(.Funding.summaryBankRateNote(symbol: model.cash.symbol))
+                    Text(verbatim: model.viewModel.bankRateNote)
                         .typography(.captionSmall)
                         .foregroundStyle(.fgSecondary)
                 }
@@ -444,10 +419,10 @@ struct FundingLiveLine: View {
 /// The provider's terms for cancelling: what it keeps and what comes back to
 /// the balance, accepted or declined by the user.
 struct FundingCancelOfferView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingProgressViewModel>
     let presenter: FundingProgressPresenterProtocol
-    let fee: U128
-    let refund: U128
+    let terms: (fee: Balance, refund: Balance)
+    let text: FundingProgressViewModel.CancelOffer
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
@@ -460,8 +435,8 @@ struct FundingCancelOfferView: View {
                 .multilineTextAlignment(.center)
 
             VStack(spacing: DSSpacings.small) {
-                row(String(localized: .Funding.offerFee), fee)
-                row(String(localized: .Funding.offerRefund), refund)
+                row(String(localized: .Funding.offerFee), text.fee)
+                row(String(localized: .Funding.offerRefund), text.refund)
             }
             .padding(DSSpacings.medium)
             .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: 16))
@@ -469,7 +444,7 @@ struct FundingCancelOfferView: View {
             Spacer(minLength: 0)
 
             DSButton(.Funding.offerAccept, style: .destructive, expands: true, isLoading: model.isAnsweringOffer) {
-                presenter.answerCancelOffer(accepting: CancelTerms(fee: fee, refund: refund))
+                presenter.answerCancelOffer(accepting: CancelTerms(fee: terms.fee.units, refund: terms.refund.units))
             }
             DSButton(.Funding.offerKeepGoing, expands: true) {
                 presenter.answerCancelOffer(accepting: nil)
@@ -478,18 +453,15 @@ struct FundingCancelOfferView: View {
         .padding(DSSpacings.medium)
     }
 
-    @ViewBuilder
-    private func row(_ title: String, _ units: U128) -> some View {
-        if let amount = model.cash.label(units: units) {
-            HStack {
-                Text(verbatim: title)
-                    .typography(.bodyMedium)
-                    .foregroundStyle(.fgSecondary)
-                Spacer()
-                Text(verbatim: amount)
-                    .typography(.bodyMediumEmphasized)
-                    .foregroundStyle(.fgPrimary)
-            }
+    private func row(_ title: String, _ amount: String) -> some View {
+        HStack {
+            Text(verbatim: title)
+                .typography(.bodyMedium)
+                .foregroundStyle(.fgSecondary)
+            Spacer()
+            Text(verbatim: amount)
+                .typography(.bodyMediumEmphasized)
+                .foregroundStyle(.fgPrimary)
         }
     }
 }

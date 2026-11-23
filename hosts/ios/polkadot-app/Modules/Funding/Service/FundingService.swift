@@ -1,6 +1,7 @@
 import AsyncExtensions
 import Foundation
 import os
+import SubstrateSdk
 import TrUAPIHost
 
 /// The one place the funding screens reach the core. Reads what the core
@@ -51,8 +52,8 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         return stream.eraseToAnyAsyncSequence()
     }
 
-    func open(_ direction: FundingDirection, amount: U128?) async throws -> String? {
-        try await runtime.openFunding(direction: direction, amount: amount)
+    func open(_ direction: FundingDirection, amount: Balance?) async throws -> String? {
+        try await runtime.openFunding(direction: direction, amount: amount?.units)
     }
 
     func select(_ selection: FundingSelection, for entryId: String) {
@@ -62,7 +63,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         }
     }
 
-    func quote(amount: U128?, for entryId: String) {
+    func quote(amount: Balance?, for entryId: String) {
         guard let amount else {
             state.withLock { $0.quotes[entryId, default: QuoteAsk()].drop() }
             publish(entryId)
@@ -72,13 +73,13 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         let ask = state.withLock { $0.quotes[entryId, default: QuoteAsk()].ask() }
         publish(entryId)
         calls.async { [runtime, weak self] in
-            let requestId = runtime.getFundingQuote(intent: entryId, amount: amount)
+            let requestId = runtime.getFundingQuote(intent: entryId, amount: amount.units)
             self?.take(requestId, of: ask, for: entryId)
         }
     }
 
-    func amountIssue(_ amount: U128, spendable: U128?, for entryId: String) -> FundingAmountIssue? {
-        runtime.fundingAmountIssue(intent: entryId, amount: amount, spendable: spendable)
+    func amountIssue(_ amount: Balance, spendable: Balance?, for entryId: String) -> FundingAmountIssue? {
+        runtime.fundingAmountIssue(intent: entryId, amount: amount.units, spendable: spendable?.units)
     }
 
     func start(_ entryId: String, provider: ProductId?) async throws {
@@ -190,7 +191,7 @@ extension FundingService: FundingCoreEventHandling {
                 state.withLock { state in
                     state.presentations[intent] = Presentation(
                         direction: direction,
-                        amount: amount,
+                        amount: Balance(units: amount),
                         answer: continuation
                     )
                 }
@@ -276,7 +277,7 @@ private extension FundingService {
 
     struct Presentation {
         let direction: FundingDirection
-        let amount: U128?
+        let amount: Balance?
         let answer: CheckedContinuation<FundingPresentOutcome, Never>
     }
 
@@ -435,7 +436,7 @@ private extension FundingService {
             FundingEntry(
                 id: item.session.intent,
                 direction: item.session.direction,
-                amount: item.session.amount,
+                amount: Balance(units: item.session.amount),
                 session: item.session,
                 progress: item.progress,
                 summary: item.session.stage.isOpen ? nil : runtime.fundingSummary(intent: item.session.intent),
@@ -448,7 +449,7 @@ private extension FundingService {
             FundingEntry(
                 id: summary.intent,
                 direction: summary.direction,
-                amount: summary.amount,
+                amount: Balance(units: summary.amount),
                 session: nil,
                 progress: nil,
                 summary: summary,

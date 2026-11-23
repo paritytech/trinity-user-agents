@@ -2,6 +2,7 @@ import Foundation
 import FoundationExt
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
+import SubstrateSdk
 import Testing
 import TrUAPIHost
 import UIKit
@@ -19,9 +20,8 @@ struct FundingHistoryTests {
         #expect(ended.providerId == provider)
         #expect(ended.rail == .crypto)
         #expect(ended.network == "polkadot")
-        #expect(ended.settledAmount == "50000000")
-        #expect(ended.quotedAmount == AssetBalanceDisplayInfo.from(assetCode: "USDC", decimals: 2)
-            .amount(units: "4600"))
+        #expect(ended.settledAmount == 50_000_000)
+        #expect(ended.quotedAmount == FundingEndedSession.QuotedAmount(amount: 4_600, asset: "USDC", decimals: 2))
         #expect(ended.summary.transactionId == "tx")
         #expect(item.status == .toppedUp)
         #expect(item.rail == .crypto)
@@ -251,10 +251,12 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
         window.makeKeyAndVisible()
     }
 
-    var cash: FundingCash { FundingCash(symbol: "CASH", precision: 6) }
+    var cashInfo: AssetBalanceDisplayInfo { .digitalDollarFigure(assetPrecision: 6) }
+    var cashSymbol: String { "CASH" }
     var branding: FundingProviderBranding { PlaceholderBranding() }
+    var iconLoader: FundingIconLoader? { nil }
 
-    func followSpendable(_: @escaping @MainActor (Decimal) -> Void) async {}
+    func followSpendable(_: @escaping @MainActor (Balance) -> Void) async {}
 
     func present(_ controller: UIViewController) -> Bool {
         guard presents, var top = window.rootViewController else { return false }

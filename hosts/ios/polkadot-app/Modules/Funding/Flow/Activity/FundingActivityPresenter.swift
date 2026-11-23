@@ -10,6 +10,7 @@ final class FundingActivityPresenter {
     private let mode: FundingActivityMode
     private let interactor: FundingActivityInteractorInputProtocol
     private let wireframe: FundingActivityWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
     private var state = FundingActivityState()
     private var justFinished: [String: Date] = [:]
     private var acknowledged: Set<String> = []
@@ -17,11 +18,13 @@ final class FundingActivityPresenter {
     init(
         mode: FundingActivityMode,
         interactor: FundingActivityInteractorInputProtocol,
-        wireframe: FundingActivityWireframeProtocol
+        wireframe: FundingActivityWireframeProtocol,
+        viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.mode = mode
         self.interactor = interactor
         self.wireframe = wireframe
+        self.viewModelFactory = viewModelFactory
     }
 }
 
@@ -68,6 +71,9 @@ extension FundingActivityPresenter: FundingActivityInteractorOutputProtocol {
             state.history = []
         }
         state.arriving = Set(justFinished.keys)
+        state.titles = Dictionary(
+            (state.inFlight + state.history).map { ($0.id, viewModelFactory.makeActivityTitle(for: $0)) }
+        ) { _, latest in latest }
         view?.didReceive(state: state)
     }
 }

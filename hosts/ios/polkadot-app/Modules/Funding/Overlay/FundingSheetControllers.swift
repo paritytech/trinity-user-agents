@@ -60,8 +60,8 @@ extension UIView {
 final class FundingEndedSheetController: FundingSheetHostingController<FundingEndedSheetView> {
     var onStartOver: (() -> Void)?
 
-    convenience init(ended: FundingEndedSession, cash: FundingCash, branding: FundingProviderBranding) {
-        self.init(rootView: FundingEndedSheetView(ended: ended, cash: cash, branding: branding))
+    convenience init(ended: FundingEndedSession, viewModel: FundingEndedViewModel, branding: FundingProviderBranding) {
+        self.init(rootView: FundingEndedSheetView(ended: ended, viewModel: viewModel, branding: branding))
 
         rootView.onClose = { [weak self] in self?.dismiss(animated: true) }
         rootView.onStartOver = { [weak self] in self?.onStartOver?() }
@@ -70,7 +70,7 @@ final class FundingEndedSheetController: FundingSheetHostingController<FundingEn
 
 struct FundingEndedSheetView: View {
     let ended: FundingEndedSession
-    let cash: FundingCash
+    let viewModel: FundingEndedViewModel
     let branding: FundingProviderBranding
     var onClose: () -> Void = {}
     var onStartOver: () -> Void = {}
@@ -78,7 +78,7 @@ struct FundingEndedSheetView: View {
     var body: some View {
         FundingEndedView(
             ended: ended,
-            cash: cash,
+            viewModel: viewModel,
             branding: branding,
             onClose: onClose,
             onStartOver: onStartOver

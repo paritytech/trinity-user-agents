@@ -17,6 +17,8 @@ struct FundingActivityState: Equatable {
     var history: [FundingActivityItem] = []
     /// Rows that just finished, which arrive with their completion.
     var arriving: Set<String> = []
+    /// Each row's amount line, by session.
+    var titles: [String: String] = [:]
 }
 
 @MainActor

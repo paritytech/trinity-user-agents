@@ -1,5 +1,6 @@
 import AsyncExtensions
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// Everything the funding screens ask of the core, in one place. The core
@@ -20,7 +21,7 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     /// through ``events`` as `presentationRequested`. Answers the session's
     /// id once it started, or nil when the user left its screens first.
     @discardableResult
-    func open(_ direction: FundingDirection, amount: U128?) async throws -> String?
+    func open(_ direction: FundingDirection, amount: Balance?) async throws -> String?
 
     /// Tells the core what the user picked, in order with the asks made
     /// after it. What it offers for it comes back on the session's state, as
@@ -30,11 +31,11 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     /// Asks every provider routing the reported selection to quote `amount`,
     /// or drops the quotes on screen when `amount` is nil. The quotes come
     /// back on the session's state, only for the latest ask.
-    func quote(amount: U128?, for entryId: String)
+    func quote(amount: Balance?, for entryId: String)
 
     /// Why `amount` cannot go ahead for the reported selection, given what a
     /// withdrawal can spend.
-    func amountIssue(_ amount: U128, spendable: U128?, for entryId: String) -> FundingAmountIssue?
+    func amountIssue(_ amount: Balance, spendable: Balance?, for entryId: String) -> FundingAmountIssue?
 
     /// Hands the session to `provider` on the quote on screen. With no
     /// provider, the core hands it to the latest ask's best quote once every

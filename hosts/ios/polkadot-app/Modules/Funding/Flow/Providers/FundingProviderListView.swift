@@ -6,7 +6,7 @@ import TrUAPIHost
 /// Every provider's live quote for the ask, the one the core marks best
 /// tagged, with how long until the core asks every provider again.
 struct FundingProviderListView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingProvidersViewModel>
     let presenter: FundingProvidersPresenterProtocol
 
     var body: some View {
@@ -77,7 +77,7 @@ private extension FundingProviderListView {
                     badge(providerId: providerId, state: state)
                 }
                 Spacer()
-                price(state)
+                price(providerId: providerId, state: state)
             }
             .padding(DSSpacings.small)
             .background(isSelected ? Color.bgSurfaceNested : Color.clear, in: RoundedRectangle(cornerRadius: 16))
@@ -90,8 +90,8 @@ private extension FundingProviderListView {
 
     @ViewBuilder
     func badge(providerId: ProductId, state: FundingQuoteState) -> some View {
-        if case let .unavailable(reason) = state {
-            Text(unavailableText(reason))
+        if case .unavailable = state, let unavailable = model.viewModel.unavailable[providerId] {
+            Text(unavailable)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSecondary)
         } else if providerId == model.bestProviderId, model.quotedProviders.count > 1 {
@@ -102,51 +102,29 @@ private extension FundingProviderListView {
     }
 
     @ViewBuilder
-    func price(_ state: FundingQuoteState) -> some View {
+    func price(providerId: ProductId, state: FundingQuoteState) -> some View {
         switch state {
         case .pending:
             VStack(alignment: .trailing, spacing: 4) {
                 FundingSkeleton(width: 64)
                 FundingSkeleton(width: 48, height: 10)
             }
-        case let .quoted(quote):
-            let providerSide = model.direction == .in ? quote.sendAmount : quote.receiveAmount
-            let cashSide = model.direction == .in ? quote.receiveAmount : quote.sendAmount
+        case .quoted:
+            let price = model.viewModel.prices[providerId]
             VStack(alignment: .trailing, spacing: 2) {
-                if let providerAmount = model.state.quoteUnit(quote).amount(units: providerSide) {
-                    Text(verbatim: "≈ " + providerAmount)
+                if let providerAmount = price?.provider {
+                    Text(verbatim: providerAmount)
                         .typography(.bodyMediumEmphasized)
                         .foregroundStyle(.fgPrimary)
                 }
-                if let cashAmount = model.cash.label(units: cashSide) {
-                    Text(.Funding.providersFor(amount: cashAmount))
+                if let cashAmount = price?.cash {
+                    Text(verbatim: cashAmount)
                         .typography(.captionSmall)
                         .foregroundStyle(.fgSecondary)
                 }
             }
         case .unavailable:
             EmptyView()
-        }
-    }
-
-    func unavailableText(_ reason: FundingQuoteUnavailable) -> String {
-        switch reason {
-        case .timeout:
-            String(localized: .Funding.providersUnavailable)
-        case let .refused(refusal):
-            switch refusal {
-            case let .belowMinimum(min):
-                model.cash.label(units: min).map { String(localized: .Funding.errorMinimum(amount: $0)) }
-                    ?? String(localized: .Funding.providersUnavailable)
-            case let .aboveMaximum(max):
-                model.cash.label(units: max).map { String(localized: .Funding.errorMaximum(amount: $0)) }
-                    ?? String(localized: .Funding.providersUnavailable)
-            case .countryUnsupported:
-                String(localized: .Funding.providersCountryUnsupported)
-            case .unavailable,
-                 .other:
-                String(localized: .Funding.providersUnavailable)
-            }
         }
     }
 }
