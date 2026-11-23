@@ -371,9 +371,10 @@ fn with_caller_request_id(
 /// The error for a People connection that did not open: `ChainUnavailable`
 /// if the chain could not be reached or stayed halted, otherwise `Failure`.
 fn connect_error(err: &StatementStoreRpcClientError) -> SsoRemoteResponseError {
-	match err.is_unreachable() {
-		true => SsoRemoteResponseError::ChainUnavailable(err.to_string()),
-		false => SsoRemoteResponseError::Failure(err.to_string()),
+	if err.is_unreachable() {
+		SsoRemoteResponseError::ChainUnavailable(err.to_string())
+	} else {
+		SsoRemoteResponseError::Failure(err.to_string())
 	}
 }
 

@@ -2791,6 +2791,31 @@ fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	assert_eq!((earlier_closed, provider.connect_calls.load(Ordering::SeqCst)), (true, 3));
 }
 
+/// A node that gives no genesis hash says nothing about which chain its
+/// endpoint serves. The connections opened earlier for the chain may still be
+/// on the right one, so they stay open.
+#[test]
+fn a_connection_that_gets_no_answer_leaves_the_earlier_ones_open() {
+	let named = [0xa1; 32];
+	let asked = AtomicUsize::new(0);
+	let provider = Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		let reply = match asked.fetch_add(1, Ordering::SeqCst) {
+			0 => format!(r#""result":"{}""#, encode_hex(&named)),
+			_ => r#""error":{"code":-32601,"message":"Method not found"}"#.to_string(),
+		};
+		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}",{reply}}}"#))
+	}));
+	let runtime = ChainRuntime::new(provider, Spawner::for_test())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.expect("the first connection reaches the chain");
+
+	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
+
+	assert_eq!((newer.is_err(), earlier.is_closed()), (true, false));
+}
+
 /// A product's runtime opens its own connections, apart from the core's. A
 /// wiped chain must not reach a product through them.
 #[test]

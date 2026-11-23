@@ -281,11 +281,13 @@ impl Shared {
 				Some(wait) => self.timer.sleep(wait),
 				None => pending().boxed(),
 			};
-			let asked = select(forced.next(), chain_answers.next());
-			force = match select(until_due, asked).await {
-				Either::Left(_) | Either::Right((Either::Right(_), _)) => false,
-				Either::Right((Either::Left((Some(()), _)), _)) => true,
-				Either::Right((Either::Left((None, _)), _)) => return,
+			force = futures::select_biased! {
+				() = until_due.fuse() => false,
+				request = forced.next() => match request {
+					Some(()) => true,
+					None => return,
+				},
+				_ = chain_answers.next() => false,
 			};
 		}
 	}
