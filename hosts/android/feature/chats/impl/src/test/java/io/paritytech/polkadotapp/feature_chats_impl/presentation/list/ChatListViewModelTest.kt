@@ -83,6 +83,7 @@ class ChatListViewModelTest {
                 origin = ChatMessageOrigin.Extension("ProductBot_chess"),
                 content = ChatMessage.Content.Text("Your move"),
                 status = ChatMessage.Status.IS_READ,
+                sortOrder = null,
             ),
         ),
         timestamp = 5L,
