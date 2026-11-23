@@ -51,7 +51,7 @@ suite("dev accounts against the real signing host", () => {
     initSync({ module: readFileSync(wasmUrl) });
     const mock = createMockHost();
     const { productId, ...hostConfig } = mockRuntimeConfig();
-    const runtime = new WasmSigningHostRuntime(
+    const runtime = await WasmSigningHostRuntime.create(
       {
         ...createWasmRawCallbacks(mock.callbacks),
         requestWorkerTransition: () => {},

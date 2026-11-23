@@ -25,7 +25,7 @@ use truapi::{
 			build_register_proof_message, expire_reservation_call, is_dotted_lite_username,
 			is_registrable_full_label,
 		},
-		product_account::{derive_full_person_ring_vrf_entropy, derive_identity_keypair},
+		root_entropy::RootEntropy,
 	},
 	statement_allowance::{
 		self as alloc, CollectionCandidate, ExtrinsicTarget, FixedPersonhoodSigner,
@@ -44,7 +44,7 @@ pub struct RegisterNameConfig {
 	/// Network preset providing the People and Asset Hub endpoints.
 	pub network: Stack,
 	/// BIP-39 entropy of the signing host's root account.
-	pub entropy: Vec<u8>,
+	pub entropy: RootEntropy,
 	/// Base label to register: lowercase ASCII letters only (`is_person_label`
 	/// in the gateway pallet), at most 32 bytes.
 	pub label: String,
@@ -72,7 +72,9 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	{
 		bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
 	}
-	let who = derive_identity_keypair(&config.entropy, config.network.tld())
+	let who = config
+		.entropy
+		.derive_identity_keypair(config.network.tld())
 		.map_err(IdentityDerivationError::from)?;
 	let who_public = who.public.to_bytes();
 
@@ -122,7 +124,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
-	let full_entropy = derive_full_person_ring_vrf_entropy(&config.entropy, config.network.tld());
+	let full_entropy = config.entropy.derive_full_person_ring_vrf_entropy(config.network.tld());
 	let candidates =
 		[CollectionCandidate { collection: PersonhoodCollection::People, entropy: full_entropy }];
 	let signer = FixedPersonhoodSigner::new(&candidates).await?;

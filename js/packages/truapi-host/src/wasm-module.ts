@@ -65,6 +65,11 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
    * Release one reference. The last one reports `"Stop"` the same way.
    */
   releaseWorker(productId: ProductId): void;
+  /**
+   * Forget one product: its grants, Allow once answers and keys, and the
+   * values it wrote to product storage.
+   */
+  clearProductState(productId: ProductId): Promise<void>;
   free(): void;
 }
 
@@ -74,7 +79,7 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   notifySessionStoreChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
-  deviceEncryptionKey(): Promise<Uint8Array>;
+  deviceEncryptionKey(): Promise<Uint8Array | undefined>;
   productSubtreePublicKey(
     productId: ProductId,
     timeoutMs?: number,
@@ -115,19 +120,30 @@ export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
   /** Validate and normalize an identifier using the core's canonical parser. */
   parseProductId: (value: string) => ProductId;
-  WasmPairingHostRuntime: new (
-    callbacks: unknown,
-    hostConfig: unknown,
-  ) => WorkerPairingHostRuntime;
+  /**
+   * Each runtime is built with `create`, which resolves once the core has read
+   * its stack record from the host's core storage, or after a few seconds
+   * without it.
+   */
+  WasmPairingHostRuntime: {
+    create(
+      callbacks: unknown,
+      hostConfig: unknown,
+    ): Promise<WorkerPairingHostRuntime>;
+  };
   /** Only in the `testing` bundle; see {@link WorkerSigningHostRuntime}. */
-  WasmSigningHostRuntime?: new (
-    callbacks: unknown,
-    hostConfig: unknown,
-  ) => WorkerSigningHostRuntime;
-  WasmProductRuntime: new (
-    callbacks: unknown,
-    runtimeConfig: unknown,
-  ) => WorkerProductRuntime;
+  WasmSigningHostRuntime?: {
+    create(
+      callbacks: unknown,
+      hostConfig: unknown,
+    ): Promise<WorkerSigningHostRuntime>;
+  };
+  WasmProductRuntime: {
+    create(
+      callbacks: unknown,
+      runtimeConfig: unknown,
+    ): Promise<WorkerProductRuntime>;
+  };
   setLogLevel?: (level: string) => void;
   /**
    * Derive a product account public key from that product's hard-subtree

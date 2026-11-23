@@ -1,4 +1,4 @@
-import type { HostConnection } from '@parity/truapi/internal';
+import type { HostConnection } from './host-connection.js';
 
 // A live port delivers within one task; the margin only absorbs a busy main thread.
 const PROBE_TIMEOUT_MS = 1000;

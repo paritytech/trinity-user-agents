@@ -10,6 +10,7 @@ use truapi::v01;
 use super::{ENVELOPE_VERSION, EnvelopeContents, TEST_STATIC_SECRET, test_purses_over};
 use crate::{
 	host_logic::{
+		root_entropy::RootEntropy,
 		statement_store::{StatementField, sign_statement_fields},
 		x25519_seal::{SealedBox, X25519PrivateKey},
 	},
@@ -52,7 +53,7 @@ async fn a_payment_inbox_receives_a_cheque_published_on_the_live_chain() {
 		eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
 		return;
 	};
-	let entropy = bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy();
+	let entropy = RootEntropy::new(bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy());
 	let statements = Arc::new(LivePeopleStatements::connect().await);
 	let signer = statements.statement_signer_with_allowance(&entropy).await;
 	let (_dir, db) = open_temporary_core_db();
