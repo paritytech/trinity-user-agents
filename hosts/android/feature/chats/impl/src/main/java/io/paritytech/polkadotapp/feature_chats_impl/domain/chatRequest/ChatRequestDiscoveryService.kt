@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.model.ChatRequestDecrypted
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestRepository
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.cancel.IncomingChatRequestCancelProcessor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTopic
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTransport
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +44,7 @@ class RealChatRequestDiscoveryService @Inject constructor(
     private val chatRequestTransport: ChatRequestTransport,
     private val chatRequestRepository: ChatRequestRepository,
     private val processor: IncomingChatRequestProcessor,
+    private val cancelProcessor: IncomingChatRequestCancelProcessor,
 ) : ChatRequestDiscoveryService {
     companion object {
         private val DAY_CHANGE_CHECK_INTERVAL = 1.minutes
@@ -174,9 +176,16 @@ class RealChatRequestDiscoveryService @Inject constructor(
         derivationDomain: SharedSecretDerivationDomain,
     ) {
         for (request in requests) {
-            val requestData = IncomingChatRequestData(request, metaAccount.id, derivationDomain)
-            processor.processIncomingRequest(requestData)
-                .logFailure("Failed to process request: $request")
+            when (val statement = request.toIncomingStatement()) {
+                is IncomingChatRequestStatement.Request -> {
+                    val requestData = IncomingChatRequestData(statement, metaAccount.id, derivationDomain)
+                    processor.processIncomingRequest(requestData)
+                        .logFailure("Failed to process request: $request")
+                }
+
+                is IncomingChatRequestStatement.Cancel -> cancelProcessor.process(statement)
+                    .logFailure("Failed to process request cancel: $request")
+            }
         }
     }
 

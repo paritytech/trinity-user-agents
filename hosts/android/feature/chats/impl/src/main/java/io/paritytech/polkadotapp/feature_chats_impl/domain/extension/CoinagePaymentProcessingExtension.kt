@@ -124,17 +124,22 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         val outcome = if (message.isIncoming) {
             claimStatuses(message, content, coinKeys.map { it.key })
         } else {
-            handoffStatuses(coinKeys.map { it.keypair })
+            handoffStatuses(coinKeys.map { it.keypair }).map { Result.success(it) }
         }
             .distinctUntilChanged()
-            .onEach { status -> modifyPaymentContent(message, status) }
+            .onEach { result -> result.onSuccess { status -> modifyPaymentContent(message, status) } }
             .lastOrNull()
+
+        if (outcome?.isFailure == true) {
+            Timber.tag(COINAGE_LOG_TAG).w("Payment claim could not be valued message=${message.id}")
+            return
+        }
 
         // Reaching the end of the flow is the finish, not any status seen along the way. An incoming
         // payment's claim keeps retrying while a coin is still there to be claimed, so a partial
         // Transferred is a progress report; treating it as the end is what settled a 1.00 payment as
         // 0.12. A claim cut short by shutdown throws instead, leaving the message for the next launch.
-        logSettled(message, outcome)
+        logSettled(message, outcome?.getOrNull())
         with(chatExtensionContext) { markMessageProcessed(message) }
     }
 
@@ -149,7 +154,7 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         message: ChatMessage,
         content: CoinagePayment,
         coinKeys: List<CoinPrivateKey>,
-    ): Flow<Status> {
+    ): Flow<Result<Status>> {
         val groupId = claimGroupOf(message.id)
         // TODO: this deadline is persisted in every durable claim's submission params. If it is ever changed,
         //  add a migration that updates the stored deadlines too
@@ -159,7 +164,7 @@ class CoinagePaymentProcessingExtension @Inject constructor(
             .i("Payment claiming message=${message.id} group=${groupId.value} coins=${coinKeys.size} until=$retryUntil")
 
         return claimReceivedCoinsUseCase.claim(coinKeys, groupId, retryUntil)
-            .map { it.toPaymentStatus(expected = content.totalValue) }
+            .map { detection -> detection.map { it.toPaymentStatus(expected = content.totalValue) } }
     }
 
     /**

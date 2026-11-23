@@ -682,6 +682,13 @@ host failures. Android and iOS hosts with Sentry enabled report the reminder
 lifecycle through `host.reminder.*` Sentry events without changing reminder
 delivery or cleanup.
 
+iOS hosts with Sentry enabled report each product notification through
+`host.product_notification.*` events, tagged with
+`product_notification.product_id`. An event of a booking that has an id
+carries it as the extra `product_notification.id`. A booking that fails on
+the store or the system also reports a `CriticalIssue` under flow
+`product-notification`. One refused at the slot limit does not.
+
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
 it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
@@ -903,6 +910,13 @@ auth, Firebase auth, push and backup, so a preview built from it cannot sign in.
 A pull request opened from a fork cannot reach the configuration and signing key
 this needs, and is told so rather than handed a build that misleads. Push the
 branch to this repository to get one.
+
+Every Gradle build in the repository, the vendored Android app included,
+resolves Maven Central through Google's mirror of it in place of Central.
+Maven Central rate limits by IP and hosted runners share theirs, so direct
+requests are refused with a 429 often enough to fail builds. The mirror is
+declared in each `settings.gradle.kts`, so local and CI builds resolve the same
+way.
 
 ### The iOS nightly
 

@@ -19,11 +19,14 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImages
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
@@ -63,6 +66,8 @@ class PocketViewModel @Inject constructor(
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
     private val tabSelection: BottomTabSelection,
+    private val materialsGl: MaterialsGl,
+    private val materialImages: MaterialImages,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
@@ -177,17 +182,20 @@ class PocketViewModel @Inject constructor(
         // with a whole face tree in its replay buffer.
         val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext.job))
 
+        val imageResolver = object : JsImageResolver {
+            override suspend fun resolve(source: JsImageSource) = resolveFaceImage(card, source)
+
+            override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
+        }
+
         return CardBinding(
             scope = scope,
             bindings = ProductFaceBindings(
                 face = interactor.observeFace(card.key)
                     .stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null),
                 onFaceAction = { actionId, type -> onFaceAction(card, actionId, type) },
-                imageResolver = object : JsImageResolver {
-                    override suspend fun resolve(source: JsImageSource) = resolveFaceImage(card, source)
-
-                    override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
-                },
+                imageResolver = imageResolver,
+                materials = CardMaterialsSlot(materialsGl, { source -> materialImages.load(imageResolver, source) }, scope),
             ),
         )
     }
