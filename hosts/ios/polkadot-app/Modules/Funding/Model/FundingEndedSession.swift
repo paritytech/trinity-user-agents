@@ -12,6 +12,13 @@ struct FundingEndedSession: Equatable {
         case payoutFailed(reason: String)
     }
 
+    /// What the user paid or receives, in the quote's asset.
+    struct QuotedAmount: Equatable {
+        let amount: Balance
+        let asset: String
+        let decimals: UInt8
+    }
+
     /// Where a released outbound session's payout stands.
     enum PayoutState: Equatable {
         case pending
@@ -63,16 +70,15 @@ extension FundingEndedSession {
     }
 
     /// What the user paid for value in, or receives for value out, in the
-    /// asset of the quote the session ran on, with that asset's code and
-    /// decimals: the record's copy, or the quote while the core still holds
-    /// it.
-    var quotedAmount: (amount: Balance, asset: String, decimals: UInt8)? {
+    /// asset of the quote the session ran on: the record's copy, or the quote
+    /// while the core still holds it.
+    var quotedAmount: QuotedAmount? {
         let quoted = Balance(units: quote.map { direction == .in ? $0.sendAmount : $0.receiveAmount })
         guard let amount = record.paidAmount ?? quoted,
               let asset = record.paidAsset ?? record.asset,
               let decimals = record.paidDecimals ?? quote?.assetDecimals
         else { return nil }
-        return (amount, asset, decimals)
+        return QuotedAmount(amount: amount, asset: asset, decimals: decimals)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.
