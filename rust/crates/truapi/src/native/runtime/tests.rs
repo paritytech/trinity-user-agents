@@ -1,4 +1,5 @@
 mod public_profile;
+mod workers;
 
 use super::*;
 use crate::{

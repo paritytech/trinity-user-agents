@@ -59,6 +59,7 @@ pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 mod test_resource_controls;
 mod versioning;
 mod vrf;
+mod worker_hold;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -87,6 +88,7 @@ pub use pairing_host::PairingHost;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
+pub use worker_hold::WorkerHold;
 pub use signing_host::{LocalActivation, SigningHost};
 pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
@@ -677,8 +679,8 @@ impl ProductConnection {
 	}
 
 	/// Hold this connection's product worker until the hold is dropped.
-	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
-		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	pub(crate) fn hold_worker(&self) -> WorkerHold {
+		WorkerHold::acquire(&self.services, &self.product.product_id)
 	}
 
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.

@@ -192,7 +192,17 @@ impl RuntimeServices {
 	/// asked to. While something holds it, it is started again once the
 	/// ledger's backoff for its run of crashes has passed.
 	pub fn worker_exited(self: &Arc<Self>, product_id: &crate::platform::ProductId) {
-		let Some(wait_ms) = self.worker_ledger.exited(product_id, crate::current_unix_millis())
+		self.worker_attempt_exited(product_id, None);
+	}
+
+	/// Apply crash backoff only if the reported attempt still serves this product.
+	pub fn worker_attempt_exited(
+		self: &Arc<Self>,
+		product_id: &crate::platform::ProductId,
+		attempt: Option<u64>,
+	) {
+		let Some(wait_ms) =
+			self.worker_ledger.exited(product_id, attempt, crate::current_unix_millis())
 		else {
 			return;
 		};
@@ -201,7 +211,7 @@ impl RuntimeServices {
 		self.spawner.spawn(async move {
 			futures_timer::Delay::new(core::time::Duration::from_millis(wait_ms)).await;
 			if let Some(services) = services.upgrade() {
-				services.worker_ledger.restart(&product_id);
+				services.worker_ledger.restart(&product_id, attempt);
 			}
 		});
 	}
