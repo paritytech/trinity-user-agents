@@ -19,12 +19,13 @@ use truapi::latest::GenericError;
 
 use super::{
 	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
-	signed_pointer, source::StackSource,
+	signed_pointer,
+	source::{Listing, StackSource},
 };
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
-	chain_runtime::{GenesisCheck, GenesisHashes, encode_hex},
+	chain_runtime::{GenesisCheck, GenesisHashes},
 	time::{Clock, Timer},
 	wake::WakeSignal,
 };
@@ -98,21 +99,8 @@ impl StackChecks {
 
 impl GenesisCheck for Shared {
 	fn chain_answered(&self, hashes: GenesisHashes) {
-		let GenesisHashes { named, answered } = hashes;
-		let changed = self.source().chain_answered(hashes);
-		if !changed {
-			return;
-		}
-		// Logged with the source unlocked: a native host is handed each
-		// warning as it is made, and may read the stack's status from there.
-		if answered != named {
-			tracing::warn!(
-				"a chain of the stack gave genesis hash {}, not {}",
-				encode_hex(&answered),
-				encode_hex(&named)
-			);
-		}
-		self.chain_answers.wake();
+		let listing = self.source().chain_answered(hashes);
+		self.answer_recorded(listing);
 	}
 }
 
@@ -251,6 +239,19 @@ impl Shared {
 
 	fn now(&self) -> i64 {
 		unix_now(self.clock.as_ref())
+	}
+
+	/// Logs an entry the status lists now and wakes the loop, unless the
+	/// answer changed nothing. Call it with the source unlocked: a native host
+	/// is handed each warning as it is made, and may read the status from
+	/// there.
+	fn answer_recorded(&self, listing: Listing) {
+		match listing {
+			Listing::Unchanged => return,
+			Listing::Cleared => {},
+			Listing::Listed(mismatch) => tracing::warn!("{mismatch}"),
+		}
+		self.chain_answers.wake();
 	}
 
 	async fn run(self: Arc<Self>, host: Box<dyn StackHost>, mut forced: mpsc::Receiver<()>) {

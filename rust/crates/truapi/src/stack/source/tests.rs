@@ -359,11 +359,11 @@ fn a_chain_that_gave_a_different_genesis_hash_is_reported_and_brings_the_fetch_f
 	let (bundled, mut source) = fetched_at_start();
 	let hourly = source.next_fetch_in(START + 60);
 
-	let changed = source.chain_answered(PEOPLE_WIPED);
+	let listing = source.chain_answered(PEOPLE_WIPED);
 
 	assert_eq!(
 		(
-			changed,
+			listing,
 			source.status(),
 			hourly,
 			source.next_fetch_in(START + 60),
@@ -371,7 +371,7 @@ fn a_chain_that_gave_a_different_genesis_hash_is_reported_and_brings_the_fetch_f
 			source.due_fetch(START + 300).is_some(),
 		),
 		(
-			true,
+			Listing::Listed(people_gave(TEST_STACK_WIPED_PEOPLE)),
 			StackStatus {
 				mismatches: vec![people_gave(TEST_STACK_WIPED_PEOPLE)],
 				..status(&bundled, Some(StackRefreshOutcome::Current))
@@ -410,13 +410,22 @@ fn wrong_answers_do_not_bring_a_fetch_sooner_than_five_minutes() {
 	let (_bundled, mut source) = fetched_at_start();
 
 	let answers = [TEST_STACK_WIPED_PEOPLE, TEST_STACK_WIPED_PEOPLE, TEST_STACK_PEOPLE, [0x55; 32]];
-	let changed = answers.map(|answered| {
+	let listings = answers.map(|answered| {
 		source.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered })
 	});
 
 	assert_eq!(
-		(changed, source.due_fetch(START + 299), source.status().mismatches),
-		([true, false, true, true], None, vec![people_gave([0x55; 32])])
+		(listings, source.due_fetch(START + 299), source.status().mismatches),
+		(
+			[
+				Listing::Listed(people_gave(TEST_STACK_WIPED_PEOPLE)),
+				Listing::Unchanged,
+				Listing::Cleared,
+				Listing::Listed(people_gave([0x55; 32])),
+			],
+			None,
+			vec![people_gave([0x55; 32])]
+		)
 	);
 }
 
@@ -437,20 +446,34 @@ fn chains_that_restarted_together_are_each_listed_once_in_the_descriptors_order(
 	source.chain_answered(GenesisHashes { named: bulletin, answered: [0xb1; 32] });
 	source.chain_answered(PEOPLE_WIPED);
 	source.chain_answered(GenesisHashes { named: asset_hub, answered: [0xc1; 32] });
-	let changed = source.chain_answered(GenesisHashes { named: bulletin, answered: [0xb2; 32] });
+	let listing = source.chain_answered(GenesisHashes { named: bulletin, answered: [0xb2; 32] });
 	let all_wrong = source.status().mismatches;
 	source.chain_answered(GenesisHashes { named: asset_hub, answered: asset_hub });
 
 	assert_eq!(
-		(changed, all_wrong, source.status().mismatches),
+		(listing, all_wrong, source.status().mismatches),
 		(
-			true,
+			Listing::Listed(gave("Bulletin", bulletin, [0xb2; 32])),
 			vec![
 				gave("AssetHub", asset_hub, [0xc1; 32]),
 				people_gave(TEST_STACK_WIPED_PEOPLE),
 				gave("Bulletin", bulletin, [0xb2; 32]),
 			],
 			vec![people_gave(TEST_STACK_WIPED_PEOPLE), gave("Bulletin", bulletin, [0xb2; 32])],
+		)
+	);
+}
+
+/// The core logs a mismatch as it lists it, and a native host is handed that
+/// warning as text. It has to say which chain and give both hashes.
+#[test]
+fn a_mismatch_reads_as_the_warning_the_core_logs() {
+	assert_eq!(
+		people_gave(TEST_STACK_WIPED_PEOPLE).to_string(),
+		format!(
+			"the People chain gave genesis hash 0x{}, not 0x{}",
+			"a9".repeat(32),
+			"a1".repeat(32)
 		)
 	);
 }
@@ -462,12 +485,12 @@ fn chains_that_restarted_together_are_each_listed_once_in_the_descriptors_order(
 fn a_chain_outside_the_stack_is_not_the_stacks_mismatch() {
 	let (bundled, mut source) = fetched_at_start();
 
-	let changed = source.chain_answered(GenesisHashes { named: [0x77; 32], answered: [0x78; 32] });
+	let listing = source.chain_answered(GenesisHashes { named: [0x77; 32], answered: [0x78; 32] });
 
 	assert_eq!(
-		(changed, source.status(), source.next_fetch_in(START)),
+		(listing, source.status(), source.next_fetch_in(START)),
 		(
-			false,
+			Listing::Unchanged,
 			status(&bundled, Some(StackRefreshOutcome::Current)),
 			Some(Duration::from_secs(3600))
 		)
@@ -482,13 +505,13 @@ fn a_chain_that_gives_its_own_genesis_hash_again_is_no_longer_reported() {
 	let (bundled, mut source) = fetched_at_start();
 	source.chain_answered(PEOPLE_WIPED);
 
-	let changed = source
+	let listing = source
 		.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered: TEST_STACK_PEOPLE });
 
 	assert_eq!(
-		(changed, source.status(), source.next_fetch_in(START)),
+		(listing, source.status(), source.next_fetch_in(START)),
 		(
-			true,
+			Listing::Cleared,
 			status(&bundled, Some(StackRefreshOutcome::Current)),
 			Some(Duration::from_secs(3600))
 		)

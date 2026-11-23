@@ -12,7 +12,7 @@ use trinity_stack::{
 };
 
 use super::{ReplaceCheck, Stack, StackError};
-use crate::chain_runtime::GenesisHashes;
+use crate::chain_runtime::{GenesisHashes, encode_hex};
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
@@ -82,12 +82,17 @@ pub enum StackRefreshOutcome {
 }
 
 /// A difference between the stack's descriptor and what one of its chains answered.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StackMismatch {
 	/// The chain's last connection reached one with a different genesis hash
 	/// from the descriptor's, as happens after a chain restarts from genesis.
 	/// The core refused that connection.
+	#[display(
+		"the {role} chain gave genesis hash {}, not {}",
+		encode_hex(answered),
+		encode_hex(named)
+	)]
 	GenesisHash {
 		/// The chain's role in the descriptor.
 		role: String,
@@ -96,6 +101,18 @@ pub enum StackMismatch {
 		/// The genesis hash the chain gave.
 		answered: [u8; 32],
 	},
+}
+
+/// What an answer from a chain did to [`StackStatus::mismatches`].
+#[cfg_attr(test, derive(Debug, PartialEq))]
+pub enum Listing {
+	/// Nothing: the list is as it was.
+	Unchanged,
+	/// The entry the list had is gone, because the answer agrees with the
+	/// descriptor.
+	Cleared,
+	/// The list has this entry now.
+	Listed(StackMismatch),
 }
 
 /// The stack the core runs, and what the host shows and does about it.
@@ -280,26 +297,28 @@ impl StackSource {
 
 	/// Records the genesis hash a new connection's chain gave.
 	///
-	/// Returns whether that changed [`Self::status`]. A chain the running
-	/// copy does not name changes nothing. While a chain's last answer is
-	/// wrong and no newer copy waits for the next start,
-	/// [`Self::next_fetch_in`] counts to five minutes instead of an hour.
-	pub fn chain_answered(&mut self, hashes: GenesisHashes) -> bool {
+	/// Returns what that did to [`Self::status`]. A chain the running copy
+	/// does not name changes nothing. While a chain's last answer is wrong
+	/// and no newer copy waits for the next start, [`Self::next_fetch_in`]
+	/// counts to five minutes instead of an hour.
+	pub fn chain_answered(&mut self, hashes: GenesisHashes) -> Listing {
 		let GenesisHashes { named, answered } = hashes;
-		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
-			return false;
-		}
+		let chains = &self.running.descriptor.chains;
+		let Some(chain) = chains.iter().find(|chain| chain.genesis() == named) else {
+			return Listing::Unchanged;
+		};
 		let entry = self.wrong_genesis.iter().find(|entry| entry.named == named);
 		let listed = entry.map(|entry| entry.answered);
 		let wrong = (answered != named).then_some(answered);
 		if listed == wrong {
-			return false;
+			return Listing::Unchanged;
 		}
 		self.wrong_genesis.retain(|entry| entry.named != named);
-		if wrong.is_some() {
-			self.wrong_genesis.push(hashes);
+		if answered == named {
+			return Listing::Cleared;
 		}
-		true
+		self.wrong_genesis.push(hashes);
+		Listing::Listed(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
