@@ -778,7 +778,6 @@ private class HostCallbackAdapter(
         CoreStorageAccess.changed(
             coreStorage, storageGroup, key,
             reportFailure = { onCoreLog("host.permission_refresh.failed", "Permission refresh failed") },
-            authorizationChanged = ::permissionAuthorizationsChanged,
         )
     }
 

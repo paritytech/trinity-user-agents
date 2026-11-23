@@ -31,7 +31,6 @@ internal object CoreStorageAccess {
             val origin: Any,
             val key: ByteArray,
             val reportFailure: () -> Unit,
-            val authorizationChanged: (String) -> Unit,
         ) : Notice
         class Barrier(val origin: Any, val completion: CompletableDeferred<Unit>) : Notice
     }
@@ -87,9 +86,8 @@ internal object CoreStorageAccess {
         origin: Any,
         key: ByteArray,
         reportFailure: () -> Unit,
-        authorizationChanged: (String) -> Unit,
     ) {
-        notices.trySend(Notice.Changed(storage, origin, key.copyOf(), reportFailure, authorizationChanged)).getOrThrow()
+        notices.trySend(Notice.Changed(storage, origin, key.copyOf(), reportFailure)).getOrThrow()
     }
 
     suspend fun awaitChanges(origin: Any) {
@@ -123,8 +121,6 @@ internal object CoreStorageAccess {
                 failed = true
             }
         }
-        // Notify after refresh so the shell sees canonical closure, including a dropped CAS caller.
-        runCatching { notice.authorizationChanged(productId) }
         return failed
     }
 }

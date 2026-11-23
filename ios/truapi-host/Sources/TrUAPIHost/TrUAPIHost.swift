@@ -195,7 +195,6 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
             // its complete write-and-notify critical section has been released.
             self.transaction(store: store, key: key) {}
             if let previous { _ = try? await previous.value }
-            defer { bridge.permissionAuthorizationsChanged(productId: productId) }
             var failed = false
             for group in targets.values {
                 guard let execution = group.first(where: { self.isRegistered($0) }) else { continue }
