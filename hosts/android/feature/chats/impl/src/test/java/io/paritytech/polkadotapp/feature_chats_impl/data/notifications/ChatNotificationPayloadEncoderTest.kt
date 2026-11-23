@@ -92,6 +92,7 @@ class ChatNotificationPayloadEncoderTest {
         origin = ChatMessageOrigin.User,
         content = content,
         status = ChatMessage.Status.IS_SENT,
+        sortOrder = null,
     )
 
     private companion object {
