@@ -155,7 +155,10 @@ GUARD_PID=""
 start_watchdog() {
   local pid="$1" label="$2"
   (
-    sleep "$PHASE_TIMEOUT"
+    # The sleep outlives this subshell when stop_watchdog kills it, so it must
+    # not hold the script's stdout or stderr: a caller piping into `tail` would
+    # otherwise wait out the whole timeout after the battery has finished.
+    sleep "$PHASE_TIMEOUT" </dev/null >/dev/null 2>&1
     if kill -0 "$pid" 2>/dev/null; then
       echo "battery: $label exceeded ${PHASE_TIMEOUT}s, terminating" >&2
       kill -TERM "$pid" 2>/dev/null || true

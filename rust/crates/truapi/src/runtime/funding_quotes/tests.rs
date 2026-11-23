@@ -114,3 +114,55 @@ fn only_an_alpha2_code_counts_as_a_detected_country() {
 		[Some("DE".to_string()), Some("PT".to_string()), None, None, None]
 	);
 }
+
+// A request replaced after it showed a list but before every provider
+// answered settles as superseded, with what it showed; one that settled
+// already does not settle again.
+#[test]
+fn a_replaced_request_settles_as_superseded_once() {
+	let quotes = FundingQuotes::default();
+	let ask = FundingQuoteAsk {
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		amount: 1_000,
+		country: None,
+	};
+	let list = |request_id, state| FundingQuoteList {
+		request_id,
+		rows: vec![FundingQuoteRow { provider_id: ProductId::for_test("ramp.dot"), state }],
+		best: None,
+		refresh_at_ms: 0,
+		amount: 1_000,
+		refusal: None,
+		issue: None,
+		complete: false,
+	};
+	let (first, _, replaced) = quotes.start("fs_1", ask.clone(), NOW);
+	assert_eq!(replaced, None);
+	assert_eq!(
+		quotes.publish("fs_1", &list(first, FundingQuoteState::Pending), true, NOW + 10),
+		Some(None)
+	);
+	let (second, _, replaced) = quotes.start("fs_1", ask.clone(), NOW + 50);
+	let replaced = replaced.expect("superseded");
+	assert_eq!(
+		(
+			replaced.superseded,
+			replaced.settle_ms,
+			replaced.first_quote_ms,
+			replaced.list.rows.len()
+		),
+		(true, 50, None, 1)
+	);
+	let quoted = FundingQuoteState::Quoted { quote: quote("q1", None) };
+	let settled = FundingQuoteList { complete: true, ..list(second, quoted) };
+	let shown = quotes
+		.publish("fs_1", &settled, true, NOW + 80)
+		.expect("shown")
+		.expect("settles");
+	assert_eq!((shown.superseded, shown.first_quote_ms, shown.settle_ms), (false, Some(30), 30));
+	assert_eq!(quotes.publish("fs_1", &settled, true, NOW + 90), Some(None));
+	assert_eq!(quotes.start("fs_1", ask, NOW + 100).2, None);
+}
