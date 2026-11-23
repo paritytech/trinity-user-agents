@@ -394,11 +394,19 @@ fn errors_pass_on_before_and_after_the_backlog() {
 	assert_eq!(batches_of(pages), expected);
 }
 
-/// A People node whose chain has `genesis`, and a statement store that opens
-/// its subscription connections to it with the genesis check on.
-fn checked_statement_store(
-	genesis: [u8; 32],
-) -> (StatementStoreRpc, Arc<StubPlatform>, Arc<HeardAnswers>, Arc<PeopleChain>) {
+/// A statement store that opens its subscription connections with the genesis
+/// check on, and what a test reads of it.
+struct CheckedStore {
+	statement_store: StatementStoreRpc,
+	/// The People node the store's own connections reach.
+	node: Arc<StubPlatform>,
+	heard: Arc<HeardAnswers>,
+	/// The chain behind the pooled connection.
+	pooled: Arc<PeopleChain>,
+}
+
+/// A [`CheckedStore`] over a People node whose chain has `genesis`.
+fn checked_statement_store(genesis: [u8; 32]) -> CheckedStore {
 	let node = Arc::new(StubPlatform {
 		rpc_responder: Some(Arc::new(move |request| {
 			let request: serde_json::Value = serde_json::from_str(request).unwrap();
@@ -415,7 +423,7 @@ fn checked_statement_store(
 		PEOPLE_GENESIS,
 		Spawner::for_test(),
 	);
-	(statement_store, node, heard, pooled)
+	CheckedStore { statement_store, node, heard, pooled }
 }
 
 /// The check adds one request to every subscription connection. When People
@@ -423,7 +431,7 @@ fn checked_statement_store(
 /// the check.
 #[test]
 fn a_subscription_connection_to_the_people_chain_is_handed_out() {
-	let (statement_store, _node, heard, _pooled) = checked_statement_store(PEOPLE_GENESIS);
+	let CheckedStore { statement_store, heard, .. } = checked_statement_store(PEOPLE_GENESIS);
 
 	let client = block_on(statement_store.client("test"));
 
@@ -441,7 +449,8 @@ fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 #[test]
 fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 	const WIPED_PEOPLE: [u8; 32] = [0x19; 32];
-	let (statement_store, wiped_node, heard, pooled) = checked_statement_store(WIPED_PEOPLE);
+	let CheckedStore { statement_store, node: wiped_node, heard, pooled } =
+		checked_statement_store(WIPED_PEOPLE);
 
 	let refused =
 		block_on(statement_store.client("test")).expect_err("the wiped People chain is refused");

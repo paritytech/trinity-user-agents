@@ -257,8 +257,8 @@ impl Shared {
 	async fn run(self: Arc<Self>, host: Box<dyn StackHost>, mut forced: mpsc::Receiver<()>) {
 		let mut chain_answers = self.chain_answers.subscribe();
 		let mut reported = self.source().status();
-		host.stack_changed(reported.clone());
 		let tell = |status: &StackStatus| host.stack_changed(status.clone());
+		tell(&reported);
 		let mut force = false;
 		loop {
 			// A chain's answer is reported before the fetch it brings forward,

@@ -269,12 +269,7 @@ impl SsoRequestService {
 		let connect = core::pin::pin!(self.statement_store.client("SSO statement-store"));
 		let rpc_client = match select(connect, cx.cancel().cancelled()).await {
 			Either::Left((connected, _)) => connected.map_err(|err| connect_error(&err))?,
-			Either::Right((reason, _)) => {
-				return Err(with_caller_request_id(
-					cx,
-					SsoRemoteResponseError::Cancelled(CancelError::new(reason, &message_id)),
-				));
-			},
+			Either::Right((reason, _)) => return Err(cancelled(cx, reason, &message_id)),
 		};
 		let own_subscription =
 			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
@@ -368,6 +363,16 @@ fn with_caller_request_id(
 	}
 }
 
+/// The error for request `message_id` once the caller gave it up for `reason`.
+fn cancelled(
+	cx: &CallContext,
+	reason: CancellationReason,
+	message_id: &str,
+) -> SsoRemoteResponseError {
+	let cancelled = SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id));
+	with_caller_request_id(cx, cancelled)
+}
+
 /// The error for a People connection that did not open: `ChainUnavailable`
 /// if the chain could not be reached or stayed halted, otherwise `Failure`.
 fn connect_error(err: &StatementStoreRpcClientError) -> SsoRemoteResponseError {
@@ -387,10 +392,7 @@ fn subscribe_error(
 	err: &subxt_rpcs::Error,
 ) -> SsoRemoteResponseError {
 	if let Some(reason) = cx.cancel().reason() {
-		return with_caller_request_id(
-			cx,
-			SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id)),
-		);
+		return cancelled(cx, reason, message_id);
 	}
 	let reason = format!("SSO {label} statement-store subscribe failed: {err}");
 	if says_chain_halted(err) {

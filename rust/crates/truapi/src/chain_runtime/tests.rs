@@ -2695,8 +2695,24 @@ fn node_answering_its_genesis_with(reply: String) -> Arc<ScriptedProvider> {
 	}))
 }
 
+/// The reply of a node whose chain has `genesis`.
+fn genesis_reply(genesis: [u8; 32]) -> String {
+	format!(r#""result":"{}""#, encode_hex(&genesis))
+}
+
 fn node_of(genesis: [u8; 32]) -> Arc<ScriptedProvider> {
-	node_answering_its_genesis_with(format!(r#""result":"{}""#, encode_hex(&genesis)))
+	node_answering_its_genesis_with(genesis_reply(genesis))
+}
+
+/// A node whose n-th request, on any connection, gets the n-th of `replies`,
+/// the last one repeating. Each is the JSON-RPC member that follows `"id"`.
+fn node_answering_in_turn(replies: Vec<String>) -> Arc<ScriptedProvider> {
+	let asked = AtomicUsize::new(0);
+	Arc::new(ScriptedProvider::new(move |request| {
+		let id = extract_id(request)?;
+		let reply = &replies[asked.fetch_add(1, Ordering::SeqCst).min(replies.len() - 1)];
+		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}",{reply}}}"#))
+	}))
 }
 
 /// After a wipe the node behind a chain's endpoint serves a new chain. What
@@ -2769,15 +2785,7 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 #[test]
 fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
-	let asked = AtomicUsize::new(0);
-	let provider = Arc::new(ScriptedProvider::new(move |request| {
-		let id = extract_id(request)?;
-		let genesis = match asked.fetch_add(1, Ordering::SeqCst) {
-			0 => named,
-			_ => answered,
-		};
-		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{}"}}"#, encode_hex(&genesis)))
-	}));
+	let provider = node_answering_in_turn(vec![genesis_reply(named), genesis_reply(answered)]);
 	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
 	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
@@ -2797,15 +2805,8 @@ fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 #[test]
 fn a_connection_that_gets_no_answer_leaves_the_earlier_ones_open() {
 	let named = [0xa1; 32];
-	let asked = AtomicUsize::new(0);
-	let provider = Arc::new(ScriptedProvider::new(move |request| {
-		let id = extract_id(request)?;
-		let reply = match asked.fetch_add(1, Ordering::SeqCst) {
-			0 => format!(r#""result":"{}""#, encode_hex(&named)),
-			_ => r#""error":{"code":-32601,"message":"Method not found"}"#.to_string(),
-		};
-		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}",{reply}}}"#))
-	}));
+	let no_answer = r#""error":{"code":-32601,"message":"Method not found"}"#.to_string();
+	let provider = node_answering_in_turn(vec![genesis_reply(named), no_answer]);
 	let runtime = ChainRuntime::new(provider, Spawner::for_test())
 		.checking_genesis(Arc::<HeardAnswers>::default());
 	let earlier = futures::executor::block_on(runtime.rpc_client("test", &named))
@@ -2814,6 +2815,26 @@ fn a_connection_that_gets_no_answer_leaves_the_earlier_ones_open() {
 	let newer = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
 
 	assert_eq!((newer.is_err(), earlier.is_closed()), (true, false));
+}
+
+/// The statement store opens People connections of its own and has them
+/// checked through `check_genesis`. One of them finding the chain restarted
+/// says as much about the pooled connections as a pooled one would, so they
+/// are closed too.
+#[test]
+fn a_wrong_answer_on_a_connection_the_caller_opened_closes_the_pooled_ones() {
+	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
+	let runtime = ChainRuntime::new(node_of(named), Spawner::for_test())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+	let pooled = futures::executor::block_on(runtime.rpc_client("test", &named))
+		.expect("the pooled connection reaches the chain");
+	let own = futures::executor::block_on(node_of(answered).connect(named.to_vec()))
+		.expect("the scripted node accepts the connection");
+	let own = HostRpcClient::new(own, Spawner::for_test());
+
+	let refused = futures::executor::block_on(runtime.check_genesis(named, &own));
+
+	assert_eq!((refused.is_err(), pooled.is_closed()), (true, true));
 }
 
 /// A product's runtime opens its own connections, apart from the core's. A
@@ -2852,20 +2873,17 @@ fn an_unreachable_chain_gives_no_answer_to_check() {
 /// not a chain that answered wrong.
 #[test]
 fn a_node_that_hangs_up_before_naming_its_chain_is_unavailable() {
-	let hung_up = Arc::new(Mutex::new(None::<Arc<ScriptedProvider>>));
-	let hangs_up = hung_up.clone();
-	let provider = Arc::new(ScriptedProvider::new(move |_request| {
-		let provider = hangs_up.lock().unwrap().clone().expect("the provider is set");
-		provider.sender.lock().unwrap().take();
-		None
-	}));
-	*hung_up.lock().unwrap() = Some(provider.clone());
+	let provider = Arc::new(ScriptedProvider::new(|_request| None));
 	let heard = Arc::<HeardAnswers>::default();
-	let runtime = ChainRuntime::new(provider, Spawner::for_test()).checking_genesis(heard.clone());
+	let runtime =
+		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
+	let connect = std::thread::spawn(move || {
+		futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32])).err()
+	});
 
-	let failure = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 32]))
-		.err()
-		.expect("the chain hung up");
+	wait_for_sent(&provider, |sent| !sent.is_empty());
+	provider.sender.lock().unwrap().take();
+	let failure = connect.join().unwrap().expect("the chain hung up");
 
 	assert_eq!((failure.kind(), heard.heard()), (RuntimeFailureKind::Unavailable, Vec::new()));
 }
@@ -2934,12 +2952,10 @@ fn node_halted_for(halts: usize, genesis: [u8; 32]) -> Arc<ScriptedProvider> {
 	let asked = AtomicUsize::new(0);
 	Arc::new(ScriptedProvider::new(move |request| {
 		let id = extract_id(request)?;
-		Some(match asked.fetch_add(1, Ordering::SeqCst) < halts {
-			true => crate::test_support::chain_halted_frame(&id),
-			false => {
-				format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{}"}}"#, encode_hex(&genesis))
-			},
-		})
+		if asked.fetch_add(1, Ordering::SeqCst) < halts {
+			return Some(crate::test_support::chain_halted_frame(&id));
+		}
+		Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}",{}}}"#, genesis_reply(genesis)))
 	}))
 }
 
