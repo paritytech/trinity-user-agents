@@ -1,6 +1,7 @@
 import UIKit
 import UIKitExt
 
+@MainActor
 protocol BottomNotificationPresenting {
     func presentSuccessNotification(
         _ title: String,

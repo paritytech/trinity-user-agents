@@ -252,6 +252,7 @@ jobs:
             ios/truapi-host/Binaries
             ios/truapi-provider/Sources
             ios/truapi-provider/Binaries
+            js/container/dist/truapi-test-sdk.js
           )
           for path in "${paths[@]}"; do
             if [ ! -e "$path" ]; then
@@ -370,9 +371,11 @@ jobs:
           simulator="$(node --input-type=module -e 'import { selectSimulator } from "./scripts/lib/ios-simulator.mjs"; console.log(selectSimulator().udid)')"
           echo "TRUAPI_TEST_SIMULATOR=$simulator" >> "$GITHUB_ENV"
           probe="$RUNNER_TEMP/tag-probe"
-          mkdir -p "$probe/ios/truapi-host/Binaries" "$probe/ios/truapi-provider/Binaries"
+          mkdir -p "$probe/ios/truapi-host/Binaries" "$probe/ios/truapi-provider/Binaries" "$probe/js/container/dist"
           cp -R ios/truapi-host/Binaries/truapi_server.xcframework "$probe/ios/truapi-host/Binaries/"
           cp -R ios/truapi-provider/Binaries/truapi_provider.xcframework "$probe/ios/truapi-provider/Binaries/"
+          # The test pages' product SDK is a build output the tag does not carry.
+          cp js/container/dist/truapi-test-sdk.js "$probe/js/container/dist/"
           cd "$probe"
           TRUAPI_TEST_SIMULATOR="$simulator" ./ios/truapi-host/scripts/test.sh build-for-testing \
             -derivedDataPath "$RUNNER_TEMP/TrUAPINetworkTestHost"

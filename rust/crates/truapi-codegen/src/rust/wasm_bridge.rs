@@ -14,7 +14,8 @@ use crate::{
 		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
 	},
 	rustdoc::{
-		ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
+		ApiDefinition, STRING_NEWTYPES, TypeDef, TypeDefKind, TypeRef, VariantFields,
+		split_versioned_type_name,
 	},
 };
 
@@ -147,42 +148,24 @@ pub fn generate_wasm_bridge(
 
 struct BridgeCtx<'a> {
 	api_types: BTreeMap<&'a str, &'a TypeDef>,
-	codec_types: BTreeSet<&'a str>,
 	local_types: BTreeSet<&'a str>,
 	local_codec_types: BTreeSet<&'a str>,
 }
 
 impl<'a> BridgeCtx<'a> {
 	fn new(definition: &'a PlatformDefinition, api: &'a ApiDefinition) -> Self {
-		let mut api_types =
-			api.types.iter().map(|ty| (ty.name.as_str(), ty)).collect::<BTreeMap<_, _>>();
-		// A platform signature names the newest version of a protocol type by
-		// its plain name, and the API names each version of a type that two
-		// versions define with its version.
-		let mut newest = BTreeMap::<&str, (u32, &TypeDef)>::new();
-		for ty in &api.types {
-			if let Some((version, simple_name)) = split_versioned_type_name(&ty.name) &&
-				newest.get(simple_name).is_none_or(|(known, _)| version > *known)
-			{
-				newest.insert(simple_name, (version, ty));
-			}
-		}
-		for (simple_name, (_, ty)) in newest {
-			api_types.entry(simple_name).or_insert(ty);
-		}
-		let codec_types = api_types
-			.iter()
-			.filter(|(_, ty)| !matches!(ty.kind, TypeDefKind::Alias(_)))
-			.map(|(name, _)| *name)
-			.collect::<BTreeSet<_>>();
+		let api_types = api.platform_types();
 		let local_types =
 			definition.types.iter().map(|ty| ty.name.as_str()).collect::<BTreeSet<_>>();
 		let local_codec_types = collect_local_bridge_payload_types(definition);
-		Self { api_types, codec_types, local_types, local_codec_types }
+		Self { api_types, local_types, local_codec_types }
 	}
 
 	fn is_api_codec(&self, ty: &TypeRef) -> bool {
-		matches!(ty, TypeRef::Named { name, .. } if self.codec_types.contains(name.as_str()))
+		let TypeRef::Named { name, .. } = ty else { return false };
+		self.api_types
+			.get(name.as_str())
+			.is_some_and(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
 	}
 
 	fn is_local_codec(&self, ty: &TypeRef) -> bool {
@@ -497,6 +480,11 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
 		},
 		TypeRef::Named { name, args } if name == "CallError" && args.len() == 1 => {
 			Ok(format!("truapi::CallError<{}>", rust_type(&args[0], ctx)?))
+		},
+		TypeRef::Named { name, args }
+			if STRING_NEWTYPES.contains(&name.as_str()) && args.is_empty() =>
+		{
+			Ok(format!("truapi::{name}"))
 		},
 		TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
 			if args.is_empty() {

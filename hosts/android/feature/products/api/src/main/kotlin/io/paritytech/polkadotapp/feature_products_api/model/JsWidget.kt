@@ -92,4 +92,15 @@ sealed interface JsWidget {
         val fit: JsImageFit = JsImageFit.FILL,
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget
+
+    /**
+     * Shader layers over [children]. [node] is its place among the tree's `Materials` nodes, depth
+     * first, as the core numbers them. A surface without a materials renderer draws the children plain.
+     */
+    @Serializable
+    @SerialName("materials")
+    data class Materials(
+        val node: Int,
+        val children: List<JsWidget>,
+    ) : JsWidget
 }

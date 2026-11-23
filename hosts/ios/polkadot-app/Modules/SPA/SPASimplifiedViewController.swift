@@ -125,8 +125,7 @@ private extension SPASimplifiedViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs,
-                 .bundled:
+            case .dotNs:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider

@@ -19,6 +19,6 @@ protocol ProductsSignConfirmInteractorOutputProtocol: AnyObject {
 }
 
 @MainActor
-protocol ProductsSignConfirmWireframeProtocol: PolkadotSigningDetailsPresentable {
+protocol ProductsSignConfirmWireframeProtocol: PolkadotSigningDetailsPresentable, AuthorizationPresentable {
     func hide(view: PolkadotSigningViewProtocol?, decision: Bool)
 }

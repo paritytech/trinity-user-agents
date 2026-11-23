@@ -18,8 +18,12 @@ pub enum ProviderError {
 		/// The queried genesis hash.
 		genesis: [u8; 32],
 	},
-	/// A parachain named a relay that is not a registered light-client chain.
-	#[display("relay 0x{} is not a registered light-client chain", hex::encode(relay))]
+	/// A parachain's relay has no light-client source: it is not registered as
+	/// a light-client chain, and the stack has no spec for it yet.
+	#[display(
+		"relay 0x{} has no light-client source: it is not registered as a light-client chain, and the stack has no spec for it yet",
+		hex::encode(relay)
+	)]
 	UnknownRelay {
 		/// The relay genesis hash the parachain referenced.
 		relay: [u8; 32],
@@ -90,11 +94,39 @@ pub enum ProviderError {
 		/// Comma-separated names of the bundled networks.
 		known: String,
 	},
-	/// A bundled genesis hash does not decode to 32 bytes.
-	#[display("bundled genesis hash {hex} is malformed")]
-	MalformedGenesis {
-		/// The catalog entry as written.
-		hex: String,
+	/// A stack's link or descriptor was refused.
+	#[cfg(feature = "smoldot")]
+	#[display("stack refused: {source}")]
+	Stack {
+		/// The rule the link or the descriptor broke.
+		source: trinity_stack::Error,
+	},
+	/// A light spec is not the one the stack's descriptor names for the chain.
+	#[cfg(feature = "smoldot")]
+	#[display("light spec of {role} (0x{}) refused: {source}", hex::encode(genesis))]
+	LightSpec {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// The chain's genesis hash.
+		genesis: [u8; 32],
+		/// How the spec differs from the descriptor.
+		source: trinity_stack::Error,
+	},
+	/// A light spec was handed to a provider built without a stack.
+	#[display(
+		"this provider was built without a stack, so it has no descriptor to check a light spec against"
+	)]
+	NoStack,
+	/// A bundled chain spec does not yield a genesis hash.
+	#[cfg(feature = "networks")]
+	#[display("bundled {network} {service} chain spec yields no genesis hash: {source}")]
+	MalformedBundledSpec {
+		/// The catalog network listing the spec.
+		network: &'static str,
+		/// The chain's service within the network (`relay`, `asset-hub`, ...).
+		service: &'static str,
+		/// Why the spec does not parse or lacks a genesis state root.
+		source: trinity_stack::Error,
 	},
 }
 

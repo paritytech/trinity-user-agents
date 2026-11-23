@@ -37,6 +37,11 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// start.
 const STORE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long building a runtime waits for the stored record. A host whose
+/// storage never answers would otherwise keep the runtime from starting, so
+/// past this the core starts from the bundled copy.
+const RECORD_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// What a host does for the stack the core runs: fetch its descriptor, and
 /// show what the core reports about it.
 #[async_trait::async_trait]
@@ -78,8 +83,8 @@ impl StackRefresh {
 	///
 	/// Starts from the copy `records` holds when it is newer than `bundled`,
 	/// and never waits on the network. Fails with a [`StackError`] naming the
-	/// rule `bundled` breaks. A record that cannot be read is logged and
-	/// ignored.
+	/// rule `bundled` breaks. A record that cannot be read, or is not read
+	/// within a few seconds, is logged and ignored.
 	///
 	/// `clock` tells how old a copy is and `timer` waits for the next fetch.
 	pub async fn load(
@@ -91,10 +96,25 @@ impl StackRefresh {
 		clock: Box<dyn Clock>,
 	) -> Result<Self, StackError> {
 		let pointer = signed_pointer(pointer)?;
-		let stored = records.read_stack_record(&pointer.stack_id()).await.unwrap_or_else(|error| {
-			tracing::warn!("stored stack descriptor could not be read: {error}");
-			None
-		});
+		let stack_id = pointer.stack_id();
+		let read = records.read_stack_record(&stack_id);
+		// Started only if the read is still out, so a read that answers at once
+		// leaves no wait behind.
+		let read_timeout = Box::pin(async { timer.sleep(RECORD_READ_TIMEOUT).await });
+		let stored = match select(read, read_timeout).await {
+			Either::Left((Ok(stored), _)) => stored,
+			Either::Left((Err(error), _)) => {
+				tracing::warn!("stored stack descriptor could not be read: {error}");
+				None
+			},
+			Either::Right(_) => {
+				tracing::warn!(
+					"stored stack descriptor not read within {}s, starting from the bundled copy",
+					RECORD_READ_TIMEOUT.as_secs()
+				);
+				None
+			},
+		};
 		let source = StackSource::load(
 			pointer,
 			bundled,
