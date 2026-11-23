@@ -536,18 +536,14 @@ impl ChainRuntime {
 
 	/// Makes this runtime check the genesis hash of every chain it connects to.
 	///
-	/// Each hash a chain gives goes to `check`. Set it before the first
-	/// connection: one opened earlier is not checked.
+	/// Each hash goes to `check`. Connections opened before this call are not
+	/// checked.
 	///
 	/// A connection fails with a host failure when its chain gives a different
-	/// hash from the one it was opened for, or answers with an error. It fails
-	/// as unavailable when the chain closes, stays silent, or is still halted
-	/// after the retries a halted follow gets.
-	///
-	/// A different hash also closes the connections already handed out for
-	/// that chain, in every scope. A host may redial underneath a connection,
-	/// so those may be on the wrong chain too. Whoever uses one next dials
-	/// again and is checked.
+	/// hash or an error, and as unavailable when the chain gives no answer or
+	/// stays halted. A different hash also closes the connections already
+	/// handed out for that chain in every scope, since a host may have
+	/// redialled under them.
 	#[must_use]
 	pub fn checking_genesis(mut self, check: Arc<dyn GenesisCheck>) -> Self {
 		self.genesis_check = Some(check);
