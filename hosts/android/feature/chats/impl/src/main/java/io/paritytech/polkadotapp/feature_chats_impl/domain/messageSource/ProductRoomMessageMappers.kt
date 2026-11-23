@@ -49,6 +49,7 @@ internal fun ProductReplyPreviewModel.toQuotedMessage(messageId: String, chatId:
     origin = if (participantId == ProductParticipant.USER) ChatMessageOrigin.User else ChatMessageOrigin.Extension(extensionId),
     content = content,
     status = ChatMessage.Status.IS_READ,
+    sortOrder = null,
     replyToMessageId = null,
 )
 
