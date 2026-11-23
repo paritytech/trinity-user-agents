@@ -36,7 +36,7 @@ pub trait Notifications: Send + Sync {
 	/// assert(result.isOk(), "sendPushNotification failed:", result);
 	/// console.log("notification sent:", result.value);
 	/// ```
-	#[wire(id = 0)]
+	#[wire(id = 0, request_fallback)]
 	async fn send_push_notification(
 		&self,
 		cx: &CallContext,

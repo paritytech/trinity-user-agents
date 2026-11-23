@@ -1583,7 +1583,8 @@ fn generate_client_selects_highest_shared_wrapper_variant() {
 
 /// An API whose `example_call` request gained the optional `added` field in
 /// V2 while its response and error kept their V1 types, unless `reply_changed`.
-fn api_with_an_added_optional_request_field(reply_changed: bool) -> ApiDefinition {
+/// The method carries `#[wire(request_fallback)]` when `marked`.
+fn api_with_an_added_optional_request_field(reply_changed: bool, marked: bool) -> ApiDefinition {
 	let text = FieldDef {
 		name: "text".to_string(),
 		type_ref: TypeRef::Primitive("str".to_string()),
@@ -1609,6 +1610,7 @@ fn api_with_an_added_optional_request_field(reply_changed: bool) -> ApiDefinitio
 		"ExampleResponse",
 		"ExampleError",
 	);
+	method.wire.request_fallback = marked;
 	method.return_type = ReturnType::Result {
 		ok: named_type("ExampleResponse"),
 		err: TypeRef::Named {
@@ -1644,7 +1646,11 @@ fn api_with_an_added_optional_request_field(reply_changed: bool) -> ApiDefinitio
 /// sends V1 and keeps working against that host.
 #[test]
 fn generate_client_sends_the_older_version_when_the_added_fields_are_absent() {
-	let api = api_with_an_added_optional_request_field(/* reply_changed */ false);
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		false, // marked
+		true,
+	);
 
 	let client_source = generate_client(&api, 2, 1).expect("generate client");
 	let types = generate_types(&api, 2).expect("generate types");
@@ -1669,7 +1675,11 @@ fn generate_client_sends_the_older_version_when_the_added_fields_are_absent() {
 /// domain error would carry `V1` or `V2` depending on what the request left out.
 #[test]
 fn generate_client_reports_a_fallback_domain_error_under_the_wire_version() {
-	let api = api_with_an_added_optional_request_field(/* reply_changed */ false);
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		false, // marked
+		true,
+	);
 
 	let client_source = generate_client(&api, 2, 1).expect("generate client");
 
@@ -1682,18 +1692,44 @@ fn generate_client_reports_a_fallback_domain_error_under_the_wire_version() {
 }
 
 /// A reply whose type changed between versions would reach the caller in a
-/// shape its signature does not name, so only the newest version is sent.
+/// shape its signature does not name, so marking such a method is a mistake
+/// codegen reports rather than a fallback it silently skips.
 #[test]
-fn generate_client_sends_only_the_newest_version_when_the_reply_changed() {
-	let api = api_with_an_added_optional_request_field(/* reply_changed */ true);
+fn generate_client_rejects_a_marked_fallback_whose_reply_changed() {
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		true, // marked
+		true,
+	);
+
+	let error = generate_client(&api, 2, 1).expect_err("the mark cannot be honoured");
+
+	assert_eq!(
+		error.to_string(),
+		"`example_call` is marked `request_fallback`, but no older request version says the \
+		 same thing as V2"
+	);
+}
+
+/// Sending an older version keeps its payload types in the public SDK, so a
+/// method falls back only when it asks to, and otherwise sends the newest.
+#[test]
+fn generate_client_sends_only_the_newest_version_unless_marked() {
+	let api = api_with_an_added_optional_request_field(
+		// reply_changed
+		false, // marked
+		false,
+	);
 
 	let client_source = generate_client(&api, 2, 1).expect("generate client");
+	let types = generate_types(&api, 2).expect("generate types");
 
 	assert!(
 		client_source
 			.contains("payload: T.VersionedExampleRequest.enc({ tag: \"V2\", value: request }),"),
 		"{client_source}"
 	);
+	assert!(!types.contains("V01ExampleCall"), "{types}");
 }
 
 #[test]

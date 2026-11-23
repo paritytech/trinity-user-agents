@@ -921,14 +921,37 @@ struct RequestFallback {
 	added_fields: Vec<String>,
 }
 
-/// The oldest version a request method can send in place of `wire_version`
-/// without losing anything, if one exists.
+/// The oldest version a method marked `#[wire(request_fallback)]` sends in
+/// place of `wire_version`. Unmarked methods have none.
 ///
 /// A version qualifies when the request payload at `wire_version` is the older
 /// payload plus optional fields, and the response and error payloads are the
 /// same type in both versions. Leaving those fields absent then means exactly
 /// what the older version meant, and the caller decodes the same reply.
+///
+/// Fails when a marked method has no qualifying version, since the mark would
+/// otherwise do nothing.
 fn request_fallback(
+	method: &MethodDef,
+	wrappers: &BTreeMap<String, VersionedWrapper>,
+	types: &HashMap<&str, &TypeDef>,
+	wire_version: u32,
+) -> Result<Option<RequestFallback>> {
+	if !method.wire.request_fallback {
+		return Ok(None);
+	}
+	match qualifying_request_fallback(method, wrappers, types, wire_version) {
+		Some(fallback) => Ok(Some(fallback)),
+		None => bail!(
+			"`{}` is marked `request_fallback`, but no older request version says the same \
+			 thing as V{wire_version}",
+			method.name
+		),
+	}
+}
+
+/// The oldest version [`request_fallback`] accepts for `method`, if any.
+fn qualifying_request_fallback(
 	method: &MethodDef,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	types: &HashMap<&str, &TypeDef>,
@@ -994,9 +1017,11 @@ fn method_emitted_versions(
 	wrappers: &BTreeMap<String, VersionedWrapper>,
 	types: &HashMap<&str, &TypeDef>,
 	wire_version: u32,
-) -> impl Iterator<Item = u32> {
-	let fallback = request_fallback(method, wrappers, types, wire_version);
-	core::iter::once(wire_version).chain(fallback.map(|fallback| fallback.version))
+) -> Result<Vec<u32>> {
+	let fallback = request_fallback(method, wrappers, types, wire_version)?;
+	Ok(core::iter::once(wire_version)
+		.chain(fallback.map(|fallback| fallback.version))
+		.collect())
 }
 
 /// For each versioned wrapper, the set of wire versions the generated client
@@ -1025,8 +1050,7 @@ fn versioned_wrapper_emit_versions(
 			let Some(wire_version) = method_wire_version(method, wrappers, target_version)? else {
 				continue;
 			};
-			let versions: Vec<u32> =
-				method_emitted_versions(method, wrappers, &types, wire_version).collect();
+			let versions = method_emitted_versions(method, wrappers, &types, wire_version)?;
 			for wrapper_name in method_versioned_wrappers(method, wrappers) {
 				emit.entry(wrapper_name).or_default().extend(&versions);
 			}
@@ -1235,8 +1259,7 @@ fn generate_client_view(
 			.collect::<Vec<_>>();
 		for method in &methods {
 			if let Some(version) = method_wire_version(method, &wrappers, target_version)? {
-				let versions: Vec<u32> =
-					method_emitted_versions(method, &wrappers, &types, version).collect();
+				let versions = method_emitted_versions(method, &wrappers, &types, version)?;
 				uses_hex_string |= method_versioned_wrappers(method, &wrappers)
 					.iter()
 					.flat_map(|name| {
@@ -1966,7 +1989,7 @@ fn emit_method(
 			let encode = |version: u32| {
 				format!("{request_codec}.enc({{ tag: \"V{version}\", value: {request_expr} }})")
 			};
-			let fallback = request_fallback(method, wrappers, types, version);
+			let fallback = request_fallback(method, wrappers, types, version)?;
 			let request_payload = match &fallback {
 				Some(fallback) => {
 					let absent = fallback

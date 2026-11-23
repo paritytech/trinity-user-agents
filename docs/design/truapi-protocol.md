@@ -189,5 +189,5 @@ The product treats this like `UnsupportedMessage`: the call fails as unsupported
 
 Hosts released before this error existed cannot send it. They answer a version they do not know with `CallError::MalformedFrame`.
 
-To keep a newer product working against an older host, the generated client sends an older request version when it says the same thing. That holds when the newer request is the older one plus optional fields and the response and error did not change type. The client then sends the older version whenever every added field is absent, and the newer one otherwise. A push notification without a `title` therefore goes out as `V1`.
+To keep a newer product working against an older host, the generated client can send an older request version when it says the same thing. A method opts in with `#[wire(request_fallback)]`, because the older payload types then stay in the public SDK. Codegen rejects the mark unless the newer request is the older one plus optional fields and the response and error did not change type. The client then sends the older version whenever every added field is absent, and the newer one otherwise. A push notification without a `title` therefore goes out as `V1`.
 
