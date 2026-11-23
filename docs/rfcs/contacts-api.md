@@ -56,8 +56,9 @@ out. The list carries no account and no handle. Every other product, and a Host 
 usernames, gets `Unsupported`, and the Host is never asked on their behalf. While nobody is signed in,
 Jollity gets a domain error with the reason `No active session`.
 
-The handle is one value per contact, the same in every product and on every Host of this user, keyed
-on the user's entropy so no product can turn it back into an account. It is not an address: a product
+The handle is one value per contact and product: the same on every Host of this user, different in
+every other product, so two products cannot join contacts on it. It is keyed on the user's entropy and
+the full product id, network suffix or localhost port included, so no product can turn it back into an account. It is not an address: a product
 names it as the recipient and the core substitutes the account when it builds the transaction. A
 product-scoped address is not derivable at all, which is why the handle is resolvable rather than
 directly usable.
@@ -71,8 +72,8 @@ directly usable.
 - The game product reads the username of every contact, a globally correlatable name, without asking
   the user. The core fixes this to the game product, so no other product can be granted it.
 - Dropped: returning the list scoped per product (`display_name` was a correlator no scoping fixed,
-  and it needed a permission over the whole social graph); per-product handles (forfeit a durable
-  shared id, break under contact sync); returning the chat account (transactable, but a global
+  and it needed a permission over the whole social graph); one handle shared by every product (a
+  global identifier any two products can join on); returning the chat account (transactable, but a global
   identifier any two products can join on); an unkeyed handle, or one keyed on the root account key
   (recoverable by hashing enumerable accounts).
 

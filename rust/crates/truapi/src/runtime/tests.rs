@@ -106,6 +106,7 @@ use crate::{
 	},
 	host_logic::{
 		product_account::{derive_product_public_key, index_bytes},
+		root_entropy::RootEntropy,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	test_support::*,
@@ -113,15 +114,11 @@ use crate::{
 };
 
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
-	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
-		.expect("test entropy derives a root");
-	crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test(product_id),
-	)
-	.expect("test product id derives a subtree")
-	.public
-	.to_bytes()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test(product_id))
+		.expect("test product id derives a subtree")
+		.public
+		.to_bytes()
 }
 
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
@@ -163,7 +160,7 @@ pub fn signing_runtime_on_asset_hub(
 pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
 	let (_services, signing_host) =
 		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	signing_host
 }
@@ -1071,19 +1068,20 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
 	let source = session_info()
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
-	let expected = crate::runtime::contacts::contact_handle(
-		&crate::runtime::contacts::handle_key_from_root_source(&source),
-		&account,
-	);
+	let voting = ProductId::for_test("voting.dot");
+	let key_from = |source: &[u8; 32]| {
+		crate::runtime::contacts::product_handle_key(
+			&crate::runtime::contacts::user_handle_key(source),
+			&voting,
+		)
+	};
+	let expected = crate::runtime::contacts::contact_handle(&key_from(&source), &account);
 	assert_eq!(handle, expected, "the handle must key on the session's root entropy source");
 	// And is not what the public alternatives would have produced.
 	for public in [session_info().public_key, [0u8; 32]] {
 		assert_ne!(
 			handle,
-			crate::runtime::contacts::contact_handle(
-				&crate::runtime::contacts::handle_key_from_root_source(&public),
-				&account,
-			),
+			crate::runtime::contacts::contact_handle(&key_from(&public), &account),
 			"the handle must not be derivable from public material"
 		);
 	}
@@ -1462,7 +1460,7 @@ fn a_removed_contact_stops_resolving_once_the_host_signals() {
 	};
 
 	contacts.listed.lock().expect("listed mutex poisoned").clear();
-	host.connection.services.contact_handles.clear();
+	host.connection.services.contact_handle_cache.clear();
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1589,7 +1587,10 @@ fn uncached_handles_are_resolved_in_one_lookup() {
 	let source = session_info()
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
-	let key = crate::runtime::contacts::handle_key_from_root_source(&source);
+	let key = crate::runtime::contacts::product_handle_key(
+		&crate::runtime::contacts::user_handle_key(&source),
+		&ProductId::for_test("voting.dot"),
+	);
 	let handles = [alice, bob].map(|account| v01::ContactHandle {
 		bytes: crate::runtime::contacts::contact_handle(&key, &account),
 	});
@@ -1622,9 +1623,8 @@ fn a_call_declaring_no_contacts_needs_no_picker() {
 }
 
 #[test]
-fn two_products_receive_the_same_handle_for_one_contact() {
-	// The deliberate property: the handle is a durable shared id, so a
-	// product can be handed a recipient another product already knows.
+fn two_products_receive_different_handles_for_one_contact() {
+	// Products cannot join their users' contacts on the handle.
 	let platform = stub_platform();
 	let account = [10u8; 32];
 
@@ -1642,7 +1642,81 @@ fn two_products_receive_the_same_handle_for_one_contact() {
 		handle
 	};
 
-	assert_eq!(handle_for("voting.dot"), handle_for("games.dot"));
+	assert_ne!(handle_for("voting.dot"), handle_for("games.dot"));
+}
+
+/// Runtimes for `products` on one host: one set of services, so one contact
+/// handle cache, and one signed-in session.
+fn contacts_hosts_sharing_services(
+	products: [&str; 2],
+	contacts: Arc<StubContactsPlatform>,
+) -> [ProductRuntimeHost<RemoteAccountHolder>; 2] {
+	let (host_config, _) = runtime_config(products[0]);
+	let services = RuntimeServices::new(
+		stub_platform() as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	services.install_contacts_platform(contacts);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	products.map(|product_id| {
+		let (_, product) = runtime_config(product_id);
+		let host = ProductRuntimeHost::from_services(
+			services.clone(),
+			crate::host_core::ConnectionAdapters::from_services(&services),
+			pairing_host.accounts().clone(),
+			pairing_host.session().clone(),
+			product,
+		);
+		install_pairing_session(&host, session_info());
+		host
+	})
+}
+
+#[test]
+fn a_handle_from_another_product_does_not_resolve() {
+	// Even with the contact cached from the other product's pick and held by
+	// the host: the cache answers only the product it minted for, and the
+	// lookup is keyed for the calling product, so the handle names nobody.
+	let [games, voting] = contacts_hosts_sharing_services(
+		["games.dot", "voting.dot"],
+		StubContactsPlatform::picking([10u8; 32]),
+	);
+	let HostContactsPickResponse::V1(response) = pick(&games).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle: foreign } = response.outcome else {
+		panic!("the user picked someone");
+	};
+
+	assert_eq!(
+		futures::executor::block_on(
+			voting.substitute_declared_contacts(foreign.bytes.to_vec(), &[foreign])
+		),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
+}
+
+#[test]
+fn another_products_cached_handle_left_undeclared_does_not_refuse_a_call() {
+	// One product's picks must not decide whether another's call goes through.
+	let [games, voting] = contacts_hosts_sharing_services(
+		["games.dot", "voting.dot"],
+		StubContactsPlatform::picking([10u8; 32]),
+	);
+	let HostContactsPickResponse::V1(response) = pick(&games).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	let call = handle.bytes.to_vec();
+
+	assert_eq!(
+		futures::executor::block_on(voting.substitute_declared_contacts(call.clone(), &[])),
+		Ok(call.clone())
+	);
+	assert_eq!(
+		futures::executor::block_on(games.substitute_declared_contacts(call, &[])),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
 }
 
 /// Records which `ChatPlatform` methods the runtime actually reached.
@@ -7145,13 +7219,10 @@ fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
 }
 
 pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
         // A grant skips confirmation, except for a call naming contacts.
@@ -7168,11 +7239,9 @@ pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Ar
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key: subtree.secret.to_bytes(),
                                     ring_vrf_domain_entropy:
-                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
-                                            &[0xAB; 16],
-                                            &ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -7220,14 +7289,9 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccoun
 
 /// The product account the capability in [`granted_pairing_host`] derives.
 fn granted_keypair() -> schnorrkel::Keypair {
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap()
 }
 
 #[test]
@@ -7653,13 +7717,10 @@ fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
 #[test]
 fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
 	let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -7675,11 +7736,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key,
                                     ring_vrf_domain_entropy:
-                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
-                                            &[0xAB; 16],
-                                            &ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -7724,12 +7783,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 			.is_empty()
 	);
 
-	let keypair = crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap();
+	let keypair = entropy
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let mut transcript = merlin::Transcript::new(b"ctx");
 	transcript.append_message(b"round", &[7]);
 	let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
@@ -7810,13 +7866,9 @@ fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
 #[test]
 fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let platform = Arc::new(StubPlatform::default());
 	let legacy_key =
 		CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("myapp.dot") };
@@ -8943,9 +8995,6 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 }
 
@@ -9510,8 +9559,16 @@ fn a_provider_frame_closes_once_the_payment_moved() {
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	let provider = ProductContext::new(ProductId::for_test("ramp.dot"));
-	let mut frame = services.funding().request_frame(&intent, provider.clone());
-	let mut unknown = services.funding().request_frame("fs_unknown", provider);
+	let mut frame = services.funding().request_frame(
+		&intent,
+		provider.clone(),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
+	let mut unknown = services.funding().request_frame(
+		"fs_unknown",
+		provider,
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 	for (frame, intent) in [(&mut frame, intent.as_str()), (&mut unknown, "fs_unknown")] {
 		assert!(services.funding().open_frame(intent));
 		assert_eq!(futures::executor::block_on(frame.opened()), None);
@@ -10045,9 +10102,6 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -10122,9 +10176,6 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -10174,9 +10225,6 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -10295,9 +10343,6 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 
 	let rows = shown_when(&services, &intent, |rows| {
@@ -10368,9 +10413,6 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -10739,9 +10781,6 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		root_manifest: None,
-		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 	services
 		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
@@ -10805,16 +10844,10 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("ramp.dot"),
 					worker_manifest: Some(germany_only),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("chain.dot"),
 					worker_manifest: Some(crypto_only),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
 			]);
 		let intent = futures::executor::block_on(services.open_funding(
@@ -12859,9 +12892,6 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(provider),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -13279,9 +13309,6 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
 		);
@@ -13343,4 +13370,297 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 		}],
 	);
 	"q-test".to_string()
+}
+
+/// The facts emitted under `marker`.
+fn events_named<'a>(
+	events: &'a [crate::logging::CoreEvent],
+	marker: &str,
+) -> Vec<&'a crate::logging::CoreEvent> {
+	events.iter().filter(|event| event.marker().target == marker).collect()
+}
+
+/// Assert no emitted fact carries `secrets`.
+fn assert_events_carry_none_of(events: &[crate::logging::CoreEvent], secrets: &[&str]) {
+	for event in events {
+		let line = crate::runtime::funding_telemetry::read::line(event);
+		for secret in secrets {
+			assert!(!line.contains(secret), "a fact carries {secret}: {line}");
+		}
+	}
+}
+
+// A top-up the user starts, hands to a provider, cancels once paid and that
+// ends delivered reports each fact once, when it happens, under one random
+// reference, with its amount bucketed and nothing that names the session.
+#[test]
+fn a_funding_session_reports_each_fact_once_when_it_happens() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(75_000_000),
+	))
+	.expect("opened")
+	.intent;
+	use crate::runtime::funding_telemetry::read::{count, flag, text, value};
+	let opened = services.funding().emitted_facts();
+	assert_eq!(
+		opened.iter().map(|event| event.marker().target).collect::<Vec<_>>(),
+		["truapi.funding.overlay_opened", "truapi.funding.overlay_closed"]
+	);
+	assert_eq!(
+		(
+			value(&opened[0], "amount_preset"),
+			value(&opened[0], "amount_bucket"),
+			value(&opened[0], "opener"),
+			value(&opened[1], "outcome"),
+			value(&opened[1], "furthest"),
+		),
+		(flag(true), text("50-100"), text("host"), text("started"), text("amount"))
+	);
+
+	let quote_id = offer_test_quote(&services, &intent, "ramp.dot");
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&quote_id,
+		))
+		.expect("selected")
+	);
+	let provider =
+		ProductContext::new_with_execution(ProductId::for_test("ramp.dot"), ExecutableKind::Worker);
+	let paid = v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+		finalized: true,
+		mismatch: None,
+	});
+	let report = |update: v01::FundingUpdate| {
+		futures::executor::block_on(services.funding().report(
+			crate::unix_time::current_unix_millis(),
+			&provider,
+			&intent,
+			update,
+		))
+		.expect("stored")
+		.expect("accepted");
+	};
+	report(paid);
+	// A later change that reaches no milestone reports nothing new.
+	report(v01::FundingUpdate::Details {
+		transaction_id: Some("tx-secret".to_string()),
+		reference: Some("ref-secret".to_string()),
+	});
+	let cancelled =
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel stored");
+	assert!(
+		futures::executor::block_on(services.settle_funding_for_test(
+			&intent,
+			crate::host_logic::funding::FundingStage::Delivered {
+				credited: 75_000_000,
+				settled_at_ms: crate::unix_time::current_unix_millis(),
+			},
+		))
+		.expect("settled")
+	);
+
+	let events = services.funding().emitted_facts();
+	assert_eq!(
+		events[2..].iter().map(|event| event.marker().target).collect::<Vec<_>>(),
+		[
+			"truapi.funding.provider_chosen",
+			"truapi.funding.step_reached",
+			"truapi.funding.cancel_requested",
+			"truapi.funding.step_reached",
+			"truapi.funding.ended",
+		]
+	);
+	let chosen = events_named(&events, "truapi.funding.provider_chosen")[0];
+	assert_eq!(
+		(
+			value(chosen, "best"),
+			value(chosen, "provider"),
+			value(chosen, "rail"),
+			value(chosen, "asset"),
+			value(chosen, "rank"),
+			value(chosen, "quote_count"),
+		),
+		(flag(false), text("ramp.dot"), text("card"), text("eur"), count(1), count(1))
+	);
+	let steps: Vec<_> = events_named(&events, "truapi.funding.step_reached")
+		.into_iter()
+		.map(|event| value(event, "step"))
+		.collect();
+	assert_eq!(steps, [text("received"), text("added")]);
+	let cancel = events_named(&events, "truapi.funding.cancel_requested")[0];
+	assert_eq!(
+		(value(cancel, "money_moved"), value(cancel, "result")),
+		(
+			flag(true),
+			text(if cancelled == crate::host_logic::funding::CancelOutcome::Requested {
+				"requested"
+			} else {
+				"too_late"
+			})
+		)
+	);
+	let ended = events_named(&events, "truapi.funding.ended")[0];
+	assert_eq!(
+		(
+			value(ended, "outcome"),
+			value(ended, "reason"),
+			value(ended, "money_moved"),
+			ended.marker(),
+		),
+		(text("topped_up"), text("none"), flag(true), crate::markers::FUNDING_ENDED)
+	);
+	assert!(
+		events
+			.iter()
+			.all(|event| value(event, "funding.ref") == value(&events[0], "funding.ref"))
+	);
+	assert_events_carry_none_of(
+		&events,
+		&[&intent, "q-test", "75000000", "tx-secret", "ref-secret"],
+	);
+}
+
+// A quote request reports once when every provider answered, with the rows
+// counted by how each ended and the country only as its region.
+#[test]
+fn a_settled_quote_request_reports_its_counts_once() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	answered_quotes(&services, &intent, card_ask(Some("DE")), Duration::from_secs(5));
+	wait_until(
+		|| {
+			!events_named(&services.funding().emitted_facts(), "truapi.funding.quotes_settled")
+				.is_empty()
+		},
+		"quotes settled",
+	);
+
+	use crate::runtime::funding_telemetry::read::{count, flag, text, value};
+	let events = services.funding().emitted_facts();
+	let settled = events_named(&events, "truapi.funding.quotes_settled");
+	assert_eq!(settled.len(), 1);
+	assert_eq!(
+		(
+			value(settled[0], "region"),
+			value(settled[0], "superseded"),
+			value(settled[0], "issue"),
+			value(settled[0], "asked"),
+			value(settled[0], "quoted"),
+			value(settled[0], "pending"),
+			value(settled[0], "first_quote_ms").is_some(),
+		),
+		(text("eu"), flag(false), text("none"), count(1), count(1), count(0), true)
+	);
+	assert_events_carry_none_of(&events, &[&intent, "q1", "\"DE\""]);
+}
+
+// A session nobody takes expires as the user's own ending, not a fault.
+#[test]
+fn an_expired_session_reports_an_expected_ending() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::Out,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	let far_future = crate::unix_time::current_unix_millis() + 2 * 24 * 60 * 60 * 1_000;
+	futures::executor::block_on(services.funding().commit(far_future, |_| ((), Vec::new())))
+		.expect("swept");
+
+	use crate::runtime::funding_telemetry::read::{text, value};
+	let events = services.funding().emitted_facts();
+	let ended = events_named(&events, "truapi.funding.ended");
+	assert_eq!(ended.len(), 1);
+	assert_eq!(
+		(
+			value(ended[0], "outcome"),
+			value(ended[0], "direction"),
+			value(ended[0], "amount_bucket"),
+			ended[0].marker(),
+		),
+		(text("expired"), text("out"), text("unset"), crate::markers::FUNDING_ENDED)
+	);
+	assert_events_carry_none_of(&events, &[&intent]);
+}
+
+// A provider's screen is reported asked for, opened and closed, with what
+// it shows but never its URL; one replaced before the host opened it counts
+// as dropped unopened.
+#[test]
+fn provider_frames_report_their_lifecycle() {
+	use crate::runtime::funding_telemetry::{
+		FrameClose, FrameTarget,
+		read::{flag, text, value},
+	};
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let provider =
+		ProductContext::new_with_execution(ProductId::for_test("ramp.dot"), ExecutableKind::Worker);
+	let registry = services.funding();
+	let first = registry.request_frame(&intent, provider.clone(), FrameTarget::Page);
+	let mut second = registry.request_frame(&intent, provider, FrameTarget::App);
+	drop(first);
+	assert!(registry.open_frame(&intent));
+	assert_eq!(futures::executor::block_on(second.opened()), None);
+	second.closed(FrameClose::Returned);
+	drop(second);
+
+	let frames: Vec<_> = services
+		.funding()
+		.emitted_facts()
+		.into_iter()
+		.filter(|event| event.marker().target.starts_with("truapi.funding.frame_"))
+		.map(|event| {
+			(
+				event.marker().target.to_string(),
+				value(&event, "target"),
+				value(&event, "outcome").or(value(&event, "replaced")),
+			)
+		})
+		.collect();
+	let row = |name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
+	assert_eq!(
+		frames,
+		[
+			row("frame_requested", "page", flag(false)),
+			row("frame_requested", "app", flag(true)),
+			row("frame_closed", "page", text("dropped_unopened")),
+			row("frame_opened", "app", None),
+			row("frame_closed", "app", text("returned")),
+		]
+	);
 }

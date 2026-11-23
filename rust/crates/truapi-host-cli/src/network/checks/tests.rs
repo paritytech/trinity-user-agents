@@ -142,17 +142,18 @@ async fn test_polkadot_fork_check_wiring() {
 }
 
 /// A built-in stack that restarted from genesis after this build has chains
-/// the light client's bundled specs cannot sync.
+/// the light client's bundled specs cannot sync, the relay included.
 #[test]
 fn test_light_client_after_restart_error() {
-	let restarted = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient).with_chain_edit(
-		"People",
-		|chain| {
-			chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
-		},
-	);
-	let error = refuse_light_client(&restarted).unwrap_err();
-	assert!(error.to_string().contains("--chain-backend rpc"));
+	for role in ["People", "Relay"] {
+		let restarted = Network::PaseoNextV2
+			.bundled_stack(ChainBackend::LightClient)
+			.with_chain_edit(role, |chain| {
+				chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
+			});
+		let error = refuse_light_client(&restarted).unwrap_err();
+		assert!(error.to_string().contains("--chain-backend rpc"));
+	}
 }
 
 #[test]

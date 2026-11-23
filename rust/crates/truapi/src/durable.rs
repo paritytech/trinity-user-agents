@@ -6,7 +6,7 @@
 //! watches them, and decides every one it no longer watches from the chain.
 //! Signed bytes are never persisted, so a transaction left live by a previous
 //! process is decided by recovery rather than resent. A domain may instead
-//! schedule a transaction for a [`SubmissionPolicy`] to build, and a policy
+//! defer a transaction for a [`SubmissionPolicy`] to build, and a policy
 //! builds again any failure it accepts to retry.
 
 #[macro_use]
@@ -30,12 +30,9 @@ pub use engine::{
 	EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
-	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
-	GroupId, HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
-	VerdictFailureKind, VerdictStatus,
+	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
+	DurableTxStatus, GroupId, HeadKind, PolicyParams, SubmissionPlan, Verdict, VerdictFailureKind,
+	VerdictStatus, Window,
 };
-pub use oracle::{
-	CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,
-	Unobservable,
-};
+pub use oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable};
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};
