@@ -13,7 +13,6 @@ struct FundingProgressView: View {
     let presenter: FundingProgressPresenterProtocol
     let branding: FundingProviderBranding
 
-
     var body: some View {
         Group {
             if let ended = viewModel.ended {
@@ -89,14 +88,14 @@ private extension FundingProgressView {
     }
 
     var stepCard: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DSSpacings.zero) {
             FundingStepBar(steps: viewModel.steps, between: viewModel.stepsBetween)
                 .padding(.horizontal, DSSpacings.mediumIncreased)
                 .padding(.vertical, DSSpacings.medium)
                 .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
             if let note = viewModel.note {
-                VStack(spacing: 2) {
+                VStack(spacing: DSSpacings.extraTiny) {
                     Text(verbatim: note.text)
                         .typography(.bodySmall)
                         .foregroundStyle(note.isWarning ? Color.fgWarning : Color.fgSecondary)
@@ -157,7 +156,7 @@ private extension FundingProgressView {
     @ViewBuilder
     var arrivesRow: some View {
         if let arrival = viewModel.arrival {
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DSSpacings.extraTiny) {
                 FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
                     value(arrival.eta)
                 }
@@ -350,7 +349,7 @@ struct FundingCancelOfferView: View {
                 row(String(localized: .Funding.offerRefund), offer.refund)
             }
             .padding(DSSpacings.medium)
-            .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: 16))
+            .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.mediumIncreased))
 
             Spacer(minLength: 0)
 

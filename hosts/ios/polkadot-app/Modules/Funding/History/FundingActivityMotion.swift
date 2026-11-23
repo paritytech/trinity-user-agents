@@ -108,7 +108,7 @@ private extension FundingCompletionGlyph {
                 .trim(from: 0, to: stage.crossSecond)
                 .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
         }
-        .padding(4)
+        .padding(DSSpacings.tiny)
     }
 
     var loader: some View {

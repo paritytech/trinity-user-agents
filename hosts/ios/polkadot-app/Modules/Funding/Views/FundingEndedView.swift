@@ -82,7 +82,7 @@ private extension FundingEndedView {
     }
 
     var stepCard: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DSSpacings.zero) {
             FundingStepBar(steps: steps)
                 .padding(.horizontal, DSSpacings.mediumIncreased)
                 .padding(.vertical, DSSpacings.medium)

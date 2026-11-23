@@ -10,7 +10,6 @@ struct FundingDepositView: View {
     let viewModel: FundingDepositViewModel
     let presenter: FundingDepositPresenterProtocol
 
-
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: viewModel.title, onBack: presenter.back)

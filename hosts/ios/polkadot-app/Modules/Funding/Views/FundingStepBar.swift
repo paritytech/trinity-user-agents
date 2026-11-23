@@ -49,7 +49,7 @@ struct FundingStepBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: DSSpacings.zero) {
             ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                 if index > 0 {
                     segment(into: step.state)
@@ -83,14 +83,14 @@ private extension FundingStepBar {
     func mark(_ state: State) -> some View {
         switch state {
         case .done:
-            symbol("checkmark", color: .white)
+            symbol("checkmark", color: .fgStaticWhite)
                 .background(Color.fgSuccess, in: Circle())
         case .current,
              .upcoming:
             symbol("checkmark", color: .fgTertiary)
                 .background(Color.bgSurfaceNested, in: Circle())
         case .failed:
-            symbol("xmark", color: .white)
+            symbol("xmark", color: .fgStaticWhite)
                 .background(Color.fgError, in: Circle())
         }
     }
@@ -105,7 +105,7 @@ private extension FundingStepBar {
     /// The line and two dots leading into a milestone in `state`.
     func segment(into state: State) -> some View {
         let dots = dots(into: state)
-        return HStack(spacing: 0) {
+        return HStack(spacing: DSSpacings.zero) {
             line(filled: dots[0].isFilled)
             dotMark(dots[0])
             line(filled: dots[1].isFilled)

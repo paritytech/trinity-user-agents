@@ -146,7 +146,7 @@ struct FundingSkeleton: View {
     var height: CGFloat = 14
 
     var body: some View {
-        RoundedRectangle(cornerRadius: height / 2)
+        RoundedRectangle(cornerRadius: DSRadii.full)
             .fill(Color.bgSurfaceNested)
             .frame(width: width, height: height)
     }

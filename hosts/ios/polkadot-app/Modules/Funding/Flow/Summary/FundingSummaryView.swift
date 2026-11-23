@@ -132,7 +132,7 @@ private extension FundingSummaryView {
     }
 
     var arrivesRow: some View {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: .trailing, spacing: DSSpacings.extraTiny) {
             FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
                 if let eta = viewModel.eta {
                     Text(verbatim: eta)

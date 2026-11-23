@@ -116,7 +116,7 @@ struct FundingActivityRow: View {
         HStack(alignment: .top, spacing: DSSpacings.small) {
             FundingActivityIcon(icon: content.icon, animatesCompletion: arrives)
                 .frame(width: Self.iconSize, height: Self.iconSize)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
                 Text(verbatim: content.title)
                     .typography(.bodyMediumEmphasized)
                     .foregroundStyle(content.titleTone.color)
@@ -132,7 +132,7 @@ struct FundingActivityRow: View {
                     .typography(.labelSmall)
                     .foregroundStyle(.fgSecondary)
                     .padding(.horizontal, DSSpacings.small)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, DSSpacings.extraTiny)
                     .background(.bgSurfaceNested, in: Capsule())
             }
         }

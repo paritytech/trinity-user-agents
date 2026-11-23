@@ -62,7 +62,7 @@ private extension FundingAmountView {
                 Circle()
                     .fill(Color.fgError)
                     .frame(width: 8, height: 8)
-                    .padding(2)
+                    .padding(DSSpacings.extraTiny)
                     .background(Color.bgSurfaceContainer, in: Circle())
                     .offset(x: -3, y: -3)
             }
