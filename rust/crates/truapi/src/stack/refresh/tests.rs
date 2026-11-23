@@ -16,7 +16,7 @@ use crate::{
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
 		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor,
-		sign_test_descriptor,
+		sign_test_descriptor, wait_until,
 	},
 	time::ManualTimer,
 };
@@ -141,11 +141,17 @@ impl Started {
 
 	/// Waits until the host was asked for its `fetches`-th fetch.
 	fn wait_for_fetches(&self, fetches: usize) {
-		let deadline = Instant::now() + ANSWER_WAIT;
-		while self.fetches.load(Ordering::SeqCst) < fetches {
-			assert!(Instant::now() < deadline, "the host was not asked for fetch {fetches}");
-			std::thread::yield_now();
-		}
+		let asked = || self.fetches.load(Ordering::SeqCst) >= fetches;
+		wait_until(asked, "the host was not asked for the fetch");
+	}
+
+	/// A connection for People reaches a chain that restarted. Returns the
+	/// status the host is told, once the loop has gone on to its next wait.
+	fn people_restarted(&self) -> StackStatus {
+		people_answers(&self.refresh, TEST_STACK_WIPED_PEOPLE);
+		let told = self.next_status();
+		self.wait_for_sleeps(4);
+		told
 	}
 
 	/// Waits until the refresh loop has started its `sleeps`-th wait.
@@ -189,6 +195,21 @@ fn start(
 	let clock = manual_clock();
 	let refresh = load(records, timer.clone(), clock.clone());
 	start_loaded(refresh, timer, clock, responses)
+}
+
+/// A core that has made its first fetch, answered with the first of
+/// `responses`. The host was told the status at start and after the fetch,
+/// and the loop waits for the copy to be an hour old.
+fn start_fetched(
+	records: Arc<MemoryRecords>,
+	responses: Vec<Result<StackFetchResponse, GenericError>>,
+) -> Started {
+	let started = start(records, responses);
+	let _at_start = started.next_status();
+	let _after_the_fetch = started.next_status();
+	// The fetch's timeout, the store's timeout, then the wait for the hour.
+	started.wait_for_sleeps(3);
+	started
 }
 
 /// Starts `refresh` with a host that answers fetches with `responses`.
@@ -506,21 +527,16 @@ const FIVE_MINUTES: Duration = Duration::from_secs(5 * 60);
 /// the copy is five minutes old.
 #[test]
 fn a_chain_that_restarted_is_reported_at_once_and_brings_the_fetch_forward() {
-	let started = start(
+	let started = start_fetched(
 		Arc::default(),
 		vec![
 			published(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE)),
 			published(&published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE)),
 		],
 	);
-	let _at_start = started.next_status();
-	let before_the_wipe = started.next_status();
-	// The fetch's timeout, the store's timeout, then the wait for the hour.
-	started.wait_for_sleeps(3);
+	let before_the_wipe = started.refresh.status();
 
-	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
-	let once_told = started.next_status();
-	started.wait_for_sleeps(4);
+	let once_told = started.people_restarted();
 	let wait_for_the_fetch = started.timer.remaining().last().copied();
 	started.advance(FIVE_MINUTES);
 	let after_the_fetch = started.next_status();
@@ -549,10 +565,7 @@ fn a_chain_that_restarted_is_reported_at_once_and_brings_the_fetch_forward() {
 #[test]
 fn a_chain_that_restarted_is_reported_before_the_fetch_it_brings_forward() {
 	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let started = start(Arc::default(), vec![published(&unchanged)]);
-	let _at_start = started.next_status();
-	let _before_the_wipe = started.next_status();
-	started.wait_for_sleeps(3);
+	let started = start_fetched(Arc::default(), vec![published(&unchanged)]);
 	started.clock.0.fetch_add(FIVE_MINUTES.as_secs(), Ordering::SeqCst);
 
 	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
@@ -591,13 +604,9 @@ fn a_chain_found_wrong_during_a_fetch_is_reported_while_it_is_out() {
 #[test]
 fn a_restarted_chain_the_descriptor_does_not_follow_is_asked_about_every_five_minutes() {
 	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let started = start(Arc::default(), vec![published(&unchanged), published(&unchanged)]);
-	let _at_start = started.next_status();
-	let _before_the_wipe = started.next_status();
-	started.wait_for_sleeps(3);
-	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
-	let _once_told = started.next_status();
-	started.wait_for_sleeps(4);
+	let responses = vec![published(&unchanged), published(&unchanged)];
+	let started = start_fetched(Arc::default(), responses);
+	started.people_restarted();
 
 	started.advance(FIVE_MINUTES);
 	// The second fetch's timeout, its store's timeout, then the next wait.
@@ -616,13 +625,8 @@ fn a_restarted_chain_the_descriptor_does_not_follow_is_asked_about_every_five_mi
 #[test]
 fn the_host_is_told_when_a_chain_answers_as_named_again() {
 	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let started = start(Arc::default(), vec![published(&unchanged)]);
-	let _at_start = started.next_status();
-	let _before_the_wipe = started.next_status();
-	started.wait_for_sleeps(3);
-	people_answers(&started.refresh, TEST_STACK_WIPED_PEOPLE);
-	let _once_told = started.next_status();
-	started.wait_for_sleeps(4);
+	let started = start_fetched(Arc::default(), vec![published(&unchanged)]);
+	started.people_restarted();
 
 	people_answers(&started.refresh, TEST_STACK_PEOPLE);
 	let once_right = started.next_status();
@@ -646,10 +650,7 @@ fn the_host_is_told_when_a_chain_answers_as_named_again() {
 fn a_wrong_answer_before_the_refresh_starts_brings_its_first_fetch_forward() {
 	let records = Arc::<MemoryRecords>::default();
 	let unchanged = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
-	let first_run = start(records.clone(), vec![published(&unchanged)]);
-	let _at_start = first_run.next_status();
-	let _after_fetch = first_run.next_status();
-	first_run.wait_for_sleeps(3);
+	let first_run = start_fetched(records.clone(), vec![published(&unchanged)]);
 	first_run.advance(FIVE_MINUTES);
 	let Started { clock, .. } = first_run;
 	let timer = Arc::new(ManualTimer::default());
