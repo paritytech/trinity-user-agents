@@ -1,56 +1,38 @@
-//! Unified [`Worker`] trait.
+//! Explicit references held by the running product worker.
 
 use crate::{
-	CallContext, CallError,
+	CallContext, CallError, Subscription,
 	versioned::worker::{
-		HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
-		HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
-		HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
+		HostWorkerRetainReferenceError, HostWorkerRetainReferenceItem,
+		HostWorkerRetainReferenceRequest,
 	},
 	wire, wire_trait,
 };
 
-/// Worker background-operation APIs.
-///
-/// The host keeps a product's worker running while it holds at least one open
-/// operation, which is how a worker outlives the surface that started it.
+/// Holds on a worker's own execution.
 #[wire_trait(id = 19)]
 #[crate::service(required_execution = Worker)]
 #[async_trait::async_trait]
 pub trait Worker: Send + Sync {
-	/// Begin a pending operation.
+	/// Retain the worker until the caller releases its reference or disconnects.
+	///
+	/// The first item acknowledges acquisition. Stopping this subscription releases
+	/// just this reference, even if its acknowledgement has not arrived yet.
 	///
 	/// ```ts
-	/// const result = await truapi.worker.beginOperation({ label: "funding" });
-	/// assert(result.isOk(), "beginOperation failed:", result);
-	/// console.log("operation started:", result.value.id);
-	/// await truapi.worker.endOperation({ id: result.value.id });
+	/// const hold = await truapi.worker.retain();
+	/// try {
+	///   await truapi.system.info();
+	/// } finally {
+	///   hold.release();
+	/// }
 	/// ```
-	#[wire(id = 0)]
-	async fn begin_operation(
+	#[wire(id = 2)]
+	async fn retain_reference(
 		&self,
 		_cx: &CallContext,
-		_request: HostWorkerBeginOperationRequest,
-	) -> Result<HostWorkerBeginOperationResponse, CallError<HostWorkerBeginOperationError>> {
-		Err(CallError::unavailable())
-	}
-
-	/// End a pending operation. Idempotent: an unknown or already-ended id
-	/// succeeds, so a retry after an ambiguous failure is safe.
-	///
-	/// ```ts
-	/// const begun = await truapi.worker.beginOperation({});
-	/// assert(begun.isOk(), "beginOperation failed:", begun);
-	/// const result = await truapi.worker.endOperation({ id: begun.value.id });
-	/// assert(result.isOk(), "endOperation failed:", result);
-	/// console.log("operation ended");
-	/// ```
-	#[wire(id = 1)]
-	async fn end_operation(
-		&self,
-		_cx: &CallContext,
-		_request: HostWorkerEndOperationRequest,
-	) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerEndOperationError>> {
-		Err(CallError::unavailable())
+		_request: HostWorkerRetainReferenceRequest,
+	) -> Subscription<HostWorkerRetainReferenceItem, CallError<HostWorkerRetainReferenceError>> {
+		Subscription::interrupted(CallError::unavailable())
 	}
 }

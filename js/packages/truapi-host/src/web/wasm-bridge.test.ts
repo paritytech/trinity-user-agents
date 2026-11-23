@@ -1,4 +1,4 @@
-import { asProductId } from "@parity/truapi";
+import { asProductId, createClient, createTransport } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
@@ -129,6 +129,72 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     expect(mock.getHostCallCount()).toBeGreaterThan(
       invoked.filter((call) => call === "readCoreStorage:StackRecord").length,
     );
+  });
+
+  it("releases guest holds independently of the screen that started the worker", async () => {
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+
+    const transitions: string[] = [];
+    let stopped!: () => void;
+    const finalStop = new Promise<void>((resolve) => {
+      stopped = resolve;
+    });
+    const { productId, ...config } = bundledRuntimeConfig();
+    const host = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition(_product: string, transition: string) {
+          transitions.push(transition);
+          if (transition === "Stop") stopped();
+        },
+      },
+      config,
+    );
+    let deliver = (_frame: Uint8Array) => {};
+    const core = host.productRuntime(
+      { productId, executionKind: "Worker" },
+      {
+        emitFrame: (frame: Uint8Array) => deliver(frame),
+      },
+    );
+    let delivered = Promise.resolve();
+    const transport = createTransport({
+      postMessage(frame) {
+        delivered = delivered.then(() => core.receiveFrame(frame));
+      },
+      subscribe(listener) {
+        deliver = listener;
+        return () => {
+          deliver = () => {};
+        };
+      },
+      dispose() {},
+    });
+    const worker = createClient(transport).worker;
+    const screen = host.claimWorker(productId);
+    try {
+      const first = await worker.retain();
+      const second = await worker.retain();
+      screen.release();
+      first.release();
+      first.release();
+      expect(transitions).toEqual(["Start"]);
+      // Disconnection must release the second hold even while its JavaScript handle lives.
+      core.dispose();
+      await finalStop;
+      second.release();
+      expect(transitions).toEqual(["Start", "Stop"]);
+    } finally {
+      transport.dispose();
+      await delivered;
+      screen.free();
+      core.dispose();
+      core.free();
+      host.free();
+    }
   });
 
   it("refuses a stack pointer without a key", async () => {

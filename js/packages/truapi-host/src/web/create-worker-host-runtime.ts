@@ -20,14 +20,10 @@ import type {
 import {
   HostChatActionSubscribeItem as HostChatActionSubscribeItemCodec,
   HostRendererActionSubscribeItem as HostRendererActionSubscribeItemCodec,
-  HostWorkerBeginOperationResponse as HostWorkerBeginOperationResponseCodec,
   ProductRendererRenderRequest as ProductRendererRenderRequestCodec,
   RendererNode as RendererNodeCodec,
 } from "@parity/truapi";
-import {
-  PermissionAuthorizationRequest as PermissionAuthorizationRequestCodec,
-  ProductContext as ProductContextCodec,
-} from "../generated/host-callbacks.js";
+import { PermissionAuthorizationRequest as PermissionAuthorizationRequestCodec } from "../generated/host-callbacks.js";
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import { isLoopbackWsUrl } from "../worker-protocol.js";
@@ -202,24 +198,6 @@ interface RuntimeState {
     }
   >;
   subscriptionDisposers: Map<number, () => void>;
-  /**
-   * Open `worker.beginOperation` holds. A non-empty set defers `dispose()`.
-   * Worker-wide rather than per-core, since a `callbackRequest` carries no core
-   * id, so entries are product-scoped: `OperationId` is only unique per product
-   * and two products sharing this worker may be handed the same id.
-   */
-  openOperations: Set<string>;
-  /** A dispose() arrived while operations were open; run it once they drain. */
-  disposePending: boolean;
-  /**
-   * Fires if those operations never drain. A worker that never sends its
-   * `endOperation` would otherwise keep the core running for a product the
-   * user has closed, still free to raise host prompts, with no way for the
-   * caller to force teardown.
-   */
-  disposeGraceTimer: ReturnType<typeof setTimeout> | undefined;
-  /** How long `dispose()` waits for open operations before forcing teardown. */
-  operationGraceMs: number;
   chainConnections: Map<number, ChainConnection>;
   pendingDisconnects: Map<
     number,
@@ -535,35 +513,6 @@ interface TrUApiDevConsole {
   getLogLevel(): LogLevel | null;
 }
 
-/**
- * Key one pending-operation hold. `OperationId` is unique per product, not per
- * worker, so the product a `beginOperation`/`endOperation` arrived for has to be
- * part of the key. Returns null if the encoded product will not decode, which
- * drops the hold rather than letting it pin the worker forever.
- */
-/**
- * Read the host-assigned id out of a `beginOperation` response. Returns null if
- * the response will not decode, so a hold that cannot be keyed is dropped
- * rather than escaping and leaving the worker's call unanswered.
- */
-function operationIdFrom(value: unknown): number | null {
-  if (!(value instanceof Uint8Array)) return null;
-  try {
-    return HostWorkerBeginOperationResponseCodec.dec(value).id;
-  } catch {
-    return null;
-  }
-}
-
-function operationHold(encodedProduct: unknown, id: number): string | null {
-  if (!(encodedProduct instanceof Uint8Array)) return null;
-  try {
-    return `${ProductContextCodec.dec(encodedProduct).productId}\u0000${id}`;
-  } catch {
-    return null;
-  }
-}
-
 function handleCallbackRequest(
   state: RuntimeState,
   msg: {
@@ -593,23 +542,6 @@ function handleCallbackRequest(
     .then(() => fn(...msg.args))
     .then(
       (value) => {
-        // Tracked in the success arm only: a rejected begin must not leave a
-        // hold that nothing will ever release.
-        if (msg.name === "beginOperation") {
-          const id = operationIdFrom(value);
-          const hold = id === null ? null : operationHold(msg.args[0], id);
-          if (hold !== null) state.openOperations.add(hold);
-        } else if (msg.name === "endOperation") {
-          const id = msg.args[1];
-          const hold =
-            typeof id === "number" ? operationHold(msg.args[0], id) : null;
-          if (hold !== null) state.openOperations.delete(hold);
-          if (state.openOperations.size === 0 && state.disposePending) {
-            state.disposePending = false;
-            clearDisposeGrace(state);
-            teardown(state, new Error("runtime disposed"), false);
-          }
-        }
         state.worker.postMessage({
           kind: "callbackResponse",
           requestId: msg.requestId,
@@ -975,17 +907,9 @@ function closeCoreState(core: CoreState, error: Error): void {
   core.closeListeners.clear();
 }
 
-/** Drop the ceiling armed by a deferred `dispose()`, if one is pending. */
-function clearDisposeGrace(state: RuntimeState): void {
-  if (state.disposeGraceTimer === undefined) return;
-  clearTimeout(state.disposeGraceTimer);
-  state.disposeGraceTimer = undefined;
-}
-
 function teardown(state: RuntimeState, error: Error, fault: boolean): void {
   if (state.disposed) return;
   state.disposed = true;
-  clearDisposeGrace(state);
   state.closedError = error;
   rejectPendingRuntimeRequests(state, error);
   for (const core of state.cores.values()) {
@@ -1054,11 +978,6 @@ export interface CreateWebWorkerPairingHostRuntimeOptions {
    * one built with a signing host in it.
    */
   role?: HostRole;
-  /**
-   * How long `dispose()` waits for open `worker.beginOperation` holds before
-   * tearing down anyway. Defaults to 30s.
-   */
-  operationGraceMs?: number;
 }
 
 export type WebWorkerHostCallbacks = RequiredHostCallbacks;
@@ -1077,10 +996,6 @@ export function createWebWorkerPairingHostRuntime(
       cores: new Map(),
       pendingCores: new Map(),
       subscriptionDisposers: new Map(),
-      openOperations: new Set(),
-      disposePending: false,
-      disposeGraceTimer: undefined,
-      operationGraceMs: options.operationGraceMs ?? 30_000,
       chainConnections: new Map(),
       pendingDisconnects: new Map(),
       pendingSessionActivations: new Map(),
@@ -1648,18 +1563,6 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
     },
     dispose(): void {
       devGlobalTargets.delete(runtime);
-      // Let a background task (e.g. a funding transaction) finish; the last
-      // endOperation runs the teardown. Fault teardown is never deferred.
-      if (state.openOperations.size > 0) {
-        state.disposePending = true;
-        state.disposeGraceTimer ??= setTimeout(() => {
-          state.disposeGraceTimer = undefined;
-          if (!state.disposePending) return;
-          state.disposePending = false;
-          teardown(state, new Error("runtime disposed"), false);
-        }, state.operationGraceMs);
-        return;
-      }
       teardown(state, new Error("runtime disposed"), false);
     },
   };

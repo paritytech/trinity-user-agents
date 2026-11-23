@@ -36,9 +36,8 @@ use truapi::{
 		},
 		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
 		worker::{
-			HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
-			HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
-			HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
+			HostWorkerRetainReferenceError, HostWorkerRetainReferenceItem,
+			HostWorkerRetainReferenceRequest,
 		},
 	},
 };
@@ -396,41 +395,25 @@ impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 
 #[async_trait::async_trait]
 impl<H: AccountHolder> Worker for ProductRuntimeHost<H> {
-	#[instrument(skip_all, fields(runtime.method = "worker.begin_operation"))]
-	async fn begin_operation(
+	#[instrument(skip_all, fields(runtime.method = "worker.retain_reference"))]
+	async fn retain_reference(
 		&self,
 		_cx: &CallContext,
-		request: HostWorkerBeginOperationRequest,
-	) -> Result<HostWorkerBeginOperationResponse, CallError<HostWorkerBeginOperationError>> {
+		request: HostWorkerRetainReferenceRequest,
+	) -> Subscription<HostWorkerRetainReferenceItem, CallError<HostWorkerRetainReferenceError>> {
 		version(request)
-			.exec(|latest::HostWorkerBeginOperationRequest { label }| async move {
-				let response = self
-					.connection
-					.begin_operation_with_host(label.unwrap_or_default())
-					.await
-					.map_err(CallError::Domain)?;
-				self.connection.hold_worker_for_operation(response.id);
-				Ok(response)
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "worker.end_operation"))]
-	async fn end_operation(
-		&self,
-		_cx: &CallContext,
-		request: HostWorkerEndOperationRequest,
-	) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerEndOperationError>> {
-		version(request)
-			.exec(|latest::HostWorkerEndOperationRequest { id }| async move {
-				let ended =
-					self.connection.platform.end_operation(&self.connection.product, id).await;
-				// The product has declared the operation over, so the core stops
-				// counting it whatever the host made of the call. A host that dropped
-				// the operation and still failed would otherwise leave demand standing
-				// with nothing left able to end it, and a retry releases nothing.
-				self.connection.release_worker_for_operation(id);
-				ended.map_err(CallError::Domain)
+			.exec(|()| async move {
+				let Some(slot) = self.connection.worker_reference_slots.try_acquire_arc() else {
+					return Subscription::interrupted(CallError::Domain(
+						latest::WorkerReferenceError::TooManyReferences,
+					));
+				};
+				let hold = self.connection.hold_worker();
+				let held = futures::stream::once(async move {
+					let _reference = (slot, hold);
+					core::future::pending().await
+				});
+				Subscription::new(futures::stream::iter([Ok(())]).chain(held))
 			})
 			.await
 	}

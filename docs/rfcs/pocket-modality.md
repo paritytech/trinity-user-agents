@@ -115,8 +115,9 @@ changes the side the face shows when it comes back.
 
 ### Lifecycle
 
-Pocket holds a worker reference for each side on screen. A product cannot add a reference, only drop one by removing a
-card.
+Pocket holds one worker reference for each live, worker-backed card side. Multiple views of the same side share its
+reference. Removing the card releases its Pocket references. A running worker can retain a separate
+[reference for its own work](storage-subscriptions-pending-operations.md#worker-references).
 
 ### Adding a card (full iteration)
 

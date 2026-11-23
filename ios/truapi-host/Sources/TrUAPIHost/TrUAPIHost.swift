@@ -192,13 +192,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Can arrive on any thread. Defaults to a no-op.
     func workerCrashing(productId: ProductId, crashes: UInt32)
 
-    /// Begin a pending operation, whose id keeps the product's worker alive
-    /// until it ends. `label` is a log/UI hint, empty when the product gave none.
-    func beginOperation(productId: ProductId, label: String) async throws -> UInt32
-
-    /// End a pending operation. Idempotent: an unknown or already-ended id
-    /// succeeds, so a retry after an ambiguous failure is safe.
-    func endOperation(productId: ProductId, id: UInt32) async throws
 
     /// A device finished pairing with this signing host.
     ///
@@ -575,36 +568,8 @@ public extension HostBridge {
     func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
         .unsupported
     }
-    /// Defaults opt out of worker keep-alive; override to run background work
-    /// past the product's surface. The id is still distinct per call, because
-    /// an `OperationId` names one operation: a host overriding only
-    /// `endOperation`, and the core's own demand accounting, both end the
-    /// wrong ones when every operation shares an id.
-    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
-        defaultOperationIds.take()
-    }
 
-    func endOperation(productId: ProductId, id: UInt32) async throws {}
 }
-
-/// Ids handed out by the default `beginOperation`, distinct for the life of
-/// the process.
-private final class DefaultOperationIds: @unchecked Sendable {
-    private let lock = NSLock()
-    private var nextId: UInt32 = 1
-
-    func take() -> UInt32 {
-        lock.lock()
-        defer { lock.unlock() }
-        let id = nextId
-        // Never zero, and never traps: an id is only ever compared, so wrapping
-        // back to one costs nothing.
-        nextId = nextId == UInt32.max ? 1 : nextId + 1
-        return id
-    }
-}
-
-private let defaultOperationIds = DefaultOperationIds()
 
 /// Adapter that bridges the public `ChatHostBridge` to the generated UniFFI
 /// `NativeChatCallbacks` protocol.
@@ -1071,18 +1036,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func clearProductStorage(productId: ProductId) throws {
         try withStorageError {
             try bridge.clearProductStorage(productId: productId)
-        }
-    }
-
-    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
-        try await withHostRejection {
-            try await bridge.beginOperation(productId: productId, label: label)
-        }
-    }
-
-    func endOperation(productId: ProductId, id: UInt32) async throws {
-        try await withHostRejection {
-            try await bridge.endOperation(productId: productId, id: id)
         }
     }
 

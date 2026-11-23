@@ -2734,51 +2734,30 @@ where
 {
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host.clone();
-        dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerBeginOperationRequest, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerBeginOperationError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> =
-                    match host.begin_operation(&cx, request).await {
-                        Ok(response) => Ok(<versioned::worker::HostWorkerBeginOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            truapi::versioned::IntoLatest::into_latest(response),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
-            })
-        });
-    }
-    {
-        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
-        dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerEndOperationRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_subscription(wire_table::WORKER_RETAIN_REFERENCE, move |request_id: String, request: versioned::worker::HostWorkerRetainReferenceRequest| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
+                let cx = CallContext::with_request_id(request_id);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerEndOperationError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> = Err(error);
-                    return result.encode();
+                    let error: truapi::CallError<versioned::worker::HostWorkerRetainReferenceError> = truapi::CallError::Denied;
+                    return Err(subscription_interrupt(error));
                 }
-                let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> =
-                    match host.end_operation(&cx, request).await {
-                        Ok(_) => Ok(<versioned::worker::HostWorkerEndOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            (),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
+                let stream = host.retain_reference(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::worker::HostWorkerRetainReferenceItem, truapi::CallError<versioned::worker::HostWorkerRetainReferenceError>>| {
+                        item.map(|_| {
+                            <versioned::worker::HostWorkerRetainReferenceItem as truapi::versioned::FromLatest>::from_latest(
+                                (),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
             })
         });
     }

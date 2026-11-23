@@ -1493,89 +1493,90 @@ fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
 }
 
 #[test]
-fn dispose_releases_the_demand_open_operations_hold() {
-	let platform = Arc::new(StubPlatform::default());
+fn retired_worker_operation_calls_cannot_create_or_release_references() {
+	use crate::frame::{
+		MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, PROTOCOL_ERROR_METHOD_ID, PROTOCOL_ERROR_TRAIT_ID,
+		ProtocolErrorV1, VersionedProtocolError,
+	};
+
+	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
+	let product_id = ProductId::for_test("worker.dot");
+	let product = ProductContext::new_with_execution(
+		product_id.clone(),
+		crate::platform::ExecutableKind::Worker,
+	);
 	let sink = Arc::new(RecordingSink::default());
-	let (host_config, product) = runtime_config("myapp.dot");
-	let runtime = ProductRuntime::from_platform_with_config(
-		platform,
-		host_config,
-		product,
-		Spawner::for_test(),
-		sink,
-	);
-	let host = runtime.admin.product_runtime().clone();
-
-	futures::executor::block_on(truapi::api::Worker::begin_operation(
-		host.as_ref(),
-		&truapi::CallContext::default(),
-		truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-			truapi::latest::HostWorkerBeginOperationRequest { label: None },
-		),
-	))
-	.expect("begin operation");
-	assert_eq!(
-		host.connection()
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		1
-	);
-
-	runtime.dispose();
-
-	assert_eq!(
-		host.connection()
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"disposing a connection drops the demand its open operations held"
-	);
+	let worker = host.product_runtime(product, sink.clone());
+	host.worker_ledger().acquire(&product_id);
+	for (method_id, value) in [(0, (0u8, None::<String>).encode()), (1, (0u8, 1u32).encode())] {
+		let request_id = format!("legacy:{method_id}");
+		let frame = ProtocolMessage {
+			request_id: request_id.clone(),
+			payload: Payload { trait_id: 19, method_id, message_type: MESSAGE_TYPE_REQUEST, value },
+		};
+		futures::executor::block_on(worker.receive_frame(frame.encode())).unwrap();
+		let response = ProtocolMessage {
+			request_id,
+			payload: Payload {
+				trait_id: PROTOCOL_ERROR_TRAIT_ID,
+				method_id: PROTOCOL_ERROR_METHOD_ID,
+				message_type: MESSAGE_TYPE_RESPONSE,
+				value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+					trait_id: 19,
+					method_id,
+				})
+				.encode(),
+			},
+		};
+		assert_eq!(sink.frames.lock().unwrap().pop(), Some(response.encode()));
+		assert_eq!(host.worker_ledger().count(&product_id), 1);
+	}
 }
 
 #[test]
-fn dispose_ends_the_operations_the_host_is_still_holding() {
-	let platform = Arc::new(StubPlatform::default());
-	let sink = Arc::new(RecordingSink::default());
-	let (host_config, product) = runtime_config("myapp.dot");
-	let runtime = ProductRuntime::from_platform_with_config(
-		platform.clone(),
-		host_config,
-		product,
-		Spawner::for_test(),
-		sink,
+fn disconnect_releases_guest_references_but_preserves_other_owners() {
+	use crate::frame::{MESSAGE_TYPE_START, MESSAGE_TYPE_STOP};
+	use truapi::versioned::worker::HostWorkerRetainReferenceRequest;
+
+	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
+	let product_id = ProductId::for_test("worker.dot");
+	let product = ProductContext::new_with_execution(
+		product_id.clone(),
+		crate::platform::ExecutableKind::Worker,
 	);
-	let host = runtime.admin.product_runtime().clone();
-
-	futures::executor::block_on(truapi::api::Worker::begin_operation(
-		host.as_ref(),
-		&truapi::CallContext::default(),
-		truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-			truapi::latest::HostWorkerBeginOperationRequest { label: None },
-		),
-	))
-	.expect("begin operation");
-
-	runtime.dispose();
-
-	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-	loop {
-		let ended = platform
-			.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.clone();
-		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-			break;
-		}
-		assert!(
-			std::time::Instant::now() < deadline,
-			"the host's own record of the operation is closed, not left to \
-             accumulate; saw {ended:?}"
-		);
-		std::thread::yield_now();
-	}
+	let open = || host.product_runtime(product.clone(), Arc::new(RecordingSink::default()));
+	let first = open();
+	let second = open();
+	let ledger = host.worker_ledger();
+	ledger.acquire(&product_id);
+	let receive = |runtime: &ProductRuntime, id: &str, message_type, value: Vec<u8>| {
+		let frame = ProtocolMessage {
+			request_id: id.into(),
+			payload: Payload { trait_id: 19, method_id: 2, message_type, value },
+		};
+		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
+	};
+	let start = |runtime: &ProductRuntime, id: &str| {
+		receive(runtime, id, MESSAGE_TYPE_START, HostWorkerRetainReferenceRequest::V1.encode())
+	};
+	let stop = |runtime: &ProductRuntime, id: &str| receive(runtime, id, MESSAGE_TYPE_STOP, vec![]);
+	start(&first, "a");
+	start(&first, "b");
+	start(&second, "a");
+	assert_eq!(ledger.count(&product_id), 4);
+	stop(&first, "a");
+	stop(&first, "a");
+	wait_until(|| ledger.count(&product_id) == 3, "only the first hold should be released");
+	first.dispose();
+	wait_until(
+		|| ledger.count(&product_id) == 2,
+		"disconnect should release outstanding guest holds",
+	);
+	stop(&first, "a");
+	assert_eq!(ledger.count(&product_id), 2);
+	ledger.release(&product_id);
+	second.dispose();
+	wait_until(|| ledger.count(&product_id) == 0, "the last guest reference should be released");
 }
 
 #[test]

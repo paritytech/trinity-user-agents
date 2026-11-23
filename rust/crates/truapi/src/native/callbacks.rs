@@ -282,17 +282,6 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		product_id: ProductId,
 	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
-
-	/// Record a pending operation, whose id keeps the product's worker alive
-	/// until it ends.
-	async fn begin_operation(
-		&self,
-		product_id: ProductId,
-		label: String,
-	) -> Result<u32, HostRejection>;
-	/// End a pending operation. Idempotent: an unknown or already-ended id
-	/// succeeds, so a retry after an ambiguous failure is safe.
-	async fn end_operation(&self, product_id: ProductId, id: u32) -> Result<(), HostRejection>;
 }
 
 /// Native Chat storage and UI adapter. Hosts that support the Chat modality

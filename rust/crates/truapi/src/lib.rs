@@ -86,10 +86,10 @@ pub mod latest {
 		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
 		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
 		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
-		HorizontalAlignment, HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit,
-		ImageProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps,
-		Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
+		HorizontalAlignment, HostPlatform, HostSignPayloadData, ImageFit, ImageProps, ImageRef,
+		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
 		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
@@ -99,7 +99,7 @@ pub mod latest {
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
 		TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle,
-		VerticalAlignment, VrfSignature, X25519PublicKey,
+		VerticalAlignment, VrfSignature, WorkerReferenceError, X25519PublicKey,
 	};
 
 	pub use crate::v02::{

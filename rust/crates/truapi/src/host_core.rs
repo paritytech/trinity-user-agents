@@ -2332,7 +2332,6 @@ impl ProductRuntime {
 		let connection = self.admin.product_runtime.connection();
 		connection.detach_chat();
 		connection.detach_renderer();
-		connection.release_open_operations();
 		if let Some((product_id, link)) = &self.funding_link {
 			connection.services().funding().unlink(product_id, link);
 		}

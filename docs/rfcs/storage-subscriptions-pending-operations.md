@@ -1,10 +1,10 @@
 ---
-title: "Product storage subscriptions and worker pending operations"
+title: "Product storage subscriptions and worker references"
 owner: "Sergey Zhuravlev"
 status: draft
 ---
 
-# RFC — Product storage subscriptions and worker pending operations
+# RFC — Product storage subscriptions and worker references
 
 |                 |                                          |
 | --------------- | ---------------------------------------- |
@@ -15,13 +15,13 @@ status: draft
 ## Summary
 
 - `localStorage.subscribe(key)` streams a key's value on every change, within the product's own namespace.
-- `worker.beginOperation()` / `worker.endOperation(id)` declare a pending operation. The host keeps the worker running while any operation is open.
+- `worker.retain()` returns a reference on the running worker. Release it when the work finishes.
 
 ## Motivation
 
 A funding operation, part of a safety-net release, builds a transaction, submits it, waits for inclusion and records the result. Steps hit a backend, so one run takes tens of seconds with polling in between. It runs in a worker so it outlives the product's screen. Two things make that unsafe today.
 
-The host disposes a worker once its on-screen surface is gone (the worker's own `dispose` in `worker-runtime.ts` is a no-op that defers to the main thread), and the in-flight submission dies with it. The product has no way to say it is mid-operation.
+When the screen holds the last reference, closing it can stop the worker during submission. The worker needs a way to hold a reference while it finishes its task.
 
 The screen and the worker are separate runtimes over one storage namespace, and a write in one is invisible to the other until it re-reads. A progress view fed by the worker can only poll.
 
@@ -59,74 +59,21 @@ A host stream that fails ends the subscription with `CallError::HostFailure`, so
 
 If `write` gets the bytes the key already holds, the core skips the store write, so the host never sees it and nothing is emitted. `clear` always reaches the host and always emits `None`, even on an absent key.
 
-### Pending operations
+### Worker references
 
-A `begin`/`end` pair on a new `Worker` trait, gated to the Worker execution kind:
+A worker can take a reference on its own execution before the last screen or other host consumer leaves. Rust increments the session's existing count for the authenticated product. The guest can finish work while the screen is closed. Each reference has one owner.
 
-```rust
-async fn begin_operation(
-    &self,
-    cx: &CallContext,
-    request: HostWorkerBeginOperationRequest, // { label: Option<String> } for host logs and UI
-) -> Result<HostWorkerBeginOperationResponse, CallError<HostWorkerOperationError>>;
-
-/// Idempotent: an unknown or already-ended id returns `Ok`.
-async fn end_operation(
-    &self,
-    cx: &CallContext,
-    request: HostWorkerEndOperationRequest, // { id: OperationId }
-) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerOperationError>>;
-
-/// Host-assigned, unique per product. Like `NotificationId`.
-pub type OperationId = u32;
-
-pub struct HostWorkerBeginOperationResponse {
-    pub id: OperationId,
-}
-
-pub enum HostWorkerOperationError {
-    /// The product is at the host's per-product cap of open operations.
-    /// `end` never returns this.
-    TooManyOpen,
-    Unknown { reason: String },
+```ts
+const claim = await truapi.worker.retain();
+try {
+  await submitAndRecord();
+} finally {
+  claim.release();
 }
 ```
 
-The id is session-scoped and never persisted. No host stores operations, so if the host dies the worker, the id and the operation die together and the next launch starts with none open.
-
-The host owns operations and the lifecycle. The core forwards each call to a host trait scoped to the calling product, and the operation existing is the keep-alive signal. Every host implements the trait; one with no worker lifecycle, such as the headless CLI, hands out ids and tracks nothing.
-
-An open operation is also demand on the worker: the core takes one reference on the product's worker ledger per open id, so an operation reaches the host through the same `requestWorkerTransition` signal an on-screen surface produces, and a host reading that signal needs no second keep-alive rule. The reference is dropped when the operation ends, and a connection that goes away with operations still open drops the ones it held.
-
-```rust
-#[async_trait::async_trait]
-pub trait ProductOperations: Send + Sync {
-    /// `label` is empty when the product gave none.
-    async fn begin_operation(
-        &self,
-        product: &ProductContext,
-        label: String,
-    ) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-    /// Idempotent.
-    async fn end_operation(
-        &self,
-        product: &ProductContext,
-        id: OperationId,
-    ) -> Result<(), HostWorkerOperationError>;
-}
-```
-
-Operations are keyed by id and scoped to the product. Two tasks each begin one and the worker stays alive until both end. Ending an id twice, or one that was never begun, releases nothing.
-
-Keep-alive is best-effort. iOS and Android can kill a backgrounded worker. An open operation lets the host request the background time the platform allows (a background task assertion on iOS, a foreground service or WorkManager on Android), and the worker resumes from saved state after a kill.
-
-An operation is opaque: an optional label, no funding or deposit typing.
+On the wire, `worker.retain_reference` is a Worker-only subscription at (19, 2). The host sends one acknowledgement after incrementing the count. A Stop releases that subscription's reference. The SDK's `retain({ signal })` also sends Stop if the caller aborts before acknowledgement. Disconnect releases every reference acquired by that connection. Each connection can hold up to 64 guest references. The next acquisition fails with `TooManyReferences`. A worker can lose its execution when the host or operating system ends its session. Work that must survive process death needs durable state and a host owner for recovery.
 
 ## Compatibility
 
-All three wire methods are additive. `subscribe_storage` and `ProductOperations` are required host capabilities. Target is v0.2 / latest.
-
-## Future directions
-
-Operations become one term of a general liveness rule: `can_execute = has pending operations || has chats || has pocket cards || ...`. On top of that, a host UI listing active operations with `status`, a `list_operations` read to feed it, and user cancel. A prefix subscription if products want to watch a set of keys.
+The previous `worker.beginOperation` and `worker.endOperation` wire addresses (19, 0) and (19, 1) are retired. Hosts and products must support (19, 2) to use explicit guest references. A host SDK upgrade removes the product-operation callback group. The legacy mobile Nova runtime uses a different protocol; only that runtime restores its own persisted operation records.

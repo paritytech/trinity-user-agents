@@ -20,15 +20,15 @@ is closed, and every modality that calls a worker needs one rule for when it run
 ### Requirements
 
 1. **Single.** A product has one worker process, however many modalities call it.
-2. **Demand-driven.** The worker runs only while the host has work that only the worker can do.
+2. **Demand-driven.** A host consumer or the running worker can hold a reference while it needs the execution.
 3. **Stoppable.** The host may stop an unreferenced worker at any time and the product keeps working.
-4. **Additive.** Nothing is added to the TrUAPI protocol.
+4. **Connection-scoped.** A guest can retain its own worker. Disconnecting releases that connection’s references.
 
 ## Approach
 
 The host keeps one reference count per product worker. The first reference starts the worker. When the count returns to
-zero the host may stop it. Products do not ask for a worker to run: the host starts and stops the worker executable, and
-the worker learns it is needed by receiving a modality call.
+zero the host may stop it. A running worker may also retain itself while finishing work. The host starts and stops the
+worker executable, and the worker learns it is needed by receiving a modality call.
 
 The design has two parts:
 
@@ -43,15 +43,15 @@ product are three references on the same worker. A modality names its holders in
 hold no reference; their lifetime is their screen.
 
 Each holder acquires its own reference and releases it once. A renderer subscription can end or restart while its
-surface keeps the same reference. Looking up the execution or opening a product call leaves the count unchanged.
+surface keeps the same reference. Looking up the execution and calling its renderer both leave the count unchanged.
 
 Reference holders, by modality:
 
 | Holder  | Held while                                                                                               |
 | ------- | -------------------------------------------------------------------------------------------------------- |
 | Chat    | A room the product serves is on screen, or a message addressed to the product is in flight.              |
-| Pocket  | An artifact the product contributed is on screen.                                                        |
-| Funding | A funding flow with the product as selected provider is in flight, from selection until it settles.      |
+| Pocket  | A worker-backed card side is live. Multiple views of the same side share its claim.                      |
+| Funding | The picker needs a provider quote or an assigned funding session still needs the provider.               |
 | Input   | An input round is in flight, or a `Custom` candidate is on screen ([Input Modality](input-modality.md)). |
 
 ### Stopping
@@ -59,8 +59,9 @@ Reference holders, by modality:
 - The host may stop a worker whenever nothing references it, including while its output is on screen, so state that must
   survive goes through host storage.
 - The host starts a worker when a reference forms, not when the user acts on the product, so a start is not user intent.
-- The host runs a worker only while it is referenced, so a worker has no way to do background work of its own. Scheduled
-  wakeups are out of scope.
+- A guest can finish its own work after the screen closes by taking a
+  [worker reference](storage-subscriptions-pending-operations.md#worker-references) before the last external owner leaves.
+  Scheduled wakeups are out of scope.
 
 ## Trade-offs
 
