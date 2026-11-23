@@ -2,7 +2,9 @@
 //!
 //! [`StackRefresh::load`] resolves the stack the core starts on without
 //! touching the network. [`StackRefresh::start`] then fetches the descriptor
-//! through the host, in the background, whenever the copy is old enough.
+//! through the host, in the background, whenever the copy is old enough. A
+//! host that does not fetch it is still told the stack's status, through
+//! [`StackRefresh::start_reporting`].
 
 use core::time::Duration;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -63,9 +65,9 @@ pub trait StackHost: Send + Sync {
 /// The stack a host build runs and the background refresh of its descriptor.
 pub struct StackRefresh {
 	shared: Arc<Shared>,
-	/// The refresh loop, once started.
+	/// The refresh loop, or the loop that only reports, once started.
 	task: OnceLock<BackgroundTask>,
-	/// Asks the loop for a fetch now. The loop ends once this drops.
+	/// Asks the refresh loop for a fetch now. That loop ends once this drops.
 	refresh_requests: WakeSignal,
 }
 
@@ -218,8 +220,9 @@ impl StackRefresh {
 	/// Starts refreshing through `host`, on `spawner`, until this value
 	/// drops. Reports the current status to `host` first.
 	///
-	/// Set-once: answers whether this call started the refresh.
-	#[must_use = "`false` means the refresh was already running and `host` was dropped"]
+	/// Set-once, together with [`Self::start_reporting`]: answers whether this
+	/// call started the refresh.
+	#[must_use = "`false` means it had been started already and `host` was dropped"]
 	pub fn start(&self, host: Box<dyn StackHost>, spawner: &Spawner) -> bool {
 		let mut started = false;
 		self.task.get_or_init(|| {
@@ -230,12 +233,39 @@ impl StackRefresh {
 		started
 	}
 
+	/// Tells `changed` the stack's status, for a host that does not fetch it.
+	///
+	/// Once before this returns, then on `spawner`, until this value drops,
+	/// whenever what a chain answered changes the status. Nothing is fetched,
+	/// so the core stays on the copy it started from. `changed` has to return
+	/// promptly, and must not start the refresh or the reports itself.
+	///
+	/// Set-once, together with [`Self::start`]: answers whether this call
+	/// started the reports.
+	#[must_use = "`false` means it had been started already and `changed` was dropped"]
+	pub fn start_reporting(
+		&self,
+		changed: Box<dyn Fn(StackStatus) + Send>,
+		spawner: &Spawner,
+	) -> bool {
+		let mut started = false;
+		self.task.get_or_init(|| {
+			started = true;
+			let chain_answers = self.shared.chain_answers.subscribe();
+			let reported = self.shared.source().status();
+			changed(reported.clone());
+			let reports = self.shared.clone().report(changed, reported, chain_answers);
+			BackgroundTask::spawn(spawner, reports)
+		});
+		started
+	}
+
 	/// Fetches the descriptor now instead of when the copy is old enough.
 	///
 	/// A host asks when its app returns to the foreground, because a sleeping
 	/// device can stretch the wait for the next fetch. Returns at once.
 	/// Requests made while a fetch is out lead to one more fetch, not one
-	/// each. Does nothing before [`Self::start`].
+	/// each. Does nothing unless [`Self::start`] started the refresh.
 	pub fn refresh_now(&self) {
 		self.refresh_requests.wake();
 	}
@@ -254,12 +284,13 @@ impl Shared {
 		let mut chain_answers = self.chain_answers.subscribe();
 		let mut reported = self.source().status();
 		host.stack_changed(reported.clone());
+		let tell = |status| host.stack_changed(status);
 		let mut force = false;
 		loop {
 			// What a chain answered is told before the fetch it brings forward
 			// and while a fetch is out, since a host may take half a minute to
 			// answer one.
-			self.report_change(host.as_ref(), &mut reported);
+			self.report_change(&tell, &mut reported);
 			let request = if force {
 				self.source().forced_fetch(self.now())
 			} else {
@@ -268,9 +299,9 @@ impl Shared {
 			if let Some(request) = request {
 				let mut fetch = core::pin::pin!(self.fetch(host.as_ref(), request));
 				while let Either::Right(_) = select(fetch.as_mut(), chain_answers.next()).await {
-					self.report_change(host.as_ref(), &mut reported);
+					self.report_change(&tell, &mut reported);
 				}
-				self.report_change(host.as_ref(), &mut reported);
+				self.report_change(&tell, &mut reported);
 			}
 			let next_fetch_in = self.source().next_fetch_in(self.now());
 			let until_due = match next_fetch_in {
@@ -286,12 +317,25 @@ impl Shared {
 		}
 	}
 
-	/// Tells `host` the stack's status when it differs from `reported`.
-	fn report_change(&self, host: &dyn StackHost, reported: &mut StackStatus) {
+	/// Tells `changed` the status after each chain answer that makes it differ
+	/// from `reported`, the status it was told last.
+	async fn report(
+		self: Arc<Self>,
+		changed: Box<dyn Fn(StackStatus) + Send>,
+		mut reported: StackStatus,
+		mut chain_answers: mpsc::Receiver<()>,
+	) {
+		while chain_answers.next().await.is_some() {
+			self.report_change(changed.as_ref(), &mut reported);
+		}
+	}
+
+	/// Tells the host the stack's status when it differs from `reported`.
+	fn report_change(&self, tell: &dyn Fn(StackStatus), reported: &mut StackStatus) {
 		let status = self.source().status();
 		if status != *reported {
 			*reported = status;
-			host.stack_changed(reported.clone());
+			tell(reported.clone());
 		}
 	}
 
