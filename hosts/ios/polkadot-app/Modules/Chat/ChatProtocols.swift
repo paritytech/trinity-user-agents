@@ -105,10 +105,10 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
 
     func dismissChat(from view: ControllerBackedProtocol?)
 
-    func showCancelChatRequestConfirmation(
+    func showChatRequestConfirmation(
         from view: ControllerBackedProtocol?,
-        username: String,
-        delegate: ChatMoreActionsDelegate
+        viewModel: ChatRequestConfirmationViewModel,
+        onConfirm: @escaping () -> Void
     )
 
     func showDocument(at url: URL)
@@ -142,5 +142,4 @@ protocol ChatAttachmentPreviewDelegate: AnyObject {
 protocol ChatMoreActionsDelegate: AnyObject {
     func didConfirmLeaveChat()
     func didConfirmBlockUser()
-    func didConfirmCancelChatRequest()
 }

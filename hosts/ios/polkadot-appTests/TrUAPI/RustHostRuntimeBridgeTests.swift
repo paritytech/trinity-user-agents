@@ -151,7 +151,8 @@ struct TrUAPIHostRuntimeProviderConfigTests {
             secret: Data(repeating: 7, count: 32),
             liteUsername: nil,
             networkSuffix: "testnet",
-            databaseDirectory: makeDatabaseDirectory()
+            databaseDirectory: makeDatabaseDirectory(),
+            deviceEncryptionKey: nil
         )
 
         _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config)

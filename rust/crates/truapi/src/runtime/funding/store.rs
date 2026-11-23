@@ -143,7 +143,6 @@ fn scan<T: Decode>(
 	let mut statement = tx.prepare_cached(table.select)?;
 	let mut rows = statement.query([])?;
 	while let Some(row) = rows.next()? {
-		let intent: String = row.get("intent")?;
 		let record: Vec<u8> = row.get("record")?;
 		let input = &mut &record[..];
 		match u16::decode(input) {
@@ -152,7 +151,6 @@ fn scan<T: Decode>(
 				Some(value) if input.is_empty() => scanned.records.push(value),
 				_ => error!(
 					table = table.name,
-					%intent,
 					stored,
 					format = table.format,
 					"funding record of an older format; leaving it in place"
@@ -160,18 +158,17 @@ fn scan<T: Decode>(
 			},
 			Ok(_) => match T::decode(input) {
 				Ok(value) if input.is_empty() => scanned.records.push(value),
-				_ => unreadable(table, &intent, &record),
+				_ => unreadable(table, &record),
 			},
-			Err(_) => unreadable(table, &intent, &record),
+			Err(_) => unreadable(table, &record),
 		}
 	}
 	Ok(scanned)
 }
 
-fn unreadable(table: &Table, intent: &str, record: &[u8]) {
+fn unreadable(table: &Table, record: &[u8]) {
 	error!(
 		table = table.name,
-		%intent,
 		bytes = record.len(),
 		"funding record does not decode; leaving it in place"
 	);

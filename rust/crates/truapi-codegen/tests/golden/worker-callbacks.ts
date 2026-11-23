@@ -18,6 +18,7 @@ export const CALLBACK_NAMES = [
   "setChatRoomFooter",
   "contacts",
   "pickContact",
+  "contactUsernames",
   "readCoreStorage",
   "writeCoreStorage",
   "clearCoreStorage",
@@ -37,6 +38,7 @@ export const CALLBACK_NAMES = [
   "read",
   "write",
   "clear",
+  "clearProduct",
   "scanCode",
   "confirmPermission",
   "confirmUserAction",
@@ -88,6 +90,7 @@ function rawCallbacks(
     | "read"
     | "write"
     | "clear"
+    | "clearProduct"
     | "confirmPermission"
     | "confirmUserAction"
   >
@@ -156,6 +159,10 @@ function rawCallbacks(
     clear: (key) =>
       bridge.callbackRequest("clear", [key]) as ReturnType<
         Required<RawCallbacks>["clear"]
+      >,
+    clearProduct: (productId) =>
+      bridge.callbackRequest("clearProduct", [productId]) as ReturnType<
+        Required<RawCallbacks>["clearProduct"]
       >,
     confirmPermission: (review) =>
       bridge.callbackRequest("confirmPermission", [review]) as ReturnType<
@@ -233,7 +240,9 @@ function chatRawCallbacks(
 
 function contactsRawCallbacks(
   bridge: WorkerCallbackBridge,
-): Required<Pick<RawCallbacks, "contacts" | "pickContact">> {
+): Required<
+  Pick<RawCallbacks, "contacts" | "pickContact" | "contactUsernames">
+> {
   return {
     contacts: (lookup) =>
       bridge.callbackRequest("contacts", [lookup]) as ReturnType<
@@ -242,6 +251,10 @@ function contactsRawCallbacks(
     pickContact: (product) =>
       bridge.callbackRequest("pickContact", [product]) as ReturnType<
         Required<RawCallbacks>["pickContact"]
+      >,
+    contactUsernames: (product) =>
+      bridge.callbackRequest("contactUsernames", [product]) as ReturnType<
+        Required<RawCallbacks>["contactUsernames"]
       >,
   };
 }

@@ -37,6 +37,20 @@ pub trait HostCallbacks: Send + Sync {
 	/// Lifecycle logger. Marker is a stable slug, detail is free-form.
 	fn on_core_log(&self, marker: String, detail: String);
 
+	/// Structured lifecycle fact. Marker is the same stable slug
+	/// [`Self::on_core_log`] carries, and each attribute is a key the core's
+	/// own source names with a label, a count or a condition under it.
+	///
+	/// Hand these to the host's reporter as attributes, so a marker can be
+	/// grouped and filtered by what it carries. Every marker here is listed in
+	/// the table [`core_markers`] returns, and its class decides what the host
+	/// may do with it, exactly as for a log line.
+	///
+	/// Runs inline on the dispatcher thread: return promptly.
+	///
+	/// [`core_markers`]: super::core_markers
+	fn on_core_event(&self, marker: String, attributes: Vec<crate::logging::CoreAttribute>);
+
 	/// Open a URL in the system browser.
 	async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError>;
 
@@ -82,6 +96,17 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
+	/// Turn this execution's expanded card so its back (`true`) or its front
+	/// (`false`) is up.
+	///
+	/// Answer `NoBack` when asked for a back the card does not have to show,
+	/// and `NotPresented` and `UserMoving` as for the face. Return without
+	/// waiting for the animation to finish.
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardTurnOutcome, HostRejection>;
 
 	/// Prompt the user for a remote permission `product` requested.
 	async fn remote_permission(
@@ -258,6 +283,16 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		key: String,
 	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
+	/// Remove every value `product_id` owns from the host's scoped key-value
+	/// store. Idempotent.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with, from [`NativeTrUApiHostRuntime::clear_product_state`]: a product
+	/// that is not running has no callbacks of its own.
+	async fn clear_product_storage(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError>;
 
 	/// Record a pending operation, whose id keeps the product's worker alive
 	/// until it ends.
@@ -349,12 +384,14 @@ pub trait NativeGameCallbacks: Send + Sync {
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.
 ///
-/// The lookup runs inline, because it is a store read the host already has in
-/// hand. Presenting the picker is async, because it is the user.
+/// The lookup and the usernames run inline, because each is a store read the
+/// host already has in hand. Presenting the picker is async, because it is the
+/// user.
 ///
-/// Nothing here reaches a product, and the list never reaches the core: it asks
-/// only about the handles a transaction names, and the picker returns the one
-/// person the user chose.
+/// No account reaches a product, and the accounts on the list never reach the
+/// core: it asks only about the handles a transaction names, and the picker
+/// returns the one person the user chose. Usernames reach the core only
+/// through [`Self::contact_usernames`], for the game product.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeContactsCallbacks: Send + Sync {
@@ -373,6 +410,16 @@ pub trait NativeContactsCallbacks: Send + Sync {
 		&self,
 		product_id: ProductId,
 	) -> Result<crate::platform::HostContactPick, HostRejection>;
+
+	/// List the dotNS usernames of the unblocked contacts the picker would
+	/// offer, asked on behalf of `product_id`.
+	///
+	/// The core asks only for the game product. A host that does not list
+	/// usernames answers `Unsupported`.
+	fn contact_usernames(
+		&self,
+		product_id: ProductId,
+	) -> Result<crate::platform::HostContactUsernames, HostRejection>;
 }
 
 /// Native payment engine, which pays from the user's balance to an account.

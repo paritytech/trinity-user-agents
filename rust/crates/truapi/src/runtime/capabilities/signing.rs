@@ -6,14 +6,14 @@ use truapi::{
 	api::Signing,
 	latest,
 	versioned::signing::{
-		HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
-		HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
+		HostCreateTransactionError, HostCreateTransactionResponse,
+		HostCreateTransactionWithLegacyAccountError,
 		HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
 		HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
 		HostSignPayloadWithLegacyAccountRequest, HostSignPayloadWithLegacyAccountResponse,
 		HostSignRawError, HostSignRawRequest, HostSignRawResponse,
 		HostSignRawWithLegacyAccountError, HostSignRawWithLegacyAccountRequest,
-		HostSignRawWithLegacyAccountResponse,
+		HostSignRawWithLegacyAccountResponse, LegacyAccountTxPayload, ProductAccountTxPayload,
 	},
 };
 
@@ -89,7 +89,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 	async fn create_transaction(
 		&self,
 		cx: &CallContext,
-		request: HostCreateTransactionRequest,
+		request: ProductAccountTxPayload,
 	) -> Result<HostCreateTransactionResponse, CallError<HostCreateTransactionError>> {
 		version(request)
 			.exec(|mut inner| async move {
@@ -222,7 +222,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 	async fn create_transaction_with_legacy_account(
 		&self,
 		cx: &CallContext,
-		request: HostCreateTransactionWithLegacyAccountRequest,
+		request: LegacyAccountTxPayload,
 	) -> Result<
 		HostCreateTransactionWithLegacyAccountResponse,
 		CallError<HostCreateTransactionWithLegacyAccountError>,

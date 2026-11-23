@@ -63,6 +63,15 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Lifecycle logger. Marker is a stable slug, detail is free-form.
     func onCoreLog(marker: String, detail: String)
 
+    /// Structured lifecycle fact. Marker is the same stable slug
+    /// ``onCoreLog(marker:detail:)`` carries, and each attribute is a key the
+    /// core names with a label, a count or a condition under it. Hand these to
+    /// the reporter as attributes, so a marker can be grouped and filtered by
+    /// what it carries. Every marker here is listed in the table
+    /// `coreMarkers()` returns, and its class decides what the host may do
+    /// with it, exactly as for a log line.
+    func onCoreEvent(marker: String, attributes: [CoreAttribute])
+
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
@@ -70,6 +79,13 @@ public protocol HostBridge: AnyObject, Sendable {
     /// `.notPresented` when the product is not under its card and `.userMoving` while the user
     /// moves the card. Defaults to `.unsupported`, so an app without cards says so.
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+
+    /// Turn this execution's expanded card so its back (`true`) or its front
+    /// (`false`) is up. Answers `.noBack` when the card has no back to show,
+    /// and the face call's outcomes otherwise, without waiting for the
+    /// animation. Defaults to `.unsupported`, so an app that cannot turn cards
+    /// says so.
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
@@ -229,6 +245,18 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Runtime-wide, like `durableWorkChanged`. Defaults to a rejection.
     func encryptedStorageDelete(key: Data) async throws
 
+    /// Remove every value `productId` keeps in product storage. Idempotent.
+    /// Runtime-wide, like `durableWorkChanged`: the core calls it from
+    /// `TrUAPIHostRuntime.clearProductState`, when the product may have no
+    /// execution and so no bridge of its own. Every key the product owns
+    /// starts with
+    /// `truapi:product-storage:v1:<UTF-8 byte length of the id>:<id>:`, so a
+    /// shared store removes keys with that prefix and a store kept per
+    /// product drops that product's store. Defaults to a rejection, so
+    /// clearing the product's state fails on a host that has not implemented
+    /// it.
+    func clearProductStorage(productId: ProductId) throws
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -319,9 +347,11 @@ public protocol GameHostBridge: AnyObject, Sendable {
 /// and not to any one product. A runtime without one answers `contacts.pick`
 /// with `Unsupported`.
 ///
-/// Nothing here reaches a product, and the list never reaches the core: it
-/// asks only about the handles a transaction names, and the picker returns the
-/// one person the user chose. Omit the contacts the user has blocked, from both.
+/// No account reaches a product, and the accounts on the list never reach the
+/// core: it asks only about the handles a transaction names, and the picker
+/// returns the one person the user chose. Usernames reach the core only through
+/// ``contactUsernames(productId:)``, for the game product. Omit the
+/// contacts the user has blocked, from all three.
 public protocol ContactsHostBridge: AnyObject, Sendable {
     /// Resolve `lookup.handles` to contacts: one entry per handle, in order,
     /// `nil` where none matches. A contact's handle is BLAKE2b-256 keyed with
@@ -333,6 +363,18 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// did. With no contacts, answer `.noContacts` instead of drawing an empty
     /// overlay.
     func pickContact(productId: ProductId) async throws -> HostContactPick
+
+    /// List the dotNS usernames of the unblocked contacts the picker would
+    /// offer, each the bare label with no top-level domain. The core asks only
+    /// for the game product, so `productId` is not a filter. Called inline,
+    /// so answer from what is already in hand. Defaults to `.unsupported`.
+    func contactUsernames(productId: ProductId) throws -> HostContactUsernames
+}
+
+public extension ContactsHostBridge {
+    func contactUsernames(productId _: ProductId) throws -> HostContactUsernames {
+        .unsupported
+    }
 }
 
 /// Host-implemented top-up engine: claims a source's funds into the user's
@@ -409,6 +451,7 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
     func authStateChanged(state: AuthState) {}
@@ -435,6 +478,9 @@ public extension HostBridge {
     func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
+    func clearProductStorage(productId _: ProductId) throws {
+        throw HostLocalStorageReadError.Unknown(reason: "this host does not clear product storage")
+    }
     func currentInstallation() async throws -> Data {
         throw HostRejection.Rejected(reason: "this host keeps no installation id")
     }
@@ -451,6 +497,9 @@ public extension HostBridge {
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
         .unsupported
     }
     /// Defaults opt out of worker keep-alive; override to run background work
@@ -563,6 +612,10 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
 
     func pickContact(productId: ProductId) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
+    }
+
+    func contactUsernames(productId: ProductId) throws -> HostContactUsernames {
+        try withHostRejection { try bridge.contactUsernames(productId: productId) }
     }
 }
 
@@ -680,6 +733,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
+        bridge.onCoreEvent(marker: marker, attributes: attributes)
+    }
+
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         bridge.requestWorkerTransition(productId: productId, transition: transition)
     }
@@ -761,6 +818,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
         try await withHostRejection {
             try await bridge.setExpandedCardFaceShown(shown: shown)
+        }
+    }
+
+    func setExpandedCardBackShown(shown: Bool) async throws -> ExpandedCardTurnOutcome {
+        try await withHostRejection {
+            try await bridge.setExpandedCardBackShown(shown: shown)
         }
     }
 
@@ -873,6 +936,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func localStorageClear(key: String) throws {
         try withStorageError {
             try bridge.storage.clear(key: key)
+        }
+    }
+
+    func clearProductStorage(productId: ProductId) throws {
+        try withStorageError {
+            try bridge.clearProductStorage(productId: productId)
         }
     }
 
@@ -1089,6 +1158,16 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.releaseWorker(productId: productId)
     }
 
+    /// Forget one product: revoke its grants and Allow once answers, then
+    /// remove its values from product storage through
+    /// ``HostBridge/clearProductStorage(productId:)`` on the bridge this
+    /// runtime was built with. The wallet session and other products are kept.
+    /// Stop the product's executions first: a value a running execution
+    /// writes after the clear is kept.
+    public func clearProductState(productId: ProductId) async throws {
+        try await inner.clearProductState(productId: productId)
+    }
+
     /// Tell the pairing host behind `deeplink` that allowance allocation is
     /// under way, so it leaves its QR screen while the allocation runs.
     ///
@@ -1215,9 +1294,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.removePocketCard(productId: productId, cardId: cardId)
     }
 
-    /// The newest face kept for a card, if one is.
-    public func pocketCardFace(productId: ProductId, cardId: String) async throws -> RendererNode? {
-        try await inner.pocketCardFace(productId: productId, cardId: cardId)
+    /// The newest face kept for one side of a card, if one is.
+    public func pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = .front
+    ) async throws -> RendererNode? {
+        try await inner.pocketCardFace(productId: productId, cardId: cardId, side: side)
     }
 
     /// Decides durable transactions from the chain until none is live, then
@@ -1233,6 +1316,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
+    }
+
+    /// This device's 32-byte X25519 encryption secret, the key behind
+    /// `SessionUiInfo.deviceEncPublicKey`.
+    public func deviceEncryptionKey() throws -> Data {
+        try inner.deviceEncryptionKey()
     }
 
     /// Bind one peer to the wallet matching the transport's public keys.
