@@ -305,6 +305,20 @@ impl<'de> serde::Deserialize<'de> for ProductId {
 	}
 }
 
+impl ProductId {
+	/// The id of the chat room that this product names with the normalized
+	/// `room_id_source`.
+	///
+	/// The id is the blake2b-256 hash of the SCALE encoding of `("product",
+	/// product id, source)`, in `0x` hex. The hash includes the product, so two
+	/// products never share a room id. Each part has a length prefix, so two
+	/// different pairs never give the same bytes.
+	pub fn chat_room_id(&self, room_id_source: &str) -> String {
+		let preimage = ("product", self, room_id_source).encode();
+		format!("0x{}", hex::encode(sp_crypto_hashing::blake2_256(&preimage)))
+	}
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 uniffi::custom_type!(ProductId, String, {
 	lower: |product_id| product_id.0,

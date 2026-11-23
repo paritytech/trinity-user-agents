@@ -1478,19 +1478,30 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
+		// A v0.1 product names the room with its own `roomId` in every later
+		// call, and its answer carries no other id. So its room keeps that id.
+		// Only a v0.2 request gets the id that the host derives.
+		let product_names_room = matches!(request, HostChatCreateRoomRequest::V1(_));
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+				let field = if product_names_room { "roomId" } else { "roomIdSource" };
+				request.room_id_source = normalize_chat_identifier(field, &request.room_id_source)
 					.map_err(chat_create_room_field_error)?;
 				request.name = validate_chat_name("name", &request.name)
 					.map_err(chat_create_room_field_error)?;
 				request.icon = validate_chat_icon("icon", &request.icon)
 					.map_err(chat_create_room_field_error)?;
-				platform
-					.create_chat_room(&self.connection.product, request)
+				let room_id = if product_names_room {
+					request.room_id_source.clone()
+				} else {
+					self.connection.product.product_id.chat_room_id(&request.room_id_source)
+				};
+				let status = platform
+					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
-					.map_err(CallError::Domain)
+					.map_err(CallError::Domain)?;
+				Ok(latest::HostChatCreateRoomResponse { status, room_id })
 			})
 			.await
 	}
