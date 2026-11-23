@@ -59,6 +59,8 @@ private fun ChatSummary.previewMessage(listPreview: ChatRoomPolicy.ListPreview, 
             ChatMessage.Content.Reacted(reactedId, ChatMessageReactionContent(reaction.emoji))
         },
         status = ChatMessage.Status.IS_READ,
+        // Not a stored row: the store order only gives the seen ticks of a person chat.
+        sortOrder = null,
     )
 }
 

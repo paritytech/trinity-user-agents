@@ -36,6 +36,8 @@ internal fun ProductRoomMessage.toChatMessage(chatId: ChatId, extensionId: ChatE
         isUnread -> ChatMessage.Status.NEW
         else -> ChatMessage.Status.IS_READ
     },
+    // Not a stored row: the store order only gives the seen ticks of a person chat.
+    sortOrder = null,
     replyToMessageId = replyTo,
 )
 
@@ -47,6 +49,7 @@ internal fun ProductReplyPreviewModel.toQuotedMessage(messageId: String, chatId:
     origin = if (participantId == ProductParticipant.USER) ChatMessageOrigin.User else ChatMessageOrigin.Extension(extensionId),
     content = content,
     status = ChatMessage.Status.IS_READ,
+    sortOrder = null,
     replyToMessageId = null,
 )
 

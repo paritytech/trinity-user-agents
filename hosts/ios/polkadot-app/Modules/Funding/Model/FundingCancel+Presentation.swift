@@ -71,29 +71,16 @@ extension FundingStatus {
             nil
         }
     }
+}
 
-    /// Whether the user can cancel a session in this status, given the core's
-    /// `FundingProgress.moneyMoved`. Before money moved a second cancel ends the
-    /// session, so a provider that went silent cannot hold it; after, a cancel
-    /// already with the provider waits for its answer.
-    func canCancel(moneyMoved: Bool) -> Bool {
-        switch self {
-        case .cancelRequested: !moneyMoved
-        case .cancelOffered,
-             .cancelling:
-            false
-        default:
-            true
-        }
-    }
-
+extension FundingCancelAvailability {
     /// The cancel action's title: a second cancel, which ends the session at
-    /// once, reads differently from the first.
-    var cancelTitle: String {
-        if case .cancelRequested = self {
-            String(localized: .Funding.cancelAnyway)
-        } else {
-            String(localized: .Funding.depositCancel)
+    /// once, reads differently from the first; nil when none is offered.
+    var title: String? {
+        switch self {
+        case .unavailable: nil
+        case .available: String(localized: .Funding.depositCancel)
+        case .availableAgain: String(localized: .Funding.cancelAnyway)
         }
     }
 }

@@ -6,10 +6,12 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.CompactedBat
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.NOT_RESPONDED
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.RequestId
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.EncodedMessage
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.PendingMessageReplacementPolicy
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.models.StatementTransportEvent
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.stateMachine.states.Active
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.stateMachine.states.CommunicationState
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.stateMachine.states.Initialization
+import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.stateMachine.states.PendingMessages
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -38,6 +40,8 @@ class ActiveStateTest {
     private fun request(vararg messages: EncodedMessage, requestId: RequestId = "request-1") =
         StatementTransportEvent.Request(requestId = requestId, expiry = 10uL, messages = messages.toList())
 
+    private fun pending(messages: List<EncodedMessage>) = PendingMessages(messages, PendingMessageReplacementPolicy.AlwaysKeep)
+
     private fun active(
         outgoingPendingRequest: StatementTransportEvent.Request? = null,
         incomingRequests: Set<RequestId> = emptySet(),
@@ -47,7 +51,7 @@ class ActiveStateTest {
     ) = Active(
         outgoingPendingRequest = outgoingPendingRequest,
         incomingRequests = incomingRequests,
-        pendingMessages = pendingMessages,
+        pendingMessages = pending(pendingMessages),
         expiry = 10uL,
         maxStatementSize = MAX_STATEMENT_SIZE,
         canCompact = canCompact,
@@ -467,7 +471,7 @@ class ActiveStateTest {
     @Test
     fun `initialization auto-acks restored unresponded requests`() {
         val unresponded = request(message(10, 1), requestId = "unresponded")
-        val initialization = Initialization(emptyList(), MAX_STATEMENT_SIZE, canCompact = true)
+        val initialization = Initialization(pending(emptyList()), MAX_STATEMENT_SIZE, canCompact = true)
 
         val recorder = recordTransition(
             initialization,
@@ -488,7 +492,7 @@ class ActiveStateTest {
     @Test
     fun `initialization with oversized backlog and canCompact compacts on activation`() {
         val backlog = listOf(message(60, 1), message(60, 2))
-        val initialization = Initialization(backlog, MAX_STATEMENT_SIZE, canCompact = true)
+        val initialization = Initialization(pending(backlog), MAX_STATEMENT_SIZE, canCompact = true)
 
         val recorder = recordTransition(
             initialization,
@@ -506,7 +510,7 @@ class ActiveStateTest {
     @Test
     fun `initialization without canCompact packs backlog partially as before`() {
         val backlog = listOf(message(60, 1), message(60, 2))
-        val initialization = Initialization(backlog, MAX_STATEMENT_SIZE, canCompact = false)
+        val initialization = Initialization(pending(backlog), MAX_STATEMENT_SIZE, canCompact = false)
 
         val recorder = recordTransition(
             initialization,
