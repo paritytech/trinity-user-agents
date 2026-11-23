@@ -10,6 +10,7 @@ public protocol ProductAccountHolding: Sendable {
     func deriveProductSubtreePublicKey(for productId: ProductId) throws -> Data
 
     func deriveStatementStoreAccount(for productId: ProductId) throws -> any WalletManaging
+    func statementStoreSignerKeyId(for productId: ProductId) -> String
     func deriveBulletInAccount(for productId: ProductId) throws -> any WalletManaging
 
     func deriveSmartContractAccount(

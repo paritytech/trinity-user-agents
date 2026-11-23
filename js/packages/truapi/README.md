@@ -108,6 +108,8 @@ defined in the [protocol specification](../../../docs/design/truapi-protocol.md#
 - **TrUAPI transport** that handles request, response, subscription, and handshake framing.
 - **Generated domain clients and types** produced from the Rust API contract.
 - **SCALE codec helpers** used by the generated code, also re-exported for direct use.
+- **`ringCollectionId(name)`**, which encodes a ring collection name as the 32-byte `CollectionId`
+  junction of a `RingLocation`.
 - **Sandbox bootstrap** (`@parity/truapi/sandbox`) that detects the host environment, builds the
   matching provider, and exposes a cached client - see below.
 
@@ -143,8 +145,8 @@ const unsubscribe = subscribeConnectionStatus((status) => {
 | `subscribeConnectionStatus(cb): () => void` | Connected / disconnected status listener.       |
 | `connectWebSocketHost(url): TrUApiClient`   | Use a host that serves frames over a WebSocket. |
 
-Native and CLI browser hosts inject a shared SDK client. Keep the client
-returned by `getClientSync()`:
+Native and CLI browser hosts inject a frame channel, and the SDK builds its
+client over it. Keep the client returned by `getClientSync()`:
 it remains usable when the host replaces a disconnected connection. A request or
 subscription whose frame reached the host fails: the request rejects with
 `ConnectionResetError` and the subscription ends with that error as its cause. A
@@ -152,8 +154,9 @@ call still waiting to be sent goes out on the next connection that completes its
 handshake, and rejects with `ConnectionResetError` only when the connection stops
 redialing. Recreate read/watch subscriptions and discard old chain handles before
 resuming work. Registered host-initiated handlers remain
-installed. Older SDKs use a small MessagePort adapter and require a page reload
-after disconnect.
+installed. SDKs that predate the injected transport use a small MessagePort
+adapter, which the host keeps across a replaced connection; there a request or
+subscription the lost connection carried ends with a `HostFailure` error.
 
 The shared connection attempts one immediate reconnect. If a reconnect fails
 while the page is visible, it tries again after 250 ms, 1 s and 4 s. After that,

@@ -24,7 +24,7 @@ use crate::{
 			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		authority_cancellation_error,
-		contacts::ContactHandles,
+		contacts::ContactHandleKey,
 		product_manifest::{
 			AuthorizedAccess, require_context_access, ring_vrf_key_access_granted,
 			ring_vrf_key_access_granted_or_consent,
@@ -287,6 +287,15 @@ impl AccountHolder for WalletAccountHolder {
 			.lock()
 			.expect("wallet lifecycle mutex poisoned")
 			.require_session(self.session_state.current(), session)
+	}
+
+	/// The install-wide secret this host answers pairing proposals with,
+	/// generated and persisted on first read.
+	async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.encryption_secret()
+			.await
+			.map(Some)
+			.map_err(|reason| AuthorityError::Unknown { reason })
 	}
 
 	async fn allocate_grants<'a>(
@@ -730,10 +739,11 @@ impl AccountHolder for WalletAccountHolder {
 		self.with_keys(session, |keys| keys.derive_entropy(product_id, context))
 	}
 
-	fn contact_handles(
+	fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<ContactHandles, AuthorityError> {
-		self.with_keys(session, |keys| Ok(keys.contact_handles()))
+		product_id: &ProductId,
+	) -> Result<ContactHandleKey, AuthorityError> {
+		self.with_keys(session, |keys| Ok(keys.contact_handle_key(product_id)))
 	}
 }

@@ -1,7 +1,7 @@
 [package]
 name = "trinity-stack"
 # Follows @parity/trinity-stack's version; scripts/sync-release-versions.mjs writes it.
-version = "0.2.1"
+version = "0.3.0"
 edition.workspace = true
 license.workspace = true
 description = "Parses, verifies and signs Trinity stack descriptors; ships to JavaScript as @parity/trinity-stack"
@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["polkadot", "trinity", "descriptor", "ed25519"]
 categories = ["cryptography::cryptocurrencies", "parser-implementations"]
 # The conformance vectors and their generator stay in the repository.
-include = ["src/", "schema/", "tests/fixtures/", "README.md", "LICENSE"]
+include = ["src/", "schema/", "known-stacks.json", "tests/fixtures/", "README.md", "LICENSE"]
 
 [lib]
 # `cdylib` is the wasm-bindgen bundle @parity/trinity-stack ships.

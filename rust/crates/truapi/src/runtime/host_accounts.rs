@@ -154,6 +154,11 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.holder.current_session()
 	}
 
+	/// This device's X25519 encryption secret, as the account holder keeps it.
+	pub async fn device_encryption_secret(&self) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.holder.device_encryption_secret().await
+	}
+
 	/// The grant guard, taken while `session` is still current, and that session.
 	fn hold_session(
 		&self,
@@ -626,12 +631,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.holder.derive_entropy(session, product_id, context)
 	}
 
-	/// Contact handles under the selected account holder.
-	pub fn contact_handles(
+	/// The handle key of `product_id` under the selected account holder.
+	pub fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<super::contacts::ContactHandles, AuthorityError> {
-		self.holder.contact_handles(session)
+		product_id: &ProductId,
+	) -> Result<super::contacts::ContactHandleKey, AuthorityError> {
+		self.holder.contact_handle_key(session, product_id)
 	}
 
 	/// Seed a subtree without an account-holder exchange.

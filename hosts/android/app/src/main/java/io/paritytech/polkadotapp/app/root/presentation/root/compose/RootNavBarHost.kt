@@ -31,6 +31,7 @@ fun RootNavBarHost(
     val openApps by viewModel.openApps.collectAsStateWithLifecycle()
     val tooltipVisible by viewModel.isScannerTooltipVisible.collectAsStateWithLifecycle()
     val dockletTip by viewModel.dockletTip.collectAsStateWithLifecycle()
+    val dockletAutoHideEnabled by viewModel.dockletAutoHideEnabled.collectAsStateWithLifecycle()
 
     RootNavBarOverlay(
         barMode = barMode,
@@ -42,6 +43,7 @@ fun RootNavBarHost(
         scannerTooltipVisible = tooltipVisible,
         openScanPanelRequests = viewModel.scanPanelOpenRequests,
         dockletTip = dockletTip,
+        dockletAutoHideEnabled = dockletAutoHideEnabled,
         dockletInputs = dockletInputs,
         backdropSource = backdropSource,
         onTabSelected = viewModel::onTabSelected,

@@ -113,6 +113,7 @@ fun RootNavBarOverlay(
     scannerTooltipVisible: Boolean,
     openScanPanelRequests: Flow<Unit>,
     dockletTip: DockletTip?,
+    dockletAutoHideEnabled: Boolean,
     dockletInputs: Flow<DockletInput>,
     backdropSource: View?,
     onTabSelected: (BottomTab) -> Unit,
@@ -194,12 +195,17 @@ fun RootNavBarOverlay(
             snapshotFlow { hideState.hiddenFraction }.collect(onBarHiddenFraction)
         }
 
-        LaunchedEffect(barMode) {
-            if (barMode is TabBarMode.TuckedOverScreen) hideState.tuck()
-        }
         val glowMasks = rememberDockletGlowMasks()
         val barVisibility = remember { MutableTransitionState(barShown) }
         barVisibility.targetState = barShown
+        var previousBarMode by remember { mutableStateOf<TabBarMode?>(null) }
+        LaunchedEffect(barMode) {
+            if (barMode is TabBarMode.TuckedOverScreen) {
+                val barWasShown = previousBarMode?.showsBar == true && barVisibility.isIdle && barVisibility.currentState
+                if (barWasShown) hideState.slideTuck() else hideState.tuck()
+            }
+            previousBarMode = barMode
+        }
         val barGone by remember { derivedStateOf { barVisibility.isIdle && !barVisibility.currentState } }
         LaunchedEffect(barMode, barGone) {
             if (barMode is TabBarMode.HiddenByScreen && barGone) hideState.untuck()
@@ -331,6 +337,7 @@ fun RootNavBarOverlay(
             if (barShown) {
                 DockletAutoHideEffect(
                     hideState = hideState,
+                    enabled = dockletAutoHideEnabled,
                     searchOpen = pull.scanExpanded,
                     keyboardUp = keyboardUp,
                     tipShown = (hideState.countsAsHidden && dockletTip != null) || tooltipVisible,

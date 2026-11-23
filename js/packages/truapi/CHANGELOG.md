@@ -1,5 +1,136 @@
 # @parity/truapi
 
+## 0.32.0
+
+### Major Changes
+
+- f73c18e: The game product, Jollity (`dim2` on every network), reads the dotNS usernames of the unblocked chat contacts
+  of the user with `contacts.usernames({})`, which answers `{ usernames }` without a prompt. Any other product, and a
+  host that lists no usernames, gets `Unsupported`. While nobody is signed in, Jollity gets a domain error with the
+  reason `No active session`.
+
+  A JS host serving contacts passes `contactUsernames` beside `contacts` and `pickContact`. The `contacts` host
+  callbacks now require `contactUsernames`, so a TypeScript host that serves contacts fails to compile until it adds it,
+  and one that cannot list usernames returns `{ tag: "Unsupported" }`. Native hosts get `contactUsernames` on
+  `ContactsHostBridge` with a default that answers `Unsupported`.
+
+- 5710f49: Three envelope codecs take the name of the payload they carry: `VersionedHostCreateTransactionRequest` is now
+  `VersionedProductAccountTxPayload`, `VersionedHostCreateTransactionWithLegacyAccountRequest` is
+  `VersionedLegacyAccountTxPayload`, and `VersionedRemotePreimageSubmitError` is `VersionedPreimageSubmitError`. Code
+  that names one of these types, such as the error of `preimage.submit`, uses the new name. The bytes on the wire are
+  unchanged. `TRUAPI_WIRE_SCHEMA_HASH` changes with the names, so a debugger built before this release does not decode
+  frames from a host built after it.
+- ed0b17b: A funding provider's screen opens only when the host opens it, never on the worker's own call.
+
+  Breaking for native hosts:
+  - `NativeFundingCallbacks` gains `provider_frame_requested(provider_id, intent)`. The core holds the provider's
+    `presentFrame` until the host calls `open_provider_frame(intent)`: at once while the user looks at the session,
+    otherwise once the user taps a notice. `present_provider_frame` is called only after that.
+  - `funding_frame_waiting(intent)` tells whether a screen still waits, so a host can show the notice again after
+    redrawing.
+
+- 12386cf: A product inside a native host encodes its own frames. The host's container injects
+  `window.__HOST_API_TRANSPORT__`, a frame channel over the host's connection, and the SDK builds its own client over
+  it. A product therefore speaks the protocol version it was built against, whatever version of `@parity/truapi` the
+  host was built with.
+  - `@parity/truapi/sandbox` exports the `HostTransport` interface a host implements. The SDK only knows the interface.
+  - The SDK does not read `window.__HOST_API_CLIENT__`, and hosts do not publish it. SDKs from 0.19.0 that looked for it
+    use `window.__HOST_API_PORT__` instead, which also carries frames they encode themselves.
+  - `window.__HOST_API_PORT__` survives a replaced host connection. A frame sent with no connection waits for the next
+    one. A call or subscription the lost connection carried ends with a `HostFailure` error, and a stream the host
+    started is stopped. SDKs on the port see no connection status change.
+  - `@parity/truapi/internal` exports `createWebSocketProviderFactory`. `createHostConnection` and `HostConnection` are
+    not exported: the connection is the host's and lives in the host's container.
+  - A call the host lost fails with the `ConnectionResetError` of the product's own SDK, and the client stays usable
+    across reconnects. A protocol error frame the SDK cannot decode fails the calls in flight the same way.
+
+- 7774baa: `RendererNode::Materials` replaces `Effect`, which is removed with `EffectProps` and `Rainbow`. A `Materials`
+  node names materials by ID with their arguments and holds the content they draw over. Hosts draw it as its children
+  for now, and refuse a tree that still carries `Effect`.
+
+  `system.featureSupported` takes a `Materials` question (format version, features). Products ask it before sending
+  materials. A host answers yes only when it draws them. A host built before this release cannot read the question and
+  answers with an error, which products read as no.
+
+  `renderer.failureSubscribe` reports `Materials` nodes that fell back, on a host that answers yes.
+
+  Native hosts map `RendererNode.materials` and answer `HostFeatureSupportedRequest.materials` in their exhaustive
+  switches.
+
+- ed0b17b: Native hosts offer only published funding providers: `set_funding_provider_config` takes the published names
+  alone, and `bundled_funding_providers` is gone. Each name carries no TLD (`fundtest-provider`, not
+  `fundtest-provider.paseo`): the core reads it on the network it is connected to, so one remote configuration serves
+  every network, and a name that names a TLD is skipped. `FundingProviderEntry`, `FundingProviderApp` and
+  `FundingProviderOrigin` stay on the Rust runtime, where `set_funding_providers` takes them.
+
+### Minor Changes
+
+- fb833d9: The core hands a host a structured fact as well as a log line. `CoreEvent` builds one from a marker and typed
+  attributes and `HostCallbacks::on_core_event` carries it over, so a host gives its reporter attributes it can group
+  and filter by instead of prose it can only store. A key is written in the core's own source and a value is a label, a
+  count or a condition, each bounded on the way out. One marker table gates both ways out of the core, and `HostBridge`
+  defaults the new callback to nothing on iOS and Android.
+- 12ff192: `@parity/truapi` exports `ExecutableKind` and its codec. `@parity/truapi-host` re-exports both, so imports
+  from either package work.
+- fb1ed6d: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- 7443158: With `--execution-kind worker` and `TRUAPI_POCKET_CARDS`, the `truapi-host` signing host answers yes to the
+  materials question. It opens a render stream for each card as the product connects, resolves the materials of every
+  face the product draws as a phone does, reports each fallback through `Renderer::failureSubscribe`, and records each
+  result in `TRUAPI_POCKET_LOG`.
+- 95d3229: `truapi-host materials resolve <face.json>` prints what a card face's materials resolve to, with the same
+  core a phone uses: each `Materials` node loading, ready with its shaders, or drawn plain and why. `--materials <dir>`
+  keeps local material files first, `--metal` builds iOS shaders instead of Android's, and `--out <dir>` writes the
+  shaders.
+- 8c61cfa: `nftPurse.listCheques` returns every cheque the calling product created on this host, oldest first, exactly
+  as `createCheque` returned it, with the purse its items left, its destination and its creation time. A product that
+  lost a cheque can deliver it again or revoke it.
+- fb1ed6d: The core serves the card back. `expandedCard.setBackShown` reaches the host through the new
+  `HostBridge.setExpandedCardBackShown`, which defaults to `unsupported` and answers with the new
+  `ExpandedCardTurnOutcome`. The core keeps a card's back beside its front, and `pocketCardFace` takes a side that the
+  Kotlin and Swift wrappers default to the front. A product connection receives a press on a back only once it has drawn
+  that back. The core empties the bytes of an inline image a host must not draw, in rendered trees and in face files, so
+  it draws as empty space.
+- fb1ed6d: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+
+### Patch Changes
+
+- b6c9e41: truapi-host ships refreshed stack descriptors for paseo-next-v2 (sequence 1794499750). truapi-provider and
+  truapi-host ship refreshed light-client chain specs.
+- db367fd: dotNS reads open no chain follow. Manifest, username and public profile lookups read Asset Hub over JSON-RPC
+  at its best block, so however many run at once the core's connection keeps its follow for the transaction client.
+- ef6c4de: `expandedCard.setFaceShown` is documented as covering the face of the card under the calling Widget rather
+  than moving it away: with `shown: false` the face stays drawn and touches over it go to the Widget, and neither state
+  moves the face or resizes the Widget. `UserMoving` on `setFaceShown` and `setBackShown` means the user is moving or
+  turning the card. The wire format is unchanged.
+- be15021: A funding session the core starts on its best quote while the overlay is still up is announced to the host,
+  so the host no longer treats it as one the user left unstarted.
+- c45e73a: Funding warnings and errors no longer carry the session's intent, so it does not leave the device with
+  exported core logs.
+- 0fd13a7: A funding provider republished on dotNS is offered as it now publishes on the next launch: after showing its
+  cached Worker manifest, the core reads dotNS again instead of honouring the cached copy for up to a day.
+- 18ea313: A funding provider whose shipped Worker manifest does not parse, or a bundled one shipped without it, is
+  logged and left out; `set_funding_providers` still offers the rest instead of refusing the whole list. Since nothing
+  in either call can fail any more, `set_funding_providers` and `set_funding_provider_config` no longer return a
+  `Result` (natively `setFundingProviderConfig` no longer throws; an existing `try` or `runCatching` around it still
+  compiles). Bundled product archives also serve the usual web media, document and font types (mp4, webm, mp3, ogg, wav,
+  pdf, avif, xml, csv, eot, webmanifest) with their MIME type rather than `application/octet-stream`.
+- 0be1fba: The core sends at most 512 reads at a time on each chain connection and holds the rest until earlier ones are
+  answered, so a burst of core reads waits instead of failing every request on the connection. A chain send the host
+  rejects closes the connection, so its callers fail instead of hanging.
+- d19447a: A pairing host sends one `ProductSubtreeRequest` to the paired signing host per SSO session and product while
+  one is in flight, and every caller waiting for that subtree takes its answer: `account.get_account`, AutoSigning
+  allocation, and the host's own subtree lookup. A request made after it settles asks again, so a failed fetch is not
+  remembered. A cancelled caller leaves the others waiting, and cancelling the last one withdraws the request from the
+  signing host.
+- f6dc8f0: `sign_vrf` with another product's account follows the rules of the other signing methods: it needs that
+  product's `context` grant, and answers `Rejected` without a prompt otherwise. A first-party product holding the grant
+  signs without a prompt.
+
 ## 0.31.0
 
 ### Major Changes

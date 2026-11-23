@@ -10,12 +10,11 @@ import Products
 ///
 /// Placing one grants no permissions; it still prompts like any other product.
 struct HostPlacedProduct: Sendable {
-    /// Must match the `roomIdSource` the product gives to `createRoom`, which iOS gives the host no
-    /// way to check. The core derives the room id from the product and this source. A product that
-    /// registers another room, or none, gets that chat as well and leaves this one empty beside it.
-    /// Pocket's `Definition` names its `cardId` the same way, but owns card ids in a way no host
-    /// owns a room id.
-    let roomIdSource: String
+    /// Must match the room the product registers, which iOS gives the host no way to check. A
+    /// product that registers another room, or none, gets that chat as well and leaves this one
+    /// empty beside it. Pocket's `Definition` names its `cardId` the same way, but owns card ids
+    /// in a way no host owns a room id.
+    let roomId: String
 
     /// Shown until the published manifest resolves and supplies the real name.
     let fallbackName: String
@@ -27,7 +26,7 @@ struct HostPlacedProduct: Sendable {
 enum HostPlacedProducts {
     /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
     static let all: [HostPlacedProduct] = [
-        HostPlacedProduct(roomIdSource: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
+        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
     ]
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing

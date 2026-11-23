@@ -132,14 +132,14 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
-        // Reading the client is what dials the host, so each fresh page reports its own connection.
+        // Subscribing to frames is what dials the host, so each fresh page reports its own connection.
         private const val PAGE = """
             <!doctype html><html><script>
-            const host = window.__HOST_API_CLIENT__;
+            const host = window.__HOST_API_TRANSPORT__;
             host.subscribeConnectionStatus(status => {
               if (status === 'connected') report.status(status + ' ' + location.pathname);
             });
-            host.client;
+            host.subscribe(() => {});
             </script></html>
         """
     }

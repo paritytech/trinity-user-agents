@@ -254,29 +254,30 @@ private fun ChatFeedScreenInternal(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }
             ) {
-                chatMessagesLoadingState.onLoaded {
-                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
-                        ChatFeed(
-                            chatMessagesState = it,
-                            username = username,
-                            headerRenderer = headerRenderer,
-                            footerRenderer = footerRenderer,
-                            showTimestamps = config.showTimestamps,
-                            highlightEvents = highlightEvents,
-                            scrollToPosition = scrollToPosition,
-                            onMessageAction = onMessageAction,
-                            onUnreadMessageVisible = onUnreadMessageVisible,
-                            onMessageLongPress = onMessageLongPress,
-                            isInputEnabled = canReplyToMessages,
-                            customBubbleStyle = customAppearance?.bubbleStyle,
-                            revealingMessageId = revealingMessageId,
-                            onMessageRevealComplete = onMessageRevealComplete,
-                            slideInNewMessages = customAppearance != null,
-                            showNewMessagesSeparator = config.showNewMessagesSeparator,
-                            dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
-                        )
+                Box(modifier = Modifier.shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }) {
+                    chatMessagesLoadingState.onLoaded {
+                        CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
+                            ChatFeed(
+                                chatMessagesState = it,
+                                username = username,
+                                headerRenderer = headerRenderer,
+                                footerRenderer = footerRenderer,
+                                showTimestamps = config.showTimestamps,
+                                highlightEvents = highlightEvents,
+                                scrollToPosition = scrollToPosition,
+                                onMessageAction = onMessageAction,
+                                onUnreadMessageVisible = onUnreadMessageVisible,
+                                onMessageLongPress = onMessageLongPress,
+                                isInputEnabled = canReplyToMessages,
+                                customBubbleStyle = customAppearance?.bubbleStyle,
+                                revealingMessageId = revealingMessageId,
+                                onMessageRevealComplete = onMessageRevealComplete,
+                                slideInNewMessages = customAppearance != null,
+                                showNewMessagesSeparator = config.showNewMessagesSeparator,
+                                dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                            )
+                        }
                     }
 
                     if (it.messages.isEmpty() && emptyRoomText != null) {
@@ -309,6 +310,7 @@ private fun ChatFeedScreenInternal(
                         onUnblockUserClick = onUnblockUserClick,
                         onAllowIdentitySigningClick = onAllowIdentitySigningClick,
                         onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
+                        dockletHiddenFraction = { barHiddenFraction.value },
                         onHeightChanged = { footerHeight = it },
                     )
                 }

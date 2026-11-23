@@ -7,12 +7,12 @@ use parity_scale_codec::{Decode, Encode};
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
 	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
-	NftPurseItemKey, X25519PublicKey,
+	NftPurseChequeRecord, NftPurseId, NftPurseItemKey, X25519PublicKey,
 };
 use zeroize::Zeroizing;
 
 use super::{
-	NftPurses,
+	NftPurses, dao,
 	operation::{cheque_idempotency_key, operation_key},
 };
 use crate::{
@@ -23,6 +23,7 @@ use crate::{
 		OperationKey, PurseId, ReclaimRequest, StartOperationError,
 	},
 	platform::ProductId,
+	store::DbError,
 };
 
 /// Version of the cheque format this host writes.
@@ -53,17 +54,36 @@ pub fn cheque_id_for(destination: &NftPurseChequeDestination) -> NftPurseChequeI
 /// creator and its items idle. Creating it checks both again.
 pub struct PreparedCheque {
 	ledger: NftLedger,
+	creator: ProductId,
 	to: NftPurseChequeDestination,
 	id: NftPurseChequeId,
 	request: HandoffRequest,
 }
 
 impl PreparedCheque {
-	/// Hands the items off in the cheque. They are spent from then on.
-	pub async fn create(self) -> Result<NftPurseCheque, HandoffError<SealError>> {
-		let Self { ledger, to, id, request } = self;
+	/// Hands the items off in the cheque and keeps the cheque, with
+	/// `created_at` in Unix milliseconds, for [`NftPurses::list_cheques`]. The
+	/// items are spent from then on.
+	pub async fn create(self, created_at: u64) -> Result<NftPurseCheque, HandoffError<SealError>> {
+		let Self { ledger, creator, to, id, request } = self;
 		let items = request.keys.clone();
-		ledger.hand_off(request, |secrets| seal_cheque(&to, id, &items, secrets)).await
+		let from = NftPurseId(request.from.0);
+		let destination = to.clone();
+		ledger
+			.hand_off(
+				request,
+				|secrets| seal_cheque(&to, id, &items, secrets),
+				move |tx, cheque| {
+					let record = NftPurseChequeRecord {
+						cheque: cheque.clone(),
+						from,
+						destination,
+						created_at,
+					};
+					dao::insert_cheque(tx, &creator, &record)
+				},
+			)
+			.await
 	}
 }
 
@@ -82,7 +102,19 @@ impl NftPurses {
 		let id = cheque_id_for(to);
 		let request = HandoffRequest { from, keys: items, tag: handoff_tag(creator, &id) };
 		self.ledger.validate_can_handoff(&request).await?;
-		Ok(PreparedCheque { ledger: self.ledger.clone(), to: to.clone(), id, request })
+		let ledger = self.ledger.clone();
+		Ok(PreparedCheque { ledger, creator: creator.clone(), to: to.clone(), id, request })
+	}
+
+	/// Every cheque `creator` made on this host, oldest first, each as
+	/// [`PreparedCheque::create`] returned it. Fails only when the database
+	/// fails or holds a cheque that does not decode.
+	pub async fn list_cheques(
+		&self,
+		creator: &ProductId,
+	) -> Result<Vec<NftPurseChequeRecord>, DbError> {
+		let creator = creator.clone();
+		self.db.read(move |conn| dao::cheques_of(conn, &creator)).await
 	}
 
 	/// Starts moving what sits at the keys of `creator`'s cheque `id` back

@@ -6,7 +6,7 @@ use crate::{
 	durable::{
 		engine::DurableRequest,
 		model::DomainId,
-		testing::{FakeChain, extrinsic, test_engine, without_plan},
+		testing::{FakeChain, extrinsic, insert, test_engine, without_plan},
 	},
 	test_support::wait_until,
 };
@@ -51,4 +51,16 @@ fn work_reporting_stops_when_the_engine_is_dropped() {
 	drop(engine);
 
 	wait_until(|| Arc::strong_count(&reported) == 1, "the reporter is dropped with the engine");
+}
+
+/// A domain may be missing from the registry for one start. Its live rows
+/// are left alone until it is back, so they must not keep the host running
+/// recovery that returns at once.
+#[test]
+fn live_rows_of_an_unregistered_domain_are_no_work() {
+	let chain = FakeChain::new(130, 140);
+	let (_dir, engine, _timer) = test_engine(&chain);
+	insert(&engine.db, &DomainId::new("orphan"), extrinsic(1, 100, 64));
+
+	assert!(!block_on(engine.live_work().next()).unwrap().unwrap());
 }

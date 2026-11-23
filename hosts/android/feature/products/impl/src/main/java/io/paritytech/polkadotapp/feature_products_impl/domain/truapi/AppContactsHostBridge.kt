@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.blake2b256
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.hasEstablishedChat
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onEach
@@ -14,13 +15,15 @@ import kotlinx.coroutines.runBlocking
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.HostContactUsernames
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
- * Resolves the contact handles a transaction names back to accounts, and draws
- * the picker. The list never leaves the host: the core asks about handles, and
- * a product gets 32 bytes for the one person the user picked.
+ * Resolves the contact handles a transaction names back to accounts, draws the
+ * picker, and lists contact usernames. No account leaves the host: the core
+ * asks about handles, a product gets 32 bytes for the one person the user
+ * picked, and the game product gets usernames only.
  *
  * The lookup runs inline on the core's dispatcher thread, so it answers from
  * the latest contact snapshot and a handle index kept per handle key: a map
@@ -30,20 +33,22 @@ class AppContactsHostBridge @Inject constructor(
     private val directory: ContactDirectory,
     private val picks: TrUAPIContactPicks,
 ) : ContactsHostBridge {
-    private class HandleIndex(val handleKey: ByteArray, val accountsByHandle: Map<DataByteArray, ByteArray>)
-
     private val lock = Any()
 
     /** Unblocked contacts' accounts, from the latest snapshot. */
     private var accounts: List<ByteArray>? = null
 
-    /** Rebuilt when the contacts or the key change; the key changes with the session. */
-    private var index: HandleIndex? = null
+    /** Usernames of the unblocked contacts with an established chat, from the latest snapshot. */
+    private var usernames: List<String>? = null
+
+    /** One index per handle key: the key differs per product, and changes with the session. */
+    private val indexes = mutableMapOf<DataByteArray, Map<DataByteArray, ByteArray>>()
 
     /** Take the latest contacts, dropping the handle index built from the old ones. */
     internal fun update(contacts: List<Contact>) = synchronized(lock) {
         accounts = contacts.map { it.accountId.value }
-        index = null
+        usernames = contacts.usernames()
+        indexes.clear()
     }
 
     /**
@@ -57,15 +62,19 @@ class AppContactsHostBridge @Inject constructor(
     }
 
     private fun handleIndex(handleKey: ByteArray): Map<DataByteArray, ByteArray> {
+        val key = handleKey.toDataByteArray()
         val snapshot = synchronized(lock) {
-            index?.takeIf { it.handleKey.contentEquals(handleKey) }?.let { return it.accountsByHandle }
+            indexes[key]?.let { return it }
             accounts
         }
         val current = snapshot ?: runBlocking { directory.getContacts().map { it.accountId.value } }
         val built = current.associateBy { contactHandle(handleKey, it).toDataByteArray() }
         synchronized(lock) {
             // Kept only if no newer snapshot landed while hashing.
-            if (accounts === snapshot) index = HandleIndex(handleKey, built)
+            if (accounts === snapshot) {
+                if (indexes.size >= MAX_HANDLE_INDEXES) indexes.clear()
+                indexes[key] = built
+            }
         }
         return built
     }
@@ -95,6 +104,22 @@ class AppContactsHostBridge @Inject constructor(
     }
 
     /**
+     * The usernames of the unblocked contacts the user has an established chat
+     * with, as stored with each contact. A contact with a pending chat request
+     * is left out, though the picker still offers it. Only before the first
+     * snapshot does it fetch, blocking the caller, and it does not keep what it
+     * read, so a list with no snapshot behind it cannot go stale.
+     */
+    override fun contactUsernames(productId: ProductId): HostContactUsernames {
+        val snapshot = synchronized(lock) { usernames }
+        val current = snapshot ?: runBlocking { directory.getContacts().usernames() }
+        return HostContactUsernames.Listed(current)
+    }
+
+    private fun List<Contact>.usernames(): List<String> =
+        filter { it.hasEstablishedChat() }.mapNotNull { it.username?.takeIf(String::isNotEmpty) }
+
+    /**
      * Emits whenever someone leaves the user's contacts, removed or blocked.
      * The host passes it on to the core, which drops the contact handles it
      * cached so a removed contact stops resolving. Collecting it also keeps
@@ -104,6 +129,8 @@ class AppContactsHostBridge @Inject constructor(
         .onEach(::update)
         .contactRemovals()
 }
+
+private const val MAX_HANDLE_INDEXES = 16
 
 /** The handle the core knows [account] by under [handleKey]. */
 internal fun contactHandle(handleKey: ByteArray, account: ByteArray): ByteArray =
