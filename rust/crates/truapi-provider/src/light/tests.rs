@@ -356,6 +356,41 @@ fn statement_requests_are_not_held() {
 	assert_eq!(frame_id(&frame), 2, "the statement subscription is not held");
 }
 
+#[test]
+fn an_unsynced_submit_reports_unknown_without_waiting_for_smoldot() {
+	use smoldot::network::codec::{Proof, Statement, encode_statement};
+
+	let provider = offline_provider();
+	let connection = block_on(provider.connect(RELAY_GENESIS)).unwrap();
+	let mut responses = connection.responses();
+	let statement = encode_statement(&Statement {
+		proof: Some(Proof::Sr25519 { signer: [9; 32], signature: [0; 64] }),
+		decryption_key: None,
+		expiry: u64::MAX,
+		channel: None,
+		topics: vec![[3; 32]],
+		data: Some(vec![7; 4]),
+	})
+	.unwrap();
+	connection.send(
+		serde_json::json!({
+			"jsonrpc": "2.0", "id": 42, "method": "statement_submit",
+			"params": [format!("0x{}", hex::encode(statement))]
+		})
+		.to_string(),
+	);
+	let response = block_on(responses.next()).unwrap();
+	assert_eq!(
+		serde_json::from_str::<serde_json::Value>(&response).unwrap(),
+		serde_json::json!({
+			"jsonrpc": "2.0", "id": 42,
+			"result": { "status": "unknown", "reason": "allowanceUnavailable" }
+		})
+	);
+	connection.close();
+	assert!(block_on(responses.next()).is_none());
+}
+
 /// A chain that has not synced must not hold requests without limit: the
 /// ones past the budget are refused, and the ones within it are answered
 /// once the chain syncs.

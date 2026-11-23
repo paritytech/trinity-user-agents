@@ -5,6 +5,16 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Light-client statement submissions check the signer's allowance against verified
+  finalized People-chain storage before gossip. Missing or depleted allowance
+  returns `noAllowance`, oversized data returns `dataTooLarge`, and an unavailable
+  storage proof returns `unknown` / `allowanceUnavailable` for a later retry,
+  without broadcasting or acknowledging success. Remote-node RPC is unchanged.
+
 ## [0.32.0] - 2026-11-20
 
 ### Added

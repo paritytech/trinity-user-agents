@@ -340,8 +340,10 @@ pub async fn subscribe_match_all(
 ///
 /// `statement_submit` returns an RPC error only for internal failures; a
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
-/// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
-/// rejections surface instead of being silently dropped.
+/// `Ok(SubmitResult)`. Treat only `new`/`known` as success. The light provider
+/// checks finalized allowance before gossip; `unknown`/`allowanceUnavailable`
+/// means it could not read verified capacity and did not broadcast. That result
+/// remains an error for a later caller retry, not a cached submission.
 async fn submit(rpc_client: &RpcClient, statement: &[u8]) -> Result<(), StatementSubmitError> {
 	let result = rpc_client
 		.request::<Value>(
