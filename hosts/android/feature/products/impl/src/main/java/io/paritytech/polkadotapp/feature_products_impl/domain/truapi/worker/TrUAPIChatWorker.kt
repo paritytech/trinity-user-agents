@@ -4,11 +4,13 @@ import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.hasMaterials
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
@@ -38,6 +40,8 @@ import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RenderContext
+import uniffi.truapi.RendererNode
+import kotlin.time.Duration.Companion.seconds
 
 class TrUAPIChatWorker(
     private val productId: ProductId,
@@ -200,6 +204,7 @@ class TrUAPIChatWorker(
                 .collect { node ->
                     drew = true
                     emit(Result.success(node.toJsWidget()))
+                    if (node.hasMaterials()) scope.launch { reportMaterialsUnsupported(node, context, label) }
                 }
             // A stream closed before its first tree would otherwise leave the cell loading for the
             // execution's whole life; a card keeps its last face, a cell has none.
@@ -208,6 +213,15 @@ class TrUAPIChatWorker(
             // The execution went away, not the render: end quietly and let the replacement draw.
             .catch { cause -> if (cause !is CancellationException) throw cause }
             .reopenAfterFailure("TrUAPI chat render for $label")
+
+    // A chat-context resolution settles every node `Unsupported` and reports it before its first value.
+    private suspend fun TrUAPIProductExecution.reportMaterialsUnsupported(tree: RendererNode, context: RenderContext, label: String) {
+        runCancellableCatching {
+            resolveMaterials(tree, context, floatFilterable = false).use { resolution ->
+                withTimeoutOrNull(MATERIALS_REPORT_TIMEOUT) { resolution.resolved.first { it != null } }
+            }
+        }.logFailure("TrUAPI chat materials report for $label")
+    }
 
     private class StreamDrewNothing : Exception("the render stream ended without drawing")
 
@@ -220,5 +234,6 @@ class TrUAPIChatWorker(
 
     private companion object {
         const val NATIVE_PEER = "native"
+        val MATERIALS_REPORT_TIMEOUT = 1.seconds
     }
 }

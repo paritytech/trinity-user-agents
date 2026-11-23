@@ -398,11 +398,11 @@ describe("connectWebSocketHost", () => {
         expect(sandbox.getClientSync()).toBe(client);
     });
 
-    it("uses an explicitly selected WebSocket without reading an injected client", async () => {
+    it("uses an explicitly selected WebSocket without reading an injected transport", async () => {
         currentWindow = installFakeWebviewWindow();
-        Object.defineProperty(currentWindow.win, "__HOST_API_CLIENT__", {
+        Object.defineProperty(currentWindow.win, "__HOST_API_TRANSPORT__", {
             get() {
-                throw new Error("explicit endpoints must not adopt the injected client");
+                throw new Error("explicit endpoints must not adopt the injected transport");
             },
         });
         const sandbox = await importSandbox();

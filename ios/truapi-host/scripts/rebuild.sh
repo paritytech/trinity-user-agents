@@ -28,5 +28,6 @@ npm --prefix "$TRUAPI_ROOT" ci --ignore-scripts
 npm --prefix "$TRUAPI_ROOT/js/packages/truapi" run build
 npm --prefix "$TRUAPI_ROOT/js/container" install --no-fund --no-audit
 npm --prefix "$TRUAPI_ROOT/js/container" run build
+npm --prefix "$TRUAPI_ROOT/js/container" run build:test-sdk
 
 echo "TrUAPIHost package outputs rebuilt in $PACKAGE_ROOT"

@@ -301,6 +301,7 @@ class ChatFeedInteractor @Inject internal constructor(
 
     fun setChatActive(chatId: ChatId) {
         chatActiveTracker.setActive(chatId)
+        chatNotificationPublisher.cancelChatNotification(chatId)
     }
 
     fun setChatInactive() {

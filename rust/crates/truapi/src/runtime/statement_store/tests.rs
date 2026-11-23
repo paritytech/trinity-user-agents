@@ -1,14 +1,14 @@
 use super::{
-	super::{LocalActivation, RuntimeServices, SigningHostRole, signing_host::WalletAccountHolder},
+	super::{
+		HostRole, LocalActivation, RuntimeServices, SigningHost, signing_host::WalletAccountHolder,
+	},
 	*,
 };
 use crate::{
 	Spawner,
 	host_logic::{
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
-			index_bytes,
-		},
+		product_account::{SR25519_SIGNING_CONTEXT, index_bytes},
+		root_entropy::RootEntropy,
 		statement_store::{MAX_MATCH_ANY_TOPICS, SUBMIT_STATEMENT_METHOD, TopicFilterKind},
 	},
 	platform::{CoreStorageKey, ProductContext},
@@ -58,14 +58,14 @@ fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 
 fn signing_host_runtime(
 	product_id: &str,
-) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	signing_host_runtime_on(product_id, Arc::new(StubPlatform::default()))
 }
 
 fn signing_host_runtime_on(
 	product_id: &str,
 	platform: Arc<StubPlatform>,
-) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHost>) {
 	let platform: Arc<dyn crate::platform::Platform> = platform;
 	let services = RuntimeServices::new(
 		platform.clone(),
@@ -78,8 +78,8 @@ fn signing_host_runtime_on(
 		crate::test_support::paseo_test_stack(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	let signing_host = SigningHost::new(services.clone());
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),
@@ -126,9 +126,9 @@ fn statement_store_create_proof_signing_host_uses_product_key() {
 	let (host, _signing_host) = signing_host_runtime("myapp.dot");
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let product_keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let product_keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let expected_signer = product_keypair.public.to_bytes();
 	let cx = CallContext::default();
 	let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -160,9 +160,9 @@ fn statement_store_create_proof_confirms_a_cross_product_account() {
 	let (host, _signing_host) = signing_host_runtime_on("dim2next.paseo", platform.clone());
 	let statement = statement();
 	let payload = statement_payload(statement.clone());
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let owner =
-		derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0)).unwrap();
+	let owner = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("dim2.paseo"), index_bytes(0))
+		.unwrap();
 	let request = RemoteStatementStoreCreateProofRequest::V1(
 		latest::RemoteStatementStoreCreateProofRequest {
 			product_account_id: account_id("dim2.paseo", 0),

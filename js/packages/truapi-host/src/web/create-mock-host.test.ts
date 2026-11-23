@@ -71,6 +71,27 @@ describe("createMockHost callbacks", () => {
     expect(await callbacks.productStorage.read("k")).toBeUndefined();
   });
 
+  it("clearing a product removes only the values it owns", async () => {
+    const host = createMockHost();
+    const storage = host.callbacks.productStorage;
+    // The second id starts with the first, so a bare prefix match would hit it.
+    const cleared = "truapi:product-storage:v1:9:myapp.dot:theme";
+    const neighbour = "truapi:product-storage:v1:16:myapp.dotapp.dot:theme";
+    await storage.write(cleared, new Uint8Array([1]));
+    await storage.write(neighbour, new Uint8Array([2]));
+    const updates = storage.subscribeStorage(cleared)[Symbol.asyncIterator]();
+    await updates.next();
+
+    await storage.clearProduct(asProductId("myapp.dot"));
+
+    expect([
+      await storage.read(cleared),
+      await storage.read(neighbour),
+    ]).toEqual([undefined, new Uint8Array([2])]);
+    // A running product following the key must not keep the deleted value.
+    expect(await drain(updates, 1)).toEqual([ok({ value: undefined })]);
+  });
+
   it("core storage round-trips per slot", async () => {
     const { callbacks } = createMockHost();
     const key: CoreStorageKey = {
@@ -961,6 +982,9 @@ describe("createMockHost TestHostAPI parity", () => {
     await expect(storage.callbacks.productStorage.clear("k")).rejects.toThrow(
       "disk",
     );
+    await expect(
+      storage.callbacks.productStorage.clearProduct(asProductId("mock.dot")),
+    ).rejects.toThrow("disk");
     await expect(
       storage.callbacks.coreStorage.readCoreStorage({ tag: "AuthSession" }),
     ).rejects.toThrow("disk");
