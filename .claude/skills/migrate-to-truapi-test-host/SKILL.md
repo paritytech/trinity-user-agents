@@ -507,10 +507,12 @@ missed:
 
 - **Unserved chains are unsupported, as on a real host.** The mock answers
   `featureSupported` from the chains the suite declares in `networks` or
-  `chain` (or `mock.servedChains`), so a product's "network unavailable" path
-  runs. A suite that proxies a chain through `mock.chainProxies` alone also
-  lists its genesis in `mock.servedChains`. `mock: { onlyServedChains: false }`
-  reports every chain as supported.
+  `chain`, or failing that from the chains in `runtimeConfig.testStack`, so a
+  product's "network unavailable" path runs. `mock.servedChains` replaces that
+  list rather than adding to it. A suite that proxies a chain through
+  `mock.chainProxies` without declaring it lists its genesis in
+  `mock.servedChains`. `mock: { onlyServedChains: false }` reports every chain
+  as supported.
 - **Role suffixes.** Besides `-people`, an id ending in `-asset-hub` or
   `-bulletin` selects that role. Anything else is a relay chain, so ids such as
   `asset-hub` or `people` with no network prefix are all read as relay chains.
