@@ -218,7 +218,7 @@ private fun CryptoDeposit(content: FundingDepositContent.Crypto, onCopy: (String
                 value = content.address,
                 shown = content.address,
                 onCopy = onCopy,
-                icon = content.networkIcon.takeIf { it !is FundingCryptoIcon.Monogram },
+                icon = content.networkIcon,
             )
         }
     }
@@ -275,7 +275,7 @@ private fun CopyRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
     ) {
-        icon?.let { FundingCryptoIconImage(modifier = Modifier.size(COPY_ROW_ICON_SIZE), icon = it) }
+        icon?.let { FundingCryptoIconImage(modifier = Modifier.size(COPY_ROW_ICON_SIZE), icon = it, monogram = false) }
         NovaText(
             modifier = Modifier.weight(1f),
             text = title,

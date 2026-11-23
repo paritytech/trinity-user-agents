@@ -8,6 +8,7 @@ import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingNetworkLimits
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteList
@@ -95,6 +96,32 @@ class FundingUiMapperTest {
         assertNull(bank.bandLine(FundingBand.ENDED, null))
     }
 
+    @Test
+    fun `a picker draws each network and token with the first listed provider whose routes offer it`() {
+        val crypto = cryptoFlow(
+            cryptoCandidate(providerA, networks = listOf("polkadot"), assets = listOf("USDC")),
+            cryptoCandidate(providerB, networks = listOf("polkadot", "ethereum"), assets = listOf("USDC", "USDT")),
+        )
+
+        assertEquals(
+            listOf("funding-icon:a.dot/networks/polkadot", "funding-icon:b.dot/networks/ethereum", null),
+            crypto.toNetworkRows().map { it.icon.image },
+        )
+        assertEquals(
+            listOf("funding-icon:b.dot/tokens/usdc", "funding-icon:b.dot/tokens/usdt"),
+            crypto.withNetwork("ethereum").toTokensUiState().rows.map { it.icon.image },
+        )
+        assertEquals("funding-icon:a.dot/tokens/usdc", crypto.withNetwork("polkadot").toTokensUiState().rows.first().icon.image)
+    }
+
+    @Test
+    fun `a network or token no provider offers keeps its first letter`() {
+        val crypto = cryptoFlow(cryptoCandidate(providerA, networks = listOf("polkadot"), assets = listOf("USDC")))
+        val base = crypto.toNetworkRows().last()
+
+        assertEquals(FundingCryptoIcon(monogram = "B", image = null), base.icon)
+    }
+
     /** Asks for quotes of the amount on screen, as the funding service reports a new ask of the same amount. */
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount)
 
@@ -119,6 +146,42 @@ class FundingUiMapperTest {
         amount = null,
         country = FundingCountry("DE", "Germany", "EUR", "Euro"),
     ).withAmountText("50")
+
+    private fun cryptoFlow(vararg candidates: FundingCandidate) = FundingFlowState.initial(
+        direction = FundingDirection.IN,
+        cash = FundingCash(precision = 6),
+        format = testCashFormat(),
+        spendable = null,
+        options = FundingOptions(
+            candidates = candidates.toList(),
+            countries = emptyList(),
+            limits = FundingAmountLimits(min = null, max = null),
+            networks = listOf("polkadot", "ethereum", "base").map { FundingNetworkLimits(it, FundingAmountLimits(min = null, max = null)) },
+            rails = listOf(FundingRail.CRYPTO),
+            asset = null,
+            tokens = listOf("USDC", "USDT"),
+            detectedCountry = null,
+        ),
+        amount = null,
+        country = null,
+    )
+
+    private fun cryptoCandidate(providerId: ProductId, networks: List<String>, assets: List<String>) = FundingCandidate(
+        providerId = providerId,
+        routes = listOf(
+            FundingRoute(
+                rail = FundingRail.CRYPTO,
+                directions = listOf(FundingDirection.IN),
+                assets = assets,
+                networks = networks,
+                countries = null,
+            ),
+        ),
+        unsupported = emptyList(),
+        limits = emptyList(),
+        declaresRoutes = true,
+        brand = null,
+    )
 
     private fun candidate(providerId: ProductId) = FundingCandidate(
         providerId = providerId,

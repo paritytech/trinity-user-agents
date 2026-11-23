@@ -8,7 +8,6 @@ import org.junit.Test
 import java.math.BigDecimal
 import java.text.Collator
 import java.util.Locale
-import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingUnitsTest {
     private val cash = FundingCash(precision = 6)
@@ -53,18 +52,5 @@ class FundingUnitsTest {
 
         assertTrue("Germany" in names)
         assertEquals(names.sortedWith(Collator.getInstance(Locale.US)), names)
-    }
-
-    @Test
-    fun `a network's native token shares its logo`() {
-        assertEquals(fundingNetworkIcon("bitcoin"), fundingTokenIcon("BTC"))
-        assertEquals(fundingNetworkIcon("polkadot"), fundingTokenIcon("dot"))
-        assertEquals(FundingCryptoIcon.Drawable(RCommon.drawable.img_crypto_tron), fundingTokenIcon("trx"))
-    }
-
-    @Test
-    fun `a network or token without a logo shows its first letter`() {
-        assertEquals(FundingCryptoIcon.Monogram("B"), fundingNetworkIcon("base"))
-        assertEquals(FundingCryptoIcon.Monogram("W"), fundingTokenIcon("wbtc"))
     }
 }

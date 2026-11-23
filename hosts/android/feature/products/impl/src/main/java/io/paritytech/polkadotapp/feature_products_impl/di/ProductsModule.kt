@@ -84,6 +84,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.Ex
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingIconImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
@@ -272,6 +273,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindProductIconImageLoaderRegistrar(impl: ProductIconImageLoaderRegistrar): ImageLoaderComponentRegistrar
+
+    @Binds
+    @IntoSet
+    fun bindFundingIconImageLoaderRegistrar(impl: FundingIconImageLoaderRegistrar): ImageLoaderComponentRegistrar
 
     @Binds
     @IntoSet
