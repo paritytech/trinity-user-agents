@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals

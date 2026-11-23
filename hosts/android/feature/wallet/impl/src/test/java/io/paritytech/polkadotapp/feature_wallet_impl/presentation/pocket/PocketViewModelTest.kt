@@ -99,6 +99,8 @@ class PocketViewModelTest {
         dispatchers = dispatchers,
         cardOpenRequests = cardOpenRequests,
         tabSelection = tabSelection,
+        materialsGl = mockk(),
+        materialImages = mockk(),
         spaHost = spaHost,
     ).also { created += it }
 

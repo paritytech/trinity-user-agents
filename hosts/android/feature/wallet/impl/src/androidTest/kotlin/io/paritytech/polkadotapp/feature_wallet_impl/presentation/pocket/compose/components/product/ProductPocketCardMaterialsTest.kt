@@ -6,11 +6,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
@@ -25,17 +27,19 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.layer
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.truapi.MaterialShader
 import uniffi.truapi.NodeMaterials
 import uniffi.truapi.ProductId
+import uniffi.truapi.ReadyLayer
 import uniffi.truapi.ResolvedMaterials
 
 @RunWith(AndroidJUnit4::class)
@@ -48,7 +52,7 @@ class ProductPocketCardMaterialsTest {
     fun aMaterialsCardThatHasNotDrawnYetDoesNotCrash() {
         val resolution = mockk<MaterialsResolution>(relaxed = true) {
             every { resolved } returns MutableStateFlow(
-                ResolvedMaterials(listOf(NodeMaterials.Ready(listOf(layer(7, SOLID)))), noiseSeed = 1u),
+                ResolvedMaterials(listOf(NodeMaterials.Ready(listOf(solidLayer()))), noiseSeed = 1u),
             )
         }
         var windowFrame by mutableIntStateOf(0)
@@ -84,15 +88,33 @@ class ProductPocketCardMaterialsTest {
                 face = MutableStateFlow(PocketFace(JsWidget.Text(text = "Loyalty"), resolution)),
                 onFaceAction = { _, _ -> },
                 imageResolver = JsImageResolver { null },
-                materials = CardMaterialsSlot(),
+                materials = CardMaterialsSlot(
+                    gl = MaterialsGl(LocalContext.current),
+                    loadImage = { Result.failure(UnsupportedOperationException()) },
+                    scope = rememberCoroutineScope(),
+                ),
             ),
             onOpen = null,
             onRemoveRequested = null,
         )
     }
 
+    private fun solidLayer() = ReadyLayer(
+        material = ByteArray(32) { 7 },
+        shader = MaterialShader(
+            vertex = "#version 300 es\nin vec2 position;\nvoid main(){gl_Position=vec4(position,0.,1.);}",
+            fragment = "#version 300 es\nprecision highp float;out vec4 result;\nvoid main(){result=vec4(1.,0.,0.,1.);}",
+            uniforms = emptyList(),
+            vertexBlockSize = 0u,
+            fragmentBlockSize = 0u,
+            textures = emptyList(),
+            readsTime = false,
+            readsMotion = false,
+        ),
+        args = emptyList(),
+    )
+
     private companion object {
-        const val SOLID = "vec4 material(vec2 uv){return vec4(1.0, 0.0, 0.0, 1.0);}"
         const val WINDOW_FRAMES = 5
     }
 }

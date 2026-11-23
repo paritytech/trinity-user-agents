@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
 
 import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
 import androidx.compose.foundation.AndroidEmbeddedExternalSurface
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -24,17 +22,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsMaterialsRenderer
-import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import uniffi.truapi.ImageRef
-import uniffi.truapi.ImageSource
-import uniffi.truapi.MaterialFailure
 import kotlin.math.roundToInt
 
 internal class PocketMaterials(
@@ -60,7 +53,7 @@ internal class PocketMaterials(
         val changes by materials.changes.collectAsState()
         val resolution by materials.resolution.collectAsState()
         val resolved by resolution.resolved.collectAsState()
-        val allPlain by MaterialsGl.allPlain.collectAsState()
+        val allPlain by materials.allPlain.collectAsState()
         val draw = remember(node, changes, resolution, resolved, allPlain) { materials.draw(node) }
         val surfaceShown = draw is NodeDraw.Layers && showsSurface(node)
         var bounds by remember { mutableStateOf<Rect?>(null) }
@@ -97,10 +90,9 @@ internal class PocketMaterials(
         noiseSeed: UInt,
         base: Pair<ImageBitmap, Rect>?,
     ) {
-        val context = LocalContext.current
-        val imageResolver = LocalJsImageResolver.current
         val lifecycleOwner = LocalLifecycleOwner.current
-        val surface = remember(this, node) { nodeSurface(materials, node) { shown(node) } }
+        val surface = remember(this, node) { materials.surface(node) { shown(node) } }
+        val prepared by remember(node, draw, noiseSeed) { materials.prepared(node, draw, noiseSeed) }.collectAsState()
 
         DisposableEffect(surface) {
             onDispose {
@@ -121,24 +113,8 @@ internal class PocketMaterials(
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
 
-        LaunchedEffect(surface, draw, noiseSeed) {
-            val images = mutableMapOf<Pair<Int, Int>, Bitmap>()
-            val loaded = mutableMapOf<ImageSource, Bitmap>()
-            draw.layers.forEachIndexed { index, layer ->
-                layer.args.forEachIndexed { argument, parameter ->
-                    val source = (parameter.imageRef() as? ImageRef.Source)?.v1 ?: return@forEachIndexed
-                    val image = materials.image(node, source)
-                        ?: MaterialImages.load(context, imageResolver, source).getOrElse { failure ->
-                            val reason = (failure as? MaterialImageRefused)?.reason ?: MaterialFailure.NOT_FOUND
-                            materials.failed(node, layer.material, reason)
-                            return@LaunchedEffect
-                        }
-                    images[index to argument] = image
-                    loaded[source] = image
-                }
-            }
-            materials.keepImages(node, loaded)
-            surface.setLayers(draw.layers, images, materials.noise(noiseSeed))
+        LaunchedEffect(surface, prepared) {
+            prepared?.let { surface.setLayers(it.layers, it.images, it.noise) }
         }
 
         LaunchedEffect(surface, base) {
@@ -169,13 +145,4 @@ internal class PocketMaterials(
         if (width <= 0 || height <= 0) return null
         return Bitmap.createBitmap(card, left, top, width, height)
     }
-}
-
-private fun nodeSurface(materials: CardMaterials, node: Int, onFirstFrame: () -> Unit): MaterialsSurface {
-    val main = Handler(Looper.getMainLooper())
-    return MaterialsSurface(
-        onFirstFrame = { main.post(onFirstFrame) },
-        onFailure = { material, reason -> main.post { materials.failed(node, material, reason) } },
-        onTooSlow = { main.post { materials.tooSlow(node) } },
-    )
 }

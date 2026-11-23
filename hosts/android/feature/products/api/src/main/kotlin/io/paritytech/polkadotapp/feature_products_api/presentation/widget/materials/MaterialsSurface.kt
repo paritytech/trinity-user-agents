@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import android.animation.ValueAnimator
 import android.graphics.Bitmap
@@ -19,19 +19,22 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.nanoseconds
 
-// Callable from any thread: the work is posted to the GL thread, and the callbacks run there.
-internal class MaterialsSurface(
+/**
+ * Draws one node's shader layers into a window surface on [gl]'s thread. Callable from any thread; the
+ * callbacks run on the GL thread.
+ */
+class MaterialsSurface(
+    private val gl: MaterialsGl,
     private val onFirstFrame: () -> Unit,
     private val onFailure: (material: ByteArray?, reason: MaterialFailure) -> Unit,
     private val onTooSlow: () -> Unit,
 ) : Choreographer.FrameCallback {
-    private val gl = MaterialsGl.handler
     private val released = AtomicBoolean(false)
 
     private val schedule = FrameSchedule()
     private val budget = GpuBudget()
     private val inputs = MaterialInputs()
-    private val sensor = DeviceOrientationSensor(MaterialsGl.applicationContext, gl) { rotation, hasHeading ->
+    private val sensor = DeviceOrientationSensor(gl.applicationContext, gl.handler) { rotation, hasHeading ->
         reading = inputs.angles(rotation)
         readingRotation = if (hasHeading) rotation.copyOf() else null
         schedule.onChange()
@@ -68,9 +71,9 @@ internal class MaterialsSurface(
     fun attach(surface: Surface, width: Int, height: Int) = post {
         this.width = width
         this.height = height
-        window = MaterialsGl.windowSurface(surface)
+        window = gl.windowSurface(surface)
         if (window == null) return@post fail(null, MaterialFailure.UNSUPPORTED)
-        if (!attachedToGl) MaterialsGl.surfaceAttached()
+        if (!attachedToGl) gl.surfaceAttached()
         attachedToGl = true
         reducedMotion = !ValueAnimator.areAnimatorsEnabled()
         schedule.resume(System.nanoTime())
@@ -87,7 +90,7 @@ internal class MaterialsSurface(
 
     fun detach() = post {
         sensor.stop()
-        window?.let(MaterialsGl::destroy)
+        window?.let(gl::destroy)
         window = null
     }
 
@@ -98,7 +101,7 @@ internal class MaterialsSurface(
     }
 
     fun setLayers(layers: List<ReadyLayer>, images: Map<Pair<Int, Int>, Bitmap>, noise: ByteArray) = post {
-        if (NodeDraw.Layers(layers) != NodeDraw.Layers(this.layers)) budget.reset()
+        if (!layers.drawsSameAs(this.layers)) budget.reset()
         this.layers = layers
         this.images = images
         this.noise = noise
@@ -122,22 +125,22 @@ internal class MaterialsSurface(
     // Not awaited: a material stuck on the GPU must not hold the main thread.
     fun release() {
         if (!released.compareAndSet(false, true)) return
-        gl.post {
+        gl.handler.post {
             schedule.release()
             sensor.stop()
             Choreographer.getInstance().removeFrameCallback(this)
-            if (attachedToGl) MaterialsGl.surfaceDetached()
+            if (attachedToGl) gl.surfaceDetached()
             attachedToGl = false
             runCatching {
-                if (MaterialsGl.makeCurrent(window) || MaterialsGl.makeCurrent(null)) deleteGlObjects()
-                window?.let(MaterialsGl::destroy)
+                if (gl.makeCurrent(window) || gl.makeCurrent(null)) deleteGlObjects()
+                window?.let(gl::destroy)
             }.logFailure("materials: a released node left GL objects behind")
             window = null
         }
     }
 
     private fun post(block: () -> Unit) {
-        if (!released.get()) gl.post { if (!released.get()) guarded(block) }
+        if (!released.get()) gl.handler.post { if (!released.get()) guarded(block) }
     }
 
     // A throw on the GL thread would end the process, so it fails this node instead.
@@ -173,15 +176,15 @@ internal class MaterialsSurface(
         val surface = window ?: return
         val baseImage = base ?: return
         if (layers.isEmpty() || width <= 0 || height <= 0) return
-        if (!MaterialsGl.makeCurrent(surface)) return fail(null, MaterialFailure.UNSUPPORTED)
-        if (layers.size > 1 && !MaterialsGl.floatTargets) return fail(layers[1].material, MaterialFailure.UNSUPPORTED)
+        if (!gl.makeCurrent(surface)) return fail(null, MaterialFailure.UNSUPPORTED)
+        if (layers.size > 1 && !gl.floatTargets) return fail(layers[1].material, MaterialFailure.UNSUPPORTED)
 
         val programs = layers.map { layer ->
-            MaterialsGl.program(layer.material, layer.shader).getOrElse {
+            gl.program(layer.material, layer.shader).getOrElse {
                 return fail(layer.material, MaterialFailure.UNSUPPORTED)
             }
         }
-        MaterialsGl.clearErrors()
+        gl.clearErrors()
         upload(baseImage)
         val frame = MaterialInputs.frameInputs(
             seconds = schedule.seconds(frameTimeNanos),
@@ -199,7 +202,7 @@ internal class MaterialsSurface(
         val frameTime = (System.nanoTime() - started).nanoseconds
 
         if (GLES30.glGetError() != GLES30.GL_NO_ERROR) return fail(null, MaterialFailure.UNSUPPORTED)
-        if (!MaterialsGl.swap(surface)) return
+        if (!gl.swap(surface)) return
         if (!showedFirstFrame) {
             showedFirstFrame = true
             onFirstFrame()
@@ -385,12 +388,4 @@ internal class MaterialsSurface(
         const val BYTES_PER_PIXEL = 4
         const val MAX_ARGUMENT_FLOATS = 4
     }
-}
-
-internal fun Parameter.imageRef(): ImageRef? = when (this) {
-    is Parameter.SamplerFloat -> v1
-    is Parameter.SamplerVec2 -> v1
-    is Parameter.SamplerVec3 -> v1
-    is Parameter.SamplerVec4 -> v1
-    is Parameter.Float, is Parameter.Vec2, is Parameter.Vec3, is Parameter.Vec4 -> null
 }

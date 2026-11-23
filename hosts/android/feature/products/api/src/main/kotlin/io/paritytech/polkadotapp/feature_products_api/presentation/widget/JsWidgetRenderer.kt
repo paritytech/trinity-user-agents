@@ -136,6 +136,7 @@ private fun JsImageRenderer(
             JsImagePicture.Unavailable -> JsImageUnavailable()
             is JsImagePicture.Located -> {
                 var drawn by remember(current.model) { mutableStateOf(false) }
+                val imageLoaded = LocalJsImageLoaded.current
                 val density = LocalDensity.current.density
                 val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
                 // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
@@ -168,7 +169,10 @@ private fun JsImageRenderer(
                     },
                     onState = { state ->
                         when (state) {
-                            is AsyncImagePainter.State.Success -> drawn = true
+                            is AsyncImagePainter.State.Success -> {
+                                drawn = true
+                                imageLoaded()
+                            }
                             is AsyncImagePainter.State.Error -> {
                                 Timber.w(state.result.throwable, "Widget image %s failed to load from %s", widget.source, current.model)
                                 picture = JsImagePicture.Unavailable

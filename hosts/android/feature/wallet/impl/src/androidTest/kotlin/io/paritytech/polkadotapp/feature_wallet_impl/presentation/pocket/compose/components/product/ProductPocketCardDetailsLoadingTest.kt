@@ -5,6 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -17,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceS
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ShownProduct
@@ -68,7 +71,11 @@ class ProductPocketCardDetailsLoadingTest {
                     face = MutableStateFlow(null),
                     onFaceAction = { _, _ -> },
                     imageResolver = JsImageResolver { null },
-                    materials = CardMaterialsSlot(),
+                    materials = CardMaterialsSlot(
+                        gl = MaterialsGl(LocalContext.current),
+                        loadImage = { Result.failure(UnsupportedOperationException()) },
+                        scope = rememberCoroutineScope(),
+                    ),
                 ),
                 shownProduct = session?.let { ShownProduct(card.key.launchUrl(), it) },
                 openingFaceShown = true,

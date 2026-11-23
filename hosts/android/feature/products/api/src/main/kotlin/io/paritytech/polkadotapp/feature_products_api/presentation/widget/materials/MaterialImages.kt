@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -14,6 +14,7 @@ import coil.request.ErrorResult
 import coil.request.ImageRequest
 import coil.request.Options
 import coil.request.SuccessResult
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_api.model.toJsImageSource
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
@@ -22,20 +23,26 @@ import kotlinx.coroutines.withContext
 import uniffi.truapi.ImageSource
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.checkMaterialImage
+import javax.inject.Inject
 
-internal class MaterialImageRefused(val reason: MaterialFailure) : Exception("material image refused: $reason")
+/** The core refused a material image argument for [reason]. */
+class MaterialImageRefused(val reason: MaterialFailure) : Exception("material image refused: $reason")
 
-// Unlike an Image node's source, an image argument keeps its straight alpha and is checked by the core.
-internal object MaterialImages {
-    suspend fun load(context: Context, resolver: JsImageResolver, source: ImageSource): Result<Bitmap> =
+/**
+ * Loads the images a material reads. Unlike an Image node's source, an image argument keeps its straight
+ * alpha and is checked by the core.
+ */
+class MaterialImages @Inject constructor(@ApplicationContext private val context: Context) {
+    /** Loads [source] through [resolver]; a refused image fails with [MaterialImageRefused]. */
+    suspend fun load(resolver: JsImageResolver, source: ImageSource): Result<Bitmap> =
         runCancellableCatching {
             when (source) {
-                is ImageSource.Inline -> withContext(Dispatchers.Default) { decode(source.v1) }
-                is ImageSource.Bulletin, is ImageSource.Archive -> fetch(context, resolver, source)
+                is ImageSource.Inline -> withContext(Dispatchers.Default) { decodeStraightAlpha(source.v1) }
+                is ImageSource.Bulletin, is ImageSource.Archive -> fetch(resolver, source)
             }
         }
 
-    private suspend fun fetch(context: Context, resolver: JsImageResolver, source: ImageSource): Bitmap {
+    private suspend fun fetch(resolver: JsImageResolver, source: ImageSource): Bitmap {
         val model = source.toJsImageSource()?.let { resolver.resolve(it) }
             ?: throw MaterialImageRefused(MaterialFailure.NOT_FOUND)
         val request = ImageRequest.Builder(context)
@@ -50,20 +57,11 @@ internal object MaterialImages {
         }
     }
 
-    private fun decode(bytes: ByteArray): Bitmap {
-        val options = BitmapFactory.Options().apply {
-            inPremultiplied = false
-            inScaled = false
-        }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-            ?: throw MaterialImageRefused(MaterialFailure.UNSUPPORTED)
-    }
-
     private class CheckedDecoder(private val result: SourceResult, private val options: Options) : Decoder {
         override suspend fun decode(): DecodeResult {
             val bytes = result.source.source().use { it.readByteArray() }
             checkMaterialImage(bytes)?.let { throw MaterialImageRefused(it) }
-            return DecodeResult(BitmapDrawable(options.context.resources, decode(bytes)), isSampled = false)
+            return DecodeResult(BitmapDrawable(options.context.resources, decodeStraightAlpha(bytes)), isSampled = false)
         }
 
         class Factory : Decoder.Factory {
@@ -71,4 +69,13 @@ internal object MaterialImages {
                 CheckedDecoder(result, options)
         }
     }
+}
+
+private fun decodeStraightAlpha(bytes: ByteArray): Bitmap {
+    val options = BitmapFactory.Options().apply {
+        inPremultiplied = false
+        inScaled = false
+    }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        ?: throw MaterialImageRefused(MaterialFailure.UNSUPPORTED)
 }

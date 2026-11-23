@@ -358,9 +358,12 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
   switch `materials_enabled` (`RemoteConfigMaterialsSwitch`, passed as `HostRuntimeConfig.materialsEnabled` when the
   runtime starts) decides whether its nodes can draw; with it off the core settles every node `Unsupported`. A face
   the product drew resolves on the execution that drew it, so the product hears of its fallbacks; a kept face resolves
-  on the runtime and reports to no product. `RealPocketFaceSource` closes a resolution when the next face replaces it. The Pocket card provides `LocalJsMaterialsRenderer`
-  and draws the layers with OpenGL ES 3.0 (`wallet/impl/.../product/materials/`); every other surface draws the
-  children plain through the default renderer, and chat also reports its nodes `Unsupported` to the product.
+  on the runtime and reports to no product, and it shows plain until the runtime answers. `RealPocketFaceSource`
+  closes a resolution when the next face replaces it. The layers draw on OpenGL ES 3.0 through `MaterialsSurface`
+  on the injected `MaterialsGl` (`api/presentation/widget/materials/`). The Pocket card provides
+  `LocalJsMaterialsRenderer` (`wallet/impl/.../product/materials/`), and its `CardMaterials`, held by the card's
+  ViewModel scope, loads the layers' images and reports failures; every other surface draws the children plain
+  through the default renderer, and chat also reports its nodes `Unsupported` to the product.
 - A card expands in place rather than into a sheet: the wallet's Pocket screen moves the same card element to the top
   of a full-screen page with the shared-element transition the native cards use, and hosts the product under it through
   `SpaHost` (`api/presentation/spaHost`, with `ProductWebViewHost`). `ExpandedProductPage` keeps one session at a time

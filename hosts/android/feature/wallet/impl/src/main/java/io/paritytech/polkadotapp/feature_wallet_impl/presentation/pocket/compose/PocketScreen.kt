@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -50,6 +51,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
@@ -374,6 +376,8 @@ private fun Transition<PocketScreenState>.extractAnchorCard(): PocketCardUiModel
 @Preview
 @Composable
 private fun PocketScreenPreview() {
+    val gl = MaterialsGl(LocalContext.current)
+    val scope = rememberCoroutineScope()
     PolkadotTheme {
         CompositionLocalProvider(
             LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
@@ -402,7 +406,7 @@ private fun PocketScreenPreview() {
                         face = MutableStateFlow(PocketFace(JsWidget.Text(text = card.title), materials = null)),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
-                        materials = CardMaterialsSlot(),
+                        materials = CardMaterialsSlot(gl, { Result.failure(UnsupportedOperationException()) }, scope),
                     )
                 },
                 onExpandedCardSettled = {},

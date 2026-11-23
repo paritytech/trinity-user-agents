@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import android.content.Context
 import android.opengl.EGL14
@@ -14,6 +14,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Surface
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.sha256
@@ -25,25 +26,33 @@ import java.io.DataOutputStream
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.time.Duration.Companion.milliseconds
 
-// One GL thread and context for every card, so a material compiles once however many cards show it.
-internal object MaterialsGl {
-    private const val GUARD_PREFS = "materials_compile_guard"
-    private const val STRAIN_POLL_MILLIS = 1_000L
+/**
+ * The one GL thread and OpenGL ES 3.0 context every materials surface draws on, so a material compiles once
+ * however many surfaces show it. The thread starts when the first surface needs it.
+ */
+@Singleton
+class MaterialsGl @Inject constructor(@ApplicationContext private val appContext: Context) {
+    /** Records each compile on disk, so a material that took the app down is not compiled again. */
+    val guard: CompileGuard by lazy {
+        CompileGuard(appContext.getSharedPreferences(GUARD_PREFS, Context.MODE_PRIVATE))
+    }
 
-    // GL keeps one flag per kind of error, and ES 3.0 has six kinds.
-    private const val ERROR_FLAGS = 6
-
-    private var thread: HandlerThread? = null
-    private lateinit var appContext: Context
-
-    lateinit var handler: Handler
-        private set
-    lateinit var guard: CompileGuard
-        private set
-
+    /** True while the device is hot or saving power, when every node draws plain. */
     val allPlain = MutableStateFlow(false)
+
+    internal val handler: Handler by lazy {
+        Handler(HandlerThread("materials-gl").apply { start() }.looper).also { gl ->
+            gl.post {
+                ready = runCatching { setUp() }
+                    .logFailure("materials: no GL ES 3.0 context, every node draws plain")
+                    .isSuccess
+            }
+        }
+    }
 
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var config: EGLConfig? = null
@@ -52,66 +61,51 @@ internal object MaterialsGl {
     private var ready = false
     private var programs: GlPrograms? = null
 
-    var floatTargets = false
+    internal var floatTargets = false
         private set
 
     private var attached = 0
     private val stepDown = StepDown()
     private val watchStrain = Runnable { watchStrain() }
 
-    @Synchronized
-    fun start(context: Context) {
-        if (thread != null) return
-        appContext = context.applicationContext
-        guard = CompileGuard(appContext.getSharedPreferences(GUARD_PREFS, Context.MODE_PRIVATE))
-        val glThread = HandlerThread("materials-gl").apply { start() }
-        handler = Handler(glThread.looper)
-        thread = glThread
-        handler.post {
-            ready = runCatching { setUp() }
-                .logFailure("materials: no GL ES 3.0 context, every node draws plain")
-                .isSuccess
+    internal val applicationContext: Context get() = appContext
+
+    internal fun program(material: ByteArray, shader: MaterialShader): Result<Int> {
+        if (Looper.myLooper() != handler.looper) {
+            return Result.failure(IllegalStateException("materials: GL called off its thread"))
         }
-    }
-
-    val applicationContext: Context get() = appContext
-
-    fun onGlThread(): Boolean = thread != null && Looper.myLooper() == handler.looper
-
-    fun program(material: ByteArray, shader: MaterialShader): Result<Int> {
-        if (!onGlThread()) return Result.failure(IllegalStateException("materials: GL called off its thread"))
         val linker = programs ?: return Result.failure(IllegalStateException("materials: no GL context"))
         return linker.program(material, shader)
     }
 
-    fun windowSurface(surface: Surface): EGLSurface? {
+    internal fun windowSurface(surface: Surface): EGLSurface? {
         if (!ready) return null
         val created = EGL14.eglCreateWindowSurface(display, config, surface, intArrayOf(EGL14.EGL_NONE), 0)
         return created.takeIf { it != EGL14.EGL_NO_SURFACE }
     }
 
-    fun makeCurrent(surface: EGLSurface?): Boolean =
+    internal fun makeCurrent(surface: EGLSurface?): Boolean =
         ready && EGL14.eglMakeCurrent(display, surface ?: pbuffer, surface ?: pbuffer, eglContext)
 
     // One context serves every surface, so an error another surface left must not fail this one.
-    fun clearErrors() {
+    internal fun clearErrors() {
         repeat(ERROR_FLAGS) { if (GLES30.glGetError() == GLES30.GL_NO_ERROR) return }
     }
 
-    fun swap(surface: EGLSurface): Boolean = EGL14.eglSwapBuffers(display, surface)
+    internal fun swap(surface: EGLSurface): Boolean = EGL14.eglSwapBuffers(display, surface)
 
-    fun destroy(surface: EGLSurface) {
+    internal fun destroy(surface: EGLSurface) {
         if (EGL14.eglGetCurrentSurface(EGL14.EGL_DRAW) == surface) makeCurrent(null)
         EGL14.eglDestroySurface(display, surface)
     }
 
-    fun surfaceAttached() {
+    internal fun surfaceAttached() {
         attached++
         handler.removeCallbacks(watchStrain)
         watchStrain()
     }
 
-    fun surfaceDetached() {
+    internal fun surfaceDetached() {
         attached--
     }
 
@@ -167,6 +161,14 @@ internal object MaterialsGl {
         val device = "${GLES30.glGetString(GLES30.GL_RENDERER)}|${GLES30.glGetString(GLES30.GL_VERSION)}"
         val directory = appContext.codeCacheDir.resolve("materials")
         programs = GlPrograms(directory, guard, device, keepsBinaries = formats[0] > 0)
+    }
+
+    private companion object {
+        const val GUARD_PREFS = "materials_compile_guard"
+        const val STRAIN_POLL_MILLIS = 1_000L
+
+        // GL keeps one flag per kind of error, and ES 3.0 has six kinds.
+        const val ERROR_FLAGS = 6
     }
 }
 

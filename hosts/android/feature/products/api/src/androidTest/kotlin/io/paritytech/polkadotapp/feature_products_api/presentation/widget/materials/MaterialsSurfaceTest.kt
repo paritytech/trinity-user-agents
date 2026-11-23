@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials
+package io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials
 
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -13,7 +13,6 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.truapi.MaterialFailure
@@ -32,18 +31,15 @@ import java.util.concurrent.atomic.AtomicInteger
 // Shaders in the shape the core writes them for OpenGL ES (shader.rs), drawn on the device's own GPU.
 @RunWith(AndroidJUnit4::class)
 class MaterialsSurfaceTest {
-    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val gl = MaterialsGl(InstrumentationRegistry.getInstrumentation().targetContext)
     private val readerThread = HandlerThread("materials-test-reader").apply { start() }
     private var reader = ImageReader.newInstance(SIDE, SIDE, PixelFormat.RGBA_8888, 2)
     private var surface: MaterialsSurface? = null
 
-    @Before
-    fun startGl() = MaterialsGl.start(context)
-
     @After
     fun tearDown() {
         surface?.release()
-        onGl { }
+        gl.onGl { }
         reader.close()
         readerThread.quitSafely()
     }
@@ -60,6 +56,7 @@ class MaterialsSurfaceTest {
         val failures = AtomicInteger()
         val failed = CountDownLatch(1)
         val broken = MaterialsSurface(
+            gl = gl,
             onFirstFrame = {},
             onFailure = { _, _ ->
                 failures.incrementAndGet()
@@ -74,7 +71,7 @@ class MaterialsSurfaceTest {
         broken.setBase(base())
 
         assertTrue(failed.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
-        onGl { }
+        gl.onGl { }
         assertEquals(1, failures.get())
     }
 
@@ -85,11 +82,11 @@ class MaterialsSurfaceTest {
         val texture = SurfaceTexture(false).apply { setDefaultBufferSize(SIDE, SIDE) }
         val released = Surface(texture).apply { release() }
 
-        surface = MaterialsSurface(onFirstFrame = {}, onFailure = { _, _ -> failed.countDown() }, onTooSlow = {})
+        surface = MaterialsSurface(gl = gl, onFirstFrame = {}, onFailure = { _, _ -> failed.countDown() }, onTooSlow = {})
             .apply { attach(released, SIDE, SIDE) }
 
         assertTrue(failed.await(TIMEOUT_SECONDS, TimeUnit.SECONDS))
-        assertEquals("the GL thread still serves", "materials-gl", onGl { Thread.currentThread().name })
+        assertEquals("the GL thread still serves", "materials-gl", gl.onGl { Thread.currentThread().name })
         texture.release()
     }
 
@@ -101,6 +98,7 @@ class MaterialsSurfaceTest {
         var failure: MaterialFailure? = null
         reader.setOnImageAvailableListener({ shown.countDown() }, Handler(readerThread.looper))
         surface = MaterialsSurface(
+            gl = gl,
             onFirstFrame = { firstFrame.countDown() },
             onFailure = { _, reason ->
                 failure = reason
@@ -143,12 +141,12 @@ class MaterialsSurfaceTest {
     }
 }
 
-internal const val TIMEOUT_SECONDS = 10L
+private const val TIMEOUT_SECONDS = 10L
 
-internal fun <T> onGl(block: () -> T): T {
+private fun <T> MaterialsGl.onGl(block: () -> T): T {
     val done = CountDownLatch(1)
     var result: Result<T>? = null
-    MaterialsGl.handler.post {
+    handler.post {
         result = runCatching(block)
         done.countDown()
     }
@@ -156,11 +154,11 @@ internal fun <T> onGl(block: () -> T): T {
     return checkNotNull(result).getOrThrow()
 }
 
-internal fun material(id: Int) = ByteArray(32) { id.toByte() }
+private fun material(id: Int) = ByteArray(32) { id.toByte() }
 
-internal fun layer(id: Int, body: String) = ReadyLayer(material(id), shader(body), emptyList())
+private fun layer(id: Int, body: String) = ReadyLayer(material(id), shader(body), emptyList())
 
-internal fun shader(body: String) = MaterialShader(
+private fun shader(body: String) = MaterialShader(
     vertex = "#version 300 es\nin vec2 position;out vec2 uv;\nuniform float _shaderlab_target_flip;\n" +
         "void main(){uv=vec2(position.x*.5+.5,.5-position.y*.5);" +
         "gl_Position=vec4(position.x,position.y*_shaderlab_target_flip,0.,1.);}",

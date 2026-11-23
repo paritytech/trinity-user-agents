@@ -4,12 +4,22 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.MaterialsResolution
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.CompileGuard
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialImageRefused
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ImageRef
+import uniffi.truapi.ImageSource
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.MaterialShader
 import uniffi.truapi.NodeMaterials
+import uniffi.truapi.Parameter
 import uniffi.truapi.ReadyLayer
 import uniffi.truapi.ResolvedMaterials
 
@@ -20,7 +30,11 @@ class CardMaterialsTest {
     private val resolution = mockk<MaterialsResolution>(relaxed = true) { every { resolved } returns this@CardMaterialsTest.resolved }
     private val guard = mockk<CompileGuard> { every { crashed(any()) } returns false }
     private val allPlain = MutableStateFlow(false)
-    private val materials = CardMaterials(resolution, guard, allPlain)
+    private val gl = mockk<MaterialsGl> {
+        every { guard } returns this@CardMaterialsTest.guard
+        every { allPlain } returns this@CardMaterialsTest.allPlain
+    }
+    private val materials = CardMaterials(resolution, gl, { Result.failure(UnsupportedOperationException()) }, CoroutineScope(Job()))
 
     private fun nodes(vararg nodes: NodeMaterials) {
         resolved.value = ResolvedMaterials(nodes.toList(), noiseSeed = 7u)
@@ -76,6 +90,22 @@ class CardMaterialsTest {
         repeat(2) { materials.reportCrashed(0) }
 
         assertEquals(listOf(NodeDraw.Plain, NodeDraw.Plain), drawn)
+        verify(exactly = 1) { resolution.report(0u, tint, MaterialFailure.UNSUPPORTED) }
+    }
+
+    // Images load in the card's ViewModel scope, once for every copy of the card, and a refused one is told to the product.
+    @Test
+    fun `a node whose image is refused is reported once and drawn plain`() = runTest {
+        val withImage = ReadyLayer(tint, shader(), listOf(Parameter.SamplerFloat(ImageRef.Source(ImageSource.Inline(byteArrayOf(1))))))
+        val refusing = CardMaterials(resolution, gl, { Result.failure(MaterialImageRefused(MaterialFailure.UNSUPPORTED)) }, this)
+        nodes(NodeMaterials.Ready(listOf(withImage)))
+        val draw = NodeDraw.Layers(listOf(withImage))
+
+        val forList = refusing.prepared(0, draw, noiseSeed = 7u)
+        val forOpened = refusing.prepared(0, draw, noiseSeed = 7u)
+        advanceUntilIdle()
+
+        assertEquals(listOf(null, null, NodeDraw.Plain), listOf(forList.value, forOpened.value, refusing.draw(0)))
         verify(exactly = 1) { resolution.report(0u, tint, MaterialFailure.UNSUPPORTED) }
     }
 

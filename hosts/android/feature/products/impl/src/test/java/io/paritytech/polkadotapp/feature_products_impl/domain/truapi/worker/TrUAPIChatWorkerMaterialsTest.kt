@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -62,6 +63,7 @@ class TrUAPIChatWorkerMaterialsTest {
         val execution = executionDrawing(withMaterials)
 
         val drawn = worker(execution).renderMessage(roomId, "msg-1", "custom", DataByteArray.empty()).toList()
+        advanceUntilIdle()
 
         assertEquals(listOf(Result.success(JsWidget.Materials(0, listOf(JsWidget.Spacer())))), drawn)
         verifyOrder {

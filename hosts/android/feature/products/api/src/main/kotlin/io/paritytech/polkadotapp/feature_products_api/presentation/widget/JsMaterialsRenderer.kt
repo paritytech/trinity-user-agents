@@ -19,3 +19,6 @@ val LocalJsMaterialsRenderer = staticCompositionLocalOf {
         Box(modifier = modifier, contentAlignment = Alignment.TopStart) { children() }
     }
 }
+
+/** Called when an image in the tree finishes loading, so a surface that pictures the tree takes a new picture. */
+val LocalJsImageLoaded = staticCompositionLocalOf<() -> Unit> { {} }

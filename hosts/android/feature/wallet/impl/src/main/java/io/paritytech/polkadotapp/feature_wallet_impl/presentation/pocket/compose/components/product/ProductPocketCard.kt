@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product
 
 import android.graphics.Bitmap
-import android.view.ViewTreeObserver
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -13,12 +12,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.focusProperties
@@ -30,7 +30,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -49,16 +48,17 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageLoaded
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsMaterialsRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.PocketMaterials
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.Dispatchers
@@ -144,28 +144,18 @@ private fun CardMaterialsSlot.drawsMaterialsOf(resolution: MaterialsResolution):
 
 @Composable
 private fun BoxScope.MaterialsFace(face: JsWidget, resolution: MaterialsResolution, bindings: ProductFaceBindings) {
-    val context = LocalContext.current
-    val view = LocalView.current
-    val materials = remember(resolution) {
-        MaterialsGl.start(context)
-        bindings.materials.of(resolution, MaterialsGl.guard, MaterialsGl.allPlain)
-    }
+    val materials = remember(resolution) { bindings.materials.of(resolution) }
     val plainCard = rememberGraphicsLayer()
-    val redrawn = remember { Channel<Unit>(Channel.CONFLATED) }
+    val captureRequests = remember { Channel<Unit>(Channel.CONFLATED) }
+    val imageLoaded = remember<() -> Unit> { { captureRequests.trySend(Unit) } }
     val cardPicture = remember { mutableStateOf<ImageBitmap?>(null) }
     val cardCoordinates = remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-    // A child of the copy with a layer of its own redraws without running the copy's draw, so every window
-    // draw asks for a capture; the rate bound and the pixel check keep a drawing shader from looping on it.
-    DisposableEffect(view) {
-        val listener = ViewTreeObserver.OnDrawListener { redrawn.trySend(Unit) }
-        view.viewTreeObserver.addOnDrawListener(listener)
-        onDispose { view.viewTreeObserver.removeOnDrawListener(listener) }
-    }
-
+    // The copy asks for a picture when it redraws, which a new face does. An image loads into a layer of its
+    // own that redraws without the copy, so it asks once it has loaded.
     LaunchedEffect(plainCard) {
-        redrawn.receiveAsFlow().collect {
-            // The copy has a size only once it has drawn, and a prefetched card is composed before it draws.
+        captureRequests.receiveAsFlow().collect {
+            withFrameNanos { }
             if (plainCard.size.width == 0 || plainCard.size.height == 0) return@collect
             val captured = runCancellableCatching { plainCard.toImageBitmap() }
                 .logFailure("materials: the plain card was not captured")
@@ -185,11 +175,16 @@ private fun BoxScope.MaterialsFace(face: JsWidget, resolution: MaterialsResoluti
             .clearAndSetSemantics {}
             .focusProperties { canFocus = false }
             .onGloballyPositioned { cardCoordinates.value = it }
-            .drawWithContent { plainCard.record { this@drawWithContent.drawContent() } }
+            .drawWithContent {
+                plainCard.record { this@drawWithContent.drawContent() }
+                captureRequests.trySend(Unit)
+            }
             .background(PocketCardColors.DigitalDollarCardBackground)
     ) {
-        CardGrain()
-        JsWidgetRenderer(widget = face, modifier = Modifier.matchParentSize(), jsEventHandler = { _, _ -> })
+        CompositionLocalProvider(LocalJsImageLoaded provides imageLoaded) {
+            CardGrain()
+            JsWidgetRenderer(widget = face, modifier = Modifier.matchParentSize(), jsEventHandler = { _, _ -> })
+        }
     }
 
     val renderer = remember(materials) { PocketMaterials(materials, cardPicture, cardCoordinates) }
@@ -216,7 +211,11 @@ private fun ProductPocketCardPreview() {
                 ),
                 onFaceAction = { _, _ -> },
                 imageResolver = JsImageResolver { null },
-                materials = CardMaterialsSlot(),
+                materials = CardMaterialsSlot(
+                    gl = MaterialsGl(LocalContext.current),
+                    loadImage = { Result.failure(UnsupportedOperationException()) },
+                    scope = rememberCoroutineScope(),
+                ),
             ),
             onOpen = {},
             onRemoveRequested = {}

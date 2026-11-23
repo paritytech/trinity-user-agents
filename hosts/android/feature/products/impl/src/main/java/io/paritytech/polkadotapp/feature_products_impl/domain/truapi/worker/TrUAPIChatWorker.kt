@@ -181,7 +181,7 @@ class TrUAPIChatWorker(
                 .collect { node ->
                     drew = true
                     emit(Result.success(node.toJsWidget()))
-                    if (node.hasMaterials()) reportMaterialsUnsupported(node, context, label)
+                    if (node.hasMaterials()) scope.launch { reportMaterialsUnsupported(node, context, label) }
                 }
             // A stream closed before its first tree would otherwise leave the cell loading for the
             // execution's whole life; a card keeps its last face, a cell has none.

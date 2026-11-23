@@ -2,10 +2,12 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -20,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.materials.MaterialsGl
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.materials.CardMaterialsSlot
@@ -69,7 +72,11 @@ class ProductPocketCardThemeTest {
                         face = MutableStateFlow(PocketFace(faceUsingThemeDefaults, materials = null)),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
-                        materials = CardMaterialsSlot(),
+                        materials = CardMaterialsSlot(
+                            gl = MaterialsGl(LocalContext.current),
+                            loadImage = { Result.failure(UnsupportedOperationException()) },
+                            scope = rememberCoroutineScope(),
+                        ),
                     ),
                     onOpen = null,
                     onRemoveRequested = null,
