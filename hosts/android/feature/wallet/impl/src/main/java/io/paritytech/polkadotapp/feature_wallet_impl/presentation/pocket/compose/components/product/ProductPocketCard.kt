@@ -70,10 +70,7 @@ import kotlinx.coroutines.withContext
 import uniffi.truapi.ProductId
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * A product-backed card: the frame is the host's, the face inside it is the product's tree. The
- * shared card binding owns the worker reference while the card is visible.
- */
+/** Draws the product's face inside the host's card frame. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ProductPocketCard(

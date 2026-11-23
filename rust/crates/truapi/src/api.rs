@@ -25,7 +25,7 @@
 //! | 16 | `Locale` |
 //! | 17 | `Renderer` |
 //! | 18 | `Pocket` |
-//! | 19 | Reserved (retired `Worker` service) |
+//! | 19 | Reserved |
 //! | 20 | `Contacts` |
 //! | 21 | `Game` |
 //! | 22 | `Funding` |

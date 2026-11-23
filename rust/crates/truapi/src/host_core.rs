@@ -1915,10 +1915,9 @@ impl ProductRuntimeControl {
 		Ok(services.resolve_materials(tree, context, language, float_filterable, failures))
 	}
 
-	/// Ask this connection's product to draw one body, streaming replacement
-	/// trees until the returned subscription is dropped.
+	/// Ask the connected product to draw a body.
 	///
-	/// The caller owns the worker reference for as long as it needs the execution.
+	/// Each item replaces the current tree. Dropping the subscription stops the render.
 	pub fn render(
 		&self,
 		request: truapi::latest::ProductRendererRenderRequest,

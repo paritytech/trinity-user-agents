@@ -738,7 +738,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// Claim a product's worker while this consumer needs it.
 	///
-	/// The returned handle owns one reference regardless of how many product calls are open.
+	/// Each call returns a separate claim on the worker.
 	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
 		Arc::new(NativeWorkerClaim {
 			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
