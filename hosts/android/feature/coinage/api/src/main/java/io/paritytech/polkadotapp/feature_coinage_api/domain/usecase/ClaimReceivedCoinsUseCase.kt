@@ -40,5 +40,5 @@ interface ClaimReceivedCoinsUseCase {
         coinKeys: List<CoinPrivateKey>,
         groupId: CoinageOperationGroupId,
         retryUntil: Instant,
-    ): Flow<CoinageTransferDetection>
+    ): Flow<Result<CoinageTransferDetection>>
 }

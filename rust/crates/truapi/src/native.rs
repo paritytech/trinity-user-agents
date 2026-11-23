@@ -16,7 +16,6 @@
 //! [`NativeTrUApiHostRuntime::set_contacts_callbacks`]. A host that installs
 //! none leaves `contacts.pick` answering `Unsupported`.
 
-mod bundled_products;
 mod callbacks;
 mod config;
 mod engine_follow;
@@ -29,6 +28,8 @@ mod funding_page;
 mod materials;
 mod platform;
 mod pocket;
+mod product_archive;
+mod product_source;
 mod public_profile;
 mod renderer;
 mod runtime;
@@ -46,10 +47,6 @@ pub use crate::{
 	pocket_cards::{
 		PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketCardSide, PocketEntry,
 	},
-};
-pub use bundled_products::{
-	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_products,
-	product_source,
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
@@ -70,6 +67,8 @@ pub use funding_page::{
 };
 pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
+pub use product_archive::{ArchiveFile, archive_files};
+pub use product_source::{ProductSource, product_source};
 pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TrUAPIHost
 import ChainRegistry
 import SubstrateSdk
@@ -22,8 +23,9 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let workerManager: (any TrUAPIWorkerManaging)?
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let encryptedStorage: TrUAPIEncryptedStorage
-    private let logger: LoggerProtocol
+    private let logger: CoreEventLoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
+    private let crashNotice = OSAllocatedUnfairLock<(@Sendable (ProductId) -> Void)?>(initialState: nil)
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -33,7 +35,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         workerManager: (any TrUAPIWorkerManaging)? = nil,
         backedUpInstallation: TrUAPIBackedUpInstallation,
         encryptedStorage: TrUAPIEncryptedStorage,
-        logger: LoggerProtocol
+        logger: CoreEventLoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
@@ -57,11 +59,26 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         logger.logCoreLine(marker: marker, detail: detail)
     }
 
+    func onCoreEvent(marker: String, attributes: [CoreAttribute]) {
+        logger.logCoreEvent(marker: marker, attributes: attributes)
+    }
+
     /// Demand is runtime-wide, so it arrives here rather than on a product's
     /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
     /// the manager hands the transition off rather than acting on it here.
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         workerManager?.demandChanged(productId: productId, transition: transition)
+    }
+
+    /// Where a worker that keeps crashing is reported to the user. Set once
+    /// the overlay that shows it exists.
+    func onWorkerCrashing(_ notice: @escaping @Sendable (ProductId) -> Void) {
+        crashNotice.withLock { $0 = notice }
+    }
+
+    func workerCrashing(productId: ProductId, crashes: UInt32) {
+        logger.error("[truapi] \(productId)'s worker crashed \(crashes) times in a row")
+        crashNotice.withLock { $0 }?(productId)
     }
 
     func navigateTo(url: String) async throws {

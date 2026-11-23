@@ -104,7 +104,7 @@ pub struct EventCallbacks {
 	pub events: Mutex<Vec<(String, Vec<crate::logging::CoreAttribute>)>>,
 	pub face_requests: Mutex<Vec<bool>>,
 	pub back_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
 	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
@@ -158,7 +158,7 @@ impl EventCallbacks {
 		Self {
 			logs: Mutex::new(Vec::new()),
 			events: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+			chat_room_status: Mutex::new(truapi::latest::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
 			chat_registered_bots: Mutex::new(Vec::new()),
@@ -258,7 +258,7 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn push_notification(
 		&self,
-		_request: v01::HostPushNotificationRequest,
+		_request: truapi::latest::HostPushNotificationRequest,
 	) -> Result<u32, HostRejection> {
 		Ok(0)
 	}
@@ -447,7 +447,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection> {
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
@@ -1710,10 +1710,11 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	};
 	let product =
 		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
-	let request = v01::HostChatCreateRoomRequest {
-		room_id: "support".to_string(),
+	let request = truapi::latest::HostChatCreateRoomRequest {
+		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -1721,14 +1722,18 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
+		"support".to_string(),
 		request.clone(),
 	))
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
-		&platform, &product, request,
+		&platform,
+		&product,
+		"support".to_string(),
+		request,
 	))
 	.unwrap();
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1742,10 +1747,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	))
 	.unwrap();
 
-	assert_eq!(created.status, v01::ChatRoomRegistrationStatus::New);
+	assert_eq!(created, truapi::latest::ChatRoomRegistrationStatus::New);
 	assert_eq!(updated_rooms.rooms.len(), 1);
 	assert_eq!(updated_rooms.rooms[0].room_id, "support");
-	assert_eq!(existing.status, v01::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(existing, truapi::latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(posted.message_id, "message-1");
 	assert_eq!(
 		callbacks
@@ -2206,7 +2211,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2414,7 +2419,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2978,16 +2983,14 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 		host_internal::sso_messages::{
 			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
 		},
-		host_logic::{
-			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
-			sso::pairing::derive_x25519_keypair_from_entropy,
-		},
+		host_logic::root_entropy::RootEntropy,
 	};
 	use parity_scale_codec::Encode;
 
 	let entropy = [7; 32];
-	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
-	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	let root_entropy = RootEntropy::new(entropy);
+	let statement = root_entropy.derive_identity_keypair("paseo").unwrap().public.to_bytes();
+	let (_, encryption) = root_entropy.derive_x25519_keypair(b"sso");
 	assert!(
 		native_host_runtime_no_session()
 			.open_sso_service(statement, encryption)
@@ -3022,14 +3025,11 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
 			}
 			.encode(),
 		};
-		let public_key = derive_product_subtree_keypair(
-			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
-				.unwrap(),
-			&ProductId::for_test("browse.dot"),
-		)
-		.unwrap()
-		.public
-		.to_bytes();
+		let public_key = root_entropy
+			.derive_product_subtree_keypair(&ProductId::for_test("browse.dot"))
+			.unwrap()
+			.public
+			.to_bytes();
 		assert_eq!(
 			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
 			response(Ok(public_key))
