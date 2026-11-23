@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.IncomingRequestResponsePolicy
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.PendingMessageReplacementPolicy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.SessionAccount
 import kotlinx.coroutines.CoroutineScope
 
@@ -40,6 +41,7 @@ interface CommunicationSessionCreator {
         maxStatementSize: InformationSize,
         compactor: MessageCompactor? = null,
         responsePolicy: IncomingRequestResponsePolicy = IncomingRequestResponsePolicy.Always,
+        replacementPolicy: PendingMessageReplacementPolicy = PendingMessageReplacementPolicy.AlwaysKeep,
     ): CommunicationSession
 
     /**
@@ -56,5 +58,6 @@ interface CommunicationSessionCreator {
         maxStatementSize: InformationSize,
         compactor: MessageCompactor? = null,
         responsePolicy: IncomingRequestResponsePolicy = IncomingRequestResponsePolicy.Always,
+        replacementPolicy: PendingMessageReplacementPolicy = PendingMessageReplacementPolicy.AlwaysKeep,
     ): CommunicationSession
 }
