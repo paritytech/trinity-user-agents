@@ -254,6 +254,7 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
     var cashInfo: AssetBalanceDisplayInfo { .digitalDollarFigure(assetPrecision: 6) }
     var cashSymbol: String { "CASH" }
     var branding: FundingProviderBranding { PlaceholderBranding() }
+    var iconLoader: FundingIconLoader? { nil }
 
     func followSpendable(_: @escaping @MainActor (Balance) -> Void) async {}
 

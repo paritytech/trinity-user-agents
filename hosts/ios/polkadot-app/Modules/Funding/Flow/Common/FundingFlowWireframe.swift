@@ -13,6 +13,9 @@ protocol FundingFlowEnvironment: AnyObject {
     /// The payment balance's symbol, set after its figure.
     var cashSymbol: String { get }
     var branding: FundingProviderBranding { get }
+    /// Reads network and token icons from the providers' archives; nil
+    /// when the app cannot, and the marks keep their monogram.
+    var iconLoader: FundingIconLoader? { get }
     /// Calls `onChange` with what a payment can spend, now and on every
     /// balance change, until the calling task is cancelled. Returns without
     /// calling it when the balance cannot be followed.

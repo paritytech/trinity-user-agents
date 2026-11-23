@@ -95,7 +95,12 @@ final class FundingFlowRouter: FundingFlowRouting {
 
 private extension FundingFlowRouter {
     func show(_ entry: FundingEntry, on screens: [FundingFlowScreen]) {
-        let context = FundingFlowContext(entry: entry, cashInfo: environment.cashInfo, branding: environment.branding)
+        let context = FundingFlowContext(
+            entry: entry,
+            cashInfo: environment.cashInfo,
+            branding: environment.branding,
+            iconLoader: environment.iconLoader
+        )
         let flow = FundingFlowWireframe(
             context: context,
             service: service,

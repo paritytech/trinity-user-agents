@@ -2,6 +2,7 @@ import Foundation
 import FoundationExt
 import SubstrateSdk
 import TrUAPIHost
+import UIKit
 
 /// What the user picked so far in one funding flow, shared by its screens.
 struct FundingDraft: Equatable {
@@ -39,6 +40,8 @@ struct FundingFlowState {
     let cashInfo: AssetBalanceDisplayInfo
     let branding: FundingProviderBranding
     var brands: [ProductId: FundingProviderBrand] = [:]
+    /// The network and token icons read so far.
+    var icons: [FundingIconKey: UIImage] = [:]
     /// Why the typed amount cannot go ahead, as the core decides it.
     var amountIssue: FundingAmountIssue?
     var isStarting = false

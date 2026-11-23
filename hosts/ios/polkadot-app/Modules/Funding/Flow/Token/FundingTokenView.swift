@@ -20,7 +20,7 @@ struct FundingTokenView: View {
                     Text(verbatim: network.name)
                         .typography(.captionMedium)
                         .foregroundStyle(.fgPrimary)
-                    FundingAssetMark(letter: network.monogram, size: .s20)
+                    FundingAssetMark(icon: model.state.icon(network: network.id), letter: network.monogram, size: .s20)
                 }
                 .padding(.horizontal, DSSpacings.smallIncreased)
                 .frame(height: 32)
@@ -31,7 +31,7 @@ struct FundingTokenView: View {
                 VStack(spacing: DSSpacings.small) {
                     ForEach(model.tokens) { token in
                         DisclosureListRow(title: token.symbol) {
-                            FundingAssetMark(letter: token.monogram)
+                            FundingAssetMark(icon: model.state.icon(token: token.symbol), letter: token.monogram)
                         } onTap: {
                             presenter.chooseToken(token.symbol)
                         }

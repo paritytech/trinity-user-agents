@@ -32,6 +32,11 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         PaymentAssetBranding.shared.current.symbol
     }
 
+    private(set) lazy var iconLoader: FundingIconLoader? = {
+        let flowState = flowStateProvider.flowState()
+        return FundingIconLoader.make(dotNsResolver: flowState.dotNsResolver, products: flowState.productResolver)
+    }()
+
     /// What a payment can spend, as the payment path checks it, on every
     /// balance change. Returns at once when payments are not assembled yet
     /// or the balance service cannot be built; the balance stream follows

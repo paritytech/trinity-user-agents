@@ -33,7 +33,7 @@ struct FundingNetworkView: View {
         let minimum = model.viewModel.minimums[network.id]
 
         return DisclosureListRow(title: network.name, subtitle: minimum, isEnabled: minimum == nil) {
-            FundingAssetMark(letter: network.monogram)
+            FundingAssetMark(icon: model.state.icon(network: network.id), letter: network.monogram)
         } onTap: {
             presenter.chooseNetwork(network.id)
         }
@@ -41,13 +41,22 @@ struct FundingNetworkView: View {
     }
 }
 
-/// A network's or token's first letter.
+/// A network's or token's icon, or its first letter while there is none.
 struct FundingAssetMark: View {
+    let icon: UIImage?
     let letter: String
     var size: DSLetterAvatar.Size = .s40
 
     var body: some View {
-        DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .white, size: size)
+        if let icon {
+            Image(uiImage: icon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size.dimension, height: size.dimension)
+                .clipShape(Circle())
+        } else {
+            DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .white, size: size)
+        }
     }
 }
 

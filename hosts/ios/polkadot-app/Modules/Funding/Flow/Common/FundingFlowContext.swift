@@ -1,6 +1,7 @@
 import Foundation
 import SubstrateSdk
 import TrUAPIHost
+import UIKit
 
 /// One funding flow's shared draft: what the user picked on its screens,
 /// the providers' brands read so far, and the selection the core was last
@@ -12,25 +13,34 @@ final class FundingFlowContext {
     let direction: FundingDirection
     let cashInfo: AssetBalanceDisplayInfo
     let branding: FundingProviderBranding
+    private let iconLoader: FundingIconLoader?
 
     private(set) var draft: FundingDraft {
         didSet { if draft != oldValue { notify() } }
     }
 
     private(set) var brands: [ProductId: FundingProviderBrand] = [:]
+    private(set) var icons: [FundingIconKey: UIImage] = [:]
     /// The session as the core last pushed it to any of the flow's screens.
     private(set) var latestEntry: FundingEntry
 
     private var reportedSelection: FundingSelection?
     private var brandReads: [ProductId: Task<Void, Never>] = [:]
+    private var iconReads: Set<FundingIconKey> = []
     private var listeners: [ObjectIdentifier: () -> Void] = [:]
 
-    init(entry: FundingEntry, cashInfo: AssetBalanceDisplayInfo, branding: FundingProviderBranding) {
+    init(
+        entry: FundingEntry,
+        cashInfo: AssetBalanceDisplayInfo,
+        branding: FundingProviderBranding,
+        iconLoader: FundingIconLoader?
+    ) {
         entryId = entry.id
         direction = entry.direction
         latestEntry = entry
         self.cashInfo = cashInfo
         self.branding = branding
+        self.iconLoader = iconLoader
 
         let detected = (entry.options?.detectedCountry ?? FundingCountries.localeRegion())
             .flatMap { FundingCountries.country(code: $0) }
@@ -48,7 +58,14 @@ final class FundingFlowContext {
 
     /// The state a screen draws for `entry`, with this flow's draft.
     func state(for entry: FundingEntry) -> FundingFlowState {
-        FundingFlowState(entry: entry, draft: draft, cashInfo: cashInfo, branding: branding, brands: brands)
+        FundingFlowState(
+            entry: entry,
+            draft: draft,
+            cashInfo: cashInfo,
+            branding: branding,
+            brands: brands,
+            icons: icons
+        )
     }
 
     /// Calls `onChange` whenever the draft or a brand changes, until `owner`
@@ -62,6 +79,7 @@ final class FundingFlowContext {
 
     func update(_ change: (inout FundingDraft) -> Void) {
         change(&draft)
+        loadIcons()
     }
 
     /// Takes what the core offers into the draft: its detected country leads
@@ -70,6 +88,7 @@ final class FundingFlowContext {
         latestEntry = entry
         loadBrands(entry.options?.candidates.map(\.providerId) ?? [])
         loadBrands([entry.session?.providerId].compactMap(\.self))
+        loadIcons()
 
         guard let code = entry.options?.detectedCountry, code != draft.detectedCountry?.code,
               let detected = FundingCountries.country(code: code)
@@ -114,6 +133,21 @@ private extension FundingFlowContext {
                 let brand = await branding.brand(for: providerId)
                 brands[providerId] = brand
                 brandReads[providerId] = nil
+                notify()
+            }
+        }
+    }
+
+    /// Reads the icons the marks draw now, each from the provider it is
+    /// drawn for; a miss keeps the monogram.
+    func loadIcons() {
+        guard let iconLoader else { return }
+
+        for key in state(for: latestEntry).iconKeys where icons[key] == nil && !iconReads.contains(key) {
+            iconReads.insert(key)
+            Task {
+                guard let icon = await iconLoader.image(key.kind, id: key.id, provider: key.provider) else { return }
+                icons[key] = icon
                 notify()
             }
         }
