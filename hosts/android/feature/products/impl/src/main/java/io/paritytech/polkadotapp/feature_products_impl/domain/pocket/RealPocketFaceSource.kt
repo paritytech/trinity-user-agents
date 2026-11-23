@@ -38,7 +38,11 @@ class RealPocketFaceSource @Inject constructor(
             }
         }
         try {
-            cachedFace(key)?.let { tree -> show(tree) { streams.resolveKeptMaterials(key, tree) } }
+            cachedFace(key)?.let { tree ->
+                // Resolving waits for the runtime to boot, and the card shows plain until then.
+                if (tree.hasMaterials()) emit(PocketFace(tree.toJsWidget(), materials = null))
+                show(tree) { streams.resolveKeptMaterials(key, tree) }
+            }
             streams.renderFaces(key).collect { face -> show(face.tree) { face.resolveMaterials() } }
         } finally {
             shown?.close()

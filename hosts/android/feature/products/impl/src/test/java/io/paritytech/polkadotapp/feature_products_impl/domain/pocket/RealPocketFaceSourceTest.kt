@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.launchIn
@@ -34,6 +35,7 @@ class RealPocketFaceSourceTest {
         val faces = MutableSharedFlow<RendererNode>()
         var collectors = 0
         val actions = mutableListOf<Triple<PocketCardKey, String, String>>()
+        var runtimeBooted = CompletableDeferred(Unit)
 
         override fun renderFaces(key: PocketCardKey): Flow<RenderedFace> =
             faces.onStart { collectors++ }.map { tree -> RenderedFace(tree) { resolveDrawn(tree) } }
@@ -42,7 +44,10 @@ class RealPocketFaceSourceTest {
             actions += Triple(key, actionId, payload.decodeToString())
         }
 
-        override suspend fun resolveKeptMaterials(key: PocketCardKey, tree: RendererNode): MaterialsResolution? = resolveKept(tree)
+        override suspend fun resolveKeptMaterials(key: PocketCardKey, tree: RendererNode): MaterialsResolution? {
+            runtimeBooted.await()
+            return resolveKept(tree)
+        }
     }
 
     private class NoImages : ProductImageResolver {
@@ -139,6 +144,27 @@ class RealPocketFaceSourceTest {
         }
         verify(exactly = 0) { resolveKept(materialsFace("live")) }
         verify(exactly = 0) { resolveDrawn(materialsFace("kept")) }
+        onScreen.cancel()
+    }
+
+    // On a cold start the runtime boots after the list draws, and the card must not stay blank until it does.
+    @Test
+    fun `a kept materials face shows plain until the runtime resolves it`() = runTest {
+        val resolution = mockk<MaterialsResolution>(relaxed = true)
+        every { resolveKept(materialsFace("kept")) } returns resolution
+        streams.runtimeBooted = CompletableDeferred()
+        store.addCard(loyalty.copy(face = materialsFace("kept")))
+        val shown = mutableListOf<PocketFace>()
+
+        val onScreen = source.observeFace(loyalty.card.key).onEach { shown += it }.launchIn(this)
+        advanceUntilIdle()
+        val whileBooting = shown.toList()
+        streams.runtimeBooted.complete(Unit)
+        advanceUntilIdle()
+
+        val kept = materialsFace("kept").toJsWidget()
+        assertEquals(listOf(PocketFace(kept, materials = null)), whileBooting)
+        assertEquals(listOf(PocketFace(kept, materials = null), PocketFace(kept, resolution)), shown)
         onScreen.cancel()
     }
 }
