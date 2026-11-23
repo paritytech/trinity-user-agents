@@ -6,10 +6,9 @@
 //! stored, and fetches newer copies while the core runs. The [`Stack`] it
 //! resolves holds the network, the dotNS TLD, each chain's genesis hash and
 //! the `AccountDataStore` contract address, and answers `get_chain_info`. A
-//! runtime built on that [`Stack`] also asks each chain it connects to for
-//! its genesis hash, and a signing host hands over People's `NetworkSuffix`
-//! as its allowance work reads it. The refresh reports what differs from the
-//! descriptor.
+//! runtime built on that [`Stack`] also checks the genesis hash of each chain
+//! it connects to and, on a signing host, People's `NetworkSuffix`. The
+//! refresh reports what differs from the descriptor.
 
 mod records;
 mod refresh;
@@ -70,8 +69,7 @@ const RESERVED_TLD: &str = "dot";
 /// contracts the core reads.
 ///
 /// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
-/// hands out also has its chains checked against the descriptor, and equality
-/// does not look at that.
+/// hands out also carries the checks of its chains, which equality ignores.
 #[derive(derive_more::Debug, Clone, derive_more::PartialEq, derive_more::Eq)]
 pub struct Stack {
 	network: String,
@@ -284,9 +282,8 @@ impl Stack {
 
 /// The checks of `stack`'s chains against its descriptor.
 ///
-/// The runtime built on the stack runs them. `None` unless a [`StackRefresh`]
-/// handed the stack out: the core does not check the chains of a stack built
-/// any other way.
+/// `None` unless a [`StackRefresh`] handed the stack out: the core does not
+/// check the chains of a stack built any other way.
 pub fn checks(stack: &Stack) -> Option<&StackChecks> {
 	stack.checks.as_ref()
 }

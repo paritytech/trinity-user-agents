@@ -494,9 +494,8 @@ fn suffix_is(answered: &str) -> StackMismatch {
 	StackMismatch::NetworkSuffix { named: "paseo".to_string(), answered: answered.to_string() }
 }
 
-/// The core derives identities under `peopl.<tld>` and builds proof contexts
-/// with People's suffix, so an identity derived under one does not match the
-/// other, and the host is told both values. Nothing is refused over a suffix,
+/// An identity derived under the `tld` does not match one under People's
+/// suffix, so the host is told both values. Nothing is refused over a suffix,
 /// so the descriptor's server is not asked any sooner.
 #[test]
 fn a_people_suffix_that_is_not_the_tld_is_reported() {

@@ -2762,11 +2762,10 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 	);
 }
 
-/// A host may keep a connection it leased earlier and redial underneath it, as
-/// dotli does, so a connection that passed the check can end up on a chain
-/// that restarted. A newer connection that finds the chain wrong is the only
-/// sign of it. The earlier ones are closed, and their next user dials again
-/// and is checked.
+/// A host may redial underneath a connection it leased earlier, as dotli
+/// does, so a connection that passed the check can end up on a chain that
+/// restarted. A newer connection that finds the chain wrong is the only sign
+/// of it, so the earlier ones are closed.
 #[test]
 fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
