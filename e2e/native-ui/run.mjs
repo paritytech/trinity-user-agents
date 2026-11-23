@@ -51,8 +51,23 @@ const result = spawnSync(
 );
 
 const passed = result.status === 0;
+if (!passed && args.platform === "android") saveAndroidDiagnostics();
 writeFileSync(
   join(out, "report.md"),
   `### Native UI (${args.platform})\n\n${passed ? "Settings and wallet smoke passed." : "Settings and wallet smoke failed. The debug output in the uploaded results has a screenshot and the view hierarchy."}\n`,
 );
 process.exit(passed ? 0 : 1);
+
+/** Keeps what the device saw, since a Maestro driver failure leaves no screenshot of its own. */
+function saveAndroidDiagnostics() {
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  const adb = sdk ? join(sdk, "platform-tools", "adb") : "adb";
+  const save = (name, command, encoding = "utf8") => {
+    const { stdout } = spawnSync(adb, command, { encoding, maxBuffer: 256 * 1024 * 1024 });
+    if (stdout?.length) writeFileSync(join(out, name), stdout);
+  };
+  save("logcat.txt", ["logcat", "-d", "-v", "threadtime"]);
+  save("screen.png", ["exec-out", "screencap", "-p"], "buffer");
+  save("meminfo.txt", ["shell", "dumpsys", "meminfo"]);
+  save("gfxinfo.txt", ["shell", "dumpsys", "gfxinfo", args["app-id"]]);
+}
