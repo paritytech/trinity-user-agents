@@ -115,13 +115,13 @@ internal fun JsSlideToConfirm(
             return
         }
         val approach = WidgetStyleRules.approachMs(feel, (1f - progress.value) * travelPx() / density.density)
-        scope.launch { progress.animateTo(1f, tween(approach, easing = WidgetStyleRules.EaseOutQuad)) }
+        scope.launch { progress.animateTo(1f, tween<Float>(approach, easing = WidgetStyleRules.EaseOutQuad).fromLift()) }
         pressJob?.cancel()
         popJob?.cancel()
         val from = pressScale.value
         popJob = scope.launch {
             try {
-                val start = withFrameNanos { it } + (approach - feel.approachMs) * NANOS_PER_MS
+                val start = withFrameNanos { it } + (approach - feel.approachMs - LIFT_FRAME_MS) * NANOS_PER_MS
                 while (true) {
                     val now = withFrameNanos { it }
                     popped = WidgetStyleRules.pop(feel, (now - start) / NANOS_PER_FRAME, from) ?: break
@@ -259,7 +259,7 @@ internal fun JsSlideToConfirm(
                                 dippingRelease = number
                                 scope.launch {
                                     try {
-                                        progress.animateTo(0f, SliderSpringBack)
+                                        progress.animateTo(0f, SliderSpringBack.fromLift())
                                     } finally {
                                         if (dippingRelease == number) dippingRelease = -1
                                     }

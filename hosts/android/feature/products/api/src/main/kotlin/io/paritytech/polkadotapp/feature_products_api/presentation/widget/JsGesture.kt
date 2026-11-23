@@ -250,7 +250,9 @@ internal fun JsGesture(
         settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 settle.snapTo(from)
-                settle.animateTo(to, settleSpec(kind, current.feel, (to - from).getDistance() / density))
+                val spec = settleSpec(kind, current.feel, (to - from).getDistance() / density)
+                // With the existing slider's motion, timed from the lift as its own is (FromLift).
+                settle.animateTo(to, if (current.feel != null) spec.fromLift() else spec)
             } finally {
                 settling = false
             }
@@ -306,8 +308,8 @@ internal fun JsGesture(
             // The existing slider's finish: an ease-out to the end, longer over a longer way, and the pop as it arrives.
             val along = if (pan.axis == JsPanAxis.VERTICAL) placeY.value else placeX.value
             val approach = WidgetStyleRules.approachMs(feel, (travel - along) / density)
-            moveTo(endX, endY, animated = true, spec = tween(approach, easing = WidgetStyleRules.EaseOutQuad))
-            startPop(feel, approach - feel.approachMs)
+            moveTo(endX, endY, animated = true, spec = tween<Float>(approach, easing = WidgetStyleRules.EaseOutQuad).fromLift())
+            startPop(feel, approach - feel.approachMs - LIFT_FRAME_MS)
             return
         }
         unpress()
@@ -505,7 +507,8 @@ internal fun JsGesture(
                                     GestureSettle.COMPLETE -> complete(travel)
                                     GestureSettle.SNAP_BACK -> {
                                         send(pan.endAction, JsGesturePhase.ENDED, x, y, travel)
-                                        moveTo(0f, 0f, animated = true, dips = current.feel != null)
+                                        val feel = current.feel
+                                        moveTo(0f, 0f, animated = true, spec = feel?.springHome()?.fromLift() ?: SpringBack, dips = feel != null)
                                         unpress()
                                     }
                                     GestureSettle.STAY -> {
