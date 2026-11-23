@@ -227,9 +227,8 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 
 /// `{ descriptor, generation, stale, expired, restartRequired,
 /// lastRefresh?, mismatches }`, where `lastRefresh` is `{ outcome, reason? }`
-/// and `outcome` is `current`, `unreachable`, `refused` or `notStored`. Each
-/// of `mismatches` is `{ kind: "genesisHash", role, named, answered }`, with
-/// both hashes as `0x` hex, or `{ kind: "networkSuffix", named, answered }`.
+/// and `outcome` is `current`, `unreachable`, `refused` or `notStored`.
+/// `mismatches` holds what [`mismatch_to_js`] gives for each.
 fn status_to_js(status: &StackStatus) -> JsValue {
 	let StackStatus {
 		descriptor,
@@ -249,22 +248,7 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 		};
 		object(&[("outcome", JsValue::from_str(outcome)), ("reason", JsValue::from(reason))])
 	});
-	let mismatches: Array = mismatches
-		.iter()
-		.map(|mismatch| match mismatch {
-			StackMismatch::GenesisHash { role, named, answered } => object(&[
-				("kind", JsValue::from_str("genesisHash")),
-				("role", JsValue::from_str(role)),
-				("named", JsValue::from_str(&encode_hex(named))),
-				("answered", JsValue::from_str(&encode_hex(answered))),
-			]),
-			StackMismatch::NetworkSuffix { named, answered } => object(&[
-				("kind", JsValue::from_str("networkSuffix")),
-				("named", JsValue::from_str(named)),
-				("answered", JsValue::from_str(answered)),
-			]),
-		})
-		.collect();
+	let mismatches: Array = mismatches.iter().map(mismatch_to_js).collect();
 	object(&[
 		("descriptor", JsValue::from_str(descriptor)),
 		("generation", JsValue::from_str(generation)),
@@ -274,4 +258,22 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 		("lastRefresh", last_refresh),
 		("mismatches", mismatches.into()),
 	])
+}
+
+/// `{ kind: "genesisHash", role, named, answered }`, with both hashes as `0x`
+/// hex, or `{ kind: "networkSuffix", named, answered }`.
+fn mismatch_to_js(mismatch: &StackMismatch) -> JsValue {
+	match mismatch {
+		StackMismatch::GenesisHash { role, named, answered } => object(&[
+			("kind", JsValue::from_str("genesisHash")),
+			("role", JsValue::from_str(role)),
+			("named", JsValue::from_str(&encode_hex(named))),
+			("answered", JsValue::from_str(&encode_hex(answered))),
+		]),
+		StackMismatch::NetworkSuffix { named, answered } => object(&[
+			("kind", JsValue::from_str("networkSuffix")),
+			("named", JsValue::from_str(named)),
+			("answered", JsValue::from_str(answered)),
+		]),
+	}
 }
