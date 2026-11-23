@@ -780,6 +780,9 @@ pub struct GestureEvent {
 /// round hole through them, centred on the cell and wide enough to reach its
 /// corners, so neighbouring holes merge into one soft-edged scratch instead of
 /// showing square blocks. What is behind the node shows through the holes.
+///
+/// With a [`CoverBrush`], the cells cleared since the tree are drawn with the
+/// brush instead: see there.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -795,6 +798,34 @@ pub struct CoverGridProps {
 	/// `index % 8` of byte `index / 8`. Missing bytes are uncleared cells.
 	#[serde(default, deserialize_with = "hex_bytes_json::deserialize")]
 	pub cleared: Vec<u8>,
+	/// Draws the cells cleared since the tree as strokes of a brush that
+	/// follows a pan's finger; absent draws them as round holes.
+	#[serde(default)]
+	pub brush: Option<CoverBrush>,
+}
+
+/// The brush a cover grid draws its newly cleared cells with, as the existing
+/// scratch card draws: a line along the finger, `width` wide, with
+/// round caps and joins.
+///
+/// The host keeps every stroke of the finger on the location pan keyed `pan`
+/// since the current tree (the touch-down point, then each place the finger
+/// reached), in that pan's frame. It cuts those strokes out of the cover, but
+/// only within one cell's diagonal of a cell cleared since the tree, so the
+/// worker still decides what is scratched while the edge is the brush's own:
+/// round ends, and a strip of cover left between two strokes closer than a
+/// cell. A tree drops the strokes with the cells it replaces, and draws its
+/// own `cleared` cells as round holes, as do cells cleared while the host
+/// holds no stroke. A worker clearing cells within `width / 2` of each
+/// segment it hears has every point of the stroke covered.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CoverBrush {
+	/// The `key` of the `Gesture` whose location pan the brush follows.
+	pub pan: String,
+	/// The line's width, in logical pixels.
+	pub width: Size,
 }
 
 impl CoverGridProps {

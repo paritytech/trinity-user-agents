@@ -571,6 +571,20 @@ cell, row by row, lowest bit first), and the worker clears more with a
 A `ClearCells` answers a paced move. Inside a tree it draws nothing, and a
 Pocket card does not keep it as a face.
 
+Cells alone cannot draw a brush's own edge: two strokes a little more than a
+brush apart leave a strip of cover narrower than a cell between them, and a
+stroke's end is as round as the cells allow. A cover that should look like an
+existing scratch card names a brush in its tree, `brush: { pan, width }`:
+the key of the location pan it follows and the line's width. The host then
+keeps the finger's strokes on that pan since the tree and cuts them out of the
+cover as lines `width` wide with round caps and joins, but only within one
+cell's diagonal of the cells cleared since the tree. The worker still decides
+what is scratched, and nothing changes in its answers: the brush travels in
+the tree, never with a move. A tree's own `cleared` cells, and cells cleared
+while the host holds no stroke (after a redraw, say), are drawn as round holes.
+A worker clearing every cell within `width / 2` of each segment it hears has
+every point of the stroke covered.
+
 To hear where the finger is rather than how far it moved, a pan sets
 `location: true`: each event's `x` and `y` are then the finger's place inside
 the gesture, from its top-start corner and clamped to its frame (hundredths of

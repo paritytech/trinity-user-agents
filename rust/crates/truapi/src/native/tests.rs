@@ -3889,6 +3889,17 @@ fn cover_grid_clear_cells_and_location_pan_read_from_json() {
 		panic!("cover grid was not decoded");
 	};
 	assert_eq!((props.columns, props.rows, props.cleared), (2, 2, vec![9]));
+	assert_eq!(props.brush, None);
+	let brushed: latest::RendererNode = serde_json::from_str(
+		r#"{"tag":"CoverGrid","value":{"modifiers":[],"props":{"key":"foil","columns":2,"rows":2,
+		"cleared":"0x","brush":{"pan":"scratch","width":52}},"children":[]}}"#,
+	)
+	.unwrap();
+	let latest::RendererNode::CoverGrid { props, .. } = brushed else {
+		panic!("brushed cover grid was not decoded");
+	};
+	let brush = props.brush.expect("the brush was read");
+	assert_eq!((brush.pan.as_str(), brush.width.0), ("scratch", 52));
 	let gesture: latest::RendererNode = serde_json::from_str(
 		r#"{"tag":"Gesture","value":{"modifiers":[],"props":{"key":"scratch",
 		"pan":{"axis":"Free","moveAction":"move","location":true}},"children":[]}}"#,

@@ -422,7 +422,13 @@ fn scratch_tree(cleared: Vec<u8>) -> RendererNode {
 		},
 		children: vec![RendererNode::CoverGrid {
 			modifiers: vec![Modifier::FillWidth(true)],
-			props: CoverGridProps { key: "foil".into(), columns: 35, rows: 37, cleared },
+			props: CoverGridProps {
+				key: "foil".into(),
+				columns: 35,
+				rows: 37,
+				cleared,
+				brush: None,
+			},
 			children: vec![renderer_node()],
 		}],
 	}
@@ -449,10 +455,48 @@ fn clear_cells_has_the_same_bytes_on_hosts_and_clients() {
 fn a_cover_grid_keeps_its_wire_index() {
 	let node = RendererNode::CoverGrid {
 		modifiers: Vec::new(),
-		props: CoverGridProps { key: "f".into(), columns: 2, rows: 1, cleared: vec![2] },
+		props: CoverGridProps {
+			key: "f".into(),
+			columns: 2,
+			rows: 1,
+			cleared: vec![2],
+			brush: None,
+		},
 		children: vec![RendererNode::Nil],
 	};
-	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 4, 0]);
+	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 0, 4, 0]);
+}
+
+/// A brush is the last of a cover grid's props: present, then the pan's key
+/// and the width as a compact.
+#[test]
+fn a_cover_brush_follows_the_cleared_bits() {
+	let node = RendererNode::CoverGrid {
+		modifiers: Vec::new(),
+		props: CoverGridProps {
+			key: "f".into(),
+			columns: 2,
+			rows: 1,
+			cleared: vec![2],
+			brush: Some(CoverBrush { pan: "p".into(), width: Compact(52) }),
+		},
+		children: vec![RendererNode::Nil],
+	};
+	assert_eq!(node.encode(), vec![15, 0, 4, b'f', 2, 0, 1, 0, 4, 2, 1, 4, b'p', 208, 4, 0]);
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+}
+
+/// The brush travels with the tree, never with a move: an answer is the same
+/// few bytes whether the cover draws with a brush or with round holes.
+#[test]
+fn a_brushed_cover_answers_moves_with_the_same_clear_cells() {
+	let mut tree = scratch_tree(vec![0; 162]);
+	let RendererNode::Gesture { children, .. } = &mut tree else { unreachable!() };
+	let RendererNode::CoverGrid { props, .. } = &mut children[0] else { unreachable!() };
+	props.brush = Some(CoverBrush { pan: "scratch".into(), width: Compact(52) });
+	assert_eq!(RendererNode::decode(&mut tree.encode().as_slice()).unwrap(), tree);
+	let update = RendererNode::ClearCells { key: "foil".into(), cells: (0..8).collect() };
+	assert_eq!(update.encode().len(), 23);
 }
 
 #[test]
@@ -462,6 +506,7 @@ fn cleared_bits_read_row_by_row_lowest_bit_first() {
 		columns: 4,
 		rows: 3,
 		cleared: vec![0b0000_0101, 0b0000_1000],
+		brush: None,
 	};
 	let cleared: Vec<u32> = (0..12).filter(|&cell| props.is_cleared(cell)).collect();
 	assert_eq!(cleared, vec![0, 2, 11]);
@@ -578,8 +623,15 @@ fn a_gesture_feel_round_trips_through_scale_json_and_uniffi() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn cover_grid_and_clear_cells_round_trip_through_uniffi() {
+	let mut brushed = scratch_tree(vec![1, 2, 3]);
+	if let RendererNode::Gesture { children, .. } = &mut brushed &&
+		let RendererNode::CoverGrid { props, .. } = &mut children[0]
+	{
+		props.brush = Some(CoverBrush { pan: "scratch".into(), width: Compact(52) });
+	}
 	for node in [
 		scratch_tree(vec![1, 2, 3]),
+		brushed,
 		RendererNode::ClearCells { key: "foil".into(), cells: vec![0, 1294] },
 	] {
 		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
