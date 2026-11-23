@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 final class FundingAmountInteractor: FundingEntryInteractor, FundingAmountInteractorInputProtocol {
@@ -11,11 +12,11 @@ final class FundingAmountInteractor: FundingEntryInteractor, FundingAmountIntera
         super.init(service: service, entryId: entryId)
     }
 
-    func amountIssue(_ amount: U128, spendable: U128?) -> FundingAmountIssue? {
+    func amountIssue(_ amount: Balance, spendable: Balance?) -> FundingAmountIssue? {
         service.amountIssue(amount, spendable: spendable, for: entryId)
     }
 
-    func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) {
+    func followSpendable(_ onChange: @escaping @MainActor (Balance) -> Void) {
         balance.task = Task { [environment] in
             await environment.followSpendable(onChange)
         }

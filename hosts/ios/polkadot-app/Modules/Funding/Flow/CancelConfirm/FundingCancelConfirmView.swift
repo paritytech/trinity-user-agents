@@ -5,7 +5,7 @@ import SwiftUI
 /// Asks before cancelling: a deposit the user may already have paid, or a
 /// session the provider is working on.
 struct FundingCancelConfirmView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<Void>
     let presenter: FundingCancelConfirmPresenterProtocol
 
     var body: some View {

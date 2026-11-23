@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// What every funding screen's presenter hears from its interactor.
@@ -41,7 +42,7 @@ class FundingEntryInteractor {
         service.select(selection, for: entryId)
     }
 
-    func quote(amount: U128?) {
+    func quote(amount: Balance?) {
         service.quote(amount: amount, for: entryId)
     }
 

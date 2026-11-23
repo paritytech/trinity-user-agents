@@ -95,8 +95,13 @@ final class FundingFlowRouter: FundingFlowRouting {
 
 private extension FundingFlowRouter {
     func show(_ entry: FundingEntry, on screens: [FundingFlowScreen]) {
-        let context = FundingFlowContext(entry: entry, cash: environment.cash, branding: environment.branding)
-        let flow = FundingFlowWireframe(context: context, service: service, environment: environment)
+        let context = FundingFlowContext(entry: entry, cashInfo: environment.cashInfo, branding: environment.branding)
+        let flow = FundingFlowWireframe(
+            context: context,
+            service: service,
+            environment: environment,
+            viewModelFactory: makeViewModelFactory()
+        )
         flow.onClose = { [weak self] in self?.flows[entry.id] = nil }
         flow.onHistory = { [weak self] in self?.showHistory() }
         flow.onStartOver = { [weak self] direction in self?.startOver(direction: direction) }
@@ -118,7 +123,11 @@ private extension FundingFlowRouter {
     func showEnded(_ entry: FundingEntry) {
         guard let ended = entry.ended else { return }
 
-        let sheet = FundingEndedSheetController(ended: ended, cash: environment.cash, branding: environment.branding)
+        let sheet = FundingEndedSheetController(
+            ended: ended,
+            viewModel: makeViewModelFactory().makeEndedViewModel(for: ended),
+            branding: environment.branding
+        )
         sheet.onStartOver = { [weak self, weak sheet] in
             sheet?.dismissIfPresented { self?.startOver(direction: entry.direction) }
         }
@@ -130,11 +139,15 @@ private extension FundingFlowRouter {
     func showList(_ mode: FundingActivityMode) {
         let sheet = FundingActivityViewFactory.createView(
             mode: mode,
-            cash: environment.cash,
+            viewModelFactory: makeViewModelFactory(),
             service: service,
             router: self
         )
         _ = environment.present(sheet)
+    }
+
+    func makeViewModelFactory() -> FundingViewModelFactoryProtocol {
+        FundingViewModelFactory(cashInfo: environment.cashInfo, cashSymbol: environment.cashSymbol)
     }
 
     func current(_ entryId: String) async -> FundingEntry? {

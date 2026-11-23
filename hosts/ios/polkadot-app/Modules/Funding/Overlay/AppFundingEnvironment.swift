@@ -1,6 +1,7 @@
 import Coinage
 import Foundation
 import Products
+import SubstrateSdk
 import TrUAPIHost
 import UIKit
 import UIKitExt
@@ -23,8 +24,12 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         branding = ManifestFundingProviderBranding(flowStateProvider: flowStateProvider)
     }
 
-    var cash: FundingCash {
-        .current
+    var cashInfo: AssetBalanceDisplayInfo {
+        .digitalDollarFigure(assetPrecision: PaymentRequestViewFactory.mainChainAsset()?.asset.decimalPrecision ?? 6)
+    }
+
+    var cashSymbol: String {
+        PaymentAssetBranding.shared.current.symbol
     }
 
     /// What a payment can spend, as the payment path checks it, on every
@@ -32,7 +37,7 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
     /// or the balance service cannot be built; the balance stream follows
     /// the wallet for as long as it runs, so the loop otherwise ends only
     /// with the task's cancellation or a stream failure, which is logged.
-    func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async {
+    func followSpendable(_ onChange: @escaping @MainActor (Balance) -> Void) async {
         guard let dependencies: TruApiDependenciesLocator = RootDependencyLocator.getDependency(),
               let support: PaymentsSupport = dependencies.getDependency(),
               let balanceService = try? await support.coinageService.coinageBalanceService()
@@ -40,8 +45,7 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
 
         do {
             for try await balance in balanceService.balanceStream {
-                let spendable = balanceService.denominationContext.decimal(fromPlanks: balance.spendableByPayment)
-                onChange(spendable)
+                onChange(balance.spendableByPayment)
             }
         } catch {
             if !Task.isCancelled {

@@ -4,22 +4,27 @@ import SwiftUI
 import UIKit
 import UIKitExt
 
-/// What every funding screen's presenter draws through.
+/// What every funding screen's presenter draws through: the flow's state,
+/// and the screen's text from its view-model factory.
 @MainActor
-protocol FundingScreenViewProtocol: ControllerBackedProtocol {
-    func didReceive(state: FundingFlowState)
+protocol FundingScreenViewProtocol<ViewModel>: ControllerBackedProtocol {
+    associatedtype ViewModel
+
+    func didReceive(state: FundingFlowState, viewModel: ViewModel)
 }
 
 /// The state one funding screen draws, read by its view as if its own
-/// properties.
+/// properties, and its text.
 @MainActor
 @Observable
 @dynamicMemberLookup
-final class FundingScreenModel {
+final class FundingScreenModel<ViewModel> {
     var state: FundingFlowState
+    var viewModel: ViewModel
 
-    init(state: FundingFlowState) {
+    init(state: FundingFlowState, viewModel: ViewModel) {
         self.state = state
+        self.viewModel = viewModel
     }
 
     subscript<Value>(dynamicMember keyPath: KeyPath<FundingFlowState, Value>) -> Value {
@@ -29,13 +34,18 @@ final class FundingScreenModel {
 
 /// Hosts one funding screen's SwiftUI view, on the funding sheet's colours
 /// with the navigation bar hidden, and hands the presenter's state to it.
-final class FundingScreenController<Content: View>: UIHostingController<Content>, FundingScreenViewProtocol,
-    FundingFlowScreenTagged {
+final class FundingScreenController<Content: View, ViewModel>: UIHostingController<Content>,
+    FundingScreenViewProtocol, FundingFlowScreenTagged {
     let screen: FundingFlowScreen
-    let model: FundingScreenModel
+    let model: FundingScreenModel<ViewModel>
     private let onLoad: () -> Void
 
-    init(screen: FundingFlowScreen, model: FundingScreenModel, content: Content, onLoad: @escaping () -> Void) {
+    init(
+        screen: FundingFlowScreen,
+        model: FundingScreenModel<ViewModel>,
+        content: Content,
+        onLoad: @escaping () -> Void
+    ) {
         self.screen = screen
         self.model = model
         self.onLoad = onLoad
@@ -58,8 +68,9 @@ final class FundingScreenController<Content: View>: UIHostingController<Content>
         navigationController?.setNavigationBarHidden(true, animated: false)
     }
 
-    func didReceive(state: FundingFlowState) {
+    func didReceive(state: FundingFlowState, viewModel: ViewModel) {
         model.state = state
+        model.viewModel = viewModel
     }
 }
 

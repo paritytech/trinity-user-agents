@@ -8,11 +8,12 @@ enum FundingSummaryViewFactory {
             context: wireframe.context,
             interactor: interactor,
             wireframe: wireframe,
+            viewModelFactory: wireframe.viewModelFactory,
             logger: Logger.shared
         )
         interactor.entryOutput = presenter
 
-        let model = FundingScreenModel(state: presenter.state)
+        let model = FundingScreenModel(state: presenter.state, viewModel: presenter.viewModel)
         let view = FundingScreenController(
             screen: .summary,
             model: model,

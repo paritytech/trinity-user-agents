@@ -5,7 +5,7 @@ import SwiftUI
 /// which countries a provider serves, with the smallest amount it takes
 /// there, and which none does: those cannot be picked.
 struct FundingCountryView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingCountryViewModel>
     let presenter: FundingCountryPresenterProtocol
 
     @State private var query = ""
@@ -124,8 +124,8 @@ private extension FundingCountryView {
             Text(.Funding.countryRefused)
                 .typography(.bodySmall)
                 .foregroundStyle(.fgTertiary)
-        } else if let minimum = model.state.minimum(country: country.code) {
-            Text(.Funding.countryMinimum(amount: model.cash.label(minimum)))
+        } else if let minimum = model.viewModel.minimums[country.code.uppercased()] {
+            Text(verbatim: minimum)
                 .typography(.bodySmall)
                 .foregroundStyle(.fgSecondary)
         } else if let currency = country.currencyName {

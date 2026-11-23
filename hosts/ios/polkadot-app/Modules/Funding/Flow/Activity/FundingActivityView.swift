@@ -8,7 +8,6 @@ import TrUAPIHost
 struct FundingHistoryView: View {
     let model: FundingActivityViewModel
     let presenter: FundingActivityPresenterProtocol
-    let cash: FundingCash
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
@@ -41,9 +40,13 @@ struct FundingHistoryView: View {
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
                 ForEach(items) { item in
-                    FundingActivityRow(item: item, cash: cash, arrives: model.state.arriving.contains(item.id))
-                        .contentShape(Rectangle())
-                        .onTapGesture { presenter.open(item) }
+                    FundingActivityRow(
+                        item: item,
+                        title: model.state.titles[item.id] ?? "",
+                        arrives: model.state.arriving.contains(item.id)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture { presenter.open(item) }
                 }
             }
         }
@@ -57,7 +60,6 @@ struct FundingPendingView: View {
     let direction: FundingDirection
     let model: FundingActivityViewModel
     let presenter: FundingActivityPresenterProtocol
-    let cash: FundingCash
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
@@ -77,7 +79,7 @@ struct FundingPendingView: View {
             ScrollView {
                 VStack(spacing: DSSpacings.small) {
                     ForEach(items) { item in
-                        FundingActivityRow(item: item, cash: cash)
+                        FundingActivityRow(item: item, title: model.state.titles[item.id] ?? "")
                             .contentShape(Rectangle())
                             .onTapGesture { presenter.open(item) }
                     }
@@ -105,14 +107,15 @@ struct FundingPendingView: View {
 /// the rail it went by.
 struct FundingActivityRow: View {
     let item: FundingActivityItem
-    let cash: FundingCash
+    /// The amount line, from the presenter.
+    let title: String
     /// Just finished: the row arrives and its icon plays the completion.
     var arrives = false
 
     private static let iconSize: CGFloat = 20
 
     var body: some View {
-        let content = FundingActivityRowContent(item: item, cash: cash)
+        let content = FundingActivityRowContent(item: item, title: title)
         HStack(alignment: .top, spacing: DSSpacings.small) {
             FundingActivityIcon(icon: content.icon, animatesCompletion: arrives)
                 .frame(width: Self.iconSize, height: Self.iconSize)
@@ -175,10 +178,10 @@ struct FundingActivityRowContent: Equatable {
     /// The rail, in the pill on the right.
     let pill: String?
 
-    init(item: FundingActivityItem, cash: FundingCash, now: Date = Date(), calendar: Calendar = .current) {
+    init(item: FundingActivityItem, title: String, now: Date = Date(), calendar: Calendar = .current) {
         let isDelayed = item.isDelayed
         icon = Self.icon(item, isDelayed: isDelayed)
-        title = Self.title(item, cash: cash)
+        self.title = title
         titleTone = Self.tone(item)
         subtitle = Self.subtitle(item, now: now, calendar: calendar)
         isSubtitleWarning = isDelayed
@@ -196,24 +199,6 @@ private extension FundingActivityRowContent {
              .payoutFailed,
              .cancelled,
              .failed: .failed
-        }
-    }
-
-    static func title(_ item: FundingActivityItem, cash: FundingCash) -> String {
-        guard let balance = item.amount, let value = cash.decimal(fromPlanks: balance) else { return "" }
-
-        switch item.status {
-        case .toppedUp,
-             .sent:
-            return cash.signed(value, direction: item.direction)
-        case .inProgress where item.direction == .out:
-            return cash.signed(value, direction: .out)
-        case .inProgress,
-             .refunded,
-             .payoutFailed,
-             .cancelled,
-             .failed:
-            return cash.label(value)
         }
     }
 

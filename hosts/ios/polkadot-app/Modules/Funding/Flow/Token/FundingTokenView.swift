@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The tokens the providers take on the chosen network.
 struct FundingTokenView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<Void>
     let presenter: FundingTokenPresenterProtocol
 
     var body: some View {
@@ -20,7 +20,7 @@ struct FundingTokenView: View {
                     Text(verbatim: network.name)
                         .typography(.captionMedium)
                         .foregroundStyle(.fgPrimary)
-                    FundingAssetMark(logo: network.logo, letter: network.monogram, size: .s20)
+                    FundingAssetMark(letter: network.monogram, size: .s20)
                 }
                 .padding(.horizontal, DSSpacings.smallIncreased)
                 .frame(height: 32)
@@ -31,7 +31,7 @@ struct FundingTokenView: View {
                 VStack(spacing: DSSpacings.small) {
                     ForEach(model.tokens) { token in
                         DisclosureListRow(title: token.symbol) {
-                            FundingAssetMark(logo: token.logo, letter: token.monogram)
+                            FundingAssetMark(letter: token.monogram)
                         } onTap: {
                             presenter.chooseToken(token.symbol)
                         }

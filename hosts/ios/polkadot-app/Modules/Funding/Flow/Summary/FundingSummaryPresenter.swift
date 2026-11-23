@@ -3,7 +3,7 @@ import TrUAPIHost
 
 /// What the chosen provider will charge and pay, before the session is
 /// handed to it. A provider is only chosen on its quote.
-final class FundingSummaryPresenter: FundingScreenPresenter {
+final class FundingSummaryPresenter: FundingScreenPresenter<FundingSummaryViewModel> {
     private let interactor: FundingSummaryInteractorInputProtocol
     private let wireframe: FundingSummaryWireframeProtocol
     private let logger: LoggerProtocol
@@ -12,12 +12,13 @@ final class FundingSummaryPresenter: FundingScreenPresenter {
         context: FundingFlowContext,
         interactor: FundingSummaryInteractor,
         wireframe: FundingSummaryWireframeProtocol,
+        viewModelFactory: FundingViewModelFactoryProtocol,
         logger: LoggerProtocol
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
         self.logger = logger
-        super.init(context: context, interactor: interactor)
+        super.init(context: context, interactor: interactor) { viewModelFactory.makeSummaryViewModel(for: $0) }
     }
 }
 

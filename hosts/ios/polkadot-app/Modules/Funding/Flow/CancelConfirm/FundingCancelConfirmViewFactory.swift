@@ -11,7 +11,7 @@ enum FundingCancelConfirmViewFactory {
         )
         interactor.entryOutput = presenter
 
-        let model = FundingScreenModel(state: presenter.state)
+        let model = FundingScreenModel(state: presenter.state, viewModel: presenter.viewModel)
         let view = FundingScreenController(
             screen: .cancelConfirm,
             model: model,

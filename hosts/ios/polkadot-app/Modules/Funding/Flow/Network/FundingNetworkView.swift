@@ -5,7 +5,7 @@ import SwiftUI
 /// The networks the providers' crypto routes name, each closed to amounts
 /// below the lowest minimum a provider has refused with there.
 struct FundingNetworkView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingNetworkViewModel>
     let presenter: FundingNetworkPresenterProtocol
 
     var body: some View {
@@ -30,14 +30,10 @@ struct FundingNetworkView: View {
     }
 
     private func row(_ network: FundingNetwork) -> some View {
-        let minimum = model.state.minimum(network: network.id).flatMap { $0 > model.amount ? $0 : nil }
-        let subtitle = minimum.map { minimum -> String in
-            let label = model.cash.label(minimum)
-            return String(localized: LocalizedStringResource.Funding.networkMinimum(amount: label))
-        }
+        let minimum = model.viewModel.minimums[network.id]
 
-        return DisclosureListRow(title: network.name, subtitle: subtitle, isEnabled: minimum == nil) {
-            FundingAssetMark(logo: network.logo, letter: network.monogram)
+        return DisclosureListRow(title: network.name, subtitle: minimum, isEnabled: minimum == nil) {
+            FundingAssetMark(letter: network.monogram)
         } onTap: {
             presenter.chooseNetwork(network.id)
         }
@@ -45,22 +41,13 @@ struct FundingNetworkView: View {
     }
 }
 
-/// A network's or token's icon, or its first letter when it has none.
+/// A network's or token's first letter.
 struct FundingAssetMark: View {
-    let logo: ImageResource?
     let letter: String
     var size: DSLetterAvatar.Size = .s40
 
     var body: some View {
-        if let logo {
-            Image(logo)
-                .resizable()
-                .scaledToFit()
-                .frame(width: size.dimension, height: size.dimension)
-                .clipShape(Circle())
-        } else {
-            DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .white, size: size)
-        }
+        DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .white, size: size)
     }
 }
 

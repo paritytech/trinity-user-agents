@@ -4,7 +4,10 @@ import Testing
 import TrUAPIHost
 
 struct FundingScreenTests {
-    private let cash = FundingCash(symbol: "CASH", precision: 2)
+    private let viewModelFactory = FundingViewModelFactory(
+        cashInfo: .digitalDollarFigure(assetPrecision: 2),
+        cashSymbol: "CASH"
+    )
     private let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US")
@@ -140,9 +143,10 @@ private extension FundingScreenTests {
         direction: FundingDirection,
         rail: FundingRail
     ) -> FundingActivityRowContent {
-        FundingActivityRowContent(
-            item: item(status, direction: direction, rail: rail),
-            cash: cash,
+        let activity = item(status, direction: direction, rail: rail)
+        return FundingActivityRowContent(
+            item: activity,
+            title: viewModelFactory.makeActivityTitle(for: activity),
             now: now,
             calendar: calendar
         )

@@ -3,10 +3,11 @@ import TrUAPIHost
 
 /// What every funding screen's presenter does: follows the session through
 /// its interactor, keeps the flow's draft and the core's selection in step,
-/// and draws both. Each screen's presenter adds its own actions.
+/// and draws both with the screen's text. Each screen's presenter adds its
+/// own actions.
 @MainActor
-class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
-    weak var view: FundingScreenViewProtocol?
+class FundingScreenPresenter<ViewModel>: FundingEntryInteractorOutputProtocol {
+    weak var view: (any FundingScreenViewProtocol<ViewModel>)?
     let context: FundingFlowContext
     let entryInteractor: FundingEntryInteractor
     private(set) var entry: FundingEntry
@@ -15,9 +16,17 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
         didSet { render() }
     }
 
-    init(context: FundingFlowContext, interactor: FundingEntryInteractor) {
+    private let makeViewModel: (FundingFlowState) -> ViewModel
+
+    /// `viewModel` makes the screen's text for the state it draws.
+    init(
+        context: FundingFlowContext,
+        interactor: FundingEntryInteractor,
+        viewModel: @escaping (FundingFlowState) -> ViewModel
+    ) {
         self.context = context
         entryInteractor = interactor
+        makeViewModel = viewModel
         entry = context.latestEntry
     }
 
@@ -38,8 +47,13 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
         return state
     }
 
+    var viewModel: ViewModel {
+        makeViewModel(state)
+    }
+
     func render() {
-        view?.didReceive(state: state)
+        let state = state
+        view?.didReceive(state: state, viewModel: makeViewModel(state))
     }
 
     /// Tells the core of the draft's selection when it changed since the
@@ -53,7 +67,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     /// which it is told of first.
     func requestQuote() {
         reportSelection()
-        entryInteractor.quote(amount: state.amountUnits)
+        entryInteractor.quote(amount: state.amount)
     }
 
     /// A hook for a screen that acts on the session's new state.

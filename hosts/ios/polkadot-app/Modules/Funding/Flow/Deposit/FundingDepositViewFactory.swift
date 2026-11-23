@@ -7,11 +7,12 @@ enum FundingDepositViewFactory {
         let presenter = FundingDepositPresenter(
             context: wireframe.context,
             interactor: interactor,
-            wireframe: wireframe
+            wireframe: wireframe,
+            viewModelFactory: wireframe.viewModelFactory
         )
         interactor.entryOutput = presenter
 
-        let model = FundingScreenModel(state: presenter.state)
+        let model = FundingScreenModel(state: presenter.state, viewModel: presenter.viewModel)
         let view = FundingScreenController(
             screen: .deposit,
             model: model,

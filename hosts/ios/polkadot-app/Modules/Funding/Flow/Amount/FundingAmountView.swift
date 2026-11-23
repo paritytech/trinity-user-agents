@@ -5,10 +5,8 @@ import TrUAPIHost
 
 /// The overlay's first screen: which rail, and how much.
 struct FundingAmountView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingAmountViewModel>
     let presenter: FundingAmountPresenterProtocol
-
-    private static let presets: [Decimal] = [10, 50, 100]
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
@@ -23,8 +21,8 @@ struct FundingAmountView: View {
             }
 
             VStack(spacing: DSSpacings.extraSmall) {
-                if model.direction == .out, let spendable = model.spendable {
-                    Text(.Funding.amountAvailable(amount: model.cash.label(spendable)))
+                if let available = model.viewModel.available {
+                    Text(.Funding.amountAvailable(amount: available))
                         .typography(.captionMedium)
                         .foregroundStyle(.fgSecondary)
                 }
@@ -33,7 +31,7 @@ struct FundingAmountView: View {
             }
             .frame(maxWidth: .infinity)
 
-            if model.direction == .in {
+            if !model.viewModel.presets.isEmpty {
                 presets
             }
 
@@ -80,11 +78,11 @@ private extension FundingAmountView {
 
     var amountFigure: some View {
         DSAmount(
-            amount: model.cash.figure(model.amount),
-            symbol: model.cash.symbol,
+            amount: model.viewModel.figure,
+            symbol: model.viewModel.symbol,
             typography: .fundingFigure(digits: model.amountText.filter(\.isNumber).count)
         )
-        .foregroundStyle(model.amount > 0 ? Color.fgPrimary : Color.fgTertiary)
+        .foregroundStyle((model.amount ?? 0) > 0 ? Color.fgPrimary : Color.fgTertiary)
         .lineLimit(1)
         .minimumScaleFactor(0.5)
         .animation(.snappy, value: model.amountText)
@@ -92,12 +90,12 @@ private extension FundingAmountView {
 
     @ViewBuilder
     var captionLine: some View {
-        if let issue = model.amountIssue {
-            Text(message(for: issue))
+        if let issue = model.viewModel.issue {
+            Text(issue)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgError)
         } else {
-            Text(minimumCaption(model.amountLimits.min))
+            Text(model.viewModel.minimum)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSecondary)
         }
@@ -105,34 +103,15 @@ private extension FundingAmountView {
 
     var presets: some View {
         HStack(spacing: DSSpacings.small) {
-            ForEach(Self.presets, id: \.self) { preset in
+            ForEach(model.viewModel.presets, id: \.self) { preset in
                 Button {
-                    presenter.amountTextChanged(NSDecimalNumber(decimal: preset).stringValue)
+                    presenter.amountTextChanged(preset.text)
                 } label: {
-                    DSAmount(amount: model.cash.figure(preset), symbol: model.cash.symbol, typography: .labelMedium)
+                    DSAmount(amount: preset.figure, symbol: model.viewModel.symbol, typography: .labelMedium)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.ds(style: .tertiary, shape: .pill, size: .small))
             }
-        }
-    }
-
-    func minimumCaption(_ minimum: Decimal) -> String {
-        let label = model.cash.label(minimum)
-        if model.direction == .in {
-            return String(localized: .Funding.amountMinimum(amount: label))
-        }
-        return String(localized: .Funding.amountWithdrawMinimum(amount: label))
-    }
-
-    func message(for issue: FundingAmountIssue) -> String {
-        switch issue {
-        case let .belowMinimum(minimum):
-            String(localized: .Funding.errorMinimum(amount: model.cash.label(units: minimum) ?? ""))
-        case let .aboveMaximum(maximum):
-            String(localized: .Funding.errorMaximum(amount: model.cash.label(units: maximum) ?? ""))
-        case .notEnoughBalance:
-            String(localized: .Funding.errorNotEnough(symbol: model.cash.symbol))
         }
     }
 }

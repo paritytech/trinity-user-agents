@@ -7,7 +7,7 @@ import TrUAPIHost
 /// Where to send the funds, as the provider reported it, while the session
 /// waits for them.
 struct FundingDepositView: View {
-    let model: FundingScreenModel
+    let model: FundingScreenModel<FundingDepositViewModel>
     let presenter: FundingDepositPresenterProtocol
 
     @State private var copied: String?
@@ -56,21 +56,17 @@ private extension FundingDepositView {
             errorText(failure.failedText)
         } else if let deposit = model.progress?.deposit {
             switch deposit {
-            case let .crypto(address, network, asset, amount, decimals, exact, uri, _):
+            case let .crypto(address, network, _, _, _, exact, uri, _):
                 cryptoDeposit(
                     address: address,
                     network: network,
-                    amount: AssetBalanceDisplayInfo.from(assetCode: asset, decimals: Int16(decimals))
-                        .amount(units: amount),
+                    amount: model.viewModel.amount,
                     exact: exact,
                     uri: uri
                 )
-            case let .bank(amount, currency, decimals, beneficiary, account, bankCode, reference, _):
+            case let .bank(_, _, _, beneficiary, account, bankCode, reference, _):
                 VStack(spacing: DSSpacings.small) {
-                    AssetBalanceDisplayInfo
-                        .from(assetCode: currency, decimals: Int16(decimals))
-                        .amount(units: amount)
-                        .map { copyRow(String(localized: .Funding.depositExactAmount), $0) }
+                    model.viewModel.amount.map { copyRow(String(localized: .Funding.depositExactAmount), $0) }
                     beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
                     account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
                     bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }

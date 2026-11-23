@@ -3,16 +3,17 @@ import TrUAPIHost
 
 /// Every provider the core asked, in its order, with its quote or why it
 /// would not give one.
-final class FundingProvidersPresenter: FundingScreenPresenter {
+final class FundingProvidersPresenter: FundingScreenPresenter<FundingProvidersViewModel> {
     private let wireframe: FundingProvidersWireframeProtocol
 
     init(
         context: FundingFlowContext,
         interactor: FundingProvidersInteractor,
-        wireframe: FundingProvidersWireframeProtocol
+        wireframe: FundingProvidersWireframeProtocol,
+        viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
-        super.init(context: context, interactor: interactor)
+        super.init(context: context, interactor: interactor) { viewModelFactory.makeProvidersViewModel(for: $0) }
     }
 }
 

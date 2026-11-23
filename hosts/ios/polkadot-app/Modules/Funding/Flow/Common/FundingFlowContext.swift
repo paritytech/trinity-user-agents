@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// One funding flow's shared draft: what the user picked on its screens,
@@ -9,7 +10,7 @@ import TrUAPIHost
 final class FundingFlowContext {
     let entryId: String
     let direction: FundingDirection
-    let cash: FundingCash
+    let cashInfo: AssetBalanceDisplayInfo
     let branding: FundingProviderBranding
 
     private(set) var draft: FundingDraft {
@@ -24,18 +25,18 @@ final class FundingFlowContext {
     private var brandReads: [ProductId: Task<Void, Never>] = [:]
     private var listeners: [ObjectIdentifier: () -> Void] = [:]
 
-    init(entry: FundingEntry, cash: FundingCash, branding: FundingProviderBranding) {
+    init(entry: FundingEntry, cashInfo: AssetBalanceDisplayInfo, branding: FundingProviderBranding) {
         entryId = entry.id
         direction = entry.direction
         latestEntry = entry
-        self.cash = cash
+        self.cashInfo = cashInfo
         self.branding = branding
 
         let detected = (entry.options?.detectedCountry ?? FundingCountries.localeRegion())
             .flatMap { FundingCountries.country(code: $0) }
         draft = FundingDraft(
             rail: entry.session?.choice?.rail ?? entry.options?.rails.first ?? .card,
-            amountText: entry.amount.flatMap { cash.decimal($0) }.map(Self.text(for:)) ?? "",
+            amountText: entry.amount.map { Self.text(for: $0.decimal(assetInfo: cashInfo)) } ?? "",
             country: detected,
             detectedCountry: detected,
             network: entry.session?.choice?.network,
@@ -47,7 +48,7 @@ final class FundingFlowContext {
 
     /// The state a screen draws for `entry`, with this flow's draft.
     func state(for entry: FundingEntry) -> FundingFlowState {
-        FundingFlowState(entry: entry, draft: draft, cash: cash, branding: branding, brands: brands)
+        FundingFlowState(entry: entry, draft: draft, cashInfo: cashInfo, branding: branding, brands: brands)
     }
 
     /// Calls `onChange` whenever the draft or a brand changes, until `owner`
@@ -99,8 +100,12 @@ final class FundingFlowContext {
 }
 
 private extension FundingFlowContext {
+    /// `value` as the keypad types it: at most two decimals, rounded down.
     static func text(for value: Decimal) -> String {
-        NSDecimalNumber(decimal: value.fundingRounded(scale: 2, mode: .down)).stringValue
+        var source = value
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &source, 2, .down)
+        return NSDecimalNumber(decimal: rounded).stringValue
     }
 
     func loadBrands(_ providerIds: [ProductId]) {
