@@ -43,16 +43,17 @@ extension FundingActivityItem {
             .status ?? (session.direction == .in ? .waitingForPayment : .transactionInitiated))
     }
 
-    init(record: FundingRecord) {
-        id = record.intent
-        direction = record.direction
-        rail = record.rail
-        amount = record.settledAmount ?? record.requestedAmount
-        date = record.settledAt
-        status = record.outcome.activityStatus(
-            payout: record.payout,
-            refunded: record.refundedAmount
-        )
+    /// The row for an ended session from its summary in the core's history;
+    /// nil while it is open.
+    init?(summary: FundingSessionSummary) {
+        guard let status = Status(ended: summary) else { return nil }
+
+        id = summary.intent
+        direction = summary.direction
+        rail = summary.choice?.rail
+        amount = Balance(units: summary.ended.cashAmount)
+        date = Date(milliseconds: summary.ended.atMs)
+        self.status = status
     }
 
     var isInProgress: Bool {
@@ -67,26 +68,23 @@ extension FundingActivityItem {
     }
 }
 
-private extension FundingRecord.Outcome {
-    /// The row's status for a record that ended this way; a release whose
-    /// payout failed reads as a failed payout.
-    func activityStatus(payout: FundingRecord.Payout?, refunded: Balance?) -> FundingActivityItem.Status {
-        switch self {
-        case .delivered:
-            .toppedUp
-        case .released:
-            if case .failed = payout {
-                .payoutFailed(refunded: refunded)
-            } else {
-                .sent
-            }
-        case .refunded:
-            .refunded
-        case .cancelled,
-             .failed(.cancelled):
-            .cancelled(refunded: refunded)
-        case let .failed(failure):
-            .failed(failure)
+private extension FundingActivityItem.Status {
+    /// How the core says `summary` ended; a cancel reads as cancelled, with
+    /// what came back when money had moved.
+    init?(ended summary: FundingSessionSummary) {
+        switch summary.ended.outcome {
+        case .open:
+            return nil
+        case .succeeded:
+            self = summary.direction == .in ? .toppedUp : .sent
+        case .payoutFailed:
+            self = .payoutFailed(refunded: Balance(units: summary.refunded))
+        case .failed(.cancelled):
+            self = .cancelled(refunded: Balance(units: summary.refunded))
+        case .failed(.refunded):
+            self = .refunded
+        case let .failed(reason):
+            self = .failed(reason)
         }
     }
 }
@@ -107,6 +105,43 @@ extension FundingStatus {
              .cancelOffered,
              .cancelRefused: true
         default: false
+        }
+    }
+}
+
+extension FundingActivityItem {
+    /// The sessions in flight, newest first, and the ended ones, most
+    /// recently ended first.
+    static func lists(from entries: [FundingEntry])
+        -> (inFlight: [FundingActivityItem], history: [FundingActivityItem]) {
+        let inFlight = entries
+            .filter { $0.progress?.status.isInFlight == true }
+            .compactMap { entry in entry.session.map { FundingActivityItem(session: $0, progress: entry.progress) } }
+            .sorted { $0.date > $1.date }
+        let inFlightIds = Set(inFlight.map(\.id))
+        let history = entries
+            .filter { !inFlightIds.contains($0.id) }
+            .compactMap { $0.summary.flatMap(FundingActivityItem.init(summary:)) }
+            .sorted { $0.date > $1.date }
+        return (inFlight, history)
+    }
+}
+
+/// The amount screen's history clock, read from every session the core holds.
+enum FundingHistoryClock: Equatable {
+    /// No session has started: the history would be empty.
+    case hidden
+    case shown
+    /// A session has started and not ended: the clock wears a dot.
+    case running
+
+    init(entries: [FundingEntry]) {
+        if entries.contains(where: { $0.phase == .running }) {
+            self = .running
+        } else if entries.contains(where: \.hasEnded) {
+            self = .shown
+        } else {
+            self = .hidden
         }
     }
 }
