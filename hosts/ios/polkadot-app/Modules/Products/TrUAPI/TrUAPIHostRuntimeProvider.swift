@@ -25,9 +25,8 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// The view the host's own prompts present from, once attached.
     @MainActor var presentationView: ControllerBackedProtocol? { get }
 
-    /// Attach what runs product workers when the core's reference ledger asks
-    /// for them. Called once at startup, before the runtime is first built.
-    func attach(workerManager: any TrUAPIWorkerManaging)
+    /// Stop this session's workers even when a consumer outlives sign-out.
+    func shutdownProductWorkers()
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
@@ -47,11 +46,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
+    private var sessionEnded = false
     private var contactsChangeNotifier: ContactsChangeNotifier?
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
-    private var workerManager: (any TrUAPIWorkerManaging)?
+    private var workerManager: (any NativeWebViewWorkerHost)?
 
     /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
     /// it is built, or right away if it already is.
@@ -87,11 +87,19 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.productsRouter.presentationView
     }
 
-    func attach(workerManager: any TrUAPIWorkerManaging) {
+    func attach(workerManager: any NativeWebViewWorkerHost) {
         lock.lock()
         defer { lock.unlock() }
 
         self.workerManager = workerManager
+    }
+
+    func shutdownProductWorkers() {
+        let runtime = lock.withLock {
+            sessionEnded = true
+            return cachedRuntime
+        }
+        runtime?.shutdownProductWorkers()
     }
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
@@ -126,6 +134,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         lock.lock()
         defer { lock.unlock() }
 
+        guard !sessionEnded else { throw CancellationError() }
         if let cachedRuntime {
             return cachedRuntime
         }
@@ -153,13 +162,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
-            workerManager: workerManager,
             backedUpInstallation: backedUpInstallation,
             encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, workerHost: workerManager)
         if handedOverKey != nil {
             deviceEncryptionKeys.forgetHandedOverKey()
         }

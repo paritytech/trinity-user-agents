@@ -40,7 +40,7 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     private struct State {
-        var request = WorkerRequest.none
+        var claim: (any TrUAPIWorkerClaiming)?
         var disposed = false
     }
 
@@ -60,49 +60,26 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
     /// The request is ours from the moment we ask, including when the ask
     /// fails, so ``dispose()`` gives it back either way.
     func start() async throws {
-        state.withLock { $0.request = .asking }
-
-        do {
-            _ = try await workers.ensureWorker(for: productId)
-        } catch {
-            settleRequest()
-            throw error
+        let claim = try workers.claim(productId)
+        let held = state.withLock { state in
+            guard !state.disposed, state.claim == nil else { return false }
+            state.claim = claim
+            return true
         }
-        settleRequest()
+        guard held else {
+            claim.release()
+            throw CancellationError()
+        }
+        try await workers.waitUntilReady(productId)
     }
 
     func dispose() {
-        let release = state.withLock { state -> Bool in
+        let claim = state.withLock { state in
             state.disposed = true
-            guard state.request == .held else { return false }
-
-            state.request = .none
-            return true
+            defer { state.claim = nil }
+            return state.claim
         }
-        guard release else { return }
-
-        // A release, not a close. A chat session with the same product may
-        // still be asking for the worker, and the core stops it once the last
-        // request goes.
-        workers.releaseWorker(for: productId)
-    }
-
-    /// The ask has returned, so the request is ours either way: it is
-    /// registered before the wait that can fail. A dispose that landed while we
-    /// were asking left the giving back to here.
-    private func settleRequest() {
-        let release = state.withLock { state -> Bool in
-            guard state.disposed else {
-                state.request = .held
-                return false
-            }
-
-            state.request = .none
-            return true
-        }
-        guard release else { return }
-
-        workers.releaseWorker(for: productId)
+        claim?.release()
     }
 
     func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {
@@ -143,15 +120,11 @@ private extension TrUAPIPocketHandler {
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async {
         var opened: Task<Void, Never>?
-        var current: (any TrUAPIProductExecutionProtocol)?
+        var current: (any TrUAPIWorkerOperations)?
         defer { opened?.cancel() }
 
         do {
             for try await execution in workers.executions(of: key.productId) {
-                // The manager publishes every product's execution together,
-                // so this re-sends whenever any other worker starts or stops.
-                // Reopening on those would tear down a live render stream, and
-                // pay the connect retries again, for a worker that never moved.
                 guard execution !== current else { continue }
                 current = execution
 
@@ -170,7 +143,7 @@ private extension TrUAPIPocketHandler {
     /// render is only opened when a different execution is published, and a
     /// stop publishes none.
     func reopening(
-        _ execution: TrUAPIProductExecutionProtocol,
+        _ execution: TrUAPIWorkerOperations,
         for key: PocketCardKey,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async {
@@ -191,7 +164,7 @@ private extension TrUAPIPocketHandler {
     }
 
     func drain(
-        _ execution: TrUAPIProductExecutionProtocol,
+        _ execution: TrUAPIWorkerOperations,
         for key: PocketCardKey,
         into continuation: AsyncThrowingStream<RendererNode, Error>.Continuation
     ) async throws {
@@ -205,7 +178,7 @@ private extension TrUAPIPocketHandler {
     /// are refused rather than answered. They are asked again at a fixed short
     /// interval instead of backing off, because the wait is a boot, not a fault.
     func connect(
-        _ execution: TrUAPIProductExecutionProtocol,
+        _ execution: TrUAPIWorkerOperations,
         for key: PocketCardKey
     ) async throws -> AsyncThrowingStream<RendererNode, Error> {
         let request = ProductRendererRenderRequest(context: .pocketCard(cardId: key.cardId.value), payload: Data())

@@ -6,201 +6,91 @@ import StructuredConcurrency
 import TrUAPIHost
 import UIKitExt
 
-/// Runs product workers for as long as the core's reference ledger wants them.
-///
-/// A handler asks for the worker it needs with ``ensureWorker(for:)``, which
-/// registers the request with the core and returns once the worker it decided
-/// to run is up. The core counts those requests and reports only the
-/// transitions across zero: a `.start` boots the product's worker behind its
-/// one Worker execution, a `.stop` tears it down.
 protocol TrUAPIWorkerManaging: AnyObject, Sendable {
-    /// May arrive on any thread, including re-entrantly from inside a request,
-    /// so the work is handed off rather than done here.
-    func demandChanged(productId: ProductId, transition: WorkerTransition)
-
-    /// Registers a request for `productId`'s worker and returns its execution
-    /// once the core has let the worker start.
-    ///
-    /// The request is the caller's from the moment it asks, including when this
-    /// throws, so it is given back with ``releaseWorker(for:)`` either way.
-    /// A handler can be disposed while it is still waiting here, and a release
-    /// that crossed the answer must not be the one that is lost.
-    func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol
-
-    func releaseWorker(for productId: ProductId)
-
-    /// What `productId`'s worker is built against, for the life of the session
-    /// rather than of any one worker.
+    func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming
+    func waitUntilReady(_ productId: ProductId) async throws
     func context(of productId: ProductId) -> ProductWorkerContext
-
-    /// The product's worker execution while it runs, and nil while it does not.
-    /// Followed by a handler that must survive the worker restarting under it.
-    func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIProductExecutionProtocol?>
-
-    func currentExecution(of productId: ProductId) -> TrUAPIProductExecutionProtocol?
-
-    /// Stops every worker this manager is running. Called when the session
-    /// it was built for ends.
-    func shutdown() async
-
+    func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIWorkerOperations?>
+    func currentExecution(of productId: ProductId) -> TrUAPIWorkerOperations?
     func reload(productId: ProductId) async
 }
 
-/// Builds the pieces one product's worker needs: its archive, its execution and
-/// the engine its script runs in.
-protocol TrUAPIWorkerBuilding: Sendable {
-    func makeRuntime(
-        productId: ProductId,
-        context: ProductWorkerContext
+/// Owns the platform views opened for the core's startup attempts.
+final class TrUAPIWorkerManager: NativeWebViewWorkerHost, TrUAPIWorkerManaging, Sendable {
+    typealias Builder = @Sendable (
+        ProductId, ProductWorkerContext, NativeWorkerAttempt
     ) async throws -> TrUAPIWorkerRuntime
-}
 
-actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
-    private struct Running {
-        let boot: Boot
-        let runtime: TrUAPIWorkerRuntime
+    private struct WebView {
+        let startup: Task<Void, Never>
+        var runtime: TrUAPIWorkerRuntime?
     }
 
-    /// What the manager holds for one product. A boot claims the product
-    /// before its first await: actors are reentrant, so two starts that overlap
-    /// would otherwise both pass the guard and build a worker, and a stop that
-    /// landed mid-boot would find nothing to remove and leave the worker
-    /// running with no way back to it.
-    private enum Held {
-        case booting(Boot)
-        case running(Running)
-
-        /// Whether this entry belongs to `boot`, so a boot only ever clears
-        /// what it built. Android keys the same check on the worker itself.
-        func belongsTo(_ boot: Boot) -> Bool {
-            switch self {
-            case let .booting(claimed): claimed === boot
-            case let .running(worker): worker.boot === boot
-            }
-        }
-    }
-
-    /// One attempt to bring a product's worker up, as an identity. A stop and a
-    /// restart can both land while an attempt is still in flight, and the one
-    /// that finishes last must not clear what the others left.
-    private final class Boot: Sendable {}
-
-    /// What the transition queue applies: the ledger's transitions, the
-    /// reboot of a worker whose engine died, and the reload of one whose
-    /// archive changed. Reboots and reloads share the queue so that neither
-    /// overtakes a stop the ledger sent before it.
-    private enum Command: Sendable {
-        case transition(WorkerTransition)
-        case reboot(Boot)
-        case reload
-    }
-
-    private let builder: any TrUAPIWorkerBuilding
-    /// The core's reference ledger, which is what decides whether a worker runs.
-    private let references: @Sendable () throws -> any TrUAPIWorkerReferencing
-    /// How long a request waits for the worker it asked for. A boot that fails
-    /// publishes no execution, so without this a handler would wait for one
-    /// forever.
-    private let startupWindow: Duration
-    /// Where a worker's prompts present while no chat has given it a screen.
-    private let presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)?
-    private let logger: LoggerProtocol
-
-    private var held: [ProductId: Held] = [:]
-    private var draining: Task<Void, Never>?
-    private var isShutDown = false
-
-    /// Read from `context(of:)`, which a chat session calls before any worker
-    /// exists, so it is held beside the actor's own state rather than in it.
+    private let build: Builder
+    private let runtime: @Sendable () throws -> TrUAPIHostRuntime
+    private let presentationFallback: @MainActor @Sendable () -> ControllerBackedProtocol?
+    private let views = OSAllocatedUnfairLock<[UInt64: WebView]>(initialState: [:])
     private let openContexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
 
-    /// Transitions are booked one at a time, in the order the ledger sent them.
-    /// Handing each to its own task leaves the order to the scheduler, where a
-    /// start and the stop that cancels it can overtake each other.
-    private let transitions = AsyncStream<(ProductId, Command)>.makeStream()
-    private let executionSubject = AsyncCurrentValueSubject<[ProductId: TrUAPIProductExecutionProtocol]>([:])
-
     init(
-        builder: any TrUAPIWorkerBuilding,
-        references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
-        startupWindow: Duration = .seconds(30),
-        presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil,
-        logger: LoggerProtocol = Logger.shared
+        build: @escaping Builder,
+        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime,
+        presentationFallback: @escaping @MainActor @Sendable () -> ControllerBackedProtocol?
     ) {
-        self.builder = builder
-        self.references = references
-        self.startupWindow = startupWindow
+        self.build = build
+        self.runtime = runtime
         self.presentationFallback = presentationFallback
-        self.logger = logger
-
-        Task { await self.beginFollowing() }
     }
 
-    nonisolated func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
-        try references().acquireWorker(productId: productId)
-
-        return try await withTimeout(startupWindow) { [self] in
-            for try await execution in executions(of: productId) {
-                if let execution { return execution }
+    func start(productId: ProductId, attempt: NativeWorkerAttempt) {
+        let id = attempt.id()
+        views.withLock { views in
+            let startup = Task {
+                do {
+                    let view = try await build(productId, context(of: productId), attempt)
+                    let accepted = self.views.withLock { views in
+                        guard views[id] != nil else { return false }
+                        views[id]?.runtime = view
+                        return true
+                    }
+                    guard accepted else {
+                        await view.dispose()
+                        return
+                    }
+                    try await view.start { attempt.failed(reason: "WebView process terminated") }
+                } catch {
+                    attempt.failed(reason: String(describing: error))
+                }
             }
-
-            throw TrUAPIWorkerError.noWorker(productId)
+            views[id] = WebView(startup: startup)
         }
     }
 
-    nonisolated func releaseWorker(for productId: ProductId) {
-        do {
-            try references().releaseWorker(productId: productId)
-        } catch {
-            logger.error("[truapi] \(productId)'s worker request could not be given back: \(error)")
-        }
+    func stop(productId _: ProductId, attemptId: UInt64) {
+        guard let view = views.withLock({ $0.removeValue(forKey: attemptId) }) else { return }
+        view.startup.cancel()
+        if let runtime = view.runtime { Task { await runtime.dispose() } }
     }
 
-    /// Started from a task rather than in `init`, because the drain task
-    /// captures the manager and an actor's initializer cannot reach its own
-    /// storage once it has escaped. A shutdown can therefore land first, and
-    /// must not be followed by a drain loop nothing holds a way back to.
-    private func beginFollowing() {
-        guard !isShutDown else { return }
-
-        draining = Task { await self.drainTransitions() }
+    func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming {
+        try runtime().claimWorker(productId: productId)
     }
 
-    private func drainTransitions() async {
-        for await (productId, command) in transitions.stream {
-            switch command {
-            case let .transition(transition): await apply(transition, to: productId)
-            case let .reboot(boot): await reboot(productId, after: boot)
-            case .reload: await restart(productId)
+    func waitUntilReady(_ productId: ProductId) async throws {
+        let states = try runtime().workerExecutionState(productId: productId)
+        try await withTimeout(.seconds(30)) {
+            for await state in states {
+                switch state {
+                case .running: return
+                case let .failed(reason): throw HostRejection.Rejected(reason: reason)
+                case .idle, .pending: continue
+                }
             }
+            throw CancellationError()
         }
     }
 
-    /// The workers outlive every screen, so nothing else ever tears them down:
-    /// a manager dropped without this leaves a headless web view and its
-    /// chain connections running for the rest of the process.
-    func shutdown() async {
-        isShutDown = true
-        transitions.continuation.finish()
-        draining?.cancel()
-        draining = nil
-
-        // Over a snapshot: `stop` takes each product out of the map it would
-        // otherwise be iterating, and awaits inside it let more land.
-        for productId in Array(held.keys) {
-            await stop(productId)
-        }
-    }
-
-    nonisolated func reload(productId: ProductId) async {
-        transitions.continuation.yield((productId, .reload))
-    }
-
-    nonisolated func demandChanged(productId: ProductId, transition: WorkerTransition) {
-        transitions.continuation.yield((productId, .transition(transition)))
-    }
-
-    nonisolated func context(of productId: ProductId) -> ProductWorkerContext {
+    func context(of productId: ProductId) -> ProductWorkerContext {
         openContexts.withLock { open in
             if let context = open[productId] { return context }
 
@@ -210,96 +100,21 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         }
     }
 
-    nonisolated func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIProductExecutionProtocol?> {
-        executionSubject
-            .map { $0[productId] }
+    func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIWorkerOperations?> {
+        let states = (try? runtime().workerExecutionState(productId: productId)) ?? AsyncStream { $0.finish() }
+        return states
+            .map { state -> TrUAPIWorkerOperations? in
+                if case let .running(execution) = state { return execution }
+                return nil
+            }
             .eraseToAnyAsyncSequence()
     }
 
-    nonisolated func currentExecution(of productId: ProductId) -> TrUAPIProductExecutionProtocol? {
-        executionSubject.value[productId]
+    func currentExecution(of productId: ProductId) -> TrUAPIWorkerOperations? {
+        try? runtime().currentWorkerExecution(productId: productId)
     }
 
-    private func apply(_ transition: WorkerTransition, to productId: ProductId) async {
-        switch transition {
-        case .start: start(productId)
-        case .stop: await stop(productId)
-        }
-    }
-
-    /// Claims the product and returns, leaving the slow half of the boot to its
-    /// own task. Fetching an archive and booting a web view can stall for as
-    /// long as the network does, and held against this queue that would keep
-    /// every other product off its worker.
-    private func start(_ productId: ProductId) {
-        guard held[productId] == nil else { return }
-        let boot = Boot()
-        held[productId] = .booting(boot)
-
-        Task { await self.bringUp(productId, as: boot) }
-    }
-
-    private func bringUp(_ productId: ProductId, as boot: Boot) async {
-        do {
-            logger.debug("Starting worker for \(productId)...")
-
-            let runtime = try await builder.makeRuntime(
-                productId: productId,
-                context: context(of: productId)
-            )
-            guard held[productId]?.belongsTo(boot) == true else {
-                await runtime.dispose()
-                return
-            }
-            held[productId] = .running(Running(boot: boot, runtime: runtime))
-
-            try await runtime.start { [weak self] in
-                self?.transitions.continuation.yield((productId, .reboot(boot)))
-            }
-
-            guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
-
-            executionSubject.send(executionSubject.value.merging([productId: runtime.execution]) { _, new in new })
-
-            logger.debug("Started worker for \(productId)...")
-        } catch {
-            // Only a failure of the boot still holding the product: a stop may
-            // already have cleared this one and a restart taken its place, and
-            // clearing that would swallow a start the core never repeats.
-            guard held[productId]?.belongsTo(boot) == true else { return }
-
-            logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
-            // A failed boot left in the map would swallow every later start,
-            // while the core keeps counting the reference the holder took and
-            // so never sends another stop to clear it.
-            await stop(productId)
-        }
-    }
-
-    private func restart(_ productId: ProductId) async {
-        guard held[productId] != nil else { return }
-
-        await stop(productId)
-        start(productId)
-    }
-
-    private func reboot(_ productId: ProductId, after boot: Boot) async {
-        guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
-
-        logger.error("[truapi] \(productId)'s worker engine died, rebooting it")
-        await stop(productId)
-        start(productId)
-    }
-
-    private func stop(_ productId: ProductId) async {
-        // A boot in flight is cleared here and disposes what it built when it
-        // finds its claim gone, so there is nothing else to tear down yet.
-        guard case let .running(worker)? = held.removeValue(forKey: productId) else { return }
-
-        var executions = executionSubject.value
-        executions[productId] = nil
-        executionSubject.send(executions)
-
-        await worker.runtime.dispose()
+    func reload(productId: ProductId) async {
+        try? runtime().reloadWorker(productId: productId)
     }
 }

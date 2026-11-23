@@ -23,8 +23,6 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     /// and never given back.
     let references: StubWorkerReferences
 
-    private(set) var demands: [(productId: ProductId, transition: WorkerTransition)] = []
-
     init(references: StubWorkerReferences = StubWorkerReferences(), startupWindow: Duration = .seconds(10)) {
         let (delivered, continuation) = AsyncStream.makeStream(of: Void.self)
         deliveredSignal = continuation
@@ -47,24 +45,23 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         gate.continuation.finish()
     }
 
-    func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
+    func claim(_ productId: ProductId) throws -> any TrUAPIWorkerClaiming {
+        references.acquireWorker(productId: productId)
+        return Claim { [references] in references.releaseWorker(productId: productId) }
+    }
+
+    func waitUntilReady(_ productId: ProductId) async throws {
         entered.continuation.yield(())
         if holdsTheAsk {
             for await _ in gate.stream {}
         }
-        references.acquireWorker(productId: productId)
-
-        return try await withTimeout(startupWindow) { [self] in
+        try await withTimeout(startupWindow) { [self] in
             for try await execution in executions(of: productId) {
-                if let execution { return execution }
+                if execution != nil { return }
             }
 
             throw TrUAPIWorkerError.noWorker(productId)
         }
-    }
-
-    func releaseWorker(for productId: ProductId) {
-        references.releaseWorker(productId: productId)
     }
 
     func publish(_ executions: [ProductId: TrUAPIProductExecutionProtocol]) {
@@ -79,10 +76,6 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         _ = await deliveredSignals.next()
     }
 
-    func demandChanged(productId: ProductId, transition: WorkerTransition) {
-        demands.append((productId, transition))
-    }
-
     func context(of productId: ProductId) -> ProductWorkerContext {
         openContexts.withLock { open in
             if let context = open[productId] { return context }
@@ -93,21 +86,19 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         }
     }
 
-    func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIProductExecutionProtocol?> {
+    func executions(of productId: ProductId) -> AnyAsyncSequence<TrUAPIWorkerOperations?> {
         let delivered = deliveredSignal
         return subject
-            .map { $0[productId] }
+            .map { $0[productId] as TrUAPIWorkerOperations? }
             .handleEvents(onElement: { _ in delivered.yield() })
             .eraseToAnyAsyncSequence()
     }
 
-    func currentExecution(of productId: ProductId) -> TrUAPIProductExecutionProtocol? {
+    func currentExecution(of productId: ProductId) -> TrUAPIWorkerOperations? {
         let execution = subject.value[productId]
         lookups.continuation.yield(())
         return execution
     }
-
-    func shutdown() async {}
 
     func reload(productId _: ProductId) async {}
 }
@@ -117,7 +108,7 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 /// Handlers ask and give back from their own tasks while the test reads these
 /// from its own, so the records are locked. Appending to a bare array from two
 /// threads is a data race, and the test that reads it fails at random.
-final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
+final class StubWorkerReferences: @unchecked Sendable {
     private let records = OSAllocatedUnfairLock(
         initialState: (acquired: [ProductId](), released: [ProductId](), log: [String]())
     )
@@ -141,4 +132,11 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
             $0.log.append("release \(productId)")
         }
     }
+}
+
+
+private struct Claim: TrUAPIWorkerClaiming {
+    let onRelease: @Sendable () -> Void
+
+    func release() { onRelease() }
 }

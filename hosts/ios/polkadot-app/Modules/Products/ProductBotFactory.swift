@@ -14,16 +14,14 @@ import Products
 final class ProductBotFactory {
     private let productFileProvider: ChatProductFileProviding
     private let settingsManager: SettingsManagerProtocol
-    private let runtimeProvider: TrUAPIHostRuntimeProviding
-    private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
+    private let workers: any TrUAPIWorkerManaging
     private let workerManager: ProductWorkerManaging
     private let productImages: ProductImageSources
     private let logger: LoggerProtocol
 
     init(
         productFileProvider: ChatProductFileProviding,
-        runtimeProvider: TrUAPIHostRuntimeProviding,
-        workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
+        workers: any TrUAPIWorkerManaging,
         workerManager: ProductWorkerManaging,
         productImages: ProductImageSources,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
@@ -31,7 +29,6 @@ final class ProductBotFactory {
     ) {
         self.productFileProvider = productFileProvider
         self.settingsManager = settingsManager
-        self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
         self.productImages = productImages
@@ -46,7 +43,7 @@ final class ProductBotFactory {
         let images = productImages.resolver(contentId: { source.contentId })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
-        if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
+        if settingsManager.isTrUAPIRuntimeEnabled {
             let runtime = TrUAPIChatHandler(
                 productId: product.id,
                 workers: workers,

@@ -1001,21 +1001,29 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private var balanceRetainer: NativeBalanceCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
 
-    public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
-        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
+    public convenience init(
+        bridge: HostBridge,
+        runtimeConfig: HostRuntimeConfig,
+        workerHost: NativeWebViewWorkerHost? = nil
+    ) throws {
+        try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default, workerHost: workerHost)
     }
 
     init(
         bridge: HostBridge,
         runtimeConfig: HostRuntimeConfig,
-        notificationCenter: NotificationCenter
+        notificationCenter: NotificationCenter,
+        workerHost: NativeWebViewWorkerHost? = nil
     ) throws {
         let adapter = HostCallbackAdapter(bridge: bridge)
         callbackRetainer = adapter
-        let inner = try NativeTrUApiHostRuntime.withRuntimeConfig(
-            callbacks: adapter,
-            runtimeConfig: runtimeConfig
-        )
+        let inner: NativeTrUApiHostRuntime
+        if let workerHost {
+            inner = try .withManagedProductWorkers(callbacks: adapter, runtimeConfig: runtimeConfig)
+            _ = inner.enableProductWorkers(host: workerHost)
+        } else {
+            inner = try .withRuntimeConfig(callbacks: adapter, runtimeConfig: runtimeConfig)
+        }
         self.inner = inner
         self.notificationCenter = notificationCenter
         // iOS reclaims a suspended app's listening sockets. Rebinding waits on
@@ -1122,25 +1130,44 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         chat: ChatHostBridge? = nil,
         game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
-        let adapter = HostCallbackAdapter(bridge: bridge)
-        let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
-        let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
-        let execution = try inner.openProductExecution(
-            callbacks: adapter,
-            chatCallbacks: chatAdapter,
-            gameCallbacks: gameAdapter,
-            executionConfig: configuration
-        )
-        return TrUAPIProductExecution(
-            inner: execution,
-            callbackRetainer: adapter,
-            chatRetainer: chatAdapter,
-            gameRetainer: gameAdapter
-        )
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks, chat, game in
+            try inner.openProductExecution(
+                callbacks: callbacks, chatCallbacks: chat, gameCallbacks: game, executionConfig: configuration
+            )
+        }
     }
 
     public func disconnect() {
         inner.disconnect()
+    }
+
+    /// Keep the worker running until this consumer releases its claim.
+    public func claimWorker(productId: ProductId) -> NativeWorkerClaim {
+        inner.claimWorker(productId: productId)
+    }
+
+    /// Read the ready execution without acquiring demand.
+    public func currentWorkerExecution(productId: ProductId) -> NativeWorkerExecution? {
+        inner.currentWorkerExecution(productId: productId)
+    }
+
+    /// Observe the current startup and its replacements without holding the worker open.
+    public func workerExecutionState(productId: ProductId) -> AsyncStream<NativeWorkerExecutionState> {
+        let (stream, continuation) = AsyncStream<NativeWorkerExecutionState>.makeStream()
+        let observer = WorkerStateObserver(continuation)
+        let subscription = inner.observeWorkerExecution(productId: productId, observer: observer)
+        continuation.onTermination = { @Sendable _ in subscription.cancel() }
+        return stream
+    }
+
+    /// Restart a worker in use after its entry changes.
+    public func reloadWorker(productId: ProductId) {
+        inner.reloadWorker(productId: productId)
+    }
+
+    /// Revoke this session's workers and finish their observations.
+    public func shutdownProductWorkers() {
+        inner.shutdownProductWorkers()
     }
 
     /// Take one reference on the product's worker for a modality holder that
@@ -1428,14 +1455,19 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 }
 
-/// Testable surface for one connection-scoped product execution.
-public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
-    func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
-    func stopWsBridge()
-    func close()
+/// Operations available to a consumer sharing the product's worker.
+public protocol TrUAPIWorkerOperations: AnyObject, Sendable {
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
+    func notifyChatRoomsChanged(rooms: [ChatRoom])
+}
+
+/// Testable surface for one connection-scoped product execution.
+public protocol TrUAPIProductExecutionProtocol: TrUAPIWorkerOperations {
+    func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
+    func stopWsBridge()
+    func close()
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
@@ -1450,7 +1482,6 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func notifyPreimageChanged(key: Data, value: Data?)
     func notifyChainResponse(connectionId: UInt32, json: String)
     func notifyChainClosed(connectionId: UInt32)
-    func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
 }
 
@@ -1462,15 +1493,20 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
-        inner: NativeProductExecution,
-        callbackRetainer: HostCallbacks,
-        chatRetainer: NativeChatCallbacks?,
-        gameRetainer: NativeGameCallbacks?
-    ) {
-        self.inner = inner
-        self.callbackRetainer = callbackRetainer
-        self.chatRetainer = chatRetainer
-        self.gameRetainer = gameRetainer
+        bridge: HostBridge,
+        chat: ChatHostBridge?,
+        game: GameHostBridge?,
+        open: (HostCallbacks, NativeChatCallbacks?, NativeGameCallbacks?) throws -> NativeProductExecution
+    ) throws {
+        callbackRetainer = HostCallbackAdapter(bridge: bridge)
+        chatRetainer = chat.map { ChatCallbackAdapter(bridge: $0) }
+        gameRetainer = game.map { GameCallbackAdapter(bridge: $0) }
+        inner = try open(callbackRetainer, chatRetainer, gameRetainer)
+    }
+
+    /// Acknowledge that the WebView loaded this attempt's worker entry.
+    public func reportReady(for attempt: NativeWorkerAttempt) -> Bool {
+        attempt.ready(execution: inner)
     }
 
     deinit {
@@ -1570,6 +1606,49 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyChatRoomsChanged(rooms: [ChatRoom]) {
         inner.notifyChatRoomsChanged(rooms: rooms)
+    }
+}
+
+extension NativeWorkerAttempt {
+    /// Open the execution belonging to this startup, with the product and kind fixed by Rust.
+    public func openExecution(
+        bridge: HostBridge,
+        chat: ChatHostBridge? = nil,
+        game: GameHostBridge? = nil
+    ) throws -> TrUAPIProductExecution {
+        try TrUAPIProductExecution(bridge: bridge, chat: chat, game: game) { callbacks, chat, game in
+            try openExecution(callbacks: callbacks, chatCallbacks: chat, gameCallbacks: game)
+        }
+    }
+}
+
+extension NativeWorkerExecution: TrUAPIWorkerOperations {
+    public func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
+        try publishChatAction(action: action)
+    }
+
+    public func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
+        try observedStream(RendererStreamObserver.init(continuation:)) { observer in
+            try render(request: request, observer: observer)
+        }
+    }
+
+    public func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
+        try publishRendererAction(item: item)
+    }
+}
+
+private final class WorkerStateObserver: NativeWorkerExecutionObserver {
+    private let continuation: AsyncStream<NativeWorkerExecutionState>.Continuation
+
+    init(_ continuation: AsyncStream<NativeWorkerExecutionState>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func finished() { continuation.finish() }
+
+    func changed(state: NativeWorkerExecutionState) {
+        continuation.yield(state)
     }
 }
 

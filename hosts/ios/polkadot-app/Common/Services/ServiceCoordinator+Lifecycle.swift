@@ -90,6 +90,7 @@ extension ServiceCoordinator {
         // when the coordinator is built and a coordinator kept alive by a
         // background run is started again when the dashboard returns.
         pocket?.stop()
+        truapiRuntimeProvider.shutdownProductWorkers()
     }
 }
 

@@ -38,8 +38,6 @@ actor TrUAPIWorkerRuntime {
         self.logger = logger
     }
 
-    nonisolated var execution: TrUAPIProductExecutionProtocol { executionModel.execution }
-
     /// `onEngineLost` runs if the engine dies once it is up. For example,
     /// iOS might kill engine once the app goes background.
     func start(onEngineLost: @escaping @Sendable () -> Void) async throws {
@@ -55,7 +53,9 @@ actor TrUAPIWorkerRuntime {
         try checkNotDisposed()
         moduleBridge = bridge
 
-        try await bridge.executeScript(url: productUrl)
+        try await bridge.executeScript(url: productUrl, isWorkerEntry: true)
+        try checkNotDisposed()
+        guard executionModel.acknowledgeStartup?() != false else { throw CancellationError() }
 
         logger.debug("[truapi] worker running: \(productUrl)")
     }
