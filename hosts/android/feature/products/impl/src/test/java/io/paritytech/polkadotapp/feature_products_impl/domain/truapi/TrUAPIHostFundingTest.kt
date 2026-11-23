@@ -39,7 +39,7 @@ class TrUAPIHostFundingTest {
 
     @Test
     fun `opening passes the direction and amount to the core`() = runBlocking {
-        val service = mockk<FundingService> { coEvery { open(CoreFundingDirection.OUT, "250") } returns Result.success(FundingSessionId("intent")) }
+        val service = mockk<FundingService> { coEvery { open(CoreFundingDirection.OUT, Balance(BigInteger("250"))) } returns Result.success(FundingSessionId("intent")) }
 
         assertEquals(Result.success("intent"), TrUAPIHostFunding(service, mockk()).openFunding(FundingDirection.OUT, Balance(BigInteger("250"))))
     }

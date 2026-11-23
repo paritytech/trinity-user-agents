@@ -30,7 +30,7 @@ class TrUAPIHostFunding @Inject constructor(
     private val sessionScreens: FundingSessionScreens,
 ) : HostFunding {
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
-        service.open(direction.toCore(), amount?.toU128()).map { it?.value }
+        service.open(direction.toCore(), amount).map { it?.value }
 
     override suspend fun isFundingAvailable(): Result<Boolean> = service.isAvailable()
 
@@ -68,7 +68,7 @@ private fun InFlight.toItem(): FundingActivityItem {
         direction = session.direction.toDomain(),
         rail = session.choice?.rail?.toType(),
         // In flight, only a released withdrawal has settled an amount.
-        amount = ((session.stage as? FundingStage.Released)?.debited ?: session.amount ?: quoted)?.toBalance(),
+        amount = ((session.stage as? FundingStage.Released)?.debited ?: session.amount ?: quoted)?.toBalanceOrNull(),
         date = Instant.fromEpochMilliseconds(session.openedAtMs.toLong()),
         status = progress.status.toActivityStatus(),
     )
@@ -78,7 +78,7 @@ private fun FundingSessionSummary.toItem() = FundingActivityItem(
     id = intent,
     direction = direction.toDomain(),
     rail = choice?.rail?.toType(),
-    amount = ended.cashAmount?.toBalance(),
+    amount = ended.cashAmount?.toBalanceOrNull(),
     date = Instant.fromEpochMilliseconds(ended.atMs.toLong()),
     // A cancel that still settled or refunded something reads as cancelled.
     status = if (status == FundingStatus.Failed(FundingFailure.Cancelled)) {
