@@ -162,9 +162,8 @@ class RealInstallationAssetScanner @Inject constructor(
     }
 
     private fun RingPosition.getVoucherLocation() = when (this) {
-        // Recovery knows where the voucher sits, not how full the ring is. Zero until the location service
-        // reads it, so nothing releases the voucher on an anonymity set we have not seen.
-        is RingPosition.Included -> Location.InRecycler(ringIndex, recyclerMembers = 0, enteredAt = null)
+        // Placeholders, not reads: the time route stays shut until the location service has the ring.
+        is RingPosition.Included -> Location.InRecycler(ringIndex, recyclerMembers = 0, enteredAt = null, recyclerUnloaded = null)
         is RingPosition.Onboarding -> Location.Onboarding
         is RingPosition.Suspended -> Location.Unknown
     }

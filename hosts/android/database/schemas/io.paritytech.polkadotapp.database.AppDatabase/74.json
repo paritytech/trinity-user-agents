@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 74,
-    "identityHash": "6f88b9e8f6104e10c135314973b7c757",
+    "identityHash": "3e7dbb61f88b305279e50963ed1c684a",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -3113,64 +3113,63 @@
         ]
       },
       {
-        "tableName": "chat_room_declarations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` BLOB NOT NULL, `config` BLOB, `configGeneration` INTEGER NOT NULL DEFAULT 0, `description` TEXT, `placeholder` TEXT, `preview` BLOB, `features` BLOB, `contact` BLOB, PRIMARY KEY(`chatId`))",
+        "tableName": "chat_seen_states",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`contactAccountId` BLOB NOT NULL, `peerSeenOrder` INTEGER NOT NULL, `lastSentSeenMessageId` TEXT, `lastSentSeenOrder` INTEGER NOT NULL, `lastSentSeenTimestamp` INTEGER NOT NULL, PRIMARY KEY(`contactAccountId`), FOREIGN KEY(`contactAccountId`) REFERENCES `contacts`(`accountId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
         "fields": [
           {
-            "fieldPath": "chatId",
-            "columnName": "chatId",
+            "fieldPath": "contactAccountId",
+            "columnName": "contactAccountId",
             "affinity": "BLOB",
             "notNull": true
           },
           {
-            "fieldPath": "config",
-            "columnName": "config",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "configGeneration",
-            "columnName": "configGeneration",
+            "fieldPath": "peerSeenOrder",
+            "columnName": "peerSeenOrder",
             "affinity": "INTEGER",
-            "notNull": true,
-            "defaultValue": "0"
+            "notNull": true
           },
           {
-            "fieldPath": "description",
-            "columnName": "description",
+            "fieldPath": "lastSentSeenMessageId",
+            "columnName": "lastSentSeenMessageId",
             "affinity": "TEXT"
           },
           {
-            "fieldPath": "placeholder",
-            "columnName": "placeholder",
-            "affinity": "TEXT"
+            "fieldPath": "lastSentSeenOrder",
+            "columnName": "lastSentSeenOrder",
+            "affinity": "INTEGER",
+            "notNull": true
           },
           {
-            "fieldPath": "preview",
-            "columnName": "preview",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "features",
-            "columnName": "features",
-            "affinity": "BLOB"
-          },
-          {
-            "fieldPath": "contact",
-            "columnName": "contact",
-            "affinity": "BLOB"
+            "fieldPath": "lastSentSeenTimestamp",
+            "columnName": "lastSentSeenTimestamp",
+            "affinity": "INTEGER",
+            "notNull": true
           }
         ],
         "primaryKey": {
           "autoGenerate": false,
           "columnNames": [
-            "chatId"
+            "contactAccountId"
           ]
-        }
+        },
+        "foreignKeys": [
+          {
+            "table": "contacts",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contactAccountId"
+            ],
+            "referencedColumns": [
+              "accountId"
+            ]
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6f88b9e8f6104e10c135314973b7c757')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3e7dbb61f88b305279e50963ed1c684a')"
     ]
   }
 }
