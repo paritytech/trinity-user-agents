@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.database.dao.ChatRequestSyncStateDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDeclarationsDao
 import io.paritytech.polkadotapp.database.dao.ChatSearchRecentDao
+import io.paritytech.polkadotapp.database.dao.ChatSeenDao
 import io.paritytech.polkadotapp.database.dao.CoinDao
 import io.paritytech.polkadotapp.database.dao.ContactDao
 import io.paritytech.polkadotapp.database.dao.ContactDeviceDao
@@ -170,6 +171,10 @@ class DbModule {
     @Singleton
     fun provideChatIdentitySigningConsentDao(appDatabase: AppDatabase): ChatIdentitySigningConsentDao =
         appDatabase.chatIdentitySigningConsentDao()
+
+    @Provides
+    @Singleton
+    fun provideChatSeenDao(appDatabase: AppDatabase): ChatSeenDao = appDatabase.chatSeenDao()
 
     @Provides
     @Singleton
