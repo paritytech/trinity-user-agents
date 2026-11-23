@@ -397,7 +397,8 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
             executionModel: RustRuntimeEnvironment.ExecutionModel(
                 execution: execution,
                 chainConnections: MockChainConnections(),
-                osPermissionAsker: OSPermissionAsker()
+                osPermissionAsker: OSPermissionAsker(),
+                media: NativeMediaBackend(productId: "test.dot")
             ),
             engineFactory: { [weak self] in
                 self?.cardsWhenTheEngineBooted = (try? pocket.listCards()) ?? []

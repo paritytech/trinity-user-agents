@@ -64,6 +64,24 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.ProductSubtree -> build(
         RCommon.string.truapi_confirm_title_product_subtree,
     )
+    is TrUAPIConfirmation.Calling -> build(
+        RCommon.string.truapi_confirm_title_calling,
+        detail(RCommon.string.truapi_confirm_label_chain, network),
+        detail(RCommon.string.truapi_confirm_label_signer, account),
+    )
+    is TrUAPIConfirmation.ChatAuthority -> build(
+        RCommon.string.truapi_confirm_title_chat_authority,
+        detailRes(RCommon.string.truapi_confirm_label_request, RCommon.string.truapi_confirm_chat_authority_details),
+    )
+    is TrUAPIConfirmation.MainPurseChatPayment -> build(
+        RCommon.string.truapi_confirm_title_main_purse_payment,
+        detail(RCommon.string.truapi_confirm_label_recipient, recipient),
+        detail(RCommon.string.truapi_confirm_label_amount_cents, amountCents.toString()),
+        detail(RCommon.string.truapi_confirm_label_max_debit_cents, maxDebitCents.toString()),
+        detail(RCommon.string.truapi_confirm_label_chain, chain),
+        detail(RCommon.string.truapi_confirm_label_asset_instance, assetInstance),
+        detail(RCommon.string.truapi_confirm_label_operation, operationId),
+    )
 }
 
 private fun TrUAPIConfirmation.Prompt.build(

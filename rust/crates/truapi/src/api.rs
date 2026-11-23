@@ -10,6 +10,7 @@ pub mod expanded_card;
 pub mod game;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -34,6 +35,7 @@ pub use expanded_card::ExpandedCard;
 pub use game::Game;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
@@ -50,59 +52,61 @@ pub use worker::Worker;
 
 /// The unified TrUAPI contract.
 pub trait TrUApi:
-	Account
-	+ Chain
-	+ Chat
-	+ CoinPayment
-	+ Contacts
-	+ Entropy
+    Account
+    + Chain
+    + Chat
+    + CoinPayment
+    + Contacts
+    + Entropy
 	+ ExpandedCard
 	+ Game
-	+ LocalStorage
-	+ Locale
-	+ Notifications
-	+ Payment
-	+ Permissions
-	+ Pocket
-	+ Preimage
-	+ Renderer
-	+ ResourceAllocation
+    + LocalStorage
+    + Locale
+    + Media
+    + Notifications
+    + Payment
+    + Permissions
+    + Pocket
+    + Preimage
+    + Renderer
+    + ResourceAllocation
 	+ Scanner
-	+ Signing
-	+ StatementStore
-	+ System
-	+ Theme
-	+ Worker
-	+ Send
-	+ Sync
+    + Signing
+    + StatementStore
+    + System
+    + Theme
+    + Worker
+    + Send
+    + Sync
 {
 }
 
 impl<T> TrUApi for T where
-	T: Account
-		+ Chain
-		+ Chat
-		+ CoinPayment
-		+ Contacts
-		+ Entropy
+    T: Account
+        + Chain
+        + Chat
+        + CoinPayment
+        + Contacts
+        + Entropy
 		+ ExpandedCard
 		+ Game
-		+ LocalStorage
-		+ Locale
-		+ Notifications
-		+ Payment
-		+ Permissions
-		+ Pocket
-		+ Preimage
-		+ Renderer
-		+ ResourceAllocation
+        + LocalStorage
+        + Locale
+        + Media
+        + Notifications
+        + Payment
+        + Permissions
+        + Pocket
+        + Preimage
+        + Renderer
+        + ResourceAllocation
 		+ Scanner
-		+ Signing
-		+ StatementStore
-		+ System
-		+ Theme
-		+ Worker
-		+ Send
-		+ Sync
+        + Signing
+        + StatementStore
+        + System
+        + Theme
+        + Worker
+        + Send
+        + Sync
 {
 }

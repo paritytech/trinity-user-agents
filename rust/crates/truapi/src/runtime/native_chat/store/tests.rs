@@ -61,6 +61,7 @@ fn slot() -> CoreStorageKey {
 #[derive(Default)]
 struct DurableSlot {
     values: SyncMutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+    changes: SyncMutex<Vec<CoreStorageKey>>,
     fail_before: AtomicBool,
     fail_after: AtomicBool,
     writes: AtomicUsize,
@@ -116,6 +117,29 @@ impl CoreStorage for DurableSlot {
             });
         }
         Ok(())
+    }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        bytes: Vec<u8>,
+        notify: bool,
+    ) -> Result<bool, GenericError> {
+        let encoded = key.encode();
+        let mut values = self.values.lock();
+        if values.get(&encoded) != expected.as_ref() {
+            return Ok(false);
+        }
+        values.insert(encoded, bytes);
+        if notify {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.changes.lock().push(key);
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {

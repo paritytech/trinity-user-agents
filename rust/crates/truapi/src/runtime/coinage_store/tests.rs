@@ -20,6 +20,7 @@ use super::*;
 #[derive(Default)]
 struct DurableSlot {
     values: SyncMutex<BTreeMap<Vec<u8>, Vec<u8>>>,
+    changes: SyncMutex<Vec<CoreStorageKey>>,
     fail_next: AtomicBool,
     fail_after_replace: AtomicBool,
     pause_next: SyncMutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
@@ -56,6 +57,29 @@ impl CoreStorage for DurableSlot {
             });
         }
         Ok(())
+    }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        value: Vec<u8>,
+        notify: bool,
+    ) -> Result<bool, GenericError> {
+        let encoded = key.encode();
+        let mut values = self.values.lock();
+        if values.get(&encoded) != expected.as_ref() {
+            return Ok(false);
+        }
+        values.insert(encoded, value);
+        if notify {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.changes.lock().push(key);
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {

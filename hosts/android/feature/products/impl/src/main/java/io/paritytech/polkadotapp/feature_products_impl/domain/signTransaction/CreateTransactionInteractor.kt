@@ -55,8 +55,8 @@ class CreateTransactionInteractor @AssistedInject constructor(
 
     override suspend fun humanReadableRepresentation(): Result<String> = runCatching {
         val runtime = runtime()
-        val origin = resolveTransactionOrigin().getOrThrow()
-        val resolved = resolveExtensions(origin).getOrThrow()
+        // Review only needs the signed-extension interpretation, not a signing key/origin.
+        val resolved = resolveExtensions(isSigned = true).getOrThrow()
         val call = GenericCall.fromByteArray(runtime, payload.callData.value)
         val view = createTransactionHumanReadable(call, resolved.allRequestedExtensions)
         extrinsicSerializerGson.toJson(view)
@@ -98,7 +98,7 @@ class CreateTransactionInteractor @AssistedInject constructor(
         val runtime = chainRegistry.getRuntime(chainId)
 
         return resolveTransactionOrigin().flatMap { origin ->
-            resolveExtensions(origin).map { resolved ->
+            resolveExtensions(isSigned = origin is SignedTransactionOrigin).map { resolved ->
                 val call = GenericCall.fromByteArray(runtime, payload.callData.value)
                 ExtrinsicBuildingContext(
                     chain = chain,
@@ -111,12 +111,12 @@ class CreateTransactionInteractor @AssistedInject constructor(
         }
     }
 
-    private suspend fun resolveExtensions(origin: TransactionOrigin): Result<TxPayloadExtensionsResolver.Resolved> {
+    private suspend fun resolveExtensions(isSigned: Boolean): Result<TxPayloadExtensionsResolver.Resolved> {
         return extensionsResolver.resolve(
             extensions = payload.extensions,
             txExtVersion = payload.txExtVersion,
             chainId = chainId(),
-            isSigned = origin is SignedTransactionOrigin,
+            isSigned = isSigned,
         )
     }
 

@@ -51,6 +51,10 @@ class ProductTrUAPIHostBridgeTest {
         appLanguageProvider = object : AppLanguageProvider {
             override val languageTag = flowOf("en-US")
         },
+        mediaFactory = mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory::class.java).also {
+            org.mockito.Mockito.`when`(it.create("game.dot"))
+                .thenReturn(mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend::class.java))
+        },
         permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
         permissionChanges = PermissionAuthorizationChanges(),
         productGameReminder = gameReminder,

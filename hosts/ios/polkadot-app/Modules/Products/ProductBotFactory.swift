@@ -58,7 +58,7 @@ final class ProductBotFactory {
                 runtime: runtime,
                 resolveImage: resolveImage,
                 logger: logger
-            )
+                )
         }
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)

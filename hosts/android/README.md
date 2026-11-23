@@ -224,6 +224,11 @@ revocations write to the shared Rust authorization store, not an Android-only
 grant. These operations obtain consent through the canonical runtime confirmation
 flow; the legacy permission guard only observes their stored authorization.
 
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
+
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time
 configuration and the steps to sign and publish the app are documented in

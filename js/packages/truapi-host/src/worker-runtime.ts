@@ -25,6 +25,7 @@ import {
   handleGetPermissionAuthorizationStatus,
   handleGetPermissionAuthorizationStatuses,
   handleSetPermissionAuthorizationStatus,
+  handleRefreshPermissionAuthorization,
 } from "./worker-permission-authorization.js";
 import type {
   WasmModuleShape,
@@ -120,7 +121,7 @@ function callbackRequest(
 
 function startSubscription<T>(
   name: SubscriptionName,
-  payload: Uint8Array | string | null,
+  args: readonly unknown[],
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
   coreId?: number,
@@ -133,13 +134,14 @@ function startSubscription<T>(
   subscriptionListeners.set(subId, {
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
+    privateMedia: name === "mediaBackendEvents",
   });
   try {
     postToMain({
       kind: "subscriptionStart",
       subId,
       name,
-      payload,
+      args,
       ...(coreId === undefined ? {} : { coreId }),
     });
   } catch {
@@ -300,8 +302,8 @@ function buildRawCallbacks(
             args,
             COINAGE_WALLET_CALLBACKS[name] ? undefined : coreId,
           ),
-        startSubscription: (name, payload, sendItem, sendError) =>
-          startSubscription(name, payload, sendItem, sendError, coreId),
+        startSubscription: (name, args, sendItem, sendError) =>
+          startSubscription(name, args, sendItem, sendError, coreId),
         chainConnect,
         hopConnect,
       },
@@ -1125,16 +1127,16 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         "setWithheldResources",
         (booted) => {
           const signing = signingRuntime(booted, "setWithheldResources");
-          if (typeof signing.setWithheldResources !== "function") {
-            return Promise.reject(
-              new Error(
-                "setWithheldResources needs a signing host built with " +
+        if (typeof signing.setWithheldResources !== "function") {
+          return Promise.reject(
+            new Error(
+              "setWithheldResources needs a signing host built with " +
                   "`test-host`; this core does not carry it",
-              ),
-            );
-          }
-          signing.setWithheldResources(tags);
-          return Promise.resolve();
+            ),
+          );
+        }
+        signing.setWithheldResources(tags);
+        return Promise.resolve();
         },
         false,
       );
@@ -1198,6 +1200,15 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.requestId,
         msg.request,
         msg.status,
+      );
+      break;
+    case "refreshPermissionAuthorization":
+      void handleRefreshPermissionAuthorization(
+        host?.runtime ?? null,
+        postToMain,
+        msg.productId,
+        msg.requestId,
+        msg.request,
       );
       break;
     case "callbackResponse": {

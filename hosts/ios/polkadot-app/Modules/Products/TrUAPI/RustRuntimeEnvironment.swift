@@ -25,7 +25,8 @@ struct RustRuntimeEnvironment {
     struct ExecutionModel {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
-        let osPermissionAsker: OSPermissionAsking
+        let osPermissionAsker: OSPermissionAsker
+        let media: NativeMediaBackend
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -56,8 +57,8 @@ struct RustRuntimeEnvironment {
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging,
-        pocket: any PocketHostBridge
+        chatMessaging: (any ProductChatMessaging)? = nil,
+        pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
         try makeExecution(
             productId: productId,
@@ -100,15 +101,15 @@ private extension RustRuntimeEnvironment {
             configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
             chat: chatBridge,
             pocket: pocket,
-            game: gameReminders == nil ? nil : bridge
+            game: gameReminders == nil ? nil : bridge,
+            media: bridge.media
         )
 
         bridge.attach(execution)
 
         return ExecutionModel(
-            execution: execution,
-            chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
+            execution: execution, chainConnections: chainConnections,
+            osPermissionAsker: osPermissionAsker, media: bridge.media
         )
     }
 

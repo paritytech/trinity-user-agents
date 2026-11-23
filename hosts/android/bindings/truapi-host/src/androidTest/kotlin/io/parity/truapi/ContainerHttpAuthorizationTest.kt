@@ -141,9 +141,9 @@ class ContainerHttpAuthorizationTest {
 
                         try {
                             assertTrue("product script did not load", reports.ready.await(15, TimeUnit.SECONDS))
-                            bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
-                            call("requestPermission()", "true")
-                            call("loadResource('$operation', '${server.url("/$operation-allowed")}')", "true")
+                                bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
+                                call("requestPermission()", "true")
+                                call("loadResource('$operation', '${server.url("/$operation-allowed")}')", "true")
                             assertEquals(listOf("/$operation-allowed"), hits.toList())
                             assertEquals(listOf(permission.permission), bridge.requests.toList())
                             assertEquals(listOf(1, 1), listOf(authorizedLoads.get(), proxy.connections.get()))
@@ -187,6 +187,7 @@ class ContainerHttpAuthorizationTest {
     }
 
     private class MemoryStorage : HostStorage, HostCoreStorage {
+        override val storageIdentifier = "http-policy-${java.util.UUID.randomUUID()}"
         private val values = ConcurrentHashMap<Any, ByteArray>()
         override suspend fun keys(): List<ByteArray> =
             values.keys.filterIsInstance<List<Byte>>().map { it.toByteArray() }

@@ -95,7 +95,7 @@ private func makeBridge(
         ? FailingProductStorage()
         : TrUAPILocalStorage.createProductLocalStorage(
             productId: productId,
-            defaults: makeTestDefaults()
+            defaults: makeTestDefaults(), storageDomain: UUID().uuidString
         )
     return RustProductExecutionBridge(dependencies: .init(
         productId: productId,
@@ -108,7 +108,7 @@ private func makeBridge(
         chainRegistry: chainRegistry,
         chainConnections: pool,
         productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults(), storageDomain: UUID().uuidString),
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
@@ -168,10 +168,10 @@ struct RustRuntimeBridgeTests {
                 let bridge = makeBridge(permissionGuard: guard_, osPermissionAsker: osAsker)
                 let expected: DevicePermissionStatus =
                     switch status {
-                    case .allowed: .granted
-                    case .denied: .denied
-                    case .notDetermined: .notDetermined
-                    }
+                case .allowed: .granted
+                case .denied: .denied
+                case .notDetermined: .notDetermined
+                }
 
                 #expect(try await bridge.devicePermissionStatus(request: request) == expected)
                 #expect(osAsker.checkedCapabilities == [request.deviceCapabilityType])
@@ -260,10 +260,10 @@ struct RustRuntimeBridgeTests {
 
         let expected: TrUAPIPermissionDecision =
             switch decision {
-            case .allowOnce: .allowOnce
-            case .allowAlways: .allowAlways
-            case .deny: .deny
-            }
+        case .allowOnce: .allowOnce
+        case .allowAlways: .allowAlways
+        case .deny: .deny
+        }
         #expect(result == expected)
         #expect(guard_.requestedBatchedPermissions == [.networkAccess(domain: "a.io")])
     }
@@ -620,6 +620,7 @@ struct RustRuntimeBridgeTests {
 
         #expect(pool.eventHandler === bridge)
     }
+
 
     /// After `attach`, chain notify-backs route to the opened execution.
     @Test func chainEventForwardingRoutesToAttachedExecution() {
