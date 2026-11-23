@@ -177,7 +177,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     void createWebWorkerPairingHostRuntime(
       asWorker(worker),
       makeHostCallbacks({
-        chat: { createChatRoom: async () => ({ status: "New" }) },
+        chat: { createChatRoom: async () => "New" },
       }),
       { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
     );

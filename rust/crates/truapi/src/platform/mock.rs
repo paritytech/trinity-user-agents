@@ -1316,20 +1316,21 @@ impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: latest::HostChatCreateRoomRequest,
-	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+		room_id: String,
+		_request: latest::HostChatCreateRoomRequest,
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&request.room_id) {
+			if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
-					request.room_id.clone(),
+					room_id.clone(),
 					latest::ChatRoom {
-						room_id: request.room_id.clone(),
+						room_id,
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
@@ -1341,7 +1342,7 @@ impl ChatPlatform for MockPlatform {
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
 		}
-		Ok(latest::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(
