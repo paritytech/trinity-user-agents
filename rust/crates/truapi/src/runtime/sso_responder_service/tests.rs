@@ -962,6 +962,27 @@ fn a_failed_connect_does_not_end_the_session() {
 	);
 }
 
+#[test]
+fn unverified_capacity_retries_both_the_ack_and_the_answer() {
+	let unknown = (
+		SUBMIT_STATEMENT_METHOD,
+		r#"{"status":"unknown","reason":"allowanceUnavailable"}"#.to_owned(),
+	);
+	let accepted = (SUBMIT_STATEMENT_METHOD, r#"{"status":"new"}"#.to_owned());
+	let platform = Arc::new(StubPlatform {
+		rpc_method_responses: vec![unknown.clone(), accepted.clone(), unknown, accepted],
+		..StubPlatform::default()
+	});
+	let served = serve_subtree_request(platform.clone());
+	let published = published_statement_data(&platform);
+	assert_eq!(
+		(served, recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
+		(Ok(None), 4)
+	);
+	assert_eq!(published[0], published[1]);
+	assert_eq!(published[2], published[3]);
+}
+
 /// A request that ran is not run again, so its answer must outlast the
 /// ack's resend budget.
 #[test]

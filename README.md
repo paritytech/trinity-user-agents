@@ -291,16 +291,20 @@ running after its last connection closes. A light-client connection holds its re
 syncs and then forwards them in order; chain-spec queries, statement subscriptions,
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once. Before `statement_submit` broadcasts, the light provider reads
-`:statement_allowance:` plus the proof signer's account id at a verified finalized
-People-chain head. Missing or depleted capacity returns
+`:statement_allowance:` plus the proof signer's account id at a verified best
+People-chain head, so a newly granted allowance need not wait for finality.
+Locally invalid encodings, expiry, encoded size and absent proofs are answered
+by smoldot before this read. Missing or depleted capacity returns
 `{"status":"rejected","reason":"noAllowance"}`; data exceeding the allowance returns
 `dataTooLarge`. Both are failures, so the core neither caches nor acknowledges the
 statement. Products can use their existing allocation-and-retry handling.
-Before the first sync, or if the finalized storage proof cannot be read within
-15 seconds (including malformed responses), the result is
-`{"status":"unknown","reason":"allowanceUnavailable"}`. The core surfaces it in
-the existing statement-submit error; callers can retry later without requesting
-another allocation. Nothing is broadcast in either failure case.
+Checks start even on a fresh connection or while syncing. If the best head or
+its storage proof cannot be read within 15 seconds (including malformed responses),
+the result is `{"status":"unknown","reason":"allowanceUnavailable"}`. The core
+surfaces it in the existing statement-submit error and classifies it as unsent:
+SSO request and responder retries keep their existing bounds; products can retry
+later without requesting another allocation. Nothing is broadcast in either
+failure case.
 A usable allowance permits smoldot to broadcast and return its normal `new`
 result. This verifies capacity, not remote retention or delivery: peer-local
 priority, occupancy and subsequent allowance changes can still prevent retention.

@@ -39,9 +39,12 @@ fn storage_request(
 	admission: &mut Admission,
 	submit: &Value,
 ) -> (Value, futures::channel::oneshot::Receiver<()>) {
-	let (action, deadline) = admission.request(submit.to_string(), true);
+	let (action, deadline) = admission.request(submit.to_string());
 	let head = forwarded(action);
-	assert_eq!(head["method"], "chain_getFinalizedHead");
+	assert_eq!(
+		(head["method"].clone(), head["params"].clone()),
+		(json!("chain_getBlockHash"), json!([]))
+	);
 	let hash = format!("0x{}", "ab".repeat(32));
 	let storage = forwarded(answer(admission, &head, json!(hash)));
 	assert_eq!(
@@ -127,16 +130,10 @@ fn unavailable_or_malformed_proofs_are_unknown_not_no_allowance() {
 }
 
 #[test]
-fn unsynced_or_unreadable_finalized_head_does_not_broadcast() {
+fn an_unreadable_best_head_does_not_broadcast() {
 	let mut admission = Admission::default();
-	let (action, deadline) = admission.request(signed_request(4).to_string(), false);
-	assert!(deadline.is_none());
-	assert_eq!(
-		replied(action)["result"],
-		json!({"status": "unknown", "reason": "allowanceUnavailable"})
-	);
 	for hash in [json!(null), json!("0x1234"), json!("not a block hash")] {
-		let (action, _deadline) = admission.request(signed_request(4).to_string(), true);
+		let (action, _deadline) = admission.request(signed_request(4).to_string());
 		let head = forwarded(action);
 		assert_eq!(
 			replied(answer(&mut admission, &head, hash))["result"],
@@ -148,7 +145,7 @@ fn unsynced_or_unreadable_finalized_head_does_not_broadcast() {
 #[test]
 fn a_timed_out_check_ignores_late_proofs_and_can_be_retried() {
 	let mut admission = Admission::default();
-	let (action, deadline) = admission.request(signed_request(4).to_string(), true);
+	let (action, deadline) = admission.request(signed_request(4).to_string());
 	let head = forwarded(action);
 	let (id, cancelled) = deadline.unwrap();
 	assert!(cancelled.now_or_never().is_none());
@@ -201,12 +198,52 @@ fn private_ids_cannot_collide_with_consumer_requests() {
 	let (_storage, _cancelled) = storage_request(&mut admission, &signed_request(4));
 	for id in [json!("allowance:0"), json!("client:42"), json!(42), Value::Null] {
 		let request = json!({"jsonrpc": "2.0", "id": id, "method": "rpc_methods", "params": []});
-		let (action, deadline) = admission.request(request.to_string(), true);
+		let (action, deadline) = admission.request(request.to_string());
 		assert!(deadline.is_none());
 		let request = forwarded(action);
 		assert_eq!(
 			replied(answer(&mut admission, &request, json!({"methods": []}))),
 			json!({"jsonrpc": "2.0", "id": id, "result": {"methods": []}})
 		);
+	}
+}
+
+#[test]
+fn an_allowance_granted_at_best_need_not_be_finalized() {
+	let mut admission = Admission::default();
+	let submit = signed_request(4);
+	let (action, _deadline) = admission.request(submit.to_string());
+	let head = forwarded(action);
+	let best = format!("0x{}", "ab".repeat(32));
+	let finalized = format!("0x{}", "cd".repeat(32));
+	let hash = match head["method"].as_str().unwrap() {
+		"chain_getBlockHash" => &best,
+		"chain_getFinalizedHead" => &finalized,
+		other => panic!("unexpected head request: {other}"),
+	};
+	let storage = forwarded(answer(&mut admission, &head, json!(hash)));
+	let allowance = if storage["params"][1] == best { capacity(1, 4) } else { Value::Null };
+	assert_eq!(forwarded(answer(&mut admission, &storage, allowance)), submit);
+}
+
+#[test]
+fn a_new_admission_starts_a_check_without_waiting_for_readiness() {
+	let mut admission = Admission::default();
+	let (action, deadline) = admission.request(signed_request(4).to_string());
+	assert_eq!(forwarded(action)["method"], "chain_getBlockHash");
+	assert!(deadline.is_some());
+}
+
+#[test]
+fn ordinary_response_pages_need_no_decoding() {
+	for frame in [
+		r#"{"jsonrpc":"2.0","id":42,"result":{"methods":[]}}"#,
+		r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"s","result":{"event":"newBlock"}}}"#,
+	] {
+		assert!(!Admission::needs_inspection(frame));
+	}
+	for id in ["allowance:0", "client:\"allowance:0\""] {
+		let frame = json!({"jsonrpc": "2.0", "id": id, "result": null}).to_string();
+		assert!(Admission::needs_inspection(&frame));
 	}
 }

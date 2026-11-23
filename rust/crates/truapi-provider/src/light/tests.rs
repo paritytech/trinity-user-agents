@@ -357,35 +357,57 @@ fn statement_requests_are_not_held() {
 }
 
 #[test]
-fn an_unsynced_submit_reports_unknown_without_waiting_for_smoldot() {
-	use smoldot::network::codec::{Proof, Statement, encode_statement};
+fn smoldots_local_rejections_precede_allowance_checks() {
+	use serde_json::json;
+	use smoldot::network::codec::{MAX_STATEMENT_SIZE, Proof, Statement, encode_statement};
 
 	let provider = offline_provider();
 	let connection = block_on(provider.connect(RELAY_GENESIS)).unwrap();
 	let mut responses = connection.responses();
-	let statement = encode_statement(&Statement {
-		proof: Some(Proof::Sr25519 { signer: [9; 32], signature: [0; 64] }),
-		decryption_key: None,
-		expiry: u64::MAX,
-		channel: None,
-		topics: vec![[3; 32]],
-		data: Some(vec![7; 4]),
-	})
-	.unwrap();
+	for (expiry, data_len, has_proof, expected) in [
+		(0, 4, true, "alreadyExpired"),
+		(0, MAX_STATEMENT_SIZE, true, "alreadyExpired"),
+		(u64::MAX, MAX_STATEMENT_SIZE, true, "encodingTooLarge"),
+		(u64::MAX, 4, false, "noProof"),
+	] {
+		let statement = encode_statement(&Statement {
+			proof: has_proof.then_some(Proof::Sr25519 { signer: [9; 32], signature: [0; 64] }),
+			decryption_key: None,
+			expiry,
+			channel: None,
+			topics: vec![[3; 32]],
+			data: Some(vec![7; data_len]),
+		})
+		.unwrap();
+		connection.send(
+			json!({
+				"jsonrpc": "2.0", "id": 42, "method": "statement_submit",
+				"params": [format!("0x{}", hex::encode(statement))]
+			})
+			.to_string(),
+		);
+		let response = block_on(responses.next()).unwrap();
+		let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+		assert_eq!(
+			(
+				response["id"].clone(),
+				response["result"]["status"].clone(),
+				response["result"]["reason"].clone()
+			),
+			(json!(42), json!("invalid"), json!(expected))
+		);
+	}
 	connection.send(
-		serde_json::json!({
-			"jsonrpc": "2.0", "id": 42, "method": "statement_submit",
-			"params": [format!("0x{}", hex::encode(statement))]
+		json!({
+			"jsonrpc": "2.0", "id": 43, "method": "statement_submit", "params": ["0xff"]
 		})
 		.to_string(),
 	);
-	let response = block_on(responses.next()).unwrap();
+	let response: serde_json::Value =
+		serde_json::from_str(&block_on(responses.next()).unwrap()).unwrap();
 	assert_eq!(
-		serde_json::from_str::<serde_json::Value>(&response).unwrap(),
-		serde_json::json!({
-			"jsonrpc": "2.0", "id": 42,
-			"result": { "status": "unknown", "reason": "allowanceUnavailable" }
-		})
+		(response["id"].clone(), response["error"]["code"].clone()),
+		(json!(43), json!(7001))
 	);
 	connection.close();
 	assert!(block_on(responses.next()).is_none());

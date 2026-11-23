@@ -10,10 +10,12 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 ### Fixed
 
 - Light-client statement submissions check the signer's allowance against verified
-  finalized People-chain storage before gossip. Missing or depleted allowance
-  returns `noAllowance`, oversized data returns `dataTooLarge`, and an unavailable
-  storage proof returns `unknown` / `allowanceUnavailable` for a later retry,
-  without broadcasting or acknowledging success. Remote-node RPC is unchanged.
+  best-block People-chain storage before gossip, including on newly opened
+  connections. Local validation failures take precedence. Missing or depleted
+  allowance returns `noAllowance`, oversized data returns `dataTooLarge`, and an
+  unavailable storage proof returns `unknown` / `allowanceUnavailable` without
+  broadcasting or acknowledging success. SSO retries this unsent outcome.
+  Remote-node RPC is unchanged; ordinary response pages bypass admission parsing.
 
 ## [0.32.0] - 2026-11-20
 

@@ -944,8 +944,9 @@ async fn publish(
 	.await
 }
 
-/// Run `submit`, and again after a pause while the People chain is
-/// unreachable, as long as `resend` allows. Any answer from the store is final.
+/// Run `submit`, and again after a pause while the People chain is unreachable
+/// or the light provider cannot verify capacity, as long as `resend` allows.
+/// Admission rejections are final; unverified capacity has not been broadcast.
 /// Resending is safe: the store answers `known` for a statement it holds.
 async fn resend_while_unreachable<SubmitFn, SubmitFuture>(
 	label: &'static str,

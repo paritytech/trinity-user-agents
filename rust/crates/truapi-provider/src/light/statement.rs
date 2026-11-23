@@ -1,15 +1,19 @@
 //! Allowance admission before smoldot queues a statement for gossip.
 //!
-//! Storage reads are pinned to smoldot's verified finalized head. A missing
-//! proof or deadline is uncertainty, never evidence of an absent allowance.
+//! Storage reads are pinned to smoldot's verified best head, matching the node's
+//! admission rule. A missing proof is uncertainty, not an absent allowance.
 
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::SystemTime;
+#[cfg(target_arch = "wasm32")]
+use web_time::SystemTime;
 
 use futures::channel::oneshot;
 use serde_json::{Value, json};
 use smoldot::{
 	json_rpc::methods::{MethodCall, parse_jsonrpc_client_to_server},
-	network::codec::{Proof, decode_statement, statement_hash},
+	network::codec::{MAX_STATEMENT_SIZE, Proof, decode_statement, statement_hash},
 };
 
 const CLIENT_ID_PREFIX: &str = "client:";
@@ -40,13 +44,16 @@ pub struct Admission {
 }
 
 impl Admission {
+	/// Whether a response may carry one of this connection's private ids.
+	///
+	/// Ordinary subscription pages pass through without JSON decoding or locks.
+	pub fn needs_inspection(frame: &str) -> bool {
+		frame.contains("\"allowance:") || frame.contains("\"client:")
+	}
+
 	/// Namespace consumer ids so private storage replies cannot collide with them.
 	/// A new check also supplies a cancellation receiver for its deadline.
-	pub fn request(
-		&mut self,
-		request: String,
-		ready: bool,
-	) -> (Action, Option<(u64, oneshot::Receiver<()>)>) {
+	pub fn request(&mut self, request: String) -> (Action, Option<(u64, oneshot::Receiver<()>)>) {
 		let Ok(mut value) = serde_json::from_str::<Value>(&request) else {
 			return (Action::Forward(request), None);
 		};
@@ -68,14 +75,19 @@ impl Admission {
 		let Ok(statement) = decode_statement(&encoded.0) else {
 			return (Action::Forward(request), None);
 		};
+		// Let smoldot answer locally invalid statements before asking for capacity.
+		// It repeats these checks after the proof read, so expiry cannot race admission.
+		let now = SystemTime::now()
+			.duration_since(SystemTime::UNIX_EPOCH)
+			.expect("system clock predates UNIX epoch");
+		if now.as_secs() >= statement.expiry >> 32 || encoded.0.len() > MAX_STATEMENT_SIZE {
+			return (Action::Forward(request), None);
+		}
 		let signer = match statement.proof {
 			Some(Proof::Sr25519 { signer, .. } | Proof::Ed25519 { signer, .. }) => signer,
 			Some(Proof::Secp256k1Ecdsa { signer, .. }) => statement_hash(&signer),
 			None => return (Action::Forward(request), None),
 		};
-		if !ready {
-			return (reply(&value, unknown()), None);
-		}
 		let id = self.next_id;
 		self.next_id += 1;
 		let (cancel, cancelled) = oneshot::channel();
@@ -89,7 +101,7 @@ impl Admission {
 				_cancel: cancel,
 			},
 		);
-		(Action::Forward(rpc(id, "chain_getFinalizedHead", json!([]))), Some((id, cancelled)))
+		(Action::Forward(rpc(id, "chain_getBlockHash", json!([]))), Some((id, cancelled)))
 	}
 
 	/// Consume a private storage reply or restore a consumer's original id.

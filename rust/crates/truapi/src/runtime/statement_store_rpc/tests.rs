@@ -277,6 +277,19 @@ fn only_a_statement_that_reached_no_peer_is_unsent() {
 	assert_eq!(unsent, vec![true, true, false]);
 }
 
+#[test]
+fn only_unverified_capacity_is_classified_as_unsent() {
+	for (status, reason, unsent) in [
+		("unknown", "allowanceUnavailable", true),
+		("rejected", "allowanceUnavailable", false),
+		("unknown", "noAllowance", false),
+		("unknown", "other", false),
+	] {
+		let error = StatementSubmitError::Rejected(json!({"status": status, "reason": reason}));
+		assert_eq!((error.reached_no_peer(), error.is_unreachable()), (unsent, unsent));
+	}
+}
+
 /// A statement store whose subscription connection answers with `frames`.
 fn watching_statement_store(frames: Vec<String>) -> (StatementStoreRpc, Arc<StubPlatform>) {
 	let platform = Arc::new(StubPlatform { rpc_responses: frames, ..Default::default() });

@@ -673,8 +673,7 @@ impl Pipe {
 	/// Hand `request`, already counted in `undelivered`, to smoldot, returning
 	/// it if smoldot refuses it.
 	fn forward(&self, guard: &mut LightInner, request: String) -> Result<(), String> {
-		let ready = lock(&self.held).is_none();
-		let (action, deadline) = lock(&self.admission).request(request, ready);
+		let (action, deadline) = lock(&self.admission).request(request);
 		if let Some(deadline) = deadline {
 			let _ = self.deadlines_tx.unbounded_send(deadline);
 		}
@@ -697,19 +696,23 @@ impl Pipe {
 	}
 
 	fn response(&self, frame: String) -> Option<String> {
-		let mut guard = lock(&self.inner);
-		if self.is_closed() {
-			return None;
+		if !Admission::needs_inspection(&frame) {
+			return Some(frame);
 		}
 		let action = lock(&self.admission).response(frame);
 		match action {
 			Action::Reply(frame) => Some(frame),
-			other => {
+			other @ Action::Forward(_) => {
+				let mut guard = lock(&self.inner);
+				if self.is_closed() {
+					return None;
+				}
 				if let Err(rejected) = self.apply(&mut guard, other) {
 					self.reject(&rejected);
 				}
 				None
 			},
+			Action::Ignore => None,
 		}
 	}
 
