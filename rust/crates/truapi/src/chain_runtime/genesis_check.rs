@@ -1,6 +1,7 @@
-//! [`GenesisCheck`]: who hears which chain a new connection reached.
+//! [`GenesisCheck`]: where a chain runtime reports the genesis hash of each
+//! chain it connects to.
 
-/// Hears the genesis hash each new connection's chain gives.
+/// Is told the genesis hash each new connection's chain gives.
 ///
 /// A [`ChainRuntime`](super::ChainRuntime) given one asks every connection it
 /// opens for its chain's genesis hash before anything else uses the

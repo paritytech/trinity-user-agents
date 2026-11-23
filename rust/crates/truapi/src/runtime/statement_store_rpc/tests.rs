@@ -416,8 +416,9 @@ fn checked_statement_store(
 	(statement_store, node, heard, pooled)
 }
 
-/// The check asks every subscription connection one question. People naming
-/// itself has to leave the store as usable as without the check.
+/// The check adds one request to every subscription connection. When People
+/// gives the hash it was opened for, the store has to work as it does without
+/// the check.
 #[test]
 fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 	let (statement_store, _node, heard, _pooled) = checked_statement_store(PEOPLE_GENESIS);

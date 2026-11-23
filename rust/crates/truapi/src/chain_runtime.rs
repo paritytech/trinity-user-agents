@@ -427,8 +427,8 @@ pub struct ChainRuntime {
 	next_transaction_operation_id: Arc<AtomicU64>,
 	/// Paces follow retries and bounds reads, so tests can control the waits.
 	timer: Arc<dyn Timer>,
-	/// Hears the genesis hash each new connection's chain gives. With one,
-	/// a connection whose chain gives a different hash is refused.
+	/// Told the genesis hash each new connection's chain gives. When set, a
+	/// connection whose chain gives a different hash is refused.
 	genesis_check: Option<Arc<dyn GenesisCheck>>,
 	/// Runtime call outputs every connection shares, so the products and the
 	/// core download the runtime metadata of a chain once between them.
@@ -534,20 +534,20 @@ impl ChainRuntime {
 		self
 	}
 
-	/// This runtime, asking each chain it connects to for its genesis hash.
+	/// Makes this runtime check the genesis hash of every chain it connects to.
 	///
-	/// Each answer goes to `check`. Set it before the first connection: one
-	/// opened earlier was not asked.
+	/// Each hash a chain gives goes to `check`. Set it before the first
+	/// connection: one opened earlier is not checked.
 	///
-	/// A connection fails with a host failure when its chain gives a
-	/// different hash from the one it was opened for, or answers the question
-	/// with an error. One that closes, stays silent or stays halted fails as
-	/// unavailable. A halted chain is asked again as a halted follow is.
+	/// A connection fails with a host failure when its chain gives a different
+	/// hash from the one it was opened for, or answers with an error. It fails
+	/// as unavailable when the chain closes, stays silent, or is still halted
+	/// after the retries a halted follow gets.
 	///
-	/// A different hash also closes the connections handed out earlier for
-	/// the same chain, in every scope: a host may redial underneath a
-	/// connection, so they may have come to reach that chain too. Their next
-	/// user dials again and is asked.
+	/// A different hash also closes the connections already handed out for
+	/// that chain, in every scope. A host may redial underneath a connection,
+	/// so those may be on the wrong chain too. Whoever uses one next dials
+	/// again and is checked.
 	#[must_use]
 	pub fn checking_genesis(mut self, check: Arc<dyn GenesisCheck>) -> Self {
 		self.genesis_check = Some(check);
@@ -556,10 +556,9 @@ impl ChainRuntime {
 
 	/// Checks a connection the caller opened itself for `genesis_hash`.
 	///
-	/// The connection passes the check every connection of this runtime
-	/// passes, and none for a runtime without one. Fails as
-	/// [`Self::checking_genesis`] describes; drop the connection then. Drop
-	/// the future to stop waiting.
+	/// Does nothing on a runtime without a check. Fails as
+	/// [`Self::checking_genesis`] describes, and the caller then drops the
+	/// connection. Dropping the future stops the wait.
 	pub async fn check_genesis(
 		&self,
 		genesis_hash: [u8; 32],
@@ -2303,9 +2302,9 @@ enum GenesisAnswer {
 }
 
 impl GenesisAnswer {
-	/// Passes a chain that named itself. For one that gave a different hash,
-	/// closes every connection `registry` handed out earlier under `key`,
-	/// the chain's, and returns the failure.
+	/// `Ok` for the hash the connection was opened for. For a different one,
+	/// closes every connection `registry` handed out earlier for the chain,
+	/// which it keeps under `key`, and returns the failure.
 	fn or_close_earlier(
 		self,
 		registry: &ConnectionRegistry,

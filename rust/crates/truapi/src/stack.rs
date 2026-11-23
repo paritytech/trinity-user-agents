@@ -263,11 +263,10 @@ impl Stack {
 		self.account_data_store
 	}
 
-	/// What hears the genesis hash each chain connection's chain gives.
+	/// The check a chain runtime reports each connection's genesis hash to.
 	///
-	/// The runtime that opens the connections asks for it. `None` unless a
-	/// [`StackRefresh`] handed the stack out: the core does not check the
-	/// chains of a stack built any other way.
+	/// `None` unless a [`StackRefresh`] handed the stack out: the core does
+	/// not check the chains of a stack built any other way.
 	pub fn genesis_check(&self) -> Option<Arc<dyn GenesisCheck>> {
 		self.checks.as_ref().map(StackChecks::genesis_check)
 	}

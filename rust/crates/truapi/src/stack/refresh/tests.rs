@@ -568,7 +568,7 @@ fn a_chain_that_restarted_is_reported_before_the_fetch_it_brings_forward() {
 }
 
 /// At start the loop is fetching while the core's services open their first
-/// connections. A chain found wrong then is told while the fetch is still
+/// connections. A chain found wrong then is reported while the fetch is still
 /// out, not once a hung fetch has timed out.
 #[test]
 fn a_chain_found_wrong_during_a_fetch_is_reported_while_it_is_out() {
