@@ -26,7 +26,7 @@ use crate::{
 	runtime::{
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
 		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
-		statement_store_rpc::StatementStoreRpc,
+		statement_allowance, statement_store_rpc::StatementStoreRpc,
 	},
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -319,9 +319,9 @@ impl RuntimeServices {
 	/// suffix of one to sixteen bytes, and nothing is reported then.
 	pub async fn people_network_suffix(
 		&self,
-		people: &crate::runtime::statement_allowance::rpc::RpcClient,
-	) -> Result<Vec<u8>, crate::runtime::statement_allowance::StatementAllowanceError> {
-		let suffix = crate::runtime::statement_allowance::slot::read_network_suffix(people).await?;
+		people: &statement_allowance::rpc::RpcClient,
+	) -> Result<Vec<u8>, statement_allowance::StatementAllowanceError> {
+		let suffix = statement_allowance::slot::read_network_suffix(people).await?;
 		if let Some(checks) = crate::stack::checks(&self.stack) {
 			checks.people_suffix_answered(&suffix);
 		}
