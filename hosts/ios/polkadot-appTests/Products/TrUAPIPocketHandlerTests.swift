@@ -1,3 +1,4 @@
+import Foundation
 import Products
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -23,7 +24,7 @@ struct TrUAPIPocketHandlerTests {
         let streams = makeStreams(workers: workers)
 
         let drawing = Task {
-            for try await _ in streams.renderFaces(for: loyalty) {
+            for try await _ in streams.renderFaces(for: loyalty, side: .front) {
                 return true
             }
             return false
@@ -59,7 +60,7 @@ struct TrUAPIPocketHandlerTests {
         first.keepsRenderStreamOpen = true
         let streams = makeStreams(workers: workers)
 
-        let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
+        let drawing = Task { for try await _ in streams.renderFaces(for: loyalty, side: .front) {} }
         defer { drawing.cancel() }
 
         workers.publish([gameProductId: first])
@@ -71,6 +72,26 @@ struct TrUAPIPocketHandlerTests {
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
         #expect(first.renderRequests.count == 1)
+    }
+
+    /// The worker tells a card's sides apart only by the context, and the core
+    /// passes a press on a back only to a connection that drew that back.
+    @Test
+    func drawsAndPressesTheBackUnderTheBacksOwnContext() async throws {
+        let workers = StubWorkerManager()
+        let execution = MockProductExecution()
+        execution.keepsRenderStreamOpen = true
+        let streams = makeStreams(workers: workers)
+
+        let drawing = Task { for try await _ in streams.renderFaces(for: loyalty, side: .back) {} }
+        defer { drawing.cancel() }
+        workers.publish([gameProductId: execution])
+        try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
+        streams.send(action: "stamp", payload: Data(), for: loyalty, side: .back)
+
+        let back = RenderContext.pocketCardBack(cardId: "loyalty")
+        #expect(execution.renderRequests.map(\.context) == [back])
+        #expect(execution.publishedRendererActions.map(\.context) == [back])
     }
 }
 

@@ -78,18 +78,19 @@ extension CorePocketCardStore: PocketCardStore {
 
     /// A host-placed card falls back to the face shipped with the app, so it
     /// draws before its product has drawn one.
-    func face(for key: PocketCardKey) async -> RendererNode? {
+    func face(for key: PocketCardKey, side: PocketCardSide) async -> RendererNode? {
         do {
             if let kept = try await runtimeProvider.sharedRuntime().pocketCardFace(
                 productId: key.productId,
-                cardId: key.cardId.value
+                cardId: key.cardId.value,
+                side: side
             ) {
                 return kept
             }
         } catch {
             logger.warning("[pocket] the kept face for '\(key.storageId)' could not be read: \(error)")
         }
-        guard pinned.pinned(key) != nil else { return nil }
+        guard side == .front, pinned.pinned(key) != nil else { return nil }
 
         return await pinned.face(for: key.cardId)
     }

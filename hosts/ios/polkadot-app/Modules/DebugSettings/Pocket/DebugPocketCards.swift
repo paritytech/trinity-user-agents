@@ -17,6 +17,7 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
     /// The page the card opens instead of its product's widget, even a published one.
     let widgetUrl: URL?
     let faceShown: Bool?
+    let backFaceUrl: String?
 
     var id: String { "\(productId)/\(cardId)" }
 
@@ -29,7 +30,8 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
             id: PocketCardId(value: screened),
             title: title,
             preview: .url(faceUrl),
-            faceShown: faceShown ?? true
+            faceShown: faceShown ?? true,
+            back: backFaceUrl.map { .url($0) }
         )
     }
 }

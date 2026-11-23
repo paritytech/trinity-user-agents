@@ -32,6 +32,7 @@ struct ProductImageResolver: Sendable {
         switch source {
         case let .bulletin(cid): ipfsUrl(cid)
         case let .archive(path): await archived(path)
+        case .inline: nil
         }
     }
 

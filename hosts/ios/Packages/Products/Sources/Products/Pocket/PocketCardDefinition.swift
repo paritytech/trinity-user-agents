@@ -18,11 +18,20 @@ public struct PocketCardDefinition: Hashable, Sendable {
     public let preview: PocketCardPreview
     /// Whether the card opens with its face shown above the product's page.
     public let faceShown: Bool
+    /// The static back the card turns over to, read like ``preview``. Nil for a card that does not turn.
+    public let back: PocketCardPreview?
 
-    public init(id: PocketCardId, title: String, preview: PocketCardPreview, faceShown: Bool = true) {
+    public init(
+        id: PocketCardId,
+        title: String,
+        preview: PocketCardPreview,
+        faceShown: Bool = true,
+        back: PocketCardPreview? = nil
+    ) {
         self.id = id
         self.title = title
         self.preview = preview
         self.faceShown = faceShown
+        self.back = back
     }
 }

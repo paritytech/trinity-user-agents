@@ -2,6 +2,7 @@ import FoundationExt
 import Products
 import SwiftUI
 import enum TrUAPIHost.ExpandedCardFaceOutcome
+import enum TrUAPIHost.ExpandedCardTurnOutcome
 import struct TrUAPIHost.ProductId
 import UIKit
 import UIKitExt
@@ -17,11 +18,13 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     private let widgetView: WidgetView
     private let engine: SPAJSEngine
     private let face: UIHostingController<PocketOpenedCardView>
+    private let turn: PocketCardTurn
     /// Holds the page so the face can join the page's safe area through `additionalSafeAreaInsets`
     /// without moving the face, which follows this screen's own safe area.
     private let pageController = UIViewController()
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
+    private lazy var turnPan = UIPanGestureRecognizer(target: self, action: #selector(followTurn))
     private var faceSetByPage = false
     private var isClosing = false
     private var isInFlight = false
@@ -39,7 +42,14 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         self.widgetView = widgetView
         self.engine = engine
 
-        let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
+        let turn = PocketCardTurn()
+        self.turn = turn
+        let face = UIHostingController(rootView: PocketOpenedCardView(
+            card: card,
+            turn: turn,
+            onBackChanged: { turn.backChanged(available: $0) },
+            onTurnOver: { turn.turnOver() }
+        ))
         face.view.backgroundColor = .clear
         face.safeAreaRegions = []
         self.face = face
@@ -97,7 +107,11 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     override func willMove(toParent parent: UIViewController?) {
         super.willMove(toParent: parent)
 
-        guard parent != nil else { return }
+        // The list shows only fronts, and the screen is kept to open again on one.
+        guard parent != nil else {
+            turn.turnHome()
+            return
+        }
 
         origin?.setOpenItem(.card(card.key))
     }
@@ -152,12 +166,11 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
     }
 
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
-        guard isOnDisplay, !isClosing else { return .notPresented }
-        guard !pullDown.isPulling else { return .userMoving }
+        ExpandedCardFaceOutcome(answer(.face(shown: shown)))
+    }
 
-        faceSetByPage = true
-        setFaceCovered(!shown)
-        return .applied
+    func setBackShown(_ shown: Bool) -> ExpandedCardTurnOutcome {
+        answer(.back(shown: shown))
     }
 
     /// The card's published starting face, unless the page has already set it.
@@ -169,6 +182,18 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
 }
 
 extension ExpandedPocketCardViewController: ProductPageShowing {}
+
+/// The face takes touches only while uncovered, so a sideways drag turns the card only then, and a vertical one is
+/// left to the pull-down.
+extension ExpandedPocketCardViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_: UIGestureRecognizer) -> Bool {
+        turn.canTurn && transitionCoordinator == nil && turnPan.isSideways(in: view)
+    }
+
+    func gestureRecognizer(_: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer) -> Bool {
+        true
+    }
+}
 
 extension ExpandedPocketCardViewController: PocketFlightScreen {
     var pocketItem: PocketItem {
@@ -225,6 +250,45 @@ private extension ExpandedPocketCardViewController {
         addChild(face)
         rootView.embedFace(face.view)
         face.didMove(toParent: self)
+
+        turnPan.delegate = self
+        face.view.addGestureRecognizer(turnPan)
+    }
+
+    /// Answers the page as the change starts, without waiting for it to finish.
+    func answer(_ request: ExpandedCardPageRequest) -> ExpandedCardTurnOutcome {
+        let outcome = request.outcome(
+            hasBack: turn.hasBack,
+            isUserMoving: pullDown.isPulling || turn.isUserMoving,
+            isPresented: isOnDisplay && !isClosing
+        )
+        guard outcome == .applied else { return outcome }
+
+        switch request {
+        case let .face(shown):
+            faceSetByPage = true
+            setFaceCovered(!shown)
+        case let .back(shown):
+            turn.turn(to: shown ? .back : .front)
+        }
+        return outcome
+    }
+
+    @objc func followTurn(_ pan: UIPanGestureRecognizer) {
+        let width = face.view.bounds.width - 2 * PocketCardSize.sideMargin
+        switch pan.state {
+        case .began:
+            turn.beginDrag()
+        case .changed:
+            turn.drag(by: pan.translation(in: view).x, width: width)
+            pan.setTranslation(.zero, in: view)
+        case .ended,
+             .cancelled,
+             .failed:
+            turn.release(velocity: pan.velocity(in: view).x, width: width)
+        default:
+            break
+        }
     }
 
     func setupPage() {
@@ -257,5 +321,13 @@ private extension ExpandedPocketCardViewController {
 
         origin.moveOpenItem(by: .zero, clearingPocket: false, animated: false)
         origin.setOpenItem(nil)
+    }
+}
+
+private extension UIPanGestureRecognizer {
+    /// Only a sideways pan turns the card: a vertical one scrolls the page or pulls the card down to close it.
+    func isSideways(in view: UIView) -> Bool {
+        let panVelocity = velocity(in: view)
+        return abs(panVelocity.x) > abs(panVelocity.y)
     }
 }

@@ -68,7 +68,7 @@ struct PocketCardsProvider {
     }
 
     private func viewModel(for card: PocketCardEntry) async -> PocketCardViewModel {
-        let face = await store.face(for: card.key)
+        let face = await store.face(for: card.key, side: .front)
 
         return PocketCardViewModel(
             key: card.key,

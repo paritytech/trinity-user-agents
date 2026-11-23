@@ -26,9 +26,16 @@ public struct WidgetImageResolver: Sendable {
         self.load = load
     }
 
+    /// Inline bytes are the picture itself, so they are decoded here rather than handed to `load`.
     public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> UIImage? {
-        await load(source)
+        if case let .inline(bytes) = source {
+            return await Task.detached { UIImage(downsampling: bytes) }.value
+        }
+        return await load(source)
     }
+
+    /// Draws inline images only, for a tree shown before anything can locate its other images.
+    public static let inlineOnly = WidgetImageResolver { _ in nil }
 }
 
 private struct WidgetImageResolverKey: EnvironmentKey {
@@ -117,9 +124,15 @@ private struct NodeImageView: View {
     var body: some View {
         content
             .applyWidgetNodeModifiers(modifiers)
+            // Keyed on the source, which compares inline bytes by content, so a
+            // redrawn face with the same bytes does not decode them again.
             .task(id: props.source) {
                 picture = .loading
-                picture = await resolveImage?(props.source).map(Picture.loaded) ?? .unavailable
+                let image = await (resolveImage ?? .inlineOnly)(props.source)
+                // A load the source has moved on from must not draw over the new one.
+                guard !Task.isCancelled else { return }
+
+                picture = image.map(Picture.loaded) ?? .unavailable
             }
     }
 
@@ -165,6 +178,28 @@ private struct NodeImageView: View {
             maxWidth: modifiers.hasOwnWidth ? .infinity : nil,
             maxHeight: modifiers.hasOwnHeight ? .infinity : nil
         )
+    }
+}
+
+extension UIImage {
+    /// A product's bytes can declare a picture of any size in a few hundred
+    /// bytes, so they are read at most 1024 pixels on the longer side rather
+    /// than decoded whole.
+    convenience init?(downsampling bytes: Data) {
+        let options = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 1_024
+        ] as CFDictionary
+        guard
+            let source = CGImageSourceCreateWithData(
+                bytes as CFData,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+            ),
+            let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+        else { return nil }
+
+        self.init(cgImage: image)
     }
 }
 

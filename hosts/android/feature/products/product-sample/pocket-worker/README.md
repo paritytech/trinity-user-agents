@@ -72,3 +72,5 @@ The page has "Show back", "Show front" and "Show back in 2 s" buttons, which cal
 
 In the debug loop the card comes from the product form: set its "Pocket card back face URL" to
 `http://127.0.0.1:5173/faces/loyalty-back.json`. The Pocket face preview takes a back URL as well.
+On iOS, the same fields are "Back face URL (optional)" under Debug → Pocket Cards and Debug →
+Pocket Face Preview.

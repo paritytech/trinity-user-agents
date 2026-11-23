@@ -121,6 +121,8 @@ public extension CustomMessageWidgetNode {
     enum ImageSource: Hashable {
         case bulletin(cid: String)
         case archive(path: String)
+        /// Bytes the host has already allowed, drawn as they are with no resolver.
+        case inline(Data)
     }
 
     enum ImageFit: Sendable {
