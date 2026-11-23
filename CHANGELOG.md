@@ -9,6 +9,9 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- notify native permission-list observers once after a successful permission
+  compare/exchange write, including device permission answers; failed exchanges
+  and unrelated storage writes do not emit permission-list notifications.
 - connect Media peers directly when possible, with optional TURN fallback;
   keep SDP, ICE candidates, network addresses and statistics inside hosts,
   never in product-facing responses or events. Bound the wait for optional TURN
