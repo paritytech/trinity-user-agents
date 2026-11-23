@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -114,7 +115,8 @@ private fun SendPaymentScreenInternal(
                 NovaTextField(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = PolkadotTheme.spacings.small),
+                        .padding(horizontal = PolkadotTheme.spacings.small)
+                        .testTag(SendPaymentTestTags.RECIPIENT_INPUT),
                     value = state.input,
                     maxLines = 1,
                     onValueChange = onInputChange,

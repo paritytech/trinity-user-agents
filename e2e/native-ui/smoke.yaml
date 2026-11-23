@@ -1,0 +1,46 @@
+# Settings and wallet smoke for an account that is already signed in.
+appId: ${APP_ID}
+name: Settings and wallet smoke
+---
+- launchApp
+- runFlow: flows/dismiss-tips.yaml
+- extendedWaitUntil:
+    visible:
+      id: chats_new_chat_button
+    timeout: 60000
+
+- runFlow:
+    file: flows/open-tab.yaml
+    env:
+      TAB: tab_settings
+      SCREEN: settings_backup_button
+
+- runFlow:
+    file: flows/open-tab.yaml
+    env:
+      TAB: tab_wallet
+      SCREEN: wallet_cash_card
+# The Humanity card is the devicehood product's own widget, so its text is all there is to match.
+- extendedWaitUntil:
+    visible: ${USERNAME}
+    timeout: 90000
+- tapOn:
+    label: Open the cash card by its top edge, which the Humanity card does not cover
+    id: wallet_cash_card
+    point: "50%,6%"
+- tapOn:
+    id: wallet_send_payment_button
+- assertVisible:
+    id: send_payment_recipient_input
+- runFlow: flows/go-back.yaml
+- assertVisible:
+    id: wallet_send_payment_button
+- runFlow: flows/go-back.yaml
+- assertVisible:
+    id: wallet_cash_card
+
+- runFlow:
+    file: flows/open-tab.yaml
+    env:
+      TAB: tab_chat
+      SCREEN: chats_new_chat_button

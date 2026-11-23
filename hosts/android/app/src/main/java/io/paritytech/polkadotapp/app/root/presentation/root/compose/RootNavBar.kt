@@ -216,6 +216,7 @@ fun RootNavBar(
                     badgeCount = if (target == DockletSlotTarget.Tab(BottomTab.EXPLORE)) apps.size else 0,
                     warning = target is DockletSlotTarget.Tab && tabWarnings[target.tab] == true,
                     onClick = { currentOnSlotClick(target) },
+                    testTag = target.testTag(),
                 )
             }.toImmutableList()
         }
@@ -324,6 +325,17 @@ fun RootNavBar(
 private fun DockletSlotTarget.icon() = when (this) {
     is DockletSlotTarget.Tab -> tab.icon()
     DockletSlotTarget.NetworkStatus -> NovaIcons.NetworkStatus
+}
+
+/** Matches the iOS tab bar's accessibility identifiers, so one UI test flow drives both apps. */
+private fun DockletSlotTarget.testTag(): String? = when (this) {
+    is DockletSlotTarget.Tab -> when (tab) {
+        BottomTab.CHATS -> "tab_chat"
+        BottomTab.WALLET -> "tab_wallet"
+        BottomTab.SETTINGS -> "tab_settings"
+        BottomTab.EXPLORE -> null
+    }
+    DockletSlotTarget.NetworkStatus -> null
 }
 
 @Composable

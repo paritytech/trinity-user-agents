@@ -1,0 +1,35 @@
+# Opens the tab TAB and waits for SCREEN, an id on that tab.
+appId: ${APP_ID}
+---
+# iOS tucks the docklet away after a few idle seconds; it comes back with a swipe in from the right edge.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - retry:
+          maxRetries: 3
+          commands:
+            - runFlow:
+                when:
+                  notVisible:
+                    id: ${TAB}
+                commands:
+                  - swipe:
+                      start: 99%, 60%
+                      end: 50%, 60%
+                      duration: 300
+            - tapOn:
+                id: ${TAB}
+            - assertVisible:
+                id: ${SCREEN}
+# The seeded Android build keeps its docklet on screen.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          id: ${TAB}
+- extendedWaitUntil:
+    visible:
+      id: ${SCREEN}
+    timeout: 30000
