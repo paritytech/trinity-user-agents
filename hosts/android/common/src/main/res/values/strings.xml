@@ -578,9 +578,17 @@
     <string name="chat_request_pending">Pending</string>
     <string name="chat_request_welcome_message_hint">Add a welcome message (optional)</string>
     <string name="chat_request_decline_dialog_title">Decline message request?</string>
+    <string name="chat_request_decline_title">Decline chat request?</string>
+    <string name="chat_request_decline_message">%1$s will not be notified. The chat will be removed.</string>
+    <string name="chat_request_decline_keep">Keep request</string>
     <string name="chat_request_you_approved">You approved the request</string>
     <string name="chat_request_accept_title">Accept chat request from %s</string>
     <string name="chat_request_wait_accept_title">Wait for %s to accept your message request.</string>
+    <string name="chat_request_cancel_button">Cancel request</string>
+    <string name="chat_request_cancel_dialog_title">Cancel request?</string>
+    <string name="chat_request_cancel_dialog_message">%s will no longer see your request.</string>
+    <string name="chat_request_cancel_dialog_keep">Keep request</string>
+    <string name="chat_request_cancelled_by_peer">%s cancelled this chat request.</string>
     <string name="chat_request_accept_description">Add %s to your contacts to accept the chat request. They won\'t know you\'ve seen their message until you accept.</string>
     <string name="chat_request_invite_title">Invite %s to chat</string>
     <string name="chat_request_invite_description">You can only send one message in this request.</string>
@@ -747,7 +755,7 @@
     <string name="chat_notification_reaction_added">reacted with %1$s</string>
 
     <string name="chat_notification_contact_added">added you</string>
-    <string name="chat_notification_payment">is sending you %1$s</string>
+    <string name="chat_notification_payment">is sending you %1$s. Open the app to receive it.</string>
     <string name="chat_notification_request_approved">approved the chat request</string>
 
     <string name="card_currency_title">Local currency</string>

@@ -17,10 +17,12 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.ChatRequest
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.model.ChatRequestDecrypted
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.model.ChatRequestMessage
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.model.IdentityProofScale
+import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.model.RequestContentCancel
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.model.VersionedRequestContent
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTopic
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTransport
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.OutgoingChatRequestTopics
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.StoredChatRequestCopy
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.RichTextContent
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.TokenContent
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
@@ -64,6 +66,15 @@ interface OutgoingChatRequestService {
     ): Result<Boolean>
 
     suspend fun isStoredBy(contact: Contact, signer: AccountId): Result<Boolean>
+
+    suspend fun fetchCopiesToCancel(contact: Contact): Result<List<StoredChatRequestCopy>>
+
+    suspend fun deliverChatRequestCancel(
+        request: ChatRequest,
+        contact: Contact,
+        statementProver: StatementStoreMessageProver,
+        replacedCopyExpiry: ULong,
+    ): Result<Unit>
 }
 
 @Singleton
@@ -106,6 +117,47 @@ class RealOutgoingChatRequestService @Inject constructor(
         }
     }
 
+    override suspend fun fetchCopiesToCancel(contact: Contact): Result<List<StoredChatRequestCopy>> {
+        return identityAccountOf(contact).flatMap { identityAccount ->
+            val session = constructChatRequestTopics(contact, identityAccount.defaultAccountId()).session
+            chatRequestTransport.fetchChatRequestCopiesToCancel(session, contact.sharedSecretDerivationDomain)
+        }
+    }
+
+    override suspend fun deliverChatRequestCancel(
+        request: ChatRequest,
+        contact: Contact,
+        statementProver: StatementStoreMessageProver,
+        replacedCopyExpiry: ULong,
+    ): Result<Unit> {
+        return identityAccountOf(contact).flatMap { identityAccount ->
+            constructCancelMessage(request, contact)
+                .flatMap { cancel ->
+                    chatRequestProver.createProof(cancel, identityAccount, contact.accountId)
+                        .map { proof -> ChatRequestDecrypted(cancel, proof) }
+                }
+                .flatMap { decrypted ->
+                    chatRequestTransport.submitChatRequestCancel(
+                        topics = constructChatRequestTopics(contact, identityAccount.defaultAccountId()),
+                        cancel = decrypted,
+                        derivationDomain = contact.sharedSecretDerivationDomain,
+                        statementProver = statementProver,
+                        replacedCopyExpiry = replacedCopyExpiry,
+                    )
+                }
+        }
+    }
+
+    private suspend fun constructCancelMessage(request: ChatRequest, contact: Contact): Result<ChatRequestMessage> {
+        return identityProofCodec.produceCancel(requestId = request.id, peerIdentityChatPubKey = contact.chatKey).map { cancelProof ->
+            ChatRequestMessage(
+                messageId = request.id,
+                timestamp = maxOf(System.currentTimeMillis(), request.timestamp + 1).toULong(),
+                content = VersionedRequestContent.Cancel(RequestContentCancel(cancelProof.toScale())),
+            )
+        }
+    }
+
     private suspend fun composeRequest(request: ChatRequest, payload: OutgoingChatRequestPayload): Result<ComposedChatRequest> {
         return identityAccountOf(payload.contact).flatMap { identityAccount ->
             val topics = constructChatRequestTopics(payload.contact, identityAccount.defaultAccountId())
@@ -142,35 +194,42 @@ class RealOutgoingChatRequestService @Inject constructor(
         request: ChatRequest,
         payload: OutgoingChatRequestPayload,
     ): Result<ChatRequestDecrypted> {
-        val requestMessage = ChatRequestMessage(
-            messageId = request.id,
-            timestamp = request.timestamp.toULong(),
-            content = constructRequestContent(identityAccount, payload),
-        )
+        return constructRequestContent(identityAccount, payload).flatMap { content ->
+            val requestMessage = ChatRequestMessage(
+                messageId = request.id,
+                timestamp = request.timestamp.toULong(),
+                content = content,
+            )
 
-        return chatRequestProver.createProof(requestMessage, identityAccount, payload.contact.accountId)
-            .map { proof -> ChatRequestDecrypted(requestMessage, proof) }
+            chatRequestProver.createProof(requestMessage, identityAccount, payload.contact.accountId)
+                .map { proof -> ChatRequestDecrypted(requestMessage, proof) }
+        }
     }
 
     private suspend fun constructRequestContent(
         identityAccount: MetaAccount,
         payload: OutgoingChatRequestPayload,
-    ): VersionedRequestContent {
+    ): Result<VersionedRequestContent> {
         val welcomeMessage = payload.welcomeMessage?.toRemote()
         if (!payload.contact.isMultiDeviceChatSupported(accountRepository.getWalletAccount())) {
-            return VersionedRequestContent.V1.new(pushToken = payload.pushToken, welcomeMessage = welcomeMessage)
+            return Result.success(VersionedRequestContent.V1.new(pushToken = payload.pushToken, welcomeMessage = welcomeMessage))
         }
 
-        val identityProof = identityProofCodec.produce(
+        return identityProofOf(identityAccount, payload.contact).map { identityProof ->
+            VersionedRequestContent.V2.new(
+                identityProof = identityProof,
+                deviceEncPubKey = ourDeviceKeypairProvider.publicKey().toScale(),
+                pushToken = payload.pushToken,
+                welcomeMessage = welcomeMessage,
+            )
+        }
+    }
+
+    private suspend fun identityProofOf(identityAccount: MetaAccount, contact: Contact): Result<IdentityProofScale> {
+        return identityProofCodec.produce(
             statementAccountId = identityAccount.defaultAccountId(),
-            peerIdentityChatPubKey = payload.contact.chatKey,
-        )
-        return VersionedRequestContent.V2.new(
-            identityProof = identityProof.toScale(),
-            deviceEncPubKey = ourDeviceKeypairProvider.publicKey().toScale(),
-            pushToken = payload.pushToken,
-            welcomeMessage = welcomeMessage,
-        )
+            peerIdentityChatPubKey = contact.chatKey,
+        ).map { it.toScale() }
     }
 
     private fun IdentityProof.toScale(): IdentityProofScale {
