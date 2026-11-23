@@ -1039,6 +1039,7 @@ describe("the notification log", () => {
       scheduledAt: 1_700_000_000_000n,
     });
     const second = await callbacks.notifications.pushNotification({
+      title: "Daily Dollar",
       text: "two",
       deeplink: "https://example.test/x",
     });
@@ -1057,6 +1058,7 @@ describe("the notification log", () => {
     });
     expect(scheduled[1]).toMatchObject({
       id: second.id,
+      title: "Daily Dollar",
       deeplink: "https://example.test/x",
       cancelled: false,
     });
