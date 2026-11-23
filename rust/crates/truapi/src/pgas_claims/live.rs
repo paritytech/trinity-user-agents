@@ -14,8 +14,8 @@ use futures::{StreamExt, future::ready};
 use subxt::utils::{AccountId32, H256};
 
 use super::{
-	ClaimBuildError, ClaimIdentity, PgasClaimBuilder, PgasClaims, testing::TEST_IDENTITY,
-	with_pgas_claims,
+	BuiltClaim, ClaimBuildError, ClaimIdentity, ClaimSlot, PgasClaimBuilder, PgasClaims,
+	build_claim_in_free_slot, testing::TEST_IDENTITY, with_pgas_claims,
 };
 use crate::{
 	chain::{ExtrinsicService, FixedExtensionVersions, live_asset_hub, live_asset_hub_genesis},
@@ -28,7 +28,7 @@ use crate::{
 	runtime::statement_allowance::{
 		self as alloc, CollectionCandidate, FixedPersonhoodSigner, StatementAllowanceError,
 		collection::PersonhoodCollection,
-		pgas::{BuiltClaim, ClaimSlot, PgasClaim, build_pgas_claim, holds_a_full_claim},
+		pgas::{PgasClaim, holds_a_full_claim},
 		ring::RingParams,
 	},
 	store::open_temporary_core_db,
@@ -106,7 +106,7 @@ impl LivePerson {
 			target: &target.0,
 			ring: &ring,
 		};
-		build_pgas_claim(&claim, excluded).await
+		build_claim_in_free_slot(&claim, excluded).await
 	}
 
 	/// The strongest People ring `signer` proves the person in.

@@ -11,6 +11,7 @@ use tempfile::TempDir;
 use super::{
 	PgasClaims,
 	builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder},
+	claim_extrinsic::{BuiltClaim, ClaimSlot},
 	pgas_domain,
 	policy::PgasClaimPolicy,
 };
@@ -20,7 +21,6 @@ use crate::{
 		DurableRegistry, DurableTxEngine, DurableTxId, DurableTxStatus, FakeChain, GENESIS,
 		Unobservable, block, block_hash, engine_with, extrinsic,
 	},
-	runtime::statement_allowance::pgas::{BuiltClaim, ClaimSlot},
 	test_support::wait_until,
 };
 
@@ -96,14 +96,14 @@ impl PgasClaimBuilder for FakeClaimBuilder {
 }
 
 /// A claim in the first slot of [`TEST_DAY`] that `excluded` does not list,
-/// with an alias and an extrinsic distinct to that slot.
+/// with an extrinsic distinct to that slot.
 fn claim_in_first_free_slot(excluded: &BTreeSet<ClaimSlot>) -> BuiltClaim {
 	let slot = (0..)
 		.map(|slot_index| ClaimSlot { day: TEST_DAY, slot_index })
 		.find(|slot| !excluded.contains(slot))
 		.expect("a test day has a free slot");
 	let tag = u8::try_from(slot.slot_index).expect("a test slot fits in u8");
-	BuiltClaim { extrinsic: extrinsic(tag, 130, 64), slot, alias: [tag; 32] }
+	BuiltClaim { extrinsic: extrinsic(tag, 130, 64), slot }
 }
 
 /// An engine serving the PGAS domain over a [`FakeChain`], whose claims the

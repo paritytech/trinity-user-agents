@@ -12,13 +12,13 @@
 //! authorized against a revision Asset Hub has already imported, so the flow
 //! waits for it rather than submitting a proof the runtime cannot verify.
 
+use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
-use std::{collections::BTreeSet, time::Duration};
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use parity_scale_codec::{Decode, DecodeAll, Encode};
+use parity_scale_codec::{Decode, DecodeAll};
 use scale_decode::DecodeAsType;
 use sp_crypto_hashing::twox_128;
 use thiserror::Error;
@@ -195,55 +195,28 @@ pub async fn holds_a_full_claim(
 	Ok(balance >= claim_amount)
 }
 
-/// One PGAS claim slot: a slot index within a UTC day.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
-pub struct ClaimSlot {
-	/// UTC day the slot belongs to, by Asset Hub's clock.
-	pub day: u32,
-	/// Slot index within that day.
-	pub slot_index: u32,
-}
-
-/// A signed PGAS claim, with the slot it spends and the alias the pallet
-/// records once it lands.
-pub struct BuiltClaim {
-	/// The fee-less `Pgas.claim_pgas` extrinsic.
-	pub extrinsic: MortalExtrinsic,
-	/// The slot it claims.
-	pub slot: ClaimSlot,
-	/// The person's alias for `slot`, the key of `Pgas.ClaimedGasAliases`.
-	pub alias: [u8; 32],
-}
-
-/// Build one PGAS claim for `params.target` in the first free slot of
-/// Asset Hub's current day that `excluded` does not list, proving membership
-/// in the already-located People ring once Asset Hub has imported its
-/// revision.
+/// Claim one PGAS allowance for `target`, proving membership in the
+/// already-located People `ring`.
 ///
-/// Fails when no slot of the day is free, when the revision is pruned or does
-/// not arrive within the wait, or when a read, the proof or the signature
-/// fails.
-pub async fn build_pgas_claim(
-	params: &PgasClaim<'_>,
-	excluded: &BTreeSet<ClaimSlot>,
-) -> Result<BuiltClaim, StatementAllowanceError> {
+/// A duplicate submission retries against a different slot, as the statement-store
+/// and long-term-storage claims do: two hosts racing the same day both scan a free
+/// slot before either lands.
+pub async fn claim_pgas(
+	params: PgasClaim<'_>,
+) -> Result<PgasClaimOutcome, StatementAllowanceError> {
+	let PgasClaim {
+		asset_hub_rpc,
+		asset_hub_metadata,
+		people_rpc,
+		people_metadata,
+		signer,
+		network_suffix,
+		ring,
+		..
+	} = params;
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
-	let chain_now = slot::read_chain_now_seconds(params.asset_hub_rpc).await?;
-	let day = slot::current_period(chain_now);
-	let revision = await_claim_ring_revision(params).await?;
-	let slot_index = scan_free_claim_slot(params, day, excluded).await?;
-	let slot = ClaimSlot { day, slot_index };
-	let PgasClaim { signer, ring, network_suffix, .. } = *params;
-	let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
-	let extrinsic = sign_pgas_claim(params, slot, revision).await?;
-	Ok(BuiltClaim { extrinsic, slot, alias })
-}
-
-/// The revision of the claim's ring on People, once Asset Hub has imported it.
-async fn await_claim_ring_revision(params: &PgasClaim<'_>) -> Result<u32, StatementAllowanceError> {
-	let PgasClaim { asset_hub_rpc, asset_hub_metadata, people_rpc, people_metadata, ring, .. } =
-		*params;
+	let day = slot::current_period(slot::read_chain_now_seconds(asset_hub_rpc).await?);
 	let revision = ring::read_ring_revision(
 		people_rpc,
 		people_metadata,
@@ -260,48 +233,58 @@ async fn await_claim_ring_revision(params: &PgasClaim<'_>) -> Result<u32, Statem
 		revision,
 	)
 	.await?;
-	Ok(revision)
+
+	let mut skipped_duplicate_slots = Vec::new();
+	loop {
+		let slot_index = slot::scan_pgas_slot_excluding(
+			asset_hub_rpc,
+			asset_hub_metadata,
+			ring.collection,
+			signer,
+			network_suffix,
+			day,
+			&skipped_duplicate_slots,
+		)
+		.await?;
+		let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
+		let claim = build_pgas_claim_extrinsic(&params, day, slot_index, revision).await?;
+
+		match asset_hub_rpc.submit_and_watch(claim.extrinsic.bytes()).await {
+			Ok(block_hash) => {
+				// Inclusion is not success. `Pgas.claim_pgas` can dispatch-error —
+				// `AlreadyClaimed`, `PgasMintFailed` — and the extrinsic still lands,
+				// so reporting an allowance now would promise PGAS that was never
+				// minted. The pallet marks the alias spent on success; check that.
+				if !slot::pgas_slot_is_claimed_at(asset_hub_rpc, &alias, day, &block_hash).await? {
+					return Err(PgasError::ClaimNotRecorded { block_hash, day, slot_index }.into());
+				}
+				return Ok(PgasClaimOutcome {
+					block_hash,
+					day,
+					slot_index,
+					ring_index: ring.ring_index,
+				});
+			},
+			Err(err) if duplicate_submit_error(&err.to_string()) => {
+				skipped_duplicate_slots.push(slot_index);
+			},
+			Err(err) => return Err(err),
+		}
+	}
 }
 
-/// The first unclaimed slot of `day` that `excluded` does not list.
-async fn scan_free_claim_slot(
+/// Builds the `Pgas.claim_pgas` extrinsic of one slot without submitting it.
+///
+/// The claim spends slot `slot_index` of `day` into `params.target`,
+/// authorized by a membership proof against `revision` of `params.ring`.
+/// Fails when the proof or the extrinsic cannot be built.
+pub async fn build_pgas_claim_extrinsic(
 	params: &PgasClaim<'_>,
 	day: u32,
-	excluded: &BTreeSet<ClaimSlot>,
-) -> Result<u32, StatementAllowanceError> {
-	let excluded_today = slot_indices_on_day(excluded, day);
-	let PgasClaim { asset_hub_rpc, asset_hub_metadata, signer, network_suffix, ring, .. } = *params;
-	slot::scan_pgas_slot_excluding(
-		asset_hub_rpc,
-		asset_hub_metadata,
-		ring.collection,
-		signer,
-		network_suffix,
-		day,
-		&excluded_today,
-	)
-	.await
-}
-
-/// The slot indices of `slots` that belong to `day`. A slot of another day
-/// does not stand in the way of a claim today.
-fn slot_indices_on_day(slots: &BTreeSet<ClaimSlot>, day: u32) -> Vec<u32> {
-	slots
-		.iter()
-		.filter(|slot| slot.day == day)
-		.map(|slot| slot.slot_index)
-		.collect()
-}
-
-/// The signed `Pgas.claim_pgas` of `slot`, authorized by a proof against
-/// `revision` of the claim's ring.
-async fn sign_pgas_claim(
-	params: &PgasClaim<'_>,
-	slot: ClaimSlot,
+	slot_index: u32,
 	revision: u32,
 ) -> Result<MortalExtrinsic, StatementAllowanceError> {
 	let PgasClaim { asset_hub_target, signer, network_suffix, target, ring, .. } = *params;
-	let ClaimSlot { day, slot_index } = slot;
 	let context = slot::derive_pgas_context(network_suffix, day, slot_index);
 	let proof = super::RingProof { signer, ring, context, revision };
 	let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
@@ -312,46 +295,6 @@ async fn sign_pgas_claim(
 		.with_extension(super::AsPgasExtension::new(proof, day))
 		.build()
 		.await?)
-}
-
-/// Claim one PGAS allowance for `target`, proving membership in the
-/// already-located People `ring`.
-///
-/// A duplicate submission retries against a different slot, as the statement-store
-/// and long-term-storage claims do: two hosts racing the same day both scan a free
-/// slot before either lands.
-pub async fn claim_pgas(
-	params: PgasClaim<'_>,
-) -> Result<PgasClaimOutcome, StatementAllowanceError> {
-	let mut skipped_duplicate_slots = BTreeSet::new();
-	loop {
-		let built = build_pgas_claim(&params, &skipped_duplicate_slots).await?;
-		match params.asset_hub_rpc.submit_and_watch(built.extrinsic.extrinsic.bytes()).await {
-			Ok(block_hash) => return confirm_claim_recorded(&params, &built, block_hash).await,
-			Err(err) if duplicate_submit_error(&err.to_string()) => {
-				skipped_duplicate_slots.insert(built.slot);
-			},
-			Err(err) => return Err(err),
-		}
-	}
-}
-
-/// The outcome of `built`, which reached `block_hash`, once the pallet
-/// recorded its alias there.
-async fn confirm_claim_recorded(
-	params: &PgasClaim<'_>,
-	built: &BuiltClaim,
-	block_hash: String,
-) -> Result<PgasClaimOutcome, StatementAllowanceError> {
-	let ClaimSlot { day, slot_index } = built.slot;
-	// Inclusion is not success. `Pgas.claim_pgas` can fail its dispatch, with
-	// `AlreadyClaimed` or `PgasMintFailed`, and the extrinsic still lands,
-	// so reporting an allowance now would promise PGAS that was never
-	// minted. The pallet marks the alias spent on success; check that.
-	if !slot::pgas_slot_is_claimed_at(params.asset_hub_rpc, &built.alias, day, &block_hash).await? {
-		return Err(PgasError::ClaimNotRecorded { block_hash, day, slot_index }.into());
-	}
-	Ok(PgasClaimOutcome { block_hash, day, slot_index, ring_index: params.ring.ring_index })
 }
 
 /// What Asset Hub's held ring roots say about the revision a proof was built

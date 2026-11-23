@@ -4,6 +4,7 @@
 //! the domain, and [`PgasClaims`] registers claims.
 
 mod builder;
+mod claim_extrinsic;
 #[cfg(test)]
 mod live;
 mod params;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use subxt::utils::{AccountId32, H256};
 
 pub use builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder};
+pub use claim_extrinsic::{BuiltClaim, ClaimSlot, build_claim_in_free_slot};
 
 use self::{params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{

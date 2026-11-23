@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 
 use super::{
 	builder::{ClaimBuildError, PgasClaimBuilder},
+	claim_extrinsic::{BuiltClaim, ClaimSlot},
 	params::ClaimParams,
 };
 use crate::{
@@ -18,7 +19,6 @@ use crate::{
 		DeferredDurableTx, DurableTxEntry, DurableTxId, PolicyError, PolicyParams, Preparation,
 		SubmissionPolicy, VerdictFailureKind,
 	},
-	runtime::statement_allowance::pgas::{BuiltClaim, ClaimSlot},
 	unix_time::current_unix_secs,
 };
 

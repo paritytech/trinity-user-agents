@@ -6,7 +6,7 @@ use std::{collections::BTreeSet, sync::Weak};
 use parity_scale_codec::{Decode, Encode};
 use subxt::utils::AccountId32;
 
-use crate::runtime::statement_allowance::pgas::{BuiltClaim, ClaimSlot};
+use super::claim_extrinsic::{BuiltClaim, ClaimSlot};
 
 /// The signed-in account a claim was registered by: its root public key.
 /// Only a session of this account builds the claim, so nobody else's

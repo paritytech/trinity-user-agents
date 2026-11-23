@@ -5,14 +5,16 @@ use std::collections::BTreeSet;
 
 use super::{WalletAccountHolder, allowance::AllowanceAllocationError};
 use crate::{
-	pgas_claims::{ClaimBuildError, ClaimIdentity},
+	pgas_claims::{
+		BuiltClaim, ClaimBuildError, ClaimIdentity, ClaimSlot, build_claim_in_free_slot,
+	},
 	runtime::{
 		authority::{AccountHolder, AuthorityError, AuthoritySession},
 		statement_allowance::{
 			ChainClient, ChainContext, PersonhoodSigner, StatementAllowanceError,
 			collection::PersonhoodCollection,
 			find_including_rings,
-			pgas::{BuiltClaim, ClaimSlot, PgasClaim, build_pgas_claim},
+			pgas::PgasClaim,
 			ring::RingParams,
 			rpc::RpcClient,
 			slot::{SlotError, read_network_suffix},
@@ -73,7 +75,7 @@ impl WalletAccountHolder {
 			target,
 			ring: &ring,
 		};
-		Ok(build_pgas_claim(&claim, excluded).await?)
+		Ok(build_claim_in_free_slot(&claim, excluded).await?)
 	}
 
 	/// Connects to Asset Hub and People and reads what a claim needs of them.
