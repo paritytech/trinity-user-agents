@@ -5,6 +5,7 @@ import SubstrateOperation
 
 public protocol ResourcesParametersProviding: Sendable {
     func stmtStoreSlotsPerPeriod(chainId: ChainId, origin: PersonOrigin) async throws -> UInt32
+    /// Seconds a slot entry must age before an old runtime lets another account take it over.
     func stmtStoreReplacementCooldown(chainId: ChainId) async throws -> UInt32
     func longTermStorageClaimsPerPeriod(chainId: ChainId) async throws -> UInt8
     /// Highest claimable notification seq for `origin`'s collection; seqs `0...value` are valid.

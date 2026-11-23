@@ -67,8 +67,12 @@ pub type Bytes64 = [u8; 64];
 
 /// Latest-version protocol payload types, unwrapped from their versioned
 /// envelopes. Runtime code should use these instead of per-version modules.
+///
+/// The payload of an envelope carries the envelope's name. Those aliases come
+/// from the `latest` module `versioned_type!` generates beside each service's
+/// envelopes. Types nested in a payload are re-exported here by name.
 pub mod latest {
-	use crate::versioned::{self, Versioned};
+	use crate::versioned::Versioned;
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
@@ -82,26 +86,20 @@ pub mod latest {
 		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
 		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
 		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps, ImageRef,
-		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
-		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
-		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
-		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
-		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, Parameter, PaymentTopUpSource, PocketCard, ProductAccount,
-		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
-		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RendererNode,
-		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
-		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
-		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		HorizontalAlignment, HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit,
+		ImageProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps,
+		Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
+		NftPurseChequeId, NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
+		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
+		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
+		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
+		TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle,
+		VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{
@@ -114,491 +112,18 @@ pub mod latest {
 		RenderContext,
 	};
 
+	pub use crate::versioned::{
+		account::latest::*, chain::latest::*, chat::latest::*, coin_payment::latest::*,
+		contacts::latest::*, entropy::latest::*, expanded_card::latest::*, funding::latest::*,
+		funding_provider::latest::*, game::latest::*, local_storage::latest::*, locale::latest::*,
+		nft_purse::latest::*, notifications::latest::*, payment::latest::*, permissions::latest::*,
+		pocket::latest::*, preimage::latest::*, renderer::latest::*,
+		resource_allocation::latest::*, scanner::latest::*, signing::latest::*,
+		statement_store::latest::*, system::latest::*, theme::latest::*, worker::latest::*,
+	};
+
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
-
-	/// Account proof creation failure.
-	pub type HostAccountCreateProofError =
-		LatestOf<versioned::account::HostAccountCreateProofError>;
-	/// Contextual alias derivation failure.
-	pub type HostAccountGetAliasError = LatestOf<versioned::account::HostAccountGetAliasError>;
-	/// Account lookup request.
-	pub type HostAccountGetRequest = LatestOf<versioned::account::HostAccountGetRequest>;
-	/// Account lookup result.
-	pub type HostAccountGetResponse = LatestOf<versioned::account::HostAccountGetResponse>;
-	/// Ring-VRF registry listing failure.
-	pub type HostAccountListRingVrfKeysError =
-		LatestOf<versioned::account::HostAccountListRingVrfKeysError>;
-	/// Ring-VRF key registration failure.
-	pub type HostAccountRegisterRingVrfKeyError =
-		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyError>;
-	/// Ring-VRF signing failure.
-	pub type HostAccountRingVrfSignError =
-		LatestOf<versioned::account::HostAccountRingVrfSignError>;
-	/// User identifier lookup failure.
-	pub type HostGetUserIdError = LatestOf<versioned::account::HostGetUserIdError>;
-	/// User identifier lookup result.
-	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
-	/// Transaction creation failure.
-	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
-	/// Transaction creation failure for a legacy account.
-	pub type HostCreateTransactionWithLegacyAccountError =
-		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountError>;
-	/// Transaction created for a legacy account.
-	pub type HostCreateTransactionWithLegacyAccountResponse =
-		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
-	/// Payload signing failure.
-	pub type HostSignPayloadError = LatestOf<versioned::signing::HostSignPayloadError>;
-	/// Product entropy derivation failure.
-	pub type HostDeriveEntropyError = LatestOf<versioned::entropy::HostDeriveEntropyError>;
-	/// Product entropy derivation request.
-	pub type HostDeriveEntropyRequest = LatestOf<versioned::entropy::HostDeriveEntropyRequest>;
-	/// Product entropy derivation result.
-	pub type HostDeriveEntropyResponse = LatestOf<versioned::entropy::HostDeriveEntropyResponse>;
-	/// Host information exposed to a product.
-	pub type HostInfoResponse = LatestOf<versioned::system::HostInfoResponse>;
-	/// Product navigation request.
-	pub type HostNavigateToRequest = LatestOf<versioned::system::HostNavigateToRequest>;
-	/// Storage read request, optionally naming another product.
-	pub type HostLocalStorageReadRequest =
-		LatestOf<versioned::local_storage::HostLocalStorageReadRequest>;
-	/// Value read from product storage.
-	pub type HostLocalStorageReadResponse =
-		LatestOf<versioned::local_storage::HostLocalStorageReadResponse>;
-	/// Product storage write request.
-	pub type HostLocalStorageWriteRequest =
-		LatestOf<versioned::local_storage::HostLocalStorageWriteRequest>;
-	/// Product storage removal request.
-	pub type HostLocalStorageClearRequest =
-		LatestOf<versioned::local_storage::HostLocalStorageClearRequest>;
-	/// Product storage change subscription request.
-	pub type HostLocalStorageSubscribeRequest =
-		LatestOf<versioned::local_storage::HostLocalStorageSubscribeRequest>;
-	/// Worker pending operation completion request.
-	pub type HostWorkerEndOperationRequest =
-		LatestOf<versioned::worker::HostWorkerEndOperationRequest>;
-	/// Push notification scheduling failure.
-	pub type HostPushNotificationError =
-		LatestOf<versioned::notifications::HostPushNotificationError>;
-	/// Push notification cancellation request.
-	pub type HostPushNotificationCancelRequest =
-		LatestOf<versioned::notifications::HostPushNotificationCancelRequest>;
-	/// Content-addressed preimage lookup request.
-	pub type RemotePreimageLookupSubscribeRequest =
-		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeRequest>;
-	/// Current preimage lookup result.
-	pub type RemotePreimageLookupSubscribeItem =
-		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeItem>;
-	/// Ring VRF proof creation result.
-	pub type HostAccountCreateProofResponse =
-		LatestOf<versioned::account::HostAccountCreateProofResponse>;
-	/// Chat action delivered from the native host to a product worker.
-	pub type HostChatActionSubscribeItem = LatestOf<versioned::chat::HostChatActionSubscribeItem>;
-	/// Native chat room creation request.
-	pub type HostChatCreateRoomRequest = LatestOf<versioned::chat::HostChatCreateRoomRequest>;
-	/// Native chat room creation result.
-	pub type HostChatCreateRoomResponse = LatestOf<versioned::chat::HostChatCreateRoomResponse>;
-	/// Native chat room creation failure.
-	pub type HostChatCreateRoomError = LatestOf<versioned::chat::HostChatCreateRoomError>;
-	/// Native chat bot registration request.
-	pub type HostChatRegisterBotRequest = LatestOf<versioned::chat::HostChatRegisterBotRequest>;
-	/// Native chat bot registration result.
-	pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
-	/// Native chat bot registration failure.
-	pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
-	/// Request to set what a native chat room shows below its messages.
-	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
-	/// Failure to set what a native chat room shows below its messages.
-	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
-	/// Failure of a chat query the host sends to a product.
-	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
-	/// Request to replace the name and description of a native chat room.
-	pub type HostChatSetRoomMetadataRequest =
-		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
-	/// Failure to replace the name and description of a native chat room.
-	pub type HostChatSetRoomMetadataError = LatestOf<versioned::chat::HostChatSetRoomMetadataError>;
-	/// Request to replace how a native chat room shows in the chat list.
-	pub type HostChatSetRoomPreviewRequest =
-		LatestOf<versioned::chat::HostChatSetRoomPreviewRequest>;
-	/// Failure to replace how a native chat room shows in the chat list.
-	pub type HostChatSetRoomPreviewError = LatestOf<versioned::chat::HostChatSetRoomPreviewError>;
-	/// Request to delete a native chat room.
-	pub type HostChatDeleteRoomRequest = LatestOf<versioned::chat::HostChatDeleteRoomRequest>;
-	/// Failure to delete a native chat room.
-	pub type HostChatDeleteRoomError = LatestOf<versioned::chat::HostChatDeleteRoomError>;
-	/// Request to push one change to the messages of a native chat room.
-	pub type HostChatUpdateFeedRequest = LatestOf<versioned::chat::HostChatUpdateFeedRequest>;
-	/// Failure to push a change to the messages of a native chat room.
-	pub type HostChatUpdateFeedError = LatestOf<versioned::chat::HostChatUpdateFeedError>;
-	/// Host-to-product question for one page of chat messages.
-	pub type ProductChatMessagesQueryRequest =
-		LatestOf<versioned::chat::ProductChatMessagesQueryRequest>;
-	/// Product-to-host page of chat messages.
-	pub type ProductChatMessagesQueryResponse =
-		LatestOf<versioned::chat::ProductChatMessagesQueryResponse>;
-	/// Host-to-product report of what the user did in a chat room.
-	pub type ProductChatUserActionRequest = LatestOf<versioned::chat::ProductChatUserActionRequest>;
-	/// Product-to-host answer to a chat user action.
-	pub type ProductChatUserActionResponse =
-		LatestOf<versioned::chat::ProductChatUserActionResponse>;
-	/// Failure to apply a chat user action.
-	pub type ProductChatUserActionError = LatestOf<versioned::chat::ProductChatUserActionError>;
-	/// Host-to-product question about who reacted to a chat message.
-	pub type ProductChatReactionsQueryRequest =
-		LatestOf<versioned::chat::ProductChatReactionsQueryRequest>;
-	/// Product-to-host list of who reacted to a chat message.
-	pub type ProductChatReactionsQueryResponse =
-		LatestOf<versioned::chat::ProductChatReactionsQueryResponse>;
-	/// Current native room list for a product.
-	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
-	/// Native chat message posting request.
-	pub type HostChatPostMessageRequest = LatestOf<versioned::chat::HostChatPostMessageRequest>;
-	/// Native chat message posting result.
-	pub type HostChatPostMessageResponse = LatestOf<versioned::chat::HostChatPostMessageResponse>;
-	/// Native chat message posting failure.
-	pub type HostChatPostMessageError = LatestOf<versioned::chat::HostChatPostMessageError>;
-	/// Action triggered inside a product-rendered body, delivered to the worker.
-	pub type HostRendererActionSubscribeItem =
-		LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
-	/// A `Materials` node that fell back, delivered to the worker.
-	pub type HostRendererFailureSubscribeItem =
-		LatestOf<versioned::renderer::HostRendererFailureSubscribeItem>;
-	/// Host-to-product render request for one body.
-	pub type ProductRendererRenderRequest =
-		LatestOf<versioned::renderer::ProductRendererRenderRequest>;
-	/// Product-to-host renderer tree.
-	pub type ProductRendererRenderItem = LatestOf<versioned::renderer::ProductRendererRenderItem>;
-	/// Contact picker request.
-	pub type HostContactsPickRequest = LatestOf<versioned::contacts::HostContactsPickRequest>;
-	/// Contact picker outcome.
-	pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
-	/// Contact picker failure.
-	pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
-	/// Scanner request.
-	pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
-	/// Scanner outcome.
-	pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
-	/// Scanner failure.
-	pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
-	/// Contextual alias derivation result.
-	pub type HostAccountGetAliasResponse =
-		LatestOf<versioned::account::HostAccountGetAliasResponse>;
-	/// Ring-VRF key registration result.
-	pub type HostAccountRegisterRingVrfKeyResponse =
-		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyResponse>;
-	/// Ring-VRF registry listing result.
-	pub type HostAccountListRingVrfKeysResponse =
-		LatestOf<versioned::account::HostAccountListRingVrfKeysResponse>;
-	/// Direct ring-VRF key signing result.
-	pub type HostAccountRingVrfSignResponse =
-		LatestOf<versioned::account::HostAccountRingVrfSignResponse>;
-	/// Legacy account listing result.
-	pub type HostGetLegacyAccountsResponse =
-		LatestOf<versioned::account::HostGetLegacyAccountsResponse>;
-	/// Transaction creation result.
-	pub type HostCreateTransactionResponse =
-		LatestOf<versioned::signing::HostCreateTransactionResponse>;
-	/// Device-capability permission request.
-	pub type HostDevicePermissionRequest =
-		LatestOf<versioned::permissions::HostDevicePermissionRequest>;
-	/// Device-capability permission outcome.
-	pub type HostDevicePermissionResponse =
-		LatestOf<versioned::permissions::HostDevicePermissionResponse>;
-	/// Feature-support query.
-	pub type HostFeatureSupportedRequest = LatestOf<versioned::system::HostFeatureSupportedRequest>;
-	/// Feature-support query result.
-	pub type HostFeatureSupportedResponse =
-		LatestOf<versioned::system::HostFeatureSupportedResponse>;
-	/// Product context bound to the current host runtime.
-	pub type HostGetProductContextResponse =
-		LatestOf<versioned::system::HostGetProductContextResponse>;
-	/// Request to drop the calling product's game reminder.
-	pub type HostCancelNextGameRequest = LatestOf<versioned::game::HostCancelNextGameRequest>;
-	/// Request to remind the user when the calling product's next game starts.
-	pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
-	/// Why a game reminder was not taken.
-	pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
-	/// Storage key change pushed to a subscriber.
-	pub type HostLocalStorageChangeItem =
-		LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;
-	/// Local storage operation error.
-	pub type HostLocalStorageReadError =
-		LatestOf<versioned::local_storage::HostLocalStorageReadError>;
-	/// Locale the host currently presents its interface in.
-	pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
-	/// Navigation request error.
-	pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
-	/// Funding request.
-	pub type HostFundingRequest = LatestOf<versioned::funding::HostFundingRequest>;
-	/// Accepted funding intent.
-	pub type HostFundingResponse = LatestOf<versioned::funding::HostFundingResponse>;
-	/// Funding request failure.
-	pub type HostFundingError = LatestOf<versioned::funding::HostFundingError>;
-	/// Request to watch a funding session.
-	pub type HostFundingStatusSubscribeRequest =
-		LatestOf<versioned::funding::HostFundingStatusSubscribeRequest>;
-	/// Progress of a funding session.
-	pub type HostFundingStatusSubscribeItem =
-		LatestOf<versioned::funding::HostFundingStatusSubscribeItem>;
-	/// Failure watching a funding session.
-	pub type HostFundingStatusSubscribeError =
-		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
-
-	/// Payment balance subscription request.
-	pub type HostPaymentBalanceSubscribeRequest =
-		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
-	/// Payment balance subscription item.
-	pub type HostPaymentBalanceSubscribeItem =
-		LatestOf<versioned::payment::HostPaymentBalanceSubscribeItem>;
-	/// Payment balance subscription failure.
-	pub type HostPaymentBalanceSubscribeError =
-		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
-	/// A provider's progress report.
-	pub type HostFundingReportRequest =
-		LatestOf<versioned::funding_provider::HostFundingReportRequest>;
-	/// Failure reporting progress.
-	pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
-	/// Request to show a provider screen.
-	pub type HostFundingPresentFrameRequest =
-		LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
-	/// How a provider screen closed.
-	pub type HostFundingPresentFrameResponse =
-		LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
-	/// Failure showing a provider screen.
-	pub type HostFundingPresentFrameError =
-		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
-	/// Request to close a provider screen.
-	pub type HostFundingCloseFrameRequest =
-		LatestOf<versioned::funding_provider::HostFundingCloseFrameRequest>;
-	/// Failure closing a provider screen.
-	pub type HostFundingCloseFrameError =
-		LatestOf<versioned::funding_provider::HostFundingCloseFrameError>;
-	/// Payment request.
-	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
-	/// Payment request failure.
-	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
-	/// Payment status subscription request.
-	pub type HostPaymentStatusSubscribeRequest =
-		LatestOf<versioned::payment::HostPaymentStatusSubscribeRequest>;
-	/// Progress of a payment.
-	pub type HostPaymentStatusSubscribeItem =
-		LatestOf<versioned::payment::HostPaymentStatusSubscribeItem>;
-	/// Failure following a payment.
-	pub type HostPaymentStatusSubscribeError =
-		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
-	/// Payment top-up request.
-	pub type HostPaymentTopUpRequest = LatestOf<versioned::payment::HostPaymentTopUpRequest>;
-	/// Payment top-up failure.
-	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
-	/// Payment top-up status subscription request.
-	pub type HostPaymentTopUpStatusSubscribeRequest =
-		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeRequest>;
-	/// Progress of a payment top-up.
-	pub type HostPaymentTopUpStatusSubscribeItem =
-		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeItem>;
-	/// Failure following a payment top-up.
-	pub type HostPaymentTopUpStatusSubscribeError =
-		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
-	/// NFT purse creation request.
-	pub type HostNftPurseCreatePurseRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseRequest>;
-	/// Created NFT purse.
-	pub type HostNftPurseCreatePurseResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseResponse>;
-	/// NFT purse listing request.
-	pub type HostNftPurseListPursesRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseListPursesRequest>;
-	/// An owner's NFT purses.
-	pub type HostNftPurseListPursesResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseListPursesResponse>;
-	/// NFT purse listing failure.
-	pub type HostNftPurseListPursesError =
-		LatestOf<versioned::nft_purse::HostNftPurseListPursesError>;
-	/// NFT purse item key creation request.
-	pub type HostNftPurseCreateItemsRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsRequest>;
-	/// Created NFT purse item keys.
-	pub type HostNftPurseCreateItemsResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsResponse>;
-	/// NFT purse item key creation failure.
-	pub type HostNftPurseCreateItemsError =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsError>;
-	/// NFT purse page request.
-	pub type HostNftPurseQueryPurseRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseRequest>;
-	/// One page of an NFT purse.
-	pub type HostNftPurseQueryPurseResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseResponse>;
-	/// NFT purse page failure.
-	pub type HostNftPurseQueryPurseError =
-		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseError>;
-	/// NFT purse rebalance request.
-	pub type HostNftPurseRebalancePurseRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseRequest>;
-	/// NFT purse rebalance failure.
-	pub type HostNftPurseRebalancePurseError =
-		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseError>;
-	/// NFT receive key creation request.
-	pub type HostNftPurseCreateReceiveKeyRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyRequest>;
-	/// A created NFT receive key.
-	pub type HostNftPurseCreateReceiveKeyResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyResponse>;
-	/// NFT receive key creation failure.
-	pub type HostNftPurseCreateReceiveKeyError =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyError>;
-	/// NFT cheque creation request.
-	pub type HostNftPurseCreateChequeRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeRequest>;
-	/// A created NFT cheque.
-	pub type HostNftPurseCreateChequeResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeResponse>;
-	/// NFT cheque creation failure.
-	pub type HostNftPurseCreateChequeError =
-		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeError>;
-	/// NFT cheque deposit request.
-	pub type HostNftPurseDepositRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseDepositRequest>;
-	/// NFT cheque deposit failure.
-	pub type HostNftPurseDepositError = LatestOf<versioned::nft_purse::HostNftPurseDepositError>;
-	/// NFT cheque revoke request.
-	pub type HostNftPurseRevokeChequeRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeRequest>;
-	/// NFT cheque revoke failure.
-	pub type HostNftPurseRevokeChequeError =
-		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeError>;
-	/// NFT cheque refund request.
-	pub type HostNftPurseRefundRequest = LatestOf<versioned::nft_purse::HostNftPurseRefundRequest>;
-	/// NFT cheque refund response.
-	pub type HostNftPurseRefundResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseRefundResponse>;
-	/// NFT cheque refund failure.
-	pub type HostNftPurseRefundError = LatestOf<versioned::nft_purse::HostNftPurseRefundError>;
-	/// NFT item transfer request.
-	pub type HostNftPurseTransferItemRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;
-	/// NFT item transfer failure.
-	pub type HostNftPurseTransferItemError =
-		LatestOf<versioned::nft_purse::HostNftPurseTransferItemError>;
-	/// NFT operation status request.
-	pub type HostNftPurseObserveOperationStatusRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusRequest>;
-	/// NFT operation status failure.
-	pub type HostNftPurseObserveOperationStatusError =
-		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusError>;
-	/// NFT one-time payment listen request.
-	pub type HostNftPurseListenOneTimePaymentRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest>;
-	/// NFT one-time payment listen item.
-	pub type HostNftPurseListenOneTimePaymentItem =
-		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentItem>;
-	/// NFT one-time payment listen failure.
-	pub type HostNftPurseListenOneTimePaymentError =
-		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>;
-	/// NFT payment inbox listen request.
-	pub type HostNftPurseListenPaymentInboxRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxRequest>;
-	/// NFT payment inbox listen item.
-	pub type HostNftPurseListenPaymentInboxItem =
-		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxItem>;
-	/// NFT payment inbox listen failure.
-	pub type HostNftPurseListenPaymentInboxError =
-		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxError>;
-	/// NFT static receive key request.
-	pub type HostNftPurseStaticReceiveKeyRequest =
-		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest>;
-	/// The host's NFT static receive key.
-	pub type HostNftPurseStaticReceiveKeyResponse =
-		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse>;
-	/// NFT static receive key failure.
-	pub type HostNftPurseStaticReceiveKeyError =
-		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyError>;
-	/// The calling product's Pocket cards.
-	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
-	/// Pocket card removal request.
-	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
-	/// Pocket card removal failure.
-	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
-	/// Request to cover or uncover the face under the calling Widget.
-	pub type HostExpandedCardSetFaceShownRequest =
-		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
-	/// Face cover change failure.
-	pub type HostExpandedCardSetFaceShownError =
-		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
-	/// Request to turn the card under the calling Widget to one side.
-	pub type HostExpandedCardSetBackShownRequest =
-		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
-	/// Card turn failure.
-	pub type HostExpandedCardSetBackShownError =
-		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownError>;
-	/// Push notification scheduling request.
-	pub type HostPushNotificationRequest =
-		LatestOf<versioned::notifications::HostPushNotificationRequest>;
-	/// Push notification scheduling result.
-	pub type HostPushNotificationResponse =
-		LatestOf<versioned::notifications::HostPushNotificationResponse>;
-	/// Login request.
-	pub type HostRequestLoginRequest = LatestOf<versioned::account::HostRequestLoginRequest>;
-	/// Connection state reported to account subscribers.
-	pub type HostAccountConnectionStatusSubscribeItem =
-		LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
-	/// Login request error.
-	pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
-	/// Login request result.
-	pub type HostRequestLoginResponse = LatestOf<versioned::account::HostRequestLoginResponse>;
-	/// Batched resource pre-allocation request.
-	pub type HostRequestResourceAllocationRequest =
-		LatestOf<versioned::resource_allocation::HostRequestResourceAllocationRequest>;
-	/// Per-resource allocation outcomes.
-	pub type HostRequestResourceAllocationResponse =
-		LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
-	/// Extrinsic payload signing request for a product account.
-	pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
-	/// Signing operation result.
-	pub type HostSignPayloadResponse = LatestOf<versioned::signing::HostSignPayloadResponse>;
-	/// Extrinsic payload signing request for a legacy account.
-	pub type HostSignPayloadWithLegacyAccountRequest =
-		LatestOf<versioned::signing::HostSignPayloadWithLegacyAccountRequest>;
-	/// Raw-bytes signing request for a product account.
-	pub type HostSignRawRequest = LatestOf<versioned::signing::HostSignRawRequest>;
-	/// Raw-bytes signing request for a legacy account.
-	pub type HostSignRawWithLegacyAccountRequest =
-		LatestOf<versioned::signing::HostSignRawWithLegacyAccountRequest>;
-	/// Current host theme pushed to subscribers.
-	pub type HostThemeSubscribeItem = LatestOf<versioned::theme::HostThemeSubscribeItem>;
-	/// Result of beginning a worker pending operation.
-	pub type HostWorkerBeginOperationResponse =
-		LatestOf<versioned::worker::HostWorkerBeginOperationResponse>;
-	/// Transaction creation payload for a legacy account.
-	pub type LegacyAccountTxPayload =
-		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
-	/// Preimage submission error.
-	pub type PreimageSubmitError = LatestOf<versioned::preimage::RemotePreimageSubmitError>;
-	/// Transaction creation payload for a product account.
-	pub type ProductAccountTxPayload = LatestOf<versioned::signing::HostCreateTransactionRequest>;
-	/// Chain-head runtime-API call request.
-	pub type RemoteChainHeadCallRequest = LatestOf<versioned::chain::RemoteChainHeadCallRequest>;
-	/// Chain-head subscription item.
-	pub type RemoteChainHeadFollowItem = LatestOf<versioned::chain::RemoteChainHeadFollowItem>;
-	/// Chain-identifier resolution error.
-	pub type RemoteChainInfoError = LatestOf<versioned::chain::RemoteChainInfoError>;
-	/// Chain-identifier resolution request.
-	pub type RemoteChainInfoRequest = LatestOf<versioned::chain::RemoteChainInfoRequest>;
-	/// Chain-identifier resolution result.
-	pub type RemoteChainInfoResponse = LatestOf<versioned::chain::RemoteChainInfoResponse>;
-	/// Chain-head subscription request.
-	pub type RemoteChainHeadFollowRequest =
-		LatestOf<versioned::chain::RemoteChainHeadFollowRequest>;
-	/// Chain-head storage query request.
-	pub type RemoteChainHeadStorageRequest =
-		LatestOf<versioned::chain::RemoteChainHeadStorageRequest>;
-	/// Chain-head storage query result.
-	pub type RemoteChainHeadStorageResponse =
-		LatestOf<versioned::chain::RemoteChainHeadStorageResponse>;
-	/// Remote-operation permission request.
-	pub type RemotePermissionRequest = LatestOf<versioned::permissions::RemotePermissionRequest>;
-	/// Remote-operation permission outcome.
-	pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
 }
 
 pub use truapi_macros::{service, wire, wire_trait};
@@ -887,6 +412,8 @@ cfg_select! {
 		mod dotns_views;
 		mod dynamic_vrf;
 		mod evm_contract;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod gap_scan;
 		pub mod frame;
 		mod host_core;
 		mod host_internal;
@@ -941,6 +468,9 @@ cfg_select! {
 		pub mod installation;
 
 		#[cfg(not(target_arch = "wasm32"))]
+		mod installation_registry;
+
+		#[cfg(not(target_arch = "wasm32"))]
 		mod nft;
 
 		#[cfg(not(target_arch = "wasm32"))]
@@ -963,9 +493,8 @@ cfg_select! {
 		pub use bulletin_lookup::{BlobSource, BulletinLookup, SourceError};
 
 		pub use host_core::{
-			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
-			PairingHostRuntime, ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
-			SigningHostRuntime,
+			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, HostRuntime,
+			ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
 		};
 		pub use host_internal::{
 			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
@@ -1005,8 +534,8 @@ cfg_select! {
 		};
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
-			PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, StatementRenewalTarget,
+			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
+			ResumePairingError, SigningHost, StatementRenewalTarget,
 			contacts::contact_handle,
 			login_failure::reports_exhausted_period,
 			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},

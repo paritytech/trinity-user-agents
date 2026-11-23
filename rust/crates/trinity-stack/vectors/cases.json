@@ -271,6 +271,15 @@
       }
     },
     {
+      "expect": "duplicate-genesis-hash",
+      "file": "documents/duplicate-genesis-hash.json",
+      "name": "duplicate-genesis-hash",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "duplicate-service-kind",
       "file": "documents/duplicate-service-kind.json",
       "name": "duplicate-service-kind",

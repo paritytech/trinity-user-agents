@@ -317,7 +317,7 @@ fn shutting_an_execution_down_closes_its_failure_stream() {
 }
 
 #[test]
-fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
+fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
@@ -345,11 +345,23 @@ fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
 		v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
 	));
 
-	assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
-	assert_eq!(*card_callbacks.face_requests.lock().expect("face requests"), [false]);
+	let turned = futures::executor::block_on(truapi::api::ExpandedCard::set_back_shown(
+		admin.product_runtime().as_ref(),
+		&truapi::CallContext::default(),
+		v01::HostExpandedCardSetBackShownRequest { shown: true }.into(),
+	));
+
 	assert!(
-		other_callbacks.face_requests.lock().expect("face requests").is_empty(),
-		"another product's card must not be asked to move its face"
+		reply.is_ok() && turned.is_ok(),
+		"the card's own host applied both: {reply:?} {turned:?}"
+	);
+	assert_eq!(
+		(card_callbacks.face_requests(), card_callbacks.back_requests()),
+		(vec![false], vec![true])
+	);
+	assert!(
+		other_callbacks.face_requests().is_empty() && other_callbacks.back_requests().is_empty(),
+		"another product's card must not be asked to move its face or turn"
 	);
 }
 
@@ -592,8 +604,8 @@ fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
 	let previous = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
 	futures::executor::block_on(previous.write(|tx| {
 		tx.execute(
-			"INSERT INTO durable_tx (domain, tx_hash, birth_number, birth_hash, period, status)
-             VALUES ('nft', zeroblob(32), 0, zeroblob(32), 64, 'PENDING')",
+			"INSERT INTO durable_tx (domain, tx_hash, birth_number, period, status)
+             VALUES ('nft', zeroblob(32), 0, 64, 'PENDING')",
 			[],
 		)?;
 		Ok(())
@@ -644,4 +656,46 @@ fn a_missing_database_directory_fails_runtime_creation() {
 	);
 
 	assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));
+}
+
+/// The sink a runtime installs carries events as well as lines, so a host that
+/// implements the structured callback is handed what the core emits under a
+/// marker rather than a line it would have to parse.
+#[test]
+fn the_runtime_sink_forwards_an_event_to_the_host() {
+	use crate::logging::{CoreAttribute, CoreAttributeValue, HostSink as _};
+
+	let callbacks = Arc::new(EventCallbacks::new());
+	let held: Arc<dyn HostCallbacks> = callbacks.clone();
+	let sink = CallbackSink { callbacks: Arc::downgrade(&held) };
+	let attributes = vec![CoreAttribute {
+		key: "outcome".to_string(),
+		value: CoreAttributeValue::Text { value: "sent".to_string() },
+	}];
+
+	sink.event(crate::markers::CORE_STARTED.target, attributes.clone());
+
+	assert_eq!(
+		*callbacks.events.lock().expect("events mutex poisoned"),
+		vec![(crate::markers::CORE_STARTED.target.to_string(), attributes)],
+	);
+}
+
+/// A host being torn down must not be resurrected by traffic already in
+/// flight, so the sink holds its callbacks weakly on the event path too.
+#[test]
+fn the_runtime_sink_drops_an_event_for_a_host_that_has_gone() {
+	use crate::logging::HostSink as _;
+
+	let callbacks = Arc::new(EventCallbacks::new());
+	let held: Arc<dyn HostCallbacks> = callbacks.clone();
+	let sink = CallbackSink { callbacks: Arc::downgrade(&held) };
+	let watch = Arc::downgrade(&held);
+	drop(held);
+	drop(callbacks);
+	assert!(watch.upgrade().is_none(), "the host outlived both of the test's handles");
+
+	sink.event(crate::markers::CORE_STARTED.target, Vec::new());
+
+	assert!(watch.upgrade().is_none(), "the sink resurrected a host that had gone");
 }

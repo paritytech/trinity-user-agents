@@ -64,6 +64,10 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
+		// A v0.1 product names the room with its own `roomId` in every later
+		// call, and its answer carries no other id. So its room keeps that id.
+		// Only a v0.2 request gets the id that the host derives.
+		let product_names_room = matches!(request, HostChatCreateRoomRequest::V1(_));
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
@@ -72,13 +76,16 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 						reason: error.to_string(),
 					})
 				};
-				request.room_id_source =
-					normalize_chat_identifier("roomIdSource", &request.room_id_source)
-						.map_err(field_error)?;
+				let field = if product_names_room { "roomId" } else { "roomIdSource" };
+				request.room_id_source = normalize_chat_identifier(field, &request.room_id_source)
+					.map_err(field_error)?;
 				request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
 				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
-				let room_id =
-					self.connection.product.product_id.chat_room_id(&request.room_id_source);
+				let room_id = if product_names_room {
+					request.room_id_source.clone()
+				} else {
+					self.connection.product.product_id.chat_room_id(&request.room_id_source)
+				};
 				let config = request.config.clone();
 				let status = platform
 					.create_chat_room(&self.connection.product, room_id.clone(), request)
@@ -575,7 +582,8 @@ mod tests {
 			ProductContext, ProductId,
 		},
 		runtime::{
-			PairingHostRole, RemoteAccountHolder, RuntimeServices, tests::install_pairing_session,
+			HostRole, PairingHost, RemoteAccountHolder, RuntimeServices,
+			tests::install_pairing_session,
 		},
 		test_support::{runtime_config, session_info, stub_platform},
 	};
@@ -750,7 +758,7 @@ mod tests {
 			host_config.stack.clone(),
 			crate::Spawner::for_test(),
 		);
-		let pairing_host = PairingHostRole::new(services.clone(), host_config);
+		let pairing_host = PairingHost::new(services.clone(), host_config);
 		let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
 		adapters.chat_platform = Some(chat);
 		let host = ProductRuntimeHost::from_services(

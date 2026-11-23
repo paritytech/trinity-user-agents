@@ -52,7 +52,7 @@ pub enum Severity {
 }
 
 /// One marker, and what its detail is allowed to carry.
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Marker {
 	/// The dotted target, as raised by the core.
 	pub target: &'static str,
@@ -117,6 +117,107 @@ markers! {
 	/// message, which is written for operators and names no person.
 	TRACING_ERROR = "truapi.tracing.error" => Export(Error);
 
+	// ------------------------------------------------------- funding facts
+	//
+	// One `CoreEvent` per fact of a funding session, built in
+	// `runtime/funding_telemetry.rs`. Each carries its own attributes, then
+	// `funding.ref`, a random label drawn per session and kept in memory
+	// only, the session's labels and its `age_ms`. Every value is a label
+	// from a closed set, a condition, or a count or milliseconds; never an
+	// intent, a quote, transaction or reference id, an address, an exact
+	// amount, fee or limit, a provider's own text, or a URL. Below, a key
+	// with no values listed is a condition, and one ending in `_ms` or naming
+	// a number is a count, left off when unknown.
+	//
+	// The session's labels: `direction` (`in`, `out`), `opener` (`host`,
+	// `product`), `product` (a first-party product's dotNS label,
+	// `third_party`, `none`), `rail` (`card`, `bank`, `crypto`, `none`),
+	// `provider` (a provider the host lists, `other`, `none`), `asset` and
+	// `network` (a known id a provider route declares, such as `usdt` or
+	// `polkadot-asset-hub`, else `other`; `none`), `amount_bucket` (CASH: `<10`, `10-50`, `50-100`, `100-250`,
+	// `250-500`, `500-1k`, `1k-5k`, `5k+`, `unset`). A session the core no
+	// longer holds carries `session` as `unknown` instead, and no age.
+
+	/// The overlay opened on a new session. `amount_preset`: `true` when the
+	/// opener named the amount.
+	FUNDING_OVERLAY_OPENED = "truapi.funding.overlay_opened" => Export(Info);
+
+	/// The overlay closed. `outcome`: `started`, `dismissed`, `failed`.
+	/// `furthest`, how far the user got: `amount`, `rail`, `quotes`,
+	/// `provider`. `age_ms` is how long it was up.
+	FUNDING_OVERLAY_CLOSED = "truapi.funding.overlay_closed" => Export(Info);
+
+	/// Every provider asked for one quote request answered, or a newer
+	/// request replaced it first. `region`: `eu`, `uk`, `us`, `other`,
+	/// `unset`. `issue`: `none`, `not_enough_balance`, `below_minimum`,
+	/// `above_maximum`. `superseded`. Counts `asked`, `quoted`,
+	/// `refused_country`, `refused_min`, `refused_max`,
+	/// `refused_unavailable`, `refused_other`, `timed_out`, `pending`;
+	/// `first_quote_ms` and `settle_ms` from the request.
+	FUNDING_QUOTES_SETTLED = "truapi.funding.quotes_settled" => Export(Info);
+
+	/// The session was handed to a provider on one of its quotes. `best`.
+	/// `fee_bucket`, fees against what the user sends in basis points:
+	/// `<50`, `50-100`, `100-200`, `200-500`, `500+`. `eta_bucket`: `<1m`,
+	/// `1-10m`, `10-60m`, `1-24h`, `1d+`, `unknown`. `rank` by what the user
+	/// gets, and `quote_count`.
+	FUNDING_PROVIDER_CHOSEN = "truapi.funding.provider_chosen" => Export(Info);
+
+	/// The provider's worker took the session, or first failed to.
+	/// `outcome`: `taken`, `not_taken`. `take_ms` since it was handed over.
+	FUNDING_PROVIDER_TOOK = "truapi.funding.provider_took" => Export(Info);
+
+	/// The session first reached a milestone. `step`: `received`, `added`,
+	/// `sent`. `since_prev_ms` since the milestone before.
+	FUNDING_STEP_REACHED = "truapi.funding.step_reached" => Export(Info);
+
+	/// The session first showed a warning state. `flag`: `taking_longer`,
+	/// `retrying`, `retrying_payout`.
+	FUNDING_STATUS_FLAG = "truapi.funding.status_flag" => Export(Info);
+
+	/// The provider is done with the session, on an ending that is no fault.
+	/// `outcome`: `topped_up`, `sent`, `refunded`, `payout_failed`, `failed`,
+	/// `expired`, `cancelled`, `paid_out_after_cancel`. `reason`: `none`,
+	/// `refunded`, `payout_failed`, a failure's kind such as `declined`, the
+	/// core's `not_claimed` or `payment_failed`, or `provider_other`.
+	/// `payout_failed` comes only under `ended_unexpectedly`. `money_moved`,
+	/// `region`, and `to_received_ms`; `age_ms` is the session's whole run.
+	FUNDING_ENDED = "truapi.funding.ended" => Export(Info);
+
+	/// An ending that is a fault: failed, a failed payout, or expired once
+	/// money moved, and not the user's or the rules' doing. Carries what
+	/// `truapi.funding.ended` does.
+	FUNDING_ENDED_UNEXPECTEDLY = "truapi.funding.ended_unexpectedly" => Export(Error);
+
+	/// The user asked to cancel. `result`: `ended`, `requested`, `pending`,
+	/// `too_late`, `refused`. `status_at`: the status variant when asked,
+	/// such as `waiting_for_payment`. `money_moved`.
+	FUNDING_CANCEL_REQUESTED = "truapi.funding.cancel_requested" => Export(Info);
+
+	/// The provider answered a cancel, or its worker first failed to.
+	/// `answer`: `offered`, `refused`, `stopped`, `no_answer`. `fee_bucket`:
+	/// an offer's fee against its total, as on `provider_chosen`, or `none`.
+	/// `answer_ms` since the cancel was asked.
+	FUNDING_CANCEL_ANSWERED = "truapi.funding.cancel_answered" => Export(Info);
+
+	/// The user answered a cancel offer. `result`: `accepted`, `declined`,
+	/// `lapsed`, `no_offer`, `too_late`.
+	FUNDING_CANCEL_CONFIRMED = "truapi.funding.cancel_confirmed" => Export(Info);
+
+	/// The provider asked to show a screen. `target`: `app`, `page`.
+	/// `replaced`: whether it replaced one still waiting.
+	FUNDING_FRAME_REQUESTED = "truapi.funding.frame_requested" => Export(Info);
+
+	/// The host opened a screen the provider asked for. `target`, and
+	/// `wait_ms` since it was asked for.
+	FUNDING_FRAME_OPENED = "truapi.funding.frame_opened" => Export(Info);
+
+	/// A provider's screen closed. `target`. `outcome`: `closed`,
+	/// `dismissed`, `returned` or `failed` once shown, `closed_by_core` when
+	/// withdrawn before it showed, `dropped_unopened` when the user never
+	/// opened it. `open_ms` on screen.
+	FUNDING_FRAME_CLOSED = "truapi.funding.frame_closed" => Export(Info);
+
 	// ------------------------------------------------------------- materials
 
 	/// A `Materials` node draws its children plain. Detail names the node, the
@@ -166,6 +267,9 @@ markers! {
 
 	/// A card face was expanded or collapsed. Detail names the card.
 	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN = "truapi.native.callback.set_expanded_card_face_shown" => Local;
+
+	/// An expanded card was turned to its back or its front.
+	NATIVE_SET_EXPANDED_CARD_BACK_SHOWN = "truapi.native.callback.set_expanded_card_back_shown" => Local;
 
 	/// The host's chain socket connected. Detail names the chain.
 	NATIVE_CHAIN_CONNECTED = "truapi.native.callback.chain_connected" => Local;

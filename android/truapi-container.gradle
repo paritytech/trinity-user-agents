@@ -1,6 +1,8 @@
 def truapiSource = file(project.ext.truapiSourceDir)
 def containerBundle = new File(truapiSource, 'ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js')
 def containerAssets = layout.buildDirectory.dir('generated/truapi-assets')
+def testSdkBundle = new File(truapiSource, 'js/container/dist/truapi-test-sdk.js')
+def testSdkAssets = layout.buildDirectory.dir('generated/truapi-test-assets')
 
 def installContainerDeps = tasks.register('installTrUAPIContainerDeps', Exec) {
     dependsOn tasks.matching { it.name == 'generateCoreDispatcher' }
@@ -40,9 +42,31 @@ def copyContainer = tasks.register('copyTrUAPIContainer', Sync) {
     into containerAssets
 }
 
+// The SDK a product would ship, for instrumentation test pages.
+def buildTestSdk = tasks.register('buildTrUAPITestSdk', Exec) {
+    dependsOn buildContainerSdk
+    workingDir truapiSource
+    commandLine 'npm', 'run', 'build:test-sdk', '--prefix', 'js/container'
+    inputs.file new File(truapiSource, 'js/container/src/test-sdk.ts')
+    inputs.dir new File(truapiSource, 'js/packages/truapi/dist')
+    inputs.file new File(truapiSource, 'js/container/package.json')
+    inputs.file new File(truapiSource, 'js/container/package-lock.json')
+    outputs.file testSdkBundle
+}
+
+def copyTestSdk = tasks.register('copyTrUAPITestSdk', Sync) {
+    dependsOn buildTestSdk
+    from testSdkBundle
+    into testSdkAssets
+}
+
 android.sourceSets.main.assets.srcDir(containerAssets)
+android.sourceSets.androidTest.assets.srcDir(testSdkAssets)
 tasks.matching { it.name.endsWith('Assets') }.configureEach {
     dependsOn copyContainer
+}
+tasks.matching { it.name.endsWith('AndroidTestAssets') }.configureEach {
+    dependsOn copyTestSdk
 }
 tasks.matching { it.name.toLowerCase().contains('lint') }.configureEach {
     dependsOn copyContainer

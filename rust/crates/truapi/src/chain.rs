@@ -45,7 +45,7 @@ pub use extrinsic::{
 };
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
-pub use runtime_api::RuntimeApiCaller;
+pub use runtime_api::{RpcClientAtBlock, RuntimeApiCaller};
 pub use storage_watch::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
 	StorageWatchError, WatchedHead, WatchedStorage,
