@@ -24,9 +24,16 @@ protocol FundingProgressInteractorInputProtocol: AnyObject {
     /// Reads the session again at `longerAtMs`, when the core turns it to
     /// taking longer without a change to announce it; nil reads nothing.
     func refreshWhenTakingLonger(atMs longerAtMs: UInt64?)
-    func answerCancelOffer(accepting terms: CancelTerms?) async throws -> CancelConfirmation
+    /// Answers the provider's cancel offer; the outcome comes back through
+    /// `didReceiveCancelOfferAnswer(result:)`.
+    func answerCancelOffer(accepting terms: CancelTerms?)
     /// The user was shown how the session ended.
     func acknowledge()
+}
+
+@MainActor
+protocol FundingProgressInteractorOutputProtocol: FundingEntryInteractorOutputProtocol {
+    func didReceiveCancelOfferAnswer(result: Result<CancelConfirmation, Error>)
 }
 
 @MainActor

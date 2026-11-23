@@ -67,6 +67,19 @@ private extension FundingProgressPresenter {
     }
 }
 
+extension FundingProgressPresenter: FundingProgressInteractorOutputProtocol {
+    func didReceiveCancelOfferAnswer(result: Result<CancelConfirmation, Error>) {
+        defer { activity.isAnsweringOffer = false }
+        switch result {
+        case let .success(answer):
+            answer.toast.map(wireframe.showToast)
+        case let .failure(error):
+            logger.error("[funding] \(context.entryId): answering the cancel offer failed: \(error)")
+            wireframe.showToast(String(localized: .Funding.errorCancelFailed))
+        }
+    }
+}
+
 extension FundingProgressPresenter: FundingProgressPresenterProtocol {
     func showFees() {
         wireframe.show(.fees)
@@ -87,16 +100,7 @@ extension FundingProgressPresenter: FundingProgressPresenterProtocol {
         guard !activity.isAnsweringOffer else { return }
 
         activity.isAnsweringOffer = true
-        Task {
-            defer { activity.isAnsweringOffer = false }
-            do {
-                let answer = try await interactor.answerCancelOffer(accepting: terms)
-                answer.toast.map(wireframe.showToast)
-            } catch {
-                logger.error("[funding] \(context.entryId): answering the cancel offer failed: \(error)")
-                wireframe.showToast(String(localized: .Funding.errorCancelFailed))
-            }
-        }
+        interactor.answerCancelOffer(accepting: terms)
     }
 
     func startOver() {

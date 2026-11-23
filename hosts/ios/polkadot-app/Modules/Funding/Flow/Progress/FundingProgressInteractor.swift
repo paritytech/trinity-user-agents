@@ -3,6 +3,8 @@ import FoundationExt
 import TrUAPIHost
 
 final class FundingProgressInteractor: FundingEntryInteractor, FundingProgressInteractorInputProtocol {
+    weak var presenter: FundingProgressInteractorOutputProtocol?
+
     private let clock: any Clock<Duration>
     private var longerAtMs: UInt64?
     private var longerTask: Task<Void, Never>?
@@ -33,8 +35,16 @@ final class FundingProgressInteractor: FundingEntryInteractor, FundingProgressIn
         }
     }
 
-    func answerCancelOffer(accepting terms: CancelTerms?) async throws -> CancelConfirmation {
-        try await service.answerCancelOffer(entryId, accepting: terms)
+    func answerCancelOffer(accepting terms: CancelTerms?) {
+        Task { [weak self, service, entryId] in
+            let result: Result<CancelConfirmation, Error>
+            do {
+                result = try await .success(service.answerCancelOffer(entryId, accepting: terms))
+            } catch {
+                result = .failure(error)
+            }
+            self?.presenter?.didReceiveCancelOfferAnswer(result: result)
+        }
     }
 
     func acknowledge() {
