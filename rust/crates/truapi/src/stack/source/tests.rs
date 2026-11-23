@@ -10,6 +10,11 @@ use crate::{
 
 const START: i64 = 1_800_000_000;
 
+/// A connection opened for People that reached the chain serving its endpoint
+/// after a wipe.
+const PEOPLE_WIPED: GenesisHashes =
+	GenesisHashes { named: TEST_STACK_PEOPLE, answered: TEST_STACK_WIPED_PEOPLE };
+
 fn signed(descriptor: &serde_json::Value) -> Vec<u8> {
 	sign_test_descriptor(descriptor).1
 }
@@ -354,7 +359,7 @@ fn a_chain_that_gave_a_different_genesis_hash_is_reported_and_brings_the_fetch_f
 	let (bundled, mut source) = fetched_at_start();
 	let hourly = source.next_fetch_in(START + 60);
 
-	let changed = source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	let changed = source.chain_answered(PEOPLE_WIPED);
 
 	assert_eq!(
 		(
@@ -385,7 +390,7 @@ fn a_chain_that_gave_a_different_genesis_hash_is_reported_and_brings_the_fetch_f
 #[test]
 fn a_chain_that_stays_wrong_is_asked_about_every_five_minutes() {
 	let (bundled, mut source) = fetched_at_start();
-	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	source.chain_answered(PEOPLE_WIPED);
 	source.due_fetch(START + 300).expect("the copy is five minutes old");
 
 	serve(&mut source, &bundled, START + 300);
@@ -405,7 +410,9 @@ fn wrong_answers_do_not_bring_a_fetch_sooner_than_five_minutes() {
 	let (_bundled, mut source) = fetched_at_start();
 
 	let answers = [TEST_STACK_WIPED_PEOPLE, TEST_STACK_WIPED_PEOPLE, TEST_STACK_PEOPLE, [0x55; 32]];
-	let changed = answers.map(|answered| source.chain_answered(TEST_STACK_PEOPLE, answered));
+	let changed = answers.map(|answered| {
+		source.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered })
+	});
 
 	assert_eq!(
 		(changed, source.due_fetch(START + 299), source.status().mismatches),
@@ -420,7 +427,7 @@ fn wrong_answers_do_not_bring_a_fetch_sooner_than_five_minutes() {
 fn a_chain_outside_the_stack_is_not_the_stacks_mismatch() {
 	let (bundled, mut source) = fetched_at_start();
 
-	let changed = source.chain_answered([0x77; 32], [0x78; 32]);
+	let changed = source.chain_answered(GenesisHashes { named: [0x77; 32], answered: [0x78; 32] });
 
 	assert_eq!(
 		(changed, source.status(), source.next_fetch_in(START)),
@@ -438,9 +445,10 @@ fn a_chain_outside_the_stack_is_not_the_stacks_mismatch() {
 #[test]
 fn a_chain_that_gives_its_own_genesis_hash_again_is_no_longer_reported() {
 	let (bundled, mut source) = fetched_at_start();
-	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	source.chain_answered(PEOPLE_WIPED);
 
-	let changed = source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_PEOPLE);
+	let changed = source
+		.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered: TEST_STACK_PEOPLE });
 
 	assert_eq!(
 		(changed, source.status(), source.next_fetch_in(START)),
@@ -460,7 +468,7 @@ fn a_chain_that_gives_its_own_genesis_hash_again_is_no_longer_reported() {
 fn a_mismatch_stays_reported_until_the_restart_the_newer_copy_asks_for() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
-	source.chain_answered(TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE);
+	source.chain_answered(PEOPLE_WIPED);
 	source.due_fetch(START).expect("a build copy is due at once");
 
 	serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE), START)

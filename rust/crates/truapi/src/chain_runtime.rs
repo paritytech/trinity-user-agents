@@ -89,7 +89,7 @@ pub use chain_access::ChainAccess;
 pub use chain_halt::{retry_while_halted, says_chain_halted};
 pub use current_block::CurrentBlockError;
 use follow_retry::{FollowReport, FollowRetryingRpcClient};
-pub use genesis_check::GenesisCheck;
+pub use genesis_check::{GenesisCheck, GenesisHashes};
 
 mod runtime_call_cache;
 mod runtime_call_client;
@@ -2350,7 +2350,7 @@ async fn ask_genesis(
 		})?
 		.0;
 	if let Ok(named) = <[u8; 32]>::try_from(named) {
-		check.chain_answered(named, answered);
+		check.chain_answered(GenesisHashes { named, answered });
 	}
 	if answered.as_slice() != named {
 		let failure = RuntimeFailure::host_failure(

@@ -216,7 +216,7 @@ fn people_answers(refresh: &StackRefresh, answered: [u8; 32]) {
 		.stack()
 		.genesis_check()
 		.expect("a refreshed stack has its chains checked");
-	check.chain_answered(TEST_STACK_PEOPLE, answered);
+	check.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered });
 }
 
 fn people_gave(answered: [u8; 32]) -> Vec<StackMismatch> {
