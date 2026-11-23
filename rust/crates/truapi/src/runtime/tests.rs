@@ -1068,19 +1068,20 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
 	let source = session_info()
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
-	let expected = crate::runtime::contacts::contact_handle(
-		&crate::runtime::contacts::handle_key_from_root_source(&source),
-		&account,
-	);
+	let voting = ProductId::for_test("voting.dot");
+	let key_from = |source: &[u8; 32]| {
+		crate::runtime::contacts::product_handle_key(
+			&crate::runtime::contacts::user_handle_key(source),
+			&voting,
+		)
+	};
+	let expected = crate::runtime::contacts::contact_handle(&key_from(&source), &account);
 	assert_eq!(handle, expected, "the handle must key on the session's root entropy source");
 	// And is not what the public alternatives would have produced.
 	for public in [session_info().public_key, [0u8; 32]] {
 		assert_ne!(
 			handle,
-			crate::runtime::contacts::contact_handle(
-				&crate::runtime::contacts::handle_key_from_root_source(&public),
-				&account,
-			),
+			crate::runtime::contacts::contact_handle(&key_from(&public), &account),
 			"the handle must not be derivable from public material"
 		);
 	}
@@ -1459,7 +1460,7 @@ fn a_removed_contact_stops_resolving_once_the_host_signals() {
 	};
 
 	contacts.listed.lock().expect("listed mutex poisoned").clear();
-	host.connection.services.contact_handles.clear();
+	host.connection.services.contact_handle_cache.clear();
 
 	assert_eq!(
 		futures::executor::block_on(
@@ -1586,7 +1587,10 @@ fn uncached_handles_are_resolved_in_one_lookup() {
 	let source = session_info()
 		.root_entropy_source
 		.expect("the test session carries an entropy source");
-	let key = crate::runtime::contacts::handle_key_from_root_source(&source);
+	let key = crate::runtime::contacts::product_handle_key(
+		&crate::runtime::contacts::user_handle_key(&source),
+		&ProductId::for_test("voting.dot"),
+	);
 	let handles = [alice, bob].map(|account| v01::ContactHandle {
 		bytes: crate::runtime::contacts::contact_handle(&key, &account),
 	});
@@ -1619,9 +1623,8 @@ fn a_call_declaring_no_contacts_needs_no_picker() {
 }
 
 #[test]
-fn two_products_receive_the_same_handle_for_one_contact() {
-	// The deliberate property: the handle is a durable shared id, so a
-	// product can be handed a recipient another product already knows.
+fn two_products_receive_different_handles_for_one_contact() {
+	// Products cannot join their users' contacts on the handle.
 	let platform = stub_platform();
 	let account = [10u8; 32];
 
@@ -1639,7 +1642,81 @@ fn two_products_receive_the_same_handle_for_one_contact() {
 		handle
 	};
 
-	assert_eq!(handle_for("voting.dot"), handle_for("games.dot"));
+	assert_ne!(handle_for("voting.dot"), handle_for("games.dot"));
+}
+
+/// Runtimes for `products` on one host: one set of services, so one contact
+/// handle cache, and one signed-in session.
+fn contacts_hosts_sharing_services(
+	products: [&str; 2],
+	contacts: Arc<StubContactsPlatform>,
+) -> [ProductRuntimeHost<RemoteAccountHolder>; 2] {
+	let (host_config, _) = runtime_config(products[0]);
+	let services = RuntimeServices::new(
+		stub_platform() as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	services.install_contacts_platform(contacts);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	products.map(|product_id| {
+		let (_, product) = runtime_config(product_id);
+		let host = ProductRuntimeHost::from_services(
+			services.clone(),
+			crate::host_core::ConnectionAdapters::from_services(&services),
+			pairing_host.accounts().clone(),
+			pairing_host.session().clone(),
+			product,
+		);
+		install_pairing_session(&host, session_info());
+		host
+	})
+}
+
+#[test]
+fn a_handle_from_another_product_does_not_resolve() {
+	// Even with the contact cached from the other product's pick and held by
+	// the host: the cache answers only the product it minted for, and the
+	// lookup is keyed for the calling product, so the handle names nobody.
+	let [games, voting] = contacts_hosts_sharing_services(
+		["games.dot", "voting.dot"],
+		StubContactsPlatform::picking([10u8; 32]),
+	);
+	let HostContactsPickResponse::V1(response) = pick(&games).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle: foreign } = response.outcome else {
+		panic!("the user picked someone");
+	};
+
+	assert_eq!(
+		futures::executor::block_on(
+			voting.substitute_declared_contacts(foreign.bytes.to_vec(), &[foreign])
+		),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
+}
+
+#[test]
+fn another_products_cached_handle_left_undeclared_does_not_refuse_a_call() {
+	// One product's picks must not decide whether another's call goes through.
+	let [games, voting] = contacts_hosts_sharing_services(
+		["games.dot", "voting.dot"],
+		StubContactsPlatform::picking([10u8; 32]),
+	);
+	let HostContactsPickResponse::V1(response) = pick(&games).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	let call = handle.bytes.to_vec();
+
+	assert_eq!(
+		futures::executor::block_on(voting.substitute_declared_contacts(call.clone(), &[])),
+		Ok(call.clone())
+	);
+	assert_eq!(
+		futures::executor::block_on(games.substitute_declared_contacts(call, &[])),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
 }
 
 /// Records which `ChatPlatform` methods the runtime actually reached.
