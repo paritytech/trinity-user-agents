@@ -16,12 +16,10 @@ use truapi::{
 
 use super::grant_revision;
 use crate::{
-	host_logic::{
-		product_account::derive_root_keypair_from_entropy, statement_store::SUBMIT_STATEMENT_METHOD,
-	},
+	host_logic::{root_entropy::RootEntropy, statement_store::SUBMIT_STATEMENT_METHOD},
 	platform::{ProductContext, ProductId},
 	runtime::{
-		HostSession, LocalActivation, SigningHostRole,
+		HostRole, HostSession, LocalActivation, SigningHost,
 		allowances::AllowanceResource,
 		authority::{Allowance, AuthorityError, StatementStoreAllowanceKey},
 		statement_allowance::slot,
@@ -36,7 +34,7 @@ use crate::{
 const PRODUCT_ID: &str = "myapp.dot";
 
 /// Whether this host keeps an AutoSigning key for `product_id` in this activation.
-fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
+fn keeps_auto_signing(authority: &SigningHost, product_id: &str) -> bool {
 	let session = authority.session_state().current().expect("an active wallet");
 	futures::executor::block_on(
 		authority
@@ -55,7 +53,8 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
 	let (services, authority) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let authority_session = authority.accounts().current_session().unwrap();
 	let revision = grant_revision(authority.accounts());
 	for product in ["myapp.dot", "other.dot"] {
@@ -68,9 +67,7 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	)
 	.unwrap()
 	.unwrap();
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, &myapp).unwrap();
+	let subtree = RootEntropy::new(ENTROPY).derive_product_subtree_keypair(&myapp).unwrap();
 	authority.clear_product_state(&myapp);
 	let current_session = authority.accounts().current_session().unwrap();
 	let own = keeps_auto_signing(&authority, "myapp.dot");
@@ -95,7 +92,8 @@ fn a_product_reset_leaves_another_products_kept_key_signing() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
 	let (services, authority) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let products =
 		["myapp.dot", "other.dot"].map(|product| ProductContext::new(ProductId::for_test(product)));
 	for product in &products {
@@ -138,7 +136,8 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 		..StubPlatform::default()
 	});
 	let (services, authority) = signing_runtime_on_asset_hub(platform.clone(), crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	futures::executor::block_on(authority.activate_local_session(RootEntropy::new(ENTROPY)))
+		.unwrap();
 	let runtime = product_runtime_for(services, authority.clone(), PRODUCT_ID);
 	let cx = CallContext::default();
 	let allocation = ResourceAllocation::request(
@@ -177,7 +176,7 @@ fn secret_key() -> StatementStoreAllowanceKey {
 	StatementStoreAllowanceKey::from_secret_bytes(SECRET.to_vec()).expect("64-byte secret")
 }
 
-fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
+fn remember(signing_host: &SigningHost, product_id: &str, period: u32) {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
 	let revision = grant_revision(signing_host.accounts());
@@ -190,7 +189,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 	.unwrap();
 }
 
-fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 64]> {
+fn remembered(signing_host: &SigningHost, product_id: &str) -> Option<[u8; 64]> {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
 	let revision = grant_revision(signing_host.accounts());
@@ -206,7 +205,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
 
 /// The key the host serves for the product, bounded so a lookup that falls
 /// through to an unanswered chain read fails instead of hanging.
-fn served(signing_host: &SigningHostRole) -> Option<[u8; 64]> {
+fn served(signing_host: &SigningHost) -> Option<[u8; 64]> {
 	futures::executor::block_on(async {
 		let session = signing_host.accounts().current_session().expect("a session is active");
 		let cx = CallContext::default();
@@ -247,7 +246,7 @@ fn a_new_session_looks_the_allowance_up_again() {
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 
 	futures::executor::block_on(signing_host.disconnect());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("re-activation succeeds");
 
 	assert_eq!(
@@ -276,7 +275,7 @@ fn clearing_a_product_forgets_only_its_key() {
 fn a_replaced_session_is_not_served_the_new_sessions_key() {
 	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
 	let authority_session = signing_host.accounts().current_session().unwrap();
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("re-activation succeeds");
 	remember(
 		&signing_host,
@@ -303,7 +302,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
 	let revision = grant_revision(signing_host.accounts());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("re-activation succeeds");
 
 	let remembered_stale =
@@ -330,7 +329,7 @@ fn rejected(reason: &str) -> String {
 fn submit_answered(
 	answers: Vec<String>,
 	signer: [u8; 32],
-) -> (Result<(), CallError<RemoteStatementStoreSubmitError>>, Arc<SigningHostRole>) {
+) -> (Result<(), CallError<RemoteStatementStoreSubmitError>>, Arc<SigningHost>) {
 	let platform = Arc::new(StubPlatform {
 		rpc_method_responses: answers
 			.into_iter()
@@ -339,7 +338,7 @@ fn submit_answered(
 		..Default::default()
 	});
 	let (services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 	let runtime = product_runtime_for(services, signing_host.clone(), PRODUCT_ID);
@@ -359,7 +358,7 @@ fn submit_answered(
 	(submitted, signing_host)
 }
 
-fn submit_rejected(reason: &str, attempts: usize, signer: [u8; 32]) -> Arc<SigningHostRole> {
+fn submit_rejected(reason: &str, attempts: usize, signer: [u8; 32]) -> Arc<SigningHost> {
 	let (submitted, signing_host) = submit_answered(vec![rejected(reason); attempts], signer);
 	let Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(error))) = submitted else {
 		panic!("the store rejection must surface as a domain error: {submitted:?}");

@@ -5,6 +5,7 @@ import FirebaseRemoteConfig
 import Combine
 import ChainRegistry
 import Revive
+import TrUAPIHost
 
 protocol RemoteConfigDelegate: AnyObject {
     func remoteConfig(didFinishLoading result: Result<Void, Error>)
@@ -108,7 +109,8 @@ final class FirebaseApplicationService: RemoteConfigManaging {
             offrampUrl: fundingConfigValue(.offrampUrl),
             accountDataStoreContract: accountDataStoreContractAddress(),
             paymentAsset: paymentAssetConfig(),
-            appSharingUrl: url(for: .appSharingUrl)
+            appSharingUrl: url(for: .appSharingUrl),
+            fundingProviders: fundingProviders()
         )
     }
 
@@ -167,11 +169,9 @@ private extension FirebaseApplicationService {
     }
 
     /// One JSON object shared with Android, passed through as published:
-    /// `{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp" }`.
+    /// `{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp", "providers": […] }`.
     func fundingConfigValue(_ field: String) -> String? {
-        let json = remoteConfig[.fundingConfig].jsonValue as? [String: String]
-        guard let value = json?[field], !value.isEmpty else { return nil }
-        return value
+        FundingConfig.string(field, in: remoteConfig[.fundingConfig].jsonValue as? [String: Any])
     }
 
     /// One JSON object shared with Android: `{ "contractAddress": "0x…" }`, decoded to an EVM address
@@ -191,6 +191,10 @@ private extension FirebaseApplicationService {
     func paymentAssetConfig() -> PaymentAssetConfig? {
         guard let json = remoteConfig[.paymentAssetConfig].jsonValue as? [String: String] else { return nil }
         return PaymentAssetConfig(json: json)
+    }
+
+    func fundingProviders() -> [String] {
+        FundingConfig.providers(in: remoteConfig[.fundingConfig].jsonValue as? [String: Any], logger: logger)
     }
 
     func dotNsConfigEntry(_ field: String, treatingEmptyAsMissing: Bool = false) -> String? {

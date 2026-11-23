@@ -77,6 +77,9 @@ pub enum StorageError {
 	#[cfg(windows)]
 	#[display("replace {}", path.display())]
 	Replace { path: PathBuf, source: std::io::Error },
+	/// A storage file could not be removed.
+	#[display("remove {}", path.display())]
+	Remove { path: PathBuf, source: std::io::Error },
 	/// A completed write could not be moved to its destination.
 	#[display("persist {}", path.display())]
 	Persist { path: PathBuf, source: std::io::Error },
@@ -99,6 +102,7 @@ impl std::error::Error for StorageError {
 			Self::Create { source, .. } |
 			Self::Write { source, .. } |
 			Self::Sync { source, .. } |
+			Self::Remove { source, .. } |
 			Self::Persist { source, .. } |
 			Self::RecordNavigation { source, .. } => Some(source),
 			#[cfg(windows)]
@@ -308,6 +312,24 @@ impl CliPlatform {
 			return Ok(());
 		};
 		save_product_storage(&directory, product_id, values)
+	}
+
+	fn remove_product_storage(&self, product_id: &ProductId) -> Result<(), StorageError> {
+		let Some(directory) = self
+			.product_storage_dir
+			.lock()
+			.expect("product storage path mutex poisoned")
+			.clone()
+		else {
+			return Ok(());
+		};
+		let path = product_storage_path(&directory, product_id);
+		match fs::remove_file(&path) {
+			Err(source) if source.kind() != std::io::ErrorKind::NotFound => {
+				Err(StorageError::Remove { path, source })
+			},
+			_ => Ok(()),
+		}
 	}
 
 	/// Whether a slot belongs to the install rather than the signed-in user.
@@ -526,6 +548,16 @@ impl ProductStorage for CliPlatform {
 		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
 		self.persist_product_storage(scoped.product_id(), values)?;
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
+		storage.remove(&product_id);
+		self.remove_product_storage(&product_id)?;
 		Ok(())
 	}
 

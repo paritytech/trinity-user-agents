@@ -195,7 +195,7 @@ fn unknown_relay_is_an_error() {
 	let error = block_on(provider.connect(RELAY_GENESIS))
 		.err()
 		.expect("an unregistered relay must fail to connect");
-	assert!(error.to_string().contains("not a registered light-client chain"));
+	assert!(error.to_string().contains("has no light-client source"));
 }
 
 #[test]

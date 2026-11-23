@@ -20,7 +20,7 @@ use std::{
 };
 
 use truapi::{
-	SigningHostRuntime, current_unix_millis,
+	HostRuntime, SigningHost, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
 	platform::{FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext},
@@ -63,13 +63,13 @@ fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
 pub struct CliFundingHost {
 	outcomes: Mutex<VecDeque<Outcome>>,
 	transcript: Transcript,
-	runtime: Weak<SigningHostRuntime>,
+	runtime: Weak<HostRuntime<SigningHost>>,
 }
 
 impl CliFundingHost {
 	/// Install a scripted funding host on `runtime` when
 	/// `TRUAPI_FUNDING_OUTCOMES` is set, recording to `TRUAPI_FUNDING_LOG`.
-	pub fn install_from_env(runtime: &Arc<SigningHostRuntime>) {
+	pub fn install_from_env(runtime: &Arc<HostRuntime<SigningHost>>) {
 		let Ok(spec) = std::env::var("TRUAPI_FUNDING_OUTCOMES") else {
 			return;
 		};
