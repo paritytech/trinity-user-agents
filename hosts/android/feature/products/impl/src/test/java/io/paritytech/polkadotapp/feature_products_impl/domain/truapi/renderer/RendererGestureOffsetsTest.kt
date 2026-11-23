@@ -127,6 +127,7 @@ class RendererGestureOffsetsTest {
             enabled = null,
             hapticOnComplete = null,
             key = key,
+            feel = null,
         ),
         children = emptyList(),
     )

@@ -130,6 +130,7 @@ class RendererNodeMappingTest {
                 accessibilityLabel = "Slide to register",
                 enabled = null,
                 hapticOnComplete = true,
+                feel = null,
             ),
             children = listOf(RendererNode.Box(modifiers = emptyList(), props = BoxProps(contentAlignment = null), children = emptyList())),
         )
@@ -172,6 +173,7 @@ class RendererNodeMappingTest {
                 accessibilityLabel = null,
                 enabled = false,
                 hapticOnComplete = null,
+                feel = null,
             ),
             children = emptyList(),
         )

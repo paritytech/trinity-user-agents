@@ -237,10 +237,11 @@ fn gesture_keeps_its_wire_index_and_children() {
 			enabled: OptionBool(None),
 			haptic_on_complete: OptionBool(None),
 			key: None,
+			feel: None,
 		},
 		children: vec![RendererNode::Nil],
 	};
-	assert_eq!(node.encode(), vec![13, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
+	assert_eq!(node.encode(), vec![13, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0]);
 	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
 }
 
@@ -275,6 +276,7 @@ fn gesture_modes_round_trip_with_actions_and_motion() {
 				enabled: OptionBool(Some(true)),
 				haptic_on_complete: OptionBool(Some(true)),
 				key: Some("thumb".into()),
+				feel: None,
 			},
 			children: vec![renderer_node()],
 		};
@@ -313,6 +315,7 @@ fn set_offset_is_smaller_than_any_tree_holding_its_gesture() {
 			enabled: OptionBool(None),
 			haptic_on_complete: OptionBool(None),
 			key: Some("thumb".into()),
+			feel: None,
 		},
 		children: vec![renderer_node()],
 	};
@@ -334,6 +337,7 @@ fn set_offset_and_keyed_gesture_round_trip_through_uniffi() {
 				enabled: OptionBool(None),
 				haptic_on_complete: OptionBool(None),
 				key: Some("thumb".into()),
+				feel: None,
 			},
 			children: vec![RendererNode::Nil],
 		},
@@ -434,4 +438,45 @@ fn modifiers_by_value_read_from_json() {
 		})
 	);
 	assert_eq!(modifiers[7], Modifier::ExitFade(350));
+}
+
+/// The existing slider's own feel.
+fn slide_feel() -> PanFeel {
+	PanFeel {
+		press_scale_permille: 1059,
+		press_ms: 133,
+		unpress_ms: 150,
+		spring_omega_centi: 1800,
+		spring_damping_centi: 80,
+		approach_ms: 117,
+		approach_reference: 4200,
+		pop_permille: vec![1059, 1132, 1192, 1237, 1000],
+		pop_offset: 333,
+	}
+}
+
+#[test]
+fn a_gesture_feel_round_trips_through_scale_json_and_uniffi() {
+	let node = RendererNode::Gesture {
+		modifiers: Vec::new(),
+		props: GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: Some("thumb".into()),
+			feel: Some(slide_feel()),
+		},
+		children: vec![RendererNode::Nil],
+	};
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	let json = r#"{"pressScalePermille":1059,"pressMs":133,"unpressMs":150,"springOmegaCenti":1800,
+		"springDampingCenti":80,"approachMs":117,"approachReference":4200,"popPermille":[1059,1132,1192,1237,1000],"popOffset":333}"#;
+	assert_eq!(serde_json::from_str::<PanFeel>(json).unwrap(), slide_feel());
+	#[cfg(not(target_arch = "wasm32"))]
+	{
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		assert_eq!(<RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), node);
+	}
 }

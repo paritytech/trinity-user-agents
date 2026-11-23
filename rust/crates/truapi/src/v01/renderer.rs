@@ -676,6 +676,48 @@ pub struct GestureProps {
 	/// host drops the moves in between and sends only the newest, so no
 	/// backlog builds up. Absent keeps every move, as `moveIntervalMs` says.
 	pub key: Option<String>,
+	/// How the children move when pressed and when a pan lets go; absent
+	/// leaves it to the host.
+	pub feel: Option<PanFeel>,
+}
+
+/// How a gesture's children move when pressed and released, given by value so
+/// a worker's slider can move as the existing slider does.
+///
+/// While a pan or a press holds, the children grow to `press_scale_permille`
+/// (a quadratic ease-out over `press_ms`). When the finger lifts short of
+/// completing, they go back to the start on a damped spring that starts at
+/// rest (`spring_omega_centi`, `spring_damping_centi`) and back to their size
+/// over `unpress_ms`. When it completes, they reach the end with a quadratic
+/// ease-out lasting `approach_ms`, or `approach_ms * sqrt(distance /
+/// approach_reference)` over a longer way, and play `pop_permille` from the
+/// moment they would arrive: one scale per 1/60 s, the first replaced by the
+/// scale they had, standing `pop_offset * ((scale - 1) / (peak - 1))^1.5`
+/// past the end while larger than 1, where `peak` is the largest scale.
+/// Lengths are hundredths of a logical pixel. The host draws none of this
+/// where the person asked for less motion.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PanFeel {
+	/// Scale while pressed, in thousandths.
+	pub press_scale_permille: u16,
+	/// How long the press takes to grow.
+	pub press_ms: u16,
+	/// How long a released child takes to return to its size.
+	pub unpress_ms: u16,
+	/// The return spring's angular frequency, hundredths of a radian a second.
+	pub spring_omega_centi: u16,
+	/// The return spring's damping ratio, in hundredths.
+	pub spring_damping_centi: u16,
+	/// The shortest way to the end on completion.
+	pub approach_ms: u16,
+	/// The distance beyond which the approach takes longer.
+	pub approach_reference: u32,
+	/// Scales after completion, one per 1/60 s, in thousandths.
+	pub pop_permille: Vec<u16>,
+	/// How far past the end the children stand at the pop's peak.
+	pub pop_offset: u32,
 }
 
 /// Stage of a gesture action.

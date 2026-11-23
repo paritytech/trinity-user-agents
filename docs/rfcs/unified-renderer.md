@@ -548,3 +548,9 @@ Motion stays the host's: a worker never animates frame by frame. `FadeWithPan`
 follows the pan on the host, in the same frame as the thumb, and `ExitFade`
 keeps whatever the host held for the node (a cover grid's brush strokes, say)
 while it fades, which a worker cannot resend.
+
+A `Gesture` may also carry a `feel`: the scale its children grow to while
+pressed, the damped spring that takes them home when a pan lets go, and the
+ease and scale "pop" with which a completed pan reaches the end, all by value
+(an existing slider's constants copy straight in). The host runs it for host-owned
+drags and for the release settle of a worker's every-move thumb alike.

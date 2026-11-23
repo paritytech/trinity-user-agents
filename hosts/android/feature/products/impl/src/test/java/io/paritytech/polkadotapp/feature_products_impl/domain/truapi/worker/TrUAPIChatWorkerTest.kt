@@ -95,7 +95,7 @@ class TrUAPIChatWorkerTest {
         runCurrent()
         val tree = RendererNode.Gesture(
             modifiers = emptyList(),
-            props = GestureProps(null, null, null, null, null, "thumb"),
+            props = GestureProps(null, null, null, null, null, "thumb", null),
             children = emptyList(),
         )
         stream.emit(tree)
