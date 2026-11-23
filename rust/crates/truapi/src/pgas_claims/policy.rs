@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 
 use super::{
 	builder::{ClaimBuildError, PgasClaimBuilder},
-	params::{ClaimAttempt, ClaimParams},
+	params::ClaimParams,
 };
 use crate::{
 	durable::{
@@ -71,7 +71,7 @@ impl PgasClaimPolicy {
 		}
 		let ClaimParams { target, identity, .. } = &claim.params;
 		match self.builder.build_claim(*target, *identity, excluded).await {
-			Ok(built) => PreparedClaim::built(claim, built),
+			Ok(built) => PreparedClaim::built(built),
 			Err(error) => PreparedClaim::answered(answer_unbuilt_claim(claim, &error)),
 		}
 	}
@@ -97,10 +97,10 @@ impl PreparedClaim {
 		Self { answer, built_slot: None }
 	}
 
-	/// `claim` ready to submit as `built`.
-	fn built(claim: &PlannedClaim, built: BuiltClaim) -> Self {
-		let built_slot = Some(built.slot);
-		Self { answer: Some(ready_preparation(claim, built)), built_slot }
+	/// A claim ready to submit as `built`.
+	fn built(built: BuiltClaim) -> Self {
+		let ready = Preparation::Ready { extrinsic: built.extrinsic, params: None };
+		Self { answer: Some(ready), built_slot: Some(built.slot) }
 	}
 }
 
@@ -152,14 +152,6 @@ impl RecentSlots {
 			.map(|(slot, _)| *slot)
 			.collect()
 	}
-}
-
-/// `claim` ready to submit as `built`, with the slot and alias it claims
-/// recorded in its params.
-fn ready_preparation(claim: &PlannedClaim, built: BuiltClaim) -> Preparation {
-	let attempt = Some(ClaimAttempt::from(&built));
-	let params = ClaimParams { attempt, ..claim.params.clone() };
-	Preparation::Ready { extrinsic: built.extrinsic, params: Some(params.into()) }
 }
 
 /// What `claim` answers when it could not be built for `error`: a lost

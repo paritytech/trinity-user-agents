@@ -536,10 +536,7 @@ impl HostRuntime<PairingHost> {
 	/// Stop the product's executions first: a value a running execution
 	/// writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(
-		&self,
-		product_id: &ProductId,
-	) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id).await?;
 		self.services
 			.platform
@@ -1467,15 +1464,11 @@ fn durable_registry(
 	services: &RuntimeServices,
 	host: std::sync::Weak<SigningHost>,
 ) -> crate::durable::DurableRegistry {
-	use crate::{
-		nft::with_scarcity_transfers,
-		pgas_claims::{PgasClaimsDeps, with_pgas_claims},
-	};
+	use crate::{nft::with_scarcity_transfers, pgas_claims::with_pgas_claims};
 
-	let storage = Arc::new(services.chain.clone());
 	let genesis = services.asset_hub_chain_genesis_hash().into();
-	let claims = PgasClaimsDeps { storage, genesis, builder: Arc::new(host.clone()) };
-	let registry = with_pgas_claims(crate::durable::DurableRegistry::new(), claims);
+	let registry =
+		with_pgas_claims(crate::durable::DurableRegistry::new(), genesis, Arc::new(host.clone()));
 	let Some(transfers) = scarcity_transfers_deps(services, host) else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;

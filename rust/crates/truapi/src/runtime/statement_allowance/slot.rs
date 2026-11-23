@@ -271,7 +271,7 @@ fn statement_store_allowance_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
 /// `Pgas.ClaimedGasAliases[day][alias]` storage key on Asset Hub.
 /// key1 = Identity(u32be day); key2 = Blake2_128Concat(alias). Presence alone
 /// marks the slot spent; the value is unit.
-pub fn claimed_gas_alias_key(day: u32, alias: &[u8; 32]) -> Vec<u8> {
+fn claimed_gas_alias_key(day: u32, alias: &[u8; 32]) -> Vec<u8> {
 	[
 		twox_128(b"Pgas").as_slice(),
 		twox_128(b"ClaimedGasAliases").as_slice(),

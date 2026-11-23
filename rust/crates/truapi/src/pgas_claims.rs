@@ -8,7 +8,6 @@ mod builder;
 mod delivery;
 #[cfg(test)]
 mod live;
-mod oracle;
 mod params;
 mod policy;
 #[cfg(test)]
@@ -23,44 +22,41 @@ pub use delivery::UndeliveredClaim;
 #[cfg(test)]
 pub use testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination, transient};
 
-use self::{oracle::PgasClaimOracle, params::ClaimParams, policy::PgasClaimPolicy};
+use self::{params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{
-	chain::WatchedStorage,
 	durable::{
 		self, DeferredSubmission, DomainId, DurableRegistry, DurableRequest, DurableTxEngine,
-		DurableTxId, DurableTxState, DurableTxStatus, GroupId, RegistrationError,
+		DurableTxId, DurableTxState, DurableTxStatus, GroupId, RegistrationError, Unobservable,
 	},
 	store::DbError,
 	time::Timer,
 	unix_time::current_unix_secs,
 };
 
-/// How long a registered claim waits for a session of its identity before it
-/// is given up, in seconds.
-const SESSION_WAIT_LIMIT_SECS: u64 = 10 * 60;
+/// How long after registration an attempt of a claim may still be built, in
+/// seconds. No wait for a session, no transient failure and no rebuild
+/// outlasts it.
+const CLAIM_DEADLINE_SECS: u64 = 10 * 60;
 
 /// The durable domain PGAS claims are registered under.
 fn pgas_domain() -> DomainId {
 	DomainId::new("pgas")
 }
 
-/// What PGAS claims need to be decided and built.
-pub struct PgasClaimsDeps {
-	/// Storage of the Asset Hub that runs the `Pgas` pallet.
-	pub storage: Arc<dyn WatchedStorage>,
-	/// Genesis of that Asset Hub.
-	pub genesis: H256,
-	/// Builds each claim as the identity that registered it.
-	pub builder: Arc<dyn PgasClaimBuilder>,
-}
-
-/// `registry` with the PGAS domain on Asset Hub, whose claims the alias
-/// oracle decides and the claim policy builds.
-pub fn with_pgas_claims(registry: DurableRegistry, deps: PgasClaimsDeps) -> DurableRegistry {
-	let PgasClaimsDeps { storage, genesis, builder } = deps;
-	let oracle = Arc::new(PgasClaimOracle::new(storage, genesis));
+/// `registry` with the PGAS domain on the Asset Hub with `genesis`, whose
+/// claims `builder` builds as the identity that registered each one.
+///
+/// No storage proves a claim landed: `Pgas.ClaimedGasAliases` records only
+/// the person's alias for a day and slot, which any claim of that slot
+/// writes, whatever its target. The engine decides each claim by finding its
+/// extrinsic in a block instead.
+pub fn with_pgas_claims(
+	registry: DurableRegistry,
+	genesis: H256,
+	builder: Arc<dyn PgasClaimBuilder>,
+) -> DurableRegistry {
 	let policy = Arc::new(PgasClaimPolicy::new(builder));
-	registry.with_domain(pgas_domain(), genesis, oracle, policy)
+	registry.with_domain(pgas_domain(), genesis, Arc::new(Unobservable), policy)
 }
 
 /// Why a claim was not registered. Nothing was written.
@@ -101,8 +97,8 @@ impl PgasClaims {
 		identity: ClaimIdentity,
 	) -> Result<DurableTxId, RegistrationError<PgasClaimError>> {
 		let group = destination_group(&dest);
-		let give_up_after = current_unix_secs() + SESSION_WAIT_LIMIT_SECS;
-		let params = ClaimParams { target: dest, identity, give_up_after, attempt: None };
+		let give_up_after = current_unix_secs() + CLAIM_DEADLINE_SECS;
+		let params = ClaimParams { target: dest, identity, give_up_after };
 		let request = DurableRequest::deferred_in(pgas_domain(), Some(group.clone()), move |tx| {
 			refuse_active_claim(tx, &group)?;
 			Ok(vec![DeferredSubmission::independent(params.into())])

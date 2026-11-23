@@ -13,20 +13,13 @@ use futures::future::pending;
 use subxt::utils::{AccountId32, H256};
 
 use super::{
-	ClaimBuildError, ClaimIdentity, PgasClaimBuilder, PgasClaims, PgasClaimsDeps,
-	destination_group, oracle::PgasClaimOracle, pgas_domain, testing::TEST_IDENTITY,
+	ClaimBuildError, ClaimIdentity, PgasClaimBuilder, PgasClaims, testing::TEST_IDENTITY,
 	with_pgas_claims,
 };
 use crate::{
-	chain::{
-		ChainHeads, ExtrinsicService, FixedExtensionVersions, live_asset_hub,
-		live_asset_hub_genesis,
-	},
+	chain::{ExtrinsicService, FixedExtensionVersions, live_asset_hub, live_asset_hub_genesis},
 	chain_runtime::ChainRuntime,
-	durable::{
-		CompletionOracle, DurableRegistry, DurableTxEntry, DurableTxId, HeadKind, Window,
-		live_engine,
-	},
+	durable::{DurableRegistry, live_engine},
 	host_logic::product_account::{
 		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
 	},
@@ -149,29 +142,11 @@ impl PgasClaimBuilder for LivePerson {
 	}
 }
 
-/// The ledger row of claim `id` into `dest`, as a recovery pass hands it to
-/// the oracle.
-async fn claim_entry(claims: &PgasClaims, id: DurableTxId, dest: &AccountId32) -> DurableTxEntry {
-	let group = destination_group(dest);
-	let rows = claims.engine.group(&pgas_domain(), &group).await.unwrap();
-	let row = rows.into_iter().find(|row| row.id == id).expect("the claim is listed");
-	DurableTxEntry {
-		id,
-		domain: pgas_domain(),
-		group: Some(group),
-		tx_hash: row.tx_hash.expect("the claim was built"),
-		window: Window { birth: 0, period: 0 },
-		status: row.status,
-		scanned_to: None,
-		plan: row.plan,
-	}
-}
-
 /// A claim the engine builds, submits and follows mints PGAS into a fresh
-/// account, and the alias its attempt recorded proves it at the best head.
+/// account, and the engine sees it reach a block from its extrinsic alone.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs the live Paseo Next chains and a person's mnemonic"]
-async fn a_durable_claim_lands_on_asset_hub_and_its_alias_proves_it() {
+async fn a_durable_claim_lands_on_asset_hub_and_the_engine_sees_it() {
 	let Ok(mnemonic) = std::env::var("TRUAPI_LIVE_PERSON_MNEMONIC") else {
 		eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
 		return;
@@ -181,9 +156,8 @@ async fn a_durable_claim_lands_on_asset_hub_and_its_alias_proves_it() {
 	let chain = live_asset_hub(genesis);
 	let person = Arc::new(LivePerson::connect(&chain, genesis, entropy).await);
 	let (_dir, db) = open_temporary_core_db();
-	let deps =
-		PgasClaimsDeps { storage: Arc::new(chain.clone()), genesis, builder: person.clone() };
-	let engine = live_engine(&chain, db, with_pgas_claims(DurableRegistry::new(), deps));
+	let registry = with_pgas_claims(DurableRegistry::new(), genesis, person.clone());
+	let engine = live_engine(&chain, db, registry);
 	let claims = PgasClaims::new(engine, Arc::new(RealTimer));
 	let dest = AccountId32(rand::random());
 
@@ -192,9 +166,4 @@ async fn a_durable_claim_lands_on_asset_hub_and_its_alias_proves_it() {
 
 	let funded = holds_a_full_claim(&person.asset_hub, &person.asset_hub_metadata, &dest.0);
 	assert!(funded.await.unwrap(), "the destination holds a full claim");
-	let entry = claim_entry(&claims, id, &dest).await;
-	let heads = chain.heads(genesis).await.unwrap();
-	let oracle = PgasClaimOracle::new(Arc::new(chain.clone()), genesis);
-	let scope = oracle.open_pass(std::slice::from_ref(&entry), &heads).await.unwrap();
-	assert!(scope.proven_completed(&entry, HeadKind::Best), "the alias proves the claim");
 }

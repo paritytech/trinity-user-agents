@@ -13,11 +13,7 @@ use crate::{
 /// A claim registered just now, waiting for a session for ten minutes.
 fn waiting_claim(id: i64, dest: AccountId32) -> DeferredDurableTx {
 	let give_up_after = current_unix_secs() + 600;
-	deferred(
-		id,
-		0,
-		ClaimParams { target: dest, identity: TEST_IDENTITY, give_up_after, attempt: None },
-	)
+	deferred(id, 0, ClaimParams { target: dest, identity: TEST_IDENTITY, give_up_after })
 }
 
 fn deferred(id: i64, attempts: u32, params: ClaimParams) -> DeferredDurableTx {
@@ -51,14 +47,10 @@ fn answer_when_build_fails(
 	prepare_with(&policy, &[claim]).remove(&DurableTxId(1))
 }
 
-/// The slot each answer of `answers` was built in, from the params it
-/// records.
-fn built_slot(answers: &HashMap<DurableTxId, Preparation>, id: i64) -> ClaimSlot {
-	let Some(Preparation::Ready { params: Some(params), .. }) = answers.get(&DurableTxId(id))
-	else {
-		panic!("claim {id} was not built: {answers:?}")
-	};
-	ClaimParams::try_from(params).unwrap().attempt.unwrap().slot
+/// The attempt the fake builder builds in slot `slot_index` of the test
+/// day, submitted with the params the claim was registered with.
+fn ready_in_slot(slot_index: u8) -> Preparation {
+	Preparation::Ready { extrinsic: extrinsic(slot_index, 130, 64), params: None }
 }
 
 /// Two claims of this process never take one slot, so neither attempt is
@@ -70,8 +62,8 @@ fn claims_of_one_batch_are_built_in_different_slots() {
 
 	let answers = prepare_with(&policy, &batch);
 
-	assert_eq!(built_slot(&answers, 1), slot(0));
-	assert_eq!(built_slot(&answers, 2), slot(1));
+	assert_eq!(answers.get(&DurableTxId(1)), Some(&ready_in_slot(0)));
+	assert_eq!(answers.get(&DurableTxId(2)), Some(&ready_in_slot(1)));
 }
 
 /// A slot whose attempt may still land is not handed to the next batch.
@@ -89,22 +81,6 @@ fn a_slot_built_a_moment_ago_is_not_handed_out_again() {
 		excluded: BTreeSet::from([slot(0)]),
 	};
 	assert_eq!(builder.calls().last(), Some(&second));
-}
-
-/// The oracle proves a claim by the slot and alias of its live attempt,
-/// so a built claim records both.
-#[test]
-fn a_built_claim_records_its_slot_and_alias() {
-	let policy = PgasClaimPolicy::new(FakeClaimBuilder::building());
-	let claim = waiting_claim(1, destination(7));
-
-	let answer = prepare_with(&policy, std::slice::from_ref(&claim)).remove(&DurableTxId(1));
-
-	let mut expected = ClaimParams::try_from(&claim.plan.params).unwrap();
-	expected.attempt = Some(ClaimAttempt { slot: slot(0), alias: [0; 32] });
-	let ready =
-		Preparation::Ready { extrinsic: extrinsic(0, 130, 64), params: Some(expected.into()) };
-	assert_eq!(answer, Some(ready));
 }
 
 /// Nobody's personhood pays for a claim another account registered.
@@ -154,7 +130,6 @@ fn a_claim_past_its_deadline_gives_up_without_building() {
 		target: destination(7),
 		identity: TEST_IDENTITY,
 		give_up_after: current_unix_secs() - 1,
-		attempt: None,
 	};
 
 	let answer = prepare_with(&policy, &[deferred(1, 1, past_deadline)]).remove(&DurableTxId(1));
@@ -194,7 +169,7 @@ fn a_claim_built_four_times_is_built_again() {
 
 	let answers = prepare_with(&policy, &[deferred(1, 4, params)]);
 
-	assert_eq!(built_slot(&answers, 1), slot(0));
+	assert_eq!(answers.get(&DurableTxId(1)), Some(&ready_in_slot(0)));
 }
 
 fn entry() -> DurableTxEntry {

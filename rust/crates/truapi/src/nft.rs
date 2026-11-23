@@ -44,7 +44,7 @@ pub use reclaim::ReclaimRequest;
 pub use recovery::{AssetHubRecoveryChain, NftRecovery, NftRecoveryDeps, recovery_scan_config};
 pub use returns::ReturnRequest;
 #[cfg(test)]
-pub use scarcity::{ASSET_HUB_PIPELINE, asset_hub_metadata};
+pub use scarcity::ASSET_HUB_PIPELINE;
 pub use scarcity::{
 	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
 };
