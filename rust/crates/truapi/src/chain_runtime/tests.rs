@@ -2899,10 +2899,10 @@ fn a_node_that_does_not_name_its_chain_is_not_used() {
 }
 
 /// A genesis hash is 32 bytes, and the check can only compare one. A
-/// connection opened for anything else is refused before the node is asked,
+/// connection asked for anything else is refused before the node is dialled,
 /// and nothing is reported for it.
 #[test]
-fn a_connection_opened_for_what_is_no_genesis_hash_is_refused_unasked() {
+fn a_connection_for_what_is_no_genesis_hash_is_refused_undialled() {
 	let provider = node_of([0xa1; 32]);
 	let heard = Arc::<HeardAnswers>::default();
 	let runtime =
@@ -2913,10 +2913,15 @@ fn a_connection_opened_for_what_is_no_genesis_hash_is_refused_unasked() {
 		.expect("31 bytes are no genesis hash");
 
 	assert_eq!(
-		(refused.kind(), refused.reason(), heard.heard(), provider.sent.lock().unwrap().len()),
+		(
+			refused.kind(),
+			refused.reason(),
+			heard.heard(),
+			provider.connect_calls.load(Ordering::SeqCst),
+		),
 		(
 			RuntimeFailureKind::HostFailure,
-			"test: remote_chain_connect: expected 32-byte genesis hash, got 31".to_string(),
+			"test: expected 32-byte hash, got 31".to_string(),
 			Vec::new(),
 			0,
 		)
