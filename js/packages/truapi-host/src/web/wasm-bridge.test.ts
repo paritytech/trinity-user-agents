@@ -31,8 +31,8 @@ function bundledRuntimeConfig() {
 }
 
 /**
- * A connection to a node that gives `genesisHash` as its chain's and answers
- * nothing else, as a node does once its chain restarted from genesis.
+ * A connection to a node that gives `genesisHash` as its chain's, as one whose
+ * chain restarted from genesis does. It answers no other request.
  */
 function chainWithGenesis(genesisHash: string): JsonRpcConnection {
   const answers: string[] = [];
@@ -47,8 +47,12 @@ function chainWithGenesis(genesisHash: string): JsonRpcConnection {
     },
     async *responses() {
       while (!closed) {
+        // Waits only with nothing to deliver, so no answer or close that
+        // comes while one is being delivered is missed.
+        if (answers.length === 0) {
+          await new Promise<void>((resolve) => (wake = resolve));
+        }
         yield* answers.splice(0);
-        await new Promise<void>((resolve) => (wake = resolve));
       }
     },
     close() {
@@ -325,31 +329,36 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       (chain: { role: string }) => chain.role === "People",
     );
 
-    const answer = await client.chain.getSpecGenesisHash({
-      genesisHash: people.genesisHash,
-    });
+    try {
+      const answer = await client.chain.getSpecGenesisHash({
+        genesisHash: people.genesisHash,
+      });
 
-    expect([
-      answer.isErr(),
-      statuses.map((status) => status.mismatches),
-    ]).toEqual([
-      true,
-      [
-        [],
+      // The call fails as a host failure, and the mismatch names People:
+      // together they show it was this chain's connection the core refused.
+      expect([
+        answer.isErr() && answer.error.tag,
+        statuses.map((status) => status.mismatches),
+      ]).toEqual([
+        "HostFailure",
         [
-          {
-            kind: "genesisHash",
-            role: "People",
-            named: people.genesisHash,
-            answered: restarted,
-          },
+          [],
+          [
+            {
+              kind: "genesisHash",
+              role: "People",
+              named: people.genesisHash,
+              answered: restarted,
+            },
+          ],
         ],
-      ],
-    ]);
-    provider.dispose();
-    core.dispose();
-    channel.port1.close();
-    channel.port2.close();
+      ]);
+    } finally {
+      provider.dispose();
+      core.dispose();
+      channel.port1.close();
+      channel.port2.close();
+    }
   });
 
   it("tells a host of its stack only once the runtime exists", async () => {

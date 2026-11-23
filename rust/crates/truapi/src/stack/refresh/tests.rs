@@ -677,8 +677,8 @@ fn a_wrong_answer_before_the_refresh_starts_brings_its_first_fetch_forward() {
 }
 
 /// A host that does not fetch the descriptor still has to keep its own
-/// features off a chain that restarted. It is told the status at start, as
-/// before, and again when a chain's answer changes it, with nothing fetched.
+/// features off a chain that restarted. It is told the status at start, and
+/// again when a chain's answer changes it.
 #[test]
 fn a_host_that_does_not_fetch_is_told_when_a_chain_restarted() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
@@ -695,27 +695,47 @@ fn a_host_that_does_not_fetch_is_told_when_a_chain_restarted() {
 		.expect("the host is told what the chain answered");
 
 	assert_eq!(
-		(started, at_start.mismatches, once_answered.mismatches, once_answered.last_refresh),
-		(true, vec![], people_gave(TEST_STACK_WIPED_PEOPLE), None)
+		(started, at_start.mismatches, once_answered.mismatches),
+		(true, vec![], people_gave(TEST_STACK_WIPED_PEOPLE))
 	);
 }
 
-/// One loop tells the host. A refresh started beside the reports would tell
-/// it every change twice.
+/// One loop tells the host. A refresh started beside the reports, or the
+/// reports beside a refresh, would tell it every change twice.
 #[test]
-fn a_stack_that_reports_does_not_start_a_refresh_too() {
-	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let reporting = refresh.start_reporting(Box::new(|_| ()), &Spawner::for_test());
+fn a_stack_reports_or_refreshes_but_not_both() {
+	let reporting = load(Arc::default(), Arc::default(), manual_clock());
+	let reports = reporting.start_reporting(Box::new(|_| ()), &Spawner::for_test());
 	let (told, _statuses) = channel();
 	let host = QueuedHost {
 		fetches: Arc::default(),
 		responses: Mutex::default(),
 		statuses: Mutex::new(told),
 	};
+	let refreshing = start(Arc::default(), vec![]);
 
-	let refreshing = refresh.start(Box::new(host), &Spawner::for_test());
+	let refresh_too = reporting.start(Box::new(host), &Spawner::for_test());
+	let reports_too = refreshing.refresh.start_reporting(Box::new(|_| ()), &Spawner::for_test());
 
-	assert_eq!((reporting, refreshing), (true, false));
+	assert_eq!((reports, refresh_too, reports_too), (true, false, false));
+}
+
+/// A runtime the host tears down takes its reports with it. A loop left
+/// running would keep calling into a host that is gone.
+#[test]
+fn dropping_the_refresh_stops_the_reports() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (told, statuses) = channel();
+	let tell = move |status| {
+		let _ = told.send(status);
+	};
+	assert!(refresh.start_reporting(Box::new(tell), &Spawner::for_test()));
+	let _at_start = statuses.try_recv();
+
+	drop(refresh);
+
+	// The loop owns `tell`, the only sender of statuses.
+	assert_eq!(statuses.recv_timeout(ANSWER_WAIT), Err(RecvTimeoutError::Disconnected));
 }
 
 /// The checks reach the chains only through the stack the refresh hands out.

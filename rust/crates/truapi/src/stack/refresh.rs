@@ -67,7 +67,7 @@ pub struct StackRefresh {
 	shared: Arc<Shared>,
 	/// The refresh loop, or the loop that only reports, once started.
 	task: OnceLock<BackgroundTask>,
-	/// Asks the loop for a fetch now. The loop ends once this drops.
+	/// Asks the refresh loop for a fetch now. That loop ends once this drops.
 	refresh_requests: WakeSignal,
 }
 
@@ -202,7 +202,7 @@ impl StackRefresh {
 	///
 	/// Set-once, together with [`Self::start_reporting`]: answers whether this
 	/// call started the refresh.
-	#[must_use = "`false` means the refresh was already running and `host` was dropped"]
+	#[must_use = "`false` means it had been started already and `host` was dropped"]
 	pub fn start(&self, host: Box<dyn StackHost>, spawner: &Spawner) -> bool {
 		let mut started = false;
 		self.task.get_or_init(|| {
@@ -213,14 +213,16 @@ impl StackRefresh {
 		started
 	}
 
-	/// Tells `changed` the stack's status, for a host that does not fetch the
-	/// descriptor: once before this returns, then on `spawner`, until this
-	/// value drops, whenever what a chain answered changes it.
+	/// Tells `changed` the stack's status, for a host that does not fetch it.
 	///
-	/// Nothing is fetched, so the core stays on the copy it started from.
+	/// Once before this returns, then on `spawner`, until this value drops,
+	/// whenever what a chain answered changes the status. Nothing is fetched,
+	/// so the core stays on the copy it started from. `changed` has to return
+	/// promptly, and must not start the refresh or the reports itself.
+	///
 	/// Set-once, together with [`Self::start`]: answers whether this call
 	/// started the reports.
-	#[must_use = "`false` means the refresh was already running and `changed` was dropped"]
+	#[must_use = "`false` means it had been started already and `changed` was dropped"]
 	pub fn start_reporting(
 		&self,
 		changed: Box<dyn Fn(StackStatus) + Send>,
