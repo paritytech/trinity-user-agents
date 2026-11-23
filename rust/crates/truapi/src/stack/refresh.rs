@@ -18,8 +18,8 @@ use trinity_stack::{FetchRequest, Served};
 use truapi::latest::GenericError;
 
 use super::{
-	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
-	signed_pointer, source::StackSource,
+	Stack, StackError, StackFetchRequest, StackFetchResponse, StackMismatch, StackRecords,
+	StackStatus, signed_pointer, source::StackSource,
 };
 use crate::{
 	Spawner,
@@ -102,16 +102,17 @@ impl StackChecks {
 	/// A suffix that is not the stack's `tld` is reported in
 	/// [`StackStatus::mismatches`] until a later read gives the `tld`.
 	pub fn people_suffix_answered(&self, answered: &[u8]) {
-		let changed = self.shared.source().people_suffix_answered(answered);
-		if !changed {
-			return;
-		}
-		let tld = self.shared.source().stack().tld().to_owned();
-		if answered != tld.as_bytes() {
-			tracing::warn!(
-				"People's NetworkSuffix is {}, not the stack's tld {tld}",
-				String::from_utf8_lossy(answered)
-			);
+		let listed = {
+			let mut source = self.shared.source();
+			if !source.people_suffix_answered(answered) {
+				return;
+			}
+			source.wrong_suffix()
+		};
+		// Logged with the source unlocked: a host handed the warning may read
+		// the stack's status from there.
+		if let Some(StackMismatch::NetworkSuffix { named: tld, answered: suffix }) = listed {
+			tracing::warn!("People's NetworkSuffix is {suffix}, not the stack's tld {tld}");
 		}
 		self.shared.chain_answers.wake();
 	}

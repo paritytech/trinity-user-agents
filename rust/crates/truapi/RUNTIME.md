@@ -238,20 +238,20 @@ The check has three limits:
 - A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
   is not checked.
 
-The core also compares People's `NetworkSuffix.NetworkSuffix` with the
-descriptor's `tld`. A signing host's allowance work reads the suffix to build
-its proofs, and the core compares each value that work reads. A suffix that
-differs is listed in `StackStatus::mismatches` until a later read gives the
+The core also checks People's `NetworkSuffix.NetworkSuffix` against the
+descriptor's `tld`. It makes no request for this. A signing host already reads
+the suffix when it builds allowance proofs, and the core compares that value. If
+it differs, `StackStatus::mismatches` lists it until a later read gives the
 `tld`.
 
-This is only a report. The core keeps using People and fetches the descriptor no
-sooner. An entry means the build's stack and its People chain disagree: the core
-derives its identities under the `tld` and builds proof contexts with People's
-suffix, so an identity derived under one does not match the other.
+This is only a report. The core keeps using People and does not fetch the
+descriptor any sooner. It matters because the core derives its identities under
+the `tld` but builds proof contexts with People's suffix. If the two differ, an
+identity derived under one does not match the other.
 
-Nothing is listed when the read fails or People holds no suffix of one to
-sixteen bytes, because the allowance work fails with that error first. A host
-that does no allowance work, such as a pairing host, never lists a suffix.
+Nothing is listed if the read fails or the suffix is not one to sixteen bytes
+long. The allowance work fails with that error instead. A pairing host does no
+allowance work, so it never lists a suffix.
 
 #### Descriptor refresh
 

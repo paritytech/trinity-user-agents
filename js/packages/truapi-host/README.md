@@ -68,9 +68,9 @@ refresh it.
   changes a chain, the network, the TLD or the generation, and applies once
   the runtime is built again. `generation` changes when the stack restarts its
   chains: key cached chain data by it. `mismatches` lists each chain whose last
-  connection reached one with a different genesis hash from the descriptor's,
-  and People's `NetworkSuffix` when a signing host's allowance work found it
-  is not the descriptor's `tld`. A pairing host never lists the suffix.
+  connection reached one with a different genesis hash from the descriptor's.
+  On a signing host it also lists People's `NetworkSuffix` when that is not the
+  descriptor's `tld`.
 
 After a stack's chains restart from genesis, the same endpoints serve new
 chains with new genesis hashes. To catch that, the core asks every chain

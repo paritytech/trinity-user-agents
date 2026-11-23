@@ -287,7 +287,7 @@ impl StackSource {
 	}
 
 	/// People's suffix as last read, when it is not the running copy's `tld`.
-	fn wrong_suffix(&self) -> Option<StackMismatch> {
+	pub fn wrong_suffix(&self) -> Option<StackMismatch> {
 		let tld = self.running.stack.tld();
 		let answered =
 			self.people_suffix.as_deref().filter(|answered| *answered != tld.as_bytes())?;
