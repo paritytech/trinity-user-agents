@@ -38,7 +38,7 @@ fn raw_request(product_id: &str) -> HostSignRawRequest {
 fn a_granted_product_signs_raw_without_a_prompt() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 	grant_auto_signing(&runtime);
@@ -56,9 +56,9 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 			.is_empty(),
 		"the grant waives the prompt",
 	);
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let keypair =
-		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
+	let keypair = RootEntropy::new(ENTROPY)
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(
@@ -74,7 +74,7 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 fn an_ungranted_product_still_prompts_for_raw_signing() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 
@@ -104,7 +104,7 @@ fn a_grant_does_not_cover_the_unwatermarked_raw_signing_api() {
 	// transaction signatures, so a standing grant must not waive its prompt.
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime(services, activation);
 	grant_auto_signing(&runtime);
@@ -136,7 +136,7 @@ fn a_blessed_product_signs_its_own_account_without_a_grant() {
 	for (product_id, blessed) in [("dim2.paseo", true), ("app.dim2.paseo", false)] {
 		let platform = granting_platform();
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("activation succeeds");
 		let runtime = product_runtime_for(services, activation, product_id);
 
@@ -159,7 +159,7 @@ fn a_blessed_product_signs_its_own_account_without_a_grant() {
 fn a_blessed_vrf_signature_skips_the_prompt_only_locally() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime_for(services, activation.clone(), "dim2.paseo");
 	let request = vrf_request("dim2.paseo");
@@ -200,7 +200,7 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally() {
 fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime(services, activation.clone()));
 
@@ -235,9 +235,9 @@ fn kept_key_in_its_own_ring(
 	resolution_gate: Option<futures::channel::oneshot::Receiver<()>>,
 ) -> Arc<SigningHost> {
 	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
-	let entropy =
-		derive_ring_vrf_entropy(&ENTROPY, &product.product_id, &v01::DerivationIndex::Index(0))
-			.unwrap();
+	let entropy = RootEntropy::new(ENTROPY)
+		.derive_ring_vrf_entropy(&product.product_id, &v01::DerivationIndex::Index(0))
+		.unwrap();
 	let member = futures::executor::block_on(crate::runtime::vrf::load())
 		.expect("verifiable is linked")
 		.member(&entropy)
@@ -257,7 +257,7 @@ fn kept_key_in_its_own_ring(
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
 	let (services, activation) = signing_runtime_with_ring_resolver(platform, resolver);
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime(services, activation.clone()));
 	let session = activation.accounts().current_session().expect("an active wallet");
@@ -307,8 +307,9 @@ fn a_kept_key_proves_with_its_own_alias() {
 	))
 	.expect("the kept key proves");
 
-	let entropy =
-		derive_ring_vrf_entropy(&ENTROPY, &product_id, &v01::DerivationIndex::Index(0)).unwrap();
+	let entropy = RootEntropy::new(ENTROPY)
+		.derive_ring_vrf_entropy(&product_id, &v01::DerivationIndex::Index(0))
+		.unwrap();
 	let vrf =
 		futures::executor::block_on(crate::runtime::vrf::load()).expect("verifiable is linked");
 	let alias =
@@ -353,7 +354,7 @@ fn a_kept_key_proof_finished_after_a_product_reset_is_refused() {
 #[test]
 fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
 	let (services, activation) = signing_runtime_with_platform(granting_platform());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime(services, activation.clone()));
 	let session = activation.accounts().current_session().expect("an active wallet");
@@ -397,10 +398,10 @@ fn identity_raw_request(identity: &schnorrkel::Keypair) -> HostSignRawWithLegacy
 fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_prompt() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	let runtime = product_runtime_for(services, activation, "dim2.paseo");
-	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+	let identity = RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 
 	let HostSignRawWithLegacyAccountResponse::V1(response) = futures::executor::block_on(
 		runtime
@@ -425,10 +426,11 @@ fn other_raw_signatures_with_the_users_account_still_ask() {
 	for (product_id, watermarked) in [("dim2.paseo", false), ("myapp.dot", true)] {
 		let platform = granting_platform();
 		let (services, activation) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		futures::executor::block_on(activation.activate_local_session(RootEntropy::new(ENTROPY)))
 			.expect("activation succeeds");
 		let runtime = product_runtime_for(services, activation, product_id);
-		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+		let identity =
+			RootEntropy::new(ENTROPY).derive_identity_keypair(TEST_NETWORK_SUFFIX).unwrap();
 		let request = identity_raw_request(&identity);
 		let cx = CallContext::default();
 
