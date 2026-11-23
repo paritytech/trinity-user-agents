@@ -4,10 +4,11 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
 	durable::{DurableTxId, RegistrationError},
+	host_logic::root_entropy::RootEntropy,
 	nft::{
 		HandoffRequest, ImportRequest, NftLedger, PurseId, PurseTag, StartImportError,
-		TransferProgress, item_keys_from_entropy,
-		keys::{ImportedItemKey, ItemIndex, item_secrets_from_entropy},
+		TransferProgress,
+		keys::{ImportedItemKey, ItemIndex},
 		testing::{
 			TEST_ENTROPY, TEST_INSTALLATION, allocate_held_items, fail_transfer,
 			stored_transfer_params, test_ledger,
@@ -32,7 +33,7 @@ fn handed_off() -> HandedOff {
 	block_on(ledger.create_purse("cheques".to_owned(), PurseTag::default())).unwrap();
 	let keys = allocate_held_items(&ledger, PURSE, 2);
 	let request = HandoffRequest { from: PURSE, keys: keys.iter().copied().collect(), tag: tag() };
-	block_on(ledger.hand_off(request, |_| Ok::<_, ()>(()))).unwrap();
+	block_on(ledger.hand_off(request, |_| Ok::<_, ()>(()), |_, _| Ok(()))).unwrap();
 	HandedOff { _dir: dir, db, ledger, keys }
 }
 
@@ -61,7 +62,7 @@ fn deposit_cheque(ledger: &NftLedger) -> Result<(), StartImportError> {
 			index: ItemIndex(index),
 		})
 		.collect();
-	let secrets = item_secrets_from_entropy(&TEST_ENTROPY, &slots).unwrap();
+	let secrets = RootEntropy::new(TEST_ENTROPY).item_secrets(&slots).unwrap();
 	let keys = secrets.into_iter().map(|secret| ImportedItemKey::from_secret(secret).unwrap());
 	let operation = OperationKey::new(b"depositor", [8; 32]);
 	let request = ImportRequest { operation, into: PURSE, keys: keys.collect() };
@@ -84,7 +85,7 @@ fn a_reclaim_moves_each_handed_off_key_into_a_fresh_key_of_its_purse() {
 	let stored = stored_transfer_params(&handed_off.db);
 	let slot =
 		|index| ItemSlot { purse: PURSE, installation: TEST_INSTALLATION, index: ItemIndex(index) };
-	let fresh = item_keys_from_entropy(&TEST_ENTROPY, &[slot(2), slot(3)]).unwrap();
+	let fresh = RootEntropy::new(TEST_ENTROPY).item_keys(&[slot(2), slot(3)]).unwrap();
 	let expected: Vec<_> = (0..2)
 		.map(|index| TransferParams {
 			source: handed_off.keys[index],

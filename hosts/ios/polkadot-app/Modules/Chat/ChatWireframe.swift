@@ -152,20 +152,17 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
         controller.navigationController?.popViewController(animated: true)
     }
 
-    func showCancelChatRequestConfirmation(
+    func showChatRequestConfirmation(
         from view: ControllerBackedProtocol?,
-        username: String,
-        delegate: ChatMoreActionsDelegate
+        viewModel: ChatRequestConfirmationViewModel,
+        onConfirm: @escaping () -> Void
     ) {
-        let cancelRequestView = CancelChatRequestViewFactory.createView(
-            username: username,
-            onConfirm: {
-                delegate.didConfirmCancelChatRequest()
-            },
-            onKeep: {}
+        let confirmationView = ChatRequestConfirmationViewFactory.createView(
+            viewModel: viewModel,
+            onConfirm: onConfirm
         )
 
-        view?.controller.present(cancelRequestView, animated: true)
+        view?.controller.present(confirmationView, animated: true)
     }
 
     func showDocument(at url: URL) {

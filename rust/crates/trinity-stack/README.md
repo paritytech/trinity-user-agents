@@ -44,6 +44,35 @@ let chains = &accepted.stack.descriptor.chains;
 fails or breaks a rule, and reports a new `generation` (drop cached chain data), `stale` (past `validUntil`) and
 `expired` (past `expiresAt`).
 
+## Known stacks
+
+The crate lists the links of the Trinity stacks below. A link with a key is a signed stack; host builds bundle only
+signed stacks, from their copies in the repository's `stacks/`. `known_stack` returns one's pointer by name, and
+`known_stack_links` lists every name and link:
+
+```rust
+let pointer = trinity_stack::known_stack("previewnet").expect("unknown stack previewnet");
+assert_eq!(pointer.url().host_str(), Some("previewnet.substrate.dev"));
+```
+
+| Name | Stack | Signed | Descriptor |
+| --- | --- | --- | --- |
+| `paseo-next-v2` | Paseo Next v2 | yes | <https://stack-paseo-next.parity-testnet.parity.io/.well-known/trinity-stack.json> |
+| `pcf-devnet` | PCF Devnet | yes | <https://stack.api.polkadotcommunity.foundation/.well-known/trinity-stack.json> |
+| `polkadot` | Polkadot | yes | <https://stack.api.pcf.network/.well-known/trinity-stack.json> |
+| `previewnet` | Previewnet | yes | <https://previewnet.substrate.dev/.well-known/trinity-stack.json> |
+| `westend` | Westend | no | <https://stack-westend.parity-testnet.parity.io/.well-known/trinity-stack.json> |
+
+To add a stack to the list, open a pull request that:
+
+1. adds its name and link to
+   [`known-stacks.json`](https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/trinity-stack/known-stacks.json);
+2. adds its row to the table above;
+3. for a signed stack, writes its copies in `stacks/` with `scripts/update-stacks.sh`. An unsigned stack is only the
+   JSON entry and the table row.
+
+Users get the stack with the next release of `@parity/trinity-stack` and the crate.
+
 ## What else is here
 
 - `Document::parse` and `open` read a document as served and apply a pointer's rules: a pointer with a key accepts only
@@ -59,8 +88,8 @@ fails or breaks a rule, and reports a new `generation` (drop cached chain data),
 - `StackReader` refreshes each stack's copy by a `Refresh` policy: it serves the copy it has, decides when to fetch, and
   takes the answer, so a descriptor is never a live dependency.
 - `Descriptor::web_url` gives the URL a dotNS name opens at on the stack's `web-gateway`.
-- `Chain::genesis`, `Descriptor::service` and `Descriptor::dotns_address` return a chain's genesis hash, a service by kind
-  and a dotNS address as bytes. They decode hex that validation already checked, and panic only on a descriptor that
+- `Chain::genesis`, `Descriptor::service`, `Descriptor::dotns_address` and `Descriptor::contract_address` return a
+  chain's genesis hash, a service by kind, a dotNS address and a named contract's address as bytes. They decode hex that validation already checked, and panic only on a descriptor that
   skipped validation.
 
 Every error is one rule of the RFC, and `Error::code` is its stable name.

@@ -383,6 +383,11 @@ fn document_cases() -> Vec<DocumentCase> {
 			"duplicate-chain-role",
 		),
 		plain(
+			"duplicate-genesis-hash",
+			with(|value| value["chains"][2]["genesisHash"] = json!(ASSET_HUB)),
+			"duplicate-genesis-hash",
+		),
+		plain(
 			"duplicate-service-kind",
 			with(|value| value["services"][1]["kind"] = json!("dub")),
 			"duplicate-service-kind",

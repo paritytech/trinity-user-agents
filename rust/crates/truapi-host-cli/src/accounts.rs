@@ -11,9 +11,9 @@ use bip39::Mnemonic;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
-use truapi::host_logic::product_account::{
-	ProductAccountError, derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-	derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
+use truapi::host_logic::{
+	product_account::{ProductAccountError, product_public_key_to_address},
+	root_entropy::RootEntropy,
 };
 
 use crate::{attestation, network::Stack};
@@ -40,11 +40,19 @@ pub fn has_account_store(base_path: &std::path::Path) -> bool {
 const IMPORTED_ACCOUNT_NAME: &str = "imported";
 
 /// Signer material selected for a signing-host session.
-#[derive(Clone, derive_more::Debug)]
+#[derive(derive_more::Debug)]
 pub struct ResolvedSigner {
-	/// BIP-39 entropy backing the selected signer account.
+	/// BIP-39 entropy backing the selected signer account. Activating the
+	/// session hands it to the runtime.
 	#[debug("\"<redacted>\"")]
-	pub entropy: Vec<u8>,
+	pub entropy: RootEntropy,
+	/// The account the entropy belongs to.
+	pub account: SignerAccount,
+}
+
+/// What a session keeps about its signer once the runtime holds the entropy.
+#[derive(Debug)]
+pub struct SignerAccount {
 	/// Stored account name when this came from `accounts.json`.
 	pub account_name: Option<String>,
 	/// Lite username attested for the signer, when managed by the CLI.
@@ -59,8 +67,6 @@ pub struct ResolvedSigner {
 pub struct ImportedSigner {
 	#[debug("\"<redacted>\"")]
 	mnemonic: String,
-	#[debug("\"<redacted>\"")]
-	entropy: Vec<u8>,
 	#[zeroize(skip)]
 	username: Option<String>,
 	#[zeroize(skip)]
@@ -84,9 +90,9 @@ impl ImportedSigner {
 		&self.session_name
 	}
 
-	/// Borrow the already-derived entropy for off-side runtime activation.
-	pub fn entropy(&self) -> &[u8] {
-		&self.entropy
+	/// The entropy the runtime is activated with, derived from the mnemonic.
+	pub fn root_entropy(&self) -> Result<RootEntropy> {
+		root_entropy_from_mnemonic(&self.mnemonic)
 	}
 }
 
@@ -346,13 +352,10 @@ pub fn remove_managed_accounts(
 
 pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedSigner> {
 	if let Some(mnemonic) = config.mnemonic {
-		let entropy = mnemonic_entropy(&mnemonic)?;
-		return Ok(ResolvedSigner {
-			entropy,
-			account_name: None,
-			lite_username: None,
-			auto_managed: false,
-		});
+		let entropy = root_entropy_from_mnemonic(&mnemonic)?;
+		let account =
+			SignerAccount { account_name: None, lite_username: None, auto_managed: false };
+		return Ok(ResolvedSigner { entropy, account });
 	}
 
 	let _lock = AccountStoreLock::acquire(config.base_path)?;
@@ -438,7 +441,6 @@ pub async fn inspect_imported_signer(network: &Stack, mnemonic: &str) -> Result<
 	let session_name = imported_session_name(username.as_deref(), &identity.public_key);
 	Ok(ImportedSigner {
 		mnemonic,
-		entropy: identity.entropy,
 		username,
 		session_name,
 		public_key: identity.public_key,
@@ -453,7 +455,7 @@ pub fn persist_imported_signer(
 	base_path: &Path,
 	network: &Stack,
 	imported: &ImportedSigner,
-) -> Result<ResolvedSigner> {
+) -> Result<SignerAccount> {
 	let network_id = network.namespace();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let mut store = AccountStore::load(base_path)?;
@@ -486,7 +488,7 @@ pub fn persist_imported_signer(
 	};
 	store.upsert(record.clone());
 	store.save()?;
-	resolved_from_record(record, false)
+	Ok(SignerAccount::from_record(record, false))
 }
 
 /// Resolve an already-provisioned signer from local state without network
@@ -624,7 +626,7 @@ async fn attest_record(
 	record: &AccountRecord,
 	reserved_username: Option<&str>,
 ) -> Result<String> {
-	let entropy = mnemonic_entropy(&record.mnemonic)?;
+	let entropy = root_entropy_from_mnemonic(&record.mnemonic)?;
 	let lite_username = attestation::attest(&attest_config(
 		network,
 		entropy,
@@ -644,7 +646,7 @@ async fn attest_record(
 
 fn attest_config<'a>(
 	network: &'a Stack,
-	entropy: Vec<u8>,
+	entropy: RootEntropy,
 	username_base: String,
 	reserved_username: Option<&str>,
 ) -> attestation::AttestConfig<'a> {
@@ -667,22 +669,22 @@ fn resolved_lite_username(username: &str) -> bool {
 ///
 /// Both are always offered; membership is settled on chain, not from local state.
 pub fn collection_candidates(
-	entropy: &[u8],
+	entropy: &RootEntropy,
 	network_suffix: &str,
 ) -> Vec<alloc::CollectionCandidate> {
 	vec![
 		alloc::CollectionCandidate {
 			collection: PersonhoodCollection::People,
-			entropy: derive_full_person_ring_vrf_entropy(entropy, network_suffix),
+			entropy: entropy.derive_full_person_ring_vrf_entropy(network_suffix),
 		},
 		alloc::CollectionCandidate {
 			collection: PersonhoodCollection::LitePeople,
-			entropy: derive_lite_person_ring_vrf_entropy(entropy, network_suffix),
+			entropy: entropy.derive_lite_person_ring_vrf_entropy(network_suffix),
 		},
 	]
 }
 
-async fn wait_for_ring_membership(network: &Stack, entropy: &[u8]) -> Result<()> {
+async fn wait_for_ring_membership(network: &Stack, entropy: &RootEntropy) -> Result<()> {
 	const MAX_ATTEMPTS: usize = 30;
 	const SLEEP: Duration = Duration::from_secs(4);
 
@@ -776,9 +778,15 @@ async fn sleep_ring_poll(attempt: usize, max_attempts: usize, sleep: Duration) {
 }
 
 fn resolved_from_record(record: AccountRecord, auto_managed: bool) -> Result<ResolvedSigner> {
-	let entropy = mnemonic_entropy(&record.mnemonic)?;
-	let lite_username = (!record.lite_username.is_empty()).then_some(record.lite_username);
-	Ok(ResolvedSigner { entropy, account_name: Some(record.name), lite_username, auto_managed })
+	let entropy = root_entropy_from_mnemonic(&record.mnemonic)?;
+	Ok(ResolvedSigner { entropy, account: SignerAccount::from_record(record, auto_managed) })
+}
+
+impl SignerAccount {
+	fn from_record(record: AccountRecord, auto_managed: bool) -> Self {
+		let lite_username = (!record.lite_username.is_empty()).then_some(record.lite_username);
+		Self { account_name: Some(record.name), lite_username, auto_managed }
+	}
 }
 
 fn imported_session_name(username: Option<&str>, public_key: &[u8; 32]) -> String {
@@ -801,10 +809,9 @@ pub async fn attest_mnemonic(
 ) -> Result<AttestedIdentity> {
 	let username_base = lite_username_base(username_base)?;
 	let identity = identity_from_mnemonic(mnemonic, network.tld())?;
-	let lite_username =
-		attestation::attest(&attest_config(network, identity.entropy.clone(), username_base, None))
-			.await?;
-	wait_for_ring_membership(network, &identity.entropy).await?;
+	let config = attest_config(network, identity.entropy, username_base, None);
+	let lite_username = attestation::attest(&config).await?;
+	wait_for_ring_membership(network, &config.entropy).await?;
 	Ok(AttestedIdentity {
 		address: identity.address,
 		public_key: identity.public_key,
@@ -813,23 +820,24 @@ pub async fn attest_mnemonic(
 }
 
 struct SignerIdentity {
-	entropy: Vec<u8>,
+	entropy: RootEntropy,
 	public_key: [u8; 32],
 	address: String,
 }
 
 fn identity_from_mnemonic(mnemonic: &str, network_suffix: &str) -> Result<SignerIdentity> {
-	let entropy = mnemonic_entropy(mnemonic)?;
-	let candidate =
-		derive_identity_keypair(&entropy, network_suffix).map_err(IdentityDerivationError::from)?;
+	let entropy = root_entropy_from_mnemonic(mnemonic)?;
+	let candidate = entropy
+		.derive_identity_keypair(network_suffix)
+		.map_err(IdentityDerivationError::from)?;
 	let public_key = candidate.public.to_bytes();
 	Ok(SignerIdentity { entropy, public_key, address: product_public_key_to_address(public_key) })
 }
 
-fn mnemonic_entropy(mnemonic: &str) -> Result<Vec<u8>> {
-	Ok(Mnemonic::parse(mnemonic.trim())
-		.context("invalid BIP-39 mnemonic")?
-		.to_entropy())
+/// The root entropy of a BIP-39 `mnemonic`.
+pub fn root_entropy_from_mnemonic(mnemonic: &str) -> Result<RootEntropy> {
+	let mnemonic = Mnemonic::parse(mnemonic.trim()).context("invalid BIP-39 mnemonic")?;
+	Ok(RootEntropy::new(mnemonic.to_entropy()))
 }
 
 /// The two rejections are reported apart because they suggest opposite fixes.
