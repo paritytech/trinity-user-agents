@@ -17,7 +17,9 @@ use super::{
 };
 use crate::{
 	Spawner,
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
+	chain_runtime::{
+		ChainRuntime, GenesisHashes, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind,
+	},
 	host_logic::statement_store::{
 		MAX_MATCH_ALL_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD, StatementStoreApi,
 		StatementWatchError, TopicFilter, hex_topic,
@@ -426,7 +428,10 @@ fn a_subscription_connection_to_the_people_chain_is_handed_out() {
 	let client = block_on(statement_store.client("test"));
 
 	assert!(client.is_ok(), "{:?}", client.err());
-	assert_eq!(heard.heard(), vec![(PEOPLE_GENESIS, PEOPLE_GENESIS)]);
+	assert_eq!(
+		heard.heard(),
+		vec![GenesisHashes { named: PEOPLE_GENESIS, answered: PEOPLE_GENESIS }]
+	);
 }
 
 /// Statement subscriptions run on connections the store opens itself, apart
@@ -456,7 +461,7 @@ fn a_subscription_connection_to_a_wiped_people_chain_is_refused() {
 		(kind, heard.heard(), asked, pooled.connects()),
 		(
 			Some(RuntimeFailureKind::HostFailure),
-			vec![(PEOPLE_GENESIS, WIPED_PEOPLE)],
+			vec![GenesisHashes { named: PEOPLE_GENESIS, answered: WIPED_PEOPLE }],
 			vec![json!("chainSpec_v1_genesisHash")],
 			0,
 		)

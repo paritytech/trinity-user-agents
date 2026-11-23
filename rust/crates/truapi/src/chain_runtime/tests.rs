@@ -2735,7 +2735,7 @@ fn a_connection_to_a_chain_with_a_different_genesis_hash_is_refused() {
 				encode_hex(&named)
 			),
 			Some(named.as_slice()),
-			vec![(named, answered); 2],
+			vec![GenesisHashes { named, answered }; 2],
 			2,
 		)
 	);
@@ -2758,7 +2758,7 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 	assert!(first.is_ok() && second.is_ok(), "the chain is usable");
 	assert_eq!(
 		(heard.heard(), provider.connect_calls.load(Ordering::SeqCst)),
-		(vec![(named, named)], 1)
+		(vec![GenesisHashes { named, answered: named }], 1)
 	);
 }
 
@@ -2804,7 +2804,7 @@ fn a_products_connection_is_checked_like_the_cores() {
 	let product = futures::executor::block_on(runtime.for_product(1).rpc_client("test", &named));
 
 	assert!(product.is_err(), "the product is not given the wiped chain");
-	assert_eq!(heard.heard(), vec![(named, answered)]);
+	assert_eq!(heard.heard(), vec![GenesisHashes { named, answered }]);
 }
 
 /// A chain that cannot be reached is not a wrong chain. Nothing is said about
@@ -2923,7 +2923,7 @@ fn a_halted_chain_is_asked_for_its_genesis_hash_again() {
 
 	let failure = connect_through_halts(node_halted_for(2, named), 2, &heard);
 
-	assert_eq!((failure, heard.heard()), (None, vec![(named, named)]));
+	assert_eq!((failure, heard.heard()), (None, vec![GenesisHashes { named, answered: named }]));
 }
 
 /// A chain that stays halted gave no hash, so it is out of reach rather than

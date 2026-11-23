@@ -15,6 +15,7 @@ use std::time::Duration;
 use web_time::Duration;
 
 use crate::{
+	chain_runtime::{GenesisCheck, GenesisHashes},
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	host_logic::{
 		session::{SessionInfo, SsoSessionInfo},
@@ -421,20 +422,19 @@ pub fn test_descriptor_chain(
 	chain
 }
 
-/// What a genesis check heard, in order: the hash each connection was
-/// opened for, and the hash its chain gave.
+/// What a genesis check heard, in order.
 #[derive(Default)]
-pub struct HeardAnswers(Mutex<Vec<([u8; 32], [u8; 32])>>);
+pub struct HeardAnswers(Mutex<Vec<GenesisHashes>>);
 
-impl crate::chain_runtime::GenesisCheck for HeardAnswers {
-	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
-		self.0.lock().expect("heard answers mutex poisoned").push((named, answered));
+impl GenesisCheck for HeardAnswers {
+	fn chain_answered(&self, hashes: GenesisHashes) {
+		self.0.lock().expect("heard answers mutex poisoned").push(hashes);
 	}
 }
 
 impl HeardAnswers {
 	/// Every answer heard so far.
-	pub fn heard(&self) -> Vec<([u8; 32], [u8; 32])> {
+	pub fn heard(&self) -> Vec<GenesisHashes> {
 		self.0.lock().expect("heard answers mutex poisoned").clone()
 	}
 }

@@ -215,7 +215,9 @@ fn start_loaded(
 fn people_answers(refresh: &StackRefresh, answered: [u8; 32]) {
 	let stack = refresh.stack();
 	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
-	checks.genesis_check().chain_answered(TEST_STACK_PEOPLE, answered);
+	checks
+		.genesis_check()
+		.chain_answered(GenesisHashes { named: TEST_STACK_PEOPLE, answered });
 }
 
 fn people_gave(answered: [u8; 32]) -> Vec<StackMismatch> {

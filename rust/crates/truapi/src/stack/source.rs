@@ -13,6 +13,7 @@ use trinity_stack::{
 };
 
 use super::{ReplaceCheck, Stack, StackError};
+use crate::chain_runtime::GenesisHashes;
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
@@ -319,13 +320,14 @@ impl StackSource {
 		self.wrong_suffix() != listed
 	}
 
-	/// Records the genesis hash a connection opened for `named` got.
+	/// Records the genesis hash a new connection's chain gave.
 	///
 	/// Returns whether that changed [`Self::status`]. A chain the running
 	/// copy does not name changes nothing. While a chain's last answer is
 	/// wrong and no newer copy waits for the next start,
 	/// [`Self::next_fetch_in`] counts to five minutes instead of an hour.
-	pub fn chain_answered(&mut self, named: [u8; 32], answered: [u8; 32]) -> bool {
+	pub fn chain_answered(&mut self, hashes: GenesisHashes) -> bool {
+		let GenesisHashes { named, answered } = hashes;
 		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;
 		}

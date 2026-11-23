@@ -24,7 +24,7 @@ use super::{
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
-	chain_runtime::{GenesisCheck, encode_hex},
+	chain_runtime::{GenesisCheck, GenesisHashes, encode_hex},
 	time::{Clock, Timer},
 	wake::WakeSignal,
 };
@@ -124,8 +124,9 @@ impl core::fmt::Debug for StackChecks {
 }
 
 impl GenesisCheck for Shared {
-	fn chain_answered(&self, named: [u8; 32], answered: [u8; 32]) {
-		let changed = self.source().chain_answered(named, answered);
+	fn chain_answered(&self, hashes: GenesisHashes) {
+		let GenesisHashes { named, answered } = hashes;
+		let changed = self.source().chain_answered(hashes);
 		if !changed {
 			return;
 		}
