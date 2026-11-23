@@ -1,11 +1,9 @@
 //! PGAS claims through the durable engine: each claim mints one slot of PGAS
 //! into an account, a destination has at most one active claim, and only the
 //! identity that registered a claim builds it. [`with_pgas_claims`] serves
-//! the domain, and [`PgasClaims`] registers claims, joins a destination's
-//! active one, and waits for them.
+//! the domain, and [`PgasClaims`] registers claims.
 
 mod builder;
-mod delivery;
 #[cfg(test)]
 mod live;
 mod params;
@@ -18,9 +16,6 @@ use std::sync::Arc;
 use subxt::utils::{AccountId32, H256};
 
 pub use builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder};
-pub use delivery::UndeliveredClaim;
-#[cfg(test)]
-pub use testing::{ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, destination, transient};
 
 use self::{params::ClaimParams, policy::PgasClaimPolicy};
 use crate::{
@@ -29,7 +24,6 @@ use crate::{
 		DurableTxId, DurableTxState, DurableTxStatus, GroupId, RegistrationError, Unobservable,
 	},
 	store::DbError,
-	time::Timer,
 	unix_time::current_unix_secs,
 };
 
@@ -76,22 +70,19 @@ pub enum PgasClaimError {
 #[derive(Clone)]
 pub struct PgasClaims {
 	engine: Arc<DurableTxEngine>,
-	/// Times out a caller's wait for its claim.
-	timer: Arc<dyn Timer>,
 }
 
 impl PgasClaims {
-	/// Claims registered with `engine`, which must serve [`with_pgas_claims`],
-	/// whose callers stop waiting on `timer`.
-	pub fn new(engine: Arc<DurableTxEngine>, timer: Arc<dyn Timer>) -> Self {
-		Self { engine, timer }
+	/// Claims registered with `engine`, which must serve [`with_pgas_claims`].
+	pub fn new(engine: Arc<DurableTxEngine>) -> Self {
+		Self { engine }
 	}
 
 	/// Registers a claim of one slot into `dest`, built later as `identity`,
 	/// and returns its ledger id. Refuses with
 	/// [`PgasClaimError::AlreadyClaiming`] when `dest` already has an active
 	/// claim, checked in the registration write.
-	async fn claim(
+	pub async fn claim(
 		&self,
 		dest: AccountId32,
 		identity: ClaimIdentity,

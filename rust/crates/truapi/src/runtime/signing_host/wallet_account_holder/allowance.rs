@@ -11,7 +11,7 @@ use crate::{
 	platform::ProductId,
 	runtime::{
 		allowances::current_unix_secs,
-		authority::{AccountHolder, AccountInvocation, AuthorityError, AuthoritySession},
+		authority::{AccountHolder, AuthorityError, AuthoritySession},
 		statement_allowance::StatementAllowanceError,
 		statement_store_rpc::StatementStoreRpcClientError,
 	},
@@ -44,22 +44,6 @@ pub enum AllowanceAllocationError {
 		/// Chain runtime failure.
 		#[source]
 		source: RuntimeFailure,
-	},
-	/// The durable ledger did not register the PGAS claim.
-	#[cfg(not(target_arch = "wasm32"))]
-	#[error("PGAS claim not registered: {0}")]
-	PgasClaimNotRegistered(
-		#[from] crate::durable::RegistrationError<crate::pgas_claims::PgasClaimError>,
-	),
-	/// The request stopped waiting before its PGAS claim reached a block.
-	#[cfg(not(target_arch = "wasm32"))]
-	#[error("PGAS claim {claim:?} not delivered: {reason}")]
-	PgasClaimNotDelivered {
-		/// The claim's ledger id.
-		claim: crate::durable::DurableTxId,
-		/// Why the request stopped waiting.
-		#[source]
-		reason: crate::pgas_claims::UndeliveredClaim,
 	},
 	/// The signing account is not in any personhood ring.
 	#[error("signing account is not a personhood ring member; cannot grant {resource} allowance")]
@@ -364,46 +348,91 @@ impl WalletAccountHolder {
 	/// there is no key to hand back.
 	pub async fn allocate_smart_contract_allowance(
 		&self,
-		invocation: &AccountInvocation<'_>,
+		session: &AuthoritySession,
 		product_id: &ProductId,
 		derivation_index: api::DerivationIndex,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<(), AllowanceAllocationError> {
-		let session = invocation.session;
-		let target = self.product_account_public_key(session, product_id, derivation_index)?;
-		let asset_hub = self.pgas_asset_hub().await?;
+		use crate::runtime::statement_allowance::{
+			self, ChainClient, collection::PersonhoodCollection, find_including_rings, pgas,
+		};
+
+		// PGAS credits the product account the caller named.
+		let target = self.with_keys(session, |keys| {
+			keys.product_keypair(&api::ProductAccountId {
+				dot_ns_identifier: product_id.clone(),
+				derivation_index,
+			})
+			.map(|key| key.public.to_bytes())
+		})?;
+
+		let asset_hub_genesis = self.services.asset_hub_chain_genesis_hash();
+		let asset_hub_client = ChainClient::new(
+			statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(
+				self.services
+					.chain
+					.rpc_client("PGAS allowance", &asset_hub_genesis)
+					.await
+					.map_err(|source| AllowanceAllocationError::ChainRpcClient {
+						context: "Asset Hub PGAS client",
+						source,
+					})?,
+			)),
+			asset_hub_genesis,
+		);
+		let asset_hub = self.services.chain_context.get(&asset_hub_client).await?;
+
 		// Reusing a funded account preserves the person's daily claim slots.
 		if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
-			asset_hub.holds_a_full_claim(&target).await?
+			pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target)
+				.await?
 		{
 			debug!(%product_id, "PGAS allowance already funded; leaving it alone");
 			return Ok(());
 		}
-		let signer = self.personhood_signer(session).await?;
-		// Both claim paths need the person in a ring, so the check runs first either way.
-		let proof = self.claim_proof_context(&asset_hub, &signer).await?;
-		self.require_current_session(session)?;
-		#[cfg(not(target_arch = "wasm32"))]
-		if let Some(claims) = self.services.pgas_claims() {
-			let request = super::pgas_delivery::DurablePgasClaim::new(session, target);
-			return request.deliver(&claims, invocation.call).await;
-		}
-		let claim = self.pgas_claim(&asset_hub, &proof, &signer, &target);
-		self.claim_pgas_directly(product_id, claim).await
-	}
+		let network_suffix =
+			statement_allowance::slot::read_network_suffix(asset_hub_client.rpc()).await?;
 
-	/// The public key of the product account PGAS credits: the account of
-	/// `product_id` that `derivation_index` selects.
-	fn product_account_public_key(
-		&self,
-		session: &AuthoritySession,
-		product_id: &ProductId,
-		derivation_index: api::DerivationIndex,
-	) -> Result<[u8; 32], AuthorityError> {
-		let account =
-			api::ProductAccountId { dot_ns_identifier: product_id.clone(), derivation_index };
-		self.with_keys(session, |keys| {
-			keys.product_keypair(&account).map(|key| key.public.to_bytes())
+		let people_client =
+			self.services.statement_store.chain_client("PGAS allowance ring").await?;
+		let people_rpc = people_client.rpc();
+		let people = self.services.chain_context.get(&people_client).await?;
+
+		let signer = self.personhood_signer(session).await?;
+		// A PGAS claim uses the strongest available membership.
+		let membership = find_including_rings(
+			people_rpc,
+			&people.metadata,
+			&signer,
+			&PersonhoodCollection::ALL,
+			u32::MAX,
+		)
+		.await?
+		.into_iter()
+		.next()
+		.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
+
+		self.require_current_session(session)?;
+		let outcome = pgas::claim_pgas(pgas::PgasClaim {
+			asset_hub_rpc: asset_hub_client.rpc(),
+			asset_hub_metadata: &asset_hub.metadata,
+			asset_hub_target: asset_hub_client.extrinsic_target(&self.services.extrinsics),
+			people_rpc,
+			people_metadata: &people.metadata,
+			signer: &signer,
+			network_suffix: &network_suffix,
+			target: &target,
+			ring: &membership,
 		})
+		.await?;
+		debug!(
+			%product_id,
+			day = outcome.day,
+			slot_index = outcome.slot_index,
+			ring_index = outcome.ring_index,
+			block = %outcome.block_hash,
+			"claimed PGAS allowance"
+		);
+		Ok(())
 	}
 }

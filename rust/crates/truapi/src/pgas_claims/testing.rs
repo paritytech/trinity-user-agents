@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use super::{
 	PgasClaims,
 	builder::{ClaimBuildError, ClaimIdentity, PgasClaimBuilder},
-	destination_group, pgas_domain,
+	pgas_domain,
 	policy::PgasClaimPolicy,
 };
 use crate::{
@@ -22,7 +22,6 @@ use crate::{
 	},
 	runtime::statement_allowance::pgas::{BuiltClaim, ClaimSlot},
 	test_support::wait_until,
-	time::ManualTimer,
 };
 
 /// The day every fake claim is built for.
@@ -114,7 +113,6 @@ pub struct ClaimsHarness {
 	_dir: TempDir,
 	chain: Arc<FakeChain>,
 	engine: Arc<DurableTxEngine>,
-	delivery_timer: Arc<ManualTimer>,
 	claims: PgasClaims,
 }
 
@@ -130,9 +128,8 @@ impl ClaimsHarness {
 			policy,
 		);
 		let (dir, engine, _timer) = engine_with(&chain, registry);
-		let delivery_timer = Arc::new(ManualTimer::default());
-		let claims = PgasClaims::new(engine.clone(), delivery_timer.clone());
-		Self { _dir: dir, chain, engine, delivery_timer, claims }
+		let claims = PgasClaims::new(engine.clone());
+		Self { _dir: dir, chain, engine, claims }
 	}
 
 	/// The claims under test.
@@ -145,23 +142,10 @@ impl ClaimsHarness {
 		&self.engine
 	}
 
-	/// The clock callers time out their wait for a claim on, apart from the
-	/// engine's.
-	pub fn delivery_timer(&self) -> &ManualTimer {
-		&self.delivery_timer
-	}
-
 	/// Registers a claim into `dest` as [`TEST_IDENTITY`], which must be
 	/// accepted.
 	pub fn claim_into(&self, dest: AccountId32) -> DurableTxId {
 		futures::executor::block_on(self.claims.claim(dest, TEST_IDENTITY)).unwrap()
-	}
-
-	/// Every claim into `dest`, in registration order.
-	pub fn claims_into(&self, dest: AccountId32) -> Vec<DurableTxId> {
-		let group = destination_group(&dest);
-		let claims = futures::executor::block_on(self.engine.group(&pgas_domain(), &group));
-		claims.unwrap().into_iter().map(|claim| claim.id).collect()
 	}
 
 	/// Where `id` stands.

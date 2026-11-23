@@ -7,9 +7,10 @@
 //! slots for the day. `TRUAPI_LIVE_PEOPLE_WS`, `LIVE_ASSET_HUB_WS` and
 //! `LIVE_ASSET_HUB_GENESIS` point it at other nodes.
 
+use core::time::Duration;
 use std::{collections::BTreeSet, sync::Arc};
 
-use futures::future::pending;
+use futures::{StreamExt, future::ready};
 use subxt::utils::{AccountId32, H256};
 
 use super::{
@@ -19,7 +20,7 @@ use super::{
 use crate::{
 	chain::{ExtrinsicService, FixedExtensionVersions, live_asset_hub, live_asset_hub_genesis},
 	chain_runtime::ChainRuntime,
-	durable::{DurableRegistry, live_engine},
+	durable::{DurableRegistry, DurableTxEngine, DurableTxId, DurableTxStatus, live_engine},
 	host_logic::product_account::{
 		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
 	},
@@ -31,7 +32,6 @@ use crate::{
 		ring::RingParams,
 	},
 	store::open_temporary_core_db,
-	time::RealTimer,
 };
 
 /// The person behind a mnemonic, with the chains its claims are built from.
@@ -128,6 +128,22 @@ impl LivePerson {
 	}
 }
 
+/// The first status of claim `id` past submission: in a block, or failed.
+/// Panics when none comes within three minutes, the inclusion wait of a
+/// direct claim plus the ring revision wait of a build.
+async fn settled_status(engine: &DurableTxEngine, id: DurableTxId) -> DurableTxStatus {
+	let under_way = |status: &DurableTxStatus| {
+		matches!(status, DurableTxStatus::PendingSubmission | DurableTxStatus::Pending)
+	};
+	let statuses = engine.observe_status(id).map(|read| read.unwrap().expect("the claim is kept"));
+	let mut settled = statuses.filter(|status| ready(!under_way(status)));
+	let first_settled = tokio::time::timeout(Duration::from_secs(180), settled.next());
+	first_settled
+		.await
+		.expect("the claim settles in time")
+		.expect("the ledger stays open")
+}
+
 #[async_trait::async_trait]
 impl PgasClaimBuilder for LivePerson {
 	async fn build_claim(
@@ -158,11 +174,19 @@ async fn a_durable_claim_lands_on_asset_hub_and_the_engine_sees_it() {
 	let (_dir, db) = open_temporary_core_db();
 	let registry = with_pgas_claims(DurableRegistry::new(), genesis, person.clone());
 	let engine = live_engine(&chain, db, registry);
-	let claims = PgasClaims::new(engine, Arc::new(RealTimer));
+	let claims = PgasClaims::new(engine.clone());
 	let dest = AccountId32(rand::random());
 
 	let id = claims.claim(dest, TEST_IDENTITY).await.unwrap();
-	claims.wait_until_delivered(id, pending()).await.unwrap();
+	let settled = settled_status(&engine, id).await;
+
+	assert!(
+		matches!(
+			settled,
+			DurableTxStatus::PendingSuccess { .. } | DurableTxStatus::FinalizedSuccess { .. }
+		),
+		"the claim reaches a block, got {settled:?}"
+	);
 
 	let funded = holds_a_full_claim(&person.asset_hub, &person.asset_hub_metadata, &dest.0);
 	assert!(funded.await.unwrap(), "the destination holds a full claim");

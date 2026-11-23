@@ -1421,8 +1421,7 @@ fn start_durable_engine(
 	if !services.install_durable_engine(engine.clone()) {
 		return None;
 	}
-	let timer = Arc::new(crate::time::RealTimer);
-	services.install_pgas_claims(crate::pgas_claims::PgasClaims::new(engine.clone(), timer));
+	services.install_pgas_claims(crate::pgas_claims::PgasClaims::new(engine.clone()));
 	forward_durable_work(services, &engine);
 	Some(engine)
 }
