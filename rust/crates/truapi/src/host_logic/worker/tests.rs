@@ -446,7 +446,7 @@ fn a_panicking_delivery_still_lets_a_later_transition_through() {
 fn an_older_crash_or_backoff_cannot_restart_a_replacement() {
 	let (ledger, recorder) = observed();
 	let product = ProductId::for_test("retry.dot");
-	let attempt = || ledger.state().references[&product].attempt;
+	let attempt = || ledger.state().references[&product].attempt_id;
 	ledger.acquire(&product);
 	let first = attempt();
 	ledger.exited(&product, Some(first), 0);
