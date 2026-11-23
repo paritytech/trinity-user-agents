@@ -3,16 +3,13 @@ import UIKit_iOS
 import PolkadotUI
 import DesignSystem
 
-final class CancelChatRequestViewLayout: BottomSheetBaseLayout {
+final class ChatRequestConfirmationViewLayout: BottomSheetBaseLayout {
     private let titleView: TopBottomLabelView = .create { view in
         view.topLabel.typography = .headlineSmall
         view.topLabel.textColor = .fgPrimary
         view.topLabel.textAlignment = .center
         view.topLabel.numberOfLines = 0
 
-        view.bottomLabel.typography = .paragraphLarge
-        view.bottomLabel.textColor = .fgSecondary
-        view.bottomLabel.textAlignment = .center
         view.bottomLabel.numberOfLines = 0
 
         view.spacing = DSSpacings.small
@@ -65,10 +62,10 @@ final class CancelChatRequestViewLayout: BottomSheetBaseLayout {
         }
     }
 
-    func bind(username: String) {
-        titleLabel.text = String(localized: .cancelChatRequestTitle)
-        descriptionLabel.text = String(localized: .cancelChatRequestMessage(username: username))
-        confirmButton.setTitle(String(localized: .cancelChatRequestConfirm))
-        keepButton.setTitle(String(localized: .cancelChatRequestKeep))
+    func bind(viewModel: ChatRequestConfirmationViewModel) {
+        titleLabel.text = viewModel.title
+        descriptionLabel.attributedText = viewModel.message
+        confirmButton.setTitle(viewModel.confirmTitle)
+        keepButton.setTitle(viewModel.keepTitle)
     }
 }

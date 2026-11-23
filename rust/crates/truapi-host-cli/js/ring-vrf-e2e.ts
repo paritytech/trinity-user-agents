@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
   asProductId,
+  ringCollectionId,
   type ProductId,
   type ProductAccountId,
   type RegisteredRingVrfKey,
@@ -14,10 +15,10 @@ import {
 } from "./auto-signing-e2e.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 
-const PEOPLE_COLLECTION_ID =
-  "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652020202020";
-const PEOPLE_LITE_COLLECTION_ID =
-  "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
+const PEOPLE_COLLECTION_ID = ringCollectionId("pop:polkadot.network/people");
+const PEOPLE_LITE_COLLECTION_ID = ringCollectionId(
+  "pop:polkadot.network/people-lite",
+);
 const ACCOUNT_ACCESS_ACTION = "access another product account";
 const PROOF_ACTION = "create account proof";
 
