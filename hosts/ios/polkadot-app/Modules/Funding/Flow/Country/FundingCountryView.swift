@@ -107,7 +107,7 @@ private extension FundingCountryView {
             HStack(spacing: DSSpacings.smallIncreased) {
                 Text(verbatim: country.flag)
                     .font(.system(size: 30))
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
                     Text(verbatim: country.name)
                         .typography(.bodyLargeEmphasized)
                         .foregroundStyle(isRefused ? Color.fgTertiary : Color.fgPrimary)
@@ -116,7 +116,10 @@ private extension FundingCountryView {
                 Spacer()
             }
             .padding(DSSpacings.small)
-            .background(isSelected ? Color.bgSurfaceNested : Color.clear, in: RoundedRectangle(cornerRadius: 16))
+            .background(
+                isSelected ? Color.bgSurfaceNested : Color.clear,
+                in: RoundedRectangle(cornerRadius: DSRadii.mediumIncreased)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

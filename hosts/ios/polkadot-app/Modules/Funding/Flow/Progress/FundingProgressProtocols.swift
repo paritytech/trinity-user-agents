@@ -14,8 +14,8 @@ protocol FundingProgressPresenterProtocol: AnyObject {
     func showDeposit()
     func confirmCancel()
     func answerCancelOffer(accepting terms: CancelTerms?)
-    /// Reads the session again, as when it turns to taking longer.
-    func refresh()
+    /// The user copied one of the session's details.
+    func didCopy()
     func startOver()
     func close()
 }
@@ -23,18 +23,26 @@ protocol FundingProgressPresenterProtocol: AnyObject {
 @MainActor
 protocol FundingProgressInteractorInputProtocol: AnyObject {
     func setup()
-    func refresh()
-    func answerCancelOffer(accepting terms: CancelTerms?) async throws -> CancelConfirmation
+    /// Reads the session again at `longerAtMs`, when the core turns it to
+    /// taking longer without a change to announce it; nil reads nothing.
+    func refreshWhenTakingLonger(atMs longerAtMs: UInt64?)
+    /// Answers the provider's cancel offer; the outcome comes back through
+    /// `didReceiveCancelOfferAnswer(result:)`.
+    func answerCancelOffer(accepting terms: CancelTerms?)
     /// The user was shown how the session ended.
     func acknowledge()
 }
 
 @MainActor
-protocol FundingProgressWireframeProtocol: AnyObject {
+protocol FundingProgressInteractorOutputProtocol: FundingEntryInteractorOutputProtocol {
+    func didReceiveCancelOfferAnswer(result: Result<CancelConfirmation, Error>)
+}
+
+@MainActor
+protocol FundingProgressWireframeProtocol: FundingToastPresentable {
     func show(_ screen: FundingFlowScreen)
     func close(then completion: (() -> Void)?)
     func startOver()
-    func showToast(_ message: String)
 }
 
 extension FundingFlowWireframe: FundingProgressWireframeProtocol {}

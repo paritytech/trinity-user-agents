@@ -33,10 +33,12 @@ final class FundingProgressPresenter: FundingScreenPresenter {
     override func setup() {
         super.setup()
         showDepositOnceReported()
+        refreshWhenTakingLonger()
     }
 
     override func entryDidChange(from _: FundingEntry) {
         showDepositOnceReported()
+        refreshWhenTakingLonger()
         guard entry.hasEnded, !hasAcknowledged else { return }
 
         hasAcknowledged = true
@@ -57,6 +59,24 @@ private extension FundingProgressPresenter {
 
         hasShownDeposit = true
         wireframe.show(.deposit)
+    }
+
+    func refreshWhenTakingLonger() {
+        let current = state
+        interactor.refreshWhenTakingLonger(atMs: current.hasStarted ? current.progress?.longerAtMs : nil)
+    }
+}
+
+extension FundingProgressPresenter: FundingProgressInteractorOutputProtocol {
+    func didReceiveCancelOfferAnswer(result: Result<CancelConfirmation, Error>) {
+        defer { activity.isAnsweringOffer = false }
+        switch result {
+        case let .success(answer):
+            answer.toast.map(wireframe.showToast)
+        case let .failure(error):
+            logger.error("[funding] \(context.entryId): answering the cancel offer failed: \(error)")
+            wireframe.showToast(String(localized: .Funding.errorCancelFailed))
+        }
     }
 }
 
@@ -80,20 +100,11 @@ extension FundingProgressPresenter: FundingProgressPresenterProtocol {
         guard !activity.isAnsweringOffer else { return }
 
         activity.isAnsweringOffer = true
-        Task {
-            defer { activity.isAnsweringOffer = false }
-            do {
-                let answer = try await interactor.answerCancelOffer(accepting: terms)
-                answer.toast.map(wireframe.showToast)
-            } catch {
-                logger.error("[funding] \(context.entryId): answering the cancel offer failed: \(error)")
-                wireframe.showToast(String(localized: .Funding.errorCancelFailed))
-            }
-        }
+        interactor.answerCancelOffer(accepting: terms)
     }
 
-    func refresh() {
-        interactor.refresh()
+    func didCopy() {
+        wireframe.showCopied()
     }
 
     func startOver() {

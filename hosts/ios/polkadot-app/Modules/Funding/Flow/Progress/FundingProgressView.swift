@@ -13,8 +13,6 @@ struct FundingProgressView: View {
     let presenter: FundingProgressPresenterProtocol
     let branding: FundingProviderBranding
 
-    @State private var copied: String?
-
     var body: some View {
         Group {
             if let ended = viewModel.ended {
@@ -23,6 +21,7 @@ struct FundingProgressView: View {
                     viewModel: ended.viewModel,
                     branding: branding,
                     onFees: presenter.showFees,
+                    onCopy: presenter.didCopy,
                     onClose: presenter.close,
                     onStartOver: presenter.startOver
                 )
@@ -30,7 +29,6 @@ struct FundingProgressView: View {
                 inProgress
             }
         }
-        .task(id: viewModel.longerAtMs) { await follow() }
         .sheet(isPresented: offerShown) {
             if let offer = viewModel.cancelOffer {
                 FundingCancelOfferView(offer: offer, isAnswering: viewModel.isAnsweringOffer, presenter: presenter)
@@ -66,7 +64,6 @@ private extension FundingProgressView {
                 DSButton(cancelTitle, style: .destructive, expands: true, action: presenter.confirmCancel)
             }
         }
-        .fundingToast($copied)
     }
 
     var headline: some View {
@@ -91,14 +88,14 @@ private extension FundingProgressView {
     }
 
     var stepCard: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DSSpacings.zero) {
             FundingStepBar(steps: viewModel.steps, between: viewModel.stepsBetween)
                 .padding(.horizontal, DSSpacings.mediumIncreased)
                 .padding(.vertical, DSSpacings.medium)
                 .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
             if let note = viewModel.note {
-                VStack(spacing: 2) {
+                VStack(spacing: DSSpacings.extraTiny) {
                     Text(verbatim: note.text)
                         .typography(.bodySmall)
                         .foregroundStyle(note.isWarning ? Color.fgWarning : Color.fgSecondary)
@@ -159,7 +156,7 @@ private extension FundingProgressView {
     @ViewBuilder
     var arrivesRow: some View {
         if let arrival = viewModel.arrival {
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DSSpacings.extraTiny) {
                 FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
                     value(arrival.eta)
                 }
@@ -188,7 +185,7 @@ private extension FundingProgressView {
     }
 
     func copyRow(_ title: String, _ text: String) -> some View {
-        FundingCopyRow(title: title, text: text, copied: $copied)
+        FundingCopyRow(title: title, text: text, onCopy: presenter.didCopy)
     }
 
     func value(_ text: String) -> some View {
@@ -207,20 +204,6 @@ private extension FundingProgressView {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DSSpacings.small)
-    }
-
-    /// The core's change events keep the screen current, except for a
-    /// session turning to taking longer, which no report announces: read the
-    /// session again at the time the core gave for it.
-    func follow() async {
-        guard viewModel.hasStarted, let longerAtMs = viewModel.longerAtMs else { return }
-
-        let wait = Date(milliseconds: longerAtMs).timeIntervalSinceNow
-        if wait > 0 {
-            try? await Task.sleep(for: .seconds(wait))
-        }
-        guard !Task.isCancelled else { return }
-        presenter.refresh()
     }
 }
 
@@ -366,7 +349,7 @@ struct FundingCancelOfferView: View {
                 row(String(localized: .Funding.offerRefund), offer.refund)
             }
             .padding(DSSpacings.medium)
-            .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: 16))
+            .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.mediumIncreased))
 
             Spacer(minLength: 0)
 

@@ -70,7 +70,7 @@ private extension FundingProviderListView {
         } label: {
             HStack(spacing: DSSpacings.smallIncreased) {
                 FundingProviderLogo(brand: row.brand)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
                     Text(verbatim: row.brand.name)
                         .typography(.bodyMediumEmphasized)
                         .foregroundStyle(.fgPrimary)
@@ -80,7 +80,10 @@ private extension FundingProviderListView {
                 price(row.price)
             }
             .padding(DSSpacings.small)
-            .background(row.isSelected ? Color.bgSurfaceNested : Color.clear, in: RoundedRectangle(cornerRadius: 16))
+            .background(
+                row.isSelected ? Color.bgSurfaceNested : Color.clear,
+                in: RoundedRectangle(cornerRadius: DSRadii.mediumIncreased)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -108,12 +111,12 @@ private extension FundingProviderListView {
     func price(_ price: FundingProvidersViewModel.Row.Price) -> some View {
         switch price {
         case .pending:
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: DSSpacings.tiny) {
                 FundingSkeleton(width: 64)
                 FundingSkeleton(width: 48, height: 10)
             }
         case let .quoted(providerAmount, cashAmount):
-            VStack(alignment: .trailing, spacing: 2) {
+            VStack(alignment: .trailing, spacing: DSSpacings.extraTiny) {
                 if let providerAmount {
                     Text(verbatim: providerAmount)
                         .typography(.bodyMediumEmphasized)

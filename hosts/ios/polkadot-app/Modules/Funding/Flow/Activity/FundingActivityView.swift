@@ -40,13 +40,11 @@ struct FundingHistoryView: View {
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
                 ForEach(items) { item in
-                    FundingActivityRow(
-                        item: item,
-                        title: model.state.titles[item.id] ?? "",
-                        arrives: model.state.arriving.contains(item.id)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture { presenter.open(item) }
+                    if let content = model.state.rows[item.id] {
+                        FundingActivityRow(content: content, arrives: model.state.arriving.contains(item.id))
+                            .contentShape(Rectangle())
+                            .onTapGesture { presenter.open(item) }
+                    }
                 }
             }
         }
@@ -79,9 +77,11 @@ struct FundingPendingView: View {
             ScrollView {
                 VStack(spacing: DSSpacings.small) {
                     ForEach(items) { item in
-                        FundingActivityRow(item: item, title: model.state.titles[item.id] ?? "")
-                            .contentShape(Rectangle())
-                            .onTapGesture { presenter.open(item) }
+                        if let content = model.state.rows[item.id] {
+                            FundingActivityRow(content: content)
+                                .contentShape(Rectangle())
+                                .onTapGesture { presenter.open(item) }
+                        }
                     }
                 }
             }
@@ -106,20 +106,17 @@ struct FundingPendingView: View {
 /// One session in a list: its amount, what it is doing or when it ended, and
 /// the rail it went by.
 struct FundingActivityRow: View {
-    let item: FundingActivityItem
-    /// The amount line, from the presenter.
-    let title: String
+    let content: FundingActivityRowContent
     /// Just finished: the row arrives and its icon plays the completion.
     var arrives = false
 
     private static let iconSize: CGFloat = 20
 
     var body: some View {
-        let content = FundingActivityRowContent(item: item, title: title)
         HStack(alignment: .top, spacing: DSSpacings.small) {
             FundingActivityIcon(icon: content.icon, animatesCompletion: arrives)
                 .frame(width: Self.iconSize, height: Self.iconSize)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
                 Text(verbatim: content.title)
                     .typography(.bodyMediumEmphasized)
                     .foregroundStyle(content.titleTone.color)
@@ -135,104 +132,13 @@ struct FundingActivityRow: View {
                     .typography(.labelSmall)
                     .foregroundStyle(.fgSecondary)
                     .padding(.horizontal, DSSpacings.small)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, DSSpacings.extraTiny)
                     .background(.bgSurfaceNested, in: Capsule())
             }
         }
         .padding(DSSpacings.medium)
         .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
         .modifier(FundingArrival(isArriving: arrives))
-    }
-}
-
-/// What one activity row says, worked out apart from its view.
-struct FundingActivityRowContent: Equatable {
-    enum Icon: Equatable {
-        case pending(delayed: Bool)
-        case received
-        case sent
-        case failed
-    }
-
-    enum Tone: Equatable {
-        case success
-        case primary
-        case secondary
-
-        var color: Color {
-            switch self {
-            case .success: .fgSuccess
-            case .primary: .fgPrimary
-            case .secondary: .fgSecondary
-            }
-        }
-    }
-
-    let icon: Icon
-    /// The amount: unsigned in flight and once nothing moved, signed once
-    /// value moved.
-    let title: String
-    let titleTone: Tone
-    let subtitle: String
-    let isSubtitleWarning: Bool
-    /// The rail, in the pill on the right.
-    let pill: String?
-
-    init(item: FundingActivityItem, title: String, now: Date = Date(), calendar: Calendar = .current) {
-        let isDelayed = item.isDelayed
-        icon = Self.icon(item, isDelayed: isDelayed)
-        self.title = title
-        titleTone = Self.tone(item)
-        subtitle = Self.subtitle(item, now: now, calendar: calendar)
-        isSubtitleWarning = isDelayed
-        pill = item.rail?.title
-    }
-}
-
-private extension FundingActivityRowContent {
-    static func icon(_ item: FundingActivityItem, isDelayed: Bool) -> Icon {
-        switch item.status {
-        case .inProgress: .pending(delayed: isDelayed)
-        case .toppedUp: .received
-        case .sent: .sent
-        case .refunded,
-             .payoutFailed,
-             .cancelled,
-             .failed: .failed
-        }
-    }
-
-    static func tone(_ item: FundingActivityItem) -> Tone {
-        switch item.status {
-        case .toppedUp: .success
-        case .sent,
-             .inProgress: .primary
-        case .refunded,
-             .payoutFailed,
-             .cancelled,
-             .failed: .secondary
-        }
-    }
-
-    static func subtitle(_ item: FundingActivityItem, now: Date, calendar: Calendar) -> String {
-        let moment = FundingActivityDate.moment(item.date, now: now, calendar: calendar)
-        switch item.status {
-        case let .inProgress(status):
-            return FundingWording.inFlight(status, direction: item.direction) ?? moment
-        case .toppedUp,
-             .sent:
-            return moment
-        case .refunded:
-            return String(localized: .Funding.activityRefundedAt(moment: moment))
-        case .payoutFailed:
-            return String(localized: .Funding.activityPayoutFailedAt(moment: moment))
-        case .cancelled:
-            return String(localized: .Funding.activityCancelledAt(moment: moment))
-        case .failed(.expired):
-            return String(localized: .Funding.activityExpiredAt(moment: moment))
-        case .failed:
-            return String(localized: .Funding.activityPaymentFailedAt(moment: moment))
-        }
     }
 }
 
@@ -263,36 +169,12 @@ struct FundingActivityIcon: View {
     }
 }
 
-/// When a row's session ended: "Today at 12:45", "Yesterday at 12:45",
-/// "Jun 12 at 16:40", and "Jun 12, 2025" in an earlier year.
-enum FundingActivityDate {
-    static func moment(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        let time = date.formatted(date: .omitted, time: .shortened)
-        if calendar.isDate(date, inSameDayAs: now) {
-            return String(localized: .Funding.dateTodayAt(time: time))
+private extension FundingActivityRowContent.Tone {
+    var color: Color {
+        switch self {
+        case .success: .fgSuccess
+        case .primary: .fgPrimary
+        case .secondary: .fgSecondary
         }
-        if isYesterday(date, now: now, calendar: calendar) {
-            return String(localized: .Funding.dateYesterdayAt(time: time))
-        }
-        if calendar.isDate(date, equalTo: now, toGranularity: .year) {
-            return String(localized: .Funding.dateDayAt(
-                day: format(date, template: "MMMd", calendar: calendar),
-                time: time
-            ))
-        }
-        return format(date, template: "yMMMd", calendar: calendar)
-    }
-
-    private static func isYesterday(_ date: Date, now: Date, calendar: Calendar) -> Bool {
-        guard let yesterday = calendar.date(byAdding: .day, value: -1, to: now) else { return false }
-        return calendar.isDate(date, inSameDayAs: yesterday)
-    }
-
-    /// `template` names the fields; the locale orders and punctuates them.
-    private static func format(_ date: Date, template: String, calendar: Calendar) -> String {
-        let formatter = DateFormatter.localizableFormatterFromTemplate(template).value(for: calendar.locale ?? .current)
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        return formatter.string(from: date)
     }
 }

@@ -10,8 +10,6 @@ struct FundingDepositView: View {
     let viewModel: FundingDepositViewModel
     let presenter: FundingDepositPresenterProtocol
 
-    @State private var copied: String?
-
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: viewModel.title, onBack: presenter.back)
@@ -37,7 +35,6 @@ struct FundingDepositView: View {
                 EmptyView()
             }
         }
-        .fundingToast($copied)
         .onChange(of: viewModel.paymentSeen, initial: true) { _, seen in
             if seen { presenter.showProgress() }
         }
@@ -95,7 +92,7 @@ private extension FundingDepositView {
     }
 
     func copyRow(_ title: String, _ value: String, shown: String? = nil) -> some View {
-        FundingCopyRow(title: title, text: value, copied: $copied, shown: shown)
+        FundingCopyRow(title: title, text: value, onCopy: presenter.didCopy, shown: shown)
             .padding(.vertical, DSSpacings.small)
             .overlay(alignment: .bottom) { Divider().overlay(Color.strokePrimary) }
     }

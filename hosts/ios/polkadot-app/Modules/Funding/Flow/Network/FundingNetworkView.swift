@@ -56,7 +56,7 @@ struct FundingAssetMark: View {
                 .frame(width: size.dimension, height: size.dimension)
                 .clipShape(Circle())
         } else {
-            DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .white, size: size)
+            DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .fgStaticWhite, size: size)
         }
     }
 }

@@ -3,23 +3,39 @@ import TrUAPIHost
 
 @MainActor
 final class FundingActivityInteractor: FundingActivityInteractorInputProtocol {
+    /// How often the history reads the sessions again.
+    static let refreshInterval: Duration = .seconds(10)
+
     weak var presenter: FundingActivityInteractorOutputProtocol?
 
     private let service: FundingServiceProtocol
-    private let following = FundingFollowing()
-    private let refreshing = FundingFollowing()
+    private let clock: any Clock<Duration>
+    private let logger: LoggerProtocol
+    private var followingTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
 
-    init(service: FundingServiceProtocol) {
+    init(
+        service: FundingServiceProtocol,
+        clock: any Clock<Duration> = ContinuousClock(),
+        logger: LoggerProtocol = Logger.shared
+    ) {
         self.service = service
+        self.clock = clock
+        self.logger = logger
+    }
+
+    deinit {
+        followingTask?.cancel()
+        refreshTask?.cancel()
     }
 
     func setup(refreshing refreshes: Bool) {
         follow()
         guard refreshes else { return }
 
-        refreshing.task = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self, clock] in
+            while await (try? clock.sleep(for: Self.refreshInterval)) != nil {
                 self?.follow()
             }
         }
@@ -32,13 +48,17 @@ final class FundingActivityInteractor: FundingActivityInteractorInputProtocol {
 
 private extension FundingActivityInteractor {
     func follow() {
-        following.task?.cancel()
-        following.task = Task { [weak self, service] in
+        followingTask?.cancel()
+        followingTask = Task { [weak self, service, logger] in
             do {
                 for try await entries in service.subscribeEntries() {
                     self?.presenter?.didReceive(entries: entries)
                 }
-            } catch {}
+            } catch {
+                if !Task.isCancelled {
+                    logger.error("[funding] following the sessions failed: \(error)")
+                }
+            }
         }
     }
 }

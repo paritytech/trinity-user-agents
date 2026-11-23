@@ -9,21 +9,18 @@ final class FundingAmountPresenter: FundingScreenPresenter {
     private let interactor: FundingAmountInteractorInputProtocol
     private let wireframe: FundingAmountWireframeProtocol
     private let viewModelFactory: FundingViewModelFactoryProtocol
-    private let clock: any Clock<Duration>
-    /// The ask waiting on the keypad pause.
-    private var pause: Task<Void, Never>?
+    /// Holds the quote ask until the keypad pauses.
+    private let quoteDebouncer = Debouncer(delay: 0.6)
 
     init(
         context: FundingFlowContext,
         interactor: FundingAmountInteractor,
         wireframe: FundingAmountWireframeProtocol,
-        viewModelFactory: FundingViewModelFactoryProtocol,
-        clock: any Clock<Duration> = ContinuousClock()
+        viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
         self.viewModelFactory = viewModelFactory
-        self.clock = clock
         super.init(context: context, interactor: interactor)
     }
 
@@ -48,11 +45,6 @@ final class FundingAmountPresenter: FundingScreenPresenter {
 
     override func entryDidChange(from _: FundingEntry) {
         refreshAmountIssue()
-    }
-
-    /// Returns once the ask waiting on the keypad pause has been made.
-    func pauseSettled() async {
-        await pause?.value
     }
 }
 
@@ -79,7 +71,7 @@ extension FundingAmountPresenter: FundingAmountPresenterProtocol {
     func continueFromAmount() {
         guard state.canContinue else { return }
 
-        pause?.cancel()
+        quoteDebouncer.cancel()
         switch context.draft.rail {
         case .crypto:
             wireframe.show(.network)
@@ -91,12 +83,12 @@ extension FundingAmountPresenter: FundingAmountPresenterProtocol {
     }
 
     func showHistory() {
-        pause?.cancel()
+        quoteDebouncer.cancel()
         wireframe.showHistory()
     }
 
     func close() {
-        pause?.cancel()
+        quoteDebouncer.cancel()
         wireframe.close(then: nil)
     }
 }
@@ -105,14 +97,11 @@ private extension FundingAmountPresenter {
     /// Asks for quotes on the typed amount once the keypad has paused,
     /// replacing the ask waiting on the pause before it.
     func askAfterPause() {
-        pause?.cancel()
+        quoteDebouncer.cancel()
         guard context.draft.rail != .crypto, (state.amount ?? 0) > 0 else { return }
 
-        pause = Task { [clock] in
-            try? await clock.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-
-            requestQuote()
+        quoteDebouncer.debounce { [weak self] in
+            self?.requestQuote()
         }
     }
 

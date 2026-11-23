@@ -132,7 +132,7 @@ private extension FundingSummaryView {
     }
 
     var arrivesRow: some View {
-        VStack(alignment: .trailing, spacing: 2) {
+        VStack(alignment: .trailing, spacing: DSSpacings.extraTiny) {
             FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
                 if let eta = viewModel.eta {
                     Text(verbatim: eta)
@@ -151,20 +151,5 @@ private extension FundingSummaryView {
                     .foregroundStyle(.fgSecondary)
             }
         }
-    }
-}
-
-/// When the provider says the funds arrive.
-enum FundingEta {
-    static func text(seconds: UInt64) -> String {
-        let minutes = max(1, Int((Double(seconds) / 60).rounded(.up)))
-        if minutes < 60 {
-            return String(localized: .Funding.etaMinutes(count: minutes))
-        }
-        let hours = Int((Double(minutes) / 60).rounded(.up))
-        if hours < 24 {
-            return String(localized: .Funding.etaHours(count: hours))
-        }
-        return String(localized: .Funding.etaDays(count: Int((Double(hours) / 24).rounded(.up))))
     }
 }

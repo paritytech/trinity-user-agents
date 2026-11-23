@@ -234,9 +234,6 @@ struct FundingProgressViewModel: Equatable {
     let cancelTitle: String?
     let cancelOffer: CancelOffer?
     let isAnsweringOffer: Bool
-    /// When the session turns to taking longer, once started.
-    let hasStarted: Bool
-    let longerAtMs: UInt64?
     let ended: Ended?
 }
 
@@ -256,4 +253,8 @@ struct FundingEndedViewModel: Equatable {
     let refunded: String?
     /// The CASH the session was for, with its symbol.
     let amount: String
+    /// When the session ended.
+    let endedAt: String
+    /// When the provider says the payout arrives.
+    let eta: String?
 }

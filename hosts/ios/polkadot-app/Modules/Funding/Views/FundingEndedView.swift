@@ -11,10 +11,10 @@ struct FundingEndedView: View {
     let viewModel: FundingEndedViewModel
     let branding: FundingProviderBranding
     var onFees: (() -> Void)?
+    let onCopy: () -> Void
     let onClose: () -> Void
     let onStartOver: () -> Void
 
-    @State private var copied: String?
     @State private var providerName: String?
 
     var body: some View {
@@ -33,7 +33,6 @@ struct FundingEndedView: View {
 
             bottomAction
         }
-        .fundingToast($copied)
         .task(id: ended.providerId) { await loadProviderName() }
     }
 }
@@ -55,7 +54,7 @@ private extension FundingEndedView {
                 .minimumScaleFactor(0.5)
             }
             if ended.succeeded {
-                Text(verbatim: FundingActivityDate.moment(ended.endedAt))
+                Text(verbatim: viewModel.endedAt)
                     .typography(.bodySmall)
                     .foregroundStyle(.fgSecondary)
             }
@@ -83,7 +82,7 @@ private extension FundingEndedView {
     }
 
     var stepCard: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DSSpacings.zero) {
             FundingStepBar(steps: steps)
                 .padding(.horizontal, DSSpacings.mediumIncreased)
                 .padding(.vertical, DSSpacings.medium)
@@ -144,9 +143,9 @@ private extension FundingEndedView {
                 }
             }
 
-            if ended.payoutState == .pending, let eta = ended.quote?.etaSecs {
+            if ended.payoutState == .pending, let eta = viewModel.eta {
                 FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
-                    value(FundingEta.text(seconds: eta))
+                    value(eta)
                 }
             }
 
@@ -154,7 +153,7 @@ private extension FundingEndedView {
                 FundingCopyRow(
                     title: String(localized: .Funding.endedTransactionId),
                     text: transactionId,
-                    copied: $copied,
+                    onCopy: onCopy,
                     truncatesMiddle: true
                 )
             }
@@ -163,7 +162,7 @@ private extension FundingEndedView {
                 FundingCopyRow(
                     title: String(localized: .Funding.depositReference),
                     text: reference,
-                    copied: $copied
+                    onCopy: onCopy
                 )
             }
 

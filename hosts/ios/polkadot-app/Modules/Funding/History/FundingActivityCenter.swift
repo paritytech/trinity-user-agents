@@ -17,9 +17,16 @@ final class FundingActivityCenter {
     /// they did, so their rows arrive in the history with their completion.
     private(set) var justFinished: [String: Date] = [:]
 
-    @ObservationIgnored private let following = FundingFollowing()
+    @ObservationIgnored private let clock: any Clock<Duration>
+    @ObservationIgnored private let logger: LoggerProtocol
+    @ObservationIgnored private var followingTask: Task<Void, Never>?
     /// Draws the sessions again when one turns to taking longer.
-    @ObservationIgnored private let longer = FundingFollowing()
+    @ObservationIgnored private var longerTask: Task<Void, Never>?
+
+    init(clock: any Clock<Duration> = ContinuousClock(), logger: LoggerProtocol = Logger.shared) {
+        self.clock = clock
+        self.logger = logger
+    }
 
     /// The service and router are built with the runtime, off the main
     /// thread, so they are handed over through a lock rather than through the
@@ -70,13 +77,17 @@ private extension FundingActivityCenter {
     func follow() {
         guard let service = Self.attached.withLock({ $0.service }) else { return }
 
-        following.task?.cancel()
-        following.task = Task { [weak self] in
+        followingTask?.cancel()
+        followingTask = Task { [weak self, logger] in
             do {
                 for try await entries in service.subscribeEntries() {
                     self?.show(entries)
                 }
-            } catch {}
+            } catch {
+                if !Task.isCancelled {
+                    logger.error("[funding] following the sessions failed: \(error)")
+                }
+            }
         }
     }
 
@@ -96,13 +107,12 @@ private extension FundingActivityCenter {
     /// The core turns a session to taking longer at `longerAtMs` without a
     /// change to announce it, so read the sessions again then.
     func scheduleTakingLonger(_ deadlines: [UInt64]) {
-        longer.task?.cancel()
+        longerTask?.cancel()
         let now = Date()
         guard let next = deadlines.map(Date.init(milliseconds:)).filter({ $0 > now }).min() else { return }
 
-        longer.task = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(next.timeIntervalSince(now)))
-            guard !Task.isCancelled else { return }
+        longerTask = Task { [weak self, clock] in
+            guard await (try? clock.sleep(for: .seconds(next.timeIntervalSince(now)))) != nil else { return }
             self?.refresh()
         }
     }
