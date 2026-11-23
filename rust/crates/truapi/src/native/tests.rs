@@ -258,7 +258,7 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn push_notification(
 		&self,
-		_request: v01::HostPushNotificationRequest,
+		_request: truapi::latest::HostPushNotificationRequest,
 	) -> Result<u32, HostRejection> {
 		Ok(0)
 	}
@@ -2252,7 +2252,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
@@ -2460,7 +2460,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn push_notification(
 			&self,
-			_request: v01::HostPushNotificationRequest,
+			_request: truapi::latest::HostPushNotificationRequest,
 		) -> Result<u32, HostRejection> {
 			Ok(0)
 		}
