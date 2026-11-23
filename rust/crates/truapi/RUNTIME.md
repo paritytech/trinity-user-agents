@@ -197,59 +197,61 @@ reports a difference, as the next section describes.
 
 #### Checks against the chains
 
-A runtime built on the stack `StackRefresh` hands out asks every chain
-connection it opens for the chain's genesis hash before anything else uses the
-connection: the core's own, each product's, and the statement subscriptions on
-People.
+When an operator restarts a stack's chains from genesis, the same endpoints
+serve new chains with new genesis hashes. A build that still runs the old
+descriptor would read them as the old chains. So the core asks every chain
+connection for its genesis hash before anything else uses the connection. This
+covers the core's own connections, each product's, and the statement
+subscriptions on People.
 
-- A chain that gives the hash the connection was opened for is used.
-- A chain that gives a different hash, as after it restarted from genesis, gets
-  no connection: the call fails with a host failure. The core also closes the
-  connections it handed out earlier for that chain, since a host may have
-  redialled underneath them, and their next user dials again and is asked. For
-  a chain of the stack, `StackStatus::mismatches` lists what the last
-  connection got, until a connection reaches the chain the descriptor names.
-- A chain that cannot be reached, or stays silent for 30 seconds, is
-  unavailable and is asked again on the next connection. A chain dotli reports
+- If the hash is the one the connection was opened for, the core hands the
+  connection out.
+- If the hash is different, the call fails with a host failure. For a chain of
+  the stack, `StackStatus::mismatches` lists it until a connection reaches the
+  chain the descriptor names. The core also closes the connections it handed out
+  earlier for that chain, because a host may have redialled underneath them.
+- If the chain cannot be reached, or says nothing for 30 seconds, the call fails
+  as unavailable and the next connection asks again. A chain that dotli reports
   as halted is asked again for up to 47 seconds, as a halted follow is, and is
-  unavailable after that. A node that answers the question with any other
-  error is not used either, and is not a mismatch.
+  unavailable after that. Any other error fails the call with a host failure.
+  None of these is a mismatch.
 
-While `mismatches` lists a chain, the core fetches the descriptor every five
-minutes instead of every hour, because an operator publishes the new genesis
-hashes when the chains restart from genesis. A published descriptor that
-changes a chain sets `restart_required`, and the fetches are hourly again from
-then on.
+While a chain is listed, the core fetches the descriptor every five minutes
+instead of every hour, since the operator publishes the new genesis hashes with
+the restart. Once the core holds a descriptor that changes a chain, it sets
+`restart_required` and fetches hourly again.
 
-A host that installed its stack callbacks hears of a mismatch through them,
-and any host reads it from `stack_status`. A browser host that passes
-`stackChanged` without `fetchStackDescriptor` is told too, through
-`StackRefresh::start_reporting`, and nothing is fetched for it. Without the
-callbacks the chain is still refused, and nothing is fetched. A host shows the
-listed chains as out of service and keeps its own features off them.
+A host learns of a mismatch through its stack callbacks, and any host can read
+it from `stack_status`. A browser host that passes `stackChanged` without
+`fetchStackDescriptor` still gets the reports, and nothing is fetched for it.
+Without the callbacks the chain is still refused, and nothing is fetched. A host
+shows a listed chain as out of service and keeps its own features off it.
 
-The check runs when the core opens a connection. A host whose connection
-outlives its transport, redialling underneath as dotli does, is asked again
-only when the core opens the next one for that chain, in any scope.
+The check has three limits:
 
-A light client answers from its chain spec. A chain that restarted is out of
-its reach, not a mismatch, so there only the hourly fetch brings the new
-descriptor.
+- It runs only when the core opens a connection. If a host redials underneath
+  one, as dotli does, the core notices when it opens the next connection for
+  that chain, in any scope.
+- A light client answers from its chain spec, so a chain that restarted is out
+  of its reach and never listed. Only the hourly fetch brings it the new
+  descriptor.
+- A `Stack` built any other way, such as with `Stack::new` or from `testStack`,
+  is not checked.
 
-A signing host's allowance work reads People's `NetworkSuffix.NetworkSuffix` to
-build its proofs, and each suffix it reads goes to the stack's checks. A suffix
-that is not the descriptor's `tld` is listed in `StackStatus::mismatches` until
-a later read gives the `tld`. The core keeps using People, and fetches the
-descriptor no sooner for it. The entry means the build's stack and its People
-chain disagree: the core derives its identities under the `tld` and builds
-proof contexts with People's suffix, so an identity derived under one does not
-match the other. A read that fails lists nothing, and neither does a People
-chain that holds no suffix of one to sixteen bytes: the allowance work fails
-with that error instead. A host that does no allowance work, such as a pairing
-host, never lists it.
+The core also compares People's `NetworkSuffix.NetworkSuffix` with the
+descriptor's `tld`. A signing host's allowance work reads the suffix to build
+its proofs, and the core compares each value that work reads. A suffix that
+differs is listed in `StackStatus::mismatches` until a later read gives the
+`tld`.
 
-The core does not check the chains of a `Stack` built any other way, such as
-with `Stack::new` or from `testStack`.
+This is only a report. The core keeps using People and fetches the descriptor no
+sooner. An entry means the build's stack and its People chain disagree: the core
+derives its identities under the `tld` and builds proof contexts with People's
+suffix, so an identity derived under one does not match the other.
+
+Nothing is listed when the read fails or People holds no suffix of one to
+sixteen bytes, because the allowance work fails with that error first. A host
+that does no allowance work, such as a pairing host, never lists a suffix.
 
 #### Descriptor refresh
 

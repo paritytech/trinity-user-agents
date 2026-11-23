@@ -2873,6 +2873,31 @@ fn a_node_that_does_not_name_its_chain_is_not_used() {
 	assert_eq!(outcomes, [(RuntimeFailureKind::HostFailure, 0); 3]);
 }
 
+/// A genesis hash is 32 bytes, and the check can only compare one. A
+/// connection opened for anything else is refused before the node is asked,
+/// and nothing is reported for it.
+#[test]
+fn a_connection_opened_for_what_is_no_genesis_hash_is_refused_unasked() {
+	let provider = node_of([0xa1; 32]);
+	let heard = Arc::<HeardAnswers>::default();
+	let runtime =
+		ChainRuntime::new(provider.clone(), Spawner::for_test()).checking_genesis(heard.clone());
+
+	let refused = futures::executor::block_on(runtime.rpc_client("test", &[0xa1; 31]))
+		.err()
+		.expect("31 bytes are no genesis hash");
+
+	assert_eq!(
+		(refused.kind(), refused.reason(), heard.heard(), provider.sent.lock().unwrap().len()),
+		(
+			RuntimeFailureKind::HostFailure,
+			"test: remote_chain_connect: expected 32-byte genesis hash, got 31".to_string(),
+			Vec::new(),
+			0,
+		)
+	);
+}
+
 /// A node that answers the genesis question with dotli's halt error for the
 /// first `halts` times it is asked, then with `genesis`.
 fn node_halted_for(halts: usize, genesis: [u8; 32]) -> Arc<ScriptedProvider> {

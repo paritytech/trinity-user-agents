@@ -2326,40 +2326,40 @@ impl GenesisAnswer {
 ///
 /// Fails when the chain gives no hash. A halted chain is asked again on
 /// `timer`, and is unavailable when the halt outlasts the retries. `named` is
-/// the hash the connection was opened for.
+/// the hash the connection was opened for, and nothing is asked unless it is
+/// 32 bytes.
 async fn ask_genesis(
 	methods: &ChainHeadRpcMethods<TruapiRpcConfig>,
 	named: &[u8],
 	check: &dyn GenesisCheck,
 	timer: &dyn Timer,
 ) -> Result<GenesisAnswer, RuntimeFailure> {
+	let named: [u8; 32] = named.try_into().map_err(|_| {
+		let reason = format!("expected 32-byte genesis hash, got {}", named.len());
+		RuntimeFailure::host_failure(CONNECT_METHOD, reason).on_chain(named)
+	})?;
 	let ask = || methods.chainspec_v1_genesis_hash();
 	let never_cancelled = truapi::CancellationToken::default();
-	let answered = retry_while_halted(ask, says_chain_halted, timer, &never_cancelled)
-		.await
-		.map_err(|error| {
-			let failure = match says_chain_halted(&error) {
-				true => RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, error.to_string()),
-				false => rpc_failure(CONNECT_METHOD, error),
-			};
-			failure.on_chain(named)
-		})?
-		.0;
-	if let Ok(named) = <[u8; 32]>::try_from(named) {
-		check.chain_answered(GenesisHashes { named, answered });
+	let answer = retry_while_halted(ask, says_chain_halted, timer, &never_cancelled).await;
+	let H256(answered) = answer.map_err(|error| {
+		let failure = if says_chain_halted(&error) {
+			RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, error.to_string())
+		} else {
+			rpc_failure(CONNECT_METHOD, error)
+		};
+		failure.on_chain(&named)
+	})?;
+	check.chain_answered(GenesisHashes { named, answered });
+	if answered == named {
+		return Ok(GenesisAnswer::Named);
 	}
-	if answered.as_slice() != named {
-		let failure = RuntimeFailure::host_failure(
-			CONNECT_METHOD,
-			format!(
-				"the chain gave genesis hash {}, not {}",
-				encode_hex(&answered),
-				encode_hex(named)
-			),
-		);
-		return Ok(GenesisAnswer::Different(failure.on_chain(named)));
-	}
-	Ok(GenesisAnswer::Named)
+	let reason = format!(
+		"the chain gave genesis hash {}, not {}",
+		encode_hex(&answered),
+		encode_hex(&named)
+	);
+	let failure = RuntimeFailure::host_failure(CONNECT_METHOD, reason);
+	Ok(GenesisAnswer::Different(failure.on_chain(&named)))
 }
 
 fn scope_released(method: &'static str) -> RuntimeFailure {
