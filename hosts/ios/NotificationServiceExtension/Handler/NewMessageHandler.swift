@@ -67,7 +67,7 @@ extension NewMessageHandler: PushNotificationHandling {
                 )
                 completion(contentResult.withBadgeCount(badgeCount))
             } catch {
-                let contentResult = NotificationContentResult.createUnsupportedResult(badgeCount: badgeCount)
+                let contentResult = NotificationContentResult.createNewMessageResult(badgeCount: badgeCount)
                 completion(contentResult)
             }
         }
