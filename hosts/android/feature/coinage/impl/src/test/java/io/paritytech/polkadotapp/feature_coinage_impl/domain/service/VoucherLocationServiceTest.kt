@@ -28,14 +28,18 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
@@ -94,7 +98,9 @@ class VoucherLocationServiceTest {
 
         startService()
 
-        assertEquals(RecyclerFungibility.ofPercent(100), written.single().values.single().recyclerFungibility)
+        val update = written.single().values.single()
+        assertEquals(RecyclerFungibility.ofPercent(100), update.recyclerFungibility)
+        assertEquals(0, update.location.recyclerUnloaded)
     }
 
     /**
@@ -185,6 +191,142 @@ class VoucherLocationServiceTest {
         assertEquals(NOW, written.last().values.single().location.enteredAt)
     }
 
+    @Test
+    fun `the ring's unloaded count reaches the voucher`() = runTest {
+        givenChain()
+        givenTwoVouchersInDifferentRings()
+        givenCapacityReadable()
+        givenUnloadedCounts(Result.success(mapOf(recyclerKey(RING_INDEX) to 5, recyclerKey(OTHER_RING_INDEX) to 2)))
+
+        startService()
+
+        val updates = written.single()
+        assertEquals(5, updates.getValue(VOUCHER_KEY).location.recyclerUnloaded)
+        assertEquals(2, updates.getValue(OTHER_VOUCHER_KEY).location.recyclerUnloaded)
+    }
+
+    @Test
+    fun `a failed unloaded count read writes no unloaded count`() = runTest {
+        givenChain()
+        givenVoucherIncludedInRing()
+        givenRingStatus(included = RING_MEMBERS)
+        givenCapacityReadable()
+        givenUnloadedCounts(Result.failure(IllegalStateException("subscription dropped")))
+
+        startService()
+
+        assertNull(written.single().values.single().location.recyclerUnloaded)
+    }
+
+    @Test
+    fun `a failed unloaded count read is retried until it succeeds`() = runTest {
+        givenChain()
+        givenVoucherIncludedInRing()
+        givenRingStatus(included = RING_MEMBERS)
+        givenCapacityReadable()
+        var attempt = 0
+        every { voucherRepository.subscribeUnloadedCounts(any(), any(), any()) } returns flow {
+            attempt++
+            if (attempt == 1) {
+                emit(Result.failure(IllegalStateException("subscription dropped")))
+            } else {
+                emit(Result.success(mapOf(recyclerKey() to 3)))
+            }
+        }
+
+        with(ComputationalScope(backgroundScope)) { service.start() }
+        runCurrent()
+        assertNull(written.single().values.single().location.recyclerUnloaded)
+        advanceTimeBy(READ_RESUBSCRIBE_DELAY.delayFor(attempt = 1))
+        runCurrent()
+        assertEquals(3, written.last().values.single().location.recyclerUnloaded)
+
+        advanceTimeBy(1.minutes)
+        runCurrent()
+
+        assertEquals("a read that succeeded must not be resubscribed", 2, attempt)
+    }
+
+    @Test
+    fun `a read that keeps failing waits longer each time`() = runTest {
+        givenChain()
+        givenVoucherIncludedInRing()
+        givenRingStatus(included = RING_MEMBERS)
+        givenCapacityReadable()
+        var attempt = 0
+        every { voucherRepository.subscribeUnloadedCounts(any(), any(), any()) } returns flow {
+            attempt++
+            emit(Result.failure(IllegalStateException("subscription dropped")))
+        }
+
+        with(ComputationalScope(backgroundScope)) { service.start() }
+        runCurrent()
+        advanceTimeBy(READ_RESUBSCRIBE_DELAY.delayFor(attempt = 1))
+        runCurrent()
+        assertEquals(2, attempt)
+
+        advanceTimeBy(READ_RESUBSCRIBE_DELAY.delayFor(attempt = 2))
+        runCurrent()
+
+        assertEquals("a flat delay would have reached a fourth attempt by now", 3, attempt)
+    }
+
+    /** A drop after a healthy stretch waits the first delay again, not the one the early failures reached. */
+    @Test
+    fun `a subscription that drops after good reads starts its wait over`() = runTest {
+        givenChain()
+        givenVoucherIncludedInRing()
+        givenRingStatus(included = RING_MEMBERS)
+        givenCapacityReadable()
+        var attempt = 0
+        every { voucherRepository.subscribeUnloadedCounts(any(), any(), any()) } returns flow {
+            attempt++
+            if (attempt == 2) emit(Result.success(mapOf(recyclerKey() to 3)))
+            emit(Result.failure(IllegalStateException("subscription dropped")))
+        }
+
+        with(ComputationalScope(backgroundScope)) { service.start() }
+        runCurrent()
+        advanceTimeBy(READ_RESUBSCRIBE_DELAY.delayFor(attempt = 1))
+        runCurrent()
+        assertTrue(written.any { it.values.single().location.recyclerUnloaded == 3 })
+
+        advanceTimeBy(READ_RESUBSCRIBE_DELAY.delayFor(attempt = 1))
+        runCurrent()
+
+        assertEquals("the good read must reset the wait", 3, attempt)
+    }
+
+    /**
+     * An empty status map is a legitimate answer — no ring holds these vouchers — so a failed read that
+     * reported one would drop every voucher from the write, and no later good read could undo it.
+     */
+    @Test
+    fun `a failed ring status read is retried and the recovered status reaches the write`() = runTest {
+        givenChain()
+        givenVoucherIncludedInRing()
+        givenCapacityReadable()
+        givenUnloadedCounts(Result.success(mapOf(recyclerKey() to 0)))
+        var attempt = 0
+        every { membersRepository.subscribeRingStatuses(any(), any()) } returns flow {
+            attempt++
+            if (attempt == 1) {
+                emit(Result.failure(IllegalStateException("subscription dropped")))
+            } else {
+                emit(Result.success(mapOf((collectionId() to RecyclerIndex(RING_INDEX.toBigInteger())) to RingStatus(RING_MEMBERS, RING_MEMBERS))))
+            }
+        }
+
+        with(ComputationalScope(backgroundScope)) { service.start() }
+        runCurrent()
+        assertTrue("a failed read must write no voucher at all", written.all { it.isEmpty() })
+
+        advanceTimeBy(READ_RESUBSCRIBE_DELAY.delayFor(attempt = 1))
+        runCurrent()
+
+        assertEquals(RING_MEMBERS, written.last().values.single().location.recyclerMembers)
+    }
+
     private suspend fun startService() {
         with(ComputationalScope(scope)) { service.start() }
     }
@@ -207,15 +349,37 @@ class VoucherLocationServiceTest {
         givenIncludedPosition()
     }
 
-    private fun givenIncludedPosition() {
-        val position = RingPosition.Included(
-            ringIndex = RecyclerIndex(RING_INDEX.toBigInteger()),
-            ringPage = 0,
-            ringPosition = 0
+    private fun givenTwoVouchersInDifferentRings() {
+        every { voucherRepository.subscribeAllVouchers() } returns
+            flowOf(listOf(voucher(), voucher(index = 1, key = OTHER_VOUCHER_KEY)))
+        every { membersRepository.subscribeMembers(any(), any(), any()) } returns flowOf(
+            Result.success(
+                mapOf(
+                    (collectionId() to VOUCHER_KEY) to includedIn(RING_INDEX),
+                    (collectionId() to OTHER_VOUCHER_KEY) to includedIn(OTHER_RING_INDEX),
+                )
+            )
         )
-        every { membersRepository.subscribeMembers(any(), any(), any()) } returns
-            flowOf(Result.success(mapOf((collectionId() to VOUCHER_KEY) to position)))
+        every { membersRepository.subscribeRingStatuses(any(), any()) } returns flowOf(
+            Result.success(
+                listOf(RING_INDEX, OTHER_RING_INDEX).associate { ring ->
+                    (collectionId() to RecyclerIndex(ring.toBigInteger())) to
+                        RingStatus(total = RING_MEMBERS, included = RING_MEMBERS)
+                }
+            )
+        )
     }
+
+    private fun givenIncludedPosition() {
+        every { membersRepository.subscribeMembers(any(), any(), any()) } returns
+            flowOf(Result.success(mapOf((collectionId() to VOUCHER_KEY) to includedIn(RING_INDEX))))
+    }
+
+    private fun includedIn(ring: Int) = RingPosition.Included(
+        ringIndex = RecyclerIndex(ring.toBigInteger()),
+        ringPage = 0,
+        ringPosition = 0
+    )
 
     private fun givenRingStatus(included: Int) {
         every { membersRepository.subscribeRingStatuses(any(), any()) } returns
@@ -238,13 +402,13 @@ class VoucherLocationServiceTest {
         every { voucherRepository.subscribeUnloadedCounts(any(), any(), any()) } returns flowOf(result)
     }
 
-    private fun recyclerKey() = RecyclerKey(DENOMINATION, RecyclerIndex(RING_INDEX.toBigInteger()))
+    private fun recyclerKey(ring: Int = RING_INDEX) = RecyclerKey(DENOMINATION, RecyclerIndex(ring.toBigInteger()))
 
     private fun collectionId(): RingCollectionId = DENOMINATION.toRingCollectionId(INSTANCE_ID)
 
-    private fun voucher() = RecyclerVoucher(
-        ringVrfKeyIndex = testKey(0),
-        ringVrfPublicKey = VOUCHER_KEY,
+    private fun voucher(index: Int = 0, key: BandersnatchPublicKey = VOUCHER_KEY) = RecyclerVoucher(
+        ringVrfKeyIndex = testKey(index),
+        ringVrfPublicKey = key,
         recyclerValue = DENOMINATION,
         location = RecyclerVoucher.Location.Unknown,
         recyclerFungibility = RecyclerFungibility.NONE,
@@ -256,10 +420,12 @@ class VoucherLocationServiceTest {
         const val RING_CAPACITY = 767
         const val RING_MEMBERS = 400
         const val RING_INDEX = 3
+        const val OTHER_RING_INDEX = 4
         const val RING_KEYS_PER_PAGE = 255
         val INSTANCE_ID: CoinageInstanceId = 1u
         val NOW: Instant = Instant.fromEpochMilliseconds(1_000L)
         val DENOMINATION = ValueExponent(3)
         val VOUCHER_KEY: BandersnatchPublicKey = ByteArray(32) { 7 }.toDataByteArray()
+        val OTHER_VOUCHER_KEY: BandersnatchPublicKey = ByteArray(32) { 8 }.toDataByteArray()
     }
 }

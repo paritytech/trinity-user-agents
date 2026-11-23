@@ -70,6 +70,7 @@ class RealApplyRemoteChatMessageUseCaseTest {
             origin = ChatMessageOrigin.Contact(peerAccountId),
             content = ChatMessage.Content.Text("hi"),
             status = ChatMessage.Status.NEW,
+            sortOrder = null,
         ).toEncodedMessage().getOrThrow()
     }
 

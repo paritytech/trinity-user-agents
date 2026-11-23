@@ -628,7 +628,7 @@ class ChatEngine @Inject constructor(
 
     private fun determineInitialMessageStatus(chatId: ChatId): ChatMessage.Status {
         return when (chatId.chatVariant()) {
-            is ChatVariant.Extension -> ChatMessage.Status.IS_READ
+            is ChatVariant.Extension -> ChatMessage.Status.IS_DELIVERED
             is ChatVariant.Contact -> ChatMessage.Status.NEW
         }
     }
