@@ -307,7 +307,7 @@ impl<Role> HostRuntime<Role> {
 	/// the next transaction naming a contact reads the list again.
 	#[instrument(skip_all, fields(runtime.method = "host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
-		self.services.contact_handles.clear();
+		self.services.contact_handle_cache.clear();
 	}
 
 	/// The stack this host runs.
@@ -2077,7 +2077,7 @@ impl ProductRuntime {
 	/// what it cached before. For an embedder that holds only this runtime;
 	/// one holding the host runtime calls it there.
 	pub fn notify_contacts_changed(&self) {
-		self.admin.product_runtime.connection().services().contact_handles.clear();
+		self.admin.product_runtime.connection().services().contact_handle_cache.clear();
 	}
 
 	/// Build a product-facing host core around a platform implementation and
