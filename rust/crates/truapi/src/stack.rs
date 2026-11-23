@@ -74,24 +74,16 @@ const RESERVED_TLD: &str = "dot";
 /// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
 /// hands out also has its chains checked against the descriptor, and equality
 /// does not look at that.
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone, derive_more::PartialEq, derive_more::Eq)]
 pub struct Stack {
 	network: String,
 	tld: String,
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
+	#[debug(skip)]
+	#[partial_eq(skip)]
 	checks: Option<StackChecks>,
 }
-
-impl PartialEq for Stack {
-	fn eq(&self, other: &Self) -> bool {
-		let Self { network, tld, chains, account_data_store, checks: _ } = self;
-		(network, tld, chains, account_data_store) ==
-			(&other.network, &other.tld, &other.chains, &other.account_data_store)
-	}
-}
-
-impl Eq for Stack {}
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
 /// Bulletin are required: the core reads dotNS and runs SSO and its own
