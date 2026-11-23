@@ -131,7 +131,7 @@ class UnloadAndSplitVouchersStrategyTest {
         ringVrfKeyIndex = testKey(index),
         ringVrfPublicKey = byteArrayOf(index.toByte()).toDataByteArray(),
         recyclerValue = ValueExponent(5),
-        location = RecyclerVoucher.Location.InRecycler(RingIndex(BigInteger.ZERO), recyclerMembers = 1, enteredAt = null),
+        location = RecyclerVoucher.Location.InRecycler(RingIndex(BigInteger.ZERO), recyclerMembers = 1, enteredAt = null, recyclerUnloaded = null),
         recyclerFungibility = RecyclerFungibility.NONE,
         maxRecyclerFungibility = RecyclerFungibility.NONE,
     )
