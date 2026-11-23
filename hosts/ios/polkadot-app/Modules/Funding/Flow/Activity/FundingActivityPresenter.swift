@@ -71,8 +71,8 @@ extension FundingActivityPresenter: FundingActivityInteractorOutputProtocol {
             state.history = []
         }
         state.arriving = Set(justFinished.keys)
-        state.titles = Dictionary(
-            (state.inFlight + state.history).map { ($0.id, viewModelFactory.makeActivityTitle(for: $0)) }
+        state.rows = Dictionary(
+            (state.inFlight + state.history).map { ($0.id, viewModelFactory.makeActivityRow(for: $0, now: now)) }
         ) { _, latest in latest }
         view?.didReceive(state: state)
     }

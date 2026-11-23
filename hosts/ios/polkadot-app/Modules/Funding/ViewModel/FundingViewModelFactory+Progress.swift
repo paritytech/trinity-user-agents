@@ -131,9 +131,9 @@ extension FundingViewModelFactory {
             },
             details: progressDetails(for: state),
             hasFees: quote != nil,
-            arrival: quote?.etaSecs.map { eta in
+            arrival: quote?.etaSecs.flatMap(etaText(seconds:)).map { eta in
                 FundingProgressViewModel.Arrival(
-                    eta: FundingEta.text(seconds: eta),
+                    eta: eta,
                     rateNote: state.direction == .in && state.rail != .card ? bankRateNote : nil
                 )
             },

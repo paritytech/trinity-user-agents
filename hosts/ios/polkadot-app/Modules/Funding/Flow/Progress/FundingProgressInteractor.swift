@@ -28,7 +28,7 @@ final class FundingProgressInteractor: FundingEntryInteractor, FundingProgressIn
         let wait = Date(milliseconds: longerAtMs).timeIntervalSinceNow
         longerTask = Task { [weak self, clock] in
             if wait > 0 {
-                guard (try? await clock.sleep(for: .seconds(wait))) != nil else { return }
+                guard await (try? clock.sleep(for: .seconds(wait))) != nil else { return }
             }
             guard !Task.isCancelled else { return }
             self?.refresh()

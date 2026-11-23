@@ -55,7 +55,7 @@ private extension FundingEndedView {
                 .minimumScaleFactor(0.5)
             }
             if ended.succeeded {
-                Text(verbatim: FundingActivityDate.moment(ended.endedAt))
+                Text(verbatim: viewModel.endedAt)
                     .typography(.bodySmall)
                     .foregroundStyle(.fgSecondary)
             }
@@ -144,9 +144,9 @@ private extension FundingEndedView {
                 }
             }
 
-            if ended.payoutState == .pending, let eta = ended.quote?.etaSecs {
+            if ended.payoutState == .pending, let eta = viewModel.eta {
                 FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
-                    value(FundingEta.text(seconds: eta))
+                    value(eta)
                 }
             }
 

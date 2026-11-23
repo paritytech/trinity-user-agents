@@ -1,6 +1,7 @@
 import Foundation
 import Foundation_iOS
 import FoundationExt
+import PolkadotUI
 import SubstrateSdk
 import TrUAPIHost
 
@@ -20,7 +21,7 @@ protocol FundingViewModelFactoryProtocol {
     func makeProgressViewModel(for state: FundingFlowState) -> FundingProgressViewModel
     func makeCancelConfirmViewModel(for state: FundingFlowState) -> FundingCancelConfirmViewModel
     func makeEndedViewModel(for ended: FundingEndedSession) -> FundingEndedViewModel
-    func makeActivityTitle(for item: FundingActivityItem) -> String
+    func makeActivityRow(for item: FundingActivityItem, now: Date) -> FundingActivityRowContent
 }
 
 final class FundingViewModelFactory {
@@ -30,6 +31,8 @@ final class FundingViewModelFactory {
     let cashInfo: AssetBalanceDisplayInfo
     let cashSymbol: String
     let formatterFactory: AssetBalanceFormatterFactoryProtocol
+    let timestampFormatter: TimestampFormatting
+    let etaFormatter: TimeFormatterProtocol
 
     private let wholeCashFormatter: LocalizableDecimalFormatting
     private let centsCashFormatter: LocalizableDecimalFormatting
@@ -37,11 +40,15 @@ final class FundingViewModelFactory {
     init(
         cashInfo: AssetBalanceDisplayInfo,
         cashSymbol: String,
-        formatterFactory: AssetBalanceFormatterFactoryProtocol = AssetBalanceFormatterFactory()
+        formatterFactory: AssetBalanceFormatterFactoryProtocol = AssetBalanceFormatterFactory(),
+        timestampFormatter: TimestampFormatting = FundingTimestampFormatter(),
+        etaFormatter: TimeFormatterProtocol = FundingEtaFormatter()
     ) {
         self.cashInfo = cashInfo
         self.cashSymbol = cashSymbol
         self.formatterFactory = formatterFactory
+        self.timestampFormatter = timestampFormatter
+        self.etaFormatter = etaFormatter
 
         wholeCashFormatter = formatterFactory
             .createAssetPriceFormatter(for: cashInfo, minimumFractionDigits: 0)
@@ -172,7 +179,7 @@ extension FundingViewModelFactory: FundingViewModelFactoryProtocol {
                 ? String(localized: .Funding.summaryMinPayout)
                 : String(localized: .Funding.summaryYouReceive),
             payout: payout,
-            eta: quote?.etaSecs.map(FundingEta.text(seconds:)),
+            eta: quote?.etaSecs.flatMap(etaText(seconds:)),
             bankRateNote: state.rail == .bank && state.direction == .in ? bankRateNote : nil,
             problem: summaryProblem(for: state),
             hasQuote: quote != nil,
@@ -288,12 +295,27 @@ extension FundingViewModelFactory: FundingViewModelFactoryProtocol {
             settled: ended.settledAmount.map(cashLabel),
             requested: ended.differingRequestedAmount.map(cashLabel),
             refunded: refunded,
-            amount: ended.cashAmount.map(cashLabel) ?? "$\(cashSymbol)"
+            amount: ended.cashAmount.map(cashLabel) ?? "$\(cashSymbol)",
+            endedAt: timestampFormatter.string(for: ended.endedAt),
+            eta: ended.quote?.etaSecs.flatMap(etaText(seconds:))
         )
     }
 
+    func makeActivityRow(for item: FundingActivityItem, now: Date) -> FundingActivityRowContent {
+        FundingActivityRowContent(
+            item: item,
+            title: activityTitle(for: item),
+            moment: timestampFormatter.string(for: item.date, now: now)
+        )
+    }
+
+    /// "About 5 min", as the provider gave it in seconds.
+    func etaText(seconds: UInt64) -> String? {
+        try? etaFormatter.string(from: TimeInterval(seconds))
+    }
+
     /// Unsigned in flight and once nothing moved, signed once value moved.
-    func makeActivityTitle(for item: FundingActivityItem) -> String {
+    func activityTitle(for item: FundingActivityItem) -> String {
         guard let amount = item.amount else { return "" }
 
         switch item.status {

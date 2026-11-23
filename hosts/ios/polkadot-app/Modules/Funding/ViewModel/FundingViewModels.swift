@@ -253,4 +253,8 @@ struct FundingEndedViewModel: Equatable {
     let refunded: String?
     /// The CASH the session was for, with its symbol.
     let amount: String
+    /// When the session ended.
+    let endedAt: String
+    /// When the provider says the payout arrives.
+    let eta: String?
 }
