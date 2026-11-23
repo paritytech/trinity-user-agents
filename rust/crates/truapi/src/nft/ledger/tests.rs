@@ -6,10 +6,10 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
-	host_logic::product_account::derive_sr25519_hard_path,
+	host_logic::root_entropy::RootEntropy,
 	installation::InstallationId,
 	nft::{
-		ItemSlot, UnknownPurse, item_keys_from_entropy,
+		ItemSlot, UnknownPurse,
 		keys::ItemIndex,
 		testing::{
 			FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, insert_item_row, test_ledger_deps,
@@ -41,7 +41,7 @@ fn expected_keys(indices: std::ops::Range<u32>) -> Vec<ItemKey> {
 		index: ItemIndex(index),
 	};
 	let slots: Vec<ItemSlot> = indices.map(slot).collect();
-	item_keys_from_entropy(&TEST_ENTROPY, &slots).expect("test entropy derives")
+	RootEntropy::new(TEST_ENTROPY).item_keys(&slots).expect("test entropy derives")
 }
 
 /// Recovery derives these keys again from the entropy alone, so the path
@@ -49,7 +49,8 @@ fn expected_keys(indices: std::ops::Range<u32>) -> Vec<ItemKey> {
 #[test]
 fn item_keys_follow_the_hard_path_nft_purse_installation_index() {
 	let installation = format!("0x{}", "1d".repeat(32));
-	let by_path = derive_sr25519_hard_path(&TEST_ENTROPY, &["nft", "0", &installation, "3"])
+	let by_path = RootEntropy::new(TEST_ENTROPY)
+		.derive_sr25519_hard_path(&["nft", "0", &installation, "3"])
 		.expect("path derives");
 	let [_, _, _, by_slot] = expected_keys(0..4)[..] else { panic!("four keys") };
 	let pinned = "d837c9c558b3d5c58df68608ba64f5db6a546271368c1c386efee373b33f4636";
@@ -97,7 +98,7 @@ fn another_installation_starts_its_own_indices() {
 	});
 	let allocated = allocate(&other_ledger, 1).expect("second installation allocates");
 	let slot = ItemSlot { purse: PurseId(0), installation: other, index: ItemIndex(0) };
-	let expected = item_keys_from_entropy(&TEST_ENTROPY, &[slot]).expect("derives");
+	let expected = RootEntropy::new(TEST_ENTROPY).item_keys(&[slot]).expect("derives");
 	assert_eq!(allocated, expected);
 }
 
@@ -227,7 +228,8 @@ struct OneKeyShort;
 
 impl ItemKeyDeriver for OneKeyShort {
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
-		let mut keys = item_keys_from_entropy(&TEST_ENTROPY, slots).expect("test entropy derives");
+		let mut keys =
+			RootEntropy::new(TEST_ENTROPY).item_keys(slots).expect("test entropy derives");
 		keys.pop();
 		Ok(keys)
 	}

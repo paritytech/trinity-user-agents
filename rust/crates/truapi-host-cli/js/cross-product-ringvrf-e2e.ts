@@ -1,4 +1,8 @@
-import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/index.ts";
+import {
+  asProductId,
+  ringCollectionId,
+  type ProductId,
+} from "../../../../js/packages/truapi/src/index.ts";
 
 // Cross-product ring-VRF signing against a real signing-host CLI.
 //
@@ -41,9 +45,9 @@ const OWNER = asProductId("peopl.paseo");
 const GRANTED = asProductId("dim2.paseo");
 const UNTRUSTED = asProductId("stash.paseo");
 
-/// "pop:polkadot.network/people-lite", hex.
-const PEOPLE_LITE_COLLECTION_ID =
-  "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
+const PEOPLE_LITE_COLLECTION_ID = ringCollectionId(
+  "pop:polkadot.network/people-lite",
+);
 
 
 const INDEX = { tag: "Index" as const, value: 0 };
