@@ -201,15 +201,15 @@ impl Navigation for CallbackPlatform {
 impl Notifications for CallbackPlatform {
 	async fn push_notification(
 		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		notification: latest::HostPushNotificationRequest,
+	) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
 		self.callbacks.on_core_log(
 			markers::NATIVE_PUSH_NOTIFICATION.target.to_string(),
 			notification.text.clone(),
 		);
 
 		let id = self.callbacks.push_notification(notification).await?;
-		Ok(v01::HostPushNotificationResponse { id })
+		Ok(latest::HostPushNotificationResponse { id })
 	}
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
