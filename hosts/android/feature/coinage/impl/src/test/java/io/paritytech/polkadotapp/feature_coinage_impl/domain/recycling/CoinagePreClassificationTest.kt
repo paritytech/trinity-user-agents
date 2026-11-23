@@ -2,13 +2,11 @@ package io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling
 
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerIndex
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher.Location
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
-import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.params
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyCoins
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyVouchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
@@ -21,16 +19,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import java.math.BigInteger
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 private const val FULL_RING = 767
 
 class CoinagePreClassificationTest {
-    private val minPrivacy = ParametricRecyclingStrategy(RecyclingStrategyType.MIN_PRIVACY.params, forcedAgeOf(FORCED_AGE))
-    private val maxPrivacy = ParametricRecyclingStrategy(RecyclingStrategyType.MAX_PRIVACY.params, forcedAgeOf(FORCED_AGE))
+    private val minPrivacy = ParametricRecyclingStrategy(RecyclingStrategyType.MIN_PRIVACY.bundledParams, forcedAgeOf(FORCED_AGE))
+    private val maxPrivacy = ParametricRecyclingStrategy(RecyclingStrategyType.MAX_PRIVACY.bundledParams, forcedAgeOf(FORCED_AGE))
 
     @Test
     fun `a settled coin is minted`() {
@@ -123,7 +118,7 @@ class CoinagePreClassificationTest {
 
     @Test
     fun `min privacy makes an in-recycler voucher usable at once`() {
-        val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 0, enteredAt = null))
+        val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 0, enteredAt = null, recyclerUnloaded = null))
 
         val buckets = listOf(trackedVoucher(voucher)).preClassifyVouchers(minPrivacy, context())
 
@@ -132,7 +127,7 @@ class CoinagePreClassificationTest {
 
     @Test
     fun `max privacy holds an in-recycler voucher back below ninety percent without a timestamp`() {
-        val partial = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 690, enteredAt = null))
+        val partial = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 690, enteredAt = null, recyclerUnloaded = null))
 
         val buckets = listOf(trackedVoucher(partial)).preClassifyVouchers(maxPrivacy, context())
 
@@ -143,7 +138,7 @@ class CoinagePreClassificationTest {
     @Test
     fun `max privacy releases at ninety percent of the included ring`() {
         val vouchers = listOf(690, 691).map { members ->
-            voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), members, enteredAt = null))
+            voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), members, enteredAt = null, recyclerUnloaded = null))
         }
 
         assertEquals(listOf(false, true), vouchers.map { maxPrivacy.isVoucherUsable(it, context()) })
@@ -151,9 +146,9 @@ class CoinagePreClassificationTest {
 
     @Test
     fun `balanced releases at twenty percent of the included ring`() {
-        val balanced = ParametricRecyclingStrategy(RecyclingStrategyType.BALANCED.params, forcedAgeOf(FORCED_AGE))
+        val balanced = ParametricRecyclingStrategy(RecyclingStrategyType.BALANCED.bundledParams, forcedAgeOf(FORCED_AGE))
         val vouchers = listOf(153, 154).map { members ->
-            voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), members, enteredAt = null))
+            voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), members, enteredAt = null, recyclerUnloaded = null))
         }
 
         assertEquals(listOf(false, true), vouchers.map { balanced.isVoucherUsable(it, context()) })
@@ -191,7 +186,7 @@ class CoinagePreClassificationTest {
 
     @Test
     fun `buckets never overlap`() {
-        val usable = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), FULL_RING, enteredAt = null), ringVrfKeyIndex = 1)
+        val usable = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), FULL_RING, enteredAt = null, recyclerUnloaded = null), ringVrfKeyIndex = 1)
         val onboarding = voucherOf(Location.Onboarding, ringVrfKeyIndex = 2)
 
         val buckets = listOf(trackedVoucher(usable), trackedVoucher(onboarding))
@@ -202,33 +197,15 @@ class CoinagePreClassificationTest {
     }
 
     @Test
-    fun `timed readiness requires thirty two members and ten full minutes in both modes`() {
-        data class Case(val members: Int, val elapsed: Duration, val ready: Boolean)
-        val cases = listOf(
-            Case(31, 10.minutes, false),
-            Case(32, 10.minutes - 1.milliseconds, false),
-            Case(32, 10.minutes, true),
-        )
-        val enteredAt = Instant.fromEpochMilliseconds(0)
-        for (type in listOf(RecyclingStrategyType.BALANCED, RecyclingStrategyType.MAX_PRIVACY)) {
-            val strategy = ParametricRecyclingStrategy(type.params, forcedAgeOf(FORCED_AGE))
-            for (case in cases) {
-                val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), case.members, enteredAt))
-                assertEquals("$type: $case", case.ready, strategy.isVoucherUsable(voucher, context(enteredAt + case.elapsed)))
-            }
-        }
-    }
-
-    @Test
     fun `saturation releases small rings before either timed requirement`() {
-        val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), 9, enteredAt = null))
+        val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), 9, enteredAt = null, recyclerUnloaded = null))
 
         assertEquals(true, maxPrivacy.isVoucherUsable(voucher, context(capacity = 10)))
     }
 
     @Test
     fun `maturity does not release transaction restricted vouchers`() {
-        val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), 32, Instant.fromEpochMilliseconds(0)))
+        val voucher = voucherOf(Location.InRecycler(RecyclerIndex(BigInteger.ONE), 32, Instant.fromEpochMilliseconds(0), recyclerUnloaded = 0))
         val held = TrackedVoucher(voucher, CoinageAssetState(handedOff = true, minterStatus = null, consumerStatus = null))
         val buckets = listOf(held).preClassifyVouchers(maxPrivacy, context(Instant.fromEpochMilliseconds(600000)))
 
@@ -259,15 +236,6 @@ class CoinagePreClassificationTest {
         isOnChain = onChain,
         accountId = mock(),
         provenance = CoinProvenance.UNKNOWN,
-    )
-
-    private fun voucherOf(location: Location, ringVrfKeyIndex: Int = 0) = RecyclerVoucher(
-        ringVrfKeyIndex = testKey(ringVrfKeyIndex),
-        ringVrfPublicKey = mock(),
-        recyclerValue = ValueExponent(1),
-        location = location,
-        recyclerFungibility = RecyclerFungibility.NONE,
-        maxRecyclerFungibility = RecyclerFungibility.NONE,
     )
 
     private companion object {

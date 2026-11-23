@@ -3,43 +3,90 @@ use super::*;
 const ALICE: [u8; 32] = [10u8; 32];
 const BOB: [u8; 32] = [11u8; 32];
 
-/// One identity's handle key, derived the way a live session's is.
-fn key() -> [u8; 32] {
-	handle_key_from_root_source(&[1u8; 32])
+fn product(id: &str) -> ProductId {
+	ProductId::for_test(id)
 }
 
-/// A second identity's, to stand in for another user.
-fn other_key() -> [u8; 32] {
-	handle_key_from_root_source(&[2u8; 32])
+/// One identity's handle key in `product_id`, derived the way a live session's is.
+fn handle_key_in(product_id: &ProductId) -> ContactHandleKey {
+	ContactHandleKey::from_root_entropy_source(&[1u8; 32], product_id)
 }
 
-/// The resolver a host holds, for the same identity as [`key`].
-fn handles() -> ContactHandles {
-	ContactHandles::from_root_entropy_source(&[1u8; 32])
+/// The handle key a host holds for one identity in one product.
+fn handle_key() -> ContactHandleKey {
+	handle_key_in(&product("voting.dot"))
 }
 
-/// The other identity's resolver.
-fn other_handles() -> ContactHandles {
-	ContactHandles::from_root_entropy_source(&[2u8; 32])
+/// The same product's handle key for another identity.
+fn other_handle_key() -> ContactHandleKey {
+	ContactHandleKey::from_root_entropy_source(&[2u8; 32], &product("voting.dot"))
+}
+
+/// The bytes of [`handle_key`].
+fn raw_handle_key() -> [u8; 32] {
+	product_handle_key(&user_handle_key(&[1u8; 32]), &product("voting.dot"))
+}
+
+/// The bytes of [`other_handle_key`].
+fn other_raw_handle_key() -> [u8; 32] {
+	product_handle_key(&user_handle_key(&[2u8; 32]), &product("voting.dot"))
 }
 
 #[test]
-fn one_contact_has_one_handle_regardless_of_product() {
-	// The point of the design: a handle is a durable shared id, so it takes
-	// no product as input and cannot vary by caller.
-	assert_eq!(contact_handle(&key(), &ALICE), contact_handle(&key(), &ALICE));
+fn the_handle_key_mints_under_the_product_key() {
+	assert_eq!(handle_key().mint(&ALICE), contact_handle(&raw_handle_key(), &ALICE));
+}
+
+#[test]
+fn one_contact_has_one_handle_within_a_product() {
+	// Stable across the user's hosts: the same root source and product give
+	// the same handle.
+	assert_eq!(handle_key_in(&product("voting.dot")).mint(&ALICE), handle_key_in(&product("voting.dot")).mint(&ALICE));
+}
+
+#[test]
+fn one_contact_has_a_different_handle_in_each_product() {
+	assert_ne!(handle_key_in(&product("voting.dot")).mint(&ALICE), handle_key_in(&product("games.dot")).mint(&ALICE));
+}
+
+#[test]
+fn a_handle_from_one_product_names_nobody_in_another() {
+	let handle = handle_key_in(&product("games.dot")).mint(&ALICE);
+	assert!(!handle_key_in(&product("voting.dot")).matches(&handle, &ALICE));
+}
+
+#[test]
+fn a_cached_handle_from_another_product_is_a_miss() {
+	// The cache is shared by every product runtime of a host.
+	let cache = ContactHandleCache::default();
+	let games = handle_key_in(&product("games.dot"));
+	let handle = games.mint(&BOB);
+	cache.insert(&games, handle, BOB, cache.generation());
+	assert_eq!(cache.get(&handle, &handle_key_in(&product("voting.dot"))), None);
+}
+
+#[test]
+fn another_products_cached_handle_does_not_refuse_a_call() {
+	// One product's picks must not decide whether another's call goes through.
+	let cache = ContactHandleCache::default();
+	let games = handle_key_in(&product("games.dot"));
+	let handle = games.mint(&BOB);
+	cache.insert(&games, handle, BOB, cache.generation());
+
+	assert!(!cache.has_undeclared_handle(&product("voting.dot"), &handle, &[]));
+	assert!(cache.has_undeclared_handle(&product("games.dot"), &handle, &[]));
 }
 
 #[test]
 fn two_contacts_have_different_handles() {
-	assert_ne!(contact_handle(&key(), &ALICE), contact_handle(&key(), &BOB));
+	assert_ne!(contact_handle(&raw_handle_key(), &ALICE), contact_handle(&raw_handle_key(), &BOB));
 }
 
 #[test]
 fn two_users_have_different_handles_for_one_contact() {
 	// Keyed per identity, so the same person is a different pseudonym to a
 	// different user.
-	assert_ne!(contact_handle(&key(), &ALICE), contact_handle(&other_key(), &ALICE));
+	assert_ne!(contact_handle(&raw_handle_key(), &ALICE), contact_handle(&other_raw_handle_key(), &ALICE));
 }
 
 #[test]
@@ -47,34 +94,34 @@ fn the_handle_key_is_not_the_root_source_it_came_from() {
 	// Domain separation: the key is not the raw entropy source, so it cannot
 	// collide with another use of the same secret.
 	let source = [1u8; 32];
-	assert_ne!(handle_key_from_root_source(&source), source);
+	assert_ne!(user_handle_key(&source), source);
 }
 
 #[test]
 fn a_handle_does_not_reveal_the_account() {
 	// Not a strength claim -- just that the account is not passed through.
-	assert_ne!(contact_handle(&key(), &ALICE), ALICE);
+	assert_ne!(contact_handle(&raw_handle_key(), &ALICE), ALICE);
 }
 
 #[test]
 fn a_handle_names_the_account_it_was_minted_for() {
-	let handle = contact_handle(&key(), &BOB);
-	assert!(handles().names(&handle, &BOB));
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	assert!(handle_key().matches(&handle, &BOB));
 }
 
 #[test]
 fn a_handle_names_no_other_account() {
 	// A host answering with the wrong contact, or with somebody for a
 	// handle a product invented, must be caught here.
-	let handle = contact_handle(&key(), &BOB);
-	assert!(!handles().names(&handle, &ALICE));
-	assert!(!handles().names(&[0u8; 32], &BOB));
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	assert!(!handle_key().matches(&handle, &ALICE));
+	assert!(!handle_key().matches(&[0u8; 32], &BOB));
 }
 
 #[test]
 fn a_handle_names_nobody_under_another_handle_key() {
-	let handle = contact_handle(&key(), &BOB);
-	assert!(!other_handles().names(&handle, &BOB));
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	assert!(!other_handle_key().matches(&handle, &BOB));
 }
 
 #[test]
@@ -93,27 +140,27 @@ fn the_handle_matches_the_published_host_vector() {
 #[test]
 fn a_cached_handle_resolves_without_asking_the_host() {
 	let cache = ContactHandleCache::default();
-	let handle = contact_handle(&key(), &BOB);
-	cache.insert(handle, BOB, cache.generation());
-	assert_eq!(cache.get(&handle, &handles()), Some(BOB));
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	cache.insert(&handle_key(), handle, BOB, cache.generation());
+	assert_eq!(cache.get(&handle, &handle_key()), Some(BOB));
 }
 
 #[test]
 fn a_cached_handle_from_another_key_is_a_miss() {
 	// An entry left from an earlier session must not answer for this one.
 	let cache = ContactHandleCache::default();
-	let handle = contact_handle(&key(), &BOB);
-	cache.insert(handle, BOB, cache.generation());
-	assert_eq!(cache.get(&handle, &other_handles()), None);
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	cache.insert(&handle_key(), handle, BOB, cache.generation());
+	assert_eq!(cache.get(&handle, &other_handle_key()), None);
 }
 
 #[test]
 fn clearing_the_cache_forgets_every_handle() {
 	let cache = ContactHandleCache::default();
-	let handle = contact_handle(&key(), &BOB);
-	cache.insert(handle, BOB, cache.generation());
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	cache.insert(&handle_key(), handle, BOB, cache.generation());
 	cache.clear();
-	assert_eq!(cache.get(&handle, &handles()), None);
+	assert_eq!(cache.get(&handle, &handle_key()), None);
 }
 
 #[test]
@@ -125,7 +172,7 @@ fn a_full_cache_empties_rather_than_grows() {
 			account[..2].copy_from_slice(&byte.to_le_bytes());
 			account
 		};
-		cache.insert(contact_handle(&key(), &account), account, cache.generation());
+		cache.insert(&handle_key(), contact_handle(&raw_handle_key(), &account), account, cache.generation());
 	}
 	assert_eq!(
 		cache.state().entries.len(),
@@ -139,24 +186,24 @@ fn an_answer_from_before_a_clear_is_not_cached() {
 	// The race a host lookup runs against a removal: the answer was read
 	// before the host signalled, and must not be written back after.
 	let cache = ContactHandleCache::default();
-	let handle = contact_handle(&key(), &BOB);
+	let handle = contact_handle(&raw_handle_key(), &BOB);
 	let before = cache.generation();
 	cache.clear();
-	cache.insert(handle, BOB, before);
-	assert_eq!(cache.get(&handle, &handles()), None);
+	cache.insert(&handle_key(), handle, BOB, before);
+	assert_eq!(cache.get(&handle, &handle_key()), None);
 }
 
 #[test]
 fn a_known_handle_the_call_does_not_declare_is_caught() {
 	let cache = ContactHandleCache::default();
-	let handle = contact_handle(&key(), &BOB);
-	cache.insert(handle, BOB, cache.generation());
+	let handle = contact_handle(&raw_handle_key(), &BOB);
+	cache.insert(&handle_key(), handle, BOB, cache.generation());
 	let mut call = vec![0x04, 0x00];
 	call.extend_from_slice(&handle);
 
-	assert!(cache.has_undeclared_handle(&call, &[]));
-	assert!(!cache.has_undeclared_handle(&call, &[handle]));
-	assert!(!cache.has_undeclared_handle(&[0x04, 0x00], &[]));
+	assert!(cache.has_undeclared_handle(&product("voting.dot"), &call, &[]));
+	assert!(!cache.has_undeclared_handle(&product("voting.dot"), &call, &[handle]));
+	assert!(!cache.has_undeclared_handle(&product("voting.dot"), &[0x04, 0x00], &[]));
 }
 
 #[test]
@@ -178,7 +225,7 @@ fn a_picked_outcome_carries_nothing_but_a_handle() {
 	// Encoded width pins the payload: one discriminant plus 32 bytes leaves
 	// no room for a name, an account, or a count to ride along.
 	let picked = truapi::latest::ContactPickOutcome::Picked {
-		handle: truapi::latest::ContactHandle { bytes: contact_handle(&key(), &ALICE) },
+		handle: truapi::latest::ContactHandle { bytes: contact_handle(&raw_handle_key(), &ALICE) },
 	};
 	assert_eq!(picked.encode().len(), 33);
 }

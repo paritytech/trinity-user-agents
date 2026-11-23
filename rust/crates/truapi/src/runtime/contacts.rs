@@ -5,75 +5,91 @@
 //! turns the one person the user selected into a handle. Only the game
 //! product, Jollity, reads the usernames of the contacts.
 //!
-//! The handle is deliberately **not** per-product: the same contact yields the
-//! same value in every product and on every host of this user. Per-product
-//! handles were considered and rejected — the core resolves a handle when it
-//! builds a transaction anyway, so scoping bought no safety a product could not
-//! route around, and it cost the durable shared id that makes the API usable and
-//! that survives contacts syncing between a user's hosts.
+//! The handle is **per product**: one contact yields a different value in each
+//! product, so two products cannot join their users' contacts on it. Within a
+//! product it is stable on every host of this user, because the key comes from
+//! the session's root entropy source, which the wallet supplies alike to each
+//! host, and from the product's id. The id is the full one the host runs the
+//! product under, network suffix or localhost port included, so the same
+//! product on another network or port is a different product here, as it is
+//! for its accounts.
 //!
-//! Keyed on the session's root entropy source, which no product can reach, so
-//! the mapping cannot be recovered by hashing candidate accounts.
+//! No product can reach the root entropy source, so the mapping cannot be
+//! recovered by hashing candidate accounts.
 
 use std::{collections::HashMap, sync::Mutex};
 
 use parity_scale_codec::Encode;
 
+use crate::{host_logic::keyed_hash::blake2b_256_keyed, product_id::ProductId};
+
 /// Upper bound on cached handles. The cache holds contacts the user picked, so
 /// it stays small; reaching the bound empties it rather than evicting in order.
 const HANDLE_CACHE_MAX_ENTRIES: usize = 256;
 
-/// Domain separator for the contact-handle key.
-pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle";
+/// Domain separator for the user's handle key.
+///
+/// The user's handle key only ever hashes product ids, and only product
+/// handle keys mint handles, so a product handle key cannot equal a handle:
+/// no handle is minted under the key a product id is hashed with.
+pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle-key/user";
 
-/// Domain-separate the session's root entropy source into the contact-handle
-/// key, so this key cannot collide with another derived from the same source.
-pub fn handle_key_from_root_source(root_entropy_source: &[u8; 32]) -> [u8; 32] {
-	blake2b256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
+/// Domain-separate the session's root entropy source into the user's handle
+/// key, so it cannot collide with another key derived from the same source.
+/// Never used to mint: only [`product_handle_key`] reads it.
+pub fn user_handle_key(root_entropy_source: &[u8; 32]) -> [u8; 32] {
+	blake2b_256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
 }
 
-/// The handle one contact is known by, across every product and every host of
-/// this user.
+/// Scope the user's handle key to one product, so the same contact hashes to an
+/// unrelated handle in every other product.
+pub fn product_handle_key(user_handle_key: &[u8; 32], product_id: &ProductId) -> [u8; 32] {
+	blake2b_256_keyed(product_id.as_str().as_bytes(), user_handle_key)
+}
+
+/// The handle one contact is known by in one product, on every host of this
+/// user.
 ///
-/// `handle_key` comes from the session's root entropy source, which both host
-/// roles hold and no product can reach. That is what makes this a real
-/// obfuscation rather than an encoding: an adversary cannot recover the mapping
-/// by hashing candidate accounts, because People-chain accounts are enumerable
-/// but the key is not guessable.
-///
-/// Product-independent on purpose — one contact is one handle everywhere, and
-/// the key is uniform across a user's hosts because the wallet supplies the same
-/// root source to each.
+/// `handle_key` is the product-scoped key from `product_handle_key`. It comes
+/// from the session's root entropy source, which both host roles hold and no
+/// product can reach. That is what makes this a real obfuscation rather than an
+/// encoding: an adversary cannot recover the mapping by hashing candidate
+/// accounts, because People-chain accounts are enumerable but the key is not
+/// guessable.
 pub fn contact_handle(handle_key: &[u8; 32], account: &[u8; 32]) -> [u8; 32] {
-	blake2b256_keyed(&account.encode(), handle_key)
+	blake2b_256_keyed(&account.encode(), handle_key)
 }
 
-/// Both directions of the handle mapping: minting one for a contact the user
-/// picked, and recovering the account a handle a product holds names.
+/// One product's handle key: mints the handles that product holds and checks
+/// the accounts a host resolves them to.
 ///
-/// Keyed on the session's root entropy source, which both host roles hold and
-/// no product can reach, so only a host can go either way.
-pub struct ContactHandles {
-	handle_key: [u8; 32],
+/// Derived from the session's root entropy source, which both host roles hold
+/// and no product can reach, and always for one product, so no handle exists
+/// that two products share.
+pub struct ContactHandleKey {
+	bytes: [u8; 32],
+	product_id: ProductId,
 }
 
-impl ContactHandles {
-	/// Derive the handle key from the session's root entropy source.
-	pub fn from_root_entropy_source(root_entropy_source: &[u8; 32]) -> Self {
-		Self { handle_key: handle_key_from_root_source(root_entropy_source) }
+impl ContactHandleKey {
+	/// The handle key of `product_id` under the session's root entropy source.
+	pub fn from_root_entropy_source(root_entropy_source: &[u8; 32], product_id: &ProductId) -> Self {
+		Self {
+			bytes: product_handle_key(&user_handle_key(root_entropy_source), product_id),
+			product_id: product_id.clone(),
+		}
 	}
 
-	/// The handle this user knows `account` by.
+	/// The handle this product knows `account` by.
 	pub fn mint(&self, account: &[u8; 32]) -> [u8; 32] {
-		contact_handle(&self.handle_key, account)
+		contact_handle(&self.bytes, account)
 	}
 
 	/// The host lookup for the accounts `handles` name.
 	///
-	/// It carries the key the handles are minted under, which the host needs
-	/// to look them up.
+	/// It carries this key, which the host needs to look the handles up.
 	pub fn lookup(&self, handles: Vec<[u8; 32]>) -> crate::platform::HostContactLookup {
-		crate::platform::HostContactLookup { handle_key: self.handle_key, handles }
+		crate::platform::HostContactLookup { handle_key: self.bytes, handles }
 	}
 
 	/// Whether `account` is the one `handle` names.
@@ -82,7 +98,7 @@ impl ContactHandles {
 	/// wrong contact, or with anyone at all for a made-up handle, is refused
 	/// rather than trusted: resolution is the host's lookup, but the check
 	/// stays in the core.
-	pub fn names(&self, handle: &[u8; 32], account: &[u8; 32]) -> bool {
+	pub fn matches(&self, handle: &[u8; 32], account: &[u8; 32]) -> bool {
 		&self.mint(account) == handle
 	}
 }
@@ -105,11 +121,13 @@ pub enum ContactResolutionError {
 /// Handles this host minted or resolved, mapped back to their accounts, so a
 /// transaction naming one needs no host lookup.
 ///
-/// Emptied whenever the host signals its contacts changed, which is what keeps
-/// a removed contact from resolving. Only the core writes it, so a handle it
-/// never minted cannot be in it: a forged handle always misses and meets the
-/// host. Each hit is re-minted under the current key before use, so an entry
-/// from an earlier session is a miss rather than a wrong answer.
+/// Shared by every product runtime of the host, so each entry records the
+/// product it was minted for and answers only that product. Emptied whenever
+/// the host signals its contacts changed, which is what keeps a removed contact
+/// from resolving. Only the core writes it, so a handle it never minted cannot
+/// be in it: a forged handle always misses and meets the host. Each hit is
+/// re-minted under the current key before use, so an entry from an earlier
+/// session is a miss rather than a wrong answer.
 #[derive(Default)]
 pub struct ContactHandleCache {
 	state: Mutex<CacheState>,
@@ -117,11 +135,16 @@ pub struct ContactHandleCache {
 
 #[derive(Default)]
 struct CacheState {
-	entries: HashMap<[u8; 32], [u8; 32]>,
+	entries: HashMap<[u8; 32], CacheEntry>,
 	/// Bumped by every clear. An answer obtained before a clear carries the
 	/// older value and is dropped rather than cached, so a host lookup racing
 	/// a removal cannot put the removed contact back.
 	generation: u64,
+}
+
+struct CacheEntry {
+	account: [u8; 32],
+	product_id: ProductId,
 }
 
 impl ContactHandleCache {
@@ -131,9 +154,15 @@ impl ContactHandleCache {
 		self.state().generation
 	}
 
-	/// Remember the account `handle` names, unless the cache was cleared since
-	/// `generation` was read.
-	pub fn insert(&self, handle: [u8; 32], account: [u8; 32], generation: u64) {
+	/// Remember the account `handle` names under `handle_key`, unless the cache
+	/// was cleared since `generation` was read.
+	pub fn insert(
+		&self,
+		handle_key: &ContactHandleKey,
+		handle: [u8; 32],
+		account: [u8; 32],
+		generation: u64,
+	) {
 		let mut state = self.state();
 		if state.generation != generation {
 			return;
@@ -141,27 +170,39 @@ impl ContactHandleCache {
 		if state.entries.len() >= HANDLE_CACHE_MAX_ENTRIES && !state.entries.contains_key(&handle) {
 			state.entries.clear();
 		}
-		state.entries.insert(handle, account);
+		state
+			.entries
+			.insert(handle, CacheEntry { account, product_id: handle_key.product_id.clone() });
 	}
 
-	/// The account `handle` names under `handles`, if this cache holds it.
-	pub fn get(&self, handle: &[u8; 32], handles: &ContactHandles) -> Option<[u8; 32]> {
-		let account = *self.state().entries.get(handle)?;
-		(&handles.mint(&account) == handle).then_some(account)
+	/// The account `handle` names under `handle_key`, if this cache holds it.
+	pub fn get(&self, handle: &[u8; 32], handle_key: &ContactHandleKey) -> Option<[u8; 32]> {
+		let state = self.state();
+		let entry = state.entries.get(handle)?;
+		(entry.product_id == handle_key.product_id && handle_key.matches(handle, &entry.account))
+			.then_some(entry.account)
 	}
 
-	/// Whether `call` carries a handle this cache knows that `declared` does
-	/// not list. Such a call would sign the handle bytes as an address nobody
-	/// holds, so it is refused. Best effort: a handle minted before the last
-	/// clear is no longer known here.
-	pub fn has_undeclared_handle(&self, call: &[u8], declared: &[[u8; 32]]) -> bool {
+	/// Whether `call` carries a handle this cache knows for `product_id` that
+	/// `declared` does not list. Such a call would sign the handle bytes as an
+	/// address nobody holds, so it is refused. Best effort: a handle minted
+	/// before the last clear is no longer known here. Another product's
+	/// handles are not looked at, so one product's picks never decide whether
+	/// another's call goes through.
+	pub fn has_undeclared_handle(
+		&self,
+		product_id: &ProductId,
+		call: &[u8],
+		declared: &[[u8; 32]],
+	) -> bool {
 		let state = self.state();
 		if state.entries.is_empty() {
 			return false;
 		}
 		call.windows(32).any(|window| {
 			let window: [u8; 32] = window.try_into().expect("windows(32); qed");
-			state.entries.contains_key(&window) && !declared.contains(&window)
+			state.entries.get(&window).is_some_and(|entry| &entry.product_id == product_id) &&
+				!declared.contains(&window)
 		})
 	}
 
@@ -175,16 +216,6 @@ impl ContactHandleCache {
 	fn state(&self) -> std::sync::MutexGuard<'_, CacheState> {
 		self.state.lock().expect("contact handle cache poisoned")
 	}
-}
-
-fn blake2b256_keyed(message: &[u8], key: &[u8]) -> [u8; 32] {
-	blake2b_simd::Params::new()
-		.hash_length(32)
-		.key(key)
-		.hash(message)
-		.as_bytes()
-		.try_into()
-		.expect("hash_length(32) configures BLAKE2b output to exactly 32 bytes; qed")
 }
 
 #[cfg(test)]

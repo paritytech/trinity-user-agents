@@ -206,7 +206,7 @@ private extension TabBarBottomChromeController {
         }
         keyboardFrame = frame
         let isKeyboardUp = view.convert(frame, from: nil).minY < view.bounds.maxY
-        foldController.setAutoHideBlocked(.keyboardUp, isKeyboardUp)
+        foldController.setKeyboardUp(isKeyboardUp, tucksShownBar: panelController.open == nil)
         let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
         let animates = duration > 0 && !UIAccessibility.isReduceMotionEnabled
         applyKeyboardLift(animation: animates ? .spring(duration: duration, bounce: 0) : nil)

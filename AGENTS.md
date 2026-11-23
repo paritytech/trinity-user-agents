@@ -17,14 +17,16 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         scheduled ones through their submission policies, and its
+                         deferred ones through their domain's submission policy, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
-                         (purse records, item keys, and the tracker of what they hold on
-                         Asset Hub) and `nft_purse` (the NFT purses RFC over them)
-                         modules keep NFT purses in the same database, transfer items
-                         as scheduled durable transactions, and receive cheques over
-                         the statement store; its `public_profile` domain resolves and caches
+                         (purse records, item keys, the tracker of what they hold on
+                         Asset Hub, and backup recovery after a reinstall) and `nft_purse`
+                         (the NFT purses RFC over them) modules keep NFT purses in the
+                         same database, transfer items as deferred durable transactions,
+                         and receive cheques over the statement store; recovery reads the
+                         seed's installations through `installation_registry` and scans
+                         keys with the generic `gap_scan`, which coinage can reuse; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them; its `materials` module keeps
                          the materials renderer trees name in the same database, read from
@@ -348,6 +350,10 @@ Two ways to lose work that involve no pushing at all:
   the core's marker table decides. Its `Adding a signal` subsection shows what
   a host event looks like on each host, how a core log line is registered and
   raised, and how to check one in Sentry.
+- A funding fact the core emits is a `CoreEvent` under an exported
+  `truapi.funding.*` marker whose entry in `markers.rs` documents its
+  attributes, built in `runtime/funding_telemetry.rs`; the `Funding events`
+  section of the same doc says what one may carry and how it reaches Sentry.
 
 ## Scope of a change
 

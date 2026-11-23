@@ -34,8 +34,8 @@ class NotificationService: UNNotificationServiceExtension {
                 contentHandler(notificationContent)
             }
         } catch {
-            let unsupported = NotificationContentResult.createUnsupportedResult()
-            let notificationContent = unsupported.toUserNotificationContent(with: request.content)
+            let newMessage = NotificationContentResult.createNewMessageResult()
+            let notificationContent = newMessage.toUserNotificationContent(with: request.content)
             contentHandler(notificationContent)
         }
     }
