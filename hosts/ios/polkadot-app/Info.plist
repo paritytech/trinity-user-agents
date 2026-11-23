@@ -82,7 +82,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Polkadot uses your camera for video calls and to scan a contact's QR code, so you can start a chat by scanning the code from their phone.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Polkadot uses Face ID to confirm it's you before showing your account backup or restoring your account.</string>
+	<string>Polkadot uses Face ID to confirm it's you before transfers, signing and backups.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Polkadot uses your local network to connect calls directly when you call a contact on the same Wi‑Fi network.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

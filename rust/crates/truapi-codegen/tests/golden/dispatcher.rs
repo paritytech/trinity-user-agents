@@ -1151,7 +1151,7 @@ where
     P: Contacts + Send + Sync + 'static,
 {
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::CONTACTS_PICK, move |request_id: String, request: versioned::contacts::HostContactsPickRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1160,6 +1160,25 @@ where
                 let result: Result<versioned::contacts::HostContactsPickResponse, truapi::CallError<versioned::contacts::HostContactsPickError>> =
                     match host.pick(&cx, request).await {
                         Ok(response) => Ok(<versioned::contacts::HostContactsPickResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::CONTACTS_USERNAMES, move |request_id: String, request: versioned::contacts::HostContactsUsernamesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::contacts::HostContactsUsernamesResponse, truapi::CallError<versioned::contacts::HostContactsUsernamesError>> =
+                    match host.usernames(&cx, request).await {
+                        Ok(response) => Ok(<versioned::contacts::HostContactsUsernamesResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1824,7 +1843,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_PAYMENT_INBOX, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenPaymentInboxRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -1844,6 +1863,25 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::NFT_PURSE_LIST_CHEQUES, move |request_id: String, request: versioned::nft_purse::HostNftPurseListChequesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseListChequesResponse, truapi::CallError<versioned::nft_purse::HostNftPurseListChequesError>> =
+                    match host.list_cheques(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseListChequesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -2186,7 +2224,7 @@ where
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
-                let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::RemotePreimageSubmitError>> =
+                let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::PreimageSubmitError>> =
                     match host.submit(&cx, request).await {
                         Ok(response) => Ok(<versioned::preimage::RemotePreimageSubmitResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -2320,7 +2358,7 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::HostCreateTransactionRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::ProductAccountTxPayload, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
@@ -2339,7 +2377,7 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostCreateTransactionWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::LegacyAccountTxPayload, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();

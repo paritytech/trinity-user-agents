@@ -6,6 +6,7 @@ mod envelope;
 mod error;
 mod format;
 mod ijson;
+mod known;
 mod pointer;
 mod publish;
 mod reader;
@@ -21,6 +22,7 @@ pub use descriptor::{
 };
 pub use envelope::{Document, Verified, open, public_key, sign};
 pub use error::Error;
+pub use known::{known_stack, known_stack_links};
 pub use pointer::{DEFAULT_LINK_BASE, Pointer};
 pub use publish::{PublishState, Rendered, render};
 pub use reader::{Accepted, Fetched, Status, accept};

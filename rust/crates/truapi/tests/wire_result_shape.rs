@@ -645,7 +645,7 @@ fn subscription_start_receive_stop_through_wire_boundary() {
 		root_entropy_source: None,
 		identity_account_id: None,
 		identity_chat_private_key: None,
-		device_enc_public_key: None,
+		peer_device_enc_public_key: None,
 		lite_username: None,
 		full_username: None,
 	});
