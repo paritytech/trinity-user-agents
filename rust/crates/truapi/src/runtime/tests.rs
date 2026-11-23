@@ -8835,7 +8835,7 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 fn a_detached_connection_leaves_later_failures_for_the_next_one() {
 	let host = scanner_host_for(ExecutableKind::Worker, None);
 	let failures = &host.connection.renderer_failures;
-	let _first = failures.subscribe::<truapi::latest::GenericError>();
+	let _first = failures.subscribe::<truapi::latest::GenericError>(host.connection.core_instance);
 	let failure = truapi::latest::HostRendererFailureSubscribeItem {
 		context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
 		node: 0,
@@ -8845,7 +8845,7 @@ fn a_detached_connection_leaves_later_failures_for_the_next_one() {
 
 	host.connection.detach_renderer();
 	failures.publish(failure.clone().into()).unwrap();
-	let mut second = failures.subscribe::<truapi::latest::GenericError>();
+	let mut second = failures.subscribe::<truapi::latest::GenericError>(host.connection.core_instance);
 
 	let delivered = crate::test_support::next(&mut second).expect("a failure").unwrap();
 	assert_eq!(delivered.into_latest(), failure);

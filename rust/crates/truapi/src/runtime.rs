@@ -648,7 +648,7 @@ impl ProductConnection {
 
 	/// End this connection's Chat action stream.
 	pub fn detach_chat(&self) {
-		self.chat.detach();
+		self.chat.detach(self.core_instance);
 	}
 
 	/// Buffer one host-authored Chat action for this connection's product,
@@ -740,8 +740,8 @@ impl ProductConnection {
 	/// End the renderer action and failure streams this connection's product
 	/// is reading.
 	pub fn detach_renderer(&self) {
-		self.renderer.detach();
-		self.renderer_failures.detach();
+		self.renderer.detach(self.core_instance);
+		self.renderer_failures.detach(self.core_instance);
 	}
 
 	/// Buffer one report of a `Materials` node that fell back for this
@@ -1646,7 +1646,10 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 					return Subscription::interrupted(error);
 				}
 				Subscription::new(
-					self.connection.chat.subscribe().map(|item| item.map(IntoLatest::into_latest)),
+					self.connection
+						.chat
+						.subscribe(self.connection.core_instance)
+						.map(|item| item.map(IntoLatest::into_latest)),
 				)
 			})
 			.await
@@ -1671,7 +1674,7 @@ impl<H: AccountHolder> Renderer for ProductRuntimeHost<H> {
 				Subscription::new(
 					self.connection
 						.renderer
-						.subscribe()
+						.subscribe(self.connection.core_instance)
 						.map(|item| item.map(IntoLatest::into_latest))
 						.filter(move |item| {
 							core::future::ready(
@@ -1698,7 +1701,7 @@ impl<H: AccountHolder> Renderer for ProductRuntimeHost<H> {
 				Subscription::new(
 					self.connection
 						.renderer_failures
-						.subscribe()
+						.subscribe(self.connection.core_instance)
 						.map(|item| item.map(IntoLatest::into_latest)),
 				)
 			})
