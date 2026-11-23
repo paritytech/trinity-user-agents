@@ -192,22 +192,9 @@ fn main() -> Result<()> {
 		let definition =
 			platform::extract_all(&krates).context("extracting platform definition")?;
 		if let Some(output) = &cli.platform_ts_output {
-			// The client also exports the newest version of a type that two
-			// versions define under its plain name, which is the name a
-			// platform signature uses.
-			let codec_types = api
-				.types
-				.iter()
-				.filter(|t| !matches!(t.kind, rustdoc::TypeDefKind::Alias(_)))
-				.flat_map(|t| {
-					let plain = rustdoc::split_versioned_type_name(&t.name)
-						.map(|(_, simple_name)| simple_name.to_string());
-					[Some(t.name.clone()), plain].into_iter().flatten()
-				})
-				.collect();
 			let adapter_output =
 				cli.platform_wasm_adapter_output.as_deref().unwrap_or(output.as_str());
-			ts::generate_host_callbacks(&definition, &codec_types, output, adapter_output)
+			ts::generate_host_callbacks(&definition, &api, output, adapter_output)
 				.with_context(|| format!("writing host callbacks TS to {output}"))?;
 			println!("Generated typed HostCallbacks TS surface in {output}");
 			println!("Generated WASM HostCallbacks adapter in {adapter_output}");

@@ -40,5 +40,21 @@ pub async fn read_or_create_device_encryption_secret(
 	Ok(*secret.as_bytes())
 }
 
+/// Persist `secret` as this device's X25519 encryption secret, replacing any
+/// stored one.
+///
+/// Callers serialize this against [`read_or_create_device_encryption_secret`]
+/// for the same reason that function gives.
+#[instrument(skip_all, fields(runtime.method = "device_key.store"))]
+pub async fn store_device_encryption_secret(
+	storage: &(impl CoreStorage + ?Sized),
+	secret: [u8; 32],
+) -> Result<(), String> {
+	storage
+		.write_core_storage(CoreStorageKey::DeviceEncryptionKey, secret.to_vec())
+		.await
+		.map_err(|err| format!("device encryption key write failed: {err:?}"))
+}
+
 #[cfg(test)]
 mod tests;

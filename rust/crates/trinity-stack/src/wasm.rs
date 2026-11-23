@@ -105,6 +105,17 @@ pub fn encode_link(pointer: Ts<Pointer>, base: Option<String>) -> Result<String,
 	Ok(self::pointer(&pointer)?.to_link(base.as_deref().unwrap_or(DEFAULT_LINK_BASE)))
 }
 
+/// The link of each known stack, by name.
+#[wasm_bindgen(js_name = knownStacks, unchecked_return_type = "Record<string, string>")]
+pub fn known_stacks() -> js_sys::Object {
+	let links = js_sys::Object::new();
+	for (name, link) in crate::known_stack_links() {
+		js_sys::Reflect::set(&links, &name.into(), &link.into())
+			.expect("failed to set a known stack on the Object");
+	}
+	links
+}
+
 /// Whether two pointers name the same stack.
 #[wasm_bindgen(js_name = sameStack)]
 pub fn same_stack(pointer: Ts<Pointer>, other: Ts<Pointer>) -> Result<bool, JsValue> {

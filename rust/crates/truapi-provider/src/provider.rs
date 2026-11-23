@@ -9,6 +9,8 @@ use std::sync::Mutex;
 
 use crate::platform::{ChainProvider, JsonRpcConnection};
 
+#[cfg(feature = "smoldot")]
+use crate::stack::StackChains;
 use crate::{
 	config::{ChainSource, ResolvedChain},
 	error::ProviderError,
@@ -41,6 +43,9 @@ pub struct EmbeddedChainProviderBuilder {
 	/// Set by [`keep_chains_running`](Self::keep_chains_running).
 	#[cfg(feature = "smoldot")]
 	keep_chains_running: bool,
+	/// Set by [`stack`](Self::stack).
+	#[cfg(feature = "smoldot")]
+	stack: Option<crate::stack::LightStack>,
 	/// Set by [`catalog`](Self::catalog).
 	#[cfg(feature = "networks")]
 	catalog: bool,
@@ -56,7 +61,8 @@ impl core::fmt::Debug for EmbeddedChainProviderBuilder {
 			.field("seeded_databases", &self.seeded_databases)
 			.field("storage", &self.storage.is_some())
 			.field("connection_types", &self.connection_types)
-			.field("keep_chains_running", &self.keep_chains_running);
+			.field("keep_chains_running", &self.keep_chains_running)
+			.field("stack", &self.stack);
 		#[cfg(feature = "networks")]
 		builder.field("catalog", &self.catalog);
 		builder.finish()
@@ -79,10 +85,7 @@ impl EmbeddedChainProviderBuilder {
 
 	/// Register `source` as a parachain syncing through the relay registered
 	/// under `relay_genesis`. A later registration for `genesis_hash` wins.
-	///
-	/// The catalog is the only caller outside tests, so a build without it has
-	/// no parachain to register.
-	#[cfg(all(feature = "smoldot", any(feature = "networks", test)))]
+	#[cfg(feature = "smoldot")]
 	pub fn parachain(
 		mut self,
 		genesis_hash: [u8; 32],
@@ -131,9 +134,23 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
+	/// Serve the chains of `stack` on the light client; see
+	/// [`LightStack`](crate::LightStack).
+	///
+	/// A chain registered with [`chain`](Self::chain) or
+	/// [`parachain`](Self::parachain) still wins, as the chain itself or as
+	/// the relay a parachain syncs through, and the bundled catalog is not
+	/// consulted.
+	#[cfg(feature = "smoldot")]
+	pub fn stack(mut self, stack: crate::stack::LightStack) -> Self {
+		self.stack = Some(stack);
+		self
+	}
+
 	/// Resolve a genesis nobody registered from the bundled catalog. Without it, a
 	/// provider answers only for the chains registered on it, so one for remote
-	/// nodes never starts the light client.
+	/// nodes never starts the light client. Ignored on a provider built with a
+	/// [`stack`](Self::stack).
 	#[cfg(feature = "networks")]
 	pub fn catalog(mut self) -> Self {
 		self.catalog = true;
@@ -154,9 +171,13 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "smoldot")]
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
+			saving_stopped: core::sync::atomic::AtomicBool::new(false),
+			#[cfg(feature = "smoldot")]
 			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
 			#[cfg(feature = "networks")]
 			catalog: self.catalog,
+			#[cfg(feature = "smoldot")]
+			stack: self.stack,
 		}
 	}
 }
@@ -165,17 +186,19 @@ impl EmbeddedChainProviderBuilder {
 /// JSON-RPC node (all targets) or an embedded smoldot light client (native
 /// targets).
 ///
-/// Construct **one provider per host process** and share it (behind an `Arc`)
-/// with every consumer: the provider owns the single light-client instance,
-/// so host-internal flows (domain resolution, statement store) and product
-/// connections share sync, peers, and warm state, while each connection keeps
-/// its own isolated JSON-RPC queue and response stream.
+/// Construct **one provider per stack**, or one for a host without a stack,
+/// and share it (behind an `Arc`) with every consumer of that stack. The
+/// provider owns its light-client instance, so the host-internal flows
+/// (domain resolution, statement store) and product connections on the stack
+/// share its sync, peers and warm state, while each connection keeps its own
+/// isolated JSON-RPC queue and response stream.
 ///
 /// The `responses()` stream of returned connections is take-once: the first
 /// call yields the live stream, later calls yield an ended stream.
 ///
-/// A genesis nobody registered is resolved from the bundled catalog only on a
-/// provider built with `catalog()`, which the `networks` feature adds.
+/// A genesis nobody registered is resolved from the stack the provider was
+/// built with, or from the bundled catalog on a provider built with
+/// `catalog()`, which the `networks` feature adds.
 pub struct EmbeddedChainProvider {
 	chains: HashMap<[u8; 32], ChainSource>,
 	/// The relay each explicitly-registered parachain syncs through; catalog
@@ -195,10 +218,15 @@ pub struct EmbeddedChainProvider {
 	/// assuming nothing else writes the same key.
 	#[cfg(feature = "smoldot")]
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
+	/// Set by [`stop_saving`](Self::stop_saving).
+	#[cfg(feature = "smoldot")]
+	saving_stopped: core::sync::atomic::AtomicBool,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
 	#[cfg(feature = "networks")]
 	catalog: bool,
+	#[cfg(feature = "smoldot")]
+	stack: Option<crate::stack::LightStack>,
 }
 
 impl EmbeddedChainProvider {
@@ -217,40 +245,71 @@ impl EmbeddedChainProvider {
 			.flatten()
 	}
 
-	/// Whether [`connect`](ChainProvider::connect) can reach `genesis_hash`.
-	#[cfg(feature = "smoldot")]
-	fn serves(&self, genesis_hash: [u8; 32]) -> bool {
-		#[cfg(feature = "networks")]
-		if self.catalog && crate::networks::catalog_service(genesis_hash).is_some() {
-			return true;
-		}
-		self.chains.contains_key(&genesis_hash)
-	}
-
 	/// What a connect to `genesis_hash` goes through: the chain registered for
-	/// it, then the catalog.
+	/// it, then the provider's stack, then the catalog. A parachain's relay is
+	/// looked up the same way, the catalog's in its own network.
 	fn resolve(&self, genesis_hash: [u8; 32]) -> Result<ResolvedChain, ProviderError> {
 		if let Some(source) = self.chains.get(&genesis_hash) {
 			return Ok(ResolvedChain {
 				source: source.clone(),
 				#[cfg(feature = "smoldot")]
-				relay: relay_source(&self.chains, source, self.relays.get(&genesis_hash).copied())?,
+				relay: relay_source(source, self.relays.get(&genesis_hash).copied(), |relay| {
+					self.registered_or_stack(relay)
+				})?,
+				#[cfg(feature = "networks")]
+				catalog_service: None,
+			});
+		}
+		#[cfg(feature = "smoldot")]
+		if let Some(stack) = &self.stack {
+			let source = stack
+				.source(genesis_hash)
+				.ok_or(ProviderError::UnknownGenesis { genesis: genesis_hash })?;
+			let relay = relay_source(&source, stack.relay_of(genesis_hash), |relay| {
+				self.registered_or_stack(relay)
+			})?;
+			return Ok(ResolvedChain {
+				source,
+				relay,
+				#[cfg(feature = "networks")]
+				catalog_service: None,
 			});
 		}
 		#[cfg(feature = "networks")]
 		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
-			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
-				tracing::info!(network, service, "connecting via light client");
-			}
 			let source = catalog
 				.get(&genesis_hash)
 				.expect("catalog_network_chains includes the queried genesis");
 			return Ok(ResolvedChain {
 				source: source.clone(),
-				relay: relay_source(&catalog, source, relay)?,
+				relay: relay_source(source, relay, |relay| catalog.get(&relay).cloned())?,
+				catalog_service: crate::networks::catalog_service(genesis_hash),
 			});
 		}
 		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
+	}
+
+	/// The source a relay comes up from behind a parachain that was registered
+	/// or comes from the stack: the chain registered for it, then the stack's.
+	#[cfg(feature = "smoldot")]
+	fn registered_or_stack(&self, relay: [u8; 32]) -> Option<ChainSource> {
+		self.chains.get(&relay).cloned().or_else(|| self.stack.as_ref()?.source(relay))
+	}
+
+	/// [`resolve`](Self::resolve), with the warm-start blobs this provider
+	/// holds for the chain and its relay applied: what the light client is
+	/// handed.
+	fn resolve_seeded(&self, genesis_hash: [u8; 32]) -> Result<ResolvedChain, ProviderError> {
+		let resolved = self.resolve(genesis_hash)?;
+		Ok(ResolvedChain {
+			source: self.with_seeded_database(genesis_hash, resolved.source),
+			#[cfg(feature = "smoldot")]
+			relay: resolved
+				.relay
+				.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source))),
+			#[cfg(feature = "networks")]
+			catalog_service: resolved.catalog_service,
+		})
 	}
 
 	/// Apply a seeded warm-start database blob to `source` if one exists for
@@ -277,21 +336,27 @@ impl EmbeddedChainProvider {
 	}
 }
 
-/// The relay `source` syncs through, looked up in `chains`. Only a
-/// light-client chain has one.
+/// The relay `source` syncs through, with the source `lookup` finds for it.
+/// Only a light-client chain has one.
 #[cfg(feature = "smoldot")]
 fn relay_source(
-	chains: &HashMap<[u8; 32], ChainSource>,
 	source: &ChainSource,
 	relay: Option<[u8; 32]>,
+	lookup: impl FnOnce([u8; 32]) -> Option<ChainSource>,
 ) -> Result<Option<([u8; 32], ChainSource)>, ProviderError> {
 	match (source, relay) {
 		(ChainSource::LightClient { .. }, Some(relay)) => {
-			let source = chains.get(&relay).ok_or(ProviderError::UnknownRelay { relay })?;
-			Ok(Some((relay, source.clone())))
+			let source = lookup(relay).ok_or(ProviderError::UnknownRelay { relay })?;
+			Ok(Some((relay, source)))
 		},
 		_ => Ok(None),
 	}
+}
+
+/// The header of the databases `stack`'s provider stores.
+#[cfg(feature = "smoldot")]
+fn database_header(stack: &crate::stack::LightStack) -> crate::storage::Header<'_> {
+	crate::storage::Header { stack: stack.id(), generation: stack.generation() }
 }
 
 /// Max size for a [`snapshot`](EmbeddedChainProvider::snapshot) database blob.
@@ -310,6 +375,17 @@ impl EmbeddedChainProvider {
 	/// Whether this provider was built with somewhere to keep blobs.
 	pub fn has_storage(&self) -> bool {
 		self.storage.is_some()
+	}
+
+	/// Store nothing from now on, including a snapshot already taken but not
+	/// yet handed to the store. A save the store has already been called with
+	/// still completes.
+	///
+	/// A host that replaces this provider, as when its stack's `generation`
+	/// changes, calls it so a late save cannot replace what the next provider
+	/// stored under the same stack and genesis hash.
+	pub fn stop_saving(&self) {
+		self.saving_stopped.store(true, core::sync::atomic::Ordering::Relaxed);
 	}
 
 	/// The store this provider keeps blobs in, or an error naming what is
@@ -350,17 +426,63 @@ impl EmbeddedChainProvider {
 		.boxed())
 	}
 
-	/// The relay `genesis_hash` syncs through, from the registry or the
-	/// catalog. A chain that is not a parachain has none.
+	/// The relay a connect to `genesis_hash` brings up, from where the chain
+	/// resolves: the registry, then the stack, then the catalog. A chain that
+	/// is not a parachain has none.
 	pub fn relay_of(&self, genesis_hash: [u8; 32]) -> Option<[u8; 32]> {
-		if let Some(relay) = self.relays.get(&genesis_hash) {
-			return Some(*relay);
+		if self.chains.contains_key(&genesis_hash) {
+			return self.relays.get(&genesis_hash).copied();
+		}
+		if let Some(stack) = &self.stack {
+			return stack.relay_of(genesis_hash);
 		}
 		#[cfg(feature = "networks")]
 		if let Some((_, relay)) = self.catalog_network(genesis_hash) {
 			return relay;
 		}
 		None
+	}
+
+	/// Hand over a light spec after the build, so a chain whose spec was not
+	/// at hand then comes up without a new provider; see
+	/// [`LightStack::add_light_spec`](crate::LightStack::add_light_spec).
+	///
+	/// Fails with [`ProviderError::NoStack`] on a provider built without a
+	/// stack.
+	pub fn add_light_spec(
+		&self,
+		genesis_hash: [u8; 32],
+		specification: &[u8],
+	) -> Result<(), ProviderError> {
+		let stack = self.stack.as_ref().ok_or(ProviderError::NoStack)?;
+		stack.add_light_spec(genesis_hash, specification)
+	}
+
+	/// Whether the stack's chain with `genesis_hash` has its light spec.
+	pub fn has_light_spec(&self, genesis_hash: [u8; 32]) -> bool {
+		self.stack.as_ref().is_some_and(|stack| stack.has_light_spec(genesis_hash))
+	}
+
+	/// Where the host fetches each light spec of the provider's stack; see
+	/// [`LightStack::light_specs`](crate::LightStack::light_specs).
+	pub fn light_specs(&self) -> Vec<crate::LightSpecSource> {
+		self.stack.as_ref().map(|stack| stack.light_specs()).unwrap_or_default()
+	}
+
+	/// Read what this provider stored for `genesis_hash`. What another stack
+	/// or generation stored reads as nothing, and so does what any stack
+	/// stored on a provider without one.
+	async fn load_stored(
+		&self,
+		store: &dyn crate::storage::StorageClient,
+		genesis_hash: [u8; 32],
+	) -> Result<Option<String>, ProviderError> {
+		let Some(stack) = &self.stack else {
+			let stored = store.load(genesis_hash, None).await?;
+			return Ok(stored.filter(|stored| !crate::storage::carries_header(stored)));
+		};
+		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
+		Ok(stored.and_then(|stored| database_header(stack).unseal(stored)))
 	}
 
 	/// Put a seed back after a connect that never reached `add_chain`.
@@ -399,20 +521,18 @@ impl EmbeddedChainProvider {
 	/// A chain that silently never resumes is indistinguishable from one that
 	/// has nothing stored yet, so missing configuration is reported rather than
 	/// swallowed. For the same reason a chain this provider cannot connect to
-	/// fails as unknown, as [`connect`](crate::platform::ChainProvider::connect)
-	/// would. A chain that is already running, or already holds a blob, answers
-	/// without consulting storage at all.
+	/// fails as [`connect`](crate::platform::ChainProvider::connect) would. A
+	/// chain that is already running, or already holds a blob, answers without
+	/// consulting storage at all.
 	pub async fn load_database(&self, genesis_hash: [u8; 32]) -> Result<bool, ProviderError> {
-		if !self.serves(genesis_hash) {
-			return Err(ProviderError::UnknownGenesis { genesis: genesis_hash });
-		}
+		self.resolve(genesis_hash)?;
 		// A parachain is only as cold as the relay under it, and the relay is
 		// the one that warp syncs, so it is seeded first.
 		if let Some(relay) = self.relay_of(genesis_hash) &&
 			!self.is_connected(relay) &&
 			!self.has_database(relay) &&
-			let Some(store) = self.storage.clone() &&
-			let Some(blob) = store.load(relay).await?
+			let Ok(store) = self.storage() &&
+			let Some(blob) = self.load_stored(&*store, relay).await?
 		{
 			lock(&self.seeded_databases).entry(relay).or_insert(blob);
 		}
@@ -430,7 +550,7 @@ impl EmbeddedChainProvider {
 			return Ok(true);
 		}
 		let store = self.storage()?;
-		let Some(blob) = store.load(genesis_hash).await? else {
+		let Some(blob) = self.load_stored(&*store, genesis_hash).await? else {
 			return Ok(false);
 		};
 		lock(&self.seeded_databases).entry(genesis_hash).or_insert(blob);
@@ -496,8 +616,7 @@ impl EmbeddedChainProvider {
 			match known {
 				Some(known) => Some(known),
 				None => Some(
-					store
-						.load(genesis_hash)
+					self.load_stored(&*store, genesis_hash)
 						.await?
 						.is_some_and(|stored| crate::storage::carries_runtime_code(&stored)),
 				),
@@ -510,10 +629,25 @@ impl EmbeddedChainProvider {
 			);
 			return Ok(false);
 		}
+		// Checked last, after every await, so a snapshot taken before the
+		// provider was let go is still not handed to the store.
+		if self.saving_stopped.load(core::sync::atomic::Ordering::Relaxed) {
+			tracing::debug!(
+				genesis = %hex::encode(genesis_hash),
+				"not stored: this provider has stopped saving"
+			);
+			return Ok(false);
+		}
 		// The blob is not kept in `seeded_databases`: a chain only consumes one
 		// on its first add, and this chain is live, so nothing could read it
 		// back before the process ends.
-		store.save(genesis_hash, blob).await?;
+		match &self.stack {
+			Some(stack) => {
+				let sealed = database_header(stack).seal(&blob);
+				store.save(genesis_hash, sealed, Some(stack.id().to_owned())).await?;
+			},
+			None => store.save(genesis_hash, blob, None).await?,
+		}
 		lock(&self.stored_quality).insert(genesis_hash, has_code);
 		Ok(true)
 	}
@@ -600,15 +734,17 @@ impl ChainProvider for EmbeddedChainProvider {
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		let resolved = self.resolve(genesis_hash)?;
-		match self.with_seeded_database(genesis_hash, resolved.source) {
+		let resolved = self.resolve_seeded(genesis_hash)?;
+		match resolved.source {
 			#[cfg(feature = "ws")]
 			ChainSource::RpcNode { url } => crate::ws::connect(url).await,
 			#[cfg(feature = "smoldot")]
 			source @ ChainSource::LightClient { .. } => {
-				let relay = resolved
-					.relay
-					.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source)));
+				#[cfg(feature = "networks")]
+				if let Some((network, service)) = resolved.catalog_service {
+					tracing::info!(network, service, "connecting via light client");
+				}
+				let relay = resolved.relay;
 				let connected = self.light.connect(genesis_hash, &source, relay.as_ref()).await;
 				if connected.is_err() {
 					self.return_seed(genesis_hash, source);

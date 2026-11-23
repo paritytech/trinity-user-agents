@@ -216,7 +216,7 @@ pub fn context_bytes(context: &ProductProofContext) -> [u8; 32] {
 	input.extend_from_slice(context.product_id.as_str().as_bytes());
 	input.push(b'/');
 	input.extend_from_slice(&suffix);
-	blake2b_256(&input, None)
+	sp_crypto_hashing::blake2_256(&input)
 }
 
 pub fn create_proof(
@@ -255,18 +255,6 @@ fn pallet_instance(location: &RingLocation) -> Option<u8> {
 		RingLocationJunction::PalletInstance(index) => Some(*index),
 		RingLocationJunction::CollectionId(_) => None,
 	})
-}
-
-fn blake2b_256(input: &[u8], key: Option<&[u8]>) -> [u8; 32] {
-	let mut params = blake2b_simd::Params::new();
-	params.hash_length(32);
-	if let Some(key) = key {
-		params.key(key);
-	}
-	let hash = params.hash(input);
-	let mut output = [0u8; 32];
-	output.copy_from_slice(hash.as_bytes());
-	output
 }
 
 fn unknown(error: impl std::fmt::Debug) -> RingVrfError {

@@ -6,8 +6,10 @@
 //! one of its own cards in a room footer. A v0.1 footer upgrades to the same
 //! `TextInput` or `Empty`.
 //!
-//! v0.2 also lets the host make the room id. The `room_id` of a v0.1 room
-//! request becomes the source of the id, and a v0.1 answer carries no id.
+//! v0.2 also lets the host make the room id. A v0.1 room request upgrades with
+//! its `room_id` as the source, but the runtime keeps that id for the room: a
+//! v0.1 product names the room with it in every later call, and a v0.1 answer
+//! carries no id.
 //!
 //! The room, preview, feed and query methods are new in v0.2, so their
 //! envelopes start at `V2`.

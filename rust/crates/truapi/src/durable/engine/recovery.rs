@@ -96,7 +96,6 @@ impl DurableTxEngine {
 	/// pending transactions. Failing or being dropped leaves every pending
 	/// transaction in the ledger for the next run.
 	pub async fn run_until_settled(self: &Arc<Self>) -> Result<(), RecoveryError> {
-		self.ensure_submissions_started();
 		let wakes = self.recovery_wakes.subscribe();
 		let built = self.built_triggers().await;
 		let mut lost = LostChains::default();
@@ -130,7 +129,9 @@ impl DurableTxEngine {
 	/// given up after they were lost would otherwise end recovery's work
 	/// with no pass left to notice.
 	async fn built_triggers(&self) -> Triggers {
-		let mut waiting = dao::observe_has_pending_submissions(&self.db);
+		let registry = self.registry.clone();
+		let mut waiting = dao::observe_waiting_domains(&self.db)
+			.map(move |domains| domains.map(|domains| registry.serves_any(&domains)));
 		waiting.next().await;
 		waiting.filter_map(|waiting| ready(as_built_trigger(waiting))).boxed()
 	}
@@ -151,7 +152,7 @@ impl DurableTxEngine {
 
 	/// Whether recovery goes on after a pass. It goes on while a transaction
 	/// some registered domain can decide is live on a chain whose heads it
-	/// still receives. Rows of a domain without an oracle do not count: no
+	/// still receives. Rows of an unregistered domain do not count: no
 	/// pass could decide them. Once no such chain is left, it fails if a
 	/// chain whose heads were lost still has live transactions, and
 	/// otherwise goes on only while a transaction waits to be built.
@@ -178,11 +179,11 @@ impl DurableTxEngine {
 		Some(self.chains_of(&domains))
 	}
 
-	/// Whether a transaction waits to be built. An unreadable ledger counts
+	/// Whether a transaction of a registered domain waits to be built. An unreadable ledger counts
 	/// as one waiting.
 	async fn waits_to_be_built(&self) -> bool {
-		let waiting = self.read_or_warn(dao::has_pending_submissions).await;
-		waiting.unwrap_or(true)
+		let waiting = self.read_or_warn(dao::waiting_domains).await;
+		waiting.is_none_or(|domains| self.registry.serves_any(&domains))
 	}
 
 	/// The result of `query`, or `None` when the ledger cannot be read.
@@ -201,13 +202,9 @@ impl DurableTxEngine {
 			.ok()
 	}
 
-	/// The chains `domains` live on, skipping domains without an oracle.
+	/// The chains `domains` live on, skipping unregistered domains.
 	fn chains_of(&self, domains: &[DomainId]) -> BTreeSet<H256> {
-		domains
-			.iter()
-			.filter_map(|domain| self.registry.oracle(domain))
-			.map(|oracle| oracle.chain())
-			.collect()
+		domains.iter().filter_map(|domain| self.registry.chain(domain)).collect()
 	}
 }
 

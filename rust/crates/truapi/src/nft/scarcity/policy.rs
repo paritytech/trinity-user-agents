@@ -13,16 +13,13 @@ use super::{
 use crate::{
 	chain::{ExtrinsicService, MortalExtrinsic},
 	durable::{
-		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
-		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
+		DeferredDurableTx, DurableTxEntry, DurableTxId, PolicyError, PolicyParams, Preparation,
+		SubmissionPolicy, VerdictFailureKind,
 	},
 	host_internal::extrinsic::Sr25519Signer,
 	nft::{ImportedSecretStore, ItemKey, ItemSigner, ItemSlot},
 	unix_time::current_unix_secs,
 };
-
-/// The name rows store for this policy.
-pub const TRANSFER_POLICY: &str = "nft.scarcity.transfer";
 
 /// Attempts after which a transfer is given up, so a rejection that repeats
 /// cannot loop forever.
@@ -111,7 +108,7 @@ impl ScarcityTransferPolicy {
 	}
 }
 
-/// One scheduled transfer with everything needed to judge and build it.
+/// One deferred transfer with everything needed to judge and build it.
 struct PlannedTransfer {
 	id: DurableTxId,
 	attempts: u32,
@@ -179,10 +176,6 @@ enum SignedTransfer {
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for ScarcityTransferPolicy {
-	fn id(&self) -> PolicyId {
-		PolicyId::new(TRANSFER_POLICY)
-	}
-
 	/// Every proven failure is built again: the next build reads the chain
 	/// afresh and gives up once the transfer can never land.
 	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {
@@ -191,7 +184,7 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 
 	async fn prepare(
 		&self,
-		batch: &[ScheduledDurableTx],
+		batch: &[DeferredDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		let planned = planned_transfers(batch);
 		let context = self.deps.chain.transfer_context().await.map_err(policy_error)?;
@@ -322,15 +315,15 @@ fn log_unsigned_transfer(error: impl core::fmt::Display) -> SignedTransfer {
 /// The transfers of `batch` whose params decode. Only registration writes
 /// these params, so a row that does not decode is left out rather than
 /// answered.
-fn planned_transfers(batch: &[ScheduledDurableTx]) -> Vec<PlannedTransfer> {
+fn planned_transfers(batch: &[DeferredDurableTx]) -> Vec<PlannedTransfer> {
 	batch.iter().filter_map(planned_transfer).collect()
 }
 
-/// `scheduled` as a transfer, or `None` when its params do not decode.
-fn planned_transfer(scheduled: &ScheduledDurableTx) -> Option<PlannedTransfer> {
-	TransferParams::try_from(&scheduled.plan.params)
+/// `deferred` as a transfer, or `None` when its params do not decode.
+fn planned_transfer(deferred: &DeferredDurableTx) -> Option<PlannedTransfer> {
+	TransferParams::try_from(&deferred.plan.params)
 		.ok()
-		.map(|params| PlannedTransfer { id: scheduled.id, attempts: scheduled.attempts, params })
+		.map(|params| PlannedTransfer { id: deferred.id, attempts: deferred.attempts, params })
 }
 
 /// One view per transfer from the three reads, which answer in the same order.

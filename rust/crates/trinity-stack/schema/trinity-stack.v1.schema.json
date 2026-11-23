@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/paritytech/trinity-user-agents/rust/crates/trinity-stack/schema/trinity-stack.v1.schema.json",
   "title": "Trinity stack descriptor, $v 1",
-  "description": "Shape of a $v 1 descriptor. Rules that span fields (unique roles, exactly one Relay, forkedAt on every chain of a fork, an AssetHub chain when dotns is set, private-range http) are checked by readers, not by this schema; the conformance vectors cover them. So are three rules JSON Schema cannot express: integers are written without a fraction or exponent (42, never 42.0), strings and names hold no Unicode noncharacters, and an http or ws URL names its private address in canonical form.",
+  "description": "Shape of a $v 1 descriptor. Rules that span fields (unique roles, paraId and genesisHash values, exactly one Relay, forkedAt on every chain of a fork, an AssetHub chain when dotns is set, private-range http) are checked by readers, not by this schema; the conformance vectors cover them. So are three rules JSON Schema cannot express: integers are written without a fraction or exponent (42, never 42.0), strings and names hold no Unicode noncharacters, and an http or ws URL names its private address in canonical form.",
   "type": "object",
   "required": ["$v", "sequence", "generation", "id", "name", "network", "tld", "chains", "services"],
   "properties": {
