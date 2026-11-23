@@ -567,7 +567,7 @@ fn a_chain_that_restarted_is_reported_before_the_fetch_it_brings_forward() {
 }
 
 /// At start the loop is fetching while the core's services open their first
-/// connections. A chain found wrong then is told while the fetch is still
+/// connections. A chain found wrong then is reported while the fetch is still
 /// out, not once a hung fetch has timed out.
 #[test]
 fn a_chain_found_wrong_during_a_fetch_is_reported_while_it_is_out() {
@@ -820,8 +820,8 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 }
 
 /// A People chain that holds no usable suffix fails the allowance work with
-/// that error. The host is not shown it as a suffix that differs from the
-/// `tld`, which would name a value People never gave.
+/// that error. Nothing is listed for the host: a mismatch would have to name
+/// a value People never gave.
 #[test]
 fn a_people_suffix_that_cannot_be_read_is_not_reported() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
@@ -835,8 +835,8 @@ fn a_people_suffix_that_cannot_be_read_is_not_reported() {
 	assert_eq!((failed, refresh.status().mismatches), (Some(true), vec![]));
 }
 
-/// The host hears of a wrong suffix as it hears of a wrong chain, through the
-/// status its refresh reports, and while a fetch is out.
+/// The host is told of a wrong suffix the way it is told of a wrong chain:
+/// through the status its refresh reports, even while a fetch is out.
 #[test]
 fn the_host_is_told_of_a_people_suffix_that_is_not_the_tld() {
 	let started = start(Arc::default(), vec![]);

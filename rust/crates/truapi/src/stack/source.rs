@@ -17,10 +17,11 @@ use super::{ReplaceCheck, Stack, StackError};
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
 
-/// How old a copy gets before the core fetches the descriptor again while a
-/// chain gives a different genesis hash from the one the copy names. An
-/// operator publishes the new hashes when the chains restart from genesis,
-/// and until the core has them the chain is out of use.
+/// How old a copy gets before the next fetch while one of its chains gives a
+/// different genesis hash from the one it names.
+///
+/// Chains that restart from genesis get new hashes, which the operator
+/// publishes. Until the core has them the chain is out of use.
 const MISMATCH_REFRESH_MAX_AGE_SECS: u64 = 5 * 60;
 
 /// A fetch of the stack's descriptor for the host to make.
@@ -80,13 +81,13 @@ pub enum StackRefreshOutcome {
 	},
 }
 
-/// Where the stack's descriptor and what one of its chains answered disagree.
+/// A difference between the stack's descriptor and what one of its chains answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StackMismatch {
-	/// The last connection opened for a chain reached one with a different
-	/// genesis hash from the one the descriptor names, as after the chain
-	/// restarted from genesis. The core refused that connection.
+	/// The chain's last connection reached one with a different genesis hash
+	/// from the descriptor's, as happens after a chain restarts from genesis.
+	/// The core refused that connection.
 	GenesisHash {
 		/// The chain's role in the descriptor.
 		role: String,
@@ -134,11 +135,11 @@ pub struct StackStatus {
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
-	/// Where the chains last answered differently from the descriptor the
-	/// core runs: its chains in the descriptor's order, then People's
+	/// Where a chain's last answer differed from the descriptor the core
+	/// runs: its chains in the descriptor's order, then People's
 	/// `NetworkSuffix`. While a chain is listed, a refresh that was started
 	/// fetches the descriptor every five minutes instead of every hour, until
-	/// a published copy that changes a chain sets `restart_required`.
+	/// a newer copy sets `restart_required`.
 	pub mismatches: Vec<StackMismatch>,
 }
 
@@ -318,7 +319,7 @@ impl StackSource {
 		self.wrong_suffix() != listed
 	}
 
-	/// Takes the genesis hash a connection opened for `named` got from it.
+	/// Records the genesis hash a connection opened for `named` got.
 	///
 	/// Returns whether that changed [`Self::status`]. A chain the running
 	/// copy does not name changes nothing. While a chain's last answer is
@@ -357,8 +358,8 @@ impl StackSource {
 			return Some(Duration::ZERO);
 		}
 		let hourly = self.reader.due_in(&self.pointer, now_unix_seconds)?;
-		// A newer copy that waits for the next start is what the sooner fetch
-		// was for.
+		// Once a newer copy waits for the next start, the sooner fetch has
+		// done its job.
 		let sooner = match self.wrong_chains().next().is_none() || self.next_start.is_some() {
 			true => 0,
 			false => REFRESH_MAX_AGE_SECS - MISMATCH_REFRESH_MAX_AGE_SECS,

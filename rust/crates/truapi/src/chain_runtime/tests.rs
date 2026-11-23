@@ -2741,9 +2741,9 @@ fn a_connection_to_a_chain_with_a_different_genesis_hash_is_refused() {
 	);
 }
 
-/// The check asks every connection one question. A chain that names itself
-/// has to come out as usable as without it: handed out, and kept for the
-/// next caller.
+/// The check adds one request to every connection. A chain that gives the
+/// hash it was opened for has to be as usable as without the check: handed
+/// out, and kept for the next caller.
 #[test]
 fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 	let named = [0xa1; 32];
@@ -2763,10 +2763,10 @@ fn a_connection_to_the_chain_it_was_opened_for_is_kept() {
 }
 
 /// A host may keep a connection it leased earlier and redial underneath it, as
-/// dotli does, so a connection that passed the check can come to reach a
-/// chain that restarted. A newer connection that finds the chain wrong is the
-/// only sign of it. The earlier ones are closed, and their next user dials
-/// again and is asked.
+/// dotli does, so a connection that passed the check can end up on a chain
+/// that restarted. A newer connection that finds the chain wrong is the only
+/// sign of it. The earlier ones are closed, and their next user dials again
+/// and is checked.
 #[test]
 fn a_wrong_answer_closes_the_connections_opened_earlier_for_the_chain() {
 	let (named, answered) = ([0xa1; 32], [0xa9; 32]);
@@ -2848,8 +2848,8 @@ fn a_node_that_hangs_up_before_naming_its_chain_is_unavailable() {
 
 /// A node that will not say which chain it serves, or says something that is
 /// no genesis hash, cannot be told from one serving a different chain, so
-/// nothing is read from it. It named no other chain either, so the check
-/// hears nothing.
+/// nothing is read from it. It gave no other hash either, so no mismatch is
+/// reported.
 #[test]
 fn a_node_that_does_not_name_its_chain_is_not_used() {
 	let replies = [
@@ -2889,8 +2889,8 @@ fn node_halted_for(halts: usize, genesis: [u8; 32]) -> Arc<ScriptedProvider> {
 	}))
 }
 
-/// How opening a connection to `provider`'s chain, named `[0xa1; 32]`, fails
-/// while each of the first `pauses` pauses the check takes is let pass.
+/// Opens a connection to `provider`'s chain `[0xa1; 32]`, letting the first
+/// `pauses` of the check's retry waits pass, and returns how it failed.
 fn connect_through_halts(
 	provider: Arc<ScriptedProvider>,
 	pauses: usize,
@@ -2926,8 +2926,8 @@ fn a_halted_chain_is_asked_for_its_genesis_hash_again() {
 	assert_eq!((failure, heard.heard()), (None, vec![(named, named)]));
 }
 
-/// A chain that stays halted named no chain, so it is out of reach rather
-/// than wrong: a later attempt may find it redialled.
+/// A chain that stays halted gave no hash, so it is out of reach rather than
+/// wrong: a later attempt may find it redialled.
 #[test]
 fn a_chain_that_stays_halted_is_unavailable() {
 	let heard = Arc::<HeardAnswers>::default();

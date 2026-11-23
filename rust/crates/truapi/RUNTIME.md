@@ -237,7 +237,7 @@ its reach, not a mismatch, so there only the hourly fetch brings the new
 descriptor.
 
 A signing host's allowance work reads People's `NetworkSuffix.NetworkSuffix` to
-build its proofs, and the stack's checks hear each suffix it reads. A suffix
+build its proofs, and each suffix it reads goes to the stack's checks. A suffix
 that is not the descriptor's `tld` is listed in `StackStatus::mismatches` until
 a later read gives the `tld`. The core keeps using People, and fetches the
 descriptor no sooner for it. The entry means the build's stack and its People

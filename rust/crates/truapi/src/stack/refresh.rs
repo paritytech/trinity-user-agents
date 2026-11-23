@@ -92,8 +92,7 @@ pub struct StackChecks {
 }
 
 impl StackChecks {
-	/// Hears the genesis hash each connection's chain gives, for the
-	/// `ChainRuntime` that opens them.
+	/// The check a `ChainRuntime` reports each connection's genesis hash to.
 	pub fn genesis_check(&self) -> Arc<dyn GenesisCheck> {
 		self.shared.clone()
 	}
@@ -203,10 +202,11 @@ impl StackRefresh {
 		})
 	}
 
-	/// The stack the core runs, with the checks of its chains: a runtime
-	/// built on it puts every chain connection it opens through them. The
-	/// stack stays the same for the life of the runtime: a newer copy that
-	/// changes it applies at the next start.
+	/// The stack the core runs, with the checks of its chains.
+	///
+	/// A runtime built on it puts every chain connection it opens through
+	/// them. The stack stays the same for the life of the runtime: a newer
+	/// copy that changes it applies at the next start.
 	pub fn stack(&self) -> Stack {
 		let stack = self.shared.source().stack().clone();
 		Stack { checks: Some(StackChecks { shared: self.shared.clone() }), ..stack }
@@ -235,10 +235,11 @@ impl StackRefresh {
 
 	/// Tells `changed` the stack's status, for a host that does not fetch it.
 	///
-	/// Once before this returns, then on `spawner`, until this value drops,
-	/// whenever what a chain answered changes the status. Nothing is fetched,
-	/// so the core stays on the copy it started from. `changed` has to return
-	/// promptly, and must not start the refresh or the reports itself.
+	/// `changed` is called once before this returns. After that a task on
+	/// `spawner` calls it each time a chain's answer changes the status, until
+	/// this value drops. Nothing is fetched, so the core stays on the copy it
+	/// started from. `changed` has to return promptly, and must not start the
+	/// refresh or the reports itself.
 	///
 	/// Set-once, together with [`Self::start`]: answers whether this call
 	/// started the reports.
@@ -287,8 +288,8 @@ impl Shared {
 		let tell = |status| host.stack_changed(status);
 		let mut force = false;
 		loop {
-			// What a chain answered is told before the fetch it brings forward
-			// and while a fetch is out, since a host may take half a minute to
+			// A chain's answer is reported before the fetch it brings forward,
+			// and while a fetch is out: a host may take half a minute to
 			// answer one.
 			self.report_change(&tell, &mut reported);
 			let request = if force {

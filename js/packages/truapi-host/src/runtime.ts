@@ -99,13 +99,16 @@ export type StackFetchResponse =
   /** `304 Not Modified`. */
   | { status: "notModified" };
 
-/** Where the stack's descriptor and what one of its chains answered disagree. */
+/**
+ * A difference between the stack's descriptor and what one of its chains
+ * answered.
+ */
 export type StackMismatch =
   | {
       /**
-       * The last connection opened for a chain reached one with a different
-       * genesis hash from the one the descriptor names, as after the chain
-       * restarted from genesis. The core refused that connection.
+       * The chain's last connection reached one with a different genesis
+       * hash from the descriptor's, as happens after a chain restarts from
+       * genesis. The core refused that connection.
        */
       kind: "genesisHash";
       /** The chain's role in the descriptor. */
@@ -175,13 +178,12 @@ export interface StackStatus {
     reason?: string;
   };
   /**
-   * Where the chains last answered differently from the descriptor the core
-   * runs: its chains in the descriptor's order, then People's
-   * `NetworkSuffix`. While a chain is listed, a host with
-   * `fetchStackDescriptor` is asked for the descriptor every five minutes
-   * instead of every hour, until a published copy that changes a chain sets
-   * `restartRequired`. A light client answers from its chain spec, so a
-   * chain that restarted is out of its reach and never listed here.
+   * Where a chain's last answer differed from the descriptor the core runs:
+   * its chains in the descriptor's order, then People's `NetworkSuffix`.
+   * While a chain is listed, a host with `fetchStackDescriptor` is asked for
+   * the descriptor every five minutes instead of every hour, until a newer
+   * copy sets `restartRequired`. A light client answers from its own chain
+   * spec, so it never lists a chain that restarted.
    */
   mismatches: StackMismatch[];
 }
