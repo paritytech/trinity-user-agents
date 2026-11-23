@@ -23,6 +23,7 @@ pub use dotns_lookup::DotnsLookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod funding_telemetry;
 mod host_accounts;
 mod host_grants;
 mod host_session;
@@ -1748,14 +1749,15 @@ impl<H: AccountHolder> FundingProvider for ProductRuntimeHost<H> {
 				}
 				// The worker never puts a screen in front of the user on its own:
 				// the host opens it, at once or from a notice the user taps.
-				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				let shows = crate::runtime::funding_telemetry::FrameTarget::of(&target);
+				let mut frame = services.funding().request_frame(&intent, provider.clone(), shows);
 				if let Some(outcome) = frame.opened().await {
 					return Ok(latest::HostFundingPresentFrameResponse { outcome });
 				}
-				let outcome = platform
-					.present_provider_frame(provider, intent, target)
-					.await
-					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				let shown = platform.present_provider_frame(provider, intent, target).await;
+				frame.closed(crate::runtime::funding_telemetry::FrameClose::of(&shown));
+				let outcome =
+					shown.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
 			})
 			.await

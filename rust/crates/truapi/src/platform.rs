@@ -2185,8 +2185,9 @@ pub struct FundingQuoteList {
 }
 
 /// Why an amount cannot go ahead.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+#[strum(serialize_all = "snake_case")]
 pub enum FundingAmountIssue {
 	/// A withdrawal of more than the user can spend.
 	NotEnoughBalance,
