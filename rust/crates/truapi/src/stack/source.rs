@@ -331,13 +331,17 @@ impl StackSource {
 		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;
 		}
-		let listed = self.wrong_genesis.iter().position(|wrong| wrong.named == named);
-		let before = listed.map(|index| self.wrong_genesis.swap_remove(index).answered);
+		let entry = self.wrong_genesis.iter().find(|entry| entry.named == named);
+		let listed = entry.map(|entry| entry.answered);
 		let wrong = (answered != named).then_some(answered);
+		if listed == wrong {
+			return false;
+		}
+		self.wrong_genesis.retain(|entry| entry.named != named);
 		if wrong.is_some() {
 			self.wrong_genesis.push(hashes);
 		}
-		before != wrong
+		true
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
@@ -357,14 +361,17 @@ impl StackSource {
 		if self.first_fetch.is_some() {
 			return Some(Duration::ZERO);
 		}
-		let hourly = self.reader.due_in(&self.pointer, now_unix_seconds)?;
-		// Once a newer copy waits for the next start, the sooner fetch has
+		let until_an_hour_old = self.reader.due_in(&self.pointer, now_unix_seconds)?;
+		// Once a newer copy waits for the next start, fetching sooner has
 		// done its job.
-		let sooner = match self.wrong_chains().next().is_none() || self.next_start.is_some() {
-			true => 0,
-			false => REFRESH_MAX_AGE_SECS - MISMATCH_REFRESH_MAX_AGE_SECS,
+		let chain_is_wrong = self.wrong_chains().next().is_some();
+		let max_age = if chain_is_wrong && self.next_start.is_none() {
+			MISMATCH_REFRESH_MAX_AGE_SECS
+		} else {
+			REFRESH_MAX_AGE_SECS
 		};
-		Some(Duration::from_secs(hourly.saturating_sub(sooner)))
+		let sooner_by = REFRESH_MAX_AGE_SECS - max_age;
+		Some(Duration::from_secs(until_an_hour_old.saturating_sub(sooner_by)))
 	}
 
 	/// A fetch to make now whatever the copy's age, unless one is out. Answer

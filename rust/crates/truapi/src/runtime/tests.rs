@@ -1850,6 +1850,41 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
+/// People's connection can take half a minute to open: the host may be
+/// redialling, and the genesis check waits out a halted chain. A product that
+/// withdraws its request meanwhile is answered without waiting for the
+/// connection, and the attempt is dropped.
+#[test]
+fn a_request_withdrawn_while_people_connects_does_not_wait_for_the_connection() {
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		chain_connect_pending: true,
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("sign-raw-connecting".to_string(), cancel.clone());
+	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+		account: account_id("myapp.dot", 0),
+		payload: raw_payload(),
+	});
+
+	let call = std::thread::spawn(move || {
+		futures::executor::block_on(host.sign_raw(&cx, request)).is_err()
+	});
+	let dialled = || !platform.chain_connects.lock().unwrap().is_empty();
+	wait_until(dialled, "People is dialled");
+	cancel.cancel();
+	wait_until(|| call.is_finished(), "the withdrawn request is answered");
+
+	assert_eq!(
+		(call.join().ok(), platform.pending_connect_dropped.load(Ordering::SeqCst)),
+		(Some(true), true)
+	);
+}
+
 /// `message_id`s every `Cancel` this host has published names, oldest first.
 pub fn withdrawn_requests(platform: &Arc<StubPlatform>, session: &SessionInfo) -> Vec<String> {
 	submitted_remote_messages(platform, session)

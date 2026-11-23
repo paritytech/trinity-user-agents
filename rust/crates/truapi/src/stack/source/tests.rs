@@ -420,6 +420,41 @@ fn wrong_answers_do_not_bring_a_fetch_sooner_than_five_minutes() {
 	);
 }
 
+/// A wipe restarts every chain of a stack, and their connections answer in
+/// any order and more than once. The host is shown each chain once, in the
+/// descriptor's order and with the hash it gave last, and a chain that
+/// answers as named again leaves the others listed.
+#[test]
+fn chains_that_restarted_together_are_each_listed_once_in_the_descriptors_order() {
+	let (_bundled, mut source) = fetched_at_start();
+	let (asset_hub, bulletin) = ([0xcc; 32], [0xbb; 32]);
+	let gave = |role: &str, named, answered| StackMismatch::GenesisHash {
+		role: role.to_string(),
+		named,
+		answered,
+	};
+
+	source.chain_answered(GenesisHashes { named: bulletin, answered: [0xb1; 32] });
+	source.chain_answered(PEOPLE_WIPED);
+	source.chain_answered(GenesisHashes { named: asset_hub, answered: [0xc1; 32] });
+	let changed = source.chain_answered(GenesisHashes { named: bulletin, answered: [0xb2; 32] });
+	let all_wrong = source.status().mismatches;
+	source.chain_answered(GenesisHashes { named: asset_hub, answered: asset_hub });
+
+	assert_eq!(
+		(changed, all_wrong, source.status().mismatches),
+		(
+			true,
+			vec![
+				gave("AssetHub", asset_hub, [0xc1; 32]),
+				people_gave(TEST_STACK_WIPED_PEOPLE),
+				gave("Bulletin", bulletin, [0xb2; 32]),
+			],
+			vec![people_gave(TEST_STACK_WIPED_PEOPLE), gave("Bulletin", bulletin, [0xb2; 32])],
+		)
+	);
+}
+
 /// A host may serve chains the stack does not name, such as another network
 /// a product asks for. Fetching the stack's descriptor again would tell
 /// nothing about them.
