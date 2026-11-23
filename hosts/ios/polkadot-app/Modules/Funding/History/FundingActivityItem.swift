@@ -35,10 +35,9 @@ extension FundingActivityItem {
         id = session.intent
         direction = session.direction
         rail = session.choice?.rail
-        let units = session.amount ?? session.choice.map { choice in
+        amount = Balance(units: session.amount ?? session.choice.map { choice in
             session.direction == .in ? choice.quote.receiveAmount : choice.quote.sendAmount
-        }
-        amount = units.flatMap { Balance($0) }
+        })
         date = Date(milliseconds: session.openedAtMs)
         status = .inProgress(progress?
             .status ?? (session.direction == .in ? .waitingForPayment : .transactionInitiated))
@@ -52,7 +51,7 @@ extension FundingActivityItem {
         id = summary.intent
         direction = summary.direction
         rail = summary.choice?.rail
-        amount = summary.ended.cashAmount.flatMap { Balance($0) }
+        amount = Balance(units: summary.ended.cashAmount)
         date = Date(milliseconds: summary.ended.atMs)
         self.status = status
     }
@@ -79,9 +78,9 @@ private extension FundingActivityItem.Status {
         case .succeeded:
             self = summary.direction == .in ? .toppedUp : .sent
         case .payoutFailed:
-            self = .payoutFailed(refunded: summary.refunded.flatMap { Balance($0) })
+            self = .payoutFailed(refunded: Balance(units: summary.refunded))
         case .failed(.cancelled):
-            self = .cancelled(refunded: summary.refunded.flatMap { Balance($0) })
+            self = .cancelled(refunded: Balance(units: summary.refunded))
         case .failed(.refunded):
             self = .refunded
         case let .failed(reason):

@@ -12,7 +12,7 @@ struct FundingServiceTests {
         let service = makeService(runtime)
         service.select(selection(.card), for: intent)
 
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
 
@@ -28,8 +28,8 @@ struct FundingServiceTests {
         let service = makeService(runtime)
         service.select(selection(.card), for: intent)
 
-        service.quote(amount: "50000000", for: intent)
-        service.quote(amount: "60000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
+        service.quote(amount: 60_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 2 }
 
         push(quotes(1, [("routed", quote("old", send: "1"))], best: "routed"), runtime, service)
@@ -65,12 +65,12 @@ struct FundingServiceTests {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
         service.select(selection(.card), for: intent)
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
         try await waitUntil { await state(service).quotes != nil }
 
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { await !state(service).isQuoting }
 
         #expect(runtime.asks.count == 1)
@@ -82,7 +82,7 @@ struct FundingServiceTests {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
         service.select(selection(.card), for: intent)
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
         try await waitUntil { await state(service).quotes != nil }
@@ -97,7 +97,7 @@ struct FundingServiceTests {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
         service.select(selection(.card), for: intent)
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
         try await waitUntil { await state(service).quotes != nil }
@@ -114,7 +114,7 @@ struct FundingServiceTests {
         let service = makeService(runtime)
 
         runtime.answerAmounts(with: .belowMinimum(min: "10000000"))
-        #expect(service.amountIssue("5000000", spendable: nil, for: intent) == .belowMinimum(min: "10000000"))
+        #expect(service.amountIssue(5_000_000, spendable: nil, for: intent) == .belowMinimum(min: "10000000"))
     }
 
     @Test
@@ -124,7 +124,7 @@ struct FundingServiceTests {
         let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
         let requested = try await firstEvent(of: service)
         service.select(selection(.card), for: intent)
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
         try await waitUntil { await state(service).quotes != nil }
@@ -147,7 +147,7 @@ struct FundingServiceTests {
         let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
         _ = try await firstEvent(of: service)
         service.select(selection(.card), for: intent)
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
         try await waitUntil { await state(service).quotes != nil }
@@ -182,7 +182,7 @@ struct FundingServiceTests {
         _ = try await firstEvent(of: service)
         service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
 
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await service.start(intent, provider: nil)
         try await waitUntil { runtime.autoStarts == [.armed(requestId: 1)] }
 
@@ -198,7 +198,7 @@ struct FundingServiceTests {
         let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
         let service = makeService(runtime)
         service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
-        service.quote(amount: "50000000", for: intent)
+        service.quote(amount: 50_000_000, for: intent)
         try await service.start(intent, provider: nil)
 
         service.stopStarting(intent)
