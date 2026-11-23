@@ -170,28 +170,19 @@ class ManifestParserTest {
     fun `worker publishes pocket cards behind includes pocket`() {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true},
-               "pocket":{"cards":[{"id":" loyalty ","title":"Loyalty","preview":"faces/loyalty.json"},
-                                   {"id":"member","title":"Member","preview":"faces/member.json","back":"faces/back.json"}]}}""",
+               "pocket":{"cards":[{"id":" loyalty ","title":"Loyalty","preview":"faces/loyalty.json"}]}}""",
             ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
         assertEquals(true, worker?.includesPocket)
-        val frontOnly = PocketCardDefinition(
+        val expected = PocketCardDefinition(
             PocketCardId("loyalty"),
             "Loyalty",
             PocketCardPreview.Archive("faces/loyalty.json"),
             faceShown = true,
-            back = null,
         )
-        val twoSided = PocketCardDefinition(
-            PocketCardId("member"),
-            "Member",
-            PocketCardPreview.Archive("faces/member.json"),
-            faceShown = true,
-            back = PocketCardPreview.Archive("faces/back.json"),
-        )
-        assertEquals(listOf(frontOnly, twoSided), worker?.pocketCards)
+        assertEquals(listOf(expected), worker?.pocketCards)
     }
 
     /**
@@ -239,8 +230,6 @@ class ManifestParserTest {
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"","preview":"a.json"}]}"""))
         publishesNoCards(worker("""{}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
-        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":42}]}"""))
-        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","back":""}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
         // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
         publishesNoCards(

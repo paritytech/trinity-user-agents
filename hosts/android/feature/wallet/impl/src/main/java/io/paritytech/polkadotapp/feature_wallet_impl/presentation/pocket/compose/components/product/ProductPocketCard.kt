@@ -70,7 +70,10 @@ import kotlinx.coroutines.withContext
 import uniffi.truapi.ProductId
 import kotlin.time.Duration.Companion.milliseconds
 
-/** Draws the product's face inside the host's card frame. */
+/**
+ * A product-backed card: the frame is the host's, the face inside it is the product's tree. The
+ * face flow is collected only while this card is composed, which is what keeps its worker running.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ProductPocketCard(

@@ -1,41 +1,32 @@
+import struct TrUAPIHost.ProductId
 import Foundation
+import os
 import AsyncExtensions
 import Products
-import TrUAPIHost
 
-/// Owns Pocket's worker claims for the sides of collected cards currently on screen.
-@MainActor
-final class PocketHandlers: PocketFaceStreamsResolving {
-    private struct Presentation {
-        let key: PocketCardKey
-        let expanded: Bool
-    }
-
-    private final class LiveCard {
-        var lookup: Task<Void, Never>?
-        var front: (any TrUAPIWorkerClaiming)?
-        var back: (any TrUAPIWorkerClaiming)?
-        var hasBack: Bool?
-        var refused = false
-
-        func close() {
-            lookup?.cancel()
-            front?.release()
-            back?.release()
-        }
-    }
-
+/// The Pocket handlers running right now: one per product holding a card its
+/// worker offers.
+///
+/// Separate from ``ProductPocketService`` because what starts and stops a
+/// handler is decided by the collection and the product manifests alone, and by
+/// nothing else the session holds.
+final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
     private let workers: any TrUAPIWorkerManaging
     private let published: any PublishedPocketCardsResolving
     private let logger: LoggerProtocol
-    private nonisolated let handler: TrUAPIPocketHandler
-    private nonisolated let announced = AsyncCurrentValueSubject<[PocketCardKey: Bool]>([:])
-    private var collected: Set<PocketCardKey> = []
-    private var presentations: [UUID: Presentation] = [:]
-    private var live: [PocketCardKey: LiveCard] = [:]
-    private var stopped = false
 
-    nonisolated init(
+    private let running = OSAllocatedUnfairLock(initialState: Running())
+    /// Sent on every change so a card already on screen can wait for the
+    /// handler that will draw it, rather than being told there is none.
+    private let announced = AsyncCurrentValueSubject<[ProductId: TrUAPIPocketHandler]>([:])
+
+    private struct Running {
+        var handlers: [ProductId: TrUAPIPocketHandler] = [:]
+        var settling: Task<Void, Never>?
+        var stopped = false
+    }
+
+    init(
         workers: any TrUAPIWorkerManaging,
         published: any PublishedPocketCardsResolving,
         logger: LoggerProtocol = Logger.shared
@@ -43,131 +34,171 @@ final class PocketHandlers: PocketFaceStreamsResolving {
         self.workers = workers
         self.published = published
         self.logger = logger
-        handler = TrUAPIPocketHandler(workers: workers, logger: logger)
     }
 
-    nonisolated func streams(for key: PocketCardKey) -> (any PocketFaceStreaming)? {
-        announced.value[key] == true ? handler : nil
+    func handler(of productId: ProductId) -> TrUAPIPocketHandler? {
+        running.withLock { $0.handlers[productId] }
     }
 
-    nonisolated func awaitStreams(for key: PocketCardKey) async -> (any PocketFaceStreaming)? {
-        for await cards in announced {
-            if let offered = cards[key] { return offered ? handler : nil }
+    func streams(of productId: ProductId) -> (any PocketFaceStreaming)? {
+        handler(of: productId)
+    }
+
+    func awaitStreams(of productId: ProductId) async -> (any PocketFaceStreaming)? {
+        for await handler in announced.map({ $0[productId] }) {
+            if let handler { return handler }
         }
+
         return nil
     }
 
-    func present(_ key: PocketCardKey, expanded: Bool) -> @MainActor () -> Void {
-        guard !stopped else { return {} }
-        let id = UUID()
-        presentations[id] = Presentation(key: key, expanded: expanded)
-        update(key)
-        return { [weak self] in
-            guard let self, presentations.removeValue(forKey: id) != nil else { return }
-
-            update(key)
-        }
-    }
-
+    /// Reconciles beside the collection rather than in front of the next
+    /// change, and keeps asking while a lookup is unanswered: a chain read that
+    /// did not land must not leave a card static until the collection next
+    /// moves, which may be never.
     func settle(_ cards: [PocketCardEntry]) {
-        let previous = collected
-        collected = Set(cards.map(\.key))
-        for key in previous.symmetricDifference(collected) {
-            update(key)
-        }
-        for key in previous.intersection(collected) {
-            guard let card = live[key], card.lookup == nil else { continue }
-            activate(card, for: key, refreshOffer: true)
-        }
-    }
+        let task = Task { [weak self] in
+            var attempt = 0
+            while !Task.isCancelled {
+                guard let self, await !reconcile(cards) else { return }
 
-    func stop() {
-        stopped = true
-        for card in live.values {
-            card.close()
-        }
-        live.removeAll()
-        presentations.removeAll()
-        announced.send([:])
-        announced.send(.finished)
-    }
-
-    private func update(_ key: PocketCardKey) {
-        guard !stopped else { return }
-        let views = presentations.values.filter { $0.key == key }
-        guard collected.contains(key), !views.isEmpty else {
-            if let card = live.removeValue(forKey: key) {
-                card.close()
-                announce()
-            }
-            return
-        }
-
-        let card = live[key] ?? LiveCard()
-        live[key] = card
-        let expanded = views.contains(where: \.expanded)
-        if !expanded {
-            card.back?.release()
-            card.back = nil
-        }
-        guard !card.refused, card.lookup == nil,
-              card.front == nil || (expanded && card.hasBack == true && card.back == nil) else { return }
-        activate(card, for: key, refreshOffer: false)
-    }
-
-    private func activate(_ card: LiveCard, for key: PocketCardKey, refreshOffer: Bool) {
-        card.lookup = Task { [weak self] in
-            await self?.claimSides(of: card, for: key, refreshOffer: refreshOffer)
-        }
-    }
-
-    private func claimSides(of card: LiveCard, for key: PocketCardKey, refreshOffer: Bool) async {
-        defer { card.lookup = nil }
-        var needsOffer = refreshOffer || card.hasBack == nil
-        var attempt = 0
-        while !Task.isCancelled {
-            do {
-                if needsOffer {
-                    let offered = try await published.find(productId: key.productId, cardId: key.cardId)
-                    needsOffer = false
-                    card.refused = false
-                    card.hasBack = offered.definition.back != nil
-                }
-                guard live[key] === card, !Task.isCancelled else { return }
-                if card.front == nil {
-                    card.front = try workers.claim(key.productId)
-                    announce()
-                }
-                if card.hasBack == true, presentations.values.contains(where: { $0.key == key && $0.expanded }),
-                   card.back == nil {
-                    card.back = try workers.claim(key.productId)
-                } else if card.hasBack == false {
-                    card.back?.release()
-                    card.back = nil
-                }
-                return
-            } catch is PocketPublishError {
-                guard live[key] === card else { return }
-                card.refused = true
-                card.front?.release()
-                card.front = nil
-                card.back?.release()
-                card.back = nil
-                announce()
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                logger.warning("[pocket] \(key.cardId.value) could not become live: \(error)")
-                try? await Task.sleep(for: pocketReopenDelay(after: attempt))
+                try? await Task.sleep(for: Self.retryDelay(after: attempt))
                 attempt += 1
             }
         }
+
+        let stopped = running.withLock { running -> Bool in
+            guard !running.stopped else { return true }
+
+            running.settling?.cancel()
+            running.settling = task
+            return false
+        }
+        if stopped { task.cancel() }
     }
 
-    private func announce() {
-        announced.send(live.compactMapValues { card in
-            if card.refused { return false }
-            return card.front == nil ? nil : true
-        })
+    /// Gives back every worker request these handlers took. Nothing else holds
+    /// a way back to them.
+    func stop() {
+        let held = running.withLock { running -> [TrUAPIPocketHandler] in
+            running.stopped = true
+            running.settling?.cancel()
+            running.settling = nil
+
+            let held = Array(running.handlers.values)
+            running.handlers = [:]
+            return held
+        }
+
+        announced.send([:])
+
+        for handler in held {
+            handler.dispose()
+        }
+    }
+
+    /// Starts a handler for every product holding a card its worker offers, and
+    /// stops the ones left without. The offer check is what keeps the
+    /// host-placed card every Pocket carries from booting a worker for a
+    /// product that draws nothing.
+    ///
+    /// Answers whether every card was looked up conclusively.
+    func reconcile(_ cards: [PocketCardEntry]) async -> Bool {
+        var offered: Set<ProductId> = []
+        var unread: Set<ProductId> = []
+
+        for card in cards where !offered.contains(card.key.productId) {
+            switch await offer(of: card.key) {
+            case .offered: offered.insert(card.key.productId)
+            case .notOffered: break
+            case .unanswered: unread.insert(card.key.productId)
+            }
+        }
+
+        // The lock runs its closure as concurrently executing code, which may
+        // read only values that can no longer change.
+        let wanted = offered
+        let unanswered = unread
+
+        let (started, stopped) = running.withLock { running -> ([TrUAPIPocketHandler], [TrUAPIPocketHandler]) in
+            guard !running.stopped else { return ([], []) }
+
+            // A read that did not land is not the product saying its card is
+            // gone, so a handler already drawing one keeps running rather than
+            // being stopped and booted again by the retry.
+            let stopped = running.handlers.filter {
+                !wanted.contains($0.key) && !unanswered.contains($0.key)
+            }
+            for productId in stopped.keys {
+                running.handlers[productId] = nil
+            }
+
+            let started = wanted.compactMap { productId -> TrUAPIPocketHandler? in
+                guard running.handlers[productId] == nil else { return nil }
+
+                let handler = TrUAPIPocketHandler(productId: productId, workers: workers, logger: logger)
+                running.handlers[productId] = handler
+                return handler
+            }
+
+            announced.send(running.handlers)
+            return (started, Array(stopped.values))
+        }
+
+        for handler in stopped {
+            handler.dispose()
+        }
+
+        for handler in started {
+            await start(handler)
+        }
+
+        return unanswered.isEmpty
+    }
+}
+
+private extension PocketHandlers {
+    /// Doubling from a second up to half a minute, so a chain that is simply
+    /// slow is picked up at once and one that is down is not asked on a loop.
+    static func retryDelay(after attempt: Int) -> Duration {
+        .seconds(min(1 << min(attempt, 5), 30))
+    }
+
+    func start(_ handler: TrUAPIPocketHandler) async {
+        do {
+            try await handler.start()
+        } catch {
+            let productId = handler.productId
+            let removed = running.withLock { running in
+                guard running.handlers[productId] === handler else { return false }
+
+                running.handlers.removeValue(forKey: productId)
+                announced.send(running.handlers)
+                return true
+            }
+            if removed {
+                logger.error("[pocket] \(productId)'s cards have no worker to draw them: \(error)")
+            }
+        }
+    }
+
+    enum Offer {
+        case offered
+        case notOffered
+        /// A read that did not land, which is not the product saying no.
+        case unanswered
+    }
+
+    func offer(of key: PocketCardKey) async -> Offer {
+        do {
+            _ = try await published.find(productId: key.productId, cardId: key.cardId)
+            return .offered
+        } catch let refusal as PocketPublishError {
+            logger.debug("[pocket] \(key.cardId.value): \(refusal); it keeps the face it has")
+            return .notOffered
+        } catch {
+            logger.warning("[pocket] \(key.cardId.value) could not be looked up, asking again: \(error)")
+            return .unanswered
+        }
     }
 }

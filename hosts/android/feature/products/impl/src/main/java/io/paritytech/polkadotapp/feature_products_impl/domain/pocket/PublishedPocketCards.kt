@@ -1,15 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.reopenBackoff
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
-import kotlinx.coroutines.delay
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
@@ -40,16 +35,4 @@ class PublishedPocketCards @Inject constructor(
                 ?.let { Result.success(PublishedPocketCard(resolved.product, it)) }
                 ?: Result.failure(PocketPublishError.UnknownCard)
         }
-
-    suspend fun awaitPublished(key: PocketCardKey): PublishedPocketCard? {
-        var attempt = 0L
-        while (true) {
-            val result = find(key.productId, key.cardId)
-                .logFailure("Pocket face ${key.cardId.value} has no published card")
-            result.getOrNull()?.let { return it }
-            val failure = result.exceptionOrNull()
-            if (failure is PocketPublishError || failure is ProductResolutionError.MalformedManifest) return null
-            delay(reopenBackoff(attempt++))
-        }
-    }
 }

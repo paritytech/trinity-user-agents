@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardWorkers
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFace
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
@@ -32,7 +31,6 @@ class PocketInteractor @Inject constructor(
     private val coinageBackupService: CoinageBackupService,
     private val pocketCollection: PocketCollection,
     private val pocketFaceSource: PocketFaceSource,
-    private val pocketCardWorkers: PocketCardWorkers,
     private val pocketCardFaceOnOpen: PocketCardFaceOnOpen,
     private val productContentWarmUp: ProductContentWarmUp,
 ) {
@@ -61,9 +59,8 @@ class PocketInteractor @Inject constructor(
 
     suspend fun faceShownOnOpen(key: PocketCardKey): Boolean = pocketCardFaceOnOpen.faceShownOnOpen(key)
 
+    /** Collect only while the face is on screen: collecting keeps the backing product's worker running. */
     fun observeFace(key: PocketCardKey): Flow<PocketFace> = pocketFaceSource.observeFace(key)
-
-    suspend fun holdVisibleSides(key: PocketCardKey, expanded: Flow<Boolean>) = pocketCardWorkers.holdVisibleSides(key, expanded)
 
     suspend fun removeProductCard(key: PocketCardKey): Result<Unit> = pocketCollection.removeCard(key)
 

@@ -29,10 +29,8 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -63,7 +61,6 @@ class PocketViewModelTest {
         every { observeDigitalDollarBalance() } returns emptyFlow()
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
-        coEvery { holdVisibleSides(any(), any()) } returns Unit
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
         coEvery { faceShownOnOpen(any()) } returns true
     }
@@ -478,45 +475,6 @@ class PocketViewModelTest {
 
         assertEquals(face, viewModel.bindingsOf(uiCard).face.value)
         listCopy.cancel()
-    }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    @Test
-    fun `two presentations keep the worker after drawing ends until the last one leaves and its grace expires`() = runTest(testDispatcher) {
-        val card = productCard("loyalty")
-        every { interactor.observeProductCards() } returns flowOf(listOf(card))
-        val changes = mutableListOf<String>()
-        val expansion = mutableListOf<Boolean>()
-        coEvery { interactor.holdVisibleSides(card.key, any()) } coAnswers {
-            changes += "started"
-            try {
-                secondArg<Flow<Boolean>>().collect { expansion += it }
-            } finally {
-                changes += "stopped"
-            }
-        }
-
-        val viewModel = createViewModel()
-        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
-        val bindings = viewModel.bindingsOf(uiCard)
-        runCurrent()
-        assertEquals(emptyList<String>(), changes)
-        val list = launch { bindings.face.collect {} }
-        val expanded = launch { viewModel.bindingsOf(uiCard).face.collect {} }
-        runCurrent()
-        viewModel.selectCard(uiCard)
-        runCurrent()
-        viewModel.dismissCard()
-        runCurrent()
-        assertEquals(listOf(false, true, false), expansion)
-        list.cancel()
-        advanceTimeBy(5_000)
-        expanded.cancel()
-        advanceTimeBy(4_999)
-        assertEquals(listOf("started"), changes)
-        advanceTimeBy(1)
-        runCurrent()
-        assertEquals(listOf("started", "stopped"), changes)
     }
 
     // A link can name a card before the Pocket tab has ever been shown, and a tab shown for the first

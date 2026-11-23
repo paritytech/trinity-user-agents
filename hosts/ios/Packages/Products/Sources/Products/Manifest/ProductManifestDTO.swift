@@ -109,7 +109,6 @@ struct PocketCardDTO: Decodable {
     let title: String?
     let preview: String?
     let faceShown: Bool?
-    let back: String?
 }
 
 struct DimensionsDTO: Decodable {

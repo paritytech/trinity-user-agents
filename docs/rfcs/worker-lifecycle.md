@@ -48,7 +48,7 @@ Reference holders, by modality:
 | Holder  | Held while                                                                                               |
 | ------- | -------------------------------------------------------------------------------------------------------- |
 | Chat    | A room the product serves is on screen, or a message addressed to the product is in flight.              |
-| Pocket  | A worker-backed card side is live. Multiple views of the same side share its claim.                      |
+| Pocket  | An artifact the product contributed is on screen.                                                        |
 | Funding | The picker needs a provider quote or an assigned funding session still needs the provider.               |
 | Input   | An input round is in flight, or a `Custom` candidate is on screen ([Input Modality](input-modality.md)). |
 

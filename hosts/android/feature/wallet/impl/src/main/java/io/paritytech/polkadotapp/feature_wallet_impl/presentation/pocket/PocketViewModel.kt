@@ -35,17 +35,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -170,8 +167,8 @@ class PocketViewModel @Inject constructor(
 
     /**
      * One set of bindings per card, however many copies of it are drawn: expanding a card draws a
-     * second one over the first, and an independent stream would leave the new copy empty until
-     * the product drew again. The newest face is replayed to whichever copy asks next.
+     * second one over the first, and two streams would take two worker references and leave the new
+     * copy empty until the product drew again. The newest face is replayed to whichever copy asks next.
      *
      * The stream outlives a short gap in subscribers, so scrolling the card off screen or leaving the
      * app for a moment does not tear the product's worker down and boot it again on the way back.
@@ -191,17 +188,11 @@ class PocketViewModel @Inject constructor(
             override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
         }
 
-        val face = flow {
-            coroutineScope {
-                launch { interactor.holdVisibleSides(card.key, selectedCardId.map { it == card.id }) }
-                emitAll(interactor.observeFace(card.key))
-            }
-        }.stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null)
-
         return CardBinding(
             scope = scope,
             bindings = ProductFaceBindings(
-                face = face,
+                face = interactor.observeFace(card.key)
+                    .stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null),
                 onFaceAction = { actionId, type -> onFaceAction(card, actionId, type) },
                 imageResolver = imageResolver,
                 materials = CardMaterialsSlot(materialsGl, { source -> materialImages.load(imageResolver, source) }, scope),

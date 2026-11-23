@@ -7,8 +7,10 @@ import kotlinx.coroutines.flow.Flow
 /** Where a card's face tree comes from. */
 interface PocketFaceSource {
     /**
-     * Emits the cached face for [key], if available, followed by live updates.
-     * The source closes each face's [PocketFace.materials] when the next face replaces it or collection ends.
+     * The face for [key], starting with the cached tree. The backing product's worker is kept
+     * running for as long as the flow is collected, so collect it only while the face is on screen.
+     * The source owns each face's [PocketFace.materials]: it closes one when the next face replaces it
+     * and the last when collection ends.
      */
     fun observeFace(key: PocketCardKey): Flow<PocketFace>
 

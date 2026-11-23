@@ -103,16 +103,12 @@ internal class ManifestParser @Inject constructor(
             require(it.isJsonPrimitive && it.asJsonPrimitive.isBoolean) { "pocket card faceShown must be a boolean" }
             it.asBoolean
         }
-        require(back == null || (back.isJsonPrimitive && back.asJsonPrimitive.isString && back.asString.isNotBlank())) {
-            "pocket card back must be a non-empty path"
-        }
         return PocketCardDefinition(
             id = PocketCardId(screenPocketCardId(requireNotNull(id) { "pocket card missing id" })),
             title = title,
             // Always a path in the archive: a published card must not be able to name a URL.
             preview = PocketCardPreview.Archive(preview),
             faceShown = publishedFaceShown ?: true,
-            back = back?.asString?.let(PocketCardPreview::Archive),
         )
     }
 

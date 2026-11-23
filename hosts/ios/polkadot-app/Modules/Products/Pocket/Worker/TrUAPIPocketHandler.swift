@@ -6,13 +6,22 @@ import TrUAPIHost
 /// The live side of a face: the product's render stream, and the actions going
 /// back to it.
 protocol PocketFaceStreaming: Sendable {
-    /// Each tree replaces the previous face for this card.
+    /// Faces the product draws for `key`, each replacing the last. The stream
+    /// stays silent while the worker is unavailable.
     func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error>
 
     func send(action: String, payload: Data, for key: PocketCardKey)
 }
 
-/// Sends Pocket calls over each ready execution and reopens interrupted renders.
+/// The Pocket half of one product's worker: the faces it draws for the cards
+/// the user holds, and the presses going back to it.
+///
+/// Started by ``ProductPocketService`` while the user holds at least one of
+/// this product's cards, which is what asks for the worker. One handler serves
+/// every card its product draws, so three of them on screen run one worker.
+///
+/// A render stream that ends or fails leaves the last face on screen and is
+/// opened again; a worker that restarts gets a fresh stream.
 final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
     private enum Retry {
         /// A worker that has just booted is not yet listening, so the first
@@ -21,12 +30,50 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
         static let connectDelay = Duration.milliseconds(250)
     }
 
+    let productId: ProductId
     private let workers: any TrUAPIWorkerManaging
     private let logger: LoggerProtocol
 
-    init(workers: any TrUAPIWorkerManaging, logger: LoggerProtocol = Logger.shared) {
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    private struct State {
+        var claim: (any TrUAPIWorkerClaiming)?
+        var disposed = false
+    }
+
+    init(
+        productId: ProductId,
+        workers: any TrUAPIWorkerManaging,
+        logger: LoggerProtocol = Logger.shared
+    ) {
+        self.productId = productId
         self.workers = workers
         self.logger = logger
+    }
+
+    func start() async throws {
+        try state.withLock { state in
+            guard !state.disposed, state.claim == nil else { throw CancellationError() }
+
+            state.claim = try workers.claim(productId)
+        }
+
+        do {
+            try await workers.waitUntilReady(productId)
+            guard !state.withLock({ $0.disposed }) else { throw CancellationError() }
+        } catch {
+            dispose()
+            throw error
+        }
+    }
+
+    func dispose() {
+        let claim = state.withLock { state in
+            state.disposed = true
+            defer { state.claim = nil }
+            return state.claim
+        }
+        claim?.release()
     }
 
     func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error> {

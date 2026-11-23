@@ -128,21 +128,6 @@ class RealPocketFaceSourceTest {
         verify(exactly = 1) { second.close() }
     }
 
-    @Test
-    fun `a failed materials resolution releases the last displayed materials`() = runTest {
-        val displayed = mockk<MaterialsResolution>(relaxed = true)
-        every { resolveDrawn(materialsFace("shown")) } returns displayed
-        val tree = materialsFace("broken")
-        every { resolveDrawn(tree) } throws IllegalStateException("resolution failed")
-        val collection = source.observeFace(loyalty.card.key).launchIn(this)
-        testScheduler.runCurrent()
-        streams.faces.emit(materialsFace("shown"))
-        streams.faces.emit(tree)
-        collection.join()
-
-        verify(exactly = 1) { displayed.close() }
-    }
-
     // A kept face was not drawn by the running execution, so its fallbacks must not reach the product.
     @Test
     fun `a kept face resolves on the runtime and a live face on the execution that drew it`() = runTest {

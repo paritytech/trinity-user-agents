@@ -195,7 +195,6 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.map(\.id.value) == ["loyalty", "trophy"])
         #expect(worker.pocketCards.map(\.title) == ["Loyalty", "Trophy"])
         #expect(worker.pocketCards.first?.preview == .archive(path: "faces/loyalty.json"))
-        #expect(worker.pocketCards.map(\.back) == ["back.json", nil])
     }
 
     /// A published manifest must never make the Host fetch an address of the
@@ -228,9 +227,7 @@ struct ProductManifestParserTests {
         let missingTitle = #"[{"id":"loyalty","preview":"faces/loyalty.json"}]"#
         let blankPreview = #"[{"id":"loyalty","title":"Loyalty","preview":"  "}]"#
 
-        let blankBack = #"[{"id":"loyalty","title":"Loyalty","preview":"face.json","back":" "}]"#
-
-        for cards in [missingTitle, blankPreview, blankBack] {
+        for cards in [missingTitle, blankPreview] {
             let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
 
             #expect(worker.serves(.chat))
@@ -430,7 +427,7 @@ private enum Fixtures {
 
     static func cards() -> String {
         """
-        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","back":"back.json"},
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json"},
          {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
         """
     }

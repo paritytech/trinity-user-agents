@@ -50,8 +50,9 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     }
 
     func waitUntilReady(_ productId: ProductId) async throws {
+        let suspend = suspendsReadiness
         entered.continuation.yield(())
-        if suspendsReadiness {
+        if suspend {
             for await _ in gate.stream {}
         }
 
@@ -62,6 +63,10 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 
             throw TrUAPIWorkerError.noWorker(productId)
         }
+    }
+
+    func finishExecutions() {
+        subject.send(.finished)
     }
 
     func publish(_ executions: [ProductId: TrUAPIProductExecutionProtocol]) {
@@ -116,15 +121,10 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 /// threads is a data race, and the test that reads it fails at random.
 final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
     private let records = OSAllocatedUnfairLock(
-        initialState: (acquired: [ProductId](), released: [ProductId](), log: [String]())
+        initialState: (acquired: [ProductId](), released: [ProductId](), log: [String](), releaseCounts: [Int]())
     )
 
-    private let onRelease: @Sendable (ProductId) -> Void
-
-    init(onRelease: @escaping @Sendable (ProductId) -> Void = { _ in }) {
-        self.onRelease = onRelease
-    }
-
+    var releaseCounts: [Int] { records.withLock { $0.releaseCounts } }
     var acquired: [ProductId] { records.withLock { $0.acquired } }
     var released: [ProductId] { records.withLock { $0.released } }
     /// Both in the order they happened. A release reaching the core before its
@@ -132,16 +132,18 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
     var log: [String] { records.withLock { $0.log } }
 
     func claim(_ productId: ProductId) -> any TrUAPIWorkerClaiming {
-        records.withLock {
+        let index = records.withLock {
             $0.acquired.append(productId)
             $0.log.append("acquire \(productId)")
+            $0.releaseCounts.append(0)
+            return $0.releaseCounts.count - 1
         }
         return Claim { [self] in
             records.withLock {
+                $0.releaseCounts[index] += 1
                 $0.released.append(productId)
                 $0.log.append("release \(productId)")
             }
-            onRelease(productId)
         }
     }
 
