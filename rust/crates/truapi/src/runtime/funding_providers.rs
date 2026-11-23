@@ -498,7 +498,10 @@ impl RuntimeServices {
 			if let Err(error) =
 				services.storage().write(CoreStorageKey::FundingSupport, records.encode()).await
 			{
-				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
+				tracing::warn!(
+					reason = %crate::logging::HostText::new(&error.reason),
+					"storing what funding providers serve failed"
+				);
 			}
 		});
 	}
@@ -520,7 +523,10 @@ impl RuntimeServices {
 			},
 			Ok(None) => Vec::new(),
 			Err(error) => {
-				tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
+				tracing::warn!(
+					reason = %crate::logging::HostText::new(&error.reason),
+					"reading what funding providers serve failed"
+				);
 				return false;
 			},
 		};
