@@ -9,6 +9,7 @@ appId: ${APP_ID}
       - retry:
           maxRetries: 3
           commands:
+            - runFlow: dismiss-tips.yaml
             - runFlow:
                 when:
                   notVisible:

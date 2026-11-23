@@ -3,11 +3,15 @@ appId: ${APP_ID}
 name: Settings and wallet smoke
 ---
 - launchApp
-- runFlow: flows/dismiss-tips.yaml
-- extendedWaitUntil:
-    visible:
-      id: chats_new_chat_button
-    timeout: 60000
+# First-run tips can appear a few seconds in, over the screen, so each attempt closes them first.
+- retry:
+    maxRetries: 4
+    commands:
+      - runFlow: flows/dismiss-tips.yaml
+      - extendedWaitUntil:
+          visible:
+            id: chats_new_chat_button
+          timeout: 15000
 
 - runFlow:
     file: flows/open-tab.yaml
