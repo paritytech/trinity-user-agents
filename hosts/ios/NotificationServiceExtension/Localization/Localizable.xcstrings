@@ -83,6 +83,17 @@
         }
       }
     },
+    "contact.sent.you.coinage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(username)@ sent you %2$(amount)@. Open the app to receive it."
+          }
+        }
+      }
+    },
     "incoming.audio.call" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -8,11 +8,13 @@ final class SecretPhraseMnemonicViewController: UIViewController, ViewHolder {
     typealias RootViewType = SecretPhraseMnemonicViewLayout
 
     let presenter: SecretPhraseMnemonicPresenterProtocol
+    private let screenCaptureProtector: ScreenCaptureProtector
 
     // MARK: Initial methods
 
-    init(presenter: SecretPhraseMnemonicPresenterProtocol) {
+    init(presenter: SecretPhraseMnemonicPresenterProtocol, screenCaptureProtector: ScreenCaptureProtector) {
         self.presenter = presenter
+        self.screenCaptureProtector = screenCaptureProtector
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -30,21 +32,21 @@ final class SecretPhraseMnemonicViewController: UIViewController, ViewHolder {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        observeApplicationState()
+        protectMnemonic()
         configureController()
         presenter.setup()
     }
 
     // MARK: Private methods
 
-    private func observeApplicationState() {
-        let notificationCenter = NotificationCenter.default
-        notificationCenter.addObserver(
-            self,
-            selector: #selector(applicationWillResignActiveNotification),
-            name: UIApplication.willResignActiveNotification,
-            object: nil
-        )
+    private func protectMnemonic() {
+        screenCaptureProtector.protect(
+            [rootView.mnemonicView.sensitiveContentView],
+            in: self
+        ) { [weak self] isExposed in
+            guard isExposed else { return }
+            self?.rootView.hideData()
+        }
     }
 
     private func configureController() {
@@ -62,17 +64,14 @@ final class SecretPhraseMnemonicViewController: UIViewController, ViewHolder {
         rootView.delegate = self
     }
 
-    // MARK: Notification
-
-    @objc
-    private func applicationWillResignActiveNotification() {
-        rootView.hideData()
-    }
-
     private func onViewMnemonic() {
         switch rootView.mnemonicView.currentType {
         case .hidden:
-            presenter.onShowMnemonic()
+            if screenCaptureProtector.isExposed {
+                presenter.onShowMnemonicWhileCaptured()
+            } else {
+                presenter.onShowMnemonic()
+            }
         case .shown:
             presenter.onHideMnemonic()
         }

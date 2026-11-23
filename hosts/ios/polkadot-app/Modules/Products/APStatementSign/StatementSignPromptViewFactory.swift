@@ -29,6 +29,7 @@ private extension StatementSignPromptViewFactory {
         for context: StatementSignConfirmationContext
     ) -> TitleDetailsSheetViewModel {
         let request = context.request
+        let authorizer = DeviceOwnerAuthorizer()
 
         return TitleDetailsSheetViewModel(
             graphics: makeIcon(),
@@ -40,7 +41,14 @@ private extension StatementSignPromptViewFactory {
             },
             mainAction: makeAction(
                 title: String(localized: .Common.confirm)
-            ) { context.deliver(.approved) },
+            ) {
+                authorizer.authorize(animated: true, retriable: false) { isAuthorized in
+                    guard isAuthorized else {
+                        return
+                    }
+                    context.deliver(.approved)
+                }
+            },
             secondaryAction: makeAction(
                 title: String(localized: .Common.reject)
             ) { context.deliver(.rejected) }
