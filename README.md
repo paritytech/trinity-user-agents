@@ -142,7 +142,8 @@ rust/crates/
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state,
-                         refresh policy; conformance vectors and JSON Schema
+                         refresh policy, the known stacks' links; conformance vectors and
+                         JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -158,7 +159,8 @@ js/packages/
                           reading with a store and publishing; `/reader` keeps stacks
                           current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
-                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
+                           ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js;
+                           owns the host connection whose frame channel products encode over
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
                            published to GitHub Packages as io.parity:truapi-host-android
                            (AAR with per-ABI cdylibs; see android/truapi-host/README.md)
@@ -171,8 +173,8 @@ hosts/android/             Android host app; resolves the core from this tree
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
-stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
-                           scripts/update-stacks.sh refreshes each descriptor from its link
+stacks/                    Generated link and signed descriptor of each signed known Trinity stack, which
+                           host builds bundle; scripts/update-stacks.sh writes them from the crate's list
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -354,14 +356,18 @@ them once the rows commit, watches each one, and decides whatever it no longer
 watches from the chain. Signed bytes are never stored, so a transaction left
 live by a previous process is decided by recovery rather than sent again.
 
-A domain can also schedule a transaction before it can be signed. A submission
-policy the domain registers builds it later, and builds it again when a proven
-failure is one it accepts to retry; a presigned transaction may name such a
+Each domain registers the chain it lives on, its completion oracle and one
+submission policy. A domain can also defer a transaction before it can be
+signed. Its policy builds it later, and builds it again when a proven failure
+is one it accepts to retry; a presigned transaction may carry a plan for that
 policy too.
 
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+Transactions of a domain or policy the core did not register on this start
+are left as they are and do not count as live, so they resume once it is
+registered again.
 
 ### NFT purses
 
@@ -379,7 +385,7 @@ or handoff spends. The same grant covers both.
 
 `rebalancePurse` and `transferItem` register an operation under an idempotency
 key the product chooses and return; `observeOperationStatus` follows it by that
-key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+key until it is `Cleared` or `Incomplete`. Each transfer is a deferred durable
 transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
 submitted, and proven landed when its instance is at the destination. What
 each transfer spends is recorded in `nft_consumption`, whether the key is one
@@ -445,6 +451,21 @@ again while the store holds them, and a dropped connection ends them with
 `Other`. Receiving a cheque proves nothing about its items: `deposit` checks
 them. Underneath, `StatementStoreApi` watches any topic filter as its stored
 backlog in one batch, then each live page.
+
+After a reinstall the core recovers what the purses held. It reads the
+installations the seed registered in the `AccountDataStore` contract, at the
+address the stack names under `contracts.accountDataStore`, and decrypts each
+record with a key derived from the seed's `//datastore` account. It walks the
+purse ids once across every earlier installation, since all of them share one
+sequence of ids: the main purse, then ids from 0 until 10 purses in a row are
+empty under all of them. In each purse it reads item keys from index 0 until
+more than 1000 in a row hold nothing. Keys that hold an NFT go back under their
+purse and installation, and a purse with no record is recreated, owned by Root
+and named `Recovered purse <id>`. Recovery runs while a session is active, all
+at one finalized block, and retries after a failure. `createPurse` waits while
+any registered installation is unfinished, including one registered after an
+earlier run, so a new purse never takes an id an earlier purse comes back at.
+A stack without the contract leaves recovery off.
 
 A host without a core database, such as the browser core, answers
 `Unsupported` to the served calls.
@@ -548,7 +569,7 @@ so `make dev` leaves the board empty with no error.
 ## How it works
 
 1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's EXAMPLE tab; the build fails if any method is missing one.
-2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
+2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`. The client keeps historical payload codecs only for wire versions its methods send or receive. Host callbacks use the latest protocol payloads.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
 
@@ -682,11 +703,13 @@ reaches it through a development-only `<script>` tag:
 ```
 
 The host serves that script itself, with no imports or environment variables
-needed. It installs the shared client and browser container before product code
-runs. Keep the tag before application scripts, without `async` or `defer`.
-SDK calls and permission checks share one connection. Updated SDKs reuse the
-injected client across reconnects; older SDKs can still start through the
-MessagePort adapter but require a page reload after a disconnect.
+needed. It installs the shared host transport and browser container before
+product code runs. Keep the tag before application scripts, without `async` or
+`defer`. SDK calls and permission checks share one connection. Each product
+encodes its frames with its own `@parity/truapi`. Updated SDKs keep their
+client across reconnects. SDKs that predate the injected transport use the
+MessagePort adapter, which survives a reconnect too: what the lost connection
+carried ends with a `HostFailure` error.
 A visible page retries a failed reconnect after 250 ms, 1 s and 4 s; after that, the next API
 call or return to a visible page tries again.
 On iOS the host rebinds its localhost listener on the same port each time the app

@@ -26,12 +26,26 @@ webUrl(stack.descriptor, "my-app"); // https://my-app.testnet.li/?network=previe
 store gets no rollback protection. Errors from a rule of the RFC carry a `code`, such as `bad-signature`, which
 `isTrinityStackError` recognises.
 
+## Known stacks
+
+`knownStacks` maps the name of each known Trinity stack to its link, signed or unsigned, and `trinity-stack add <name>`
+without a link adds the known stack of that name:
+
+```sh
+npx @parity/trinity-stack add previewnet
+```
+
+`trinity-stack known` prints each name and link. An unsigned known stack, marked `(unsigned)`, is listed for its link
+only: a build copy must be signed, so `add` refuses it, and a reader loads it from its link. The
+[trinity-stack crate's README](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack#known-stacks)
+lists each stack and how to add one.
+
 ## Running from build copies
 
 A project ships the stacks it uses, so it keeps working when a descriptor's server is down:
 
 ```sh
-npx trinity-stack add previewnet "polkadotapp://stack?key=0x4d43…&url=…"
+npx trinity-stack add previewnet   # a known stack; any other takes its link: add <name> "polkadotapp://stack?key=…&url=…"
 npx trinity-stack update   # exits 2 when a committed file changed, so a scheduled job can open a pull request
 ```
 

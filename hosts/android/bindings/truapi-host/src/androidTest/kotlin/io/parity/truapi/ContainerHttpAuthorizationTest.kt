@@ -55,6 +55,7 @@ class ContainerHttpAuthorizationTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = ContainerScriptBundle.load(context)
+        val testSdk = instrumentation.context.assets.open("truapi-test-sdk.js").bufferedReader().use { it.readText() }
         val reports = Reports()
         val bridge = PermissionBridge()
         val permission = RemotePermissionRequest(RemotePermission.Remote(listOf("localhost")))
@@ -109,7 +110,7 @@ class ContainerHttpAuthorizationTest {
                             val bootstrap = LocalhostBridgeBootstrap.script(proxy.port.toUShort(), endpoint.token)
                             WebViewCompat.addDocumentStartJavaScript(
                                 webView,
-                                "$bootstrap\nwindow.__truapi_localhost.nativeHttp = true;\n$container",
+                                "$bootstrap\nwindow.__truapi_localhost.nativeHttp = true;\n$container\n$testSdk",
                                 setOf("http://product.test"),
                             )
                             webView.loadUrl("http://product.test/")
@@ -245,10 +246,9 @@ class ContainerHttpAuthorizationTest {
         const val PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
         val PAGE = """
             <!doctype html><html><body><script>
-            const host = window.__HOST_API_CLIENT__;
-            const client = host.client;
+            const client = truapiTestSdk.getClientSync();
             let connected = false;
-            host.subscribeConnectionStatus(status => {
+            truapiTestSdk.subscribeConnectionStatus(status => {
               if (status === 'connected') connected = true;
               if (connected && status === 'disconnected') httpReport.disconnected();
             });
@@ -256,7 +256,7 @@ class ContainerHttpAuthorizationTest {
               const result = await client.permissions.requestRemotePermission({
                 permission: { tag: 'Remote', value: { domains: ['localhost'] } }
               });
-              return result.isOk() && result.value.granted && host.client === client;
+              return result.isOk() && result.value.granted && truapiTestSdk.getClientSync() === client;
             };
             window.loadResource = (kind, url) => new Promise((resolve, reject) => {
               if (kind === 'fetch') { fetch(url).then(response => resolve(response.ok), reject); return; }

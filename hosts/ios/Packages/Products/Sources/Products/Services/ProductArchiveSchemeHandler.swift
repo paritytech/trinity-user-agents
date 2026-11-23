@@ -3,8 +3,9 @@ import TrUAPIHost
 import WebKit
 
 /// Serves a published App's archive on disk under the product's own origin.
-/// The core picks the file that answers each request and its MIME type, with
-/// the system's type for extensions the core leaves untyped; a request
+/// The core lists the files that may answer each request, in order, with
+/// their MIME types; the first regular file on disk is served, with the
+/// system's type for extensions the core leaves untyped, and a request
 /// nothing answers gets a 404.
 public final class ProductArchiveSchemeHandler: NSObject {
     private let productId: ProductId
@@ -25,17 +26,22 @@ public final class ProductArchiveSchemeHandler: NSObject {
         return components.url
     }
 
+    /// The first file the core lists for the request that is a regular file
+    /// on disk, so a directory is skipped for its `index.html`.
     func file(at requestPath: String, isMainFrame: Bool) -> (data: Data, mime: String)? {
-        guard let file = archiveFile(
-            root: root.path,
-            requestPath: requestPath,
-            isMainFrame: isMainFrame,
-            reader: FileArchiveReader()
-        ),
-            let data = fileManager.contents(atPath: file.path)
-        else { return nil }
+        for file in archiveFiles(root: root.path, requestPath: requestPath, isMainFrame: isMainFrame) {
+            guard let data = regularFile(at: file.path) else { continue }
+            return (data, ProductContentType.of(path: file.path, known: file.mime))
+        }
+        return nil
+    }
 
-        return (data, ProductContentType.of(path: file.path, known: file.mime))
+    private func regularFile(at path: String) -> Data? {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return nil
+        }
+        return fileManager.contents(atPath: path)
     }
 }
 
