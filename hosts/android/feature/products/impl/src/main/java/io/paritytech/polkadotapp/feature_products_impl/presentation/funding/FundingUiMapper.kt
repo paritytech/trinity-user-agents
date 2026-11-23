@@ -281,7 +281,7 @@ fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = network
     FundingNetworkRow(
         id = id,
         name = fundingNetworkName(id),
-        icon = fundingNetworkIcon(id),
+        icon = fundingNetworkIcon(id, networkIconProvider(id)),
         minimum = minimum(id)?.takeIf { it > amount }?.let(format::label),
     )
 }.toImmutableList()
@@ -289,8 +289,8 @@ fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = network
 fun FundingFlowState.toTokensUiState(): FundingTokensUiState {
     return FundingTokensUiState(
         networkName = network?.let(::fundingNetworkName),
-        networkIcon = network?.let(::fundingNetworkIcon),
-        rows = tokens.map { FundingTokenRow(it.symbol, fundingTokenIcon(it.symbol)) }.toImmutableList(),
+        networkIcon = network?.let { fundingNetworkIcon(it, networkIconProvider(it)) },
+        rows = tokens.map { FundingTokenRow(it.symbol, fundingTokenIcon(it.symbol, tokenIconProvider(it.symbol))) }.toImmutableList(),
     )
 }
 
@@ -311,7 +311,7 @@ fun FundingFlowState.toDepositUiState(
                 exact = deposit.exact,
                 address = deposit.address,
                 networkName = fundingNetworkName(deposit.network),
-                networkIcon = fundingNetworkIcon(deposit.network),
+                networkIcon = fundingNetworkIcon(deposit.network, session.providerId ?: selectedProviderId),
             )
         }
 

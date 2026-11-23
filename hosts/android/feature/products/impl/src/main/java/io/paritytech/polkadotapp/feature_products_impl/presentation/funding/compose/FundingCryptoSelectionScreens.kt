@@ -94,8 +94,8 @@ fun FundingTokenScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
                 ) {
-                    state.networkIcon?.takeIf { it !is FundingCryptoIcon.Monogram }?.let {
-                        FundingCryptoIconImage(modifier = Modifier.size(CHIP_ICON_SIZE), icon = it)
+                    state.networkIcon?.let {
+                        FundingCryptoIconImage(modifier = Modifier.size(CHIP_ICON_SIZE), icon = it, monogram = false)
                     }
                     NovaText(
                         text = stringResource(RCommon.string.funding_token_network_selected, state.networkName),

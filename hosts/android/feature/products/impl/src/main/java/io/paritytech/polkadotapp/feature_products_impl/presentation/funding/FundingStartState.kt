@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import uniffi.truapi.FundingCancel
+import uniffi.truapi.ProductId
 
 /** Where the user's start of the session on the quote on screen stands. */
 sealed interface FundingStartState {
@@ -24,12 +25,15 @@ data class FundingSessionFacts(
     val failure: FundingFailureReason?,
     /** The user's cancel as the core holds it, once money has moved and the provider decides it. */
     val cancel: FundingCancel?,
+    /** The provider the session was handed to, whose icons its deposit is drawn with. */
+    val providerId: ProductId?,
 ) {
     companion object {
         fun of(entry: FundingEntry?) = FundingSessionFacts(
             started = entry?.hasStarted == true,
             failure = entry?.failure?.toReason(),
             cancel = entry?.session?.cancel,
+            providerId = entry?.session?.providerId,
         )
     }
 }

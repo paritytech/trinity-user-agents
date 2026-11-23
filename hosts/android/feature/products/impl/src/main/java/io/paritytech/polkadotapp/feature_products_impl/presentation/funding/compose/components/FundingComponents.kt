@@ -10,13 +10,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -141,33 +145,32 @@ fun FundingCard(
     }
 }
 
-/** A crypto network's or token's round logo, or its first letter when it has none. */
+/**
+ * A crypto network's or token's icon from its provider's worker archive, or its first letter while that loads and when
+ * there is none. Without [monogram] nothing is drawn until the icon loads.
+ */
 @Composable
 fun FundingCryptoIconImage(
     modifier: Modifier = Modifier,
     icon: FundingCryptoIcon,
+    monogram: Boolean = true,
 ) {
-    when (icon) {
-        is FundingCryptoIcon.Vector -> Image(
-            modifier = modifier,
-            imageVector = icon.image,
-            contentDescription = null,
-        )
+    val context = LocalContext.current
+    val request = remember(icon.image) { ImageRequest.Builder(context).data(icon.image).size(FUNDING_ICON_PIXELS).build() }
+    // Sized up front, so the load starts though nothing is drawn until it succeeds.
+    val painter = rememberAsyncImagePainter(request)
 
-        is FundingCryptoIcon.Drawable -> Image(
-            modifier = modifier,
-            painter = painterResource(icon.id),
-            contentDescription = null,
-        )
-
-        is FundingCryptoIcon.Monogram -> PolkadotSurface(
+    if (painter.state is AsyncImagePainter.State.Success) {
+        Image(modifier = modifier, painter = painter, contentDescription = null)
+    } else if (monogram) {
+        PolkadotSurface(
             modifier = modifier,
             shape = PolkadotTheme.shapes.full,
             color = PolkadotTheme.colors.bg.surface.nested,
             contentAlignment = Alignment.Center,
         ) {
             NovaText(
-                text = icon.text,
+                text = icon.monogram,
                 style = PolkadotTheme.typography.title.small,
                 color = PolkadotTheme.colors.fg.primary,
             )
@@ -179,6 +182,9 @@ private val CIRCLE_BUTTON_SIZE = 40.dp
 private val CHEVRON_SIZE = 16.dp
 private val CARD_DIVIDER = 2.dp
 val FUNDING_CRYPTO_ICON_SIZE = 40.dp
+
+// Providers ship each icon as a 96×96 PNG.
+private const val FUNDING_ICON_PIXELS = 96
 
 /** What stands in the way, in the user's words. */
 @Composable
