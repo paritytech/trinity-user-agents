@@ -20,9 +20,8 @@ protocol FundingProvidersInteractorInputProtocol: AnyObject {
 }
 
 @MainActor
-protocol FundingProvidersWireframeProtocol: AnyObject {
+protocol FundingProvidersWireframeProtocol: FundingToastPresentable {
     func back()
-    func showToast(_ message: String)
 }
 
 extension FundingFlowWireframe: FundingProvidersWireframeProtocol {}

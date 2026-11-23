@@ -12,6 +12,8 @@ protocol FundingDepositPresenterProtocol: AnyObject {
     func back()
     func showProgress()
     func confirmCancel()
+    /// The user copied one of the deposit details.
+    func didCopy()
     func close()
 }
 
@@ -24,7 +26,7 @@ protocol FundingDepositInteractorInputProtocol: AnyObject {
 }
 
 @MainActor
-protocol FundingDepositWireframeProtocol: AnyObject {
+protocol FundingDepositWireframeProtocol: FundingToastPresentable {
     func show(_ screen: FundingFlowScreen)
     func showProgress()
     func back()

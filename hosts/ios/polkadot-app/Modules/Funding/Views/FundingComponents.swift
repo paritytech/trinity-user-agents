@@ -77,7 +77,7 @@ struct FundingValueRow<Value: View>: View {
 struct FundingCopyRow: View {
     let title: String
     let text: String
-    @Binding var copied: String?
+    let onCopy: () -> Void
     /// One line, cut in the middle, for an id only support reads in full.
     var truncatesMiddle = false
     /// What is drawn in place of `text`, such as a shortened address; the
@@ -95,7 +95,7 @@ struct FundingCopyRow: View {
                     .truncationMode(.middle)
                 Button {
                     UIPasteboard.general.string = text
-                    copied = String(localized: .Funding.depositCopied)
+                    onCopy()
                 } label: {
                     Image(systemName: "doc.on.doc")
                         .foregroundStyle(.fgPrimary)
@@ -149,20 +149,5 @@ struct FundingSkeleton: View {
         RoundedRectangle(cornerRadius: height / 2)
             .fill(Color.bgSurfaceNested)
             .frame(width: width, height: height)
-    }
-}
-
-extension View {
-    /// Shows `message` as the app's toast over the screen on top, then clears
-    /// it, so the same message can be shown again.
-    func fundingToast(_ message: Binding<String?>) -> some View {
-        onChange(of: message.wrappedValue) { _, text in
-            guard let text else { return }
-            UIWindow.topWindow?.rootViewController?.topModalViewController.showToast(
-                message: text,
-                type: .success
-            )
-            message.wrappedValue = nil
-        }
     }
 }

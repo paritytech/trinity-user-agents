@@ -13,7 +13,6 @@ struct FundingProgressView: View {
     let presenter: FundingProgressPresenterProtocol
     let branding: FundingProviderBranding
 
-    @State private var copied: String?
 
     var body: some View {
         Group {
@@ -23,6 +22,7 @@ struct FundingProgressView: View {
                     viewModel: ended.viewModel,
                     branding: branding,
                     onFees: presenter.showFees,
+                    onCopy: presenter.didCopy,
                     onClose: presenter.close,
                     onStartOver: presenter.startOver
                 )
@@ -65,7 +65,6 @@ private extension FundingProgressView {
                 DSButton(cancelTitle, style: .destructive, expands: true, action: presenter.confirmCancel)
             }
         }
-        .fundingToast($copied)
     }
 
     var headline: some View {
@@ -187,7 +186,7 @@ private extension FundingProgressView {
     }
 
     func copyRow(_ title: String, _ text: String) -> some View {
-        FundingCopyRow(title: title, text: text, copied: $copied)
+        FundingCopyRow(title: title, text: text, onCopy: presenter.didCopy)
     }
 
     func value(_ text: String) -> some View {

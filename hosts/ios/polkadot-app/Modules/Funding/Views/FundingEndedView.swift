@@ -11,10 +11,10 @@ struct FundingEndedView: View {
     let viewModel: FundingEndedViewModel
     let branding: FundingProviderBranding
     var onFees: (() -> Void)?
+    let onCopy: () -> Void
     let onClose: () -> Void
     let onStartOver: () -> Void
 
-    @State private var copied: String?
     @State private var providerName: String?
 
     var body: some View {
@@ -33,7 +33,6 @@ struct FundingEndedView: View {
 
             bottomAction
         }
-        .fundingToast($copied)
         .task(id: ended.providerId) { await loadProviderName() }
     }
 }
@@ -154,7 +153,7 @@ private extension FundingEndedView {
                 FundingCopyRow(
                     title: String(localized: .Funding.endedTransactionId),
                     text: transactionId,
-                    copied: $copied,
+                    onCopy: onCopy,
                     truncatesMiddle: true
                 )
             }
@@ -163,7 +162,7 @@ private extension FundingEndedView {
                 FundingCopyRow(
                     title: String(localized: .Funding.depositReference),
                     text: reference,
-                    copied: $copied
+                    onCopy: onCopy
                 )
             }
 

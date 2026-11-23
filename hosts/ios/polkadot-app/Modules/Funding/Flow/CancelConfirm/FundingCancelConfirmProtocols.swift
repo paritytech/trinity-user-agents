@@ -21,10 +21,9 @@ protocol FundingCancelConfirmInteractorInputProtocol: AnyObject {
 }
 
 @MainActor
-protocol FundingCancelConfirmWireframeProtocol: AnyObject {
+protocol FundingCancelConfirmWireframeProtocol: FundingToastPresentable {
     func back()
     func close(then completion: (() -> Void)?)
-    func showToast(_ message: String)
 }
 
 extension FundingFlowWireframe: FundingCancelConfirmWireframeProtocol {}

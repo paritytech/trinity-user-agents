@@ -103,6 +103,10 @@ extension FundingProgressPresenter: FundingProgressPresenterProtocol {
         interactor.answerCancelOffer(accepting: terms)
     }
 
+    func didCopy() {
+        wireframe.showCopied()
+    }
+
     func startOver() {
         wireframe.startOver()
     }

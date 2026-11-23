@@ -145,12 +145,9 @@ extension FundingFlowWireframe {
         let onStartOver = onStartOver
         close { onStartOver?(direction) }
     }
-
-    /// The app's toast over the screen on top.
-    func showToast(_ message: String) {
-        UIWindow.topWindow?.rootViewController?.topModalViewController.showToast(message: message, type: .success)
-    }
 }
+
+extension FundingFlowWireframe: FundingToastPresentable {}
 
 private extension FundingFlowWireframe {
     func didLeave() {

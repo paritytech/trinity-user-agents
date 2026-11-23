@@ -93,6 +93,8 @@ final class FundingFlowRouter: FundingFlowRouting {
     }
 }
 
+extension FundingFlowRouter: FundingToastPresentable {}
+
 private extension FundingFlowRouter {
     func show(_ entry: FundingEntry, on screens: [FundingFlowScreen]) {
         let context = FundingFlowContext(
@@ -136,6 +138,7 @@ private extension FundingFlowRouter {
         sheet.onStartOver = { [weak self, weak sheet] in
             sheet?.dismissIfPresented { self?.startOver(direction: entry.direction) }
         }
+        sheet.onCopy = { [weak self] in self?.showCopied() }
         if environment.present(sheet) {
             Task { [service] in await service.acknowledge(entry.id) }
         }

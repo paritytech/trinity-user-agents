@@ -14,6 +14,8 @@ protocol FundingProgressPresenterProtocol: AnyObject {
     func showDeposit()
     func confirmCancel()
     func answerCancelOffer(accepting terms: CancelTerms?)
+    /// The user copied one of the session's details.
+    func didCopy()
     func startOver()
     func close()
 }
@@ -37,11 +39,10 @@ protocol FundingProgressInteractorOutputProtocol: FundingEntryInteractorOutputPr
 }
 
 @MainActor
-protocol FundingProgressWireframeProtocol: AnyObject {
+protocol FundingProgressWireframeProtocol: FundingToastPresentable {
     func show(_ screen: FundingFlowScreen)
     func close(then completion: (() -> Void)?)
     func startOver()
-    func showToast(_ message: String)
 }
 
 extension FundingFlowWireframe: FundingProgressWireframeProtocol {}

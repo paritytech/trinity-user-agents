@@ -44,6 +44,10 @@ extension FundingDepositPresenter: FundingDepositPresenterProtocol {
         wireframe.show(.cancelConfirm)
     }
 
+    func didCopy() {
+        wireframe.showCopied()
+    }
+
     func close() {
         wireframe.close(then: nil)
     }

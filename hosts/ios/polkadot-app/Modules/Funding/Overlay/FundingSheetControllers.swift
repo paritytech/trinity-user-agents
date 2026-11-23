@@ -59,12 +59,14 @@ extension UIView {
 /// overlay.
 final class FundingEndedSheetController: FundingSheetHostingController<FundingEndedSheetView> {
     var onStartOver: (() -> Void)?
+    var onCopy: (() -> Void)?
 
     convenience init(ended: FundingEndedSession, viewModel: FundingEndedViewModel, branding: FundingProviderBranding) {
         self.init(rootView: FundingEndedSheetView(ended: ended, viewModel: viewModel, branding: branding))
 
         rootView.onClose = { [weak self] in self?.dismiss(animated: true) }
         rootView.onStartOver = { [weak self] in self?.onStartOver?() }
+        rootView.onCopy = { [weak self] in self?.onCopy?() }
     }
 }
 
@@ -74,12 +76,14 @@ struct FundingEndedSheetView: View {
     let branding: FundingProviderBranding
     var onClose: () -> Void = {}
     var onStartOver: () -> Void = {}
+    var onCopy: () -> Void = {}
 
     var body: some View {
         FundingEndedView(
             ended: ended,
             viewModel: viewModel,
             branding: branding,
+            onCopy: onCopy,
             onClose: onClose,
             onStartOver: onStartOver
         )
