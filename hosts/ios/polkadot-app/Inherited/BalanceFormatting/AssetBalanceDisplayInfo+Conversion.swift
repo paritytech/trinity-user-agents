@@ -32,9 +32,17 @@ extension AssetModel {
     /// The asset symbol is set separately and more quietly beside the figure (see `DSAmount`), so
     /// it must not be part of the formatted number.
     var digitalDollarFigureDisplayInfo: AssetBalanceDisplayInfo {
+        .digitalDollarFigure(assetPrecision: Int16(bitPattern: precision))
+    }
+}
+
+extension AssetBalanceDisplayInfo {
+    /// The digital dollar figure for an asset counted in `assetPrecision`
+    /// decimals; see ``AssetModel/digitalDollarFigureDisplayInfo``.
+    static func digitalDollarFigure(assetPrecision: Int16) -> AssetBalanceDisplayInfo {
         AssetBalanceDisplayInfo(
             displayPrecision: 2,
-            assetPrecision: Int16(bitPattern: precision),
+            assetPrecision: assetPrecision,
             symbol: AppConfig.Brand.fiatSymbol,
             symbolValueSeparator: "",
             symbolPosition: .prefix,

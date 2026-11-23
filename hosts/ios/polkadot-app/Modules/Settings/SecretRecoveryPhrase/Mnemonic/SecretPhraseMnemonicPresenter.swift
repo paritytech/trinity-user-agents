@@ -26,6 +26,10 @@ extension SecretPhraseMnemonicPresenter: SecretPhraseMnemonicPresenterProtocol {
         view?.showMnemonic(true)
     }
 
+    func onShowMnemonicWhileCaptured() {
+        wireframe.presentSuccessNotification(String(localized: .secretRecoveryRevealCaptured), from: view)
+    }
+
     func onHideMnemonic() {
         view?.showMnemonic(false)
     }

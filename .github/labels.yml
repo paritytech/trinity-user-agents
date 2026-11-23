@@ -132,32 +132,32 @@ labels:
   # changed, leaving out generated files, lockfiles and database schemas.
   - name: "size:XS"
     color: "ededed"
-    description: "Fewer than 10 lines changed"
+    description: "Pull requests only. Fewer than 50 lines changed"
     target: prs
     addedBy: pr-triage
   - name: "size:S"
     color: "d4d4d4"
-    description: "10 to 29 lines changed"
+    description: "Pull requests only. 50 to 199 lines changed"
     target: prs
     addedBy: pr-triage
   - name: "size:M"
     color: "bdbdbd"
-    description: "30 to 99 lines changed"
+    description: "Pull requests only. 200 to 499 lines changed"
     target: prs
     addedBy: pr-triage
   - name: "size:L"
     color: "9e9e9e"
-    description: "100 to 499 lines changed"
+    description: "Pull requests only. 500 to 999 lines changed"
     target: prs
     addedBy: pr-triage
   - name: "size:XL"
     color: "757575"
-    description: "500 to 999 lines changed; consider splitting"
+    description: "Pull requests only. 1000 to 1999 lines changed; consider splitting"
     target: prs
     addedBy: pr-triage
   - name: "size:XXL"
     color: "424242"
-    description: "1000 lines or more; split it, or say in the description why it cannot be"
+    description: "Pull requests only. 2000 lines or more; split it, or say in the description why it cannot be"
     target: prs
     addedBy: pr-triage
 

@@ -60,10 +60,13 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 			.try_collect()
 			.await
 			.unwrap();
+		// The renewal can land in a later second than `now`, and a record more than
+		// one TTL ahead of the clock reads as stale, so freshness is checked after it.
+		let resolved_at = current_unix_secs();
 		let (cached, expires_at) = db
 			.write(move |tx| {
 				let cached = dao::stored_record(tx, "alice.01")?
-					.filter(|cached| cached.is_fresh(now))
+					.filter(|cached| cached.is_fresh(resolved_at))
 					.map(|cached| cached.record);
 				let expires_at: u64 = tx.query_row(
 					"SELECT expires_at FROM public_profiles WHERE username = 'alice.01'",
