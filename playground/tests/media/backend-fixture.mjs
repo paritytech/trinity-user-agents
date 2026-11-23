@@ -1,0 +1,491 @@
+import { createBrowserMediaBackend } from "/backend.mjs";
+
+const product = { productId: "media-regression.dot", executionKind: "App" };
+const id = (value) => `0x${value.toString(16).padStart(64, "0")}`;
+const off = { microphone: false, camera: false, screen: false };
+// Synthetic-device qualification: capture and RTC stay native. Only delivery of
+// a genuine getUserMedia result is gated to exercise cancellation deterministically.
+const nativeCapture = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+const captures = [];
+let delayNextCapture = false;
+let releaseCapture;
+navigator.mediaDevices.getUserMedia = async (constraints) => {
+  const stream = await nativeCapture(constraints);
+  captures.push(stream);
+  if (delayNextCapture) {
+    delayNextCapture = false;
+    await new Promise((resolve) => { releaseCapture = resolve; });
+  }
+  return stream;
+};
+// Every candidate type that left a backend, in IceCandidate events or SDP.
+const signaled = new Set();
+const descriptions = new Set();
+const candidateType = (line) => / typ (\S+)/.exec(line)?.[1] ?? "unknown";
+let pairStartedAt;
+
+function countCandidate(counts, candidate, mid) {
+  const type = candidateType(candidate);
+  counts.total += 1;
+  counts.byType[type] = (counts.byType[type] ?? 0) + 1;
+  if (mid !== undefined) counts.byMid[mid] = (counts.byMid[mid] ?? 0) + 1;
+}
+
+const candidateCounts = () => ({ total: 0, byType: {}, byMid: {} });
+
+// Observe real native connections without changing their configuration, events,
+// SDP or candidates. Nothing from this host-only probe reaches the product.
+const nativePeerConnection = window.RTCPeerConnection;
+const nativePeers = [];
+window.RTCPeerConnection = class extends nativePeerConnection {
+  constructor(...args) {
+    super(...args);
+    const observation = { pc: this, candidates: candidateCounts() };
+    nativePeers.push(observation);
+    this.addEventListener("icecandidate", ({ candidate }) => {
+      if (candidate) countCandidate(observation.candidates, candidate.candidate,
+        candidate.sdpMid ?? String(candidate.sdpMLineIndex ?? "unknown"));
+    });
+  }
+};
+
+const nodes = [];
+const failures = [];
+const createPeerDurations = [];
+async function command(node, tag, value) {
+  const started = performance.now();
+  const result = await node.backend.mediaBackendCommand(product, node.runtime, { tag, value });
+  if (tag === "CreatePeer") createPeerDurations.push(performance.now() - started);
+  if (result.tag === "Rejected") throw new Error(`${tag}: ${JSON.stringify(result.value.failure)}`);
+  return result;
+}
+function signal(node, source, event) {
+  const participantId = id(source.index + 1);
+  let channel = node.signals.get(participantId);
+  if (!channel) {
+    channel = { pending: Promise.resolve() };
+    node.signals.set(participantId, channel);
+  }
+  channel.pending = channel.pending.then(() => command(node,
+    event.tag === "Description" ? "ApplyDescription" : "AddIceCandidate",
+    event.tag === "Description"
+      ? { sessionId: node.session, participantId, description: event.value.description }
+      : { sessionId: node.session, participantId, candidate: event.value.candidate },
+  )).catch((error) => failures.push(error.message));
+}
+async function observe(node) {
+  try {
+    for await (const item of node.backend.mediaBackendEvents(product, node.runtime)) {
+      if (item.isErr()) throw new Error("Backend observation failed");
+      const event = item.value;
+      if (event.tag === "Description" || event.tag === "IceCandidate") {
+        node.signaling[event.tag] += 1;
+        if (event.tag === "IceCandidate") {
+          const candidate = event.value.candidate;
+          signaled.add(candidateType(candidate.candidate));
+          countCandidate(node.ice.signaled, candidate.candidate,
+            candidate.mid ?? String(candidate.mlineIndex ?? "unknown"));
+          node.trickledCandidates.add(candidate.candidate.trim());
+        } else {
+          const counts = candidateCounts();
+          let mid = "unknown";
+          for (const line of event.value.description.sdp.split("\r\n")) {
+            if (line.startsWith("a=mid:")) mid = line.slice(6);
+            if (!line.startsWith("a=candidate:")) continue;
+            signaled.add(candidateType(line));
+            descriptions.add(candidateType(line));
+            countCandidate(counts, line, mid);
+            node.embeddedCandidates.add(line.slice(2).trim());
+          }
+          node.ice.descriptions.push(counts);
+        }
+        signal(nodes[Number(BigInt(event.value.participantId)) - 1], node, event);
+      } else if (event.tag === "PeerStateChanged") {
+        node.peer = event.value.state;
+        if (node.peer === "Connected") node.connectedAt ??= performance.now();
+      } else if (event.tag === "RemoteStateChanged") {
+        node.remote = event.value.state;
+      } else if (event.tag === "ViewportChanged") {
+        node.viewport = event.value.viewport;
+        node.viewports.push(event.value.viewport ?? null);
+      } else if (event.tag === "PermissionRevoked") {
+        node.revocations.push(event.value);
+      }
+    }
+  } catch (error) {
+    failures.push(error.message);
+  }
+}
+function createNode(index) {
+  const mount = document.createElement("section");
+  mount.style.cssText = "position:relative;isolation:isolate;width:320px;height:200px";
+  const frame = document.createElement("iframe");
+  frame.sandbox = "allow-scripts";
+  frame.allow = "camera 'none'; microphone 'none'; display-capture 'none'; fullscreen 'none'";
+  frame.srcdoc = "Untrusted product";
+  frame.style.cssText = "position:absolute;inset:0;z-index:1;width:100%;height:100%;border:0";
+  mount.append(frame);
+  document.body.append(mount);
+  const node = { index, runtime: BigInt(index + 1), session: id(100 + index), intentRevision: 0n,
+    mount, signals: new Map(), revocations: [], viewports: [],
+    signaling: { Description: 0, IceCandidate: 0 },
+    ice: { signaled: candidateCounts(), descriptions: [] },
+    embeddedCandidates: new Set(), trickledCandidates: new Set() };
+  node.backend = createBrowserMediaBackend({
+    window, document, productId: product.productId,
+    getProductElement: () => frame,
+    getCompositorMount: () => mount,
+    isProductIsolated: () => !frame.sandbox.contains("allow-same-origin"),
+    indicatorMount: document.querySelector("#controls"),
+    iceServers: window.mediaIceServers,
+    iceTransportPolicy: window.mediaIceTransportPolicy,
+    requestConsent: async () => { throw new Error("Unexpected consent request"); },
+  });
+  return node;
+}
+function remoteCameraSurface(node, participantId) {
+  return {
+    sessionId: node.session, viewportRevision: node.viewport.revision, layoutRevision: 0n,
+    surfaces: [{
+      surfaceId: 1, source: { tag: "Remote", value: { participantId, picture: "Camera" } },
+      rect: { x: 0, y: 0, width: 320, height: 200 }, clip: { x: 0, y: 0, width: 320, height: 200 },
+      cornerRadius: 0, depth: 0, fit: "Contain", mirrored: false, visible: true, placement: "AboveProduct",
+    }],
+  };
+}
+async function openPair() {
+  nodes.push(createNode(0), createNode(1));
+  for (const node of nodes) {
+    const capabilities = await node.backend.mediaBackendCapabilities(product);
+    if (!capabilities.supported) throw new Error("Browser Media unsupported");
+    node.observer = observe(node);
+    node.backend.attach(node.runtime);
+  }
+  if (captures.length) throw new Error("Capability discovery captured media");
+  for (const node of nodes) {
+    const operationId = id(200 + node.index);
+    await command(node, "OpenSession", { sessionId: node.session, operationId,
+      tracks: { ...off, camera: node.index === 0 } });
+    await command(node, "CommitOperation", { operationId });
+  }
+}
+async function connectPair() {
+  pairStartedAt = performance.now();
+  await command(nodes[1], "CreatePeer", { sessionId: nodes[1].session, participantId: id(1), offerer: false });
+  await command(nodes[0], "CreatePeer", { sessionId: nodes[0].session, participantId: id(2), offerer: true });
+}
+
+window.mediaFixture = {
+  disableScreenCapture() {
+    Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", {
+      configurable: true,
+      value: undefined,
+    });
+  },
+  async openReceiveOnlyWithoutCapture() {
+    const node = createNode(0);
+    nodes.push(node);
+    const capabilities = await node.backend.mediaBackendCapabilities(product);
+    node.backend.attach(node.runtime);
+    const opened = await node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession",
+      value: { sessionId: node.session, operationId: id(699), tracks: off },
+    });
+    const committed = await node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "CommitOperation",
+      value: { operationId: id(699) },
+    });
+    return {
+      supported: capabilities.supported,
+      opened: opened.tag,
+      committed: committed.tag,
+      captureRequests: captures.length,
+    };
+  },
+  async openScreenWithoutCapture() {
+    const node = createNode(0);
+    nodes.push(node);
+    const capabilities = await node.backend.mediaBackendCapabilities(product);
+    node.backend.attach(node.runtime);
+    const result = await node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession",
+      value: { sessionId: node.session, operationId: id(700), tracks: { ...off, screen: true } },
+    });
+    return { supported: capabilities.supported, result };
+  },
+  async startPair() {
+    await openPair();
+    await connectPair();
+  },
+  async startPairWithEarlyPicture() {
+    await openPair();
+    const receiver = nodes[1];
+    while (!receiver.viewport) await new Promise((resolve) => setTimeout(resolve, 10));
+    // The core admits a participant before the call handshake creates its
+    // backend peer; the product may already place that participant's picture.
+    const early = await receiver.backend.mediaBackendCommand(product, receiver.runtime,
+      { tag: "SetSurfaces", value: remoteCameraSurface(receiver, id(1)) });
+    await connectPair();
+    return early;
+  },
+  // A product re-submits its layout on every scroll frame. The receiver's
+  // picture must keep its <video> (a fresh one shows nothing until its first
+  // decoded frame) and end at the last accepted rectangle; a stale layout
+  // revision must leave the plane alone.
+  async scrollPicture({ frames, step }) {
+    const receiver = nodes[1];
+    const current = () => {
+      const video = receiver.mount.querySelector("video");
+      return { video, top: video ? parseFloat(video.parentElement.parentElement.style.top) : null };
+    };
+    const first = current().video;
+    let layoutRevision = 1n;
+    let y = 0;
+    let replaced = 0;
+    for (let frame = 0; frame < frames; frame++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      y += step;
+      const layout = remoteCameraSurface(receiver, id(1));
+      layout.layoutRevision = ++layoutRevision;
+      layout.surfaces[0].rect.y = y;
+      await command(receiver, "SetSurfaces", layout);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      if (current().video !== first) replaced += 1;
+    }
+    const stale = { ...remoteCameraSurface(receiver, id(1)), layoutRevision: 1n };
+    const rejected = await receiver.backend.mediaBackendCommand(product, receiver.runtime, { tag: "SetSurfaces", value: stale });
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const final = current();
+    return { replaced, finalTop: final.top, expectedTop: y, kept: final.video === first,
+      stale: rejected.tag === "Rejected" ? rejected.value.failure.value.error.tag : rejected.tag };
+  },
+  async setAnswererCamera(enabled) {
+    const node = nodes[1];
+    const operationId = id(300 + Number(++node.intentRevision));
+    await command(node, "SetTracks", { sessionId: node.session, operationId,
+      intentRevision: node.intentRevision, tracks: { ...off, camera: enabled } });
+    await command(node, "CommitOperation", { operationId });
+  },
+  async startCameraWithdrawal() {
+    // Keep trusted indicator teardown from changing the receiver viewport epoch.
+    document.querySelector("#controls").style.height = "140px";
+    await this.startPair();
+    // This independent capture session must end, not the receive-only answerer.
+    const camera = createNode(2);
+    nodes.push(camera);
+    camera.observer = observe(camera);
+    camera.backend.attach(camera.runtime);
+    await command(camera, "OpenSession", {
+      sessionId: camera.session, operationId: id(202), tracks: { ...off, camera: true },
+    });
+    await command(camera, "CommitOperation", { operationId: id(202) });
+    const receiver = nodes[1];
+    await command(receiver, "SetSurfaces", remoteCameraSurface(receiver, id(1)));
+  },
+  decodedFrames() {
+    return nodes[1].mount.querySelector("video")?.getVideoPlaybackQuality().totalVideoFrames ?? 0;
+  },
+  async prepareDelayedAnswererCamera() {
+    const node = nodes[1];
+    delayNextCapture = true;
+    this.pendingOperationId = id(300 + Number(++node.intentRevision));
+    this.pending = node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "SetTracks", value: { sessionId: node.session, operationId: this.pendingOperationId,
+        intentRevision: node.intentRevision, tracks: { ...off, camera: true } },
+    });
+  },
+  async withdrawCamera() {
+    // Exercise the trusted OS-observer entry point, not a simulated OS setting.
+    for (const node of nodes.slice(1)) node.backend.revokePermission(node.runtime, "Camera", "OperatingSystem");
+    // Cancellation must settle without waiting for foreign capture completion.
+    const pending = await this.pending;
+    const receiver = nodes[1];
+    const commit = await receiver.backend.mediaBackendCommand(product, receiver.runtime, {
+      tag: "CommitOperation", value: { operationId: this.pendingOperationId },
+    });
+    const camera = nodes[2];
+    const committed = await camera.backend.mediaBackendCommand(product, camera.runtime, {
+      tag: "CommitOperation", value: { operationId: id(202) },
+    });
+    const session = await camera.backend.mediaBackendCommand(product, camera.runtime, {
+      tag: "SetTracks", value: { sessionId: camera.session, operationId: id(500),
+        intentRevision: 1n, tracks: off },
+    });
+    const stoppedCapture = captures[1].getTracks().map((track) => track.readyState);
+    releaseCapture();
+    releaseCapture = undefined;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { pending, commit, session, committed: committed.tag, stoppedCapture,
+      lateCapture: captures[2].getTracks().map((track) => track.readyState) };
+  },
+  withdrawalSnapshot() {
+    return { failures, captureRequests: captures.length,
+      peer: nodes[1].peer, camera: nodes[1].remote?.camera,
+      revocations: nodes.slice(1).map((node) => node.revocations) };
+  },
+  // dotli's worker opens the event stream only after the host attached the
+  // runtime: the attach-time detach and viewport must not reach it out of order.
+  async attachBeforeObserving() {
+    const node = createNode(0);
+    nodes.push(node);
+    node.backend.attach(node.runtime);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    node.observer = observe(node);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The core (runtime/media/backend.rs) takes a revisionless None at once
+    // but only a strictly newer Some, so a replayed detach would strand it.
+    let accepted = 0n;
+    const core = node.viewports.reduce((viewport, next) => {
+      if (!next) return null;
+      if (next.revision <= accepted) return viewport;
+      accepted = next.revision;
+      return next;
+    }, null);
+    await command(node, "OpenSession", { sessionId: node.session, operationId: id(600), tracks: off });
+    await command(node, "CommitOperation", { operationId: id(600) });
+    const surfaces = core
+      ? (await node.backend.mediaBackendCommand(product, node.runtime, { tag: "SetSurfaces",
+          value: { ...remoteCameraSurface(node, id(2)), viewportRevision: core.revision } })).tag
+      : "NoViewport";
+    return { failures, core: core ? Number(core.revision) : null,
+      viewports: node.viewports.map((viewport) => (viewport ? Number(viewport.revision) : null)), surfaces };
+  },
+  async prepareDelayedCapture() {
+    const node = createNode(0);
+    nodes.push(node);
+    node.observer = observe(node);
+    node.backend.attach(node.runtime);
+    delayNextCapture = true;
+    this.pending = node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession", value: { sessionId: node.session, operationId: id(400), tracks: { ...off, camera: true } },
+    });
+  },
+  captureWaiting() { return !!releaseCapture; },
+  async cancelDelayedCapture() {
+    await command(nodes[0], "CancelOperation", { operationId: id(400) });
+    releaseCapture();
+    const result = await this.pending;
+    // The foreign capture completion runs after cancellation has already won.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { result: result.tag, tracks: captures.flatMap((stream) => stream.getTracks().map((track) => track.readyState)) };
+  },
+  configureIce(mode) {
+    window.mediaIceTransportPolicy = mode === "relay" ? "relay" : undefined;
+    if (mode === "direct") window.mediaIceServers = undefined;
+    if (mode === "unreachable") {
+      window.mediaIceServers = [{
+        urls: "turn:127.0.0.1:9?transport=udp",
+        username: "unavailable",
+        credential: "unavailable",
+      }];
+    }
+    if (mode === "discovery-failed") {
+      window.mediaIceServers = async () => { throw new Error("TURN discovery failed"); };
+    }
+  },
+  configureIceServers(iceServers, iceTransportPolicy = "all") {
+    window.mediaIceServers = iceServers;
+    window.mediaIceTransportPolicy = iceTransportPolicy;
+  },
+  hangTurnCredentials(iceTransportPolicy = "all") {
+    this.configureIceServers(() => new Promise(() => {}), iceTransportPolicy);
+  },
+  slowTurnCredentials(iceServers) {
+    let pending;
+    this.configureIceServers(() => pending ??= new Promise((resolve) => {
+      setTimeout(() => resolve(iceServers), 3_000);
+    }));
+  },
+  rejectTurnCredentials(iceTransportPolicy = "all") {
+    this.configureIceServers(async () => {
+      throw new Error("TURN credentials unavailable at 192.0.2.42");
+    }, iceTransportPolicy);
+  },
+  async rejectCapture() {
+    navigator.mediaDevices.getUserMedia = async () => {
+      throw new DOMException(
+        "capture failed: SDP candidate:1 1 udp 1 192.0.2.42 1234 typ host",
+        "NotReadableError",
+      );
+    };
+    const node = createNode(0);
+    nodes.push(node);
+    node.backend.attach(node.runtime);
+    return node.backend.mediaBackendCommand(product, node.runtime, {
+      tag: "OpenSession",
+      value: { sessionId: node.session, operationId: id(701), tracks: { ...off, camera: true } },
+    });
+  },
+  iceSnapshot() {
+    return { signaled: [...signaled].sort() };
+  },
+  descriptionSnapshot() {
+    return [...descriptions].sort();
+  },
+  // Counts only: transport addresses remain in the trusted signaling path.
+  iceCounts() {
+    return nodes.map((node) => ({
+      ...node.ice,
+      uniqueDelivered: new Set([...node.embeddedCandidates, ...node.trickledCandidates]).size,
+      embeddedAndTrickled: [...node.trickledCandidates]
+        .filter((candidate) => node.embeddedCandidates.has(candidate)).length,
+    }));
+  },
+  nativeIceSnapshot() {
+    return nativePeers.map(({ pc, candidates }) => {
+      const transceivers = pc.getTransceivers();
+      const transports = transceivers.flatMap(({ sender, receiver }) =>
+        [sender.transport, receiver.transport].filter(Boolean));
+      return {
+        gatheringState: pc.iceGatheringState,
+        bundlePolicy: pc.getConfiguration().bundlePolicy,
+        iceServerCount: pc.getConfiguration().iceServers.length,
+        rtcpMuxPolicy: pc.getConfiguration().rtcpMuxPolicy,
+        transceiverMids: transceivers.map(({ mid }) => mid),
+        dtlsTransportCount: new Set(transports).size,
+        iceTransportCount: new Set(transports.map((transport) => transport.iceTransport)).size,
+        candidates,
+      };
+    });
+  },
+  async selectedRoutes() {
+    return Promise.all(nativePeers.map(async ({ pc }) => {
+      const stats = await pc.getStats();
+      const transport = [...stats.values()].find((entry) =>
+        entry.type === "transport" && entry.selectedCandidatePairId);
+      const pair = transport && stats.get(transport.selectedCandidatePairId);
+      if (!pair) return null;
+      // Deliberately omit SDP, addresses, ports, credentials and stats IDs.
+      return {
+        state: pair.state,
+        localType: stats.get(pair.localCandidateId)?.candidateType,
+        remoteType: stats.get(pair.remoteCandidateId)?.candidateType,
+      };
+    }));
+  },
+  callSignalingCounts() {
+    const peers = nodes.map(({ index, signaling }) => ({
+      peer: index, ...signaling,
+      total: signaling.Description + signaling.IceCandidate,
+    }));
+    const totals = peers.reduce((sum, peer) => ({
+      Description: sum.Description + peer.Description,
+      IceCandidate: sum.IceCandidate + peer.IceCandidate,
+      total: sum.total + peer.total,
+    }), { Description: 0, IceCandidate: 0, total: 0 });
+    // Backend events only: this harness does not instantiate the runtime or
+    // submit statements. Core admission/budgeting may suppress late trickle.
+    return { peers, totals };
+  },
+  createPeerTimes() {
+    return createPeerDurations;
+  },
+  connectionTimes() {
+    return nodes.map((node) => node.connectedAt === undefined ? null : node.connectedAt - pairStartedAt);
+  },
+  snapshot() {
+    return { failures, captureRequests: captures.length,
+      peers: nodes.map((node) => node.peer), remoteCameras: nodes.map((node) => node.remote?.camera) };
+  },
+  dispose() { nodes.forEach((node) => node.backend.dispose()); },
+};

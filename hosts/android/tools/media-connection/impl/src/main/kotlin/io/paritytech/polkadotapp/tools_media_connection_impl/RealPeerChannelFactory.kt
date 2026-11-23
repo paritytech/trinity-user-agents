@@ -17,6 +17,10 @@ import io.paritytech.polkadotapp.tools_media_connection_impl.media.SharedMediaTr
 import io.paritytech.polkadotapp.tools_media_connection_impl.turn.ExternalRtcConfigProvider
 import kotlinx.coroutines.CoroutineScope
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
+
+/** Chat keeps its previous TURN wait; the shared fetch may still finish later and fill the cache. */
+private val CHAT_TURN_WAIT = 5.seconds
 
 internal class RealPeerChannelFactory @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -30,7 +34,7 @@ internal class RealPeerChannelFactory @Inject constructor(
         isInitiator: Boolean,
         logger: PeerConnectionLogger
     ): PeerChannel {
-        val externalRtcConfig = externalRtcConfigProvider.getConfig()
+        val externalRtcConfig = externalRtcConfigProvider.getConfig(CHAT_TURN_WAIT)
         val mediaTrackProvider = DefaultMediaTrackProvider(
             context,
             webRtcCore,
@@ -70,7 +74,7 @@ internal class RealPeerChannelFactory @Inject constructor(
         mediaConfiguration: MediaConfiguration,
         scope: CoroutineScope
     ): GroupPeerConnection {
-        val externalRtcConfig = externalRtcConfigProvider.getConfig()
+        val externalRtcConfig = externalRtcConfigProvider.getConfig(CHAT_TURN_WAIT)
         val mediaTrackProvider = SharedMediaTrackProvider(
             context,
             webRtcCore,

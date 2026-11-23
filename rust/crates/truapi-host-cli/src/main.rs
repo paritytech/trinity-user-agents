@@ -75,7 +75,8 @@ use truapi::{
 	},
 	latest::GenericError,
 	platform::{
-		ChatPlatform, ExecutableKind, HostInfo, PermissionStatusHost, PlatformInfo, ProductId,
+		ChatPlatform, CoreStorageKey, ExecutableKind, HostInfo, PermissionAuthorizationRequest,
+		PermissionStatusHost, PlatformInfo, ProductId,
 	},
 	statement_allowance as alloc,
 	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
@@ -1360,6 +1361,13 @@ async fn run_pairing_host(
 	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	pairing_runtime
 		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
+	observe_permission_changes(
+		&storage_platform,
+		&pairing_runtime,
+		|runtime, product_id, request| async move {
+			runtime.refresh_permission_authorization(&product_id, request).await
+		},
+	);
 
 	// Resolved before the port is bound, so a bad URL still fails on the argument
 	// rather than half-way through startup - but reported below, once the UI
@@ -1857,6 +1865,53 @@ async fn start_signing_host(
 	})
 }
 
+/// Re-read committed policy outside every storage gate. Each host's shared Media
+/// registry fans a precise invalidation out to its matching live executions.
+fn observe_permission_changes<R, F, Fut>(platform: &Arc<CliPlatform>, runtime: &Arc<R>, refresh: F)
+where
+	R: Send + Sync + 'static,
+	F: Fn(Arc<R>, ProductId, PermissionAuthorizationRequest) -> Fut + Send + 'static,
+	Fut: Future<Output = Result<(), truapi::latest::GenericError>> + Send + 'static,
+{
+	let mut changes = platform.subscribe_core_storage_changes();
+	let platform = Arc::downgrade(platform);
+	let runtime = Arc::downgrade(runtime);
+	tokio::spawn(async move {
+		while let Some(change) = changes.recv().await {
+			let (Some(platform), Some(runtime)) = (platform.upgrade(), runtime.upgrade()) else {
+				break;
+			};
+			// The active user can change after enqueue but before this task runs.
+			match platform.matches_core_storage_change(&change) {
+				Ok(false) => continue,
+				Ok(true) => {},
+				Err(reason) => {
+					tracing::warn!(%reason, "could not resolve permission refresh namespace")
+				},
+			}
+			let CoreStorageKey::PermissionAuthorization { scope, request } = change.key else {
+				continue;
+			};
+			let request = match request {
+				truapi::platform::StoredPermissionRequest::Calling { network, account } => {
+					PermissionAuthorizationRequest::Calling { network, account }
+				},
+				truapi::platform::StoredPermissionRequest::Device(permission) => {
+					PermissionAuthorizationRequest::Device(permission)
+				},
+				_ => continue,
+			};
+			// Media policy belongs to one exact product, never a shared bare label.
+			let Ok(product_id) = scope.parse::<ProductId>() else {
+				continue;
+			};
+			if let Err(error) = refresh(runtime, product_id.clone(), request).await {
+				tracing::warn!(%product_id, reason = %error.reason, "could not refresh committed permission policy");
+			}
+		}
+	});
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_signing_runtime(
 	network: &Stack,
@@ -1920,6 +1975,9 @@ fn build_signing_runtime(
 	runtime.set_encrypted_storage(cleartext_storage);
 	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
+	observe_permission_changes(&platform, &runtime, |runtime, product_id, request| async move {
+		runtime.refresh_permission_authorization(&product_id, request).await
+	});
 	Ok((runtime, platform))
 }
 

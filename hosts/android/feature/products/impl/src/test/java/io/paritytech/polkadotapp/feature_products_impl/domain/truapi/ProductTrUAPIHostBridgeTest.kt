@@ -85,6 +85,10 @@ class ProductTrUAPIHostBridgeTest {
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
         scope = scope,
+        mediaFactory = mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory::class.java).also {
+            org.mockito.Mockito.`when`(it.create("game.dot"))
+                .thenReturn(mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend::class.java))
+        },
     )
 
     @Test
@@ -207,7 +211,7 @@ class ProductTrUAPIHostBridgeTest {
                         every { isClosed() } returns false
                     }
                     val runtime = mockk<TrUAPIHostRuntime> {
-                        every { openProductExecution(any(), any(), any(), any()) } returns execution
+                        every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
                     }
                     val bridge = bridge(
                         scope = scope,

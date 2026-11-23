@@ -36,6 +36,7 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
     }
     private val keyAlias = "io.parity.truapi.core.$namespace"
     private val databaseFile = File(context.noBackupFilesDir, "truapi-core-$namespace.sqlite")
+    override val storageIdentifier: String = databaseFile.canonicalPath
     private val database = object : SQLiteOpenHelper(
         context, databaseFile.absolutePath, 1,
         // OpenParams configures every pooled/reopened connection, unlike a

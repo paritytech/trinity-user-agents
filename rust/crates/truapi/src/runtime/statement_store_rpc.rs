@@ -75,6 +75,27 @@ pub struct StatementStoreRpc {
 }
 
 impl StatementStoreRpc {
+	/// Open a statement-store RPC client on its own connection whose request
+	/// ids all start with `request_id_prefix`, so the host can tell this
+	/// traffic apart (see `media_signaling::ADVERTISEMENT_LOOKUP_REQUEST_ID_PREFIX`).
+	pub(crate) async fn client_with_request_id_prefix(
+		&self,
+		label: &'static str,
+		request_id_prefix: &'static str,
+	) -> Result<RpcClient, StatementStoreRpcClientError> {
+		let connection = self.connect(label).await?;
+		Ok(RpcClient::new(HostRpcClient::with_request_id_prefix(
+			connection,
+			self.spawner.clone(),
+			request_id_prefix,
+		)))
+	}
+
+	/// Authenticated network namespace used by host-owned signaling.
+	pub fn genesis_hash(&self) -> [u8; 32] {
+		self.people_chain_genesis_hash
+	}
+
 	/// Build a helper that opens subscription connections through
 	/// `platform` and sends requests over `chain`'s pooled connection.
 	pub fn new(

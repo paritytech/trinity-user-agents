@@ -12,6 +12,8 @@ final class AppPermissionsInteractor {
     private let logger: LoggerProtocol
 
     private var subscriptionTask: Task<Void, Never>?
+    private var mediaSubscriptionTask: Task<Void, Never>?
+    private var mediaMutationTask: Task<Void, Never>?
 
     init(
         productId: ProductId,
@@ -29,6 +31,8 @@ final class AppPermissionsInteractor {
 
     deinit {
         subscriptionTask?.cancel()
+        mediaSubscriptionTask?.cancel()
+        mediaMutationTask?.cancel()
     }
 }
 
@@ -42,11 +46,27 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
 
             do {
                 for try await grants in stream {
-                    await self?.presenter?.didReceive(grants: grants)
+                    let legacy = grants.filter { grant in
+                        switch grant.permission {
+                        case .deviceCapability(.camera), .deviceCapability(.microphone): return false
+                        default: return true
+                        }
+                    }
+                    await self?.presenter?.didReceive(grants: legacy)
                 }
             } catch {
                 logger.error("App permissions subscription error: \(error)")
                 await self?.presenter?.didReceive(error: error)
+            }
+        }
+        mediaSubscriptionTask = Task { [weak self, productId] in
+            let updates = NotificationCenter.default.notifications(named: .productPermissionAuthorizationsChanged)
+            await self?.refreshMediaPermissions()
+            for await update in updates {
+                guard !Task.isCancelled else { return }
+                if update.object as? String == productId.rawValue {
+                    await self?.refreshMediaPermissions()
+                }
             }
         }
     }
@@ -64,13 +84,55 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
                 }
                 try await repository.revoke(productId: productId, permissions: permissions)
                 let grants = try await repository.getAllByProduct(productId: productId)
-                await presenter?.didReceive(grants: grants.filter(\.granted))
+                await presenter?.didReceive(grants: grants.filter { grant in
+                    guard grant.granted else { return false }
+                    switch grant.permission {
+                    case .deviceCapability(.camera), .deviceCapability(.microphone): return false
+                    default: return true
+                    }
+                })
                 await presenter?.didFinishRevoking()
             } catch {
                 logger.error("Failed to revoke product permissions: \(error)")
                 await presenter?.didFinishRevoking()
                 await presenter?.didReceive(error: error)
             }
+        }
+    }
+
+    func setMediaPermission(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool) {
+        mediaMutationTask?.cancel()
+        mediaMutationTask = Task { [weak self, productId, logger] in
+            do {
+                try await TrUAPIMediaPermissionSettings(productId: productId).set(setting, allowed: allowed)
+            } catch {
+                logger.warning("Media permission change was not applied")
+                await self?.presenter?.didReceive(error: MediaPermissionSettingsError.updateFailed)
+            }
+            await self?.refreshMediaPermissions()
+            await self?.presenter?.didFinishRevoking()
+        }
+    }
+
+    private func refreshMediaPermissions() async {
+        do {
+            let settings = try await TrUAPIMediaPermissionSettings(productId: productId).snapshot()
+            await presenter?.didReceive(mediaPermissions: settings)
+        } catch {
+            logger.warning("Media permissions are unavailable")
+            await presenter?.didReceive(error: MediaPermissionSettingsError.snapshotUnavailable)
+        }
+    }
+}
+
+private enum MediaPermissionSettingsError: LocalizedError {
+    case updateFailed
+    case snapshotUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .updateFailed: "Your choice couldn’t be saved. Try again."
+        case .snapshotUnavailable: "Call permissions couldn’t be loaded. Reopen this page to try again."
         }
     }
 }

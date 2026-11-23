@@ -120,14 +120,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         return permissionStatus
     }
 
-    func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws {
-        permissionRequests.append(request)
-        permissionStatus = status
-    }
-
     func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool {
         devicePermissionRequests.append(request)
         return devicePermissionGranted

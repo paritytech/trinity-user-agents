@@ -18,6 +18,19 @@
 - Integrate the 0.26 role-specific runtime contracts while retaining native Chat,
   local identity, receiving, and session teardown protections. Signing-host subtree
   keys are derived synchronously; pairing-host key requests remain asynchronous.
+- Add the host-owned Media service (prototype wire trait 218) to the 0.30 browser host.
+  Capture, consent, SDP, ICE and video stay in trusted hosts, never in product values.
+  Direct ICE is the default; optional TURN supports relay fallback, and trusted hosts
+  can require relay explicitly. Missing or failed server discovery allows direct calls.
+  Product capture and device enumeration are denied. Screen capture is optional.
+  Permission refresh uses the active pairing or signing worker runtime without changing
+  0.30 permission decisions or product trust. Video elements persist across layouts,
+  and late event subscriptions begin at the current viewport.
+- Add browser regressions for direct and relay calls, optional screen capture, cancellation,
+  viewport ordering, persistent video and isolation under esbuild/rolldown minification.
+  The Media Playwright configuration starts a loopback coturn fixture; direct-call
+  cases omit servers or exercise unreachable TURN and failed discovery, and assert
+  that product documents cannot access host callbacks or composited media.
 
 ## 0.30.0
 

@@ -84,14 +84,22 @@ impl Drop for LoginInFlightOwner<'_> {
 #[derive(Default)]
 struct SessionLifecycle {
 	epoch: u64,
+	/// Active identity generation; storage hints only cancel pending installation.
+	authority_epoch: u64,
 	external_session_active: bool,
 }
 
 impl SessionLifecycle {
-	fn advance(&mut self) -> u64 {
+	fn invalidate_pending(&mut self) -> u64 {
 		self.epoch = self.epoch.checked_add(1).expect("session lifecycle epoch exhausted");
 		self.external_session_active = false;
 		self.epoch
+	}
+
+	fn advance(&mut self) -> u64 {
+		self.authority_epoch =
+			self.authority_epoch.checked_add(1).expect("session authority epoch exhausted");
+		self.invalidate_pending()
 	}
 }
 
@@ -189,7 +197,10 @@ impl SsoRequestService {
 	/// Signal that the persisted auth session may have changed; the sync task
 	/// re-reads it.
 	pub fn notify_session_store_changed(&self) {
-		self.advance_session_lifecycle();
+		self.session_lifecycle
+			.lock()
+			.expect("session lifecycle mutex poisoned")
+			.invalidate_pending();
 		self.session_store_changes.notify();
 	}
 
@@ -256,7 +267,42 @@ impl SsoRequestService {
 
 	/// Selected remote account identity.
 	pub fn current_session(&self) -> Option<AuthoritySession> {
-		self.session_state.current().as_ref().map(authority_session)
+		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+		let current = self.session_state.current()?;
+		let mut session = authority_session(&current);
+		session
+			.validation_id
+			.extend_from_slice(&lifecycle.authority_epoch.to_le_bytes());
+		Some(session)
+	}
+
+	/// Keep the selected activation unchanged through a private key operation.
+	pub(crate) fn with_current_session<T>(
+		&self,
+		session: &AuthoritySession,
+		operation: impl FnOnce(&SessionInfo) -> Result<T, crate::runtime::authority::AuthorityError>,
+	) -> Result<T, crate::runtime::authority::AuthorityError> {
+		use crate::runtime::authority::AuthorityError;
+		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+		let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
+		let epoch = lifecycle.authority_epoch.to_le_bytes();
+		let id = session.validation_id.as_slice();
+		let current_id_matches = if let Some(sso) = &current.sso {
+			id.len() == 75 &&
+				id[..3] == *b"sso" &&
+				id[3..35] == sso.session_id_own &&
+				id[35..67] == sso.session_id_peer &&
+				id[67..] == epoch
+		} else {
+			id.len() == 45 &&
+				id[..5] == *b"local" &&
+				id[5..37] == current.public_key &&
+				id[37..] == epoch
+		};
+		if !current_id_matches {
+			return Err(AuthorityError::Disconnected);
+		}
+		operation(&current)
 	}
 
 	/// Start the disconnect monitor when a session is already active.
@@ -369,6 +415,17 @@ impl SsoRequestService {
 				.platform
 				.write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
 				.await;
+		}
+		// A storage hint is not a fresh selection. Keep live authority and its
+		// subscribers when reconciliation merely confirms the current identity.
+		{
+			let lifecycle =
+				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+			if !lifecycle.external_session_active &&
+				self.session_state.current().as_ref() == Some(&resolved)
+			{
+				return Ok(());
+			}
 		}
 		self.set_connected_session(resolved).await;
 		Ok(())
@@ -528,7 +585,10 @@ impl SsoRequestService {
 			{
 				owner.session_ended(previous.as_ref(), false);
 			}
-			self.session_state.set_session(session.clone());
+			// Snapshots read while activation was resolving still belong to
+			// the previous selection, even when persisted SSO IDs are reused.
+			lifecycle.advance();
+			self.session_state.activate_session(session.clone());
 			lifecycle.external_session_active = external_session;
 			previous
 		};
@@ -573,7 +633,7 @@ impl SsoRequestService {
 			return Ok(None);
 		};
 		if current.has_username() {
-			return Ok(Some(authority_session(&current)));
+			return Ok(self.current_session());
 		}
 
 		let identity = super::identity::lookup_session_identity(
@@ -613,7 +673,7 @@ impl SsoRequestService {
 				{
 					warn!(reason = %err.reason, "live session identity persist repair failed");
 				}
-				Some(authority_session(&live))
+				self.current_session()
 			},
 			None => {
 				if let Err(err) =
@@ -623,7 +683,7 @@ impl SsoRequestService {
 				}
 				None
 			},
-			_ => Some(authority_session(&resolved)),
+			_ => self.current_session(),
 		})
 	}
 }

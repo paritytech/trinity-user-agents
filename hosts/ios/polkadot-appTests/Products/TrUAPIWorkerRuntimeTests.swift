@@ -7,17 +7,18 @@ import TrUAPIHost
 /// One headless worker runtime serves every modality, so a worker script is
 /// given the same engine whichever surface asked for it.
 struct TrUAPIWorkerRuntimeTests {
-    /// The handler is what turns a `getUserMedia` call into the host's own
-    /// permission prompt. Without it the engine denies the request outright, so
-    /// the same worker script would be prompted under chat and refused here.
+    /// Direct capture stays unavailable even in a headless worker.
     @Test
-    func letsTheWorkerAskForTheDeviceCapabilitiesItDeclares() async throws {
+    func reservesCaptureForHostMedia() async throws {
         let engine = MockJSEngine()
         let runtime = makeRuntime(engine: engine)
 
         try await runtime.start {}
 
         #expect(engine.mediaHandlerWasInstalledAtInitialization)
+        let capture = try #require(engine.deviceCapabilityHandler)
+        #expect(try await capture(.camera) == .denied)
+        #expect(try await capture(.microphone) == .denied)
 
         await runtime.dispose()
     }
@@ -114,7 +115,8 @@ private func makeRuntime(
         executionModel: RustRuntimeEnvironment.ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: OSPermissionAsker()
+            osPermissionAsker: OSPermissionAsker(),
+            media: NativeMediaBackend(productId: try! ProductId("test.dot"))
         ),
         engineFactory: { engine }
     )

@@ -7,9 +7,8 @@ import UIKitExt
 /// Rust SPA runtime: resolves the product content, publishes the scheme
 /// handler, injects the bootstrap + container scripts into the engine, and
 /// returns the page URL. The TrUAPI core serves product requests over its
-/// localhost ws-bridge; no ContainerBridge is installed in rust mode. Camera/mic
-/// media capture (getUserMedia) and WebKit's motion request are answered by a
-/// `JSDeviceCapabilityHandler` registered on the engine.
+/// localhost ws-bridge. Capture and RTC belong exclusively to the native Media
+/// backend; the product webview cannot acquire its own media objects.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
@@ -112,6 +111,25 @@ extension SPARustRuntime: SPARuntimeProtocol {
             await engine.destroy()
             throw CancellationError()
         }
+        await MainActor.run {
+            if let spaEngine = engine as? SPAJSEngine {
+                executionModel.media.attach(spaEngine.webView)
+                spaEngine.onProcessTerminated = { [weak media = executionModel.media, weak execution = executionModel.execution] in
+                    media?.authorityLost()
+                    execution?.close()
+                }
+            }
+        }
+        await executionModel.media.watchEngine {
+            switch await engine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
+        guard !disposed else {
+            await engine.destroy()
+            throw CancellationError()
+        }
 
         let monitor = JSEngineMonitor(engine: engine)
         monitor.start()
@@ -134,6 +152,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         engineMonitor = nil
 
         let engine = engine
+        await executionModel.media.close()
         self.engine = nil
         await engine?.destroy()
 

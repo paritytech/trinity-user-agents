@@ -591,6 +591,30 @@ impl CoreStorage for CallbackPlatform {
 		}
 		Ok(())
 	}
+
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, v01::GenericError> {
+		let exchanged = self
+			.callbacks
+			.compare_exchange_core_storage(key.encode(), expected, replacement, notify_on_success)
+			.await
+			.map_err(v01::GenericError::from)?;
+		if exchanged {
+			if let CoreStorageKey::PermissionAuthorization { scope, .. } = key {
+				self.permission_callbacks.permission_authorizations_changed(scope);
+			}
+		}
+		Ok(exchanged)
+	}
+
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.callbacks.core_storage_changed(key.encode());
+	}
 }
 
 struct NativeJsonRpcConnection {

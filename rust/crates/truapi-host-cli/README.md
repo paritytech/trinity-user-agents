@@ -620,6 +620,12 @@ Product-local KV is persisted independently under each identity root as `storage
 document records its normalized product id and raw product keys. Product and core JSON writes use a flushed temporary
 file and atomic rename.
 
+Core storage serializes reads, writes, clears and compare-exchange against a
+stable sidecar file lock. Unreadable core data fails closed and stays untouched;
+it is never replaced with an empty permission store. Successful policy commits
+enqueue deferred refreshes for runtimes sharing the exact storage namespace.
+Calling permissions remain separate from microphone and camera permissions.
+
 Scripts under `js/scripts/` include:
 
 - `battery.ts` — the generated full-surface gate. It discovers every method from the same code-generated example

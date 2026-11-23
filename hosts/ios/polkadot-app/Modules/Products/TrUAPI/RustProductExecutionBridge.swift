@@ -39,6 +39,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     let storage: HostStorageBackend
     let coreStorage: HostCoreStorageBackend
+    let media: NativeMediaBackend
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
@@ -49,6 +50,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
+        media = NativeMediaBackend(productId: dependencies.productId)
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -240,6 +242,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func authStateChanged(state: AuthState) {
+        switch state {
+        case .disconnected, .loginFailed: media.authorityLost()
+        default: break
+        }
         dependencies.logger.info("[truapi.auth] \(dependencies.productId): \(state.logMarker)")
     }
 }
@@ -344,6 +350,7 @@ extension RemotePermission {
         case let .jamPeers(genesis): [.jamPeersAccess(genesis: genesis.toHex(includePrefix: true))]
         case .balanceAccess: [.balanceAccess]
         case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        case .calling: []
         }
     }
 }

@@ -27,7 +27,8 @@ struct RustRuntimeEnvironment {
     struct ExecutionModel {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
-        let osPermissionAsker: OSPermissionAsking
+        let osPermissionAsker: OSPermissionAsker
+        let media: NativeMediaBackend
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -53,11 +54,7 @@ struct RustRuntimeEnvironment {
         try makeExecution(productId: productId, routers: routers, purpose: .app)
     }
 
-    /// Open `productId`'s one Worker execution. The core keeps a single Worker
-    /// execution per product and closes the previous one when another opens, so
-    /// every modality is served from this one: the chat bridge is handed over
-    /// here rather than attached afterwards, because the worker may post a chat
-    /// message as soon as it connects.
+    /// Open the shared worker; Chat and Media live until its final holder releases it.
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -106,7 +103,8 @@ private extension RustRuntimeEnvironment {
             bridge: bridges.host,
             configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
             chat: bridges.chat,
-            game: gameReminders == nil ? nil : bridges.host
+            game: gameReminders == nil ? nil : bridges.host,
+            media: bridges.host.media
         )
 
         bridges.host.attach(execution)
@@ -114,7 +112,8 @@ private extension RustRuntimeEnvironment {
         return ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
+            osPermissionAsker: osPermissionAsker,
+            media: bridges.host.media
         )
     }
 

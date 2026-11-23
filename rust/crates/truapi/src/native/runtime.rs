@@ -53,6 +53,7 @@ use super::{
 	errors::{HostRejection, NativeCoreDatabaseError},
 	events::NativeEventBus,
 	executor::shared_native_executor,
+	media::{MediaCallbackPlatform, NativeMediaCallbacks},
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, NativeCoinageCallbackPlatform,
@@ -221,6 +222,7 @@ impl NativeTrUApiHostRuntime {
 		callbacks: Arc<dyn HostCallbacks>,
 		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+		media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
 		product: ProductContext,
 	) -> Arc<NativeProductExecution> {
 		let events = Arc::new(NativeEventBus::default());
@@ -242,6 +244,9 @@ impl NativeTrUApiHostRuntime {
 			game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
 				Arc::new(GameCallbackPlatform { game })
 			});
+		let media = media_callbacks.map(|callbacks| -> Arc<dyn crate::platform::MediaPlatform> {
+			Arc::new(MediaCallbackPlatform { callbacks })
+		});
 		let execution = Arc::new(NativeProductExecution {
 			runtime: self.runtime.clone(),
 			product: product.clone(),
@@ -249,6 +254,7 @@ impl NativeTrUApiHostRuntime {
 			chat,
 			pocket: self.pocket.clone(),
 			game,
+			media,
 			permission_status,
 			expanded_card,
 			permission_grants: Arc::new(TemporaryPermissions::default()),
@@ -892,6 +898,15 @@ impl NativeTrUApiHostRuntime {
 	pub fn get_funding_quote(&self, intent: String, ask: latest::FundingQuoteAsk) -> u64 {
 		self.runtime.request_funding_quotes(&intent, ask)
 	}
+	/// Refresh exactly one product's stored policy after another host core writes it.
+	pub async fn refresh_permission_authorization(
+		&self,
+		product_id: ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), HostRejection> {
+		self.runtime.refresh_permission_authorization(&product_id, request).await?;
+		Ok(())
+	}
 
 	/// Report what the user picked so far in session `intent`'s overlay. The
 	/// countries and amount limits it leads to arrive through
@@ -946,7 +961,8 @@ impl NativeTrUApiHostRuntime {
 	/// Open a connection-scoped execution with immutable trusted context.
 	/// `chat_callbacks` installs the host's Chat adapter; hosts without the
 	/// Chat modality pass `None`. `game_callbacks` does the same for game
-	/// reminders.
+	/// reminders. `media_callbacks` installs a complete capture/RTC/compositor
+	/// backend; hosts without the complete capability pass `None`.
 	///
 	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
 	/// parse throws in Swift and Kotlin.
@@ -955,14 +971,24 @@ impl NativeTrUApiHostRuntime {
 		callbacks: Arc<dyn HostCallbacks>,
 		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+		media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			game_callbacks,
+			media_callbacks,
 			execution_config.into(),
 		))
+	}
+
+	/// Resolve the current immutable Calling scope for trusted host settings.
+	pub async fn calling_permission_authorization_request(
+		&self,
+		product_id: ProductId,
+	) -> Result<PermissionAuthorizationRequest, HostRejection> {
+		Ok(self.runtime.calling_permission_authorization_request(&product_id).await?)
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
@@ -1320,6 +1346,7 @@ pub struct NativeProductExecution {
 	platform: Arc<dyn crate::platform::Platform>,
 	chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
 	pocket: PocketCards,
+	media: Option<Arc<dyn crate::platform::MediaPlatform>>,
 	game: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// The same `CallbackPlatform` as `platform`, kept separately because
 	/// `Arc<dyn Platform>` cannot be downcast to the optional capability.
@@ -1367,6 +1394,7 @@ impl NativeProductExecution {
 			profile_platform: None,
 			expanded_card: Some(self.expanded_card.clone()),
 			game_platform: self.game.clone(),
+			media_platform: self.media.clone(),
 		}
 	}
 
@@ -1455,6 +1483,17 @@ impl NativeProductExecution {
 		Ok(response.into_latest().granted)
 	}
 
+	/// Resolve the current authority-derived Calling settings slot, without
+	/// consent UI, backend initialization or signaling.
+	pub async fn calling_permission_authorization_request(
+		&self,
+	) -> Result<PermissionAuthorizationRequest, HostRejection> {
+		if self.closed.load(Ordering::Acquire) {
+			return Err(HostRejection::Rejected { reason: "Product execution is closed".into() });
+		}
+		Ok(self.admin().calling_permission_authorization_request().await?)
+	}
+
 	/// Read a product-scoped permission authorization without prompting.
 	///
 	/// A device capability resolves the host application's OS gate as well as
@@ -1483,6 +1522,15 @@ impl NativeProductExecution {
 	/// Whether administration or lifecycle teardown closed this execution.
 	pub fn is_closed(&self) -> bool {
 		self.closed.load(Ordering::Acquire)
+	}
+
+	/// Re-read stored product authorization without prompting or OS queries.
+	pub async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), HostRejection> {
+		self.admin().refresh_permission_authorization(request).await?;
+		Ok(())
 	}
 
 	/// Read the active session's X25519 chat identity private key, or `None`

@@ -161,6 +161,10 @@ export interface WorkerPairingHostRuntime {
     request: PermissionAuthorizationRequest,
     status: PermissionAuthorizationStatus,
   ): Promise<void>;
+  refreshPermissionAuthorization(
+    productId: ProductId,
+    request: PermissionAuthorizationRequest,
+  ): Promise<void>;
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
   getDeviceEncryptionKey(): Promise<Uint8Array>;
@@ -289,6 +293,7 @@ interface RuntimeState {
   /** How long `dispose()` waits for open operations before forcing teardown. */
   operationGraceMs: number;
   chainConnections: Map<number, RpcConnectionEntry>;
+  mediaSubscriptionAcks: Map<number, () => void>;
   pendingDisconnects: Map<
     number,
     { resolve: () => void; reject: (error: Error) => void }
@@ -321,6 +326,7 @@ interface RuntimeState {
     number,
     { resolve: () => void; reject: (error: Error) => void }
   >;
+  pendingPermissionAuthorizationRefreshes: Map<number, PendingEntry<void>>;
   pendingSessionChatIdentityKeys: Map<
     number,
     {
@@ -768,7 +774,10 @@ function handleCallbackRequest(
               ? "Native Coinage wallet operation failed"
               : NATIVE_CHAT_FILE_CALLBACKS[msg.name]
                 ? "Native Chat file operation failed"
-                : errorMessage(err),
+                : msg.name === "mediaBackendCapabilities" ||
+                    msg.name === "mediaBackendCommand"
+                  ? "media backend failure"
+                  : errorMessage(err),
           } satisfies MainToWorker);
         } catch {
           teardown(
@@ -787,26 +796,63 @@ function handleSubscriptionStart(
     subId: number;
     coreId?: number;
     name: SubscriptionName;
-    payload: Uint8Array | string | null;
+    args: readonly unknown[];
   },
 ): void {
+  const privateMedia = msg.name === "mediaBackendEvents";
+  let closed = false;
+  let outstanding = 0;
+  let dispose: (() => void) | void;
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    state.subscriptionDisposers.delete(msg.subId);
+    state.mediaSubscriptionAcks.delete(msg.subId);
+    if (typeof dispose === "function") {
+      try {
+        dispose();
+      } catch (error) {
+        throw privateMedia ? new Error("media backend failure") : error;
+      }
+    }
+  };
+  const sendError = (error: GenericError): void => {
+    if (state.disposed || closed) return;
+    state.worker.postMessage({
+      kind: "subscriptionError",
+      subId: msg.subId,
+      error:
+        privateMedia && error.reason !== "media event overflow"
+          ? "media backend failure"
+          : error.reason,
+    } satisfies MainToWorker);
+    if (privateMedia) {
+      try {
+        close();
+      } catch {
+        /* Private callback diagnostics are redacted. */
+      }
+    }
+  };
   const sendItem = (value?: unknown): void => {
-    if (state.disposed) return;
+    if (state.disposed || closed) return;
+    if (privateMedia && outstanding >= 128) {
+      sendError({ reason: "media event overflow" });
+      return;
+    }
+    if (privateMedia) outstanding++;
     state.worker.postMessage({
       kind: "subscriptionItem",
       subId: msg.subId,
       value,
     } satisfies MainToWorker);
   };
-  const sendError = (error: GenericError): void => {
-    if (state.disposed) return;
-    state.worker.postMessage({
-      kind: "subscriptionError",
-      subId: msg.subId,
-      error: error.reason,
-    } satisfies MainToWorker);
-  };
-  let dispose: (() => void) | void = undefined;
+  state.subscriptionDisposers.set(msg.subId, close);
+  if (privateMedia) {
+    state.mediaSubscriptionAcks.set(msg.subId, () => {
+      if (outstanding > 0) outstanding--;
+    });
+  }
   try {
     const callbacks =
       msg.coreId === undefined
@@ -816,16 +862,21 @@ function handleSubscriptionStart(
     dispose = startRawSubscription(
       callbacks,
       msg.name,
-      msg.payload,
+      msg.args,
       sendItem,
       sendError,
     );
+    // A host can publish synchronously during subscribe, including overflow.
+    if (closed && typeof dispose === "function") dispose();
   } catch (err) {
-    sendError({ reason: errorMessage(err) });
-    return;
-  }
-  if (typeof dispose === "function") {
-    state.subscriptionDisposers.set(msg.subId, dispose);
+    sendError({
+      reason: privateMedia ? "media backend failure" : errorMessage(err),
+    });
+    try {
+      close();
+    } catch {
+      /* Subscription startup has already failed. */
+    }
   }
 }
 
@@ -1122,6 +1173,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingPermissionAuthorizationStatuses, error);
   rejectAll(state.pendingPermissionAuthorizationStatusBatches, error);
   rejectAll(state.pendingSetPermissionAuthorizationStatuses, error);
+  rejectAll(state.pendingPermissionAuthorizationRefreshes, error);
   rejectAll(state.pendingSessionChatIdentityKeys, error);
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
@@ -1369,6 +1421,7 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
     }
   }
   state.subscriptionDisposers.clear();
+  state.mediaSubscriptionAcks.clear();
   for (const entry of state.chainConnections.values()) {
     entry.closed = true;
     try {
@@ -1506,6 +1559,7 @@ function createWebWorkerHostRuntime(
       disposePending: false,
       disposeGraceTimer: undefined,
       operationGraceMs: options.operationGraceMs ?? 30_000,
+      mediaSubscriptionAcks: new Map(),
       chainConnections: new Map(),
       chatFileExports: new Set(),
       disposeNativeChatFiles: () => browserFiles?.dispose(),
@@ -1515,6 +1569,7 @@ function createWebWorkerHostRuntime(
       pendingPermissionAuthorizationStatuses: new Map(),
       pendingPermissionAuthorizationStatusBatches: new Map(),
       pendingSetPermissionAuthorizationStatuses: new Map(),
+      pendingPermissionAuthorizationRefreshes: new Map(),
       pendingSessionChatIdentityKeys: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
       pendingProductIds: new Map(),
@@ -1621,6 +1676,15 @@ function createWebWorkerHostRuntime(
         case "setPermissionAuthorizationStatusResponse":
           handleSetPermissionAuthorizationStatusResponse(state, msg);
           break;
+        case "refreshPermissionAuthorizationResponse":
+          settlePending(
+            state.pendingPermissionAuthorizationRefreshes,
+            msg.requestId,
+            msg.ok
+              ? { ok: true, value: undefined }
+              : { ok: false, error: msg.error },
+          );
+          break;
         case "sessionChatIdentityKeyResponse":
           handleSessionChatIdentityKeyResponse(state, msg);
           break;
@@ -1694,6 +1758,9 @@ function createWebWorkerHostRuntime(
           break;
         case "subscriptionStop":
           handleSubscriptionStop(state, msg);
+          break;
+        case "mediaSubscriptionAck":
+          state.mediaSubscriptionAcks.get(msg.subId)?.();
           break;
         case "chainConnectStart":
         case "hopConnectStart":
@@ -1777,6 +1844,10 @@ function createWebWorkerHostRuntime(
             game: host.game !== undefined,
             contacts: host.contacts !== undefined,
             scanner: host.scanner !== undefined,
+            media:
+              typeof host.media?.mediaBackendCapabilities === "function" &&
+              typeof host.media?.mediaBackendEvents === "function" &&
+              typeof host.media?.mediaBackendCommand === "function",
           },
           debuggerUrl: debuggerDial,
         } satisfies MainToWorker);
@@ -1919,6 +1990,10 @@ function buildRuntime(
                       state.rawCallbacks.nativeCoinage !== undefined,
                     game: callbacks.game !== undefined,
                     scanner: callbacks.scanner !== undefined,
+                    media:
+                      typeof callbacks.media?.mediaBackendCapabilities === "function" &&
+                      typeof callbacks.media?.mediaBackendEvents === "function" &&
+                      typeof callbacks.media?.mediaBackendCommand === "function",
                   },
                 }),
           } satisfies MainToWorker);
@@ -2177,6 +2252,11 @@ function buildRuntime(
       );
     },
     setPermissionAuthorizationStatus(productId, request, status) {
+      if (state.disposed) {
+        return Promise.reject(
+          state.closedError ?? new Error("runtime disposed"),
+        );
+      }
       return sendWorkerRequest<void>(
         state,
         state.pendingSetPermissionAuthorizationStatuses,
@@ -2188,6 +2268,25 @@ function buildRuntime(
           requestId,
           request: encodePermissionAuthorizationRequest(request),
           status,
+        }),
+      );
+    },
+    refreshPermissionAuthorization(productId, request) {
+      if (state.disposed) {
+        return Promise.reject(
+          state.closedError ?? new Error("runtime disposed"),
+        );
+      }
+      return sendWorkerRequest<void>(
+        state,
+        state.pendingPermissionAuthorizationRefreshes,
+        () => ++nextPermissionAuthorizationRequestId,
+        undefined,
+        (requestId) => ({
+          kind: "refreshPermissionAuthorization",
+          productId,
+          requestId,
+          request: encodePermissionAuthorizationRequest(request),
         }),
       );
     },
@@ -2412,6 +2511,14 @@ function buildProvider(
         request,
         status,
       );
+    },
+    refreshPermissionAuthorization(request) {
+      if (core.disposed) {
+        return Promise.reject(
+          core.closedError ?? new Error("product connection is closed"),
+        );
+      }
+      return runtime.refreshPermissionAuthorization(core.productId, request);
     },
     setLogLevel(level): void {
       if (core.disposed) return;

@@ -30,11 +30,19 @@ use crate::{
 		transaction::ExtrinsicPayloadError,
 	},
 	host_logic::{
-		product_account::ProductAccountError,
-		raw_signing::RawPayloadError,
-		session::{SessionInfo, SessionState},
+		product_account::ProductAccountError, raw_signing::RawPayloadError, session::SessionInfo,
 		statement_store::statement_public_key_from_secret,
 	},
+};
+
+use crate::{
+	host_logic::{
+		media_protocol::{
+			CLOCK_SKEW, MAX_ADVERTISEMENT_LIFETIME, MAX_PACKET_BYTES, UnsignedAdvertisement,
+		},
+		statement_store::{StatementField, statement_fields_from_v01},
+	},
+	unix_time::current_unix_secs,
 };
 
 use super::sso_remote::{
@@ -1010,6 +1018,62 @@ pub trait ProductAuthority: Send + Sync {
 
 	/// Core-only root-derived key for stable contact handles across products.
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+	/// Certify a core-owned endpoint with the canonical product's Index(0) key.
+	/// This private domain is never reachable through product raw signing.
+	async fn certify_media_endpoint(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		unsigned: UnsignedAdvertisement,
+	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Sign private Media transport with existing identity/session allowance.
+	/// `expires_at` is UTC seconds, not an encoded Statement Store expiry.
+	fn sign_media_statement(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+		topics: Vec<[u8; 32]>,
+		expires_at: u64,
+	) -> Result<Vec<u8>, AuthorityError>;
+}
+
+// Phase 1 accepts priorities on receive but sends zero for deployed V1 hosts.
+// Phase 2 can prioritize control over candidates once every receiver accepts
+// the low word; the high word remains the authenticated expiry in UTC seconds.
+const MEDIA_STATEMENT_PRIORITY: u32 = 0;
+
+/// Bound the private transport independently of the eventual network submit.
+/// No channel is set: multiple live packets on one inbox must not replace one another.
+pub(super) fn media_statement_fields(
+	payload: Vec<u8>,
+	topics: Vec<[u8; 32]>,
+	expires_at: u64,
+) -> Result<Vec<StatementField>, AuthorityError> {
+	let now = current_unix_secs();
+	let latest = now
+		.checked_add(MAX_ADVERTISEMENT_LIFETIME)
+		.and_then(|time| time.checked_add(CLOCK_SKEW))
+		.ok_or(AuthorityError::Rejected)?;
+	if payload.is_empty() ||
+		payload.len() > MAX_PACKET_BYTES ||
+		topics.is_empty() ||
+		topics.len() > 4 ||
+		expires_at <= now ||
+		expires_at > latest ||
+		expires_at > u32::MAX as u64
+	{
+		return Err(AuthorityError::Rejected);
+	}
+	statement_fields_from_v01(truapi::latest::Statement {
+		expiry: Some((expires_at << 32) | u64::from(MEDIA_STATEMENT_PRIORITY)),
+		topics,
+		data: Some(payload),
+		proof: None,
+		decryption_key: None,
+		channel: None,
+	})
+	.map_err(|_| AuthorityError::Rejected)
 }
 
 /// Build the neutral authority-session snapshot for `session`.
@@ -1017,27 +1081,10 @@ pub fn authority_session(session: &SessionInfo) -> AuthoritySession {
 	AuthoritySession::from_session_info(session, authority_session_validation_id(session))
 }
 
-/// Revalidate a pre-confirmation snapshot against the live session, returning
-/// the current [`SessionInfo`] when it still matches.
-///
-/// Both roles use this before touching key material: a snapshot taken before
-/// user confirmation must still be the current authority session when the
-/// signature or derivation happens, otherwise the request is rejected.
-pub fn require_current_session(
-	session_state: &SessionState,
-	session: &AuthoritySession,
-) -> Result<SessionInfo, AuthorityError> {
-	let current = session_state.current().ok_or(AuthorityError::Disconnected)?;
-	if authority_session_validation_id(&current) == session.validation_id {
-		Ok(current)
-	} else {
-		Err(AuthorityError::Disconnected)
-	}
-}
-
 /// Opaque token identifying which concrete session a snapshot was taken from.
 pub fn authority_session_validation_id(session: &SessionInfo) -> Vec<u8> {
-	let mut id = Vec::with_capacity(67);
+	// Leave room for the owning authority's eight-byte activation generation.
+	let mut id = Vec::with_capacity(75);
 	if let Some(sso) = &session.sso {
 		id.extend_from_slice(b"sso");
 		id.extend_from_slice(&sso.session_id_own);

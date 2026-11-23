@@ -1,5 +1,6 @@
 //! Pairing role: product calls reach a wallet on a paired phone.
 
+mod media;
 mod remote_calls;
 
 #[cfg(test)]
@@ -18,7 +19,6 @@ use super::{
 		CreateTransactionAuthorityRequest, GrantKeeping, PaymentTopUpAuthorityError,
 		ProductAuthority, ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
 		SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
-		authority_session, require_current_session,
 	},
 	host_grants::HostGrantStore,
 	product_consent::ProductConsent,
@@ -35,6 +35,7 @@ use crate::{
 	},
 	host_logic::{
 		entropy::derive_product_entropy_from_source,
+		media_protocol::UnsignedAdvertisement,
 		product_account::{
 			SR25519_SIGNING_CONTEXT, derivation_index_bytes,
 			derive_product_keypair_from_subtree_secret, derive_ring_vrf_entropy_from_domain,
@@ -152,7 +153,7 @@ impl PairingHost {
 	}
 
 	fn current_session(&self) -> Option<AuthoritySession> {
-		self.session_state.current().as_ref().map(authority_session)
+		self.session.current_session()
 	}
 
 	/// Providers registered for this ring under the active account.
@@ -245,7 +246,7 @@ impl PairingHost {
 		&self,
 		session: &AuthoritySession,
 	) -> Result<SessionInfo, AuthorityError> {
-		require_current_session(&self.session_state, session)
+		self.session.with_current_session(session, |current| Ok(current.clone()))
 	}
 
 	/// Whether `calling_product_id` may act on `handle`'s ring-VRF key.
@@ -728,8 +729,7 @@ impl PairingHost {
 		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-		let session = self.current_private_session(session)?;
-		self.remote_allocate_resources(cx, &session, grant_revision, product_id, request)
+		self.remote_allocate_resources(cx, session, grant_revision, product_id, request)
 			.await
 	}
 
@@ -1059,7 +1059,7 @@ impl ProductAuthority for PairingHost {
 		session: &AuthoritySession,
 		request: PaymentTopUpRequest,
 	) -> Result<(), PaymentTopUpAuthorityError> {
-		let current = require_current_session(&self.session_state, session)?;
+		let current = self.current_private_session(session)?;
 		self.remote_payment_top_up(cx, &current, request).await
 	}
 
@@ -1093,5 +1093,23 @@ impl ProductAuthority for PairingHost {
 
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
 		PairingHost::contacts_handle_key(self, session)
+	}
+	async fn certify_media_endpoint(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		unsigned: UnsignedAdvertisement,
+	) -> Result<[u8; 64], AuthorityError> {
+		self.certify_paired_media_endpoint(cx, session, unsigned).await
+	}
+
+	fn sign_media_statement(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+		topics: Vec<[u8; 32]>,
+		expires_at: u64,
+	) -> Result<Vec<u8>, AuthorityError> {
+		self.sign_paired_media_statement(session, payload, topics, expires_at)
 	}
 }

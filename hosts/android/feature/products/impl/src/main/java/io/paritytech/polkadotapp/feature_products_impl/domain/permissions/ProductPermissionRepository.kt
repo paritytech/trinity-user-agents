@@ -175,8 +175,13 @@ class RealProductPermissionRepository @Inject constructor(
             )
         }
         val runtime = runtime()
-        return if (imports.isEmpty()) runtime.permissionAuthorizations(productId)
+        val entries = if (imports.isEmpty()) runtime.permissionAuthorizations(productId)
             else runtime.importPermissionAuthorizations(productId, imports)
+        // Calling is displayed and revoked through its exact account scope in NativeMediaPermissions.
+        return entries.filterNot {
+            it.request is PermissionAuthorizationRequest.Calling ||
+                (it.request as? PermissionAuthorizationRequest.Remote)?.v1?.permission == uniffi.truapi.RemotePermission.Calling
+        }
     }
 
     private fun effectiveStatuses(

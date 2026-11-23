@@ -52,6 +52,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
     PermissionAuthorizationRequest.ChatAuthority -> ProductPermission.ChatAuthority
     PermissionAuthorizationRequest.ProfileDisclosure -> ProductPermission.ProfileDisclosure
+    is PermissionAuthorizationRequest.Calling -> error("Calling permissions are managed by the scoped Media settings")
     is PermissionAuthorizationRequest.StatementStoreAllowance -> ProductPermission.StatementStoreAllowance(
         when (val selector = derivationIndex) {
             null -> null
@@ -67,6 +68,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
                 else ProductPermission.RemotePermission.NetworkAccessSet(domains)
         }
         RemotePermission.WebRtc -> ProductPermission.RemotePermission.WebRtcAccess
+        RemotePermission.Calling -> error("Calling requires a scoped core review")
         RemotePermission.ChainSubmit -> ProductPermission.RemotePermission.ChainSubmitAccess
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess

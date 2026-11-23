@@ -106,6 +106,8 @@ pub enum ConfirmKind {
 	MainPurseChatPayment,
 	/// [`UserConfirmationReview::ProfileDisclosure`].
 	ProfileDisclosure,
+	/// Scoped calling consent.
+	Calling,
 }
 
 impl ConfirmKind {
@@ -128,6 +130,7 @@ impl ConfirmKind {
 			UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
 			UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
 			UserConfirmationReview::ProfileDisclosure(_) => ConfirmKind::ProfileDisclosure,
+			UserConfirmationReview::Calling(_) => ConfirmKind::Calling,
 		}
 	}
 }
@@ -327,6 +330,7 @@ impl Drop for PreimageLookup {
 pub struct MockPlatform {
 	config: Arc<MockConfig>,
 	storage: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+	core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
 	preimages: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 	navigations: Arc<Mutex<Vec<String>>>,
 	notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
@@ -388,6 +392,7 @@ impl MockPlatform {
 		Self {
 			config: Arc::new(config),
 			storage: Arc::new(Mutex::new(HashMap::new())),
+			core_storage_changes: Arc::default(),
 			preimages: Arc::new(Mutex::new(HashMap::new())),
 			navigations: Arc::new(Mutex::new(Vec::new())),
 			notifications: Arc::new(Mutex::new(Vec::new())),
@@ -420,6 +425,11 @@ impl MockPlatform {
 	/// URLs the core asked the host to open, in order.
 	pub fn navigations(&self) -> Vec<String> {
 		self.navigations.lock().expect("navigations poisoned").clone()
+	}
+
+	/// Explicit policy notifications shared by every clone.
+	pub fn core_storage_changes(&self) -> Vec<CoreStorageKey> {
+		self.core_storage_changes.lock().unwrap().clone()
 	}
 
 	/// Notifications the core asked the host to show, in order.
@@ -1007,6 +1017,34 @@ impl CoreStorage for MockPlatform {
 		}
 		self.storage.lock().expect("storage poisoned").remove(&core_key(&key));
 		Ok(())
+	}
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.storage_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let mut storage = self.storage.lock().expect("storage poisoned");
+		let slot = core_key(&key);
+		if storage.get(&slot) != expected.as_ref() {
+			return Ok(false);
+		}
+		storage.insert(slot, replacement);
+		if notify_on_success {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
+
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.core_storage_changes
+			.lock()
+			.expect("core storage changes poisoned")
+			.push(key);
 	}
 }
 

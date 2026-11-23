@@ -512,6 +512,8 @@ export interface MockHost {
   sentRpc(): string[];
   /** Auth-state transitions the core emitted, in order. */
   authStates(): AuthState[];
+  /** Explicit core-storage policy notifications, excluding raw writes/clears. */
+  coreStorageChanges(): CoreStorageKey[];
   /**
    * Full confirmation reviews the core requested, in order.
    *
@@ -913,6 +915,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
 
   const scan = scanner === undefined ? undefined : { answer: scanner };
   const storage = new Map<string, Uint8Array>();
+  const coreStorageChanges: CoreStorageKey[] = [];
   const preimages = new Map<string, Uint8Array>();
   const navigations: string[] = [];
   const pushedNotifications: NotificationLogEntry[] = [];
@@ -1167,15 +1170,33 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     coreStorage: {
       async readCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
-        return storage.get(coreKey(key));
+        return storage.get(coreKey(key))?.slice();
       },
       async writeCoreStorage(key, value) {
         if (faults.storageError) throw new Error(faults.storageError);
-        storage.set(coreKey(key), value);
+        storage.set(coreKey(key), value.slice());
       },
       async clearCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(coreKey(key));
+      },
+      async compareExchangeCoreStorage(key, expected, replacement, notifyOnSuccess) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        const slot = coreKey(key);
+        const current = storage.get(slot);
+        if (current === undefined ? expected !== undefined : (
+          expected === undefined || current.length !== expected.length ||
+          current.some((byte, index) => byte !== expected[index])
+        )) {
+          return false;
+        }
+        // No await between the byte comparison, commit and notification.
+        storage.set(slot, replacement.slice());
+        if (notifyOnSuccess) callbacks.coreStorage.coreStorageChanged(key);
+        return true;
+      },
+      coreStorageChanged(key) {
+        coreStorageChanges.push(structuredClone(key));
       },
     },
 
@@ -1544,6 +1565,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
     sentRpc: () => [...sentRpc],
     authStates: () => [...authStates],
+    coreStorageChanges: () => structuredClone(coreStorageChanges),
     reviews: () => [...reviews],
     confirmations: () => reviews.map((review) => review.tag),
     getSigningLog: () =>
@@ -1715,6 +1737,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       this.clearSentRpc();
       this.clearPreimages();
       this.clearStorage();
+      coreStorageChanges.length = 0;
       this.clearChatState();
       this.clearStatements();
       openOperations.length = 0;

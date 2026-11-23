@@ -617,6 +617,9 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 		Ok(CoreStorageKeyDescription {
 			kind: "PermissionAuthorization",
 			owner: Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
+			permission_request: Some(PermissionAuthorizationRequest::Device(
+				HostDevicePermissionRequest::Camera
+			)),
 		})
 	);
 	for (key, kind, owner) in [
@@ -654,7 +657,10 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 		(CoreStorageKey::FundingSupport, "FundingSupport", None),
 	] {
 		let description = describe_core_storage_key(&key.encode()).expect("valid key");
-		assert_eq!(description, CoreStorageKeyDescription { kind, owner });
+		assert_eq!(
+			description,
+			CoreStorageKeyDescription { kind, owner, permission_request: None }
+		);
 	}
 
 	assert_eq!(
@@ -712,7 +718,7 @@ fn fresh_permission_and_manifest_scopes_keep_their_string_encoding() {
 		assert_eq!(CoreStorageKey::decode(&mut encoded.as_slice()), Ok(key));
 		assert_eq!(
 			describe_core_storage_key(&encoded),
-			Ok(CoreStorageKeyDescription { kind, owner: Some(owner) })
+			Ok(CoreStorageKeyDescription { kind, owner: Some(owner), permission_request: None })
 		);
 	}
 }

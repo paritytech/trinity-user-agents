@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import kotlin.time.Duration.Companion.seconds
+import android.net.Uri
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.
@@ -84,6 +86,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     // Per-session decorator over the resolver: tracks the domain currently being served and
     // exposes its download/unpack progress for the host UI to render.
     private val contentLoader = DotNsContentLoader(dotNsResolver)
+    private var nativeBridge: ProductTrUAPIHostBridge? = null
 
     // No dotNS load reports progress for a page served from a loopback url, so its own load does.
     private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
@@ -129,8 +132,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
                 domStorageEnabled = true
                 allowFileAccess = false
                 allowContentAccess = false
-                // A camera preview is a MediaStream in an autoplaying <video>; the default gesture
-                // requirement would keep it black even once the capture permission is granted.
+                // Native Media owns capture; ordinary media playback does not require a gesture.
                 mediaPlaybackRequiresUserGesture = false
             }
 
@@ -150,6 +152,10 @@ class BrowserWebViewProvider @AssistedInject constructor(
 
     fun useTrUAPIPermissions(productId: ProductId, execution: TrUAPIProductExecution) {
         permissionClient.useTrUAPIPermissions(productId, execution, scope)
+    }
+
+    fun bindTrUAPILifecycle(bridge: ProductTrUAPIHostBridge) {
+        nativeBridge = bridge
     }
 
     override suspend fun loadInitialContent() {
@@ -194,6 +200,12 @@ class BrowserWebViewProvider @AssistedInject constructor(
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            val initial = Uri.parse(initialUrl)
+            val target = Uri.parse(url)
+            if (target.scheme != initial.scheme || target.encodedAuthority != initial.encodedAuthority) {
+                nativeBridge?.stop()
+                nativeBridge = null
+            }
             permissionClient.onPageStarted(view, url, favicon)
             innerClient.onPageStarted(view, url, favicon)
             notifyOnPageStarted(url)
@@ -208,7 +220,13 @@ class BrowserWebViewProvider @AssistedInject constructor(
             }
         }
 
+        override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
+            nativeBridge?.viewportChanged()
+            innerClient.onScaleChanged(view, oldScale, newScale)
+        }
+
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail?): Boolean {
+            nativeBridge?.releaseMedia()
             replaceDeadWebView(view, scope, initialUrl)
             return true
         }

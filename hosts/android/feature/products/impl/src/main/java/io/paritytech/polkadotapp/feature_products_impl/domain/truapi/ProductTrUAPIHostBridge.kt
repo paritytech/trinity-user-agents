@@ -13,6 +13,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import uniffi.truapi.HostLocaleSubscribeItem
 import android.util.Log
+import android.Manifest
+import android.content.pm.PackageManager
+import android.webkit.WebView
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaConsent
+import uniffi.truapi.DevicePermissionStatus
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -108,6 +115,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val permissionChanges: PermissionAuthorizationChanges,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val mediaFactory: NativeMediaBackendFactory,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -142,6 +150,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
     private fun currentLocale() =
         HostLocaleSubscribeItem(cachedLanguageTag.get(), ZoneId.systemDefault().id)
+    private var mediaBackend: NativeMediaBackend? = null
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -228,7 +237,22 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId)
+            if (review is UserConfirmationReview.Calling) {
+                review.v1.productId == callingProductId &&
+                    NativeMediaConsent.calling(context, review.v1.productId.value, review.v1.network, review.v1.account)
+            } else {
+                confirmationLauncher.decide(review, requesterFallback = callingProductId)
+            }
+
+        override suspend fun devicePermissionStatus(request: HostDevicePermissionRequest): DevicePermissionStatus {
+            val permission = when (request) {
+                HostDevicePermissionRequest.CAMERA -> Manifest.permission.CAMERA
+                HostDevicePermissionRequest.MICROPHONE -> Manifest.permission.RECORD_AUDIO
+                else -> return DevicePermissionStatus.NOT_APPLICABLE
+            }
+            return if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED)
+                DevicePermissionStatus.GRANTED else DevicePermissionStatus.NOT_DETERMINED
+        }
 
         override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
             confirmationLauncher.decidePermission(review, requesterFallback = callingProductId)
@@ -252,8 +276,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
-        ): TrUAPIPermissionDecision =
-            when (request) {
+        ): TrUAPIPermissionDecision {
+            // Calling is authorized by the account-scoped core review, never by a raw WebRTC grant.
+            if (request == RemotePermission.Calling || request == RemotePermission.WebRtc)
+                return TrUAPIPermissionDecision.DENY
+            return when (request) {
                 RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
                 is RemotePermission.NftPurseRead ->
                     hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
@@ -261,6 +288,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             }
                 .getOrElse { throw it }
                 .toNative()
+        }
 
         /**
          * Answered from the same snapshot [chainConnect] dials rather than the
@@ -329,11 +357,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             permissionRepository.get().getAllByProduct(productId)
             cachedChains.set(chains)
             cachedLanguageTag.set(appLanguageProvider.languageTag.first())
+            val media = mediaFactory.create(productId.value)
+            mediaBackend = media
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
                 game = gameBridge(productId),
+                media = media,
             )
             execution = opened
             // Anything failing past this point leaves a live execution behind, and
@@ -405,6 +436,28 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         execution?.notifyThemeChanged(theme)
     }
 
+    fun viewportChanged() {
+        mediaBackend?.viewportChanged()
+    }
+
+    /** Composites native media over [webView]; register through `addWebViewSetup` so a replacement WebView is attached too. */
+    fun attachMediaView(webView: WebView) {
+        mediaBackend?.attach(webView)
+    }
+
+    /** Fails media closed after the product's renderer died, leaving the execution to the WebView replacement. */
+    fun releaseMedia() {
+        mediaBackend?.close()
+        mediaBackend = null
+    }
+
+    /** Settings use the same callbacks/storage and process runtime, without a second backend. */
+    fun openPermissionExecution(runtime: TrUAPIHostRuntime, productId: ProductId): TrUAPIProductExecution =
+        runtime.openProductExecution(
+            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }, card = null),
+            ProductExecutionConfig(productId, ExecutableKind.APP),
+        )
+
     /**
      * Tears down the execution and its chain connections; the shared runtime
      * stays up for other products. Idempotent. Detaches the provider before
@@ -412,6 +465,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
      * being disposed.
      */
     fun stop() {
+        releaseMedia()
         val opened = execution ?: return
         execution = null
         permissionChangesJob?.cancel()
@@ -499,6 +553,7 @@ private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = 
     is RemotePermission.JamPeers -> RemotePermissionRequest.JamPeers(genesis.toHexString(withPrefix = true))
     RemotePermission.BalanceAccess -> error("balance access has its own prompt")
     is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")
+    RemotePermission.Calling -> error("Calling requires a scoped core review")
 }
 
 /** The owning product, or `null` for purses of the user's own account. */

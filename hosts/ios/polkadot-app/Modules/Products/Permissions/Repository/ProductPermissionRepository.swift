@@ -178,6 +178,14 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revokeAllByProduct(productId: ProductId) async throws {
+        let runtime = try authority()
+        for entry in try await runtime.permissionAuthorizations(productId: productId) {
+            if case .calling = entry.request {
+                try await runtime.setPermissionAuthorizationStatus(
+                    productId: productId, request: entry.request, status: .notDetermined
+                )
+            }
+        }
         let grants = try await getAllByProduct(productId: productId)
         try await revoke(productId: productId, permissions: grants.map(\.permission))
     }
@@ -443,6 +451,9 @@ extension ProductPermission {
             return [.accountAccess(targetProductId: targetProductId)]
         case .crossProductSignature:
             throw ProductPermissionMappingError.unsupported("cross_product_signature", "")
+        case .calling:
+            // Exact Calling scopes are shown by the Media settings adapter.
+            return []
         }
     }
 

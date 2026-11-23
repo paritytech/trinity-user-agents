@@ -71,6 +71,7 @@ fn native_wallet_dependency_survives_failure_and_product_replacement() {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
+				None,
 				native_execution_config("wallet.dot", ExecutableKind::Worker),
 			)
 			.expect("product opens without supplying wallet callbacks")
@@ -154,12 +155,14 @@ fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution
 			callbacks.clone(),
 			None,
 			None,
+			None,
 			native_execution_config("myapp.dot", ExecutableKind::App),
 		)
 		.expect("open app execution");
 	let worker = host
 		.open_product_execution(
 			callbacks.clone(),
+			None,
 			None,
 			None,
 			native_execution_config("myapp.dot", ExecutableKind::Worker),
@@ -195,6 +198,7 @@ fn a_host_pushed_storage_change_reaches_the_products_subscription() {
 	let execution = host
 		.open_product_execution(
 			callbacks.clone(),
+			None,
 			None,
 			None,
 			native_execution_config("myapp.dot", ExecutableKind::App),
@@ -250,6 +254,7 @@ fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product(
 			Arc::new(EventCallbacks::new()),
 			None,
 			None,
+			None,
 			native_execution_config("shared.dot", ExecutableKind::App),
 		)
 		.expect("App execution should open");
@@ -258,6 +263,7 @@ fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product(
 		.open_product_execution(
 			chat_host.clone(),
 			Some(chat_host.clone()),
+			None,
 			None,
 			native_execution_config("shared.dot", ExecutableKind::Worker),
 		)
@@ -275,6 +281,7 @@ fn process_runtime_shares_authority_and_replaces_one_chat_execution_per_product(
 		.open_product_execution(
 			chat_host.clone(),
 			Some(chat_host.clone()),
+			None,
 			None,
 			native_execution_config("shared.dot", ExecutableKind::Worker),
 		)
@@ -300,6 +307,7 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 	let execution = host
 		.open_product_execution(
 			Arc::new(EventCallbacks::new()),
+			None,
 			None,
 			None,
 			native_execution_config("chat.dot", ExecutableKind::Worker),
@@ -352,6 +360,7 @@ fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
 				callbacks.clone(),
 				None,
 				None,
+				None,
 				native_execution_config(product_id, ExecutableKind::Widget),
 			)
 			.expect("Widget execution should open");
@@ -388,6 +397,7 @@ fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
 			Arc::new(EventCallbacks::new()),
 			None,
 			None,
+			None,
 			native_execution_config("chain.dot", ExecutableKind::App),
 		)
 		.expect("App execution should open");
@@ -420,6 +430,7 @@ fn an_execution_close_does_not_invalidate_shared_bus_connects() {
 	let execution = host
 		.open_product_execution(
 			Arc::new(EventCallbacks::new()),
+			None,
 			None,
 			None,
 			native_execution_config("chain.dot", ExecutableKind::App),
@@ -458,6 +469,7 @@ fn an_unknown_close_still_invalidates_the_executions_own_connects() {
 			Arc::new(EventCallbacks::new()),
 			None,
 			None,
+			None,
 			native_execution_config("chain.dot", ExecutableKind::App),
 		)
 		.expect("App execution should open");
@@ -483,6 +495,7 @@ fn native_execution_authorizes_device_permission_from_stored_decision() {
 	let execution = host
 		.open_product_execution(
 			callbacks.clone(),
+			None,
 			None,
 			None,
 			native_execution_config("motion.dot", ExecutableKind::App),
@@ -524,6 +537,7 @@ fn native_execution_shares_one_use_permissions_across_connections_only() {
 	let open = || {
 		host.open_product_execution(
 			callbacks.clone(),
+			None,
 			None,
 			None,
 			native_execution_config("fetch.dot", ExecutableKind::App),

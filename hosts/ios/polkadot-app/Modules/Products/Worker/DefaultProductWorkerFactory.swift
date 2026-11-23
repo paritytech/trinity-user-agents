@@ -11,11 +11,7 @@ enum DefaultProductWorkerFactoryError: Error {
     case invalidNativeApi
 }
 
-/// Boots one product's headless native worker for the ``ProductWorkerManager``.
-///
-/// This is the single place the native worker is assembled — the same wiring the
-/// chat bot used inline before unification, now sourced by product id so SPA,
-/// operations and chat all keep the one shared instance alive.
+/// Boots the legacy native worker. TrUAPI workers use TrUAPIWorkerBuilder.
 final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendable {
     private let contentLoader: ProductContentLoading
     private let productFileProvider: ChatProductFileProviding
@@ -78,7 +74,6 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
         )
 
         let nativeApi = try makeNativeApi(productId: productId)
-
         let scriptExecutor = ProductsScriptExecutor(
             productUrl: engineContext.productUrl,
             scriptsFactory: nativeScriptsFactory,

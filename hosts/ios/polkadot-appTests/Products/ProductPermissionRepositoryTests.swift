@@ -236,6 +236,34 @@ struct ProductPermissionRepositoryTests {
         #expect(stateB == .allowedAlways)
     }
 
+    @Test("Revoke all resets exact Calling scopes without touching another product")
+    func revokeAllIncludesCallingScopes() async throws {
+        let authority = PermissionAuthorityFixture()
+        let sut = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
+        let requests: [PermissionAuthorizationRequest] = [
+            .calling(network: Data(repeating: 1, count: 32), account: Data(repeating: 2, count: 32)),
+            .calling(network: Data(repeating: 1, count: 32), account: Data(repeating: 3, count: 32)),
+            .calling(network: Data(repeating: 4, count: 32), account: Data(repeating: 2, count: 32)),
+            .device(.camera),
+        ]
+        for product in [productA, productB] {
+            for request in requests {
+                try await authority.setPermissionAuthorizationStatus(
+                    productId: product, request: request, status: .authorized
+                )
+            }
+        }
+        // Calling has its own typed Media rows, not a lossy legacy permission.
+        #expect(try await sut.getAllByProduct(productId: productA).map(\.permission) == [.deviceCapability(.camera)])
+        try await sut.revokeAllByProduct(productId: productA)
+        let revoked = try await authority.permissionAuthorizations(productId: productA)
+        let untouched = try await authority.permissionAuthorizations(productId: productB)
+        for request in requests {
+            #expect(revoked.first { $0.request == request }?.status == .notDetermined)
+            #expect(untouched.first { $0.request == request }?.status == .authorized)
+        }
+    }
+
     // MARK: - getAllByProduct
 
     @Test("getAllByProduct returns only grants for given product")
@@ -568,8 +596,12 @@ private final class PermissionSettingsViewFixture: @MainActor AppPermissionsView
 
 private final class PermissionSettingsInteractorFixture: AppPermissionsInteractorInputProtocol {
     var requests: [[ProductPermission]] = []
+    var mediaRequests: [(TrUAPIMediaPermissionSetting, Bool)] = []
     func setup() {}
     func revoke(permissions: [ProductPermission]) { requests.append(permissions) }
+    func setMediaPermission(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool) {
+        mediaRequests.append((setting, allowed))
+    }
 }
 
 @MainActor
@@ -581,6 +613,40 @@ private final class PermissionSettingsWireframeFixture: AppPermissionsWireframeP
 }
 
 extension ProductPermissionRepositoryTests {
+    @Test("Media settings retain the granted switch until runtime acknowledgement")
+    @MainActor
+    func mediaSettingsWaitForAcknowledgement() throws {
+        let view = PermissionSettingsViewFixture()
+        let interactor = PermissionSettingsInteractorFixture()
+        let presenter = AppPermissionsPresenter(
+            productName: "Calls", interactor: interactor,
+            wireframe: PermissionSettingsWireframeFixture(),
+            viewModelFactory: AppPermissionsViewModelFactory()
+        )
+        presenter.view = view
+        let setting = TrUAPIMediaPermissionSetting(
+            id: "media:camera", title: "Camera", detail: "During calls",
+            request: .device(.camera), status: .authorized
+        )
+        presenter.didReceive(mediaPermissions: [setting])
+        let item = try #require(view.items.first)
+        presenter.toggle(item, isOn: false)
+        #expect(view.revoking)
+        #expect(view.items.first?.isOn == true)
+        #expect(interactor.mediaRequests.count == 1)
+        #expect(interactor.mediaRequests.first?.0.request == .device(.camera))
+        #expect(interactor.mediaRequests.first?.1 == false)
+        presenter.toggle(item, isOn: false)
+        #expect(interactor.mediaRequests.count == 1)
+        presenter.didReceive(mediaPermissions: [
+            TrUAPIMediaPermissionSetting(id: setting.id, title: setting.title, detail: setting.detail,
+                request: setting.request, status: .notDetermined)
+        ])
+        presenter.didFinishRevoking()
+        #expect(!view.revoking)
+        #expect(view.items.first?.isOn == false)
+    }
+
     @Test("Settings retain the granted switch until acknowledgement and display failures")
     @MainActor
     func settingsRevokeIsNotOptimistic() throws {
@@ -650,6 +716,7 @@ extension ProductPermissionRepositoryTests {
 @MainActor
 private final class PermissionSettingsOutputFixture: AppPermissionsInteractorOutputProtocol {
     var snapshots: [[ProductPermissionGrant]] = []
+    var mediaSnapshots: [[TrUAPIMediaPermissionSetting]] = []
     var finished = false
     let errorContinuation: AsyncStream<String>.Continuation
 
@@ -658,6 +725,7 @@ private final class PermissionSettingsOutputFixture: AppPermissionsInteractorOut
     }
 
     func didReceive(grants: [ProductPermissionGrant]) { snapshots.append(grants) }
+    func didReceive(mediaPermissions: [TrUAPIMediaPermissionSetting]) { mediaSnapshots.append(mediaPermissions) }
     func didFinishRevoking() { finished = true }
     func didReceive(error: Error) { errorContinuation.yield(error.localizedDescription) }
 }

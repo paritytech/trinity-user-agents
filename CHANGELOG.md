@@ -5,6 +5,69 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Changed
+
+- notify native permission-list observers once after a successful permission
+  compare/exchange write, including device permission answers; failed exchanges
+  and unrelated storage writes do not emit permission-list notifications.
+- connect Media peers directly when possible, with optional TURN fallback;
+  keep SDP, ICE candidates, network addresses and statistics inside hosts,
+  never in product-facing responses or events. Bound the wait for optional TURN
+  discovery to two seconds and continue directly when its configuration is
+  invalid. Shared credential requests may finish within their own 15-second
+  timeout and populate the cache for subsequent peers without delaying the first
+  peer or cancelling concurrent Chat requests. Android Chat keeps its 5-second
+  TURN wait. iOS Chat now fails a TURN request that takes longer than 15 seconds
+  (previously the 60-second URLSession default).
+- bound bundled multi-interface Media ICE bursts to 66 pending messages per
+  peer (64 candidates plus two description/control messages) and 264 per
+  runtime queue, retaining the 256 KiB peer, 1 MiB queue and per-message byte
+  protections. Delivery releases capacity; this is not a lifetime quota.
+  Standalone Chromium complete gathering with three transceivers, STUN and
+  coturn measured 90 candidates before max-bundle (54 host, 12 srflx, 24 relay)
+  and 30 after (18 host, 4 srflx, 8 relay), with no errors. The candidate budget
+  provides about twice the measured bundled burst's headroom, not a universal
+  WebRTC maximum or mobile qualification. Synthetic tests cover 64 candidates
+  across eight interfaces on one bundled transport over four drain cycles.
+  Stalled or flooded queues still fail closed; signaling is neither batched
+  nor changed on the wire.
+
+### Fixed
+
+- embed gathered Media candidates in the existing V1 description after up to
+  one second, then send at most six late candidates per link in a sliding
+  60-second packet-lifetime window, reserving two slots for relay candidates.
+  ICE restarts retain the live budget but expired slots become reusable.
+  Normal two-party setup and teardown fit within ten statements per side
+  (excluding advertisements, renewals, retries and multi-endpoint invites),
+  leaving room in the shared 50-statement account allowance. A synthetic
+  79-candidate IPv6 SDP is 12,638 bytes, below the 65,536-byte description limit;
+  the two-sided call bound is 120,524 bytes with maximum-size late candidates
+  and 2 KiB overhead per statement (226,320 bytes with maximum-size SDPs),
+  below the 512,000-byte account allowance. These are per-call bounds, not
+  a quota reserved against concurrent calls or other product traffic.
+- release the browser session lock before answer gathering, keeping only the
+  per-peer negotiation lock: five slow-gathering peers finish in one deadline
+  window rather than serializing into the core's five-second operation timeout.
+- accept Statement Store priority bits without changing Media's authenticated
+  expiry or V1 encoding. Senders retain zero priority for compatibility with
+  deployed hosts; control-message prioritization requires a later coordinated
+  rollout after receivers have been upgraded.
+
+- publish repeated session activation atomically while invalidating previous
+  capability owners, without exposing a transient disconnected snapshot.
+  Unchanged storage notifications preserve the active authority generation and
+  live Media; only an explicit reactivation forces invalidation.
+- reuse existing trusted or one-use microphone/camera authorization for Media
+  sessions without prompting again; Calling still requires exact-scoped consent.
+- allow legacy unscoped Calling entries to be reset without granting access.
+- restore permission-generation, stale-consent and private signaling regressions
+  on the 0.30 host port.
+- retain the active authority epoch when Epoca allocates product Statement Store
+  or smart-contract resources, preserving session invalidation checks.
+
 ## [0.30.0] - 2026-11-09
 
 ### Added

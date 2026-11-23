@@ -35,6 +35,7 @@
 //! | 26 | `NftPurse` |
 //! | 69 | `Profile` (experimental) |
 //! | 111 | `JamPeerTransport` (experimental) |
+//! | 218 | `Media` (prototype) |
 
 pub mod account;
 pub mod chain;
@@ -49,6 +50,7 @@ pub mod game;
 pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
@@ -78,6 +80,7 @@ pub use game::Game;
 pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use nft_purse::NftPurse;
 pub use notifications::Notifications;
 pub use payment::Payment;
@@ -108,6 +111,7 @@ pub trait TrUApi:
 	+ FundingProvider
 	+ LocalStorage
 	+ Locale
+	+ Media
 	+ NftPurse
 	+ Notifications
 	+ Payment
@@ -142,6 +146,7 @@ impl<T> TrUApi for T where
 		+ FundingProvider
 		+ LocalStorage
 		+ Locale
+		+ Media
 		+ NftPurse
 		+ Notifications
 		+ Payment

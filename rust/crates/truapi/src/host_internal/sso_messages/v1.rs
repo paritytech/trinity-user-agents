@@ -14,11 +14,12 @@ use truapi::latest::{
 use super::{
 	CreateAccountProofResponse, CreateTransactionRequest, CreateTransactionResponse,
 	CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse, ListRingVrfKeysResponse,
-	PaymentTopUpRequest, PaymentTopUpResponse, ProductDeviceChatResponse, ProductRequest,
-	ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
-	ResourceAllocationRequest, ResourceAllocationResponse, Response, RingVrfSignResponse,
-	SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-	SignVrfResponse, SsoProductDeviceChatOperation, StatementStoreProductSignRequest,
+	MediaEndpointCertificationRequest, MediaEndpointCertificationResponse, PaymentTopUpRequest,
+	PaymentTopUpResponse, ProductDeviceChatResponse, ProductRequest, ProductSubtreeRequest,
+	ProductSubtreeResponse, RegisterRingVrfKeyResponse, ResourceAllocationRequest,
+	ResourceAllocationResponse, Response, RingVrfSignResponse, SignRawWithLegacyAccountRequest,
+	SignRawWithLegacyAccountResponse, SignRequest, SignResponse, SignVrfResponse,
+	SsoProductDeviceChatOperation, StatementStoreProductSignRequest,
 	StatementStoreProductSignResponse, Withdrawal,
 };
 
@@ -112,4 +113,10 @@ pub enum RemoteMessage {
 	/// Account Holder's answer after incoming funding has been credited.
 	#[codec(index = 205)]
 	PaymentTopUpResponse(Response<PaymentTopUpResponse>),
+	/// Certify a core-owned endpoint under the private Media account domain.
+	#[codec(index = 30)]
+	MediaEndpointCertificationRequest(MediaEndpointCertificationRequest),
+	/// Account Holder's fixed-domain endpoint signature.
+	#[codec(index = 31)]
+	MediaEndpointCertificationResponse(Response<MediaEndpointCertificationResponse>),
 }
