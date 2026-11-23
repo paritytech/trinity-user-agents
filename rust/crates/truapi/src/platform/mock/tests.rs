@@ -140,6 +140,7 @@ fn navigation_records_and_can_error() {
 fn notifications_record_order_with_unique_ids() {
 	let p = MockPlatform::new();
 	let make = |text: &str| latest::HostPushNotificationRequest {
+		title: None,
 		text: text.to_string(),
 		deeplink: None,
 		scheduled_at: None,
@@ -161,6 +162,7 @@ fn notification_error_injected() {
 		..Default::default()
 	});
 	let request = latest::HostPushNotificationRequest {
+		title: None,
 		text: "x".into(),
 		deeplink: None,
 		scheduled_at: None,
@@ -291,20 +293,21 @@ fn feature_supported_reflects_config() {
 }
 
 #[test]
-fn feature_supported_reports_unserved_chains_only_when_asked() {
+fn feature_supported_reports_unserved_chains_unless_told_otherwise() {
 	let supported = |p: &MockPlatform, genesis_hash: Vec<u8>| {
 		block_on(p.feature_supported(latest::HostFeatureSupportedRequest::Chain { genesis_hash }))
 			.unwrap()
 			.supported
 	};
 	let unserved = vec![0xab; 32];
-	// The default keeps answering every chain as supported.
-	assert!(supported(&MockPlatform::new(), unserved.clone()));
-	let strict =
-		MockPlatform::with_config(MockConfig { only_served_chains: true, ..Default::default() });
+	// The default answers from the served chains, as a real host does.
+	let strict = MockPlatform::new();
 	let served = strict.config.served_chains[0].to_vec();
 	assert!(supported(&strict, served));
-	assert!(!supported(&strict, unserved));
+	assert!(!supported(&strict, unserved.clone()));
+	let open =
+		MockPlatform::with_config(MockConfig { only_served_chains: false, ..Default::default() });
+	assert!(supported(&open, unserved));
 }
 
 #[test]

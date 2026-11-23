@@ -382,6 +382,31 @@ fun <T> Flow<T>.wrapIntoResult(): Flow<Result<T>> {
         .catch { emit(Result.failure(it)) }
 }
 
+/**
+ * Resubscribes after a failed element, waiting [retryDelay] for each consecutive failure.
+ *
+ * [wrapIntoResult] completes the flow on the first error, so a wrapped subscription stays failed until
+ * something subscribes to it again.
+ */
+fun <T> Flow<Result<T>>.resubscribingOnFailure(retryDelay: RetryDelayStrategy): Flow<Result<T>> {
+    val results = this
+
+    return flow {
+        var failures = 0
+        while (true) {
+            var lastFailed = false
+            emitAll(
+                results.onEach { result ->
+                    lastFailed = result.isFailure
+                    if (result.isSuccess) failures = 0
+                }
+            )
+            if (!lastFailed) break
+            delay(retryDelay.delayFor(++failures))
+        }
+    }
+}
+
 fun Flow<*>.mapToUnit(): Flow<Unit> = map {}
 
 inline fun <T, R> Flow<T>.concurrentMap(crossinline transform: suspend (T) -> R): Flow<R> =

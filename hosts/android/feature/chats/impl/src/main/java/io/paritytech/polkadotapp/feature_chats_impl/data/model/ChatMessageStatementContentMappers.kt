@@ -20,6 +20,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.HopTicket
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.LastSeenMessage
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.TransientMessage
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.AlwaysDecodableChatMessagePart
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageReactionStatementContent
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageStatement
@@ -41,6 +43,7 @@ import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.Versione
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.VideoFileMeta
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.DeviceInfo
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.EncodedMessage
+import java.util.UUID
 
 fun ChatMessage.toEncodedMessage(): Result<EncodedMessage> {
     return toStatementStoreMessage()
@@ -68,6 +71,40 @@ fun EncodedMessage.decodeChatMessageStatement(): Result<ChatMessageStatement> {
 fun EncodedMessage.isDeviceChatAccepted(): Boolean {
     val versioned = decodeChatMessageStatement().getOrNull()?.versioned as? VersionedChatMessage.V1 ?: return false
     return versioned.message.content is ChatMessageStatementContent.DeviceChatAccepted
+}
+
+fun EncodedMessage.isCompactionCommit(): Boolean {
+    val versioned = decodeChatMessageStatement().getOrNull()?.versioned as? VersionedChatMessage.V1 ?: return false
+    return versioned.message.content is ChatMessageStatementContent.CompactionCommit
+}
+
+fun EncodedMessage.toTransientMessageOrNull(): TransientMessage? {
+    val versioned = decodeChatMessageStatement().getOrNull()?.versioned as? VersionedChatMessage.V1 ?: return null
+    return when (val content = versioned.message.content) {
+        is ChatMessageStatementContent.Seen -> TransientMessage.Seen(content.messageId, content.timestamp.toLong())
+        else -> null
+    }
+}
+
+fun EncodedMessage.isTransient(): Boolean = toTransientMessageOrNull() != null
+
+fun List<EncodedMessage>.partitionTransient(): Pair<List<TransientMessage>, List<EncodedMessage>> {
+    val transientMessages = mutableListOf<TransientMessage>()
+    val chatMessages = mutableListOf<EncodedMessage>()
+    for (message in this) {
+        val transientMessage = message.toTransientMessageOrNull()
+        if (transientMessage != null) transientMessages += transientMessage else chatMessages += message
+    }
+    return transientMessages to chatMessages
+}
+
+fun LastSeenMessage.createSeenMessage(): Result<EncodedMessage> {
+    val message = ChatMessageStatement(
+        id = UUID.randomUUID().toString(),
+        timestamp = System.currentTimeMillis().toULong(),
+        versioned = VersionedChatMessage.V1(ChatMessageV1(ChatMessageStatementContent.Seen(id, timestamp.toULong())))
+    )
+    return BinaryScale.encodeToByteArrayCatching(message)
 }
 
 fun EncodedMessage.decodeAlwaysDecodableChatMessagePart(): Result<AlwaysDecodableChatMessagePart> {
@@ -106,6 +143,7 @@ fun EncodedMessage.toUnsupportedChatMessage(
             origin = ChatMessageOrigin.fromContactChat(authorAccountId, contactAccountId),
             content = ChatMessage.Content.Unsupported(this),
             status = messageStatus,
+            sortOrder = null,
             chatId = ChatId.fromContact(contactAccountId)
         )
     }
@@ -213,6 +251,8 @@ internal fun ChatMessageStatementContent.toChatMessageContent(): ChatMessage.Con
             claimTicket = HopTicket.fromRaw(claimTicket),
             nodeUrl = node.toNodeUrl()
         )
+
+        is ChatMessageStatementContent.Seen -> error("Seen messages are filtered out before they become chat messages")
     }
 }
 
@@ -246,6 +286,7 @@ private fun ChatMessageV1.toChatMessage(
         origin = ChatMessageOrigin.fromContactChat(authorAccountId, contactAccountId),
         content = content.toChatMessageContent(),
         status = messageStatus,
+        sortOrder = null,
         chatId = ChatId.fromContact(contactAccountId),
         replyToMessageId = extractedReplyId
     )

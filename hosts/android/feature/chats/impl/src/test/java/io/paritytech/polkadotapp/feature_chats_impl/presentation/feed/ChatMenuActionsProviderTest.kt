@@ -39,7 +39,7 @@ class ChatMenuActionsProviderTest {
         id = "m1",
         timestamp = 1,
         direction = direction,
-        status = ChatMessageUiModel.Status.READ,
+        status = ChatMessageUiModel.Status.SEEN,
         origin = ChatMessageOrigin.User,
         text = "hi",
         replyPreview = null,

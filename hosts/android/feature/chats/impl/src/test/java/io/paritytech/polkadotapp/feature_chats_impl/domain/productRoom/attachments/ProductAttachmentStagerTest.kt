@@ -268,6 +268,7 @@ class ProductAttachmentStagerTest {
         origin = ChatMessageOrigin.Extension("ProductBot_weather"),
         content = ChatMessage.Content.Text(id),
         status = ChatMessage.Status.IS_READ,
+        sortOrder = null,
     )
 
     private fun productMessage(id: String, text: String = "x") = ProductRoomMessage(

@@ -138,6 +138,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onAttachClick = contract::onAttachClick,
         onAcceptChatRequest = contract::onAcceptChatRequest,
         onDeclineChatRequest = contract::onDeclineChatRequest,
+        onCancelChatRequest = contract::onCancelChatRequestClick,
         onUnblockUserClick = contract::onUnblockUserClick,
         onAllowIdentitySigningClick = contract::onAllowIdentitySigningClick,
         onDeclineIdentitySigningClick = contract::onDeclineIdentitySigningClick,
@@ -155,7 +156,9 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onLeaveChatRequest = contract::onLeaveChatRequest,
         onLeaveChatConfirm = contract::onLeaveChatConfirm,
         onBlockUserRequest = contract::onBlockUserRequest,
-        onBlockUserConfirm = contract::onBlockUserConfirm
+        onBlockUserConfirm = contract::onBlockUserConfirm,
+        onDeclineChatRequestConfirm = contract::onDeclineChatRequestConfirm,
+        onCancelChatRequestConfirm = contract::onCancelChatRequestConfirm
     )
 
     when (popupState) {
@@ -209,6 +212,7 @@ private fun ChatFeedScreenInternal(
     onPrivacyWarningClick: () -> Unit,
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
+    onCancelChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
     onAllowIdentitySigningClick: () -> Unit,
     onDeclineIdentitySigningClick: () -> Unit,
@@ -307,6 +311,7 @@ private fun ChatFeedScreenInternal(
                         onAttachClick = onAttachClick,
                         onAcceptChatRequest = onAcceptChatRequest,
                         onDeclineChatRequest = onDeclineChatRequest,
+                        onCancelChatRequest = onCancelChatRequest,
                         onUnblockUserClick = onUnblockUserClick,
                         onAllowIdentitySigningClick = onAllowIdentitySigningClick,
                         onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
@@ -362,7 +367,7 @@ private fun ChatFeedPreview() {
                                     direction = ChatMessageUiModel.Direction.OUTGOING,
                                     text = "Hi there!",
                                     timestamp = 1625247600000,
-                                    status = ChatMessageUiModel.Status.READ,
+                                    status = ChatMessageUiModel.Status.SEEN,
                                     reactions = persistentListOf(),
                                     origin = ChatMessageOrigin.User,
                                     replyPreview = null,
@@ -402,6 +407,7 @@ private fun ChatFeedPreview() {
                     onPrivacyWarningClick = {},
                     onAcceptChatRequest = {},
                     onDeclineChatRequest = {},
+                    onCancelChatRequest = {},
                     onUnblockUserClick = {},
                     onAllowIdentitySigningClick = {},
                     onDeclineIdentitySigningClick = {},
