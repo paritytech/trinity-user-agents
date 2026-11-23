@@ -1496,8 +1496,7 @@ fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
 fn retired_worker_operation_calls_cannot_create_or_release_references() {
 	use crate::frame::{
 		MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START, PROTOCOL_ERROR_METHOD_ID,
-		PROTOCOL_ERROR_TRAIT_ID,
-		ProtocolErrorV1, VersionedProtocolError,
+		PROTOCOL_ERROR_TRAIT_ID, ProtocolErrorV1, VersionedProtocolError,
 	};
 
 	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
