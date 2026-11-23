@@ -57,7 +57,7 @@ private fun ChatAcceptedMessagePreview() {
                 id = "1",
                 timestamp = System.currentTimeMillis(),
                 direction = ChatMessageUiModel.Direction.INCOMING,
-                status = ChatMessageUiModel.Status.READ,
+                status = ChatMessageUiModel.Status.SEEN,
                 origin = ChatMessageOrigin.User,
                 peerUsername = "Julius.87"
             )

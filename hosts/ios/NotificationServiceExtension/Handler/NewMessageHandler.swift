@@ -67,7 +67,7 @@ extension NewMessageHandler: PushNotificationHandling {
                 )
                 completion(contentResult.withBadgeCount(badgeCount))
             } catch {
-                let contentResult = NotificationContentResult.createUnsupportedResult(badgeCount: badgeCount)
+                let contentResult = NotificationContentResult.createNewMessageResult(badgeCount: badgeCount)
                 completion(contentResult)
             }
         }
@@ -256,7 +256,7 @@ private extension NewMessageHandler {
             formatterFactory: formatterFactory
         )
         let amountString = formatter.amount(from: totalValue)
-        return String(localized: .contactSentYouAsset(username: contact.username)) + " \(amountString)"
+        return String(localized: .contactSentYouCoinage(username: contact.username, amount: amountString))
     }
 
     typealias DataChannelOfferContent =

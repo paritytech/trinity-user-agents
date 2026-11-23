@@ -416,8 +416,8 @@ export interface MockHostConfig {
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `servedChains`, as a real host
-   * does, so a chain outside that set is unsupported. Default `false`. It
-   * becomes the default in a later breaking release. The Rust
+   * does, so a chain outside that set is unsupported. Default `true`. `false`
+   * reports every chain as supported. The Rust
    * `MockConfig::only_served_chains` is the same option.
    */
   onlyServedChains?: boolean;
@@ -898,7 +898,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
-    onlyServedChains = false,
+    onlyServedChains = true,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -1379,17 +1379,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     chat: {
-      async createChatRoom(_product, request) {
+      async createChatRoom(_product, roomId) {
         if (faults.chatError) throw new Error(faults.chatError);
-        if (chatRooms.has(request.roomId)) return { status: "Exists" };
-        chatRooms.set(request.roomId, {
-          roomId: request.roomId,
+        if (chatRooms.has(roomId)) return "Exists";
+        chatRooms.set(roomId, {
+          roomId,
           // A product that creates a room hosts it; a product reaching a room
           // as a bot registers the bot instead.
           participatingAs: "RoomHost",
         });
         publishChatRooms();
-        return { status: "New" };
+        return "New";
       },
       async registerChatBot(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);

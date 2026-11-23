@@ -7,7 +7,20 @@ use crate::store::DbError;
 /// A purse's id. Ids are allocated in order from 0 and never reused, because
 /// each one becomes part of its items' key derivation and recovery walks them
 /// in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
+#[derive(
+	Clone,
+	Copy,
+	Debug,
+	PartialEq,
+	Eq,
+	Hash,
+	PartialOrd,
+	Ord,
+	Encode,
+	Decode,
+	derive_more::Display,
+	derive_more::From,
+)]
 pub struct PurseId(pub u32);
 
 /// No purse has this id.
