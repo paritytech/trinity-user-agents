@@ -4,14 +4,14 @@ import SwiftUI
 
 /// The tokens the providers take on the chosen network.
 struct FundingTokenView: View {
-    let model: FundingScreenModel<Void>
+    let viewModel: FundingTokenViewModel
     let presenter: FundingTokenPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
             FundingScreenHeader(title: String(localized: .Funding.tokenTitle), onBack: presenter.back)
 
-            if let network = model.network.map(FundingNetwork.init(id:)) {
+            if let network = viewModel.network {
                 HStack {
                     Text(.Funding.tokenNetworkSelected)
                         .typography(.captionMedium)
@@ -20,7 +20,7 @@ struct FundingTokenView: View {
                     Text(verbatim: network.name)
                         .typography(.captionMedium)
                         .foregroundStyle(.fgPrimary)
-                    FundingAssetMark(icon: model.state.icon(network: network.id), letter: network.monogram, size: .s20)
+                    FundingAssetMark(icon: network.icon, letter: network.monogram, size: .s20)
                 }
                 .padding(.horizontal, DSSpacings.smallIncreased)
                 .frame(height: 32)
@@ -29,16 +29,17 @@ struct FundingTokenView: View {
 
             ScrollView {
                 VStack(spacing: DSSpacings.small) {
-                    ForEach(model.tokens) { token in
-                        DisclosureListRow(title: token.symbol) {
-                            FundingAssetMark(icon: model.state.icon(token: token.symbol), letter: token.monogram)
+                    ForEach(viewModel.tokens) { token in
+                        DisclosureListRow(title: token.name) {
+                            FundingAssetMark(icon: token.icon, letter: token.monogram)
                         } onTap: {
-                            presenter.chooseToken(token.symbol)
+                            presenter.chooseToken(token.id)
                         }
                         .fundingTile(isEnabled: true)
                     }
                 }
             }
         }
+        .fundingScreen()
     }
 }

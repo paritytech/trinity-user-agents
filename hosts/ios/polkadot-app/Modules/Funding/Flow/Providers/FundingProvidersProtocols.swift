@@ -1,7 +1,11 @@
 import Foundation
+import UIKitExt
 import TrUAPIHost
 
-typealias FundingProvidersViewProtocol = FundingScreenViewProtocol
+@MainActor
+protocol FundingProvidersViewProtocol: ControllerBackedProtocol {
+    func didReceive(viewModel: FundingProvidersViewModel)
+}
 
 @MainActor
 protocol FundingProvidersPresenterProtocol: AnyObject {

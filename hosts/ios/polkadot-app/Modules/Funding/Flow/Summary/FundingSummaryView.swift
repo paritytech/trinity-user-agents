@@ -6,12 +6,12 @@ import TrUAPIHost
 /// What the chosen provider will charge and pay, before the session is handed
 /// to it.
 struct FundingSummaryView: View {
-    let model: FundingScreenModel<FundingSummaryViewModel>
+    let viewModel: FundingSummaryViewModel
     let presenter: FundingSummaryPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: title, onBack: presenter.back)
+            FundingScreenHeader(title: viewModel.title, onBack: presenter.back)
 
             VStack(spacing: DSSpacings.small) {
                 headline
@@ -20,7 +20,7 @@ struct FundingSummaryView: View {
             .padding(.top, DSSpacings.medium)
 
             VStack(spacing: DSSpacings.extraSmall) {
-                if model.rail != .crypto {
+                if viewModel.showsCountry {
                     countryRow
                 }
                 providerRow
@@ -28,7 +28,7 @@ struct FundingSummaryView: View {
                 arrivesRow
             }
 
-            if let problem = model.viewModel.problem {
+            if let problem = viewModel.problem {
                 Text(problem)
                     .typography(.bodySmall)
                     .foregroundStyle(.fgError)
@@ -37,34 +37,24 @@ struct FundingSummaryView: View {
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.continueAction, expands: true, isLoading: model.isStarting, action: presenter.start)
-                .disabled(model.selectedQuote == nil)
+            DSButton(.Funding.continueAction, expands: true, isLoading: viewModel.isStarting, action: presenter.start)
+                .disabled(!viewModel.hasQuote)
         }
+        .fundingScreen()
     }
 }
 
 private extension FundingSummaryView {
-    var title: String {
-        switch (model.direction, model.rail) {
-        case (.in, .card): String(localized: .Funding.summaryCardTitle)
-        case (.in, .bank): String(localized: .Funding.summaryBankTitle)
-        case (.in, .crypto): String(localized: .Funding.summaryCryptoTitle)
-        case (.out, .card): String(localized: .Funding.summaryWithdrawCardTitle)
-        case (.out, .bank): String(localized: .Funding.summaryWithdrawBankTitle)
-        case (.out, .crypto): String(localized: .Funding.summaryWithdrawCryptoTitle)
-        }
-    }
-
     /// What the user pays for value in, what they receive for value out.
     @ViewBuilder
     var headline: some View {
-        if let figure = model.viewModel.headline {
+        if let figure = viewModel.headline {
             Text(verbatim: figure)
                 .typography(.displayLarge)
                 .foregroundStyle(.fgPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
-        } else if model.isQuoting {
+        } else if viewModel.isQuoting {
             FundingSkeleton(width: 160, height: 48)
         } else {
             Text(verbatim: "–")
@@ -78,7 +68,7 @@ private extension FundingSummaryView {
             presenter.showFees()
         } label: {
             HStack(spacing: DSSpacings.extraSmall) {
-                Text(feesCaption)
+                Text(viewModel.feesCaption)
                     .typography(.bodySmall)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
@@ -86,15 +76,7 @@ private extension FundingSummaryView {
             .foregroundStyle(.fgSecondary)
         }
         .buttonStyle(.plain)
-        .disabled(model.selectedQuote == nil)
-    }
-
-    var feesCaption: String {
-        switch (model.direction, model.rail) {
-        case (.in, .card): String(localized: .Funding.summaryCardCaption)
-        case (.in, _): String(localized: .Funding.summaryBankCaption)
-        case (.out, _): String(localized: .Funding.summaryWithdrawCaption)
-        }
+        .disabled(!viewModel.hasQuote)
     }
 
     var countryRow: some View {
@@ -102,7 +84,7 @@ private extension FundingSummaryView {
             title: String(localized: .Funding.summaryCountry),
             action: presenter.showCountry,
             value: {
-                if let country = model.country {
+                if let country = viewModel.country {
                     HStack(spacing: DSSpacings.extraSmall) {
                         Text(verbatim: country.flag)
                         Text(verbatim: country.name)
@@ -123,8 +105,7 @@ private extension FundingSummaryView {
             title: String(localized: .Funding.summaryProvider),
             action: presenter.showProviders,
             value: {
-                if let providerId = model.selectedProviderId {
-                    let brand = model.state.brand(for: providerId)
+                if let brand = viewModel.provider {
                     HStack(spacing: DSSpacings.extraSmall) {
                         FundingProviderLogo(brand: brand, size: .s20)
                         Text(verbatim: brand.name)
@@ -139,15 +120,8 @@ private extension FundingSummaryView {
     }
 
     var payoutRow: some View {
-        let title =
-            if model.direction == .in {
-                String(localized: .Funding.summaryMinPayout)
-            } else {
-                String(localized: .Funding.summaryYouReceive)
-            }
-
-        return FundingValueRow(title: title) {
-            if let payout = model.viewModel.payout {
+        FundingValueRow(title: viewModel.payoutTitle) {
+            if let payout = viewModel.payout {
                 Text(verbatim: payout)
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
@@ -160,19 +134,19 @@ private extension FundingSummaryView {
     var arrivesRow: some View {
         VStack(alignment: .trailing, spacing: 2) {
             FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
-                if let eta = model.selectedQuote?.etaSecs {
-                    Text(verbatim: FundingEta.text(seconds: eta))
+                if let eta = viewModel.eta {
+                    Text(verbatim: eta)
                         .typography(.bodyLargeEmphasized)
                         .foregroundStyle(.fgPrimary)
-                } else if model.isQuoting {
+                } else if viewModel.isQuoting {
                     FundingSkeleton()
                 } else {
                     Text(verbatim: "–")
                         .foregroundStyle(.fgSecondary)
                 }
             }
-            if model.rail == .bank, model.direction == .in {
-                Text(verbatim: model.viewModel.bankRateNote)
+            if let bankRateNote = viewModel.bankRateNote {
+                Text(verbatim: bankRateNote)
                     .typography(.captionSmall)
                     .foregroundStyle(.fgSecondary)
             }

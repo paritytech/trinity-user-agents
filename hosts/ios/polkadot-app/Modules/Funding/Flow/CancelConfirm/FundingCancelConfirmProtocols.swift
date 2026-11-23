@@ -1,7 +1,11 @@
 import Foundation
+import UIKitExt
 import TrUAPIHost
 
-typealias FundingCancelConfirmViewProtocol = FundingScreenViewProtocol
+@MainActor
+protocol FundingCancelConfirmViewProtocol: ControllerBackedProtocol {
+    func didReceive(viewModel: FundingCancelConfirmViewModel)
+}
 
 @MainActor
 protocol FundingCancelConfirmPresenterProtocol: AnyObject {

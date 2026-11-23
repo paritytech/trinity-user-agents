@@ -7,22 +7,23 @@ import TrUAPIHost
 /// Where to send the funds, as the provider reported it, while the session
 /// waits for them.
 struct FundingDepositView: View {
-    let model: FundingScreenModel<FundingDepositViewModel>
+    let viewModel: FundingDepositViewModel
     let presenter: FundingDepositPresenterProtocol
 
     @State private var copied: String?
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: title, onBack: presenter.back)
+            FundingScreenHeader(title: viewModel.title, onBack: presenter.back)
 
             ScrollView {
                 content
             }
 
-            if model.failure != nil {
+            switch viewModel.action {
+            case .close:
                 DSButton(.Funding.failureClose, expands: true, action: presenter.close)
-            } else if model.hasStarted {
+            case .cancel:
                 HStack(spacing: DSSpacings.small) {
                     DSButton(
                         .Funding.depositCancel,
@@ -32,65 +33,41 @@ struct FundingDepositView: View {
                     )
                     waitingPill
                 }
+            case .none:
+                EmptyView()
             }
         }
         .fundingToast($copied)
-        .onChange(of: paymentSeen, initial: true) { _, seen in
+        .onChange(of: viewModel.paymentSeen, initial: true) { _, seen in
             if seen { presenter.showProgress() }
         }
+        .fundingScreen()
     }
 }
 
 private extension FundingDepositView {
-    var title: String {
-        switch model.rail {
-        case .card: String(localized: .Funding.summaryCardTitle)
-        case .bank: String(localized: .Funding.summaryBankTitle)
-        case .crypto: String(localized: .Funding.summaryCryptoTitle)
-        }
-    }
-
     @ViewBuilder
     var content: some View {
-        if let failure = model.failure {
-            errorText(failure.failedText)
-        } else if let deposit = model.progress?.deposit {
-            switch deposit {
-            case let .crypto(address, network, _, _, _, exact, uri, _):
-                cryptoDeposit(
-                    address: address,
-                    network: network,
-                    amount: model.viewModel.amount,
-                    exact: exact,
-                    uri: uri
-                )
-            case let .bank(_, _, _, beneficiary, account, bankCode, reference, _):
-                VStack(spacing: DSSpacings.small) {
-                    model.viewModel.amount.map { copyRow(String(localized: .Funding.depositExactAmount), $0) }
-                    beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
-                    account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
-                    bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }
-                    copyRow(String(localized: .Funding.depositReference), reference)
+        switch viewModel.content {
+        case let .error(text):
+            errorText(text)
+        case let .crypto(deposit):
+            cryptoDeposit(deposit)
+        case let .bank(lines):
+            VStack(spacing: DSSpacings.small) {
+                ForEach(lines, id: \.title) { line in
+                    copyRow(line.title, line.text)
                 }
             }
-        } else if let startError = model.startError {
-            errorText(startError)
-        } else if model.noProviderQuoted, !model.hasStarted {
-            errorText(model.quoteFailureText ?? String(localized: .Funding.errorNoProvider))
-        } else {
+        case let .pending(text):
             VStack(spacing: DSSpacings.medium) {
                 ProgressView().tint(.fgPrimary)
-                Text(pendingText)
+                Text(text)
                     .typography(.bodyMedium)
                     .foregroundStyle(.fgSecondary)
             }
             .padding(.top, DSSpacings.extraLarge)
         }
-    }
-
-    var pendingText: LocalizedStringResource {
-        guard model.hasStarted else { return .Funding.depositFindingProvider }
-        return model.rail == .card ? .Funding.depositCardInProgress : .Funding.depositPreparing
     }
 
     func errorText(_ text: String) -> some View {
@@ -101,22 +78,18 @@ private extension FundingDepositView {
             .padding(.top, DSSpacings.large)
     }
 
-    func cryptoDeposit(address: String, network: String, amount: String?, exact: Bool, uri: String?) -> some View {
+    func cryptoDeposit(_ deposit: FundingDepositViewModel.Crypto) -> some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingQRCode(payload: uri ?? address)
+            FundingQRCode(payload: deposit.payload)
                 .frame(width: 220, height: 220)
                 .padding(DSSpacings.medium)
                 .background(.white, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
             VStack(spacing: DSSpacings.small) {
-                if let amount {
-                    copyRow(String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast), amount)
+                if let amount = deposit.amount {
+                    copyRow(deposit.amountTitle, amount)
                 }
-                copyRow(
-                    String(localized: .Funding.depositAddressOn(network: FundingNetwork(id: network).name)),
-                    address,
-                    shown: Self.shortened(address)
-                )
+                copyRow(deposit.addressTitle, deposit.address, shown: Self.shortened(deposit.address))
             }
         }
     }
@@ -137,15 +110,6 @@ private extension FundingDepositView {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.ds(style: .tertiary, shape: .pill, size: .large))
-    }
-
-    /// Once the funds are seen or the session ends, the progress screen takes
-    /// over. The core's change events keep the session current.
-    var paymentSeen: Bool {
-        guard model.hasStarted else { return false }
-
-        let ended = model.session.map { !$0.stage.isOpen } ?? false
-        return ended || model.state.hasReached(.received)
     }
 
     static func shortened(_ address: String) -> String {

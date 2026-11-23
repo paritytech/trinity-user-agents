@@ -5,23 +5,23 @@ import TrUAPIHost
 
 /// The overlay's first screen: which rail, and how much.
 struct FundingAmountView: View {
-    let model: FundingScreenModel<FundingAmountViewModel>
+    let viewModel: FundingAmountViewModel
     let presenter: FundingAmountPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: title, leadingTitle: true, onBack: nil) {
-                if model.historyClock != .hidden {
+            FundingScreenHeader(title: viewModel.title, leadingTitle: true, onBack: nil) {
+                if viewModel.history != .hidden {
                     historyButton
                 }
             }
 
-            FundingRailTabs(selected: model.rail, available: model.availableRails) { rail in
+            FundingRailTabs(selected: viewModel.rail, available: viewModel.availableRails) { rail in
                 presenter.selectRail(rail)
             }
 
             VStack(spacing: DSSpacings.extraSmall) {
-                if let available = model.viewModel.available {
+                if let available = viewModel.available {
                     Text(.Funding.amountAvailable(amount: available))
                         .typography(.captionMedium)
                         .foregroundStyle(.fgSecondary)
@@ -31,19 +31,20 @@ struct FundingAmountView: View {
             }
             .frame(maxWidth: .infinity)
 
-            if !model.viewModel.presets.isEmpty {
+            if !viewModel.presets.isEmpty {
                 presets
             }
 
             Spacer(minLength: 0)
 
-            FundingKeypad(text: Binding(get: { model.amountText }, set: presenter.amountTextChanged))
+            FundingKeypad(text: Binding(get: { viewModel.amountText }, set: presenter.amountTextChanged))
 
             DSButton(.Funding.continueAction, expands: true) {
                 presenter.continueFromAmount()
             }
-            .disabled(!model.canContinue)
+            .disabled(!viewModel.canContinue)
         }
+        .fundingScreen()
     }
 }
 
@@ -57,7 +58,7 @@ private extension FundingAmountView {
         }
         .buttonStyle(.dsIcon(style: .secondary, shape: .pill, size: .medium))
         .overlay(alignment: .bottomTrailing) {
-            if model.historyClock == .running {
+            if viewModel.history == .running {
                 Circle()
                     .fill(Color.fgError)
                     .frame(width: 8, height: 8)
@@ -69,33 +70,26 @@ private extension FundingAmountView {
         .accessibilityLabel(Text(.Funding.historyOpen))
     }
 
-    var title: String {
-        if model.direction == .in {
-            return String(localized: .Funding.amountAddTitle)
-        }
-        return String(localized: .Funding.amountWithdrawTitle)
-    }
-
     var amountFigure: some View {
         DSAmount(
-            amount: model.viewModel.figure,
-            symbol: model.viewModel.symbol,
-            typography: .fundingFigure(digits: model.amountText.filter(\.isNumber).count)
+            amount: viewModel.figure,
+            symbol: viewModel.symbol,
+            typography: .fundingFigure(digits: viewModel.amountText.filter(\.isNumber).count)
         )
-        .foregroundStyle((model.amount ?? 0) > 0 ? Color.fgPrimary : Color.fgTertiary)
+        .foregroundStyle(viewModel.hasAmount ? Color.fgPrimary : Color.fgTertiary)
         .lineLimit(1)
         .minimumScaleFactor(0.5)
-        .animation(.snappy, value: model.amountText)
+        .animation(.snappy, value: viewModel.amountText)
     }
 
     @ViewBuilder
     var captionLine: some View {
-        if let issue = model.viewModel.issue {
+        if let issue = viewModel.issue {
             Text(issue)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgError)
         } else {
-            Text(model.viewModel.minimum)
+            Text(viewModel.minimum)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSecondary)
         }
@@ -103,11 +97,11 @@ private extension FundingAmountView {
 
     var presets: some View {
         HStack(spacing: DSSpacings.small) {
-            ForEach(model.viewModel.presets, id: \.self) { preset in
+            ForEach(viewModel.presets, id: \.self) { preset in
                 Button {
                     presenter.amountTextChanged(preset.text)
                 } label: {
-                    DSAmount(amount: preset.figure, symbol: model.viewModel.symbol, typography: .labelMedium)
+                    DSAmount(amount: preset.figure, symbol: viewModel.symbol, typography: .labelMedium)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.ds(style: .tertiary, shape: .pill, size: .small))

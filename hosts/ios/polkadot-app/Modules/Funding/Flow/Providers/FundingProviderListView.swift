@@ -6,7 +6,7 @@ import TrUAPIHost
 /// Every provider's live quote for the ask, the one the core marks best
 /// tagged, with how long until the core asks every provider again.
 struct FundingProviderListView: View {
-    let model: FundingScreenModel<FundingProvidersViewModel>
+    let viewModel: FundingProvidersViewModel
     let presenter: FundingProvidersPresenterProtocol
 
     var body: some View {
@@ -18,26 +18,27 @@ struct FundingProviderListView: View {
             }
 
             VStack(spacing: DSSpacings.extraSmall) {
-                ForEach(model.listedProviderIds, id: \.self) { providerId in
-                    row(providerId)
+                ForEach(viewModel.rows, id: \.providerId) { row in
+                    self.row(row)
                 }
             }
 
             Spacer(minLength: 0)
         }
+        .fundingScreen()
     }
 }
 
 private extension FundingProviderListView {
     @ViewBuilder
     func countdown(now: Date) -> some View {
-        if model.rows.values.contains(where: \.isPending) {
+        if viewModel.isRefreshing {
             HStack {
                 FundingSkeleton(width: 120)
                 Spacer()
                 FundingSkeleton(width: 32)
             }
-        } else if let refreshAt = model.quotesRefreshAt {
+        } else if let refreshAt = viewModel.refreshAt {
             let remaining = max(0, Int(refreshAt.timeIntervalSince(now).rounded(.up)))
             HStack {
                 Text(.Funding.providersRateUpdatedIn)
@@ -60,64 +61,65 @@ private extension FundingProviderListView {
         }
     }
 
-    func row(_ providerId: ProductId) -> some View {
-        let state = model.rows[providerId] ?? .pending
-        let brand = model.state.brand(for: providerId)
-        let isSelected = providerId == model.selectedProviderId
+    func row(_ row: FundingProvidersViewModel.Row) -> some View {
+        let isQuoted = if case .quoted = row.price { true } else { false }
+        let isPending = row.price == .pending
 
         return Button {
-            presenter.chooseProvider(providerId)
+            presenter.chooseProvider(row.providerId)
         } label: {
             HStack(spacing: DSSpacings.smallIncreased) {
-                FundingProviderLogo(brand: brand)
+                FundingProviderLogo(brand: row.brand)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: brand.name)
+                    Text(verbatim: row.brand.name)
                         .typography(.bodyMediumEmphasized)
                         .foregroundStyle(.fgPrimary)
-                    badge(providerId: providerId, state: state)
+                    badge(row.badge)
                 }
                 Spacer()
-                price(providerId: providerId, state: state)
+                price(row.price)
             }
             .padding(DSSpacings.small)
-            .background(isSelected ? Color.bgSurfaceNested : Color.clear, in: RoundedRectangle(cornerRadius: 16))
+            .background(row.isSelected ? Color.bgSurfaceNested : Color.clear, in: RoundedRectangle(cornerRadius: 16))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(state.quote == nil)
-        .opacity(state.quote == nil && !state.isPending ? 0.5 : 1)
+        .disabled(!isQuoted)
+        .opacity(!isQuoted && !isPending ? 0.5 : 1)
     }
 
     @ViewBuilder
-    func badge(providerId: ProductId, state: FundingQuoteState) -> some View {
-        if case .unavailable = state, let unavailable = model.viewModel.unavailable[providerId] {
-            Text(unavailable)
+    func badge(_ badge: FundingProvidersViewModel.Row.Badge?) -> some View {
+        switch badge {
+        case let .unavailable(text):
+            Text(text)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSecondary)
-        } else if providerId == model.bestProviderId, model.quotedProviders.count > 1 {
+        case .lowestPrice:
             Text(.Funding.providersLowestPrice)
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSuccess)
+        case nil:
+            EmptyView()
         }
     }
 
     @ViewBuilder
-    func price(providerId: ProductId, state: FundingQuoteState) -> some View {
-        switch state {
+    func price(_ price: FundingProvidersViewModel.Row.Price) -> some View {
+        switch price {
         case .pending:
             VStack(alignment: .trailing, spacing: 4) {
                 FundingSkeleton(width: 64)
                 FundingSkeleton(width: 48, height: 10)
             }
-        case .quoted:
-            let price = model.viewModel.prices[providerId]
+        case let .quoted(providerAmount, cashAmount):
             VStack(alignment: .trailing, spacing: 2) {
-                if let providerAmount = price?.provider {
+                if let providerAmount {
                     Text(verbatim: providerAmount)
                         .typography(.bodyMediumEmphasized)
                         .foregroundStyle(.fgPrimary)
                 }
-                if let cashAmount = price?.cash {
+                if let cashAmount {
                     Text(verbatim: cashAmount)
                         .typography(.captionSmall)
                         .foregroundStyle(.fgSecondary)

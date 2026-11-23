@@ -2,9 +2,11 @@ import Foundation
 
 /// Where to send the funds, as the provider reported it, over the session's
 /// progress.
-final class FundingDepositPresenter: FundingScreenPresenter<FundingDepositViewModel> {
+final class FundingDepositPresenter: FundingScreenPresenter {
+    weak var view: FundingDepositViewProtocol?
     private let interactor: FundingDepositInteractorInputProtocol
     private let wireframe: FundingDepositWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
         context: FundingFlowContext,
@@ -14,7 +16,12 @@ final class FundingDepositPresenter: FundingScreenPresenter<FundingDepositViewMo
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeDepositViewModel(for: $0) }
+        self.viewModelFactory = viewModelFactory
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeDepositViewModel(for: state))
     }
 }
 

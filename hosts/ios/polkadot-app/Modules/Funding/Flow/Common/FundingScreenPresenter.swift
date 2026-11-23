@@ -2,12 +2,11 @@ import Foundation
 import TrUAPIHost
 
 /// What every funding screen's presenter does: follows the session through
-/// its interactor, keeps the flow's draft and the core's selection in step,
-/// and draws both with the screen's text. Each screen's presenter adds its
-/// own actions.
+/// its interactor and keeps the flow's draft and the core's selection in
+/// step. Each screen's presenter overrides `render()` to push its own view
+/// model, and adds its own actions.
 @MainActor
-class FundingScreenPresenter<ViewModel>: FundingEntryInteractorOutputProtocol {
-    weak var view: (any FundingScreenViewProtocol<ViewModel>)?
+class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
     let context: FundingFlowContext
     let entryInteractor: FundingEntryInteractor
     private(set) var entry: FundingEntry
@@ -16,17 +15,9 @@ class FundingScreenPresenter<ViewModel>: FundingEntryInteractorOutputProtocol {
         didSet { render() }
     }
 
-    private let makeViewModel: (FundingFlowState) -> ViewModel
-
-    /// `viewModel` makes the screen's text for the state it draws.
-    init(
-        context: FundingFlowContext,
-        interactor: FundingEntryInteractor,
-        viewModel: @escaping (FundingFlowState) -> ViewModel
-    ) {
+    init(context: FundingFlowContext, interactor: FundingEntryInteractor) {
         self.context = context
         entryInteractor = interactor
-        makeViewModel = viewModel
         entry = context.latestEntry
     }
 
@@ -47,14 +38,8 @@ class FundingScreenPresenter<ViewModel>: FundingEntryInteractorOutputProtocol {
         return state
     }
 
-    var viewModel: ViewModel {
-        makeViewModel(state)
-    }
-
-    func render() {
-        let state = state
-        view?.didReceive(state: state, viewModel: makeViewModel(state))
-    }
+    /// Builds the screen's view model from `state` and pushes it to the view.
+    func render() {}
 
     /// Tells the core of the draft's selection when it changed since the
     /// core was last told, and the session has not started.

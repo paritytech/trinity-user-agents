@@ -3,8 +3,10 @@ import TrUAPIHost
 
 /// Every provider the core asked, in its order, with its quote or why it
 /// would not give one.
-final class FundingProvidersPresenter: FundingScreenPresenter<FundingProvidersViewModel> {
+final class FundingProvidersPresenter: FundingScreenPresenter {
+    weak var view: FundingProvidersViewProtocol?
     private let wireframe: FundingProvidersWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
         context: FundingFlowContext,
@@ -13,7 +15,12 @@ final class FundingProvidersPresenter: FundingScreenPresenter<FundingProvidersVi
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeProvidersViewModel(for: $0) }
+        self.viewModelFactory = viewModelFactory
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeProvidersViewModel(for: state))
     }
 }
 

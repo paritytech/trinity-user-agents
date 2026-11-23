@@ -5,7 +5,7 @@ import SwiftUI
 /// which countries a provider serves, with the smallest amount it takes
 /// there, and which none does: those cannot be picked.
 struct FundingCountryView: View {
-    let model: FundingScreenModel<FundingCountryViewModel>
+    let viewModel: FundingCountryViewModel
     let presenter: FundingCountryPresenterProtocol
 
     @State private var query = ""
@@ -22,7 +22,7 @@ struct FundingCountryView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DSSpacings.extraSmall) {
-                    if query.isEmpty, let detected = model.detectedCountry {
+                    if query.isEmpty, let detected = viewModel.detected {
                         sectionTitle(String(localized: .Funding.countryDetected))
                         row(detected)
                         sectionTitle(String(localized: .Funding.countryOther))
@@ -42,12 +42,13 @@ struct FundingCountryView: View {
             }
             .scrollDismissesKeyboard(.immediately)
         }
+        .fundingScreen()
     }
 }
 
 private extension FundingCountryView {
     var matching: [PaymentCountry] {
-        let listed = countries.filter { query.isEmpty ? $0 != model.detectedCountry : true }
+        let listed = countries.filter { query.isEmpty ? $0 != viewModel.detected : true }
         guard !query.isEmpty else { return listed }
         return listed.filter { country in
             country.name.localizedCaseInsensitiveContains(query)
@@ -58,16 +59,20 @@ private extension FundingCountryView {
 
     var open: [PaymentCountry] {
         matching
-            .filter { !model.unsupportedCountries.contains($0.code) && model.state.minimum(country: $0.code) == nil }
+            .filter { !viewModel.unsupported.contains($0.code) && minimum(of: $0) == nil }
     }
 
     var withMinimum: [PaymentCountry] {
         matching
-            .filter { !model.unsupportedCountries.contains($0.code) && model.state.minimum(country: $0.code) != nil }
+            .filter { !viewModel.unsupported.contains($0.code) && minimum(of: $0) != nil }
     }
 
     var unsupported: [PaymentCountry] {
-        matching.filter { model.unsupportedCountries.contains($0.code) }
+        matching.filter { viewModel.unsupported.contains($0.code) }
+    }
+
+    func minimum(of country: PaymentCountry) -> String? {
+        viewModel.minimums[country.code.uppercased()]
     }
 
     var searchField: some View {
@@ -93,8 +98,8 @@ private extension FundingCountryView {
     }
 
     func row(_ country: PaymentCountry) -> some View {
-        let isRefused = model.unsupportedCountries.contains(country.code)
-        let isSelected = country == model.country
+        let isRefused = viewModel.unsupported.contains(country.code)
+        let isSelected = country == viewModel.selected
 
         return Button {
             presenter.chooseCountry(country)
@@ -124,7 +129,7 @@ private extension FundingCountryView {
             Text(.Funding.countryRefused)
                 .typography(.bodySmall)
                 .foregroundStyle(.fgTertiary)
-        } else if let minimum = model.viewModel.minimums[country.code.uppercased()] {
+        } else if let minimum = minimum(of: country) {
             Text(verbatim: minimum)
                 .typography(.bodySmall)
                 .foregroundStyle(.fgSecondary)

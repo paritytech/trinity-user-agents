@@ -12,13 +12,7 @@ enum FundingFeesViewFactory {
         )
         interactor.entryOutput = presenter
 
-        let model = FundingScreenModel(state: presenter.state, viewModel: presenter.viewModel)
-        let view = FundingScreenController(
-            screen: .fees,
-            model: model,
-            content: FundingFeesView(model: model, presenter: presenter).fundingScreen(),
-            onLoad: presenter.setup
-        )
+        let view = FundingFeesViewController(presenter: presenter)
         presenter.view = view
         return view
     }

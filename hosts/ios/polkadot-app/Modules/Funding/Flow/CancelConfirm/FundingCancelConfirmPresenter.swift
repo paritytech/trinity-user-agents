@@ -3,21 +3,29 @@ import TrUAPIHost
 
 /// Asks before cancelling. The core ends a session no money moved on, and
 /// otherwise asks the provider, who answers with an offer or a refusal.
-final class FundingCancelConfirmPresenter: FundingScreenPresenter<Void> {
+final class FundingCancelConfirmPresenter: FundingScreenPresenter {
+    weak var view: FundingCancelConfirmViewProtocol?
     private let interactor: FundingCancelConfirmInteractorInputProtocol
     private let wireframe: FundingCancelConfirmWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
     private let logger: LoggerProtocol
 
     init(
         context: FundingFlowContext,
         interactor: FundingCancelConfirmInteractor,
         wireframe: FundingCancelConfirmWireframeProtocol,
+        viewModelFactory: FundingViewModelFactoryProtocol,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor) { _ in }
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeCancelConfirmViewModel(for: state))
     }
 }
 

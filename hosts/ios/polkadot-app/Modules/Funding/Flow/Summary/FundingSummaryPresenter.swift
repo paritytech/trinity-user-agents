@@ -3,9 +3,11 @@ import TrUAPIHost
 
 /// What the chosen provider will charge and pay, before the session is
 /// handed to it. A provider is only chosen on its quote.
-final class FundingSummaryPresenter: FundingScreenPresenter<FundingSummaryViewModel> {
+final class FundingSummaryPresenter: FundingScreenPresenter {
+    weak var view: FundingSummaryViewProtocol?
     private let interactor: FundingSummaryInteractorInputProtocol
     private let wireframe: FundingSummaryWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
     private let logger: LoggerProtocol
 
     init(
@@ -17,8 +19,13 @@ final class FundingSummaryPresenter: FundingScreenPresenter<FundingSummaryViewMo
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeSummaryViewModel(for: $0) }
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeSummaryViewModel(for: state))
     }
 }
 

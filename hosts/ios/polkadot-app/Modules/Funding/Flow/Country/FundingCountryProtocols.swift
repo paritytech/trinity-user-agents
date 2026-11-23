@@ -1,7 +1,11 @@
 import Foundation
+import UIKitExt
 import TrUAPIHost
 
-typealias FundingCountryViewProtocol = FundingScreenViewProtocol
+@MainActor
+protocol FundingCountryViewProtocol: ControllerBackedProtocol {
+    func didReceive(viewModel: FundingCountryViewModel)
+}
 
 @MainActor
 protocol FundingCountryPresenterProtocol: AnyObject {

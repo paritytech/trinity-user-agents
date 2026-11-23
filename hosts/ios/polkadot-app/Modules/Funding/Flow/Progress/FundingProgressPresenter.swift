@@ -3,9 +3,11 @@ import TrUAPIHost
 
 /// Where a started session stands, and how it ended once it did. An ended
 /// session on screen has told the user how it went.
-final class FundingProgressPresenter: FundingScreenPresenter<FundingProgressViewModel> {
+final class FundingProgressPresenter: FundingScreenPresenter {
+    weak var view: FundingProgressViewProtocol?
     private let interactor: FundingProgressInteractorInputProtocol
     private let wireframe: FundingProgressWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
     private let logger: LoggerProtocol
     private var hasAcknowledged = false
     private var hasShownDeposit = false
@@ -19,8 +21,13 @@ final class FundingProgressPresenter: FundingScreenPresenter<FundingProgressView
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.viewModelFactory = viewModelFactory
         self.logger = logger
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeProgressViewModel(for: $0) }
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeProgressViewModel(for: state))
     }
 
     override func setup() {
