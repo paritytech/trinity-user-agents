@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignmen
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
@@ -24,11 +25,15 @@ import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
 import uniffi.truapi.Dimensions
+import uniffi.truapi.DropShadow
+import uniffi.truapi.Fill
 import uniffi.truapi.GestureProps
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.Modifier
 import uniffi.truapi.PanAxis
 import uniffi.truapi.PanDrag
+import uniffi.truapi.PanFade
+import uniffi.truapi.PanFeel
 import uniffi.truapi.PanGesture
 import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
@@ -36,7 +41,9 @@ import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.SlideToConfirmProps
 import uniffi.truapi.SlideToConfirmVariant
+import uniffi.truapi.TextFont
 import uniffi.truapi.TextProps
+import uniffi.truapi.Translate
 
 class RendererNodeMappingTest {
     @Test
@@ -258,5 +265,82 @@ class RendererNodeMappingTest {
 
         assertEquals(40, size.width)
         assertEquals(10, size.minHeight)
+    }
+
+    @Test
+    fun `modifiers by value carry the existing slider's values in dp, colours as 0xRRGGBBAA`() {
+        val node = RendererNode.Box(
+            modifiers = listOf(
+                Modifier.Fill(Fill(color = 0x33363AFFu, shape = Shape.Circle)),
+                Modifier.Shadow(DropShadow(color = 0x0000005Cu, x = 0, y = 200, blur = 600u)),
+                Modifier.Translate(Translate(x = 0, y = -180)),
+                Modifier.Font(TextFont(size = 1800u, lineHeight = 2200u, weight = 600u, color = 0xF5F6F9FFu, letterSpacing = 0)),
+                Modifier.FadeWithPan(PanFade(key = "thumb", ratePermille = 1400u)),
+                Modifier.Spin(800u),
+                Modifier.ExitFade(350u),
+            ),
+            props = BoxProps(contentAlignment = null),
+            children = emptyList(),
+        )
+
+        val widget = node.toJsWidget() as JsWidget.Box
+
+        assertEquals(
+            listOf(
+                JsModifier.Fill(0x33363AFFL, JsShape.Circle),
+                JsModifier.Shadow(0x0000005CL, 0f, 2f, 6f),
+                JsModifier.Translate(0f, -1.8f),
+                JsModifier.Font(size = 18f, lineHeight = 22f, weight = 600, rgba = 0xF5F6F9FFL, letterSpacing = 0f),
+                JsModifier.FadeWithPan("thumb", 1.4f),
+                JsModifier.Spin(800),
+                JsModifier.ExitFade(350),
+            ),
+            widget.modifiers,
+        )
+    }
+
+    @Test
+    fun `a gesture's feel and key reach the widget in its own units`() {
+        val node = RendererNode.Gesture(
+            modifiers = emptyList(),
+            props = GestureProps(
+                key = "thumb",
+                tapAction = null,
+                pan = null,
+                accessibilityLabel = null,
+                enabled = null,
+                hapticOnComplete = null,
+                feel = PanFeel(
+                    pressScalePermille = 1059u,
+                    pressMs = 133u,
+                    unpressMs = 150u,
+                    springOmegaCenti = 1800u,
+                    springDampingCenti = 80u,
+                    approachMs = 117u,
+                    approachReference = 4200u,
+                    popPermille = listOf(1059u, 1237u, 1000u),
+                    popOffset = 333u,
+                ),
+            ),
+            children = emptyList(),
+        )
+
+        val widget = node.toJsWidget() as JsWidget.Gesture
+
+        assertEquals("thumb", widget.key)
+        assertEquals(
+            JsPanFeel(
+                pressScale = 1.059f,
+                pressMs = 133,
+                unpressMs = 150,
+                springOmega = 18f,
+                springDamping = 0.8f,
+                approachMs = 117,
+                approachReference = 42f,
+                pop = listOf(1.059f, 1.237f, 1f),
+                popOffset = 3.33f,
+            ),
+            widget.feel,
+        )
     }
 }

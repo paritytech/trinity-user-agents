@@ -112,6 +112,9 @@ sealed interface JsWidget {
         val hapticOnComplete: Boolean = false,
         val modifiers: List<JsModifier> = emptyList(),
         val children: List<JsWidget> = emptyList(),
+        /** The gesture's key, by which nodes that fade with its pan find it. */
+        val key: String? = null,
+        val feel: JsPanFeel? = null,
     ) : JsWidget
 
     /**

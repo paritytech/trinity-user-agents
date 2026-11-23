@@ -44,4 +44,21 @@ class JsModifierOrderTest {
 
         assertEquals(listOf(margin, background, padding, size), ordered)
     }
+
+    @Test
+    fun `a node styled by value draws its shadow under its fill and lights only what it draws`() {
+        val margin = JsModifier.Margin(all = 8)
+        val translate = JsModifier.Translate(0f, -1.8f)
+        val fade = JsModifier.FadeWithPan("thumb", 1.4f)
+        val shadow = JsModifier.Shadow(0x0000005CL, 0f, 2f, 6f)
+        val fill = JsModifier.Fill(0xFDFDFDFFL, JsShape.Circle)
+        val shimmer = SlideStyle.shimmer
+        val padding = JsModifier.Padding(all = 4)
+        val font = SlideStyle.line1Font
+
+        val ordered = listOf(font, padding, shimmer, fill, shadow, fade, translate, margin).orderedForCompose()
+
+        // A fill, unlike a background, adds no clip.
+        assertEquals(listOf(margin, translate, fade, shadow, fill, shimmer, padding, font), ordered)
+    }
 }

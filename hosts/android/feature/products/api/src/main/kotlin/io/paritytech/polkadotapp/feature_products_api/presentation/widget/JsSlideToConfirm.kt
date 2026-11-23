@@ -2,16 +2,12 @@ package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,7 +19,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -31,16 +26,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -61,15 +51,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.design.components.icon.NovaIcon
-import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowRight
-import io.paritytech.polkadotapp.design.components.icon.vectors.Check
-import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
-import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -99,6 +84,63 @@ internal fun JsSlideToConfirm(
     val travelPx = { SlideToConfirmRules.travelPx(widthPx.toFloat(), endInsetPx, sideInsetPx) }
     var dragging by remember { mutableStateOf(false) }
     var heldAtEnd by remember { mutableStateOf(false) }
+    // The existing slider's feel (SlideStyle.feel): the thumb grown while pressed, and its pop after a confirmation.
+    val feel = SlideStyle.feel
+    val pressScale = remember { Animatable(1f) }
+    var pressJob by remember { mutableStateOf<Job?>(null) }
+    var popped by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var popJob by remember { mutableStateOf<Job?>(null) }
+    var heightPx by remember { mutableIntStateOf(0) }
+    val animates = { ValueAnimator.areAnimatorsEnabled() }
+
+    fun press() {
+        pressJob?.cancel()
+        pressJob = scope.launch { pressScale.animateTo(feel.pressScale, tween(feel.pressMs, easing = WidgetStyleRules.EaseOutQuad)) }
+    }
+
+    fun unpress() {
+        if (pressScale.value == 1f && pressScale.targetValue == 1f) return
+        pressJob?.cancel()
+        pressJob = scope.launch { pressScale.animateTo(1f, tween(feel.unpressMs, easing = WidgetStyleRules.EaseOutQuad)) }
+    }
+
+    /** The existing slider's finish: the thumb eases out to the end (117 ms, longer over a longer way) and pops as it arrives. */
+    fun finish() {
+        if (!animates()) {
+            scope.launch { progress.snapTo(1f) }
+            scope.launch { pressScale.snapTo(1f) }
+            return
+        }
+        val approach = WidgetStyleRules.approachMs(feel, (1f - progress.value) * travelPx() / density.density)
+        scope.launch { progress.animateTo(1f, tween(approach, easing = WidgetStyleRules.EaseOutQuad)) }
+        pressJob?.cancel()
+        popJob?.cancel()
+        val from = pressScale.value
+        popJob = scope.launch {
+            try {
+                val start = withFrameNanos { it } + (approach - feel.approachMs) * NANOS_PER_MS
+                while (true) {
+                    val now = withFrameNanos { it }
+                    popped = WidgetStyleRules.pop(feel, (now - start) / NANOS_PER_FRAME, from) ?: break
+                }
+            } finally {
+                popped = null
+                scope.launch { pressScale.snapTo(1f) }
+            }
+        }
+    }
+
+    /** A finger down within 10 dp of the thumb, as the existing slider takes it. */
+    fun hitsThumb(at: Offset): Boolean {
+        val inset = with(density) { SlideToConfirmRules.thumbInsetDp(widget).dp.toPx() }
+        val radius = with(density) { THUMB_SIZE.toPx() } / 2f
+        val fromStart = inset + radius + progress.value * travelPx()
+        val centerX = if (rtl) widthPx - fromStart else fromStart
+        val dx = at.x - centerX
+        val dy = at.y - heightPx / 2f
+        val reach = radius + with(density) { PRESS_REACH.toPx() }
+        return dx * dx + dy * dy <= reach * reach
+    }
 
     // The product settles the control: loading and confirmed pin it at the end, and a tree that
     // is neither puts a control the user slid back at the start.
@@ -110,7 +152,7 @@ internal fun JsSlideToConfirm(
             }
             SlideSettle.RETURN_TO_START -> {
                 heldAtEnd = false
-                progress.animateTo(0f, SpringBack)
+                progress.animateTo(0f, SliderSpringBack)
             }
             SlideSettle.STAY -> Unit
         }
@@ -122,7 +164,7 @@ internal fun JsSlideToConfirm(
             heldAtEnd = true
             haptics.performHapticFeedback(HapticFeedbackType.Confirm)
             currentOnConfirm()
-            scope.launch { progress.animateTo(1f, Settle) }
+            finish()
         }
     }
     val currentConfirm by rememberUpdatedState(confirm)
@@ -147,7 +189,10 @@ internal fun JsSlideToConfirm(
                     disabled()
                 }
             }
-            .onSizeChanged { widthPx = it.width }
+            .onSizeChanged {
+                widthPx = it.width
+                heightPx = it.height
+            }
             // The loop reads every move itself, consumed or not, and consumes what it uses. A drag
             // that starts on the control is then the control's alone: the bubble's swipe to reply
             // and the feed's scroll see consumed moves and stand down.
@@ -156,6 +201,11 @@ internal fun JsSlideToConfirm(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (!interactive || travelPx() <= 0f) return@awaitEachGesture
+                    if (widget.variant == JsSlideToConfirmVariant.THUMB && animates() && popJob?.isActive != true &&
+                        hitsThumb(down.position)
+                    ) {
+                        press()
+                    }
                     var slid = progress.value
                     fun follow(dx: Float) {
                         slid = SlideToConfirmRules.slideBy(slid, dx, travelPx(), rtl)
@@ -197,12 +247,11 @@ internal fun JsSlideToConfirm(
                         }
                     } finally {
                         dragging = false
-                        if (claimed) {
-                            if (SlideToConfirmRules.completes(slid, lifted)) {
-                                currentConfirm()
-                            } else if (!heldAtEnd) {
-                                scope.launch { progress.animateTo(0f, SpringBack) }
-                            }
+                        if (claimed && SlideToConfirmRules.completes(slid, lifted)) {
+                            currentConfirm()
+                        } else {
+                            if (claimed && !heldAtEnd) scope.launch { progress.animateTo(0f, SliderSpringBack) }
+                            unpress()
                         }
                     }
                 }
@@ -213,7 +262,11 @@ internal fun JsSlideToConfirm(
                 widget = widget,
                 progress = { progress.value },
                 travelPx = travelPx,
-                hinting = interactive && !dragging,
+                // The shimmer band runs while the slider waits, is dragged or springs home; not once it is held.
+                hinting = interactive,
+                heldAtEnd = heldAtEnd || widget.loading || widget.confirmed,
+                thumbScale = { popped?.first ?: pressScale.value },
+                thumbPast = { popped?.second ?: 0f },
             )
             JsSlideToConfirmVariant.REVEAL -> SlideToConfirmRevealFace(
                 widget = widget,
@@ -223,139 +276,107 @@ internal fun JsSlideToConfirm(
     }
 }
 
-/** A pill track, a thumb that travels it, and a label the thumb fades as it passes. */
+/**
+ * A pill track, a thumb that travels it, and a label the thumb fades as it passes, drawn as the existing slider is
+ * (SlideStyle): the existing slider's pill clips nothing, so the thumb's shadow and its pop stand over the track's edge.
+ */
 @Composable
 private fun SlideToConfirmThumbFace(
     widget: JsWidget.SlideToConfirm,
     progress: () -> Float,
     travelPx: () -> Float,
     hinting: Boolean,
+    heldAtEnd: Boolean,
+    thumbScale: () -> Float,
+    thumbPast: () -> Float,
     modifier: Modifier = Modifier,
 ) {
-    val colors = PolkadotTheme.colors
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val shimmerSweep = if (hinting && ValueAnimator.areAnimatorsEnabled()) {
-        rememberInfiniteTransition(label = "slideToConfirmShimmer").animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(SHIMMER_SWEEP_MILLIS, easing = LinearEasing)),
-            label = "slideToConfirmShimmerSweep",
-        )
-    } else {
-        null
-    }
-
     // The track stands as tall as the product asked, as the room footer's 80 does, with the thumb centred in it.
     val trackHeight = SlideToConfirmRules.thumbTrackHeightDp(widget).dp
     val thumbInset = SlideToConfirmRules.thumbInsetDp(widget).dp
+    val density = LocalDensity.current.density
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(trackHeight)
-            .clip(CircleShape)
-            .background(colors.bg.surface.nested)
+            .background(WidgetStyleRules.color(SlideStyle.TRACK), CircleShape)
             .padding(thumbInset),
         contentAlignment = Alignment.CenterStart,
     ) {
+        // `#text`: two lines from 84 to 16 short of the pill's ends, centred under a 1 dp padding, 4.6 apart; the existing
+        // slider fades them with the thumb's progress, so a control held at the end shows none.
         Column(
             modifier = Modifier
-                // A confirmed control has its thumb at the end, so the label takes the start.
+                .fillMaxWidth()
                 .padding(
-                    start = if (widget.confirmed) PolkadotTheme.spacings.medium else THUMB_SIZE + PolkadotTheme.spacings.extraMedium,
-                    end = if (widget.confirmed) THUMB_SIZE + PolkadotTheme.spacings.extraMedium else 0.dp,
+                    start = SlideStyle.TEXT_START_DP.dp - thumbInset,
+                    end = SlideStyle.TEXT_END_DP.dp - thumbInset,
+                    top = SlideStyle.TEXT_PADDING_TOP_DP.dp,
                 )
-                .graphicsLayer {
-                    alpha = if (widget.confirmed) 1f else (1f - progress() / LABEL_GONE_AT_FRACTION).coerceIn(0f, 1f)
-                },
+                .graphicsLayer { alpha = SlideStyle.textOpacity(if (heldAtEnd) 1f else progress()) },
+            verticalArrangement = Arrangement.spacedBy(SlideStyle.GAP_DP.dp),
         ) {
             Text(
                 text = if (widget.confirmed) widget.confirmedText ?: widget.text else widget.text,
-                style = PolkadotTheme.typography.body.largeEmphasized,
-                color = colors.fg.primary,
+                style = SlideStyle.line1Font.toTextStyle(),
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.idleShimmer(shimmerSweep, colors.fg.staticWhite.copy(alpha = SHIMMER_ALPHA)),
+                modifier = if (hinting) SlideStyle.shimmer.toShimmerModifier() else Modifier,
             )
-            widget.secondaryText?.let { secondary ->
+            widget.secondaryText?.takeIf { it.isNotEmpty() }?.let { secondary ->
                 Text(
                     text = secondary,
-                    style = PolkadotTheme.typography.body.large,
-                    color = colors.fg.tertiary,
+                    style = SlideStyle.line2Font.toTextStyle(),
                     maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
 
-        val thumbTop = widget.accent?.toComposeColor() ?: colors.fg.primary
-        val thumbBottom = lerp(thumbTop, colors.fg.secondary, THUMB_GRADIENT_DEPTH)
+        // `#thumb`: 56, round, `--thumb` (or the product's accent) with its shadow; the chevron, or the spinner while
+        // the product works.
+        val fill = widget.accent?.toComposeColor() ?: WidgetStyleRules.color(SlideStyle.THUMB)
+        val tint = SlideStyle.glyphTint(fill)
         Box(
             modifier = Modifier
                 .offset {
                     // The owner's travel: the lane inside the track's padding less the thumb, the distance the drag
                     // divides by. A spring back that dips below the start stops at it.
-                    IntOffset((progress() * travelPx()).coerceAtLeast(0f).roundToInt(), 0)
+                    val past = thumbPast() * density * if (rtl) -1f else 1f
+                    IntOffset(((progress() * travelPx()).coerceAtLeast(0f) + past).roundToInt(), 0)
                 }
                 .size(THUMB_SIZE)
-                .clip(CircleShape)
-                .background(Brush.verticalGradient(listOf(thumbTop, thumbBottom))),
+                .graphicsLayer {
+                    scaleX = thumbScale()
+                    scaleY = thumbScale()
+                }
+                .then(SlideStyle.shadow.toShadowModifier(CircleShape))
+                .background(fill, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            when {
-                widget.loading -> NovaCircularProgressIndicator(
-                    modifier = Modifier.size(CHEVRON_SIZE),
-                    color = colors.fg.primaryInverted,
-                    strokeWidth = SPINNER_STROKE,
-                    trackColor = Color.Transparent,
-                )
-                widget.confirmed -> NovaIcon(
-                    imageVector = NovaIcons.Check,
-                    modifier = Modifier.size(CHEVRON_SIZE),
-                    tint = colors.fg.primaryInverted,
-                )
-                else -> NovaIcon(
-                    imageVector = NovaIcons.ArrowRight,
-                    modifier = Modifier
-                        .size(CHEVRON_SIZE)
-                        .graphicsLayer { scaleX = if (rtl) -1f else 1f },
-                    tint = colors.fg.primaryInverted,
-                )
+            if (widget.loading) {
+                SlideSpinner(tint = tint)
+            } else {
+                SlideChevron(tint = tint, mirrored = rtl)
             }
         }
     }
 }
 
-private fun Modifier.idleShimmer(sweep: State<Float>?, highlight: Color): Modifier {
-    if (sweep == null) return this
-    return graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-        .drawWithContent {
-            drawContent()
-            val band = size.width * SHIMMER_BAND_FRACTION
-            val start = -band + (size.width + band) * sweep.value
-            drawRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(Color.Transparent, highlight, Color.Transparent),
-                    startX = start,
-                    endX = start + band,
-                ),
-                blendMode = BlendMode.SrcAtop,
-            )
-        }
-}
-
 private val THUMB_SIZE = SlideToConfirmRules.THUMB_SIZE_DP.dp
-private val CHEVRON_SIZE = 24.dp
-private val SPINNER_STROKE = 2.dp
+private val PRESS_REACH = 10.dp
+private const val NANOS_PER_MS = 1_000_000L
+private const val NANOS_PER_FRAME = 1_000_000_000f / 60f
 
 // What a full slide leaves uncovered at the end: the thumb's width, or the last of a peeled face.
 private val TRAVEL_END_INSET = 56.dp
 private const val DISABLED_ALPHA = 0.4f
 
-private const val LABEL_GONE_AT_FRACTION = 0.6f
-private const val THUMB_GRADIENT_DEPTH = 0.3f
-private const val SHIMMER_SWEEP_MILLIS = 2200
-private const val SHIMMER_BAND_FRACTION = 0.4f
-private const val SHIMMER_ALPHA = 0.7f
-
-private val SpringBack = spring<Float>(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow)
-private val Settle = tween<Float>(durationMillis = 160)
+/** The existing slider's damped spring home (18 rad/s, 0.8): the natural frequency squared is the stiffness. */
+private val SliderSpringBack = spring<Float>(
+    dampingRatio = SlideStyle.feel.springDamping,
+    stiffness = SlideStyle.feel.springOmega * SlideStyle.feel.springOmega,
+)

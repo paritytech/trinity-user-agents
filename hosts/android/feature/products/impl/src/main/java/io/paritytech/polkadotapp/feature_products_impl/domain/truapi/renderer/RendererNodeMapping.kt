@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
@@ -32,6 +33,7 @@ import uniffi.truapi.ImageSource
 import uniffi.truapi.Modifier
 import uniffi.truapi.PanAxis
 import uniffi.truapi.PanDrag
+import uniffi.truapi.PanFeel
 import uniffi.truapi.PanGesture
 import uniffi.truapi.PanRelease
 import uniffi.truapi.PanTravel
@@ -119,8 +121,22 @@ fun RendererNode.toJsWidget(gesturePosition: (String) -> JsGesturePosition? = { 
         hapticOnComplete = props.hapticOnComplete ?: false,
         modifiers = modifiers.toJsModifiers(),
         children = children.toJsChildren(gesturePosition),
+        key = props.key,
+        feel = props.feel?.toJs(),
     )
 }
+
+private fun PanFeel.toJs(): JsPanFeel = JsPanFeel(
+    pressScale = pressScalePermille.toFloat() / PERMILLE,
+    pressMs = pressMs.toInt(),
+    unpressMs = unpressMs.toInt(),
+    springOmega = springOmegaCenti.toFloat() / HUNDREDTHS,
+    springDamping = springDampingCenti.toFloat() / HUNDREDTHS,
+    approachMs = approachMs.toInt(),
+    approachReference = approachReference.toFloat() / HUNDREDTHS,
+    pop = popPermille.map { it.toFloat() / PERMILLE },
+    popOffset = popOffset.toFloat() / HUNDREDTHS,
+)
 
 private fun PanGesture.toJs(): JsPanGesture = JsPanGesture(
     axis = axis.toJs(),
@@ -176,9 +192,37 @@ private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
             is Modifier.FillHeight -> if (modifier.v1) add(JsModifier.FillMaxHeight())
             is Modifier.Opacity -> add(JsModifier.Opacity(modifier.v1.toInt()))
             is Modifier.BlendingMode -> add(JsModifier.BlendingMode(modifier.v1.toJs()))
-            // The Android style layer draws the modifiers given by value; until then they are left out.
-            is Modifier.Fill, is Modifier.Shadow, is Modifier.Translate, is Modifier.Font,
-            is Modifier.FadeWithPan, is Modifier.Shimmer, is Modifier.Spin, is Modifier.ExitFade -> Unit
+            is Modifier.Fill -> add(JsModifier.Fill(modifier.v1.color.toLong(), modifier.v1.shape?.toJs()))
+            is Modifier.Shadow -> with(modifier.v1) {
+                add(JsModifier.Shadow(color.toLong(), x.hundredths(), y.hundredths(), blur.hundredths()))
+            }
+            is Modifier.Translate -> add(JsModifier.Translate(modifier.v1.x.hundredths(), modifier.v1.y.hundredths()))
+            is Modifier.Font -> with(modifier.v1) {
+                add(
+                    JsModifier.Font(
+                        size = size.hundredths(),
+                        lineHeight = lineHeight.hundredths(),
+                        weight = weight.toInt(),
+                        rgba = color.toLong(),
+                        letterSpacing = letterSpacing.hundredths(),
+                    ),
+                )
+            }
+            is Modifier.FadeWithPan -> add(JsModifier.FadeWithPan(modifier.v1.key, modifier.v1.ratePermille.toFloat() / PERMILLE))
+            is Modifier.Shimmer -> with(modifier.v1) {
+                add(
+                    JsModifier.Shimmer(
+                        rgba = color.toLong(),
+                        stops = stops.map { (it.toInt() and BYTE_MASK) / BYTE_MAX },
+                        band = band.hundredths(),
+                        lead = lead.hundredths(),
+                        speed = speed.hundredths(),
+                        restMs = restMs.toInt(),
+                    ),
+                )
+            }
+            is Modifier.Spin -> add(JsModifier.Spin(modifier.v1.toInt()))
+            is Modifier.ExitFade -> add(JsModifier.ExitFade(modifier.v1.toInt()))
         }
     }
 
@@ -194,6 +238,15 @@ private fun List<Modifier>.toJsModifiers(): List<JsModifier> = buildList {
  * could hold is drawn at that bound instead of rejected: the card keeps drawing, visibly wrong.
  */
 private fun Size.toDp(): Int = coerceAtMost(MAX_DRAWABLE_DP).toInt()
+
+// Lengths by value travel in hundredths of a point.
+private fun UInt.hundredths(): Float = toFloat() / HUNDREDTHS
+private fun Int.hundredths(): Float = toFloat() / HUNDREDTHS
+
+private const val HUNDREDTHS = 100f
+private const val PERMILLE = 1000f
+private const val BYTE_MASK = 0xFF
+private const val BYTE_MAX = 255f
 
 // Two orders of magnitude past the longest edge of any device, and far from where dp-to-pixel
 // arithmetic overflows.
