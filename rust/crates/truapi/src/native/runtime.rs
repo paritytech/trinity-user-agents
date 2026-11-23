@@ -1,8 +1,10 @@
+mod worker_execution;
 mod workers;
 
+pub use worker_execution::NativeWorkerExecution;
 pub use workers::{
-	NativeWebViewWorkerHost, NativeWorkerAttempt, NativeWorkerClaim, NativeWorkerExecution,
-	NativeWorkerExecutionObserver, NativeWorkerExecutionState,
+	NativeWebViewWorkerHost, NativeWorkerAttempt, NativeWorkerClaim, NativeWorkerExecutionObserver,
+	NativeWorkerExecutionState,
 };
 
 use std::sync::{

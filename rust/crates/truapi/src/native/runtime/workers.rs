@@ -1,4 +1,4 @@
-//! Session-owned WebView workers and the executions their consumers may use.
+//! Session-owned WebView worker claims, startup attempts and availability.
 
 use std::{
 	collections::HashMap,
@@ -9,17 +9,17 @@ use futures::{StreamExt, channel::mpsc};
 
 use super::{
 	HostCallbacks, HostRejection, NativeChatCallbacks, NativeGameCallbacks, NativeProductExecution,
-	NativeRendererObserver, NativeRuntimeConfigError, NativeSubscription, NativeTrUApiHostRuntime,
+	NativeRuntimeConfigError, NativeSubscription, NativeTrUApiHostRuntime, NativeWorkerExecution,
+	worker_execution,
 };
 use crate::{
-	ProductRuntimeError, WorkerTransition,
+	WorkerTransition,
 	background_task::BackgroundTask,
 	host_logic::worker::WorkerController,
-	native::{NativeMaterialsObserver, NativeMaterialsResolution, subscribers::Subscribers},
+	native::subscribers::Subscribers,
 	platform::{ExecutableKind, ProductContext, ProductId},
 	runtime::WorkerHold,
 };
-use truapi::latest;
 
 /// Operations the native UI thread performs on an individual WebView.
 #[uniffi::export(rust, foreign)]
@@ -60,56 +60,6 @@ pub trait NativeWorkerExecutionObserver: Send + Sync {
 	fn finished(&self);
 }
 
-/// Chat and renderer operations on a shared execution.
-#[derive(uniffi::Object)]
-pub struct NativeWorkerExecution {
-	owner: Arc<NativeProductExecution>,
-}
-
-#[uniffi::export]
-impl NativeWorkerExecution {
-	/// Deliver the host's complete Chat room list to this worker.
-	pub fn notify_chat_rooms_changed(&self, rooms: Vec<latest::ChatRoom>) {
-		self.owner.notify_chat_rooms_changed(rooms);
-	}
-
-	/// Deliver a native action to the worker's Chat subscription.
-	pub fn publish_chat_action(
-		&self,
-		action: latest::HostChatActionSubscribeItem,
-	) -> Result<(), ProductRuntimeError> {
-		self.owner.publish_chat_action(action)
-	}
-
-	/// Open a renderer stream on the worker's current connection.
-	pub fn render(
-		&self,
-		request: latest::ProductRendererRenderRequest,
-		observer: Arc<dyn NativeRendererObserver>,
-	) -> Result<Arc<NativeSubscription>, ProductRuntimeError> {
-		self.owner.render(request, observer)
-	}
-
-	/// Resolve the materials in a tree drawn by this worker.
-	pub fn resolve_materials(
-		&self,
-		tree: latest::RendererNode,
-		context: latest::RenderContext,
-		float_filterable: bool,
-		observer: Box<dyn NativeMaterialsObserver>,
-	) -> Arc<NativeMaterialsResolution> {
-		self.owner.resolve_materials(tree, context, float_filterable, observer)
-	}
-
-	/// Deliver a host action to the worker that drew its body.
-	pub fn publish_renderer_action(
-		&self,
-		item: latest::HostRendererActionSubscribeItem,
-	) -> Result<(), ProductRuntimeError> {
-		self.owner.publish_renderer_action(item)
-	}
-}
-
 /// One consumer's reference on a product worker.
 #[derive(uniffi::Object)]
 pub struct NativeWorkerClaim {
@@ -144,7 +94,8 @@ enum Entry {
 	},
 	Running {
 		id: u64,
-		execution: Arc<NativeWorkerExecution>,
+		owner: Arc<NativeProductExecution>,
+		consumer: Arc<NativeWorkerExecution>,
 	},
 	Failed(String),
 }
@@ -153,8 +104,8 @@ impl Entry {
 	fn state(&self) -> NativeWorkerExecutionState {
 		match self {
 			Self::Starting { .. } => NativeWorkerExecutionState::Pending,
-			Self::Running { execution, .. } => {
-				NativeWorkerExecutionState::Running { execution: execution.clone() }
+			Self::Running { consumer, .. } => {
+				NativeWorkerExecutionState::Running { execution: consumer.clone() }
 			},
 			Self::Failed(reason) => NativeWorkerExecutionState::Failed { reason: reason.clone() },
 		}
@@ -170,8 +121,7 @@ impl Entry {
 	fn stop(self, webviews: &dyn NativeWebViewWorkerHost, product: ProductId) {
 		let Some(id) = self.id() else { return };
 		match self {
-			Self::Starting { owner: Some(execution), .. } => execution.shutdown(),
-			Self::Running { execution, .. } => execution.owner.shutdown(),
+			Self::Starting { owner: Some(owner), .. } | Self::Running { owner, .. } => owner.shutdown(),
 			_ => {},
 		}
 		webviews.stop(product, id);
@@ -372,13 +322,13 @@ impl NativeWorkerAttempt {
 	pub fn disconnected(self: &Arc<Self>) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
 		let mut registry = runtime.workers.registry().expect("managed worker controller");
-		let Some(Entry::Running { id, execution }) = registry.entries.get(&self.product) else {
+		let Some(Entry::Running { id, owner, .. }) = registry.entries.get(&self.product) else {
 			return;
 		};
-		if self.id != *id || execution.owner.has_live_transport() {
+		if self.id != *id || owner.has_live_transport() {
 			return;
 		}
-		let owner = execution.owner.clone();
+		let owner = owner.clone();
 		registry.entries.insert(
 			self.product.clone(),
 			Entry::Starting {
@@ -397,7 +347,7 @@ impl NativeWorkerAttempt {
 			runtime.workers.registry().expect("attempt belongs to a managed runtime");
 		if acknowledged.is_none() &&
 			matches!(registry.entries.get(&self.product),
-			Some(Entry::Running { id, execution }) if *id == self.id && execution.owner.has_live_transport())
+			Some(Entry::Running { id, owner, .. }) if *id == self.id && owner.has_live_transport())
 		{
 			registry.changed(&self.product);
 			return true;
@@ -420,10 +370,12 @@ impl NativeWorkerAttempt {
 			*module_ready = true;
 		}
 		if *module_ready && owner.has_live_transport() {
-			let execution = Arc::new(NativeWorkerExecution { owner: owner.clone() });
-			registry
-				.entries
-				.insert(self.product.clone(), Entry::Running { id: self.id, execution });
+			let running = Entry::Running {
+				id: self.id,
+				owner: owner.clone(),
+				consumer: worker_execution::shared(owner),
+			};
+			registry.entries.insert(self.product.clone(), running);
 			registry.changed(&self.product);
 		}
 		true
@@ -532,7 +484,7 @@ impl NativeTrUApiHostRuntime {
 		product_id: ProductId,
 	) -> Option<Arc<NativeWorkerExecution>> {
 		match self.workers.registry()?.entries.get(&product_id) {
-			Some(Entry::Running { execution, .. }) => Some(execution.clone()),
+			Some(Entry::Running { consumer, .. }) => Some(consumer.clone()),
 			_ => None,
 		}
 	}

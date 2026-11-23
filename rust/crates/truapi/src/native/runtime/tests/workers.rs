@@ -159,13 +159,16 @@ async fn an_observer_joining_a_retry_sees_pending_then_the_new_execution() {
 	views.latest().failed("initial boot error".into());
 	let retry = views.latest();
 	let (send, receive) = mpsc::channel();
-	let _subscription = runtime.observe_worker_execution(product, Arc::new(Observer(send)));
+	let _subscription = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
 	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
 	assert!(matches!(next(), NativeWorkerExecutionState::Pending));
 	let owner = open(&retry);
 	let _socket = connect(&owner).await;
 	assert!(retry.ready(owner));
-	assert!(matches!(next(), NativeWorkerExecutionState::Running { .. }));
+	let NativeWorkerExecutionState::Running { execution } = next() else {
+		panic!("the retry must publish its ready execution");
+	};
+	assert!(Arc::ptr_eq(&execution, &runtime.current_worker_execution(product).unwrap()));
 }
 
 #[tokio::test]
