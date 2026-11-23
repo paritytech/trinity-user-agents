@@ -117,12 +117,6 @@ impl StackChecks {
 	}
 }
 
-impl core::fmt::Debug for StackChecks {
-	fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		formatter.debug_struct("StackChecks").finish_non_exhaustive()
-	}
-}
-
 impl GenesisCheck for Shared {
 	fn chain_answered(&self, hashes: GenesisHashes) {
 		let GenesisHashes { named, answered } = hashes;
@@ -247,7 +241,7 @@ impl StackRefresh {
 	#[must_use = "`false` means it had been started already and `changed` was dropped"]
 	pub fn start_reporting(
 		&self,
-		changed: Box<dyn Fn(StackStatus) + Send>,
+		changed: Box<dyn Fn(&StackStatus) + Send>,
 		spawner: &Spawner,
 	) -> bool {
 		let mut started = false;
@@ -255,7 +249,7 @@ impl StackRefresh {
 			started = true;
 			let chain_answers = self.shared.chain_answers.subscribe();
 			let reported = self.shared.source().status();
-			changed(reported.clone());
+			changed(&reported);
 			let reports = self.shared.clone().report(changed, reported, chain_answers);
 			BackgroundTask::spawn(spawner, reports)
 		});
@@ -286,7 +280,7 @@ impl Shared {
 		let mut chain_answers = self.chain_answers.subscribe();
 		let mut reported = self.source().status();
 		host.stack_changed(reported.clone());
-		let tell = |status| host.stack_changed(status);
+		let tell = |status: &StackStatus| host.stack_changed(status.clone());
 		let mut force = false;
 		loop {
 			// A chain's answer is reported before the fetch it brings forward,
@@ -323,7 +317,7 @@ impl Shared {
 	/// from `reported`, the status it was told last.
 	async fn report(
 		self: Arc<Self>,
-		changed: Box<dyn Fn(StackStatus) + Send>,
+		changed: Box<dyn Fn(&StackStatus) + Send>,
 		mut reported: StackStatus,
 		mut chain_answers: mpsc::Receiver<()>,
 	) {
@@ -333,11 +327,11 @@ impl Shared {
 	}
 
 	/// Tells the host the stack's status when it differs from `reported`.
-	fn report_change(&self, tell: &dyn Fn(StackStatus), reported: &mut StackStatus) {
+	fn report_change(&self, tell: &dyn Fn(&StackStatus), reported: &mut StackStatus) {
 		let status = self.source().status();
 		if status != *reported {
 			*reported = status;
-			tell(reported.clone());
+			tell(reported);
 		}
 	}
 

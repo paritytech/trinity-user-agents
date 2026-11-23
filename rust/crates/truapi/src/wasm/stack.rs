@@ -87,7 +87,7 @@ pub fn start_refresh(
 			refresh.start(Box::new(host), spawner)
 		},
 		(None, Some(changed)) => refresh
-			.start_reporting(Box::new(move |status| report_status(&changed, &status)), spawner),
+			.start_reporting(Box::new(move |status| report_status(&changed, status)), spawner),
 		(None, None) => return Ok(()),
 	};
 	debug_assert!(started, "a refresh that was just loaded has not started");

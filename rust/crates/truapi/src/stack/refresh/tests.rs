@@ -684,8 +684,8 @@ fn a_wrong_answer_before_the_refresh_starts_brings_its_first_fetch_forward() {
 fn a_host_that_does_not_fetch_is_told_when_a_chain_restarted() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (told, statuses) = channel();
-	let tell = move |status| {
-		let _ = told.send(status);
+	let tell = move |status: &StackStatus| {
+		let _ = told.send(status.clone());
 	};
 
 	let started = refresh.start_reporting(Box::new(tell), &Spawner::for_test());
@@ -727,8 +727,8 @@ fn a_stack_reports_or_refreshes_but_not_both() {
 fn dropping_the_refresh_stops_the_reports() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
 	let (told, statuses) = channel();
-	let tell = move |status| {
-		let _ = told.send(status);
+	let tell = move |status: &StackStatus| {
+		let _ = told.send(status.clone());
 	};
 	assert!(refresh.start_reporting(Box::new(tell), &Spawner::for_test()));
 	let _at_start = statuses.try_recv();
