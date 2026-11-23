@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// An ended session as its detail screen draws it: its record, plus the quote
@@ -55,28 +56,29 @@ extension FundingEndedSession {
 
     /// The CASH that moved, or for a session that did not go through, the
     /// CASH it was for.
-    var cashAmount: U128? {
-        record.settledAmount ?? record.requestedAmount ?? quote.map { quote in
+    var cashAmount: Balance? {
+        record.settledAmount ?? record.requestedAmount ?? Balance(units: quote.map { quote in
             direction == .in ? quote.receiveAmount : quote.sendAmount
-        }
+        })
     }
 
     /// What the user paid for value in, or receives for value out, in the
-    /// asset of the quote the session ran on: the record's copy, or the quote
-    /// while the core still holds it.
-    var quotedAmount: String? {
-        let quoted = quote.map { direction == .in ? $0.sendAmount : $0.receiveAmount }
-        guard let units = record.paidAmount ?? quoted,
+    /// asset of the quote the session ran on, with that asset's code and
+    /// decimals: the record's copy, or the quote while the core still holds
+    /// it.
+    var quotedAmount: (amount: Balance, asset: String, decimals: UInt8)? {
+        let quoted = Balance(units: quote.map { direction == .in ? $0.sendAmount : $0.receiveAmount })
+        guard let amount = record.paidAmount ?? quoted,
               let asset = record.paidAsset ?? record.asset,
               let decimals = record.paidDecimals ?? quote?.assetDecimals
         else { return nil }
-        return AssetBalanceDisplayInfo.from(assetCode: asset, decimals: Int16(decimals)).amount(units: units)
+        return (amount, asset, decimals)
     }
 
     /// The CASH asked for, when the CASH that moved differs from it.
-    var differingRequestedAmount: U128? {
+    var differingRequestedAmount: Balance? {
         guard let requested = record.requestedAmount, let settled = record.settledAmount,
-              Decimal(string: requested) != Decimal(string: settled)
+              requested != settled
         else { return nil }
         return requested
     }

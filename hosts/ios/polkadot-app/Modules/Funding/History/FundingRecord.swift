@@ -1,5 +1,6 @@
 import Foundation
 import FoundationExt
+import SubstrateSdk
 import TrUAPIHost
 
 /// One ended funding session as the history draws it: from the session the
@@ -25,11 +26,11 @@ struct FundingRecord: Identifiable, Equatable {
     let rail: FundingRail?
     let asset: String?
     let providerId: ProductId?
-    let requestedAmount: U128?
-    let settledAmount: U128?
+    let requestedAmount: Balance?
+    let settledAmount: Balance?
     /// What the user paid for value in, or receives for value out, in
     /// `paidAsset`, from the quote the session ran on.
-    let paidAmount: U128?
+    let paidAmount: Balance?
     let paidAsset: String?
     /// Decimals of `paidAsset`, as the quote counted it.
     let paidDecimals: UInt8?
@@ -39,7 +40,7 @@ struct FundingRecord: Identifiable, Equatable {
     let outcome: Outcome
     let payout: Payout?
     /// What a failed payout's refund returned to the balance, once final.
-    let refundedAmount: U128?
+    let refundedAmount: Balance?
     let transactionId: String?
     let reference: String?
     let openedAt: Date
@@ -58,17 +59,17 @@ extension FundingRecord {
         rail = session.choice?.rail
         asset = session.choice?.asset
         providerId = session.providerId
-        requestedAmount = session.amount
+        requestedAmount = Balance(units: session.amount)
         settledAmount = settled.amount
-        paidAmount = session.choice.map { choice in
+        paidAmount = Balance(units: session.choice.map { choice in
             session.direction == .in ? choice.quote.sendAmount : choice.quote.receiveAmount
-        }
+        })
         paidAsset = session.choice?.asset
         paidDecimals = session.choice?.quote.assetDecimals
         paidNetwork = progress?.deposit.flatMap(\.network) ?? session.choice?.network
         outcome = settled.outcome
         payout = progress?.payout.map(Payout.init)
-        refundedAmount = progress?.refunded
+        refundedAmount = Balance(units: progress?.refunded)
         transactionId = progress?.transactionId
         reference = progress?.reference
         openedAt = Date(milliseconds: session.openedAtMs)
@@ -87,17 +88,17 @@ extension FundingRecord {
         rail = summary.choice?.rail
         asset = summary.choice?.asset
         providerId = summary.providerId
-        requestedAmount = summary.amount
+        requestedAmount = Balance(units: summary.amount)
         settledAmount = settled.amount
-        paidAmount = summary.choice.map { choice in
+        paidAmount = Balance(units: summary.choice.map { choice in
             summary.direction == .in ? choice.quote.sendAmount : choice.quote.receiveAmount
-        }
+        })
         paidAsset = summary.choice?.asset
         paidDecimals = summary.choice?.quote.assetDecimals
         paidNetwork = summary.choice?.network
         outcome = settled.outcome
         payout = summary.payout.map(Payout.init)
-        refundedAmount = summary.refunded
+        refundedAmount = Balance(units: summary.refunded)
         transactionId = summary.transactionId
         reference = summary.reference
         openedAt = Date(milliseconds: summary.openedAtMs)
@@ -107,7 +108,7 @@ extension FundingRecord {
 
 private struct Settled {
     let outcome: FundingRecord.Outcome
-    let amount: U128?
+    let amount: Balance?
     let atMs: UInt64
 }
 
@@ -119,9 +120,9 @@ private extension Settled {
         case .open:
             return nil
         case let .delivered(credited, settledAtMs):
-            self.init(outcome: Self.outcome(status) ?? .delivered, amount: credited, atMs: settledAtMs)
+            self.init(outcome: Self.outcome(status) ?? .delivered, amount: Balance(units: credited), atMs: settledAtMs)
         case let .released(debited, settledAtMs):
-            self.init(outcome: Self.outcome(status) ?? .released, amount: debited, atMs: settledAtMs)
+            self.init(outcome: Self.outcome(status) ?? .released, amount: Balance(units: debited), atMs: settledAtMs)
         case let .failed(reason, settledAtMs):
             let fallback: FundingRecord.Outcome = reason == .refunded ? .refunded : .failed(reason)
             self.init(outcome: Self.outcome(status) ?? fallback, amount: nil, atMs: settledAtMs)

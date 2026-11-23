@@ -1,4 +1,5 @@
 import Foundation
+import SubstrateSdk
 import TrUAPIHost
 
 /// One funding session as the screens draw it: what the core holds for it,
@@ -17,7 +18,7 @@ struct FundingEntry: Equatable, Sendable {
     /// The session's intent.
     let id: String
     let direction: FundingDirection
-    let amount: U128?
+    let amount: Balance?
     let openedAtMs: UInt64
     let session: FundingSession?
     let progress: FundingProgress?
@@ -34,7 +35,7 @@ extension FundingEntry {
     init(
         id: String,
         direction: FundingDirection,
-        amount: U128?,
+        amount: Balance?,
         session: FundingSession?,
         progress: FundingProgress?,
         summary: FundingSessionSummary?,
@@ -44,7 +45,7 @@ extension FundingEntry {
     ) {
         self.id = id
         self.direction = session?.direction ?? summary?.direction ?? direction
-        self.amount = session?.amount ?? summary?.amount ?? amount
+        self.amount = Balance(units: session?.amount ?? summary?.amount) ?? amount
         openedAtMs = session?.openedAtMs ?? summary?.openedAtMs ?? 0
         self.session = session
         self.progress = progress
@@ -96,8 +97,11 @@ extension FundingEntry {
     }
 
     /// The provider's terms for cancelling, while it waits for the user.
-    var cancelOffer: (fee: U128, refund: U128)? {
-        guard case let .cancelOffered(fee, refund) = progress?.status else { return nil }
+    var cancelOffer: (fee: Balance, refund: Balance)? {
+        guard case let .cancelOffered(fee, refund) = progress?.status,
+              let fee = Balance(units: fee),
+              let refund = Balance(units: refund)
+        else { return nil }
         return (fee, refund)
     }
 

@@ -35,10 +35,9 @@ extension FundingActivityItem {
         id = session.intent
         direction = session.direction
         rail = session.choice?.rail
-        let units = session.amount ?? session.choice.map { choice in
+        amount = Balance(units: session.amount ?? session.choice.map { choice in
             session.direction == .in ? choice.quote.receiveAmount : choice.quote.sendAmount
-        }
-        amount = units.flatMap { Balance($0) }
+        })
         date = Date(milliseconds: session.openedAtMs)
         status = .inProgress(progress?
             .status ?? (session.direction == .in ? .waitingForPayment : .transactionInitiated))
@@ -48,11 +47,11 @@ extension FundingActivityItem {
         id = record.intent
         direction = record.direction
         rail = record.rail
-        amount = (record.settledAmount ?? record.requestedAmount).flatMap { Balance($0) }
+        amount = record.settledAmount ?? record.requestedAmount
         date = record.settledAt
         status = record.outcome.activityStatus(
             payout: record.payout,
-            refunded: record.refundedAmount.flatMap { Balance($0) }
+            refunded: record.refundedAmount
         )
     }
 
