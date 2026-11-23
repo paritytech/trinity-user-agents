@@ -522,3 +522,29 @@ the newest is sent, so a slow worker never builds a backlog. A worker should
 likewise answer only the newest move it holds. Start, end and completion
 still send whole trees.
 
+
+### Styling by value
+
+Tokens let the host keep a product inside its design system, but a product
+that already has a design of its own (a slider it already ships, say)
+cannot draw the same thing natively with them: the tokens resolve to the
+host's colours, the typography presets to the host's sizes, and nothing draws
+a shadow. Modifiers 12 to 19 give those values directly. Colours are
+`0xRRGGBBAA`; lengths are hundredths of a logical pixel, as gesture positions
+are, so a design's 4.6 px gap survives.
+
+| Index | Modifier | What it draws | CSS it copies |
+| --- | --- | --- | --- |
+| 12 | `Fill { color, shape }` | a background in that colour, clipped as `Background` | `background` |
+| 13 | `Shadow { color, x, y, blur }` | a drop shadow of the node's shape, no layout room | `box-shadow` |
+| 14 | `Translate { x, y }` | the node moved, its neighbours unmoved | `transform: translate()` |
+| 15 | `Font { size, lineHeight, weight, color, letterSpacing }` | a `Text` in the host's sans at that size and weight, glyphs centred in each line box, ellipsis on overflow | `font`, `line-height`, `color`, `text-overflow` |
+| 16 | `FadeWithPan { key, ratePermille }` | opacity × `1 − rate × progress` of the keyed pan's children, however they move | a script fading a label as a thumb passes |
+| 17 | `Shimmer { color, stops, band, lead, speed, restMs }` | a band of light over a `Text`'s glyphs only | `background-clip: text` with a moving gradient |
+| 18 | `Spin(periodMs)` | the node turning about its centre | `animation: rotate` |
+| 19 | `ExitFade(ms)` | a node a tree dropped, kept as it last drew and faded out | `transition: opacity` |
+
+Motion stays the host's: a worker never animates frame by frame. `FadeWithPan`
+follows the pan on the host, in the same frame as the thumb, and `ExitFade`
+keeps whatever the host held for the node (a cover grid's brush strokes, say)
+while it fades, which a worker cannot resend.

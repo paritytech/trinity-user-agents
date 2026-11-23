@@ -343,3 +343,95 @@ fn set_offset_and_keyed_gesture_round_trip_through_uniffi() {
 		assert_eq!(lifted, node);
 	}
 }
+
+/// Every modifier that styles by value, as the existing slider's pill uses them.
+fn styled_by_value() -> Vec<Modifier> {
+	vec![
+		Modifier::Fill(Fill { color: 0x3336_3AFF, shape: Some(Shape::Rounded(Compact(40))) }),
+		Modifier::Shadow(DropShadow { color: 0x0000_005C, x: 0, y: 200, blur: 600 }),
+		Modifier::Translate(Translate { x: 0, y: -180 }),
+		Modifier::Font(TextFont {
+			size: 1800,
+			line_height: 2200,
+			weight: 600,
+			color: 0xF5F6_F9FF,
+			letter_spacing: 0,
+		}),
+		Modifier::FadeWithPan(PanFade { key: "thumb".into(), rate_permille: 1400 }),
+		Modifier::Shimmer(Shimmer {
+			color: 0xFFFF_FFFF,
+			stops: vec![0, 3, 14, 46, 112, 195, 247, 195, 112, 46, 14, 3, 0],
+			band: 18_600,
+			lead: 7000,
+			speed: 21_200,
+			rest_ms: 1000,
+		}),
+		Modifier::Spin(800),
+		Modifier::ExitFade(350),
+	]
+}
+
+#[test]
+fn modifiers_by_value_follow_blending_mode_on_the_wire() {
+	// Indices 0 to 11 are the modifiers before these; each new one is appended.
+	let first = [12u8, 13, 14, 15, 16, 17, 18, 19];
+	for (modifier, index) in styled_by_value().into_iter().zip(first) {
+		assert_eq!(modifier.encode()[0], index, "{modifier:?}");
+	}
+	assert_eq!(
+		Modifier::Fill(Fill { color: 0x3336_3AFF, shape: None }).encode(),
+		vec![12, 0xFF, 0x3A, 0x36, 0x33, 0]
+	);
+	assert_eq!(Modifier::ExitFade(350).encode(), vec![19, 0x5E, 0x01]);
+}
+
+#[test]
+fn modifiers_by_value_round_trip_through_scale() {
+	let node = RendererNode::Box {
+		modifiers: styled_by_value(),
+		props: BoxProps { content_alignment: Some(ContentAlignment::CenterStart) },
+		children: vec![renderer_node()],
+	};
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn modifiers_by_value_round_trip_through_uniffi() {
+	for modifier in styled_by_value() {
+		let ffi = <Modifier as uniffi::Lower<crate::UniFfiTag>>::lower(modifier.clone());
+		let lifted = <Modifier as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
+		assert_eq!(lifted, modifier);
+	}
+}
+
+#[test]
+fn modifiers_by_value_read_from_json() {
+	let json = r#"[
+		{"tag":"Fill","value":{"color":859192063,"shape":{"tag":"Circle"}}},
+		{"tag":"Shadow","value":{"color":92,"x":0,"y":200,"blur":600}},
+		{"tag":"Translate","value":{"x":0,"y":-180}},
+		{"tag":"Font","value":{"size":1800,"lineHeight":2200,"weight":400,"color":4294967295,"letterSpacing":0}},
+		{"tag":"FadeWithPan","value":{"key":"thumb","ratePermille":1400}},
+		{"tag":"Shimmer","value":{"color":4294967295,"stops":"0x00ff00","band":18600,"lead":7000,"speed":21200,"restMs":1000}},
+		{"tag":"Spin","value":800},
+		{"tag":"ExitFade","value":350}
+	]"#;
+	let modifiers: Vec<Modifier> = serde_json::from_str(json).unwrap();
+	assert_eq!(modifiers.len(), 8);
+	assert_eq!(
+		modifiers[0],
+		Modifier::Fill(Fill { color: 0x3336_3AFF, shape: Some(Shape::Circle) })
+	);
+	assert_eq!(
+		modifiers[3],
+		Modifier::Font(TextFont {
+			size: 1800,
+			line_height: 2200,
+			weight: 400,
+			color: 0xFFFF_FFFF,
+			letter_spacing: 0,
+		})
+	);
+	assert_eq!(modifiers[7], Modifier::ExitFade(350));
+}

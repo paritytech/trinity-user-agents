@@ -268,6 +268,117 @@ pub enum BlendingMode {
 	Luminosity,
 }
 
+/// A background in a colour given by value. Drawn and clipped as
+/// [`Background`] is.
+///
+/// Every colour given by value in this module is `0xRRGGBBAA`: sRGB, the alpha
+/// straight, not premultiplied. `0x33363AFF` is CSS `#33363A`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Fill {
+	/// The colour.
+	pub color: u32,
+	/// The shape filled; the node's bounds when absent.
+	pub shape: Option<Shape>,
+}
+
+/// A drop shadow under the node's fill, as CSS `box-shadow` draws it: the
+/// node's shape, moved by `x` and `y`, blurred by `blur` (a Gaussian whose
+/// standard deviation is half of `blur`), in `color`. Lengths are hundredths
+/// of a logical pixel. The shadow takes no room in the layout.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct DropShadow {
+	/// The shadow's colour.
+	pub color: u32,
+	/// Horizontal offset towards the end.
+	pub x: i32,
+	/// Vertical offset downwards.
+	pub y: i32,
+	/// Blur length.
+	pub blur: u32,
+}
+
+/// Where a node is drawn, moved from where its layout put it, as CSS
+/// `transform: translate()` moves it: its neighbours keep their places.
+/// Hundredths of a logical pixel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Translate {
+	/// Towards the end.
+	pub x: i32,
+	/// Downwards.
+	pub y: i32,
+}
+
+/// The type of a `Text`, given by value instead of a [`TypographyStyle`]:
+/// the host's text face (the design system's sans) at this size and weight.
+/// Lengths are hundredths of a logical pixel. Each line stands `line_height`
+/// tall with its glyphs centred in it, as a CSS line box does; a line too
+/// long for its width ends in an ellipsis. Overrides the `Text`'s style and
+/// colour; on any other node it does nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct TextFont {
+	/// The em size.
+	pub size: u32,
+	/// The height of each line.
+	pub line_height: u32,
+	/// CSS weight, 100 to 900.
+	pub weight: u16,
+	/// The text's colour.
+	pub color: u32,
+	/// Extra space after each character.
+	pub letter_spacing: i32,
+}
+
+/// A node that fades as a keyed pan's children travel: its opacity is
+/// multiplied by `1 - rate * progress`, clamped to 0 through 1, where progress
+/// is how far the children of the `Gesture` keyed `key` are drawn along its
+/// travel (0 at the start, 1 at the end), whoever moves them: the finger, a
+/// worker's offsets, or the host settling them on release. A key that names no
+/// gesture leaves the node as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PanFade {
+	/// The `key` of the gesture followed.
+	pub key: String,
+	/// Thousandths: 1400 is gone at 71% of the travel.
+	pub rate_permille: u16,
+}
+
+/// A band of light sweeping across a `Text`'s glyphs and only them, as a CSS
+/// gradient clipped to the text does. The band is `band` wide and runs from
+/// `lead` before the text's start to `lead` past its end at `speed`, then
+/// rests `rest_ms` before the next sweep. Its colour is `color` (alpha
+/// ignored) with the alphas `stops` spread evenly across the band, laid over
+/// the text's own colour. It starts when the node first appears, and the host
+/// leaves it out where the person asked for less motion. Lengths are hundredths
+/// of a logical pixel; `speed` is hundredths per second.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Shimmer {
+	/// The band's colour.
+	pub color: u32,
+	/// Alphas, 0 to 255, from the band's start to its end.
+	#[serde(deserialize_with = "hex_bytes_json::deserialize")]
+	pub stops: Vec<u8>,
+	/// The band's width.
+	pub band: u32,
+	/// How far before and after the text a sweep starts and ends.
+	pub lead: u32,
+	/// How fast the band moves.
+	pub speed: u32,
+	/// The pause after each sweep.
+	pub rest_ms: u32,
+}
+
 /// Layout and styling applied to one node.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(tag = "tag", content = "value")]
@@ -298,6 +409,28 @@ pub enum Modifier {
 	Opacity(u8),
 	/// Compositing mode against what is behind the node.
 	BlendingMode(BlendingMode),
+	/// Background fill in a colour given by value.
+	Fill(Fill),
+	/// Drop shadow under the node's fill.
+	Shadow(DropShadow),
+	/// Draw the node moved, leaving its layout where it is.
+	Translate(Translate),
+	/// The type of a `Text`, given by value.
+	Font(TextFont),
+	/// Fade the node as a keyed pan's children travel.
+	FadeWithPan(PanFade),
+	/// A band of light sweeping a `Text`.
+	Shimmer(Shimmer),
+	/// Turn the node about its centre, once every this many milliseconds, for
+	/// as long as it is shown; the host keeps it still where the person asked
+	/// for less motion.
+	Spin(u32),
+	/// When a tree no longer holds this node, keep drawing it as it last was
+	/// and fade it out over this many milliseconds, with CSS's `ease` curve
+	/// (`cubic-bezier(0.25, 0.1, 0.25, 1)`), before it goes. It must keep its
+	/// place among its siblings' indices for the host to know it left: the
+	/// last child, or one whose followers leave with it.
+	ExitFade(u16),
 }
 
 /// Properties of a `Box`.
