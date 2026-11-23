@@ -56,6 +56,12 @@ use crate::{
 	error::{ProviderError, synthetic_error_frame},
 };
 
+mod statement;
+
+use statement::{Action, Admission};
+
+const ALLOWANCE_READ_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Lock a mutex, recovering the guard if a previous holder panicked.
 ///
 /// The embedded light client is a single process-wide instance shared by every
@@ -365,6 +371,7 @@ impl LightState {
 		// just move the growth it exists to prevent into the refusal path.
 		let (errors_tx, errors_rx) = mpsc::channel(MAX_UNDELIVERED_FRAMES);
 		let (closing_tx, closing_rx) = oneshot::channel();
+		let (deadlines_tx, deadlines_rx) = mpsc::unbounded();
 
 		Ok(Box::new(LightConnection {
 			pipe: Arc::new(Pipe {
@@ -374,6 +381,8 @@ impl LightState {
 				undelivered: AtomicUsize::new(0),
 				held: Mutex::new(Some(Vec::new())),
 				closing: Mutex::new(Some(closing_tx)),
+				admission: Mutex::new(Admission::default()),
+				deadlines_tx,
 			}),
 			genesis_hash,
 			relay: relay_genesis,
@@ -382,6 +391,7 @@ impl LightState {
 				errors: errors_rx,
 				lifecycle,
 				closing: closing_rx,
+				deadlines: deadlines_rx,
 			})),
 		}))
 	}
@@ -556,6 +566,7 @@ struct ResponseSources {
 	lifecycle: Subscription,
 	/// Resolves when the connection closes.
 	closing: oneshot::Receiver<()>,
+	deadlines: mpsc::UnboundedReceiver<(u64, oneshot::Receiver<()>)>,
 }
 
 /// The request side of a connection, shared with the stream that releases
@@ -574,6 +585,8 @@ struct Pipe {
 	/// Taken by `close`, which ends the wait for the chain to sync. `None`
 	/// means the connection is closed.
 	closing: Mutex<Option<oneshot::Sender<()>>>,
+	admission: Mutex<Admission>,
+	deadlines_tx: mpsc::UnboundedSender<(u64, oneshot::Receiver<()>)>,
 }
 
 /// Decrement `counter` unless it is already zero.
@@ -660,10 +673,54 @@ impl Pipe {
 	/// Hand `request`, already counted in `undelivered`, to smoldot, returning
 	/// it if smoldot refuses it.
 	fn forward(&self, guard: &mut LightInner, request: String) -> Result<(), String> {
-		guard
-			.client
-			.json_rpc_request(request, self.chain_id)
-			.map_err(|HandleRpcError::TooManyPendingRequests { json_rpc_request }| json_rpc_request)
+		let (action, deadline) = lock(&self.admission).request(request);
+		if let Some(deadline) = deadline {
+			let _ = self.deadlines_tx.unbounded_send(deadline);
+		}
+		self.apply(guard, action)
+	}
+
+	fn apply(&self, guard: &mut LightInner, action: Action) -> Result<(), String> {
+		match action {
+			Action::Forward(request) => {
+				guard.client.json_rpc_request(request, self.chain_id).map_err(
+					|HandleRpcError::TooManyPendingRequests { json_rpc_request }| json_rpc_request,
+				)
+			},
+			Action::Reply(frame) => {
+				let _ = lock(&self.errors_tx).try_send(frame);
+				Ok(())
+			},
+			Action::Ignore => Ok(()),
+		}
+	}
+
+	fn response(&self, frame: String) -> Option<String> {
+		if !Admission::needs_inspection(&frame) {
+			return Some(frame);
+		}
+		let action = lock(&self.admission).response(frame);
+		match action {
+			Action::Reply(frame) => Some(frame),
+			other @ Action::Forward(_) => {
+				let mut guard = lock(&self.inner);
+				if self.is_closed() {
+					return None;
+				}
+				if let Err(rejected) = self.apply(&mut guard, other) {
+					self.reject(&rejected);
+				}
+				None
+			},
+			Action::Ignore => None,
+		}
+	}
+
+	fn expire(&self, id: u64) -> Option<String> {
+		match lock(&self.admission).expire(id) {
+			Action::Reply(frame) => Some(frame),
+			_ => None,
+		}
 	}
 
 	/// Forward the requests held while the chain was syncing, in send order.
@@ -714,9 +771,23 @@ impl JsonRpcConnection for LightConnection {
 		let Some(sources) = lock(&self.responses).take() else {
 			return stream::empty().boxed();
 		};
+		let pipe = Arc::clone(&self.pipe);
 		let responses = stream::unfold(sources.responses, |mut responses| async move {
 			responses.next().await.map(|item| (item, responses))
-		});
+		})
+		.filter_map(move |frame| future::ready(pipe.response(frame)));
+		let pipe = Arc::clone(&self.pipe);
+		let deadlines = sources
+			.deadlines
+			.map(|(id, cancelled)| async move {
+				let delay = core::pin::pin!(futures_timer::Delay::new(ALLOWANCE_READ_TIMEOUT));
+				match future::select(delay, cancelled).await {
+					future::Either::Left(_) => Some(id),
+					future::Either::Right(_) => None,
+				}
+			})
+			.buffer_unordered(MAX_UNDELIVERED_FRAMES)
+			.filter_map(move |id| future::ready(id.and_then(|id| pipe.expire(id))));
 		let pipe = Arc::clone(&self.pipe);
 		// Yields nothing: it ends once the chain syncs, releasing what was
 		// held, or once the connection closes.
@@ -727,9 +798,12 @@ impl JsonRpcConnection for LightConnection {
 		})
 		.filter_map(|()| future::ready(None));
 		let pipe = Arc::clone(&self.pipe);
-		stream::select(stream::select(responses, sources.errors), release)
-			.inspect(move |_| decrement_saturating(&pipe.undelivered))
-			.boxed()
+		stream::select(
+			stream::select(stream::select(responses, sources.errors), deadlines),
+			release,
+		)
+		.inspect(move |_| decrement_saturating(&pipe.undelivered))
+		.boxed()
 	}
 
 	fn close(&self) {
@@ -754,6 +828,8 @@ impl JsonRpcConnection for LightConnection {
 		}
 
 		lock(&self.pipe.errors_tx).close_channel();
+		self.pipe.deadlines_tx.close_channel();
+		*lock(&self.pipe.admission) = Admission::default();
 		// An untaken response stream keeps smoldot's JSON-RPC service for the
 		// chain alive, and with it the chain's lifecycle.
 		lock(&self.responses).take();

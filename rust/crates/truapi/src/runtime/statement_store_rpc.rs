@@ -85,17 +85,22 @@ impl StatementSubmitError {
 	}
 
 	/// Whether the statement reached nobody, so it may be sent again: the
-	/// People chain was unreachable, or a light client found no peer to take
-	/// it.
+	/// People chain was unreachable, or a light client could not verify capacity
+	/// or find a peer to take it.
 	pub fn is_unreachable(&self) -> bool {
 		self.reached_no_peer() ||
 			matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
 	}
 
-	/// Whether the statement reached no peer, so it may be sent again. smoldot
-	/// uses one error code for all statement-store failures, so this matches
-	/// the message.
+	/// Whether nothing was broadcast, so it may be sent again.
+	///
+	/// An unavailable allowance proof stops the light provider before gossip.
+	/// smoldot uses one error code for all statement-store failures, so its
+	/// no-peer failures are identified by message.
 	pub fn reached_no_peer(&self) -> bool {
+		if let Self::Rejected(answer) = self {
+			return answer["status"] == "unknown" && answer["reason"] == "allowanceUnavailable";
+		}
 		let Self::Chain(failure) = self else {
 			return false;
 		};
@@ -340,8 +345,10 @@ pub async fn subscribe_match_all(
 ///
 /// `statement_submit` returns an RPC error only for internal failures; a
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
-/// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
-/// rejections surface instead of being silently dropped.
+/// `Ok(SubmitResult)`. Treat only `new`/`known` as success. The light provider
+/// checks best-block allowance before gossip; `unknown`/`allowanceUnavailable`
+/// means it could not read verified capacity and did not broadcast. It remains
+/// an error, classified as unsent for the existing SSO retry paths.
 async fn submit(rpc_client: &RpcClient, statement: &[u8]) -> Result<(), StatementSubmitError> {
 	let result = rpc_client
 		.request::<Value>(

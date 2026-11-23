@@ -286,9 +286,27 @@ not capped. Only a provider built with `catalog()` resolves a genesis nobody
 registered from the catalog, so one for remote nodes never starts the light client
 for a chain its host did not name. Built with `keep_chains_running()`, a provider keeps each light-client chain
 running after its last connection closes. A light-client connection holds its requests until the chain first
-syncs and then forwards them in order; chain-spec queries, statement-store and
+syncs and then forwards them in order; chain-spec queries, statement subscriptions,
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
-once.
+once. Before `statement_submit` broadcasts, the light provider reads
+`:statement_allowance:` plus the proof signer's account id at a verified best
+People-chain head, so a newly granted allowance need not wait for finality.
+Locally invalid encodings, expiry, encoded size and absent proofs are answered
+by smoldot before this read. Missing or depleted capacity returns
+`{"status":"rejected","reason":"noAllowance"}`; data exceeding the allowance returns
+`dataTooLarge`. Both are failures, so the core neither caches nor acknowledges the
+statement. Products can use their existing allocation-and-retry handling.
+Checks start even on a fresh connection or while syncing. If the best head or
+its storage proof cannot be read within 15 seconds (including malformed responses),
+the result is `{"status":"unknown","reason":"allowanceUnavailable"}`. The core
+surfaces it in the existing statement-submit error and classifies it as unsent:
+SSO request and responder retries keep their existing bounds; products can retry
+later without requesting another allocation. Nothing is broadcast in either
+failure case.
+A usable allowance permits smoldot to broadcast and return its normal `new`
+result. This verifies capacity, not remote retention or delivery: peer-local
+priority, occupancy and subsequent allowance changes can still prevent retention.
+The remote-node RPC backend and statement subscriptions are unchanged.
 On native targets every `wss` connection, to a remote node or a light-client bootnode, checks the
 certificate against the webpki roots compiled into the crate, not the operating system's store.
 Every artifact exposes the sync progress of a running chain (phase, peer count,

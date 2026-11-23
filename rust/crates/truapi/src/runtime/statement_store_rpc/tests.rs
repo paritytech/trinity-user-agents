@@ -34,6 +34,8 @@ enum Upstream {
 	Answers(&'static str),
 	/// Answers every submission with a JSON-RPC error carrying this message.
 	Fails(&'static str),
+	/// The light provider could not establish verified capacity.
+	UnknownAllowance,
 }
 
 /// Chain whose n-th connection behaves as the n-th scripted [`Upstream`],
@@ -103,6 +105,11 @@ impl JsonRpcConnection for PeopleChainConnection {
 				"id": request["id"],
 				"error": { "code": -32602, "message": message },
 			}),
+			Upstream::UnknownAllowance => json!({
+				"jsonrpc": "2.0",
+				"id": request["id"],
+				"result": { "status": "unknown", "reason": "allowanceUnavailable" },
+			}),
 		};
 		if let Some(sender) = sender.as_ref() {
 			let _ = sender.unbounded_send(response.to_string());
@@ -166,6 +173,35 @@ fn a_rejected_submit_is_not_resent() {
 	let result = futures::executor::block_on(statement_store.submit(&[1], "submit"));
 
 	assert_eq!((result.is_err(), chain.requests()), (true, 1));
+}
+
+#[test]
+fn an_unverified_allowance_is_not_success_or_an_allocation_request() {
+	let chain = PeopleChain::new(vec![Upstream::UnknownAllowance]);
+	let store = statement_store(&chain);
+	let result = block_on(store.submit_sso(&[1], "submit"));
+	assert_eq!(
+		(result, chain.requests()),
+		(
+			Err(StatementSubmitError::Rejected(json!({
+				"status": "unknown", "reason": "allowanceUnavailable"
+			}))),
+			1
+		)
+	);
+}
+
+#[test]
+fn remote_node_acceptance_and_rejection_need_no_additional_rpc() {
+	for status in ["new", "known", "rejected"] {
+		let chain = PeopleChain::new(vec![Upstream::Answers(status)]);
+		let store = statement_store(&chain);
+		let result = block_on(store.submit(&[1], "submit"));
+		assert_eq!((result.is_ok(), chain.requests()), (status != "rejected", 1));
+		if status == "rejected" {
+			assert!(result.unwrap_err().is_no_allowance());
+		}
+	}
 }
 
 #[test]
@@ -239,6 +275,19 @@ fn only_a_statement_that_reached_no_peer_is_unsent() {
 	let unsent: Vec<bool> = failures.iter().map(StatementSubmitError::reached_no_peer).collect();
 
 	assert_eq!(unsent, vec![true, true, false]);
+}
+
+#[test]
+fn only_unverified_capacity_is_classified_as_unsent() {
+	for (status, reason, unsent) in [
+		("unknown", "allowanceUnavailable", true),
+		("rejected", "allowanceUnavailable", false),
+		("unknown", "noAllowance", false),
+		("unknown", "other", false),
+	] {
+		let error = StatementSubmitError::Rejected(json!({"status": status, "reason": reason}));
+		assert_eq!((error.reached_no_peer(), error.is_unreachable()), (unsent, unsent));
+	}
 }
 
 /// A statement store whose subscription connection answers with `frames`.
