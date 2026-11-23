@@ -18,13 +18,14 @@ use trinity_stack::{FetchRequest, Served};
 use truapi::latest::GenericError;
 
 use super::{
-	Stack, StackError, StackFetchRequest, StackFetchResponse, StackMismatch, StackRecords,
-	StackStatus, signed_pointer, source::StackSource,
+	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
+	signed_pointer,
+	source::{Listing, StackSource},
 };
 use crate::{
 	Spawner,
 	background_task::BackgroundTask,
-	chain_runtime::{GenesisCheck, GenesisHashes, encode_hex},
+	chain_runtime::{GenesisCheck, GenesisHashes},
 	time::{Clock, Timer},
 	wake::WakeSignal,
 };
@@ -102,39 +103,15 @@ impl StackChecks {
 	/// A suffix that is not the stack's `tld` is reported in
 	/// [`StackStatus::mismatches`] until a later read gives the `tld`.
 	pub fn people_suffix_answered(&self, answered: &[u8]) {
-		let listed = {
-			let mut source = self.shared.source();
-			if !source.people_suffix_answered(answered) {
-				return;
-			}
-			source.wrong_suffix()
-		};
-		// Logged with the source unlocked: a host handed the warning may read
-		// the stack's status from there.
-		if let Some(StackMismatch::NetworkSuffix { named: tld, answered: suffix }) = listed {
-			tracing::warn!("People's NetworkSuffix is {suffix}, not the stack's tld {tld}");
-		}
-		self.shared.chain_answers.wake();
+		let listing = self.shared.source().people_suffix_answered(answered);
+		self.shared.answer_recorded(listing);
 	}
 }
 
 impl GenesisCheck for Shared {
 	fn chain_answered(&self, hashes: GenesisHashes) {
-		let GenesisHashes { named, answered } = hashes;
-		let changed = self.source().chain_answered(hashes);
-		if !changed {
-			return;
-		}
-		// Logged with the source unlocked: a native host is handed each
-		// warning as it is made, and may read the stack's status from there.
-		if answered != named {
-			tracing::warn!(
-				"a chain of the stack gave genesis hash {}, not {}",
-				encode_hex(&answered),
-				encode_hex(&named)
-			);
-		}
-		self.chain_answers.wake();
+		let listing = self.source().chain_answered(hashes);
+		self.answer_recorded(listing);
 	}
 }
 
@@ -275,11 +252,24 @@ impl Shared {
 		unix_now(self.clock.as_ref())
 	}
 
+	/// Logs an entry the status lists now and wakes the loop, unless the
+	/// answer changed nothing. Call it with the source unlocked: a native host
+	/// is handed each warning as it is made, and may read the status from
+	/// there.
+	fn answer_recorded(&self, listing: Listing) {
+		match listing {
+			Listing::Unchanged => return,
+			Listing::Cleared => {},
+			Listing::Listed(mismatch) => tracing::warn!("{mismatch}"),
+		}
+		self.chain_answers.wake();
+	}
+
 	async fn run(self: Arc<Self>, host: Box<dyn StackHost>, mut forced: mpsc::Receiver<()>) {
 		let mut chain_answers = self.chain_answers.subscribe();
 		let mut reported = self.source().status();
-		host.stack_changed(reported.clone());
 		let tell = |status: &StackStatus| host.stack_changed(status.clone());
+		tell(&reported);
 		let mut force = false;
 		loop {
 			// A chain's answer is reported before the fetch it brings forward,

@@ -562,9 +562,10 @@ impl ChainRuntime {
 	) -> Result<(), RuntimeFailure> {
 		let Some(check) = &self.genesis_check else { return Ok(()) };
 		let methods = ChainHeadRpcMethods::new(RpcClient::new(rpc.clone()));
-		let asked = ask_genesis(&methods, &genesis_hash, check.as_ref(), self.timer.as_ref()).await;
+		let pool = Arc::downgrade(&self.connections);
 		let key = self.connection_key(&genesis_hash);
-		asked.map_err(|refusal| refusal.closing_earlier(&self.connections, &key))
+		verify_genesis(&methods, genesis_hash, check.as_ref(), self.timer.as_ref(), &pool, &key)
+			.await
 	}
 
 	/// This runtime seen as `scope`. Shares every map with the original, so a
@@ -1105,7 +1106,12 @@ impl ChainRuntime {
 					let setup_key = key.clone();
 					let genesis_hash = genesis_hash.to_owned();
 					let runtime_calls = self.runtime_calls.clone();
-					let genesis_check = self.genesis_check.clone();
+					let genesis_check = match &self.genesis_check {
+						Some(check) => {
+							Some((check.clone(), hash_from_bytes(method, &genesis_hash)?.0))
+						},
+						None => None,
+					};
 					let identity = Arc::new(());
 					let setup_identity = identity.clone();
 					let setup: ConnectionSetup = async move {
@@ -1120,23 +1126,21 @@ impl ChainRuntime {
 								ended_follows,
 							)
 						});
-						let refusal = match (&connected, genesis_check) {
-							(Ok(connection), Some(check)) => ask_genesis(
+						let result = match (connected, genesis_check) {
+							(Ok(connection), Some((check, named))) => verify_genesis(
 								&connection.methods,
-								&connection.genesis_hash,
+								named,
 								check.as_ref(),
 								connection.timer.as_ref(),
+								&registry,
+								&setup_key,
 							)
 							.await
-							.err(),
-							_ => None,
+							.map(|()| connection),
+							(connected, _) => connected,
 						};
 						let registry =
 							registry.upgrade().ok_or_else(|| scope_released(CONNECT_METHOD))?;
-						let result = match refusal {
-							Some(refusal) => Err(refusal.closing_earlier(&registry, &setup_key)),
-							None => connected,
-						};
 						let mut scopes = registry.lock().unwrap();
 						let connections =
 							scopes.get_mut(&scope).ok_or_else(|| scope_released(CONNECT_METHOD))?;
@@ -2286,80 +2290,64 @@ fn transaction_operation_already_finished(error: &SubxtRpcError) -> bool {
 /// Connections by scope and then by chain.
 type ConnectionRegistry = Mutex<HashMap<ConnectionScope, HashMap<String, ConnectionEntry>>>;
 
-/// Why a new connection did not pass the genesis check, with the failure its
-/// caller gets.
-enum GenesisRefusal {
-	/// No genesis hash came back from the chain.
-	NoHash(RuntimeFailure),
-	/// The chain gave a different hash from the one the connection was opened
-	/// for.
-	OtherChain(RuntimeFailure),
-}
-
-impl GenesisRefusal {
-	/// The failure for the connection's caller.
-	///
-	/// For another chain, first closes every connection `registry` handed out
-	/// earlier for the chain, which it keeps under `key`.
-	fn closing_earlier(self, registry: &ConnectionRegistry, key: &str) -> RuntimeFailure {
-		let failure = match self {
-			Self::NoHash(failure) => return failure,
-			Self::OtherChain(failure) => failure,
-		};
-		let earlier: Vec<Arc<ChainConnection>> = registry
-			.lock()
-			.unwrap()
-			.values()
-			.filter_map(|connections| connections.get(key)?.ready().cloned())
-			.collect();
-		for connection in earlier {
-			connection.rpc_client.close(
-				"a newer connection for this chain reached one with a different genesis hash",
-			);
-		}
-		failure
-	}
-}
-
-/// Asks the chain behind `methods` for its genesis hash and tells `check`.
+/// Asks the chain behind `methods` for its genesis hash, tells `check`, and
+/// fails unless the hash is `named`, the one the connection was opened for.
 ///
-/// Fails when the chain gives no hash. A halted chain is asked again on
-/// `timer`, and is unavailable when the halt outlasts the retries. `named` is
-/// the hash the connection was opened for, and nothing is asked unless it is
-/// 32 bytes.
-async fn ask_genesis(
+/// A halted chain is asked again on `timer`, and is unavailable when the halt
+/// outlasts the retries. A different hash also closes every connection `pool`
+/// handed out for the chain, which it keeps under `key`, because a host may
+/// have redialled underneath them.
+async fn verify_genesis(
 	methods: &ChainHeadRpcMethods<TruapiRpcConfig>,
-	named: &[u8],
+	named: [u8; 32],
 	check: &dyn GenesisCheck,
 	timer: &dyn Timer,
-) -> Result<(), GenesisRefusal> {
-	let named: [u8; 32] = named.try_into().map_err(|_| {
-		let reason = format!("expected 32-byte genesis hash, got {}", named.len());
-		let failure = RuntimeFailure::host_failure(CONNECT_METHOD, reason);
-		GenesisRefusal::NoHash(failure.on_chain(named))
-	})?;
+	pool: &Weak<ConnectionRegistry>,
+	key: &str,
+) -> Result<(), RuntimeFailure> {
 	let ask = || methods.chainspec_v1_genesis_hash();
 	let never_cancelled = truapi::CancellationToken::default();
 	let answer = retry_while_halted(ask, says_chain_halted, timer, &never_cancelled).await;
-	let H256(answered) = answer.map_err(|error| {
-		let failure = if says_chain_halted(&error) {
-			RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, error.to_string())
-		} else {
-			rpc_failure(CONNECT_METHOD, error)
-		};
-		GenesisRefusal::NoHash(failure.on_chain(&named))
-	})?;
+	let H256(answered) = answer.map_err(|error| no_genesis_hash(error).on_chain(&named))?;
 	check.chain_answered(GenesisHashes { named, answered });
 	if answered == named {
 		return Ok(());
+	}
+	if let Some(pool) = pool.upgrade() {
+		close_connections(&pool, key);
 	}
 	let reason = format!(
 		"the chain gave genesis hash {}, not {}",
 		encode_hex(&answered),
 		encode_hex(&named)
 	);
-	let failure = RuntimeFailure::host_failure(CONNECT_METHOD, reason);
-	Err(GenesisRefusal::OtherChain(failure.on_chain(&named)))
+	Err(RuntimeFailure::host_failure(CONNECT_METHOD, reason).on_chain(&named))
+}
+
+/// The failure for a chain that gave no genesis hash: unavailable when it
+/// stayed halted or could not be reached, a host failure for any other error.
+fn no_genesis_hash(error: SubxtRpcError) -> RuntimeFailure {
+	if says_chain_halted(&error) {
+		RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, error.to_string())
+	} else {
+		rpc_failure(CONNECT_METHOD, error)
+	}
+}
+
+/// Closes every connection `pool` handed out for the chain it keeps under
+/// `key`, in every scope.
+fn close_connections(pool: &ConnectionRegistry, key: &str) {
+	let ready: Vec<Arc<ChainConnection>> = pool
+		.lock()
+		.unwrap()
+		.values()
+		.filter_map(|connections| connections.get(key)?.ready().cloned())
+		.collect();
+	for connection in ready {
+		connection
+			.rpc_client
+			.close("a newer connection for this chain reached one with a different genesis hash");
+	}
 }
 
 fn scope_released(method: &'static str) -> RuntimeFailure {

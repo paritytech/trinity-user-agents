@@ -1846,12 +1846,12 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
-/// People's connection can take half a minute to open: the host may be
-/// redialling, and the genesis check waits out a halted chain. A product that
-/// withdraws its request meanwhile is answered without waiting for the
-/// connection, and the attempt is dropped.
+/// A call that ignores a withdrawal is dropped after a two-second grace.
+/// People's connection can take half a minute to open, while the host redials
+/// or the genesis check waits out a halted chain, so the wait for it watches
+/// the withdrawal and the product is answered at once.
 #[test]
-fn a_request_withdrawn_while_people_connects_does_not_wait_for_the_connection() {
+fn a_request_withdrawn_while_people_connects_is_answered_at_once() {
 	let platform = Arc::new(StubPlatform {
 		sign_raw_confirmed: true,
 		chain_connect_pending: true,
@@ -1872,11 +1872,17 @@ fn a_request_withdrawn_while_people_connects_does_not_wait_for_the_connection() 
 	});
 	let dialled = || !platform.chain_connects.lock().unwrap().is_empty();
 	wait_until(dialled, "People is dialled");
+	let withdrawn = std::time::Instant::now();
 	cancel.cancel();
-	wait_until(|| call.is_finished(), "the withdrawn request is answered");
+	let failed = call.join().ok();
+	let answered_in = withdrawn.elapsed();
 
+	assert!(
+		answered_in < AUTHORITY_CANCEL_UNWIND_GRACE / 2,
+		"answered {answered_in:?} after the withdrawal, as late as a call that ignores it"
+	);
 	assert_eq!(
-		(call.join().ok(), platform.pending_connect_dropped.load(Ordering::SeqCst)),
+		(failed, platform.pending_connect_dropped.load(Ordering::SeqCst)),
 		(Some(true), true)
 	);
 }
