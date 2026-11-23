@@ -77,6 +77,8 @@ run("xcrun", ["simctl", "bootstatus", device.udid, "-b"]);
 spawnSync("xcrun", ["simctl", "terminate", device.udid, bundle], { stdio: "ignore" });
 spawnSync("xcrun", ["simctl", "uninstall", device.udid, bundle], { stdio: "ignore" });
 run("xcrun", ["simctl", "install", device.udid, app]);
+// Before applesimutils, whose SpringBoard restart would race a launch here.
+const dataContainer = appDataContainer();
 // System permission alerts belong to SpringBoard, which the app cannot answer.
 for (const service of ["location", "microphone"]) {
   spawnSync("xcrun", ["simctl", "privacy", device.udid, "grant", service, bundle], { stdio: "ignore" });
@@ -94,7 +96,6 @@ if (applesimutils.error) {
   console.log(`applesimutils ${applesimutils.status === 0 ? "granted" : "failed"}${output ? `: ${output}` : ""}`);
 }
 
-const dataContainer = appDataContainer();
 const exchange = join(dataContainer, "tmp", "truapi-e2e");
 const seed = join(exchange, "seed");
 
