@@ -44,15 +44,16 @@ final class TrUAPIWorkerManager: NativeWebViewWorkerHost, TrUAPIWorkerManaging, 
 
     func start(productId: ProductId, attempt: NativeWorkerAttempt) {
         let id = attempt.id()
+        let context = context(of: productId)
         views.withLock { views in
-            let startup = Task {
+            let startup = Task { [weak self, build] in
                 do {
-                    let view = try await build(productId, context(of: productId), attempt)
-                    let accepted = self.views.withLock { views in
+                    let view = try await build(productId, context, attempt)
+                    let accepted = self?.views.withLock { views in
                         guard views[id] != nil else { return false }
                         views[id]?.runtime = view
                         return true
-                    }
+                    } ?? false
                     guard accepted else {
                         await view.dispose()
                         return
@@ -83,7 +84,8 @@ final class TrUAPIWorkerManager: NativeWebViewWorkerHost, TrUAPIWorkerManaging, 
                 switch state {
                 case .running: return
                 case let .failed(reason): throw HostRejection.Rejected(reason: reason)
-                case .idle, .pending: continue
+                case .idle,
+                     .pending: continue
                 }
             }
             throw CancellationError()
