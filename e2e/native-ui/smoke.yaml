@@ -16,12 +16,6 @@ name: Settings and wallet smoke
 - runFlow:
     file: flows/open-tab.yaml
     env:
-      TAB: tab_settings
-      SCREEN: settings_backup_button
-
-- runFlow:
-    file: flows/open-tab.yaml
-    env:
       TAB: tab_wallet
       SCREEN: wallet_cash_card
 # The Humanity card is the devicehood product's own widget, so its text is all there is to match.
@@ -42,6 +36,12 @@ name: Settings and wallet smoke
 - runFlow: flows/go-back.yaml
 - assertVisible:
     id: wallet_cash_card
+
+- runFlow:
+    file: flows/open-tab.yaml
+    env:
+      TAB: tab_settings
+      SCREEN: settings_backup_button
 
 - runFlow:
     file: flows/open-tab.yaml

@@ -3,8 +3,8 @@
 //
 //   node e2e/native-ui/run.mjs --platform <android|ios> --app-id <id> --username <name> --out <dir> [--device <id>]
 
-import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -34,6 +34,12 @@ mkdirSync(out, { recursive: true });
 // The simulator the host-playground run used, chosen the same way.
 const device = args.device ?? (args.platform === "ios" ? selectSimulator().udid : undefined);
 
+const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+const adb = sdk ? join(sdk, "platform-tools", "adb") : "adb";
+
+// Streamed to the host while the flow runs, so the log survives a device that stops answering.
+const logcat = args.platform === "android" ? streamLogcat() : undefined;
+
 const result = spawnSync(
   "maestro",
   [
@@ -51,6 +57,7 @@ const result = spawnSync(
 );
 
 const passed = result.status === 0;
+logcat?.kill();
 if (!passed && args.platform === "android") saveAndroidDiagnostics();
 writeFileSync(
   join(out, "report.md"),
@@ -58,15 +65,21 @@ writeFileSync(
 );
 process.exit(passed ? 0 : 1);
 
+function streamLogcat() {
+  const file = openSync(join(out, "logcat.txt"), "w");
+  spawnSync(adb, ["logcat", "-c"], { timeout: 10_000 });
+  const child = spawn(adb, ["logcat", "-b", "all", "-v", "threadtime"], { stdio: ["ignore", file, file] });
+  closeSync(file);
+  return child;
+}
+
 /** Keeps what the device saw, since a Maestro driver failure leaves no screenshot of its own. */
 function saveAndroidDiagnostics() {
-  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
-  const adb = sdk ? join(sdk, "platform-tools", "adb") : "adb";
+  // Bounded, since adb waits forever on a device that has gone offline.
   const save = (name, command, encoding = "utf8") => {
-    const { stdout } = spawnSync(adb, command, { encoding, maxBuffer: 256 * 1024 * 1024 });
+    const { stdout } = spawnSync(adb, command, { encoding, maxBuffer: 256 * 1024 * 1024, timeout: 20_000 });
     if (stdout?.length) writeFileSync(join(out, name), stdout);
   };
-  save("logcat.txt", ["logcat", "-d", "-v", "threadtime"]);
   save("screen.png", ["exec-out", "screencap", "-p"], "buffer");
   save("meminfo.txt", ["shell", "dumpsys", "meminfo"]);
   save("gfxinfo.txt", ["shell", "dumpsys", "gfxinfo", args["app-id"]]);
