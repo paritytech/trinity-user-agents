@@ -32,6 +32,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +51,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -158,7 +160,7 @@ class PocketViewModel @Inject constructor(
             initialValue = PocketScreenState.List(collectiblesAvailable = false, removalCandidate = null)
         )
 
-    private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
+    private class CardBinding(val scope: CoroutineScope, val front: ProductFaceBindings, val back: ProductFaceBindings)
 
     /**
      * One set of bindings per card, however many copies of it are drawn: expanding a card draws a
@@ -168,26 +170,41 @@ class PocketViewModel @Inject constructor(
      * The stream outlives a short gap in subscribers, so scrolling the card off screen or leaving the
      * app for a moment does not tear the product's worker down and boot it again on the way back.
      */
-    fun bindingsOf(card: PocketCardUiModel.ProductCard): ProductFaceBindings =
-        bindings.getOrPut(card.id) { bindingFor(card) }.bindings
+    fun bindingsOf(card: PocketCardUiModel.ProductCard): ProductFaceBindings = bindingOf(card).front
+
+    /** The back of [card], shared like [bindingsOf]. Its face is `null` while the card has no back. */
+    fun backBindingsOf(card: PocketCardUiModel.ProductCard): ProductFaceBindings = bindingOf(card).back
+
+    private fun bindingOf(card: PocketCardUiModel.ProductCard): CardBinding = bindings.getOrPut(card.id) { bindingFor(card) }
 
     private fun bindingFor(card: PocketCardUiModel.ProductCard): CardBinding {
         // Its own child of the screen: sharing runs until its scope ends, whatever the subscriber
         // count, so a card that leaves the collection would otherwise leave a coroutine parked here
         // with a whole face tree in its replay buffer.
         val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext.job))
+        val imageResolver = object : JsImageResolver {
+            override suspend fun resolve(source: JsImageSource) = resolveFaceImage(card, source)
+
+            override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
+        }
+        fun <T> Flow<T>.shared() = stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null)
+
+        val back = interactor.observeBack(card.key).shared()
+        val faces = interactor.observeFace(card.key)
+        // A privileged card's back is kept current while it is listed, so it is ready before the card is opened.
+        val front = if (card.pinned) faces.combine(back) { face, _ -> face } else faces
 
         return CardBinding(
             scope = scope,
-            bindings = ProductFaceBindings(
-                face = interactor.observeFace(card.key)
-                    .stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null),
-                onFaceAction = { actionId, type -> onFaceAction(card, actionId, type) },
-                imageResolver = object : JsImageResolver {
-                    override suspend fun resolve(source: JsImageSource) = resolveFaceImage(card, source)
-
-                    override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
-                },
+            front = ProductFaceBindings(
+                face = front.shared(),
+                onFaceAction = { actionId, type -> interactor.sendFaceAction(card.key, PocketCardSide.FRONT, actionId, type.payload()) },
+                imageResolver = imageResolver,
+            ),
+            back = ProductFaceBindings(
+                face = back,
+                onFaceAction = { actionId, type -> interactor.sendFaceAction(card.key, PocketCardSide.BACK, actionId, type.payload()) },
+                imageResolver = imageResolver,
             ),
         )
     }
@@ -335,12 +352,9 @@ class PocketViewModel @Inject constructor(
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */
-    private fun onFaceAction(card: PocketCardUiModel.ProductCard, actionId: String, type: JsUiEvent.Type) {
-        val payload = when (type) {
-            JsUiEvent.Type.ButtonClick -> ByteArray(0)
-            is JsUiEvent.Type.InputFieldValueChange -> type.newValue.toByteArray()
-        }
-        interactor.sendFaceAction(card.key, actionId, payload)
+    private fun JsUiEvent.Type.payload(): ByteArray = when (this) {
+        JsUiEvent.Type.ButtonClick -> ByteArray(0)
+        is JsUiEvent.Type.InputFieldValueChange -> newValue.toByteArray()
     }
 
     private suspend fun resolveFaceImage(card: PocketCardUiModel.ProductCard, source: JsImageSource): Uri? =

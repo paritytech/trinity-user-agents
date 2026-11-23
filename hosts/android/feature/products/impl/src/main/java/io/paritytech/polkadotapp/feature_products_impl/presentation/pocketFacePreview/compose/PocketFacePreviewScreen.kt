@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -46,8 +48,10 @@ fun PocketFacePreviewScreen(contract: PocketFacePreviewContract) {
     PocketFacePreviewScreenInternal(
         state = state,
         imageResolver = contract.imageResolver,
+        backImageResolver = contract.backImageResolver,
         onBackClick = contract::onBackClick,
         onUrlChanged = contract::onUrlChanged,
+        onBackUrlChanged = contract::onBackUrlChanged,
         onDrawClick = contract::onDrawClick,
     )
 }
@@ -56,8 +60,10 @@ fun PocketFacePreviewScreen(contract: PocketFacePreviewContract) {
 private fun PocketFacePreviewScreenInternal(
     state: PocketFacePreviewState,
     imageResolver: JsImageResolver,
+    backImageResolver: JsImageResolver,
     onBackClick: () -> Unit,
     onUrlChanged: (String) -> Unit,
+    onBackUrlChanged: (String) -> Unit,
     onDrawClick: () -> Unit,
 ) {
     PolkadotSurface {
@@ -71,7 +77,11 @@ private fun PocketFacePreviewScreenInternal(
                 navigationAction = rememberTopBarAction(action = onBackClick),
             )
 
-            Column(modifier = Modifier.padding(PolkadotTheme.spacings.large)) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(PolkadotTheme.spacings.large)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     NovaTextField(
                         modifier = Modifier.weight(1f),
@@ -95,25 +105,48 @@ private fun PocketFacePreviewScreenInternal(
                     )
                 }
 
+                VerticalSpacer { medium }
+
+                NovaTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = state.backUrl,
+                    onValueChange = onBackUrlChanged,
+                    placeholder = {
+                        NovaText(
+                            text = stringResource(RCommon.string.pocket_face_preview_back_url_hint),
+                            style = PolkadotTheme.typography.body.large,
+                            color = PolkadotTheme.colors.fg.tertiary,
+                        )
+                    }
+                )
+
                 VerticalSpacer { large }
 
-                // The same frame the approval sheet gives a card, so what is drawn here is the size
-                // and shape the user will actually see.
-                PocketCardTheme {
-                    PolkadotSurface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(PocketCardSize.HEIGHT),
-                        shape = PolkadotTheme.shapes.large,
-                        color = PolkadotTheme.colors.bg.surface.container,
-                    ) {
-                        CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
-                            key(state.draws) {
-                                FaceOrExplanation(face = state.face)
-                            }
-                        }
+                key(state.draws) {
+                    CardFrame(face = state.face, imageResolver = imageResolver)
+                    state.back?.let { back ->
+                        VerticalSpacer { large }
+                        CardFrame(face = back, imageResolver = backImageResolver)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** The same frame the approval sheet gives a card, so what is drawn here is the size and shape the user will see. */
+@Composable
+private fun CardFrame(face: LoadingState<JsWidget>?, imageResolver: JsImageResolver) {
+    PocketCardTheme {
+        PolkadotSurface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(PocketCardSize.HEIGHT),
+            shape = PolkadotTheme.shapes.large,
+            color = PolkadotTheme.colors.bg.surface.container,
+        ) {
+            CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
+                FaceOrExplanation(face = face)
             }
         }
     }
@@ -163,12 +196,16 @@ private fun PocketFacePreviewScreenPreview() {
         PocketFacePreviewScreenInternal(
             state = PocketFacePreviewState(
                 url = "http://127.0.0.1:5173/faces/loyalty.json",
+                backUrl = "http://127.0.0.1:5173/faces/loyalty-back.json",
                 face = LoadingState.Loaded(JsWidget.Text(text = "Loyalty")),
+                back = LoadingState.Loaded(JsWidget.Text(text = "Back")),
                 draws = 1,
             ),
             imageResolver = JsImageResolver { null },
+            backImageResolver = JsImageResolver { null },
             onBackClick = {},
             onUrlChanged = {},
+            onBackUrlChanged = {},
             onDrawClick = {},
         )
     }

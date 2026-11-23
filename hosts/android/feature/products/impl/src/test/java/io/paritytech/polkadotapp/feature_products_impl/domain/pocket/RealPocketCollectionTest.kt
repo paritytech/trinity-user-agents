@@ -8,6 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.PocketCardSide
 import uniffi.truapi.RendererNode
 
 class RealPocketCollectionTest {
@@ -37,7 +38,7 @@ class RealPocketCollectionTest {
         assertTrue(collection.removeCard(loyalty.card.key).isSuccess)
 
         assertEquals(listOf(humanity.card), collection.observeCards().first())
-        assertNull(collection.cachedFace(loyalty.card.key))
+        assertNull(collection.cachedFace(loyalty.card.key, PocketCardSide.FRONT))
     }
 
     // The screen shows the failure; a removal that did not happen must not read as done.
@@ -63,24 +64,28 @@ class RealPocketCollectionTest {
     fun `an added card shows the face it was approved by`() = runTest {
         collection.addCard(loyalty)
 
-        assertEquals(loyalty.face, collection.cachedFace(loyalty.card.key))
+        assertEquals(loyalty.face, collection.cachedFace(loyalty.card.key, PocketCardSide.FRONT))
     }
 
     // The bundled face is what a pinned card shows before its product has ever drawn one.
+    // It is a front, so turning the card over must not show it again.
     @Test
     fun `a pinned card with nothing drawn yet still shows the face bundled with the app`() = runTest {
-        assertEquals(humanity.face, collection.cachedFace(humanity.card.key))
+        assertEquals(
+            listOf(humanity.face, null),
+            listOf(collection.cachedFace(humanity.card.key, PocketCardSide.FRONT), collection.cachedFace(humanity.card.key, PocketCardSide.BACK)),
+        )
     }
 
     // Reading a kept face goes through the runtime, which may not have started yet.
     @Test
     fun `a pinned card shows its bundled face when the kept one cannot be read`() = runTest {
         val unreadable = object : PocketCardRepository by repository {
-            override suspend fun face(key: PocketCardKey): RendererNode? = error("runtime unavailable")
+            override suspend fun face(key: PocketCardKey, side: PocketCardSide): RendererNode? = error("runtime unavailable")
         }
 
         val offline = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), unreadable)
 
-        assertEquals(humanity.face, offline.cachedFace(humanity.card.key))
+        assertEquals(humanity.face, offline.cachedFace(humanity.card.key, PocketCardSide.FRONT))
     }
 }

@@ -1,11 +1,24 @@
 package io.paritytech.polkadotapp.feature_products_api.model
 
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Where an image's bytes come from. The host fetches them; the tree carries no URL. */
+/** What an image draws: bytes the tree carries, or a file the host looks up through a [JsImageSource]. */
 @Serializable
-sealed interface JsImageSource {
+sealed interface JsImageContent {
+    /** Bytes the tree carries itself, which the core has allowed. */
+    @Serializable
+    @SerialName("inline")
+    data class Inline(val bytes: DataByteArray) : JsImageContent {
+        // Logged when a picture fails to draw, so it names the size rather than printing every byte.
+        override fun toString() = "Inline(${bytes.value.size} bytes)"
+    }
+}
+
+/** Where the host fetches an image's bytes from; the tree carries no URL. */
+@Serializable
+sealed interface JsImageSource : JsImageContent {
     @Serializable
     @SerialName("bulletin")
     data class Bulletin(val cid: String) : JsImageSource

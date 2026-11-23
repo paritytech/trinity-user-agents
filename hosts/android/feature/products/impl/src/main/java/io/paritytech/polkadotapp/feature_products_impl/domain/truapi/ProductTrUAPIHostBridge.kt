@@ -43,6 +43,7 @@ import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.CoreAttribute
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -258,6 +259,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
             card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+
+        override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardTurnOutcome =
+            card?.setBackShown(shown) ?: ExpandedCardTurnOutcome.UNSUPPORTED
     }
 
     internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {

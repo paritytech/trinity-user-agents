@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.JsAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageContent
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
@@ -153,10 +155,10 @@ private fun Shape.toJs(): JsShape = when (this) {
     is Shape.Square -> JsShape.Square
 }
 
-private fun ImageSource.toJs(): JsImageSource? = when (this) {
+private fun ImageSource.toJs(): JsImageContent? = when (this) {
     is ImageSource.Bulletin -> JsImageSource.Bulletin(v1)
     is ImageSource.Archive -> JsImageSource.Archive(v1)
-    is ImageSource.Inline -> null
+    is ImageSource.Inline -> v1.takeIf { it.isNotEmpty() }?.let { JsImageContent.Inline(it.toDataByteArray()) }
 }
 
 private fun ImageFit.toJs(): JsImageFit = when (this) {

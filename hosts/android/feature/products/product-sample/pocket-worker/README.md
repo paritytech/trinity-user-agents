@@ -26,8 +26,10 @@ The worker archive is what the host reads, so publish these files under the prod
 `worker.<name>.<tld>` dotNS name:
 
 ```
-worker.js            <- dist/worker.js
-faces/loyalty.json   <- the static face the approval sheet shows
+worker.js                <- dist/worker.js
+faces/loyalty.json       <- the static face the approval sheet shows
+faces/loyalty-back.json  <- the static back, shown until the worker draws one
+faces/code.png           <- the image on the static back
 ```
 
 and set that name's `executable` text record to `manifest/worker.json`. The root manifest of
@@ -56,3 +58,17 @@ product form, so its "Open with the face away" switch decides instead.
 2. `adb reverse tcp:5173 tcp:5173` so the emulator reaches it.
 3. Point the debug product's App URL at `http://127.0.0.1:5173/index.html`, add the card and open it.
    Add `?hideOnLoad` to the URL to hide the face as soon as the page loads.
+
+## Try the card back
+
+`loyalty` declares `"back": "faces/loyalty-back.json"`, so the host can turn the opened card over. The
+static back shows `faces/code.png` from the archive and "BACK · static". Once the worker draws the
+back under `PocketCardBack { loyalty }`, it shows the same image sent inline in the tree, "BACK ·
+live", a back stamp count and a "Stamp back" button. Both faces show the back stamp count, which lives
+in the worker's memory, so a restarted worker counts from 0.
+
+The page has "Show back", "Show front" and "Show back in 2 s" buttons, which call
+`expandedCard.setBackShown` and log its answer (`ok`, `UserMoving`, `NoBack`, `NotPresented`).
+
+In the debug loop the card comes from the product form: set its "Pocket card back face URL" to
+`http://127.0.0.1:5173/faces/loyalty-back.json`. The Pocket face preview takes a back URL as well.

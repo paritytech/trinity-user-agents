@@ -32,7 +32,7 @@ class PocketAddCardInteractor @Inject constructor(
 ) {
     suspend fun loadOffer(productId: ProductId, cardId: PocketCardId): Result<PocketAddCardOffer> =
         publishedCards.find(productId, cardId).flatMap { published ->
-            previewLoader.load(productId, published.definition).map { face ->
+            previewLoader.load(productId, published.definition.preview).map { face ->
                 PocketAddCardOffer(
                     key = PocketCardKey(productId, cardId),
                     productName = published.product.name,

@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
@@ -34,22 +33,35 @@ class PocketFacePreviewViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) : BaseViewModel(), PocketFacePreviewContract {
     /** The attempt counter is what makes drawing the same URL again actually re-fetch it. */
-    private data class Request(val url: String, val attempt: Int)
+    private data class Request(val url: String, val backUrl: String?, val attempt: Int)
+
+    private class Drawn(val draws: Int, val face: LoadingState<JsWidget>?, val back: LoadingState<JsWidget>?)
 
     private val typedUrl = MutableStateFlow("")
+    private val typedBackUrl = MutableStateFlow("")
     private val requests = MutableStateFlow<Request?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val face: Flow<Pair<Int, LoadingState<JsWidget>?>> = requests.flatMapLatest { request ->
-        if (request == null) flowOf(0 to null) else request.url.load().map { request.attempt to it }
+    private val drawn: Flow<Drawn> = requests.flatMapLatest { request ->
+        if (request == null) {
+            flowOf(Drawn(draws = 0, face = null, back = null))
+        } else {
+            combine(request.url.load(), request.backUrl?.load() ?: flowOf(null)) { face, back -> Drawn(request.attempt, face, back) }
+        }
     }
 
     override val state: StateFlow<PocketFacePreviewState> =
-        combine(typedUrl, face) { url, (draws, face) -> PocketFacePreviewState(url = url, face = face, draws = draws) }
-            .stateIn(this, SharingStarted.Eagerly, PocketFacePreviewState(url = "", face = null, draws = 0))
+        combine(typedUrl, typedBackUrl, drawn) { url, backUrl, drawn ->
+            PocketFacePreviewState(url = url, backUrl = backUrl, face = drawn.face, back = drawn.back, draws = drawn.draws)
+        }
+            .stateIn(this, SharingStarted.Eagerly, PocketFacePreviewState(url = "", backUrl = "", face = null, back = null, draws = 0))
 
-    override val imageResolver = JsImageResolver { source ->
-        val faceUrl = requests.value?.url ?: return@JsImageResolver null
+    override val imageResolver = imagesFrom { it.url }
+
+    override val backImageResolver = imagesFrom { it.backUrl }
+
+    private fun imagesFrom(faceUrlOf: (Request) -> String?) = JsImageResolver { source ->
+        val faceUrl = requests.value?.let(faceUrlOf) ?: return@JsImageResolver null
 
         val address = interactor.resolveImage(faceUrl, source)
             .logFailure("PocketFacePreview: face image unavailable")
@@ -76,11 +88,16 @@ class PocketFacePreviewViewModel @Inject constructor(
         typedUrl.value = url
     }
 
+    override fun onBackUrlChanged(url: String) {
+        typedBackUrl.value = url
+    }
+
     override fun onDrawClick() {
         val url = typedUrl.value.trim()
         if (url.isBlank()) return
 
-        requests.update { Request(url = url, attempt = (it?.attempt ?: 0) + 1) }
+        val backUrl = typedBackUrl.value.trim().ifBlank { null }
+        requests.update { Request(url = url, backUrl = backUrl, attempt = (it?.attempt ?: 0) + 1) }
     }
 
     private fun String.load(): Flow<LoadingState<JsWidget>> = flow {
