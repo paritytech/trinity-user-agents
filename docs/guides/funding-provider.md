@@ -53,6 +53,7 @@ An `App` route never leaves your App (`https://…`, `//other.dot` → `InvalidU
 ```json
 {
   "$v": 1,
+  "appVersion": [1, 0, 0],
   "kind": "worker",
   "entrypoint": "index.js",
   "includes": {
@@ -68,13 +69,16 @@ An `App` route never leaves your App (`https://…`, `//other.dot` → `InvalidU
 
 One mode per route · fiat assets are ISO 4217, crypto assets are symbols · countries ISO 3166-1 alpha-2. Routes only
 narrow who is asked; your quotes are what count. Publishing is not listing: each host offers the providers its operator
-lists, so ask to be added. The core re-reads your manifest from dotNS at every app launch, so a redeploy shows at the
-next launch; a manifest that doesn't parse leaves you out of the list.
+lists, so ask to be added. The core re-reads your manifest from dotNS when the host sets its provider list, when an
+overlay opens and on each quote round, so a redeploy can show within a session; a manifest that doesn't parse leaves you
+out of the list. `appVersion` is required.
 
 ## 3. Register four handlers at start
 
 ```ts
-const client = await truapi();
+import { getClientSync } from "@parity/truapi/sandbox";
+
+const client = getClientSync(); // null outside a host
 client.fundingProvider.onQuote(({ ask }) => ok(price(ask)));
 client.fundingProvider.onAssign(({ session }) => {
   run(session);
@@ -84,7 +88,8 @@ client.fundingProvider.onCancel(({ intent }) => answerCancel(intent).then(ok));
 client.fundingProvider.onSettleCancel(({ intent, decision }) => settle(intent, decision).then(() => ok(undefined)));
 ```
 
-Calls can repeat and arrive in any order: key everything by `intent`, make every handler idempotent.
+Calls can repeat and arrive in any order: key everything by `intent`, make every handler idempotent. Your reports are
+not: a resent step answers `OutOfOrder`, and each resent `Details` or `Deposit` uses one of the 8 allowed.
 
 ## 4. Quote
 
@@ -97,13 +102,14 @@ Calls can repeat and arrive in any order: key everything by `intent`, make every
 { tag: "Refused", value: { reason: { tag: "BelowMinimum", value: { min } } } }   // AboveMaximum · CountryUnsupported · Unavailable · Other
 ```
 
-| Rule                                                                    | Break it and                |
-| ----------------------------------------------------------------------- | --------------------------- |
-| answer within 10 s                                                      | you show as unavailable     |
-| In: `receiveAmount` = ask · Out: `sendAmount` = ask                     | unavailable                 |
-| amounts > 0 · fees ≤ `sendAmount` · `quoteId` ≤ 128 chars · not expired | unavailable                 |
-| `etaSecs` set                                                           | a silent session shows late |
-| `BelowMinimum` / `AboveMaximum` carry your limit                        | the host learns it for 12 h |
+| Rule                                                    | Break it and                      |
+| ------------------------------------------------------- | --------------------------------- |
+| answer within 10 s                                      | you show as unavailable           |
+| In: `receiveAmount` = ask · Out: `sendAmount` = ask     | unavailable                       |
+| amounts > 0 · fees ≤ `sendAmount` · not expired         | unavailable                       |
+| `quoteId` non-empty, ≤ 128 bytes, no control characters | unavailable                       |
+| `etaSecs` set                                           | a silent session never shows late |
+| `BelowMinimum` / `AboveMaximum` carry your limit        | the host learns it for 12 h       |
 
 ## 5. Run a session
 
@@ -136,15 +142,16 @@ stateDiagram-v2
   Refunding --> [*]
 ```
 
-| Any time                               | Limit                                              |
-| -------------------------------------- | -------------------------------------------------- |
-| `Details { transactionId, reference }` | 8 per session                                      |
-| `Deposit` (inbound, until funds move)  | 8 per session · payment URIs only (BIP21, EIP-681) |
-| `Failed { reason }`                    | only before funds move                             |
-| `PaymentReceived { mismatch }`         | what arrived, when less or another asset           |
+| Any time                               | Limit                                                                                            |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `Details { transactionId, reference }` | 8 per session                                                                                    |
+| `Deposit` (inbound, until funds move)  | 8 per session · no web, script or file URI (`https`, `data`, `javascript`…), e.g. BIP21, EIP-681 |
+| `Failed { reason }`                    | only before a top-up or payment starts, named in a report or not                                 |
+| `PaymentReceived { mismatch }`         | what arrived, when less or another asset                                                         |
 
-Every text is one plain line, ≤ 80 characters (`InvalidDetail` otherwise). Reports only move forward (`OutOfOrder`);
-`NotFound` means the session is over, so drop its state.
+Every text is one plain, non-blank line, ≤ 80 characters and ≤ 320 bytes (`InvalidDetail` otherwise). Reports only move
+forward (`OutOfOrder`). `NotFound` to a step does not mean you are done: a released withdrawal still takes `Payout`,
+`Refunding` and `Details` until you report how the payout went, so keep its state until your last report.
 
 ## 6. Show your screens
 
@@ -233,8 +240,10 @@ sequenceDiagram
 
 ## 10. Test it
 
-- `make e2e-funding-cli`: the funding battery against the CLI host.
-- A fake host that refuses out-of-order reports, so ordering bugs fail your tests.
+- `make e2e-funding-cli` runs the product side against a CLI host that scripts each outcome; it does not run your
+  Worker.
+- There is no fake funding host to test a Worker against: build one that refuses out-of-order reports, so ordering bugs
+  fail your tests.
 - Kill the Worker after every external action and before the next save; the resumed session must finish and move funds
   once.
 - On testnet, a switch for each ending: declined payment, refund, retried payout, late arrival.

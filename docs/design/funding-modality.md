@@ -10,7 +10,11 @@ _How value moves into and out of the user's CASH balance. Rationale: [RFC](../rf
 [product manifest](../rfcs/product-manifest.md#funding-configuration) · for provider teams:
 [Building a funding provider](../guides/funding-provider.md)._
 
-_Screens are from the Pocket R2 design in Figma. The apps put funding on the existing CASH card (Get, Send and a history button, the same on iOS and Android); the card's own redesign comes later._
+_Screens are from the Pocket R2 design in Figma. The apps put funding on the existing CASH card (Get, Send and a history
+button, the same on iOS and Android); the card's own redesign comes later._
+
+_The host side is the target: on main the iOS funding service is not wired into the app yet and Android has no funding
+host; both land with the host stacks (iOS #1866, Android #1869)._
 
 ## Parts
 
@@ -18,7 +22,7 @@ _Screens are from the Pocket R2 design in Figma. The apps put funding on the exi
 flowchart LR
   product["Product<br/>funding.request · statusSubscribe"]
 
-  subgraph HOST["Host app · iOS / Android / CLI"]
+  subgraph HOST["Host app · iOS / Android"]
     overlay["Overlay<br/>amount · providers · summary"]
     frame["Provider frame<br/>App route or https page"]
     purse["CASH card<br/>Get · Send · history"]
@@ -47,6 +51,8 @@ flowchart LR
   wallet -- statuses --> service --> sessions
 ```
 
+The CLI host only scripts outcomes for the product battery: it has no overlay, provider frame or CASH card.
+
 | Who      | Owns                                               | Never                      |
 | -------- | -------------------------------------------------- | -------------------------- |
 | Host     | screens and their wording, coins, the device       | decides an outcome         |
@@ -67,13 +73,14 @@ flowchart LR
 
 | Host ↔ core (native names)  | Methods                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Callbacks (core → host)     | `present_funding` · `provider_frame_requested` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)`                                                                                                                                                                                 |
+| Callbacks (core → host)     | `present_funding` · `provider_frame_requested` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)` · `worker_crashing(product_id, crashes)`                                                                                                                                        |
 | Actions (host → core)       | `set_funding_callbacks` · `set_funding_provider_config` · `open_funding` · `open_provider_frame` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `worker_exited` |
 | Reads (host → core)         | `funding_session` · `funding_session_open` · `funding_progress` · `funding_options` · `funding_quotes` · `funding_amount_issue` · `funding_frame_waiting` · `funding_entries` · `funding_summary` · `funding_history` · `funding_available`                                                                                               |
-| Free functions (no runtime) | `funding_resume_pending(database_directory)` · `funding_status_in_flight(status)`                                                                                                                                                                                                                                                         |
+| Free functions (no runtime) | `funding_resume_pending(database_directory)` · `funding_status_in_flight(status)` · `funding_page_origin` · `funding_page_allows_navigation` · `funding_page_allows_media` · `funding_page_matches_return`                                                                                                                                |
 
-`set_funding_provider_config` takes the providers' published names; a provider whose Worker manifest doesn't parse is
-logged and left out, and the rest are still offered.
+`set_funding_provider_config` takes the providers' published names, without a TLD; names that are not product ids are
+skipped and logged. A provider whose dotNS manifest can't be read or doesn't parse is not offered, and the rest still
+are.
 
 Session id: `fs_` + nanoid(10). Another product's session reads as `NotFound`. Amounts cross the FFI as decimal strings.
 
@@ -200,8 +207,8 @@ stateDiagram-v2
   Expired --> [*]
 ```
 
-Once money moved, only the provider ends a session. A bank top-up cancelled before paying stays open 7 days for a late
-transfer, which is still added.
+Once money moved, only the provider ends a session. An inbound session cancelled after a provider took it and before any
+top-up started stays open 7 days for a late payment, which is still added.
 
 ## Cancel
 
@@ -229,9 +236,10 @@ flowchart TD
   refund -. payout landed first .-> paid[PaidOutAfterCancel]
 ```
 
-`cancel_funding` is the host's one way to stop a session; the core picks the effect from its state and answers
-`Refused` once it has ended. Closing the overlay is not a cancel: before the session starts the host answers
-`present_funding` with `Dismissed`, which drops it the same way; after it starts the session runs on.
+`cancel_funding` is the host's one way to stop a session; the core picks the effect from its state. It answers `Refused`
+once the session has ended, and for a withdrawal whose payout failed or whose refund was reported, which is owed its
+refund in full. Closing the overlay is not a cancel: before the session starts the host answers `present_funding` with
+`Dismissed`, which drops it the same way; after it starts the session runs on.
 
 A cancel that moved no money is left out of history.
 
@@ -264,7 +272,7 @@ flowchart LR
   end
   subgraph kv["Core storage · host-backed"]
     l[(FundingSupport<br/>learned limits · 12 h)]
-    m[(Worker manifest cache · 24 h<br/>providers re-read at every launch)]
+    m[(Worker manifest cache · 24 h<br/>providers re-read when set, as an overlay opens, each quote round)]
   end
   s -- "ends · same transaction" --> k
   s & k -- funding_history --> hv[Host history]
@@ -274,6 +282,7 @@ flowchart LR
 | Row read            | Result                                           |
 | ------------------- | ------------------------------------------------ |
 | current format      | read                                             |
+| summary format 2    | read, converted to the current format            |
 | older / undecodable | skipped, kept, never written over                |
 | newer (downgrade)   | load fails, nothing touched, funding unavailable |
 
@@ -294,7 +303,8 @@ sequenceDiagram
   W->>C: handshake
   C->>W: assign(last update) per session, then unanswered cancels
   W->>W: resume from its saved state
-  Note over H,W: a crash later: worker_exited → Start again while a session or the overlay holds it (no backoff)
+  Note over H,W: a crash later: worker_exited → Start again while a session or the overlay holds it
+  Note over H,W: crashes within a minute of each other back off from the second (1 s, doubling to 5 min); the third calls worker_crashing
 ```
 
 ## Numbers
@@ -306,7 +316,7 @@ sequenceDiagram
 | detected country reuse · retry    | 1 h · 1 min |
 | open session expires              | 24 h        |
 | assigned, silent, no money moved  | 7 d         |
-| late bank transfer after a cancel | 7 d         |
+| late payment after a cancel       | 7 d         |
 | provider call timeout             | 60 s        |
 | unaccepted funds kept             | 1 h         |
 | top-ups or payments per session   | 3           |
@@ -315,4 +325,5 @@ sequenceDiagram
 
 ## Test
 
-`make e2e-funding-cli`: the product and provider battery against the CLI host.
+`make e2e-funding-cli`: the product side against the CLI host, which stands in for the overlay and scripts each provider
+outcome; no provider Worker runs.
