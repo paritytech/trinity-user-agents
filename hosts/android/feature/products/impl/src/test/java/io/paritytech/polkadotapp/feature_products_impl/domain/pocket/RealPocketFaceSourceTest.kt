@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.net.Uri
-import io.mockk.coEvery
 import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
@@ -14,11 +13,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -26,8 +22,6 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.MaterialsProps
 import uniffi.truapi.ProductId
@@ -66,10 +60,7 @@ class RealPocketFaceSourceTest {
     private val resolveDrawn = mockk<(RendererNode) -> MaterialsResolution?>(relaxed = true)
     private val resolveKept = mockk<(RendererNode) -> MaterialsResolution?> { every { this@mockk(any()) } returns mockk(relaxed = true) }
     private val streams = FakeStreams(resolveDrawn, resolveKept)
-    private val workers = mockk<PocketCardWorkers> {
-        coEvery { holdVisibleSides(any(), any(), any()) } coAnswers { arg<() -> Unit>(2)() }
-    }
-    private val source = RealPocketFaceSource(store, streams, NoImages(), workers)
+    private val source = RealPocketFaceSource(store, streams, NoImages())
 
     private fun materialsFace(text: String) =
         RendererNode.Materials(MaterialsProps(emptyList()), listOf(RendererNode.String(text)))
@@ -79,7 +70,7 @@ class RealPocketFaceSourceTest {
         store.addCard(loyalty)
         val shown = mutableListOf<PocketFace>()
 
-        val onScreen = source.bindVisibleCard(loyalty.card.key, flowOf(false)).onEach { shown += it }.launchIn(this)
+        val onScreen = source.observeFace(loyalty.card.key).onEach { shown += it }.launchIn(this)
         advanceUntilIdle()
         streams.faces.emit(faceOf("live 1"))
         streams.faces.emit(faceOf("live 2"))
@@ -94,7 +85,7 @@ class RealPocketFaceSourceTest {
     fun `a card with no cached face still opens the live stream`() = runTest {
         val shown = mutableListOf<PocketFace>()
 
-        val onScreen = source.bindVisibleCard(cardKey(gameProduct, "unknown"), flowOf(false)).onEach { shown += it }.launchIn(this)
+        val onScreen = source.observeFace(cardKey(gameProduct, "unknown")).onEach { shown += it }.launchIn(this)
         advanceUntilIdle()
         streams.faces.emit(faceOf("first"))
         advanceUntilIdle()
@@ -120,7 +111,7 @@ class RealPocketFaceSourceTest {
         every { resolveDrawn(materialsFace("2")) } returns second
         val shown = mutableListOf<PocketFace>()
 
-        val onScreen = source.bindVisibleCard(loyalty.card.key, flowOf(false)).onEach { shown += it }.launchIn(this)
+        val onScreen = source.observeFace(loyalty.card.key).onEach { shown += it }.launchIn(this)
         advanceUntilIdle()
         streams.faces.emit(materialsFace("1"))
         streams.faces.emit(materialsFace("2"))
@@ -138,27 +129,18 @@ class RealPocketFaceSourceTest {
     }
 
     @Test
-    fun `a failed materials resolution cannot release a side while the card is visible`() = runTest {
-        val released = CompletableDeferred<Unit>()
-        coEvery { workers.holdVisibleSides(any(), any(), any()) } coAnswers {
-            arg<() -> Unit>(2)()
-            try {
-                awaitCancellation()
-            } finally {
-                released.complete(Unit)
-            }
-        }
+    fun `a failed materials resolution releases the last displayed materials`() = runTest {
+        val displayed = mockk<MaterialsResolution>(relaxed = true)
+        every { resolveDrawn(materialsFace("shown")) } returns displayed
         val tree = materialsFace("broken")
         every { resolveDrawn(tree) } throws IllegalStateException("resolution failed")
-        val binding = source.bindVisibleCard(loyalty.card.key, flowOf(false)).launchIn(this)
-        advanceUntilIdle()
+        val collection = source.observeFace(loyalty.card.key).launchIn(this)
+        testScheduler.runCurrent()
+        streams.faces.emit(materialsFace("shown"))
         streams.faces.emit(tree)
-        advanceUntilIdle()
+        collection.join()
 
-        verify(exactly = 1) { resolveDrawn(tree) }
-        assertFalse(released.isCompleted)
-        binding.cancelAndJoin()
-        assertTrue(released.isCompleted)
+        verify(exactly = 1) { displayed.close() }
     }
 
     // A kept face was not drawn by the running execution, so its fallbacks must not reach the product.
@@ -166,7 +148,7 @@ class RealPocketFaceSourceTest {
     fun `a kept face resolves on the runtime and a live face on the execution that drew it`() = runTest {
         store.addCard(loyalty.copy(face = materialsFace("kept")))
 
-        val onScreen = source.bindVisibleCard(loyalty.card.key, flowOf(false)).launchIn(this)
+        val onScreen = source.observeFace(loyalty.card.key).launchIn(this)
         advanceUntilIdle()
         streams.faces.emit(materialsFace("live"))
         advanceUntilIdle()
@@ -189,7 +171,7 @@ class RealPocketFaceSourceTest {
         store.addCard(loyalty.copy(face = materialsFace("kept")))
         val shown = mutableListOf<PocketFace>()
 
-        val onScreen = source.bindVisibleCard(loyalty.card.key, flowOf(false)).onEach { shown += it }.launchIn(this)
+        val onScreen = source.observeFace(loyalty.card.key).onEach { shown += it }.launchIn(this)
         advanceUntilIdle()
         val whileBooting = shown.toList()
         streams.runtimeBooted.complete(Unit)

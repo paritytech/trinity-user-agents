@@ -9,14 +9,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.hasMaterials
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.RendererNode
 import javax.inject.Inject
@@ -26,23 +21,9 @@ class RealPocketFaceSource @Inject constructor(
     private val store: PocketCardStore,
     private val streams: PocketFaceStreams,
     private val images: ProductImageResolver,
-    private val workers: PocketCardWorkers,
 ) : PocketFaceSource {
-    override fun bindVisibleCard(key: PocketCardKey, expanded: Flow<Boolean>): Flow<PocketFace> = flow {
-        coroutineScope {
-            val ready = CompletableDeferred<Boolean>()
-            launch {
-                try {
-                    workers.holdVisibleSides(key, expanded) { ready.complete(true) }
-                } finally {
-                    ready.complete(false)
-                }
-            }
-            emitAll(faces(key, ready).catch { Timber.e(it, "pocket: the face for %s ended", key.cardId.value) })
-        }
-    }
-
-    private fun faces(key: PocketCardKey, ready: Deferred<Boolean>): Flow<PocketFace> = flow {
+    // Shared into a ViewModel scope that has no handler for a throw, so a failure ends the stream quietly.
+    override fun observeFace(key: PocketCardKey): Flow<PocketFace> = flow {
         var shown: MaterialsResolution? = null
 
         // The next tree's materials are resolved before the shown ones close, so materials both share keep their fetch.
@@ -62,13 +43,12 @@ class RealPocketFaceSource @Inject constructor(
                 if (tree.hasMaterials()) emit(PocketFace(tree.toJsWidget(), materials = null))
                 show(tree) { streams.resolveKeptMaterials(key, tree) }
             }
-            if (ready.await()) {
-                streams.renderFaces(key).collect { face -> show(face.tree) { face.resolveMaterials() } }
-            }
+            streams.renderFaces(key).collect { face -> show(face.tree) { face.resolveMaterials() } }
         } finally {
             shown?.close()
         }
     }
+        .catch { Timber.e(it, "pocket: the face stream for %s ended", key.cardId.value) }
 
     private suspend fun cachedFace(key: PocketCardKey): RendererNode? = runCatching { store.cachedFace(key) }
         .onFailure { Timber.w(it, "pocket: no kept face for %s", key.cardId.value) }

@@ -6,10 +6,12 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.cardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertNull
@@ -32,7 +34,19 @@ class TrUAPIPocketFaceStreamsTest {
             every { execution(gameProduct) } returns flowOf(execution)
             every { currentExecution(gameProduct) } returns null
         }
-        return TrUAPIPocketFaceStreams(provider, workers)
+        val published = mockk<PublishedPocketCards> { coEvery { awaitPublished(key) } returns mockk() }
+        return TrUAPIPocketFaceStreams(provider, workers, published)
+    }
+
+    @Test
+    fun `a stale card cannot draw on the worker already running for chat`() = runTest {
+        val execution = mockk<TrUAPIProductExecution>()
+        val workers = mockk<TrUAPIWorkerSupervisor> { every { execution(gameProduct) } returns flowOf(execution) }
+        val published = mockk<PublishedPocketCards> { coEvery { awaitPublished(key) } returns null }
+        val faces = TrUAPIPocketFaceStreams(mockk(), workers, published)
+
+        assertNull(faces.renderFaces(key).firstOrNull())
+        verify(exactly = 0) { execution.render(any()) }
     }
 
     @Test

@@ -7,12 +7,11 @@ import kotlinx.coroutines.flow.Flow
 /** Where a card's face tree comes from. */
 interface PocketFaceSource {
     /**
-     * Bind a visible card, starting with the cached face. The card holds its worker until the
-     * binding ends. An expanded card also holds a reference for its published back.
+     * The face for [key], starting with the cached tree. Drawing on a running worker does not take a worker claim.
      * The source owns each face's [PocketFace.materials]: it closes one when the next face replaces it
      * and the last when collection ends.
      */
-    fun bindVisibleCard(key: PocketCardKey, expanded: Flow<Boolean>): Flow<PocketFace>
+    fun observeFace(key: PocketCardKey): Flow<PocketFace>
 
     /** Delivers a press or edit inside the face to the product. [payload] is empty for a press. */
     fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray)

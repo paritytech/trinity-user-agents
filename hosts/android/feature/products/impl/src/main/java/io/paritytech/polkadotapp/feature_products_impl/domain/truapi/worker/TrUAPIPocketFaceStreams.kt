@@ -5,12 +5,15 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RenderedFace
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
@@ -21,13 +24,19 @@ import javax.inject.Inject
 class TrUAPIPocketFaceStreams @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val workers: TrUAPIWorkerSupervisor,
+    private val publishedCards: PublishedPocketCards,
 ) : PocketFaceStreams {
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun renderFaces(key: PocketCardKey): Flow<RenderedFace> =
-        workers.execution(key.productId)
-            .filterNotNull()
-            .flatMapLatest { execution -> execution.faces(key) }
-            .reopenAfterFailure("Pocket face stream for ${key.cardId.value}")
+    override fun renderFaces(key: PocketCardKey): Flow<RenderedFace> = flow {
+        if (publishedCards.awaitPublished(key) == null) return@flow
+
+        emitAll(
+            workers.execution(key.productId)
+                .filterNotNull()
+                .flatMapLatest { execution -> execution.faces(key) }
+                .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),
+        )
+    }
 
     override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
         val execution = workers.currentExecution(key.productId) ?: return

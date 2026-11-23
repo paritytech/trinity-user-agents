@@ -35,14 +35,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -188,11 +191,17 @@ class PocketViewModel @Inject constructor(
             override fun resolved(source: JsImageSource) = resolvedFaceImages[card.id to source]
         }
 
+        val face = flow {
+            coroutineScope {
+                launch { interactor.holdVisibleSides(card.key, selectedCardId.map { it == card.id }) }
+                emitAll(interactor.observeFace(card.key))
+            }
+        }.stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null)
+
         return CardBinding(
             scope = scope,
             bindings = ProductFaceBindings(
-                face = interactor.bindVisibleCard(card.key, selectedCardId.map { it == card.id })
-                    .stateIn(scope, SharingStarted.WhileSubscribed(WORKER_KEEP_ALIVE_MILLIS), initialValue = null),
+                face = face,
                 onFaceAction = { actionId, type -> onFaceAction(card, actionId, type) },
                 imageResolver = imageResolver,
                 materials = CardMaterialsSlot(materialsGl, { source -> materialImages.load(imageResolver, source) }, scope),

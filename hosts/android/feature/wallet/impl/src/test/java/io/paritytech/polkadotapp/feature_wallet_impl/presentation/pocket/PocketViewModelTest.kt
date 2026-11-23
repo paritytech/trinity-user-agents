@@ -29,8 +29,10 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -60,7 +62,8 @@ class PocketViewModelTest {
     private val interactor: PocketInteractor = mockk {
         every { observeDigitalDollarBalance() } returns emptyFlow()
         every { observeProductCards() } returns emptyFlow()
-        every { bindVisibleCard(any(), any()) } returns emptyFlow()
+        every { observeFace(any()) } returns emptyFlow()
+        coEvery { holdVisibleSides(any(), any()) } returns Unit
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
         coEvery { faceShownOnOpen(any()) } returns true
     }
@@ -466,7 +469,7 @@ class PocketViewModelTest {
         val card = productCard("loyalty")
         val face = PocketFace(JsWidget.Text(text = "Loyalty"), materials = null)
         every { interactor.observeProductCards() } returns flowOf(listOf(card))
-        every { interactor.bindVisibleCard(card.key, any()) } returns flowOf(face)
+        every { interactor.observeFace(card.key) } returns flowOf(face)
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
@@ -477,15 +480,17 @@ class PocketViewModelTest {
         listCopy.cancel()
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun `two presentations share the card binding until the last one leaves and its grace expires`() = runTest(testDispatcher) {
+    fun `two presentations keep the worker after drawing ends until the last one leaves and its grace expires`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
         every { interactor.observeProductCards() } returns flowOf(listOf(card))
         val changes = mutableListOf<String>()
-        every { interactor.bindVisibleCard(card.key, any()) } returns flow {
+        val expansion = mutableListOf<Boolean>()
+        coEvery { interactor.holdVisibleSides(card.key, any()) } coAnswers {
             changes += "started"
             try {
-                awaitCancellation()
+                secondArg<Flow<Boolean>>().collect { expansion += it }
             } finally {
                 changes += "stopped"
             }
@@ -493,9 +498,17 @@ class PocketViewModelTest {
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
-        val list = launch { viewModel.bindingsOf(uiCard).face.collect {} }
+        val bindings = viewModel.bindingsOf(uiCard)
+        runCurrent()
+        assertEquals(emptyList<String>(), changes)
+        val list = launch { bindings.face.collect {} }
         val expanded = launch { viewModel.bindingsOf(uiCard).face.collect {} }
         runCurrent()
+        viewModel.selectCard(uiCard)
+        runCurrent()
+        viewModel.dismissCard()
+        runCurrent()
+        assertEquals(listOf(false, true, false), expansion)
         list.cancel()
         advanceTimeBy(5_000)
         expanded.cancel()

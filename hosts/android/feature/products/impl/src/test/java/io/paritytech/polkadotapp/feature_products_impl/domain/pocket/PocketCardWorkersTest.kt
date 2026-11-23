@@ -33,7 +33,7 @@ import uniffi.truapi.ProductId
 class PocketCardWorkersTest {
     private val key = cardKey(gameProduct, "loyalty")
 
-    private val publishing = ResolvedProduct(
+    private fun publishing(back: PocketCardPreview.Archive? = PocketCardPreview.Archive("back.json")) = ResolvedProduct(
         product = Product(id = gameProduct, name = "Game", icon = null),
         description = null,
         executables = Executables(
@@ -46,7 +46,7 @@ class PocketCardWorkersTest {
                 includesPocket = true,
                 pocketCards = listOf(
                     PocketCardDefinition(
-                        PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true, back = PocketCardPreview.Archive("back.json"),
+                        PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true, back = back,
                     ),
                 ),
             ),
@@ -66,15 +66,15 @@ class PocketCardWorkersTest {
         coEvery { runtime() } returns Result.failure(IllegalStateException("runtime unavailable"))
     }
 
-    private fun workers(resolver: ResolveProductUseCase) = PocketCardWorkers(PublishedPocketCards(resolver), runtimeProvider)
+    private fun workers(resolver: ResolveProductUseCase) = RealPocketCardWorkers(PublishedPocketCards(resolver), runtimeProvider)
 
     // A read that did not land, typically a device briefly offline, says nothing about the card.
     // Giving up on it leaves the card static for as long as it stays on screen.
     @Test
     fun `a card whose product could not be read is looked up again`() = runTest {
-        val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishing)))
+        val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.Unknown), Result.success(publishing())))
 
-        workers(resolver).holdVisibleSides(key, flowOf(false)) { error("unavailable card cannot draw") }
+        workers(resolver).holdVisibleSides(key, flowOf(false))
 
         assertEquals(2, resolver.calls)
         coVerify(exactly = 1) { runtimeProvider.runtime() }
@@ -86,7 +86,7 @@ class PocketCardWorkersTest {
     fun `a card whose manifest is malformed is not streamed and not looked up again`() = runTest {
         val resolver = ScriptedResolver(listOf(Result.failure(ProductResolutionError.MalformedManifest)))
 
-        workers(resolver).holdVisibleSides(key, flowOf(false)) { error("unavailable card cannot draw") }
+        workers(resolver).holdVisibleSides(key, flowOf(false))
 
         assertEquals(1, resolver.calls)
         coVerify(exactly = 0) { runtimeProvider.runtime() }
@@ -94,30 +94,29 @@ class PocketCardWorkersTest {
 
     @Test
     fun `each visible side releases its own claim when that side leaves`() = runTest {
-        val front = mockk<NativeWorkerClaim>(relaxed = true)
-        val back = mockk<NativeWorkerClaim>(relaxed = true)
-        val runtime = mockk<TrUAPIHostRuntime> { every { claimWorker(gameProduct) } returnsMany listOf(front, back) }
-        coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
-        val expanded = MutableStateFlow(false)
-        var starts = 0
+        for (declaredBack in listOf(null, PocketCardPreview.Archive("back.json"))) {
+            val front = mockk<NativeWorkerClaim>(relaxed = true)
+            val back = mockk<NativeWorkerClaim>(relaxed = true)
+            val runtime = mockk<TrUAPIHostRuntime> { every { claimWorker(gameProduct) } returnsMany listOf(front, back) }
+            coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
+            val expanded = MutableStateFlow(false)
+            val eligible = workers(ScriptedResolver(listOf(Result.success(publishing(declaredBack)))))
+            val visible = launch { eligible.holdVisibleSides(key, expanded) }
+            runCurrent()
+            verify(exactly = 1) { runtime.claimWorker(gameProduct) }
 
-        val eligible = workers(ScriptedResolver(listOf(Result.success(publishing))))
-        val visible = launch { eligible.holdVisibleSides(key, expanded) { starts++ } }
-        runCurrent()
-        assertEquals(1, starts)
-        verify(exactly = 1) { runtime.claimWorker(gameProduct) }
-        verify(exactly = 0) { front.release() }
+            val backCount = if (declaredBack == null) 0 else 1
+            expanded.value = true
+            runCurrent()
+            verify(exactly = 1 + backCount) { runtime.claimWorker(gameProduct) }
+            expanded.value = false
+            runCurrent()
+            verify(exactly = backCount) { back.release() }
+            verify(exactly = 0) { front.release() }
 
-        expanded.value = true
-        runCurrent()
-        verify(exactly = 2) { runtime.claimWorker(gameProduct) }
-        expanded.value = false
-        runCurrent()
-        verify(exactly = 1) { back.release() }
-        verify(exactly = 0) { front.release() }
-
-        visible.cancelAndJoin()
-        verify(exactly = 1) { front.release() }
-        verify(exactly = 1) { back.release() }
+            visible.cancelAndJoin()
+            verify(exactly = 1) { front.release() }
+            verify(exactly = backCount) { back.release() }
+        }
     }
 }
