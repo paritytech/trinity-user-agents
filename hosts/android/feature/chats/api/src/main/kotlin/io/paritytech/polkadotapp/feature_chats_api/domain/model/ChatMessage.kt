@@ -21,6 +21,7 @@ data class ChatMessage(
     val origin: ChatMessageOrigin,
     val content: Content,
     val status: Status,
+    val sortOrder: Long?,
     val replyToMessageId: String? = null
 ) : Identifiable {
     companion object {
@@ -41,6 +42,7 @@ data class ChatMessage(
                 content = content,
                 chatId = chatId,
                 status = status,
+                sortOrder = null,
                 replyToMessageId = replyToMessageId
             )
         }
@@ -167,6 +169,7 @@ data class ChatMessage(
         PROCESSING(0),
         NEW(1),
         IS_SENT(2),
+        IS_DELIVERED(3),
         IS_READ(3),
 
         DELIVERY_FAILED(1)

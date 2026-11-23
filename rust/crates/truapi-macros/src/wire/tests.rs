@@ -22,3 +22,10 @@ fn methods_are_public_unless_marked_internal() {
 
 	assert_eq!(wire_tags(&args), ["@wire_id=2"]);
 }
+
+#[test]
+fn request_fallback_is_tagged_for_codegen() {
+	let args = syn::parse_str::<WireArgs>("id = 0, request_fallback").unwrap();
+
+	assert_eq!(wire_tags(&args), ["@wire_id=0", "@wire_request_fallback"]);
+}

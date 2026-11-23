@@ -222,7 +222,7 @@ class ProductFeedApplierTest {
         chatId: ChatId,
         origin: ChatMessageOrigin,
         content: ChatMessage.Content = ChatMessage.Content.Text("hi"),
-    ) = ChatMessage(id = id, chatId = chatId, timestamp = 1, origin = origin, content = content, status = ChatMessage.Status.IS_READ)
+    ) = ChatMessage(id = id, chatId = chatId, timestamp = 1, origin = origin, content = content, status = ChatMessage.Status.IS_READ, sortOrder = null)
 
     private fun assertSuccess(result: Result<Unit>) {
         assertTrue("expected success but was ${result.exceptionOrNull()}", result.isSuccess)

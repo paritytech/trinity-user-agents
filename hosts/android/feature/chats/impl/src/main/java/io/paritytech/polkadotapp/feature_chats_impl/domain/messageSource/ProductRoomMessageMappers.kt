@@ -30,6 +30,8 @@ internal fun ProductRoomMessage.toChatMessage(chatId: ChatId, extensionId: ChatE
         isUnread -> ChatMessage.Status.NEW
         else -> ChatMessage.Status.IS_READ
     },
+    // Not a stored row: the store order only gives the seen ticks of a person chat.
+    sortOrder = null,
     replyToMessageId = replyTo,
 )
 

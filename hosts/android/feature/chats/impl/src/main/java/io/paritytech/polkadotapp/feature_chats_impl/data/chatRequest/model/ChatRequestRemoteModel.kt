@@ -59,9 +59,11 @@ class ChatRequestMessage(
 
 @Serializable
 sealed class VersionedRequestContent {
+    sealed interface RequestVersion
+
     @Serializable
     @EnumIndex(0)
-    class V1(val content: RequestContentV1) : VersionedRequestContent() {
+    class V1(val content: RequestContentV1) : VersionedRequestContent(), RequestVersion {
         companion object {
             fun new(
                 pushToken: TokenContent?,
@@ -79,7 +81,7 @@ sealed class VersionedRequestContent {
 
     @Serializable
     @EnumIndex(1)
-    class V2(val content: RequestContentV2) : VersionedRequestContent() {
+    class V2(val content: RequestContentV2) : VersionedRequestContent(), RequestVersion {
         companion object {
             fun new(
                 identityProof: IdentityProofScale,
@@ -98,6 +100,10 @@ sealed class VersionedRequestContent {
             }
         }
     }
+
+    @Serializable
+    @EnumIndex(2)
+    class Cancel(val content: RequestContentCancel) : VersionedRequestContent()
 }
 
 @Serializable
@@ -112,6 +118,11 @@ class RequestContentV2(
     val deviceEncPubKey: X25519PublicKeyScale,
     val pushToken: TokenContent?,
     val welcomeMessage: RichTextContent?
+)
+
+@Serializable
+class RequestContentCancel(
+    val identityProof: IdentityProofScale,
 )
 
 @Serializable
@@ -130,5 +141,14 @@ class IdentityProofPayloadScale(
     val identityAccountId: ByteArray,
     @FixedLength(32)
     val statementAccountId: ByteArray,
+    val context: String,
+)
+
+@Serializable
+@Keep
+class CancelProofPayloadScale(
+    @FixedLength(32)
+    val identityAccountId: ByteArray,
+    val requestId: String,
     val context: String,
 )
