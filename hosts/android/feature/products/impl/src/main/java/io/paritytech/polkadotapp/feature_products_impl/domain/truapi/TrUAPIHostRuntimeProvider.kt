@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
-import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
@@ -23,9 +22,9 @@ import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,12 +49,11 @@ import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.WorkerTransition
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 
 /**
@@ -84,13 +82,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val pinnedPocketCards: PinnedPocketCards,
     private val coreEventLogger: CoreEventLogger,
     private val deviceKeyHandOver: TrUAPIDeviceKeyHandOver,
-    // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
-    private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
+    private val workerSupervisor: Provider<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
     private val bootMutex = Mutex()
-    private var boot: Deferred<Result<TrUAPIHostRuntime>>? = null
+    @Volatile private var boot: Deferred<Result<TrUAPIHostRuntime>>? = null
 
     private val authState = MutableStateFlow<AuthState>(AuthState.Disconnected)
 
@@ -122,11 +119,15 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun currentRuntime(): TrUAPIHostRuntime? =
+        boot?.takeIf { it.isCompleted && !it.isCancelled }?.getCompleted()?.getOrNull()
+
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
         val handedOverKey = deviceKeyHandOver.keyToHandOver()
         val config = buildRuntimeConfig(handedOverKey)
         cachedChains.set(chainDirectory.resolve())
-        TrUAPIHostRuntime(HostRuntimeBridge(), config).also {
+        TrUAPIHostRuntime(HostRuntimeBridge(), config, workerSupervisor.get()).also {
             if (handedOverKey != null) deviceKeyHandOver.forgetHandedOverKey()
         }
     }
@@ -231,15 +232,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override fun onCoreEvent(marker: String, attributes: List<CoreAttribute>) {
             coreEventLogger.log(marker, attributes)
-        }
-
-        // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
-        override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
-            val demand = when (transition) {
-                WorkerTransition.START -> WorkerDemand.START
-                WorkerTransition.STOP -> WorkerDemand.STOP
-            }
-            workerSupervisor.get().onDemandChanged(productId, demand)
         }
 
         // A run returns by itself once nothing is live, so `false` needs no action.

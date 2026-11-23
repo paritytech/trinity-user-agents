@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
-import io.parity.truapi.TrUAPIProductExecution
+import io.parity.truapi.TrUAPIWorkerExecution
+import io.parity.truapi.WorkerExecutionState
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -12,7 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import uniffi.truapi.HostRendererActionSubscribeItem
@@ -28,7 +29,6 @@ import javax.inject.Inject
  */
 class TrUAPIPocketFaceStreams @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
-    private val workers: TrUAPIWorkerSupervisor,
     private val publishedCards: PublishedPocketCards,
 ) : PocketFaceStreams {
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -42,16 +42,15 @@ class TrUAPIPocketFaceStreams @Inject constructor(
             .logFailure("TrUAPI runtime unavailable; Pocket face ${key.cardId.value} stays static")
             .getOrElse { return@flow }
 
-        runtime.acquireWorker(key.productId)
+        val claim = runtime.claimWorker(key.productId)
         try {
             emitAll(
-                workers.execution(key.productId)
-                    .filterNotNull()
-                    .flatMapLatest { execution -> execution.faces(key) }
+                runtime.workerExecutionState(key.productId)
+                    .flatMapLatest { state -> (state as? WorkerExecutionState.Running)?.execution?.faces(key) ?: emptyFlow() }
                     .reopenAfterFailure("Pocket face stream for ${key.cardId.value}"),
             )
         } finally {
-            runtime.releaseWorker(key.productId)
+            claim.release()
         }
     }
 
@@ -68,12 +67,12 @@ class TrUAPIPocketFaceStreams @Inject constructor(
     }
 
     override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
-        val execution = workers.currentExecution(key.productId) ?: return
+        val execution = runtimeProvider.currentRuntime()?.currentWorkerExecution(key.productId) ?: return
         runCatching { execution.publishRendererAction(HostRendererActionSubscribeItem(key.renderContext(), actionId, payload)) }
             .logFailure("truapi.renderer.action '$actionId' for ${key.cardId.value}")
     }
 
-    private fun TrUAPIProductExecution.faces(key: PocketCardKey): Flow<RendererNode> =
+    private fun TrUAPIWorkerExecution.faces(key: PocketCardKey): Flow<RendererNode> =
         render(ProductRendererRenderRequest(key.renderContext(), payload = ByteArray(0)))
             .retryWhileConnecting()
 

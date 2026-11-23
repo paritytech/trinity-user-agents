@@ -2,7 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import io.parity.truapi.TrUAPIHostRuntime
+import io.parity.truapi.TrUAPIWorkerExecution
+import io.parity.truapi.WorkerExecutionState
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
@@ -17,11 +22,22 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.cardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.ProductId
+import uniffi.truapi.RendererNode
 
 class TrUAPIPocketFaceStreamsTest {
     private val key = cardKey(gameProduct, "loyalty")
@@ -58,7 +74,43 @@ class TrUAPIPocketFaceStreamsTest {
     }
 
     private fun streams(resolver: ResolveProductUseCase) =
-        TrUAPIPocketFaceStreams(runtimeProvider, mockk(relaxed = true), PublishedPocketCards(resolver))
+        TrUAPIPocketFaceStreams(runtimeProvider, PublishedPocketCards(resolver))
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun `a pending replacement cancels the old render while Pocket keeps its claim`() = runTest {
+        val stopped = CompletableDeferred<Unit>()
+        val old = mockk<TrUAPIWorkerExecution> {
+            every { render(any()) } returns flow {
+                try { awaitCancellation() } finally { stopped.complete(Unit) }
+            }
+        }
+        val replacement = mockk<TrUAPIWorkerExecution> {
+            every { render(any()) } returns flow { emit(RendererNode.Nil); awaitCancellation() }
+        }
+        val states = MutableStateFlow<WorkerExecutionState>(WorkerExecutionState.Running(old))
+        val claim = mockk<NativeWorkerClaim>(relaxUnitFun = true)
+        val runtime = mockk<TrUAPIHostRuntime> {
+            every { claimWorker(key.productId) } returns claim
+            every { workerExecutionState(key.productId) } returns states
+        }
+        coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
+        val faces = streams(ScriptedResolver(listOf(Result.success(publishing)))).renderFaces(key)
+        val drawn = mutableListOf<RendererNode>()
+        val collector = launch { faces.toList(drawn) }
+        runCurrent()
+        states.value = WorkerExecutionState.Pending
+        runCurrent()
+        assertTrue(stopped.isCompleted)
+        verify(exactly = 0) { claim.release() }
+
+        states.value = WorkerExecutionState.Running(replacement)
+        runCurrent()
+        collector.cancelAndJoin()
+
+        assertEquals(listOf(RendererNode.Nil), drawn)
+        verify(exactly = 1) { claim.release() }
+    }
 
     // A read that did not land, typically a device briefly offline, says nothing about the card.
     // Giving up on it leaves the card static for as long as it stays on screen.

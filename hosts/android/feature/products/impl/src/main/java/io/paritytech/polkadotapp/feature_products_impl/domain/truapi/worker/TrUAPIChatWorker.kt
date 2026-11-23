@@ -1,7 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.parity.truapi.TrUAPIHostRuntime
-import io.parity.truapi.TrUAPIProductExecution
+import io.parity.truapi.TrUAPIWorkerExecution
+import io.parity.truapi.WorkerExecutionState
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -21,12 +22,12 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -42,19 +43,18 @@ import uniffi.truapi.RenderContext
 class TrUAPIChatWorker(
     private val productId: ProductId,
     private val runtime: TrUAPIHostRuntime,
-    private val workers: TrUAPIWorkerSupervisor,
     private val chatMessaging: ProductChatMessaging,
     private val scope: CoroutineScope,
 ) : ProductWorker {
     init {
         val workerJob = scope.coroutineContext.job
-        runtime.acquireWorker(productId)
+        val claim = runtime.claimWorker(productId)
         workerJob.invokeOnCompletion {
-            runCatching { runtime.releaseWorker(productId) }
+            runCatching { claim.release() }
                 .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
         }
         scope.launch {
-            workers.executionState(productId)
+            runtime.workerExecutionState(productId)
                 .map { (it as? WorkerExecutionState.Running)?.execution }
                 .distinctUntilChanged()
                 .collectLatest { execution ->
@@ -104,14 +104,14 @@ class TrUAPIChatWorker(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun render(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
-        workers.executionState(productId)
+        runtime.workerExecutionState(productId)
             .distinctUntilChanged()
             .flatMapLatest { state ->
                 when (state) {
                     // Reported, not thrown: a later execution must still be able to draw.
                     is WorkerExecutionState.Failed ->
                         flowOf(Result.failure(ExecutionUnavailableException(state.reason)))
-                    null -> emptyFlow()
+                    WorkerExecutionState.Idle, WorkerExecutionState.Pending -> emptyFlow()
                     is WorkerExecutionState.Running -> state.execution.chatRender(context, payload, label)
                 }
             }
@@ -123,7 +123,7 @@ class TrUAPIChatWorker(
             Timber.w("TrUAPI chat dispatchEvent for %s/%s dropped: no room id", productId.value, event.messageId)
             return
         }
-        val execution = workers.currentExecution(productId)
+        val execution = runtime.currentWorkerExecution(productId)
         if (execution == null) {
             Timber.w("TrUAPI chat dispatchEvent for %s/%s dropped: no running execution", productId.value, event.messageId)
             return
@@ -134,7 +134,7 @@ class TrUAPIChatWorker(
 
     /** A press inside the card the product docked in the footer of [roomId]. */
     override fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
-        val execution = workers.currentExecution(productId)
+        val execution = runtime.currentWorkerExecution(productId)
         if (execution == null) {
             Timber.w("TrUAPI chat footer event for %s/%s dropped: no running execution", productId.value, roomId.value)
             return
@@ -142,7 +142,7 @@ class TrUAPIChatWorker(
         execution.publishRendererAction(RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = messageType), actionId, eventType)
     }
 
-    private fun TrUAPIProductExecution.publishRendererAction(context: RenderContext, actionId: String, eventType: JsUiEvent.Type) {
+    private fun TrUAPIWorkerExecution.publishRendererAction(context: RenderContext, actionId: String, eventType: JsUiEvent.Type) {
         runCatching {
             publishRendererAction(HostRendererActionSubscribeItem(context, actionId, eventType.toActionPayload()))
         }.logFailure("truapi.renderer.action '$actionId' for ${productId.value}")
@@ -154,13 +154,16 @@ class TrUAPIChatWorker(
         return Result.failure(IllegalArgumentException(reason))
     }
 
-    private suspend fun runningExecution(): TrUAPIProductExecution =
-        when (val state = workers.executionState(productId).filterNotNull().first()) {
-            is WorkerExecutionState.Running -> state.execution
-            is WorkerExecutionState.Failed -> throw ExecutionUnavailableException(state.reason)
-        }
+    private suspend fun runningExecution(): TrUAPIWorkerExecution =
+        runtime.workerExecutionState(productId).mapNotNull { state ->
+            when (state) {
+                is WorkerExecutionState.Running -> state.execution
+                is WorkerExecutionState.Failed -> throw ExecutionUnavailableException(state.reason)
+                WorkerExecutionState.Idle, WorkerExecutionState.Pending -> null
+            }
+        }.first()
 
-    private suspend fun awaitRunningExecution(): TrUAPIProductExecution =
+    private suspend fun awaitRunningExecution(): TrUAPIWorkerExecution =
         withTimeoutOrNull(TrUAPIWorkerSupervisor.EXECUTION_WAIT_TIMEOUT) { runningExecution() }
             ?: throw IllegalStateException(
                 "TrUAPI worker for ${productId.value} did not report a running execution in time",
@@ -169,7 +172,7 @@ class TrUAPIChatWorker(
     // Reopened under flatMapLatest, not above it: a stop or a replacement execution then cancels
     // the backoff wait, and a failure cannot overtake the node drawn just before it by cancelling
     // the scope that drains flatMapLatest's channel.
-    private fun TrUAPIProductExecution.chatRender(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
+    private fun TrUAPIWorkerExecution.chatRender(context: RenderContext, payload: ByteArray, label: String): Flow<Result<JsWidget>> =
         flow {
             var drew = false
             render(ProductRendererRenderRequest(context, payload))
