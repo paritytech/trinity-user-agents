@@ -18,7 +18,7 @@ pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 #[cfg(not(target_arch = "wasm32"))]
 use super::allowances::current_unix_secs;
 use super::{
-	AccountHolder, HostAccounts, HostSession, RuntimeServices, authority::AuthorityError,
+	AccountHolder, HostAccounts, HostRole, HostSession, RuntimeServices, authority::AuthorityError,
 	connected_session_ui_info, device_enc_public_key, host_grants::HostGrantStore,
 	product_consent::ProductConsent, ring_vrf_registry::RingVrfRegistryStore,
 	sso_responder_service::SsoResponderService,
@@ -43,16 +43,31 @@ use crate::platform::Platform;
 use crate::platform::{ProductContext, ProductId};
 use truapi::{CallError, latest};
 
-/// Native host lifecycle and retained grants over a shared wallet.
+/// A host that holds the wallet locally and answers incoming SSO requests.
+///
+/// Construct its [`HostRuntime`](crate::HostRuntime) with
+/// `HostRuntime::<SigningHost>::new`.
 pub struct SigningHost {
 	services: Arc<RuntimeServices>,
 	wallet: Arc<WalletAccountHolder>,
 	auth_state: AuthStateMachine,
 	/// Product account policy and the grants kept for this wallet activation.
 	accounts: Arc<HostAccounts<WalletAccountHolder>>,
-	sso_responder: Arc<SsoResponderService>,
+	sso_responder: SsoResponderService,
 	#[cfg(not(target_arch = "wasm32"))]
 	renewal_loop_started: std::sync::atomic::AtomicBool,
+}
+
+impl HostRole for SigningHost {
+	type Holder = WalletAccountHolder;
+
+	fn accounts(&self) -> &Arc<HostAccounts<Self::Holder>> {
+		&self.accounts
+	}
+
+	fn host_session(self: &Arc<Self>) -> Arc<dyn HostSession> {
+		self.clone()
+	}
 }
 
 impl SigningHost {
@@ -100,11 +115,6 @@ impl SigningHost {
 		})
 	}
 
-	/// Product account policy and grants shared by this host's connections.
-	pub fn accounts(&self) -> &Arc<HostAccounts<WalletAccountHolder>> {
-		&self.accounts
-	}
-
 	/// Answer resource allocation as granted without performing it in test hosts.
 	#[cfg(feature = "test-host")]
 	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
@@ -137,8 +147,8 @@ impl SigningHost {
 	}
 
 	/// Incoming SSO for this host's wallet, answered by its runtime.
-	pub fn sso_responder(&self) -> Arc<SsoResponderService> {
-		self.sso_responder.clone()
+	pub fn sso_responder(&self) -> &SsoResponderService {
+		&self.sso_responder
 	}
 
 	/// This install's X25519 encryption secret, the key behind
@@ -225,6 +235,17 @@ impl SigningHost {
 		self.wallet.statement_renewal_targets().await
 	}
 
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails with `Disconnected` without
+	/// an active session.
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
+		self.wallet.identity_signer()
+	}
+
 	/// Root public key the active wallet records its ledger entries under.
 	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], StatementRenewalError> {
 		self.wallet.statement_renewal_owner_key()
@@ -300,6 +321,29 @@ impl crate::nft::ItemKeyDeriver for SigningHost {
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
 		self.wallet.item_keys(slots)
+	}
+
+	fn derive_item_key_range(
+		&self,
+		purse: crate::nft::PurseId,
+		installation: crate::installation::InstallationId,
+		indices: core::ops::Range<u32>,
+	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
+		self.wallet.item_key_range(purse, installation, indices)
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::installation_registry::DataStoreKeys for SigningHost {
+	fn data_store_owner(&self) -> Result<[u8; 20], AuthorityError> {
+		self.wallet.data_store_owner()
+	}
+
+	fn decrypt_installation_records(
+		&self,
+		records: &[Vec<u8>],
+	) -> Result<std::collections::HashSet<crate::installation::InstallationId>, AuthorityError> {
+		self.wallet.decrypt_installation_records(records)
 	}
 }
 

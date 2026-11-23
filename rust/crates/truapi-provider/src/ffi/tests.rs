@@ -9,40 +9,10 @@ use std::{
 
 use super::*;
 
-/// Paseo Next v2's relay, whose spec the catalog bundles. Spec-local queries
-/// are answered from it without any network access.
-const CATALOG_RELAY: [u8; 32] =
-	match const_hex_decode("374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd") {
-		Some(bytes) => bytes,
-		None => panic!("the constant is 32 bytes of hex"),
-	};
-
-/// `hex::decode` is not const, and a literal byte array here would not be
-/// greppable against the catalog.
-const fn const_hex_decode(hex: &str) -> Option<[u8; 32]> {
-	let bytes = hex.as_bytes();
-	if bytes.len() != 64 {
-		return None;
-	}
-	let mut out = [0u8; 32];
-	let mut i = 0;
-	while i < 32 {
-		let (high, low) = (nibble(bytes[i * 2]), nibble(bytes[i * 2 + 1]));
-		match (high, low) {
-			(Some(high), Some(low)) => out[i] = high << 4 | low,
-			_ => return None,
-		}
-		i += 1;
-	}
-	Some(out)
-}
-
-const fn nibble(byte: u8) -> Option<u8> {
-	match byte {
-		b'0'..=b'9' => Some(byte - b'0'),
-		b'a'..=b'f' => Some(byte - b'a' + 10),
-		_ => None,
-	}
+/// Genesis hash of Paseo Next v2's relay, whose spec the catalog bundles.
+/// Spec-local queries are answered from it without any network access.
+fn catalog_relay() -> Vec<u8> {
+	crate::test_stack::genesis(include_str!("../../networks/paseo.json")).to_vec()
 }
 
 /// Foreign listener stand-in: the real one lives in Swift or Kotlin, so this
@@ -565,13 +535,13 @@ fn a_lifecycle_watch_reports_the_current_state_and_ends_when_stopped() {
 	let provider = ChainProvider::new();
 	let (listener, _messages, _closed) = Collector::new();
 	let _connection = provider
-		.connect(CATALOG_RELAY.to_vec(), listener)
+		.connect(catalog_relay(), listener)
 		.expect("the catalog resolves its own relay genesis");
 
 	let (states, state_rx) = channel();
 	let (ended, ended_rx) = channel();
 	let watch = provider
-		.watch_lifecycle(CATALOG_RELAY.to_vec(), Arc::new(LifecycleCollector { states, ended }))
+		.watch_lifecycle(catalog_relay(), Arc::new(LifecycleCollector { states, ended }))
 		.expect("a connected chain can be watched");
 	state_rx
 		.recv_timeout(Duration::from_secs(30))
@@ -589,7 +559,7 @@ fn watching_a_chain_nothing_is_connected_to_fails() {
 	let (states, _state_rx) = channel();
 	let (ended, _ended_rx) = channel();
 	let error = ChainProvider::new()
-		.watch_lifecycle(CATALOG_RELAY.to_vec(), Arc::new(LifecycleCollector { states, ended }))
+		.watch_lifecycle(catalog_relay(), Arc::new(LifecycleCollector { states, ended }))
 		.err()
 		.expect("an unconnected chain has no lifecycle");
 	let ChainProviderError::Lifecycle { reason } = error else {
@@ -618,7 +588,7 @@ fn a_genesis_hash_outside_the_catalog_is_rejected() {
 fn a_catalog_chain_answers_on_the_listener_and_closes() {
 	let (listener, messages, closed) = Collector::new();
 	let connection = ChainProvider::new()
-		.connect(CATALOG_RELAY.to_vec(), listener)
+		.connect(catalog_relay(), listener)
 		.expect("the catalog resolves its own relay genesis");
 
 	connection.send(

@@ -52,7 +52,7 @@ final class CoinageDataStorePgasProvider: PGASBalanceProviding, @unchecked Senda
 extension PGASAccountProvisioner {
     /// The data store account's PGAS provisioner over the app's shared PGAS allowance manager.
     static func forDataStoreAccount(
-        allowanceManager: AllowanceManaging,
+        allowanceManager: any AllowanceManaging<AccountId>,
         chainRegistry: ChainRegistryProtocol
     ) -> PGASAccountProvisioner {
         PGASAccountProvisioner(

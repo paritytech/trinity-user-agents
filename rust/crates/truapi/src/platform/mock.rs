@@ -49,7 +49,7 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -230,9 +230,9 @@ pub struct MockConfig {
 	/// Whether `feature_supported` reports support.
 	pub feature_supported: bool,
 	/// When set, `feature_supported` answers from `served_chains`, as a real
-	/// host does, so a chain outside that set is unsupported. It becomes the
-	/// default in a later breaking release. The JS mock's `onlyServedChains` is
-	/// the same option.
+	/// host does, so a chain outside that set is unsupported. Set by default;
+	/// unset reports every chain as supported. The JS mock's `onlyServedChains`
+	/// is the same option.
 	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
@@ -260,7 +260,7 @@ impl Default for MockConfig {
 			device_permissions: PermissionPolicy::AllowAll,
 			remote_permissions: PermissionPolicy::AllowAll,
 			feature_supported: true,
-			only_served_chains: false,
+			only_served_chains: true,
 			theme: latest::ThemeVariant::Dark,
 			language_tag: "en".to_string(),
 			confirm_user_actions: true,
@@ -895,6 +895,32 @@ impl ProductStorage for MockPlatform {
 		}
 		self.storage.lock().expect("storage poisoned").remove(&product_key(&key));
 		self.publish_storage(&key, None);
+		Ok(())
+	}
+
+	async fn clear_product(
+		&self,
+		product_id: ProductId,
+	) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+		if let Some(reason) = &self.config.faults.storage_error {
+			return Err(truapi::v01::HostLocalStorageReadError::Unknown { reason: reason.clone() });
+		}
+		let owned = ProductStorageKey::owner_prefix(&product_id);
+		self.storage
+			.lock()
+			.expect("storage poisoned")
+			.retain(|key, _| !key.starts_with(&product_key(&owned)));
+		let subscribed: Vec<String> = self
+			.storage_subscribers
+			.lock()
+			.expect("storage subscribers poisoned")
+			.keys()
+			.filter(|key| key.starts_with(&owned))
+			.cloned()
+			.collect();
+		for key in subscribed {
+			self.publish_storage(&key, None);
+		}
 		Ok(())
 	}
 

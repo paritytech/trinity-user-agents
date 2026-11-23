@@ -34,6 +34,15 @@ fn multi_version_codec_indices_are_positional() {
 	assert_eq!(MultiVersionProbe::LATEST, 2);
 }
 
+// Callers build a request through its `latest` alias and wrap it with `into()`
+// instead of naming a version, so the alias has to be the newest payload.
+#[test]
+fn latest_alias_names_the_newest_payload() {
+	let payload: latest::MultiVersionProbe = ProbeV2 { b: b"hello".to_vec() };
+
+	assert_eq!(MultiVersionProbe::from(payload.clone()), MultiVersionProbe::V2(payload));
+}
+
 #[test]
 fn v1_discriminant_is_zero() {
 	let v1 = super::permissions::HostDevicePermissionRequest::V1(

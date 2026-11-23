@@ -77,10 +77,14 @@ use crate::{
 	time::{RealTimer, Timer},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+mod chain_access;
 mod chain_halt;
 mod current_block;
 mod follow_retry;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use chain_access::ChainAccess;
 pub use chain_halt::{retry_while_halted, says_chain_halted};
 pub use current_block::CurrentBlockError;
 use follow_retry::{FollowReport, FollowRetryingRpcClient};

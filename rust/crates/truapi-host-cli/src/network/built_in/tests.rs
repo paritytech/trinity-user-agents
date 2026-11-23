@@ -379,7 +379,8 @@ fn test_refresh_expired_error() {
 fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 	for network in Network::value_variants() {
 		let built_in = network.built_in_stack();
-		let bundled = truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, true)
+		let link = built_in.pointer().to_link(trinity_stack::DEFAULT_LINK_BASE);
+		let bundled = truapi::platform::Stack::bundled(&link, built_in.bundle, true)
 			.expect("the bundled copy starts an app");
 		let expected = truapi::platform::Stack::new(
 			bundled.network().to_string(),

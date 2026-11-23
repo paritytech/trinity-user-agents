@@ -71,6 +71,27 @@ describe("createMockHost callbacks", () => {
     expect(await callbacks.productStorage.read("k")).toBeUndefined();
   });
 
+  it("clearing a product removes only the values it owns", async () => {
+    const host = createMockHost();
+    const storage = host.callbacks.productStorage;
+    // The second id starts with the first, so a bare prefix match would hit it.
+    const cleared = "truapi:product-storage:v1:9:myapp.dot:theme";
+    const neighbour = "truapi:product-storage:v1:16:myapp.dotapp.dot:theme";
+    await storage.write(cleared, new Uint8Array([1]));
+    await storage.write(neighbour, new Uint8Array([2]));
+    const updates = storage.subscribeStorage(cleared)[Symbol.asyncIterator]();
+    await updates.next();
+
+    await storage.clearProduct(asProductId("myapp.dot"));
+
+    expect([
+      await storage.read(cleared),
+      await storage.read(neighbour),
+    ]).toEqual([undefined, new Uint8Array([2])]);
+    // A running product following the key must not keep the deleted value.
+    expect(await drain(updates, 1)).toEqual([ok({ value: undefined })]);
+  });
+
   it("core storage round-trips per slot", async () => {
     const { callbacks } = createMockHost();
     const key: CoreStorageKey = {
@@ -290,7 +311,7 @@ describe("createMockHost callbacks", () => {
     await expect(drain(lookup, 1)).rejects.toThrow("delivered 0 of 1");
   });
 
-  it("reports unserved chains as unsupported only when asked to", async () => {
+  it("reports unserved chains as unsupported unless told otherwise", async () => {
     const unserved = `0x${"ab".repeat(32)}`;
     const supported = async (
       genesisHash: string,
@@ -302,14 +323,12 @@ describe("createMockHost callbacks", () => {
           value: { genesisHash },
         })
       ).supported;
-    // The default keeps answering every chain as supported, so existing
-    // suites that rely on a silent chain they never declared keep working.
-    expect(await supported(unserved)).toBe(true);
-    // onlyServedChains answers as a real host does, which makes a product's
+    // The default answers as a real host does, which makes a product's
     // "network unavailable" path reachable.
-    const served = { onlyServedChains: true };
-    expect(await supported(MOCK_GENESIS.assetHub, served)).toBe(true);
-    expect(await supported(unserved, served)).toBe(false);
+    expect(await supported(MOCK_GENESIS.assetHub)).toBe(true);
+    expect(await supported(unserved)).toBe(false);
+    // Turning it off answers every chain as supported.
+    expect(await supported(unserved, { onlyServedChains: false })).toBe(true);
     expect(
       await supported(MOCK_GENESIS.assetHub, { featureSupported: false }),
     ).toBe(false);
@@ -659,7 +678,7 @@ describe("createMockHost TestHostAPI parity", () => {
     // The Rust mock declares the same three. A suite that routes on a chain
     // has to be answered the same way by either, and dropping one here would
     // otherwise only show up as a chain-routed call failing much later.
-    const host = createMockHost({ onlyServedChains: true });
+    const host = createMockHost();
     const supported = (genesisHash: string) =>
       host.callbacks.features
         .featureSupported({ tag: "Chain", value: { genesisHash } })
@@ -896,6 +915,9 @@ describe("createMockHost TestHostAPI parity", () => {
     await expect(storage.callbacks.productStorage.clear("k")).rejects.toThrow(
       "disk",
     );
+    await expect(
+      storage.callbacks.productStorage.clearProduct(asProductId("mock.dot")),
+    ).rejects.toThrow("disk");
     await expect(
       storage.callbacks.coreStorage.readCoreStorage({ tag: "AuthSession" }),
     ).rejects.toThrow("disk");

@@ -291,20 +291,21 @@ fn feature_supported_reflects_config() {
 }
 
 #[test]
-fn feature_supported_reports_unserved_chains_only_when_asked() {
+fn feature_supported_reports_unserved_chains_unless_told_otherwise() {
 	let supported = |p: &MockPlatform, genesis_hash: Vec<u8>| {
 		block_on(p.feature_supported(latest::HostFeatureSupportedRequest::Chain { genesis_hash }))
 			.unwrap()
 			.supported
 	};
 	let unserved = vec![0xab; 32];
-	// The default keeps answering every chain as supported.
-	assert!(supported(&MockPlatform::new(), unserved.clone()));
-	let strict =
-		MockPlatform::with_config(MockConfig { only_served_chains: true, ..Default::default() });
+	// The default answers from the served chains, as a real host does.
+	let strict = MockPlatform::new();
 	let served = strict.config.served_chains[0].to_vec();
 	assert!(supported(&strict, served));
-	assert!(!supported(&strict, unserved));
+	assert!(!supported(&strict, unserved.clone()));
+	let open =
+		MockPlatform::with_config(MockConfig { only_served_chains: false, ..Default::default() });
+	assert!(supported(&open, unserved));
 }
 
 #[test]

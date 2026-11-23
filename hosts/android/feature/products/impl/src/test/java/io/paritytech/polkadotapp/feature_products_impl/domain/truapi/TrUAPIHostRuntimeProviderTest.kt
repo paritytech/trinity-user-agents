@@ -132,7 +132,9 @@ class TrUAPIHostRuntimeProviderTest {
         installations = mockk(),
         extensionVersions = mockk(),
         pinnedPocketCards = pinnedPocketCards,
+        coreEventLogger = CoreEventLogger { _, _, _ -> },
         deviceKeyHandOver = mockk { every { keyToHandOver() } returns null },
+        materialsSwitch = mockk(relaxed = true),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

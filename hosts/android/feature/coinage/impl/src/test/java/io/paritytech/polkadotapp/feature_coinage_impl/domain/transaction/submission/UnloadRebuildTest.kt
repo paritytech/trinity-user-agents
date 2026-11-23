@@ -408,6 +408,7 @@ class UnloadRebuildTest {
             recyclerIndex = RingIndex(BigInteger.ZERO),
             recyclerMembers = 10,
             enteredAt = null,
+            recyclerUnloaded = null,
         )
     }
 

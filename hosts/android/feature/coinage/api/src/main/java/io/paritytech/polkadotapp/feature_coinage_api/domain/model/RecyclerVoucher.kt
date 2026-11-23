@@ -41,6 +41,8 @@ data class RecyclerVoucher(
              * Null until confirmed. Saved across restarts and reset on restore.
              */
             val enteredAt: Instant?,
+            /** Null until read for this ring. */
+            val recyclerUnloaded: Int?,
         ) : Location
     }
 }

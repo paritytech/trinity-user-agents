@@ -2,9 +2,7 @@ use super::*;
 use crate::{
 	host_rpc_client::HostRpcClient,
 	platform::{AuthState, ChainProvider, CoreStorageKey},
-	runtime::{
-		ProductRuntimeHost, sso_request_service::SsoRequestService,
-	},
+	runtime::{HostRole, ProductRuntimeHost, sso_request_service::SsoRequestService},
 	test_support::{
 		StubPlatform, core_storage_test_key, pairing_device_from_deeplink, peer_statement_keypair,
 		runtime_config, session_info, signed_test_statement, stub_platform, subscribe_ack_frame,

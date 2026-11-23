@@ -14,7 +14,7 @@ protocol API into a working host. It owns:
 - the auto-generated dispatcher/wire-table tables shipped under
   [`crate::generated`]
 - the host embedding surface: one long-lived role handle
-  (`PairingHostRuntime` or `SigningHostRuntime`) per host application, exposing
+  (`HostRuntime<PairingHost>` or `HostRuntime<SigningHost>`) per host application, exposing
   shared [`RuntimeServices`] plus one [`ProductRuntime`] per product connection
 
 ## Architecture
@@ -157,16 +157,18 @@ request path and the `CoreAdmin` status read resolve it through the host's
 and the stored product decision is never overwritten by it. Remote,
 identity-disclosure and account-access decisions have no OS gate.
 
-The embedder builds a role handle, `PairingHostRuntime::new(...)` or
-`SigningHostRuntime::new(...)`, then calls `product_runtime(product, sink)` for
+The embedder builds a role handle, `HostRuntime::<PairingHost>::new(...)` or
+`HostRuntime::<SigningHost>::new(...)`, then calls `product_runtime(product, sink)` for
 each product connection. Role-specific operations live only on the matching handle:
 `cancel_pairing`, `notify_session_store_changed`, `activate_stored_session`,
 `activate_external_session`, and `reset_session_state` on the pairing handle,
 `activate_local_session` on the signing handle. Both handles expose
-`clear_product_state` to revoke one product's capability material without
-touching the session or other products, and `notify_contacts_changed` to drop
+`clear_product_state` to revoke one product's capability material and remove
+the values it wrote to product storage, through `ProductStorage::clear_product`,
+without touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
-a compile error, not a runtime `Unavailable`.
+a compile error, not a runtime `Unavailable`. Stop a product's executions
+before clearing its state, since a value written after the clear is kept.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
@@ -232,7 +234,7 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+it on iOS and Android, and `HostRuntime::<SigningHost>::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
 `EncryptedStorage` that keeps NFT receive key and deposited item secrets with
@@ -284,7 +286,7 @@ Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
 keeps its public rows in the database and stores each secret under a key
 derived from its row. Native hosts install it from their callbacks; any other
-embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+embedder calls `HostRuntime::<SigningHost>::set_encrypted_storage`. Web hosts do not
 compile it.
 
 ### Durable transactions
@@ -295,19 +297,21 @@ mortal extrinsics (`DurableRequest::presigned`, then `execute` or
 transaction); the engine broadcasts them once committed and follows each with
 a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
-the shared chain capabilities and the domain's `CompletionOracle`. Every
+the shared chain capabilities and the domain's `CompletionOracle`, which a
+pass asks once per domain about its undecided rows. Every
 verdict is a compare-and-set against the status and attempt it was derived
 from, and rows are never deleted.
 
-A domain can also schedule transactions it cannot sign yet
-(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
-`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
-policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
-submission executor builds them: one task per domain, policy and group asks the
+Each domain is registered in the `DurableRegistry` with the genesis hash of
+its chain, its `CompletionOracle` and its one `SubmissionPolicy`. A domain can
+also defer transactions it cannot sign yet (`DurableRequest::deferred`),
+each with a `SubmissionPlan`: the `PolicyParams` its domain's policy builds it
+from. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain and group asks the
 policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
 and fails each `GiveUp`, backing off after rounds that decide nothing. A
 presigned submission may carry a plan as well. When a verdict proves a
-transaction with a policy failed, the verdict writer asks the policy's
+transaction with a plan failed, the verdict writer asks the domain policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
 records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
@@ -382,7 +386,7 @@ a withdrawn request posts no response. See the
 
 When a device finishes pairing, the signing host reports it to the embedder's
 [`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
-once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
+once through `HostRuntime::<SigningHost>::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and
 `disconnect_paired_host` take.
@@ -567,9 +571,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider a Rust host offers with `origin: Bundled`
-  ships inside it: its shipped manifest is what the core goes by, and dotNS
-  is never read for it.
+  Funding drops out.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -718,8 +720,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  when the provider publishes an `app` subname on dotNS, read within ten
+  seconds; otherwise `NoApp`). The
   core never shows it on its own: it holds the call, tells the host through
   `provider_frame_requested`, and presents it once the host calls
   `open_provider_frame`, at once while the user looks at the session or when
@@ -790,13 +792,22 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget, and turn that card to its back or front. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
+- `ContactsPlatform`: resolve the handles a transaction names to contacts,
+  render the picker that selects one, and list the dotNS usernames of the
+  contacts the picker would offer. `contacts` is the only required method.
+  `pick_contact` defaults to `Unsupported`, so a host serving no picker says so
+  rather than looking like a user who declined, and `contact_usernames`
+  defaults to `Unsupported` the same way. The host owns the UI, so no account
+  on the list reaches the product. A product gets a handle for the selection,
+  and the game product may also read the usernames. The core caches resolved
+  handles. A host calls `notify_contacts_changed` on its runtime when a contact
+  is removed or blocked.
+  The core serves `contacts.usernames` only to the game product, `dim2` on
+  every network, and answers `Unsupported` to any other product without
+  calling the host. While nobody is signed in it answers a domain error
+  with the reason `No active session`, also without calling the host. Each
+  username is the bare dotNS label with no top-level domain, and the core
+  drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host

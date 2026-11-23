@@ -12,7 +12,7 @@
 //                   v
 //   Dedicated Worker
 //   ┌─────────────────────────────────────────────────────────────────┐
-//   │ shared truapi WASM PairingHostRuntime + product runtimes        │
+//   │ shared truapi WasmPairingHostRuntime + product runtimes         │
 //   │ generated raw-callback proxy                                    │
 //   └───────────────┬─────────────────────────────────────────────────┘
 //                   │ WorkerToMain: coreReady, frame, callbackRequest,
@@ -129,6 +129,7 @@ export type MainToWorker =
       tags: string[];
     }
   | { kind: "resetSessionState"; requestId: number }
+  | { kind: "clearProductState"; requestId: number; productId: ProductId }
   | {
       kind: "getPermissionAuthorizationStatus";
       productId: ProductId;
@@ -218,9 +219,9 @@ export type WorkerToMain =
       error: string;
     }
   /**
-   * Shared reply for `activateStoredSession`, `activateExternalSession` and
-   * `resetSessionState`: all three settle as a bare success or a failure
-   * reason.
+   * Shared reply for the requests that settle as a bare success or a failure
+   * reason, such as `activateStoredSession`, `resetSessionState` and
+   * `clearProductState`.
    */
   | { kind: "sessionActivationResponse"; requestId: number; ok: true }
   | {

@@ -13,6 +13,7 @@ struct ClaimLiteUsernameDependency {
         _ liteVrfManager: BandersnatchKeyManager
     ) throws -> LitePersonParamsFactoryProtocol
     let chainTimeProvider: () -> ChainTimeProviding
+    let signingContextProvider: () -> AccountSigningContextProviding
     let usernameOperationFactory: () -> UsernameOperationFactoryProtocol
     let usernameStorage: () -> UsernameStoring
     let walletRepo: WalletManagerRepositoryProtocol
@@ -91,13 +92,18 @@ private extension ClaimLiteUsernameInteractor {
         username: Username,
         registrationFactory: LitePersonParamsFactoryProtocol
     ) async throws -> Username {
-        let attester = try await usernameOperationFactory.attester().asyncExecute().attester
+        async let attester = usernameOperationFactory.attester().asyncExecute().attester
+        async let signingContexts = dependencies.signingContextProvider().fetchContexts()
+        let (resolvedAttester, resolvedContexts) = try await (attester, signingContexts)
+
+        // Read the time last: the reservation signature is only valid for a window after signedAt.
         let signedAt = try await dependencies.chainTimeProvider().nowSeconds()
 
         let requestParams = try registrationFactory.registrationParams(
             for: username,
-            attester: attester,
-            signedAt: signedAt
+            attester: resolvedAttester,
+            signedAt: signedAt,
+            signingContexts: resolvedContexts
         )
 
         let response = try await usernameOperationFactory.claimUsername(using: requestParams).asyncExecute()
@@ -135,13 +141,15 @@ private extension LitePersonParamsFactoryProtocol {
     func registrationParams(
         for username: Username,
         attester: AccountId,
-        signedAt: UInt64
+        signedAt: UInt64,
+        signingContexts: AccountSigningContexts
     ) throws -> RegisterUsernameParameters {
         let params = try deriveRegistrationParams(
             for: username.partialUsername,
             attester: attester,
             signedAt: signedAt,
-            reservedUsername: username.partialUsername
+            reservedUsername: username.partialUsername,
+            signingContexts: signingContexts
         )
 
         return try RegisterUsernameParameters(

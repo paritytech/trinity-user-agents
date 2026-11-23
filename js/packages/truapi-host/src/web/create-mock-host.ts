@@ -77,7 +77,18 @@ function normalizePermissionPolicy(
 }
 
 /** The core's product-storage key prefix, up to and including its version. */
-const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
+const CORE_PRODUCT_STORAGE_PREFIX = "truapi:product-storage:v1:";
+
+/**
+ * The prefix of every key the core hands the host for `productId`'s values,
+ * as `ProductStorageKey::owner_prefix` builds it. The id's length is in UTF-8
+ * bytes, so one product's prefix never matches a product whose id merely
+ * starts with it.
+ */
+function coreProductStorageOwnerPrefix(productId: ProductId): string {
+  const length = new TextEncoder().encode(productId).length;
+  return `${CORE_PRODUCT_STORAGE_PREFIX}${length}:${productId}:`;
+}
 
 /**
  * The product's own key inside a core-namespaced one, or `undefined`.
@@ -93,9 +104,8 @@ const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
  * where the id ends, not the next separator.
  */
 export function coreProductStorageKey(stored: string): string | undefined {
-  const prefix = CORE_PRODUCT_STORAGE_PREFIX.exec(stored);
-  if (!prefix) return undefined;
-  const rest = stored.slice(prefix[0].length);
+  if (!stored.startsWith(CORE_PRODUCT_STORAGE_PREFIX)) return undefined;
+  const rest = stored.slice(CORE_PRODUCT_STORAGE_PREFIX.length);
   const separator = rest.indexOf(":");
   if (separator < 0) return undefined;
   const length = Number(rest.slice(0, separator));
@@ -406,8 +416,8 @@ export interface MockHostConfig {
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `servedChains`, as a real host
-   * does, so a chain outside that set is unsupported. Default `false`. It
-   * becomes the default in a later breaking release. The Rust
+   * does, so a chain outside that set is unsupported. Default `true`. `false`
+   * reports every chain as supported. The Rust
    * `MockConfig::only_served_chains` is the same option.
    */
   onlyServedChains?: boolean;
@@ -888,7 +898,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
-    onlyServedChains = false,
+    onlyServedChains = true,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -1115,6 +1125,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(productKey(key));
         publishStorage(key, undefined);
+      },
+      async clearProduct(productId) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        const owned = coreProductStorageOwnerPrefix(productId);
+        for (const stored of [...storage.keys()]) {
+          if (stored.startsWith(productKey(owned))) storage.delete(stored);
+        }
+        for (const key of [...storageSubscribers.keys()]) {
+          if (key.startsWith(owned)) publishStorage(key, undefined);
+        }
       },
       subscribeStorage(key) {
         const current = storage.get(productKey(key));
