@@ -13,6 +13,7 @@ import SwiftUI
 /// to the main thread (`applyDelivered`), whichever comes first. Each answer is applied once.
 public final class GestureOffsets {
     private var channels: [String: GestureOffsetChannel] = [:]
+    private var places: [String: GesturePanPlace] = [:]
     let answers = GestureAnswerMailbox()
 
     public init() {}
@@ -23,6 +24,15 @@ public final class GestureOffsets {
         let channel = GestureOffsetChannel()
         channels[key] = channel
         return channel
+    }
+
+    /// Where the keyed gesture's children stand, for the nodes that fade with it.
+    @MainActor
+    public func place(for key: String) -> GesturePanPlace {
+        if let place = places[key] { return place }
+        let place = GesturePanPlace()
+        places[key] = place
+        return place
     }
 
     /// A `SetOffset` item for `key`.

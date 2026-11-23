@@ -169,6 +169,13 @@ private extension [Modifier] {
         var fillHeight = false
         var opacity: CGFloat?
         var blendingMode: BlendMode?
+        var shadow: CustomMessageWidgetNode.Shadow?
+        var translate = CGSize.zero
+        var font: CustomMessageWidgetNode.TextFont?
+        var panFade: CustomMessageWidgetNode.PanFade?
+        var shimmer: CustomMessageWidgetNode.Shimmer?
+        var spinPeriod: TimeInterval?
+        var exitFade: TimeInterval?
 
         for modifier in self {
             switch modifier {
@@ -204,16 +211,43 @@ private extension [Modifier] {
                 opacity = CGFloat(value) / 255
             case let .blendingMode(mode):
                 blendingMode = mode.blendMode
-            // The iPhone style layer draws the modifiers given by value; until then they are left out.
-            case .fill,
-                 .shadow,
-                 .translate,
-                 .font,
-                 .fadeWithPan,
-                 .shimmer,
-                 .spin,
-                 .exitFade:
-                break
+            case let .fill(value):
+                background = CustomMessageWidgetNode.Background(
+                    color: Color(rgba: value.color),
+                    shape: value.shape.map { resolver.shape(for: $0.toScale()) }
+                )
+            case let .shadow(value):
+                shadow = CustomMessageWidgetNode.Shadow(
+                    color: Color(rgba: value.color),
+                    x: CGFloat(value.x) / 100,
+                    y: CGFloat(value.y) / 100,
+                    blur: CGFloat(value.blur) / 100
+                )
+            case let .translate(value):
+                translate = CGSize(width: CGFloat(value.x) / 100, height: CGFloat(value.y) / 100)
+            case let .font(value):
+                font = CustomMessageWidgetNode.TextFont(
+                    size: CGFloat(value.size) / 100,
+                    lineHeight: CGFloat(value.lineHeight) / 100,
+                    weight: Int(value.weight),
+                    color: Color(rgba: value.color),
+                    letterSpacing: CGFloat(value.letterSpacing) / 100
+                )
+            case let .fadeWithPan(value):
+                panFade = CustomMessageWidgetNode.PanFade(key: value.key, rate: CGFloat(value.ratePermille) / 1_000)
+            case let .shimmer(value):
+                shimmer = CustomMessageWidgetNode.Shimmer(
+                    color: Color(rgba: value.color | 0xFF),
+                    stops: Array(value.stops).map { CGFloat($0) / 255 },
+                    band: CGFloat(value.band) / 100,
+                    lead: CGFloat(value.lead) / 100,
+                    speed: CGFloat(value.speed) / 100,
+                    rest: TimeInterval(value.restMs) / 1_000
+                )
+            case let .spin(periodMs):
+                spinPeriod = periodMs > 0 ? TimeInterval(periodMs) / 1_000 : nil
+            case let .exitFade(ms):
+                exitFade = TimeInterval(ms) / 1_000
             }
         }
 
@@ -229,7 +263,14 @@ private extension [Modifier] {
             fillWidth: fillWidth,
             fillHeight: fillHeight,
             opacity: opacity,
-            blendingMode: blendingMode
+            blendingMode: blendingMode,
+            shadow: shadow,
+            translate: translate,
+            font: font,
+            panFade: panFade,
+            shimmer: shimmer,
+            spinPeriod: spinPeriod,
+            exitFade: exitFade
         )
     }
 }
@@ -459,7 +500,37 @@ private extension GestureProps {
         value.isEnabled = enabled ?? true
         value.hapticOnComplete = hapticOnComplete ?? false
         value.key = key
+        value.feel = feel?.nodeFeel
         return value
+    }
+}
+
+private extension PanFeel {
+    var nodeFeel: CustomMessageWidgetNode.PanFeel {
+        var value = CustomMessageWidgetNode.PanFeel()
+        value.pressScale = CGFloat(pressScalePermille) / 1_000
+        value.pressDuration = TimeInterval(pressMs) / 1_000
+        value.unpressDuration = TimeInterval(unpressMs) / 1_000
+        value.springOmega = CGFloat(springOmegaCenti) / 100
+        value.springDamping = CGFloat(springDampingCenti) / 100
+        value.approachDuration = TimeInterval(approachMs) / 1_000
+        value.approachReference = max(CGFloat(approachReference) / 100, 1)
+        value.pop = popPermille.map { CGFloat($0) / 1_000 }
+        value.popOffset = CGFloat(popOffset) / 100
+        return value
+    }
+}
+
+extension Color {
+    /// A colour given by value on the wire: `0xRRGGBBAA`, sRGB, straight alpha.
+    init(rgba: UInt32) {
+        self.init(
+            .sRGB,
+            red: Double((rgba >> 24) & 0xFF) / 255,
+            green: Double((rgba >> 16) & 0xFF) / 255,
+            blue: Double((rgba >> 8) & 0xFF) / 255,
+            opacity: Double(rgba & 0xFF) / 255
+        )
     }
 }
 
