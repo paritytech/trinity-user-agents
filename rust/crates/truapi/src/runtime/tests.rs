@@ -4982,7 +4982,7 @@ fn push_notification_drops_a_blank_title() {
 		..Default::default()
 	});
 	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
-	for title in ["", " \t\n"] {
+	for title in ["", " \t\n", "\u{200B}\u{FEFF} \u{2060}"] {
 		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
 			title: Some(title.to_string()),
 			text: "Your scratch card is ready".to_string(),
@@ -4995,7 +4995,29 @@ fn push_notification_drops_a_blank_title() {
 	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
 	let titles: Vec<Option<String>> =
 		pushed.iter().map(|notification| notification.title.clone()).collect();
-	assert_eq!(titles, [None, None]);
+	assert_eq!(titles, [None, None, None]);
+}
+
+#[test]
+fn push_notification_trims_the_title() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
+	let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+		title: Some("\u{200B} Daily Dollar\n".to_string()),
+		text: "Your scratch card is ready".to_string(),
+		deeplink: None,
+		scheduled_at: None,
+	});
+	futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+		.expect("a notification the product may send is scheduled");
+	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+	let titles: Vec<Option<String>> =
+		pushed.iter().map(|notification| notification.title.clone()).collect();
+	assert_eq!(titles, [Some("Daily Dollar".to_string())]);
 }
 
 /// A notification the product withdrew must not reach the person.

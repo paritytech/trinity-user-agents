@@ -11,8 +11,9 @@ use parity_scale_codec::{Decode, Encode};
 /// `title` replaces the product id the host shows as the notification's
 /// title. Only a trusted product may set one: the core clears it for every
 /// other caller before the host sees the request, so no product can present
-/// a notification as coming from someone else. The core also clears a title
-/// that is empty or whitespace, so a host never shows a blank one.
+/// a notification as coming from someone else. The core trims whitespace and
+/// zero width characters from the title it keeps, and clears one that nothing
+/// is left of, so a host never shows a blank one.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostPushNotificationRequest {
