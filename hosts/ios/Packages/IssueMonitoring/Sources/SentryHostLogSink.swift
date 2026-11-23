@@ -1,6 +1,6 @@
 #if SENTRY_ENABLED
     import Foundation
-    import Sentry
+    @preconcurrency import Sentry
 
     struct SentryHostLogSink: HostLogSink {
         private let logger: SentryLogger
