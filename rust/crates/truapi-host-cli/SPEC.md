@@ -2411,6 +2411,18 @@ prove. An allocation already held in any collection is reused. When every
 collection is full it replaces the globally oldest replaceable slot across all of
 them; on-demand allocation for a product reports exhaustion instead.
 
+A registration prints
+
+```text
+REGISTERED in <collection> seq=<seq> ring_index=<index> block=<inclusion hash> best=<best hash>
+```
+
+only once the allowance is readable at the best block of the People node the
+command is connected to, the state that node checks a statement against.
+`best` is that block. The extrinsic's block may be on a fork the node has not
+made best yet; when the allowance isn't at any best block within 60 seconds
+the command fails instead.
+
 ## 20. Exit status and shutdown
 
 | Status | Meaning |
