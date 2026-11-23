@@ -235,6 +235,17 @@ impl SigningHost {
 		self.wallet.statement_renewal_targets().await
 	}
 
+	/// A signer for the identity account of the active session.
+	///
+	/// For the writes a host makes itself as the identity, so it keeps no
+	/// entropy once the session is active. Fails with `Disconnected` without
+	/// an active session.
+	pub fn identity_signer(
+		&self,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
+		self.wallet.identity_signer()
+	}
+
 	/// Root public key the active wallet records its ledger entries under.
 	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], StatementRenewalError> {
 		self.wallet.statement_renewal_owner_key()
@@ -310,6 +321,29 @@ impl crate::nft::ItemKeyDeriver for SigningHost {
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
 		self.wallet.item_keys(slots)
+	}
+
+	fn derive_item_key_range(
+		&self,
+		purse: crate::nft::PurseId,
+		installation: crate::installation::InstallationId,
+		indices: core::ops::Range<u32>,
+	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
+		self.wallet.item_key_range(purse, installation, indices)
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::installation_registry::DataStoreKeys for SigningHost {
+	fn data_store_owner(&self) -> Result<[u8; 20], AuthorityError> {
+		self.wallet.data_store_owner()
+	}
+
+	fn decrypt_installation_records(
+		&self,
+		records: &[Vec<u8>],
+	) -> Result<std::collections::HashSet<crate::installation::InstallationId>, AuthorityError> {
+		self.wallet.decrypt_installation_records(records)
 	}
 }
 

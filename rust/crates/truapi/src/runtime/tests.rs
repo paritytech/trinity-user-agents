@@ -106,6 +106,7 @@ use crate::{
 	},
 	host_logic::{
 		product_account::{derive_product_public_key, index_bytes},
+		root_entropy::RootEntropy,
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	test_support::*,
@@ -113,15 +114,11 @@ use crate::{
 };
 
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
-	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
-		.expect("test entropy derives a root");
-	crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test(product_id),
-	)
-	.expect("test product id derives a subtree")
-	.public
-	.to_bytes()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test(product_id))
+		.expect("test product id derives a subtree")
+		.public
+		.to_bytes()
 }
 
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
@@ -163,7 +160,7 @@ pub fn signing_runtime_on_asset_hub(
 pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHost> {
 	let (_services, signing_host) =
 		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+	futures::executor::block_on(signing_host.activate_local_session(RootEntropy::new(ENTROPY)))
 		.expect("activation succeeds");
 	signing_host
 }
@@ -7013,13 +7010,10 @@ fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
 }
 
 pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
         // A grant skips confirmation, except for a call naming contacts.
@@ -7036,11 +7030,9 @@ pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Ar
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key: subtree.secret.to_bytes(),
                                     ring_vrf_domain_entropy:
-                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
-                                            &[0xAB; 16],
-                                            &ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -7088,14 +7080,9 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccoun
 
 /// The product account the capability in [`granted_pairing_host`] derives.
 fn granted_keypair() -> schnorrkel::Keypair {
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap()
+	RootEntropy::new([0xAB; 16])
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap()
 }
 
 #[test]
@@ -7521,13 +7508,10 @@ fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
 #[test]
 fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let entropy = RootEntropy::new([0xAB; 16]);
+	let subtree = entropy
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
 	let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -7543,11 +7527,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                 crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
                                     product_root_private_key,
                                     ring_vrf_domain_entropy:
-                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
-                                            &[0xAB; 16],
-                                            &ProductId::for_test("myapp.dot"),
-                                        )
-                                        .unwrap(),
+                                        entropy
+                                            .derive_ring_vrf_domain_entropy(&ProductId::for_test("myapp.dot"))
+                                            .unwrap(),
                                 },
                             ),
                         ]),
@@ -7592,12 +7574,9 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 			.is_empty()
 	);
 
-	let keypair = crate::host_logic::product_account::derive_product_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-		index_bytes(0),
-	)
-	.unwrap();
+	let keypair = entropy
+		.derive_product_keypair(&ProductId::for_test("myapp.dot"), index_bytes(0))
+		.unwrap();
 	let mut transcript = merlin::Transcript::new(b"ctx");
 	transcript.append_message(b"round", &[7]);
 	let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
@@ -7678,13 +7657,9 @@ fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
 #[test]
 fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
-	let root =
-		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
-		&root,
-		&ProductId::for_test("myapp.dot"),
-	)
-	.unwrap();
+	let subtree = RootEntropy::new([0xAB; 16])
+		.derive_product_subtree_keypair(&ProductId::for_test("myapp.dot"))
+		.unwrap();
 	let platform = Arc::new(StubPlatform::default());
 	let legacy_key =
 		CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("myapp.dot") };
@@ -8811,9 +8786,6 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 }
 
@@ -9913,9 +9885,6 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -9990,9 +9959,6 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -10042,9 +10008,6 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -10163,9 +10126,6 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-			root_manifest: None,
-			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}]);
 
 	let rows = shown_when(&services, &intent, |rows| {
@@ -10236,9 +10196,6 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -10607,9 +10564,6 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		root_manifest: None,
-		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 	};
 	services
 		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
@@ -10673,16 +10627,10 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("ramp.dot"),
 					worker_manifest: Some(germany_only),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test("chain.dot"),
 					worker_manifest: Some(crypto_only),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				},
 			]);
 		let intent = futures::executor::block_on(services.open_funding(
@@ -12723,9 +12671,6 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(provider),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.to_vec(),
 		);
@@ -13143,9 +13088,6 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-					root_manifest: None,
-					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
-					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
 		);
