@@ -79,32 +79,38 @@ pub mod latest {
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
-		DragAxis, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
-		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
-		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
-		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
-		FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
-		FundingRail, FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
-		HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
-		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
-		NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
+		CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment,
+		ContextualAlias, DerivationIndex, Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES,
+		FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
+		FundingCancelDecision, FundingDeposit, FundingDetail, FundingDirection, FundingFact,
+		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
+		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+		HorizontalAlignment, HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit,
+		ImageProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps,
+		Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
+		NftPurseChequeId, NftPurseChequeRecipient, NftPurseChequeRecord, NftPurseClearedItem,
 		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
 		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
 		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
-		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload, Region,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
 		RegisteredRingVrfKey, RemotePermission, RendererNode, ResourceAllocationError,
 		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
-		TextFieldProps, TextProps, ThemeName, ThemeVariant, TouchCondition, TouchProps,
-		TouchTrigger, TrailProps, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature, X25519PublicKey,
+		TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle,
+		VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
-	pub use crate::v02::{ChatRoomFooter, RenderContext};
+	pub use crate::v02::{
+		ChatCallClose, ChatCallRecord, ChatContactEvent, ChatCustomBody, ChatFeedUpdate,
+		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
+		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
+		RenderContext,
+	};
 
 	pub use crate::versioned::{
 		account::latest::*, chain::latest::*, chat::latest::*, coin_payment::latest::*,
@@ -406,6 +412,8 @@ cfg_select! {
 		mod dotns_views;
 		mod dynamic_vrf;
 		mod evm_contract;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod gap_scan;
 		pub mod frame;
 		mod host_core;
 		mod host_internal;
@@ -460,6 +468,9 @@ cfg_select! {
 		pub mod installation;
 
 		#[cfg(not(target_arch = "wasm32"))]
+		mod installation_registry;
+
+		#[cfg(not(target_arch = "wasm32"))]
 		mod nft;
 
 		#[cfg(not(target_arch = "wasm32"))]
@@ -501,14 +512,13 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use materials::{
 			KeepMaterialError, MaterialShader, MaterialsResolution, NodeFallback, NodeMaterials,
-			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole,
-			TouchInputs, TouchPhase, TrailImage, Uniform, UniformKind, UniformRole,
+			ReadyLayer, ResolvedMaterials, ShaderLanguage, Stage, Texture, TextureRole, Uniform,
+			UniformKind, UniformRole,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
 			NativeMaterialsObserver, NativeMaterialsResolution, NativePublicProfileObserver,
-			NativeRendererObserver, NativeSubscription, NativeTouchArea, WsBridgeEndpoint,
-			WsBridgeStartError,
+			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native_debug::{DebugSinkError, WsDebugSink};
