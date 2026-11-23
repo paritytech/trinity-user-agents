@@ -33,7 +33,6 @@ use truapi::api::{
     StatementStore,
     System,
     Theme,
-    Worker,
 };
 use truapi::versioned::{self, Versioned};
 use crate::platform::ExecutableKind;
@@ -75,8 +74,7 @@ where
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
     register_system(dispatcher, host.clone());
-    register_theme(dispatcher, host.clone());
-    register_worker(dispatcher, host);
+    register_theme(dispatcher, host);
 }
 
 /// Call the product's `chat_messages_query` handler and await its response.
@@ -2716,41 +2714,6 @@ where
                         item.map(|item| {
                             <versioned::theme::HostThemeSubscribeItem as truapi::versioned::FromLatest>::from_latest(
                                 truapi::versioned::IntoLatest::into_latest(item),
-                                target_version,
-                            )
-                        })
-                        .map_err(|error| downgrade_call_error(error, target_version))
-                    },
-                );
-                Ok(subscription_stream(stream))
-            })
-        });
-    }
-}
-
-fn register_worker<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
-where
-    P: Worker + Send + Sync + 'static,
-{
-    {
-        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
-        dispatcher.on_subscription(wire_table::WORKER_RETAIN_REFERENCE, move |request_id: String, request: versioned::worker::HostWorkerRetainReferenceRequest| {
-            let host = host.clone();
-            Box::pin(async move {
-                let target_version = request.version();
-                let cx = CallContext::with_request_id(request_id);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerRetainReferenceError> = truapi::CallError::Denied;
-                    return Err(subscription_interrupt(error));
-                }
-                let stream = host.retain_reference(&cx, request).await;
-                let stream = futures::StreamExt::map(
-                    stream,
-                    move |item: Result<versioned::worker::HostWorkerRetainReferenceItem, truapi::CallError<versioned::worker::HostWorkerRetainReferenceError>>| {
-                        item.map(|_| {
-                            <versioned::worker::HostWorkerRetainReferenceItem as truapi::versioned::FromLatest>::from_latest(
-                                (),
                                 target_version,
                             )
                         })

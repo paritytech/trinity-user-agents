@@ -20,15 +20,13 @@ is closed, and every modality that calls a worker needs one rule for when it run
 ### Requirements
 
 1. **Single.** A product has one worker process, however many modalities call it.
-2. **Demand-driven.** A host consumer or the running worker can hold a reference while it needs the execution.
+2. **Demand-driven.** Only host features acquire and release references. They hold a worker while they need it.
 3. **Stoppable.** The host may stop an unreferenced worker at any time and the product keeps working.
-4. **Connection-scoped.** A guest can retain its own worker. Disconnecting releases that connection’s references.
 
 ## Approach
 
 The host keeps one reference count per product worker. The first reference starts the worker. When the count returns to
-zero the host may stop it. A running worker may also retain itself while finishing work. The host starts and stops the
-worker executable, and the worker learns it is needed by receiving a modality call.
+zero the host may stop it. The worker learns it is needed by receiving a modality call.
 
 The design has two parts:
 
@@ -59,9 +57,8 @@ Reference holders, by modality:
 - The host may stop a worker whenever nothing references it, including while its output is on screen, so state that must
   survive goes through host storage.
 - The host starts a worker when a reference forms, not when the user acts on the product, so a start is not user intent.
-- A guest can finish its own work after the screen closes by taking a
-  [worker reference](storage-subscriptions-pending-operations.md#worker-references) before the last external owner leaves.
-  Scheduled wakeups are out of scope.
+- Work that continues after a screen closes needs a host owner. For example, an assigned [funding session](funding-modality.md#outcome)
+  holds its provider through an outstanding payout or refund.
 
 ## Trade-offs
 

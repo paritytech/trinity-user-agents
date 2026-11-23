@@ -39,5 +39,4 @@ export type { CreateTransportOptions } from "./client.js";
 export * as scale from "./scale.js";
 export type { CallErrorValue, Codec, HexString } from "./scale.js";
 export { ringCollectionId } from "./ring-collection-id.js";
-export type { WorkerReference } from "./worker-reference.js";
 export * from "./generated/index.js";

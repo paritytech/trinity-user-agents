@@ -17,7 +17,7 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
 	},
 	v02,
 	versioned::{
@@ -87,10 +87,6 @@ use truapi::{
 			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
-		worker::{
-			HostWorkerRetainReferenceError, HostWorkerRetainReferenceItem,
-			HostWorkerRetainReferenceRequest,
-		},
 	},
 };
 
@@ -6558,45 +6554,6 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 		Some(Err(CallError::HostFailure { reason: "store unavailable".to_string() })),
 		"a platform failure reaches the product instead of freezing it on the last value"
 	);
-}
-
-#[test]
-fn a_worker_can_hold_its_last_reference_until_its_work_finishes() {
-	let host =
-		ProductRuntimeHost::new(stub_platform(), runtime_config("worker.dot"), Spawner::for_test());
-	let product = ProductId::for_test("worker.dot");
-	let ledger = &host.connection.services().worker_ledger;
-	let external = host.connection.hold_worker();
-	let acquire = || {
-		futures::executor::block_on(
-			host.retain_reference(&CallContext::default(), HostWorkerRetainReferenceRequest::V1),
-		)
-	};
-	let mut holds = (0..super::MAX_GUEST_WORKER_REFERENCES).map(|_| acquire()).collect::<Vec<_>>();
-	let first = &mut holds[0];
-	assert_eq!(
-		futures::executor::block_on(first.next()),
-		Some(Ok(HostWorkerRetainReferenceItem::V1))
-	);
-	let mut excess = acquire();
-	assert_eq!(
-		futures::executor::block_on(excess.next()),
-		Some(Err(CallError::Domain(HostWorkerRetainReferenceError::V1(
-			v01::WorkerReferenceError::TooManyReferences
-		))))
-	);
-	drop(external);
-	assert_eq!(ledger.count(&product), holds.len());
-	drop(holds.pop());
-	let mut replacement = acquire();
-	assert_eq!(
-		futures::executor::block_on(replacement.next()),
-		Some(Ok(HostWorkerRetainReferenceItem::V1))
-	);
-	drop(holds);
-	assert_eq!(ledger.count(&product), 1);
-	drop(replacement);
-	assert_eq!(ledger.count(&product), 0);
 }
 
 /// Records every worker-demand transition the ledger reports.

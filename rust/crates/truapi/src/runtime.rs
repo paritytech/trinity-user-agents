@@ -418,8 +418,6 @@ impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
 	}
 }
 
-const MAX_GUEST_WORKER_REFERENCES: usize = 64;
-
 /// Per-connection adapters, permissions and channels.
 pub struct ProductConnection {
 	services: Arc<RuntimeServices>,
@@ -443,7 +441,6 @@ pub struct ProductConnection {
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// Control of the card face under this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
-	worker_reference_slots: Arc<async_lock::Semaphore>,
 	/// Cards whose back this connection has drawn. A press on a back reaches
 	/// the product only for these: a product whose SDK predates
 	/// `PocketCardBack` cannot decode one and would lose its whole action
@@ -669,10 +666,6 @@ impl ProductConnection {
 		renderer_access_for(self.product.execution_kind)
 	}
 
-	fn hold_worker(&self) -> WorkerHold {
-		WorkerHold::acquire(&self.services, &self.product.product_id)
-	}
-
 	/// End the renderer action and failure streams this connection's product
 	/// is reading.
 	pub fn detach_renderer(&self) {
@@ -767,9 +760,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			pocket_platform: adapters.pocket_platform,
 			game_platform: adapters.game_platform,
 			expanded_card: adapters.expanded_card,
-			worker_reference_slots: Arc::new(async_lock::Semaphore::new(
-				MAX_GUEST_WORKER_REFERENCES,
-			)),
 			drawn_backs: Mutex::new(HashSet::new()),
 		});
 		let accounts = ProductAccounts::new(accounts, connection.clone());

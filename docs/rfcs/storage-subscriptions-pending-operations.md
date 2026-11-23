@@ -1,29 +1,20 @@
 ---
-title: "Product storage subscriptions and worker references"
+title: "Product storage subscriptions"
 owner: "Sergey Zhuravlev"
 status: draft
 ---
 
-# RFC — Product storage subscriptions and worker references
+# RFC — Product storage subscriptions
 
 |                 |                                          |
 | --------------- | ---------------------------------------- |
 | **Start Date**  | 2026-08-25                               |
-| **Description** | Two TrUAPI additions so a background worker can finish a multi-step task and coordinate with the app through storage. |
+| **Description** | Apps and workers observe updates to their shared product storage. |
 | **Authors**     | Sergey Zhuravlev                         |
-
-## Summary
-
-- `localStorage.subscribe(key)` streams a key's value on every change, within the product's own namespace.
-- `worker.retain()` returns a reference on the running worker. Release it when the work finishes.
 
 ## Motivation
 
-A funding operation, part of a safety-net release, builds a transaction, submits it, waits for inclusion and records the result. Steps hit a backend, so one run takes tens of seconds with polling in between. It runs in a worker so it outlives the product's screen. Two things make that unsafe today.
-
-When the screen holds the last reference, closing it can stop the worker during submission. The worker needs a way to hold a reference while it finishes its task.
-
-The screen and the worker are separate runtimes over one storage namespace, and a write in one is invisible to the other until it re-reads. A progress view fed by the worker can only poll.
+An app and its worker share a product storage namespace. Subscribing to a key lets the app show progress as the worker records it, including an initial value when the screen reopens.
 
 ## Detailed Design
 
@@ -58,22 +49,3 @@ The core namespaces the key before calling, exactly as it does for `read`, `writ
 A host stream that fails ends the subscription with `CallError::HostFailure`, so a product learns its view is stale instead of holding the last value it saw forever.
 
 If `write` gets the bytes the key already holds, the core skips the store write, so the host never sees it and nothing is emitted. `clear` always reaches the host and always emits `None`, even on an absent key.
-
-### Worker references
-
-A worker can take a reference on its own execution before the last screen or other host consumer leaves. Rust increments the session's existing count for the authenticated product. The guest can finish work while the screen is closed. Each reference has one owner.
-
-```ts
-const claim = await truapi.worker.retain();
-try {
-  await submitAndRecord();
-} finally {
-  claim.release();
-}
-```
-
-On the wire, `worker.retain_reference` is a Worker-only subscription at (19, 2). The host sends one acknowledgement after incrementing the count. A Stop releases that subscription's reference. The SDK's `retain({ signal })` also sends Stop if the caller aborts before acknowledgement. Disconnect releases every reference acquired by that connection. Each connection can hold up to 64 guest references. The next acquisition fails with `TooManyReferences`. A worker can lose its execution when the host or operating system ends its session. Work that must survive process death needs durable state and a host owner for recovery.
-
-## Compatibility
-
-The previous `worker.beginOperation` and `worker.endOperation` wire addresses (19, 0) and (19, 1) are retired. Hosts and products must support (19, 2) to use explicit guest references. A host SDK upgrade removes the product-operation callback group. The legacy mobile Nova runtime uses a different protocol; only that runtime restores its own persisted operation records.

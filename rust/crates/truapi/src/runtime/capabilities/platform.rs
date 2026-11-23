@@ -7,7 +7,7 @@ use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, Subscription,
-	api::{LocalStorage, Locale, Notifications, Permissions, System, Theme, Worker},
+	api::{LocalStorage, Locale, Notifications, Permissions, System, Theme},
 	latest,
 	versioned::{
 		local_storage::{
@@ -35,10 +35,6 @@ use truapi::{
 			HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
-		worker::{
-			HostWorkerRetainReferenceError, HostWorkerRetainReferenceItem,
-			HostWorkerRetainReferenceRequest,
-		},
 	},
 };
 
@@ -388,32 +384,6 @@ impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 						futures::future::ready(next)
 					});
 				Subscription::new(stream)
-			})
-			.await
-	}
-}
-
-#[async_trait::async_trait]
-impl<H: AccountHolder> Worker for ProductRuntimeHost<H> {
-	#[instrument(skip_all, fields(runtime.method = "worker.retain_reference"))]
-	async fn retain_reference(
-		&self,
-		_cx: &CallContext,
-		request: HostWorkerRetainReferenceRequest,
-	) -> Subscription<HostWorkerRetainReferenceItem, CallError<HostWorkerRetainReferenceError>> {
-		version(request)
-			.exec(|()| async move {
-				let Some(slot) = self.connection.worker_reference_slots.try_acquire_arc() else {
-					return Subscription::interrupted(CallError::Domain(
-						latest::WorkerReferenceError::TooManyReferences,
-					));
-				};
-				let hold = self.connection.hold_worker();
-				let held = futures::stream::once(async move {
-					let _reference = (slot, hold);
-					core::future::pending().await
-				});
-				Subscription::new(futures::stream::iter([Ok(())]).chain(held))
 			})
 			.await
 	}

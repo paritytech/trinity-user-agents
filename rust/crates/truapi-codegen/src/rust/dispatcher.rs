@@ -226,7 +226,7 @@ struct MethodEmission {
 	/// The versioned wrapper naming this method's request payload.
 	request_payload: String,
 	response_wrapper: Option<String>,
-	output_has_unit_payload: bool,
+	response_has_unit_payload: bool,
 	error_payload: String,
 	item_wrapper: Option<String>,
 	required_execution: Option<String>,
@@ -308,9 +308,8 @@ impl MethodEmission {
 			module: module.to_string(),
 			kind: method.kind,
 			request_payload,
-			output_has_unit_payload: response_wrapper
+			response_has_unit_payload: response_wrapper
 				.as_deref()
-				.or(item_wrapper.as_deref())
 				.is_some_and(|wrapper| is_unit_payload_wrapper(api, wrapper)),
 			response_wrapper,
 			error_payload,
@@ -389,7 +388,7 @@ impl MethodEmission {
 
 		match &response_path {
 			Some(response_path) => {
-				let reply = match self.output_has_unit_payload {
+				let reply = match self.response_has_unit_payload {
 					true => formatdoc! {
 						r#"
                         let result: Result<{response_path}, truapi::CallError<{error_path}>> =
@@ -513,11 +512,6 @@ impl MethodEmission {
 
 		writeln!(out, "                let stream = host.{method}({call_args}).await;").unwrap();
 
-		let (item_binding, latest_item) = if self.output_has_unit_payload {
-			("_", "()")
-		} else {
-			("item", "truapi::versioned::IntoLatest::into_latest(item)")
-		};
 		// A domain error carries its own versions, so it is downgraded with the
 		// items to the version the caller asked in.
 		let downgrade_interrupt =
@@ -530,9 +524,9 @@ impl MethodEmission {
                 let stream = futures::StreamExt::map(
                     stream,
                     move |item: Result<{item_path}, truapi::CallError<{error_ty}>>| {{
-                        item.map(|{item_binding}| {{
+                        item.map(|item| {{
                             <{item_path} as truapi::versioned::FromLatest>::from_latest(
-                                {latest_item},
+                                truapi::versioned::IntoLatest::into_latest(item),
                                 target_version,
                             )
                         }}){downgrade_interrupt}

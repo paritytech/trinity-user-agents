@@ -1329,11 +1329,6 @@ fn generate_client_view(
 	}
 
 	for (trait_def, methods) in &services {
-		let has_worker_reference = trait_def.name == "Worker" &&
-			methods.iter().any(|method| method.name == "retain_reference");
-		if has_worker_reference {
-			writeln!(out, "import {{ retainWorker }} from '../worker-reference.js';\n").unwrap();
-		}
 		let public_docs = trait_def.public_docs();
 		write_jsdoc(&mut out, "", public_docs.as_deref());
 		let export = if internal { "" } else { "export " };
@@ -1361,18 +1356,6 @@ fn generate_client_view(
 		}
 		writeln!(out, "  }}\n").unwrap();
 
-		if has_worker_reference {
-			writedoc!(
-				out,
-				r#"
-				/** Take one reference until release or disconnection. */
-				retain(options?: CallOptions): ReturnType<typeof retainWorker> {{
-				  return retainWorker(this.retainReference(), options?.signal);
-				}}
-			"#
-			)
-			.unwrap();
-		}
 		for method in methods {
 			emit_method(&mut out, &types, trait_def, method, &wrappers, target_version)?;
 			writeln!(out).unwrap();

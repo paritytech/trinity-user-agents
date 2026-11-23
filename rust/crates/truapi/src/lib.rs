@@ -99,7 +99,7 @@ pub mod latest {
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StatementTopic, StorageQueryItem, StorageQueryType, StorageResultItem,
 		TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle,
-		VerticalAlignment, VrfSignature, WorkerReferenceError, X25519PublicKey,
+		VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{
@@ -119,7 +119,7 @@ pub mod latest {
 		nft_purse::latest::*, notifications::latest::*, payment::latest::*, permissions::latest::*,
 		pocket::latest::*, preimage::latest::*, renderer::latest::*,
 		resource_allocation::latest::*, scanner::latest::*, signing::latest::*,
-		statement_store::latest::*, system::latest::*, theme::latest::*, worker::latest::*,
+		statement_store::latest::*, system::latest::*, theme::latest::*,
 	};
 
 	/// Latest payload type of a versioned envelope.

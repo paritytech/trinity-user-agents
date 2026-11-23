@@ -1495,7 +1495,8 @@ fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
 #[test]
 fn retired_worker_operation_calls_cannot_create_or_release_references() {
 	use crate::frame::{
-		MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, PROTOCOL_ERROR_METHOD_ID, PROTOCOL_ERROR_TRAIT_ID,
+		MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START, PROTOCOL_ERROR_METHOD_ID,
+		PROTOCOL_ERROR_TRAIT_ID,
 		ProtocolErrorV1, VersionedProtocolError,
 	};
 
@@ -1507,12 +1508,16 @@ fn retired_worker_operation_calls_cannot_create_or_release_references() {
 	);
 	let sink = Arc::new(RecordingSink::default());
 	let worker = host.product_runtime(product, sink.clone());
-	host.worker_ledger().acquire(&product_id);
-	for (method_id, value) in [(0, (0u8, None::<String>).encode()), (1, (0u8, 1u32).encode())] {
+	let claim = host.hold_worker(&product_id);
+	for (method_id, message_type, value) in [
+		(0, MESSAGE_TYPE_REQUEST, (0u8, None::<String>).encode()),
+		(1, MESSAGE_TYPE_REQUEST, (0u8, 1u32).encode()),
+		(2, MESSAGE_TYPE_START, vec![0]),
+	] {
 		let request_id = format!("legacy:{method_id}");
 		let frame = ProtocolMessage {
 			request_id: request_id.clone(),
-			payload: Payload { trait_id: 19, method_id, message_type: MESSAGE_TYPE_REQUEST, value },
+			payload: Payload { trait_id: 19, method_id, message_type, value },
 		};
 		futures::executor::block_on(worker.receive_frame(frame.encode())).unwrap();
 		let response = ProtocolMessage {
@@ -1528,55 +1533,12 @@ fn retired_worker_operation_calls_cannot_create_or_release_references() {
 				.encode(),
 			},
 		};
-		assert_eq!(sink.frames.lock().unwrap().pop(), Some(response.encode()));
+		let reply = sink.frames.lock().unwrap().pop();
+		assert_eq!(reply, Some(response.encode()));
 		assert_eq!(host.worker_ledger().count(&product_id), 1);
 	}
-}
-
-#[test]
-fn disconnect_releases_guest_references_but_preserves_other_owners() {
-	use crate::frame::{MESSAGE_TYPE_START, MESSAGE_TYPE_STOP};
-	use truapi::versioned::worker::HostWorkerRetainReferenceRequest;
-
-	let host = activated_signing_runtime(Arc::new(StubPlatform::default()));
-	let product_id = ProductId::for_test("worker.dot");
-	let product = ProductContext::new_with_execution(
-		product_id.clone(),
-		crate::platform::ExecutableKind::Worker,
-	);
-	let open = || host.product_runtime(product.clone(), Arc::new(RecordingSink::default()));
-	let first = open();
-	let second = open();
-	let ledger = host.worker_ledger();
-	ledger.acquire(&product_id);
-	let receive = |runtime: &ProductRuntime, id: &str, message_type, value: Vec<u8>| {
-		let frame = ProtocolMessage {
-			request_id: id.into(),
-			payload: Payload { trait_id: 19, method_id: 2, message_type, value },
-		};
-		futures::executor::block_on(runtime.receive_frame(frame.encode())).unwrap();
-	};
-	let start = |runtime: &ProductRuntime, id: &str| {
-		receive(runtime, id, MESSAGE_TYPE_START, HostWorkerRetainReferenceRequest::V1.encode())
-	};
-	let stop = |runtime: &ProductRuntime, id: &str| receive(runtime, id, MESSAGE_TYPE_STOP, vec![]);
-	start(&first, "a");
-	start(&first, "b");
-	start(&second, "a");
-	assert_eq!(ledger.count(&product_id), 4);
-	stop(&first, "a");
-	stop(&first, "a");
-	wait_until(|| ledger.count(&product_id) == 3, "only the first hold should be released");
-	first.dispose();
-	wait_until(
-		|| ledger.count(&product_id) == 2,
-		"disconnect should release outstanding guest holds",
-	);
-	stop(&first, "a");
-	assert_eq!(ledger.count(&product_id), 2);
-	ledger.release(&product_id);
-	second.dispose();
-	wait_until(|| ledger.count(&product_id) == 0, "the last guest reference should be released");
+	drop(claim);
+	assert_eq!(host.worker_ledger().count(&product_id), 0);
 }
 
 #[test]
