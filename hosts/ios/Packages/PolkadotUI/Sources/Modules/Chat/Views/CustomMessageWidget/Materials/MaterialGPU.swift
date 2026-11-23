@@ -118,6 +118,36 @@ private struct PipelineKey: Hashable {
     let pixelFormat: UInt
 }
 
+extension MaterialGPU {
+    /// `texture` refilled with `trail`, or a new one when it has another size.
+    func trailTexture(_ trail: WidgetTrailImage, reusing texture: MTLTexture?) -> MTLTexture? {
+        guard trail.width > 0, trail.height > 0, trail.bytes.count == trail.width * trail.height else { return nil }
+        let reusable = texture.flatMap { $0.width == trail.width && $0.height == trail.height ? $0 : nil }
+        guard let target = reusable ?? makeR8Texture(width: trail.width, height: trail.height) else { return nil }
+        trail.bytes.withUnsafeBytes { pixels in
+            guard let address = pixels.baseAddress else { return }
+            target.replace(
+                region: MTLRegionMake2D(0, 0, trail.width, trail.height),
+                mipmapLevel: 0,
+                withBytes: address,
+                bytesPerRow: trail.width
+            )
+        }
+        return target
+    }
+
+    private func makeR8Texture(width: Int, height: Int) -> MTLTexture? {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .r8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        return device.makeTexture(descriptor: descriptor)
+    }
+}
+
 private extension MaterialGPU {
     static let noiseSide = 1_024
     /// One tree names at most 16 materials, and each can draw in two formats.

@@ -18,6 +18,7 @@ final class MaterialLayerRenderer {
     private let base: MTLTexture
     private let noise: MTLTexture
     private var outputs: [MTLTexture] = []
+    private var trail: (revision: UInt64, texture: MTLTexture)?
 
     init(gpu: MaterialGPU, layers: [CompiledLayer], base: MTLTexture, noise: MTLTexture) {
         self.gpu = gpu
@@ -26,7 +27,16 @@ final class MaterialLayerRenderer {
         self.noise = noise
     }
 
-    func draw(into target: MTLRenderPassDescriptor, inputs: MaterialFrameInputs) -> MTLCommandBuffer? {
+    /// `trailImage` is the enclosing `Touch` node's trail, uploaded again only when its revision moved.
+    func draw(
+        into target: MTLRenderPassDescriptor,
+        inputs: MaterialFrameInputs,
+        trailImage: WidgetTrailImage? = nil
+    ) -> MTLCommandBuffer? {
+        if let trailImage, trailImage.revision != trail?.revision || trail == nil,
+           let texture = gpu.trailTexture(trailImage, reusing: trail?.texture) {
+            trail = (trailImage.revision, texture)
+        }
         guard let commands = gpu.commandQueue.makeCommandBuffer() else { return nil }
         var input = base
         for (position, compiled) in layers.enumerated() {
@@ -72,7 +82,7 @@ private extension MaterialLayerRenderer {
     ) {
         var frame = inputs
         frame.resolution = [Float(input.width), Float(input.height)]
-        let textures = compiled.layer.textures.map { texture(for: $0, input: input) }
+        let textures = compiled.layer.textures.map { texture(for: $0, layer: compiled.layer, input: input) }
         for (slot, texture) in textures.enumerated() where !gpu.floatFilterable && texture.pixelFormat == .rgba32Float {
             frame.samplingModes[slot] = 1
         }
@@ -86,7 +96,10 @@ private extension MaterialLayerRenderer {
         set(blocks.fragment, index: MaterialShaderCompiler.fragmentUniformsBuffer, vertex: false, encoder: encoder)
         for (slot, role) in compiled.layer.textures.enumerated() {
             encoder.setFragmentTexture(textures[slot], index: slot)
-            encoder.setFragmentSamplerState(sampler(for: role, texture: textures[slot]), index: slot)
+            encoder.setFragmentSamplerState(
+                sampler(for: role, layer: compiled.layer, texture: textures[slot]),
+                index: slot
+            )
         }
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }
@@ -103,26 +116,39 @@ private extension MaterialLayerRenderer {
         }
     }
 
-    func texture(for role: WidgetMaterialLayer.TextureRole, input: MTLTexture) -> MTLTexture {
+    func texture(
+        for role: WidgetMaterialLayer.TextureRole,
+        layer: WidgetMaterialLayer,
+        input: MTLTexture
+    ) -> MTLTexture {
         switch role {
         case .base: base
         case .input: input
-        case .noise,
-             .argument: noise
+        case .noise: noise
+        case let .argument(index): readsTrail(layer, index) ? trail?.texture ?? noise : noise
         }
     }
 
-    /// Base and Input linear with clamped edges, the noise image nearest and repeated,
+    /// Base, Input and the trail linear with clamped edges, the noise image nearest and repeated,
     /// `rust/crates/truapi/src/materials/shader.rs`. A float image the GPU cannot filter is read
     /// nearest, and the shader filters it.
-    func sampler(for role: WidgetMaterialLayer.TextureRole, texture: MTLTexture) -> MTLSamplerState {
+    func sampler(
+        for role: WidgetMaterialLayer.TextureRole,
+        layer: WidgetMaterialLayer,
+        texture: MTLTexture
+    ) -> MTLSamplerState {
         switch role {
         case .base,
              .input:
             !gpu.floatFilterable && texture.pixelFormat == .rgba32Float ? gpu.nearestClamped : gpu.linearClamped
-        case .noise,
-             .argument:
+        case .noise:
             gpu.nearestRepeated
+        case let .argument(index):
+            readsTrail(layer, index) ? gpu.linearClamped : gpu.nearestRepeated
         }
+    }
+
+    func readsTrail(_ layer: WidgetMaterialLayer, _ index: Int) -> Bool {
+        layer.arguments.indices.contains(index) && layer.arguments[index] == .trail
     }
 }

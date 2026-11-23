@@ -454,6 +454,17 @@ pub enum Parameter {
 	SamplerVec3(ImageRef),
 	/// A `samplerVec4` parameter, reading all four channels.
 	SamplerVec4(ImageRef),
+	/// A `vec4` parameter the host fills: the finger's last position, then
+	/// where that touch went down, in the enclosing `Touch` node's unit square.
+	/// Zero before any touch.
+	Touch,
+	/// A `vec2` parameter the host fills: 1 while the finger is down and 0
+	/// otherwise, then seconds since it last went down or lifted. `(0, -1)`
+	/// before any touch.
+	TouchState,
+	/// A `float` parameter the host fills: seconds since it first drew this
+	/// tree, counting while the body is off screen.
+	Elapsed,
 }
 
 /// Where an image argument comes from.
@@ -465,6 +476,84 @@ pub enum ImageRef {
 	Source(ImageSource),
 	/// The host's noise image for this body, the same as `r_noise`.
 	Noise,
+	/// The trail of the enclosing `Touch` node, one channel. Fills only a
+	/// `samplerFloat` parameter.
+	Trail,
+}
+
+/// Properties of a `Touch` node.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct TouchProps {
+	/// Which finger movement the node keeps from the scroll around it.
+	pub drag: DragAxis,
+	/// The trail the finger leaves, when the node keeps one.
+	pub trail: Option<TrailProps>,
+	/// What the host tells the product, at most 8.
+	pub triggers: Vec<TouchTrigger>,
+}
+
+/// Which finger movement a `Touch` node keeps from the scroll around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum DragAxis {
+	/// A drag mostly sideways. A drag mostly up or down scrolls.
+	Horizontal,
+	/// Every drag that starts inside the node.
+	Any,
+}
+
+/// The trail a finger leaves on a `Touch` node.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct TrailProps {
+	/// Brush radius in logical pixels.
+	pub radius: Size,
+}
+
+/// An action a `Touch` node triggers when its condition holds.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct TouchTrigger {
+	/// When the action fires.
+	pub when: TouchCondition,
+	/// The action fired, with an empty payload.
+	pub action: String,
+}
+
+/// When a touch trigger fires.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(tag = "tag", content = "value")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum TouchCondition {
+	/// The finger goes down and up inside the region, having moved under 10
+	/// logical pixels. Fires every time.
+	Tap(Region),
+	/// The finger goes down inside `from`, then reaches `to` before lifting.
+	/// Fires once per tree.
+	Drag {
+		/// Where the touch goes down.
+		from: Region,
+		/// Where it has to reach.
+		to: Region,
+	},
+	/// At least this many per mille of the trail cells are marked. Fires once
+	/// per tree.
+	TrailCovers(u16),
+}
+
+/// A rectangle in per mille of a `Touch` node, from its top left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Region {
+	/// Left edge.
+	pub x: u16,
+	/// Top edge.
+	pub y: u16,
+	/// Width.
+	pub width: u16,
+	/// Height.
+	pub height: u16,
 }
 
 /// Properties of a `TextField`.
@@ -578,6 +667,16 @@ pub enum RendererNode {
 		/// The content the layers draw over.
 		children: Vec<RendererNode>,
 	},
+	/// Takes the finger over its bounds, feeds it to the `Materials` nodes
+	/// inside, and fires its triggers, as the materials RFC defines. As large as
+	/// its children, which it places at the top start like a `Box`.
+	#[codec(index = 13)]
+	Touch {
+		/// The gesture it takes and what it fires.
+		props: TouchProps,
+		/// The content the finger moves over.
+		children: Vec<RendererNode>,
+	},
 }
 
 /// Where a product-rendered body lives, and the id that names it there.
@@ -629,7 +728,8 @@ pub struct HostRendererActionSubscribeItem {
 	pub action_id: String,
 	/// Data the node attached to the action. A `Button` press carries an
 	/// empty payload; a `TextField` value change carries the UTF-8 bytes of
-	/// the new value, with no length prefix.
+	/// the new value, with no length prefix. A `Touch` trigger carries an
+	/// empty payload.
 	pub payload: Vec<u8>,
 }
 
@@ -659,8 +759,9 @@ pub enum MaterialFailure {
 	/// `unsupported-version` and `unsupported-feature`.
 	InvalidMaterial,
 	/// The arguments do not match the declared parameters, an image is not
-	/// PNG, JPEG or WebP, or the noise image fills a parameter other than
-	/// `samplerFloat`.
+	/// PNG, JPEG or WebP, the noise image or the trail fills a parameter other
+	/// than `samplerFloat`, or a touch argument has no `Touch` node taking
+	/// touch around it.
 	InvalidStack,
 	/// The node breaks a limit.
 	LimitExceeded,
@@ -696,7 +797,8 @@ impl RendererNode {
 			Self::Column { children, .. } |
 			Self::Row { children, .. } |
 			Self::Text { children, .. } |
-			Self::Button { children, .. } => children.iter_mut().for_each(Self::clear_refused_inline_images),
+			Self::Button { children, .. } |
+			Self::Touch { children, .. } => children.iter_mut().for_each(Self::clear_refused_inline_images),
 			Self::Nil | Self::String { .. } | Self::Spacer { .. } | Self::TextField { .. } => {},
 		}
 	}

@@ -373,6 +373,45 @@ struct RendererNodeMappingTests {
         #expect(textProps.text == "kept")
     }
 
+    /// The core keeps one state per `Touch` node, depth first, so a node drawn under another index
+    /// would scratch another node's trail. A node past a limit draws its children like a box.
+    @Test func touchNodesAreNumberedDepthFirstAndCarryTheCoreVerdict() throws {
+        // Given
+        func touch(_ drag: DragAxis, _ children: [RendererNode]) -> RendererNode {
+            let tap = TouchTrigger(when: .tap(Region(x: 0, y: 0, width: 1_000, height: 1_000)), action: "flip")
+            return .touch(props: TouchProps(drag: drag, trail: nil, triggers: [tap]), children: children)
+        }
+        let materials = RendererNode.materials(props: MaterialsProps(layers: []), children: [])
+        let tree = RendererNode.box(
+            modifiers: [],
+            props: BoxProps(contentAlignment: nil),
+            children: [touch(.any, [materials]), touch(.horizontal, [touch(.any, [])])]
+        )
+
+        // When
+        let node = try #require(tree.toWidgetNode(resolver: resolver))
+
+        // Then
+        guard case let .box(_, children) = node.content,
+              case let .touch(first, firstChildren) = children.first?.content,
+              case let .touch(second, secondChildren) = children.last?.content,
+              case let .touch(nested, _) = secondChildren.first?.content,
+              case let .materials(materialsIndex, _) = firstChildren.first?.content
+        else {
+            Issue.record("each touch node should keep its children")
+            return
+        }
+        #expect(first == WidgetTouchNode(index: 0, drag: .any, takesTouch: true, accessibilityActions: ["flip"]))
+        #expect(second == WidgetTouchNode(
+            index: 1,
+            drag: .horizontal,
+            takesTouch: true,
+            accessibilityActions: ["flip"]
+        ))
+        #expect(nested == WidgetTouchNode(index: 2, drag: .any, takesTouch: false, accessibilityActions: ["flip"]))
+        #expect(materialsIndex == 0)
+    }
+
     /// The core answers one state per `Materials` node, depth first, so a node drawn under another
     /// index would draw the layers of a different node. A node hidden inside a text still counts.
     @Test func materialsAreNumberedDepthFirstLikeTheCore() throws {
@@ -431,7 +470,8 @@ struct RendererNodeMappingTests {
             [index] + children.flatMap(materialsIndices)
         case let .box(_, children),
              let .column(_, children),
-             let .row(_, children):
+             let .row(_, children),
+             let .touch(_, children):
             children.flatMap(materialsIndices)
         case .spacer,
              .text,

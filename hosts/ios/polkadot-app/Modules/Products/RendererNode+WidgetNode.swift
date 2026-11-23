@@ -6,21 +6,33 @@ import SwiftUI
 
 extension RendererNode {
     /// `Materials` nodes are numbered depth first, a parent before its children, across the whole tree,
-    /// the order of `ResolvedMaterials.nodes`.
+    /// the order of `ResolvedMaterials.nodes`. `Touch` nodes are numbered the same way among themselves.
     func toWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
-        toWidgetNode(resolver: resolver, counter: MaterialsCounter())
+        toWidgetNode(resolver: resolver, counter: MaterialsCounter(takesTouch: rendererTouchNodes(tree: self)))
     }
 
     /// How many entries `ResolvedMaterials.nodes` has for this tree.
     var materialsCount: Int {
-        let counter = MaterialsCounter()
+        let counter = MaterialsCounter(takesTouch: [])
         counter.skip([self])
         return counter.count
+    }
+
+    /// The props of every `Touch` node, depth first.
+    var touchProps: [TouchProps] {
+        let own: [TouchProps] = if case let .touch(props, _) = self { [props] } else { [] }
+        return own + children.flatMap(\.touchProps)
     }
 }
 
 private final class MaterialsCounter {
     private var next: UInt32 = 0
+    private var nextTouch: UInt32 = 0
+    private let takesTouch: [Bool]
+
+    init(takesTouch: [Bool]) {
+        self.takesTouch = takesTouch
+    }
 
     var count: Int { Int(next) }
 
@@ -29,10 +41,18 @@ private final class MaterialsCounter {
         return next
     }
 
-    /// The core also numbers `Materials` nodes inside text and button children, which draw no widget.
+    /// The next `Touch` node, and whether the core lets it take touch.
+    func takeTouch() -> (index: UInt32, takesTouch: Bool) {
+        defer { nextTouch += 1 }
+        return (nextTouch, takesTouch.indices.contains(Int(nextTouch)) && takesTouch[Int(nextTouch)])
+    }
+
+    /// The core also numbers `Materials` and `Touch` nodes inside text and button children, which draw
+    /// no widget.
     func skip(_ nodes: [RendererNode]) {
         for node in nodes {
             if case .materials = node { _ = take() }
+            if case .touch = node { _ = takeTouch() }
             skip(node.children)
         }
     }
@@ -42,6 +62,7 @@ private extension RendererNode {
     var children: [RendererNode] {
         switch self {
         case let .materials(_, children),
+             let .touch(_, children),
              let .box(_, _, children),
              let .column(_, _, children),
              let .row(_, _, children),
@@ -77,6 +98,21 @@ private extension RendererNode {
             return CustomMessageWidgetNode(
                 content: .materials(
                     index: index,
+                    children: children.widgetNodes(resolver: resolver, counter: counter)
+                ),
+                modifiers: .empty
+            )
+
+        case let .touch(props, children):
+            let (index, takesTouch) = counter.takeTouch()
+            return CustomMessageWidgetNode(
+                content: .touch(
+                    WidgetTouchNode(
+                        index: index,
+                        drag: props.drag == .horizontal ? .horizontal : .any,
+                        takesTouch: takesTouch,
+                        accessibilityActions: props.triggers.compactMap(\.accessibilityAction)
+                    ),
                     children: children.widgetNodes(resolver: resolver, counter: counter)
                 ),
                 modifiers: .empty
@@ -180,9 +216,17 @@ private extension RendererNode {
         case .box,
              .column,
              .row,
-             .materials:
+             .materials,
+             .touch:
             return nil
         }
+    }
+}
+
+private extension TouchTrigger {
+    /// A tap or a drag VoiceOver can stand in for. A trail has no single action to offer.
+    var accessibilityAction: String? {
+        if case .trailCovers = when { nil } else { action }
     }
 }
 

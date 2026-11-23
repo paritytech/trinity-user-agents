@@ -49,16 +49,66 @@ final class ChatMaterialsResolver {
         following?.cancel()
         previous?.cancel()
         guard let current else {
+            materials.startResolution(nodeCount: 0, touch: WidgetTouchFactory(tree: tree))
             materials.update(nodes: [], noise: nil)
             return
         }
-        materials.startResolution(nodeCount: tree.materialsCount)
+        materials.startResolution(nodeCount: tree.materialsCount, touch: WidgetTouchFactory(tree: tree))
         following = Task { [weak self, noiseCache] in
             for await update in current.resolved {
                 let noise = await noiseCache.noise(for: update)
                 guard !Task.isCancelled else { return }
                 self?.materials.update(nodes: update.nodes.map(\.widgetState), noise: noise)
             }
+        }
+    }
+}
+
+extension WidgetTouchFactory {
+    /// Each `Touch` node of `tree` kept by the core, which holds its trail and fired triggers.
+    init(tree: RendererNode) {
+        let props = tree.touchProps
+        self.init(keys: props.map(AnyHashable.init)) { index, size in
+            CoreTouchArea(NativeTouchArea(props: props[Int(index)], width: size.width, height: size.height))
+        }
+    }
+}
+
+/// A `Touch` node's state, as the core keeps it.
+final class CoreTouchArea: WidgetTouchTracking {
+    private let area: NativeTouchAreaProtocol
+
+    init(_ area: NativeTouchAreaProtocol) {
+        self.area = area
+    }
+
+    func touch(_ phase: WidgetTouchPhase, at point: CGPoint, time: TimeInterval) -> [String] {
+        area.touch(phase: phase.corePhase, x: point.x, y: point.y, atSeconds: time)
+    }
+
+    func inputs(now: TimeInterval) -> WidgetTouchInputs {
+        let inputs = area.inputs(nowSeconds: now)
+        guard inputs.touch.count == 4, inputs.state.count == 2 else { return .none }
+        return WidgetTouchInputs(
+            touch: SIMD4(inputs.touch[0], inputs.touch[1], inputs.touch[2], inputs.touch[3]),
+            state: SIMD2(inputs.state[0], inputs.state[1])
+        )
+    }
+
+    func trail() -> WidgetTrailImage? {
+        area.trail().map {
+            WidgetTrailImage(width: Int($0.width), height: Int($0.height), bytes: $0.bytes, revision: $0.revision)
+        }
+    }
+}
+
+private extension WidgetTouchPhase {
+    var corePhase: TouchPhase {
+        switch self {
+        case .down: .down
+        case .move: .move
+        case .up: .up
+        case .cancel: .cancel
         }
     }
 }
@@ -199,7 +249,14 @@ private extension Parameter {
              let .samplerVec2(image),
              let .samplerVec3(image),
              let .samplerVec4(image):
-            if case .noise = image { .noise } else { .image }
+            switch image {
+            case .noise: .noise
+            case .trail: .trail
+            case .source: .image
+            }
+        case .touch: .touch
+        case .touchState: .touchState
+        case .elapsed: .elapsed
         }
     }
 }

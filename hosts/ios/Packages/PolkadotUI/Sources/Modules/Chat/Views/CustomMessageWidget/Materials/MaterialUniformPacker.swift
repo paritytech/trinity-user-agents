@@ -7,17 +7,25 @@ public struct MaterialFrameInputs: Equatable, Sendable {
     public var resolution: SIMD2<Float>
     /// 1 for a texture slot that holds 32-bit floats the GPU cannot filter, else 0.
     public var samplingModes: [Int: Int32]
+    /// What the touch arguments read, from the enclosing `Touch` node.
+    public var touch: WidgetTouchInputs
+    /// Seconds since the card was given its tree.
+    public var elapsed: Float
 
     public init(
         time: Float = 0,
         motion: MaterialMotion = .still,
         resolution: SIMD2<Float>,
-        samplingModes: [Int: Int32] = [:]
+        samplingModes: [Int: Int32] = [:],
+        touch: WidgetTouchInputs = .none,
+        elapsed: Float = 0
     ) {
         self.time = time
         self.motion = motion
         self.resolution = resolution
         self.samplingModes = samplingModes
+        self.touch = touch
+        self.elapsed = elapsed
     }
 }
 
@@ -110,11 +118,21 @@ private extension MaterialUniformPacker {
         case .targetFlip: [targetFlip.bitPattern]
         case let .samplingMode(slot): [UInt32(bitPattern: inputs.samplingModes[slot] ?? 0)]
         case let .argument(index):
-            if layer.arguments.indices.contains(index), case let .numbers(words) = layer.arguments[index] {
-                words
-            } else {
-                []
-            }
+            layer.arguments.indices.contains(index) ? words(of: layer.arguments[index], inputs: inputs) : []
+        }
+    }
+
+    static func words(of argument: WidgetMaterialLayer.Argument, inputs: MaterialFrameInputs) -> [UInt32] {
+        switch argument {
+        case let .numbers(words): words
+        case .touch:
+            [inputs.touch.touch.x, inputs.touch.touch.y, inputs.touch.touch.z, inputs.touch.touch.w].map(\.bitPattern)
+        case .touchState: [inputs.touch.state.x, inputs.touch.state.y].map(\.bitPattern)
+        case .elapsed: [inputs.elapsed.bitPattern]
+        case .noise,
+             .image,
+             .trail:
+            []
         }
     }
 

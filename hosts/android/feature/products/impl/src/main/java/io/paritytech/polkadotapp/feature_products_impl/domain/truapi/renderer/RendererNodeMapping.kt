@@ -85,6 +85,7 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
     is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
+    is RendererNode.Touch -> JsWidget.Box(children = children.toJsChildren())
 }
 
 private fun List<RendererNode>.toJsChildren(): List<JsWidget> =

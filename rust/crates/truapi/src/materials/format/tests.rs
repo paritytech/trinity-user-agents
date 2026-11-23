@@ -266,3 +266,30 @@ fn arguments_match_by_count_type_and_finite_value() {
 			.arguments_match(&[Parameter::SamplerFloat(ImageRef::Noise)])
 	);
 }
+
+/// The host fills a touch argument itself, so it matches only the type its
+/// value has, and the trail has one channel, like the noise image.
+#[test]
+fn touch_arguments_match_only_the_type_the_host_fills() {
+	let material = material_taking(&[
+		ParamKind::Vec4,
+		ParamKind::Vec2,
+		ParamKind::Float,
+		ParamKind::SamplerFloat,
+	]);
+	let args = [
+		Parameter::Touch,
+		Parameter::TouchState,
+		Parameter::Elapsed,
+		Parameter::SamplerFloat(ImageRef::Trail),
+	];
+	assert!(material.arguments_match(&args));
+
+	assert!(!material_taking(&[ParamKind::Vec3]).arguments_match(&[Parameter::Touch]));
+	assert!(!material_taking(&[ParamKind::Vec4]).arguments_match(&[Parameter::TouchState]));
+	assert!(!material_taking(&[ParamKind::Vec2]).arguments_match(&[Parameter::Elapsed]));
+	assert!(
+		!material_taking(&[ParamKind::SamplerVec4])
+			.arguments_match(&[Parameter::SamplerVec4(ImageRef::Trail)])
+	);
+}

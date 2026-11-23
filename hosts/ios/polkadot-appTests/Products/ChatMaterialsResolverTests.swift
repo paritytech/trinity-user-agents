@@ -209,6 +209,48 @@ struct ChatMaterialsResolverTests {
         ))
     }
 
+    /// The host fills these arguments itself, so each must reach the card as what it is.
+    @Test func everyTouchArgumentReachesTheCardAsItsOwnCase() {
+        // Given
+        let ready = ReadyLayer(
+            material: Data(repeating: 9, count: 32),
+            shader: Self.layer.shader,
+            args: [.touch, .touchState, .elapsed, .samplerFloat(.trail), .samplerFloat(.noise)]
+        )
+
+        // When
+        let layer = ready.widgetLayer
+
+        // Then
+        #expect(layer.arguments == [.touch, .touchState, .elapsed, .trail, .noise])
+    }
+
+    /// A product sends a new tree after each trigger. A `Touch` node whose props stay keeps its trail,
+    /// so the finger's work is not lost, and one whose props changed starts empty.
+    @Test func aNewTreeKeepsATouchAreaWhosePropsStayAndReplacesOneWhosePropsChanged() throws {
+        // Given
+        func touch(_ radius: UInt64) -> RendererNode {
+            .touch(props: TouchProps(drag: .any, trail: TrailProps(radius: radius), triggers: []), children: [])
+        }
+        let resolver = makeResolver { _ in StubMaterialsResolution() }
+        let size = CGSize(width: 300, height: 200)
+        let twoAreas = RendererNode.box(modifiers: [], props: BoxProps(contentAlignment: nil), children: [
+            touch(20), touch(20)
+        ])
+        resolver.follow(tree: twoAreas)
+        let kept = try #require(resolver.materials.touchArea(index: 0, size: size))
+        let replaced = try #require(resolver.materials.touchArea(index: 1, size: size))
+
+        // When
+        resolver.follow(tree: .box(modifiers: [], props: BoxProps(contentAlignment: nil), children: [
+            touch(20), touch(30)
+        ]))
+
+        // Then
+        #expect(resolver.materials.touchArea(index: 0, size: size) === kept)
+        #expect(resolver.materials.touchArea(index: 1, size: size) !== replaced)
+    }
+
     private static let layer = ReadyLayer(
         material: Data(repeating: 9, count: 32),
         shader: MaterialShader(

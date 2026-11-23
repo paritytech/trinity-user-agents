@@ -14,6 +14,7 @@ struct MaterialsNodeView<Children: View>: View {
     @Environment(\.widgetActionHandler) private var actionHandler
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.widgetImages) private var enclosingImages
+    @Environment(\.widgetTouchArea) private var touchArea
     @State private var ownImages = WidgetImageStore()
     @State private var surface: MaterialSurface?
     @State private var size: CGSize = .zero
@@ -24,8 +25,12 @@ struct MaterialsNodeView<Children: View>: View {
             .opacity(surface == nil ? 1 : 0)
             .overlay(alignment: .topLeading) {
                 if let surface {
-                    MaterialSurfaceView(surface: surface)
-                        .allowsHitTesting(false)
+                    MaterialSurfaceView(
+                        surface: surface,
+                        touchArea: touchArea,
+                        treeStartedAt: materials?.treeStartedAt ?? CACurrentMediaTime()
+                    )
+                    .allowsHitTesting(false)
                 }
             }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
@@ -112,12 +117,14 @@ final class MaterialSurface {
     let renderer: MaterialLayerRenderer
     let isAnimated: Bool
     let readsMotion: Bool
+    let readsTrail: Bool
     let pixelSize: CGSize
 
     private init(renderer: MaterialLayerRenderer, layers: [WidgetMaterialLayer], pixelSize: CGSize) {
         self.renderer = renderer
         isAnimated = layers.contains(where: \.isAnimated)
         readsMotion = layers.contains(where: \.readsMotion)
+        readsTrail = layers.contains(where: \.readsTrail)
         self.pixelSize = pixelSize
     }
 
@@ -163,22 +170,43 @@ final class MaterialSurface {
 
 private struct MaterialSurfaceView: UIViewRepresentable {
     let surface: MaterialSurface
+    let touchArea: WidgetTouchArea?
+    let treeStartedAt: CFTimeInterval
 
     func makeUIView(context _: Context) -> MaterialMetalView {
-        MaterialMetalView(surface: surface)
+        let view = MaterialMetalView(surface: surface)
+        configure(view)
+        return view
     }
 
     func updateUIView(_ view: MaterialMetalView, context _: Context) {
         view.surface = surface
+        configure(view)
+    }
+
+    private func configure(_ view: MaterialMetalView) {
+        view.treeStartedAt = treeStartedAt
+        view.touchArea = touchArea
     }
 }
 
-/// Draws only while on screen and its scene is active. A still material draws once. Reduced motion
-/// draws once with time and tilt zero. Time counts from zero each time the view comes on screen.
+/// Draws only while on screen and its scene is active. A still material draws once, and again on each
+/// finger sample of its `Touch` node. Reduced motion draws once with time and tilt zero and elapsed at
+/// an hour. Time counts from zero each time the view comes on screen, elapsed from the card's tree.
 final class MaterialMetalView: MTKView, MTKViewDelegate {
     var surface: MaterialSurface {
         didSet { restart() }
     }
+
+    var touchArea: WidgetTouchArea? {
+        didSet {
+            guard touchArea !== oldValue else { return }
+            touchArea?.redraw(on: self)
+            setNeedsDisplay()
+        }
+    }
+
+    var treeStartedAt = CACurrentMediaTime()
 
     private let motionSource: DeviceAttitudeObservable
     private var motionToken: DeviceMotionToken?
@@ -217,9 +245,10 @@ final class MaterialMetalView: MTKView, MTKViewDelegate {
     func mtkView(_: MTKView, drawableSizeWillChange _: CGSize) {}
 
     func draw(in view: MTKView) {
+        let trail = surface.readsTrail ? touchArea?.tracking.trail() : nil
         guard let pass = view.currentRenderPassDescriptor,
               let drawable = view.currentDrawable,
-              let commands = surface.renderer.draw(into: pass, inputs: frameInputs())
+              let commands = surface.renderer.draw(into: pass, inputs: frameInputs(), trailImage: trail)
         else { return }
         commands.present(drawable)
         commands.commit()
@@ -260,10 +289,18 @@ private extension MaterialMetalView {
         }
     }
 
+    /// Elapsed reads an hour under reduced motion, so an entry animation shows its end.
+    static let reducedMotionElapsed: Float = 3_600
+
     /// Until the first reading arrives, and when none does, the motion stays still.
     func frameInputs() -> MaterialFrameInputs {
-        guard runsContinuously else { return MaterialFrameInputs(resolution: .zero) }
-        return MaterialFrameInputs(time: Float(CACurrentMediaTime() - startedAt), motion: motion, resolution: .zero)
+        let now = CACurrentMediaTime()
+        var inputs = runsContinuously
+            ? MaterialFrameInputs(time: Float(now - startedAt), motion: motion, resolution: .zero)
+            : MaterialFrameInputs(resolution: .zero)
+        inputs.touch = touchArea?.tracking.inputs(now: now) ?? .none
+        inputs.elapsed = UIAccessibility.isReduceMotionEnabled ? Self.reducedMotionElapsed : Float(now - treeStartedAt)
+        return inputs
     }
 }
 

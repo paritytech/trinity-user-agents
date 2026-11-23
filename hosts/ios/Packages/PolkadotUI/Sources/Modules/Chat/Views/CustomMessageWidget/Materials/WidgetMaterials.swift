@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import QuartzCore
 import SwiftUI
 
 /// What one `Materials` node of a card draws, as the host core resolved it.
@@ -41,13 +42,19 @@ public struct WidgetMaterialLayer: Equatable, Sendable, Decodable {
         self.arguments = arguments
     }
 
-    public var isAnimated: Bool { readsTime || readsMotion }
+    /// A layer that reads the clock or the finger's time draws every frame while on screen.
+    public var isAnimated: Bool {
+        readsTime || readsMotion || arguments.contains(.touchState) || arguments.contains(.elapsed)
+    }
 
-    /// Whether this host fills every texture slot. It loads no image argument other than the noise image.
+    public var readsTrail: Bool { arguments.contains(.trail) }
+
+    /// Whether this host fills every texture slot. It loads no image argument other than the noise image
+    /// and the trail.
     public var usesOnlyHostTextures: Bool {
         textures.allSatisfy { role in
             guard case let .argument(index) = role else { return true }
-            return arguments.indices.contains(index) && arguments[index] == .noise
+            return arguments.indices.contains(index) && [.noise, .trail].contains(arguments[index])
         }
     }
 }
@@ -118,11 +125,16 @@ public extension WidgetMaterialLayer {
         }
     }
 
-    /// An argument as the tree gave it. Numbers are IEEE 754 bit patterns.
+    /// An argument as the tree gave it. Numbers are IEEE 754 bit patterns. The touch arguments and the
+    /// trail come from the enclosing `Touch` node, and elapsed from the card's clock.
     enum Argument: Equatable, Sendable, Decodable {
         case numbers([UInt32])
         case noise
         case image
+        case touch
+        case touchState
+        case elapsed
+        case trail
     }
 
     enum TextureRole: Equatable, Sendable, Decodable {
@@ -159,8 +171,12 @@ public final class WidgetMaterials {
     public private(set) var noise: WidgetMaterialNoise?
     /// Counts the trees this card was given, so a node draws its new children even when its layers stay the same.
     public private(set) var generation = 0
+    /// When the card was given its current tree, the zero of `elapsed`.
+    @ObservationIgnored public private(set) var treeStartedAt = CACurrentMediaTime()
     @ObservationIgnored private let report: @MainActor (WidgetMaterialFailure) -> Void
     @ObservationIgnored private var reported: Set<UInt32> = []
+    @ObservationIgnored private var touchFactory: WidgetTouchFactory?
+    @ObservationIgnored private var touchAreas: [UInt32: WidgetTouchArea] = [:]
 
     public nonisolated init(report: @escaping @MainActor (WidgetMaterialFailure) -> Void) {
         self.report = report
@@ -178,12 +194,32 @@ public final class WidgetMaterials {
     /// A new tree of the same card. The core keeps a reported node plain only for the resolution
     /// it was reported in, so a node that fails again is reported again. A tree with another number
     /// of nodes draws them plain until its first update, since an index may now name another node.
-    public func startResolution(nodeCount: Int) {
+    ///
+    /// A `Touch` node keeps its trail and fired triggers across trees while its props stay equal.
+    public func startResolution(nodeCount: Int, touch: WidgetTouchFactory? = nil) {
         reported = []
         generation += 1
+        treeStartedAt = CACurrentMediaTime()
+        let keptKeys = touchFactory?.keys ?? []
+        let newKeys = touch?.keys ?? []
+        touchAreas = touchAreas.filter { index, _ in
+            let position = Int(index)
+            return keptKeys.indices.contains(position) && newKeys.indices.contains(position)
+                && keptKeys[position] == newKeys[position]
+        }
+        touchFactory = touch
         if nodes.count != nodeCount {
             nodes = Array(repeating: .plain, count: nodeCount)
         }
+    }
+
+    /// The state of `Touch` node `index` at `size`, made again when the size changes.
+    public func touchArea(index: UInt32, size: CGSize) -> WidgetTouchArea? {
+        guard let touchFactory, touchFactory.keys.indices.contains(Int(index)) else { return nil }
+        if let kept = touchAreas[index], kept.size == size { return kept }
+        let area = WidgetTouchArea(tracking: touchFactory.make(index, size), size: size)
+        touchAreas[index] = area
+        return area
     }
 
     /// Draws node `index` plain and tells the product, once per resolution.

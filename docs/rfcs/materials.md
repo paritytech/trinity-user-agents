@@ -227,18 +227,22 @@ The limits are the same on every host:
 | Pixels per side of one image argument  | 2048  |
 | Distinct images in one tree, not noise | 16    |
 | `Materials` inside another `Materials` | none  |
+| `Touch` nodes in one tree              | 4     |
+| `Touch` inside another `Touch`         | none  |
+| Triggers in one `Touch` node           | 8     |
 
-Every limit but image size is checked on the tree alone, before anything loads, visiting `Materials` nodes depth first.
-A node that breaks one falls back with `LimitExceeded` and adds nothing to the per-tree totals. Every other node counts,
-whether it draws or falls back later, so a tree falls back at the same nodes on every host. An image wider or taller
-than 2048 pixels makes its node fall back with `LimitExceeded` when it loads, and the node still counts. A nested
+Every limit but image size is checked on the tree alone, before anything loads, visiting `Materials` and `Touch` nodes
+depth first. A `TrailCovers` trigger in a node with no trail, or a region past 1000 per mille, breaks the node's limits
+too. A node that breaks one falls back with `LimitExceeded` and adds nothing to the per-tree totals. Every other node
+counts, whether it draws or falls back later, so a tree falls back at the same nodes on every host. An image wider or
+taller than 2048 pixels makes its node fall back with `LimitExceeded` when it loads, and the node still counts. A nested
 `Materials` node falls back and its ancestor still draws.
 
 When the materials on screen cost more than the device can afford, the host steps down in this order:
 
 - Stop drawing materials that are not seen.
-- Draw a node once, not every frame, when nothing about it changes: no layer reads a time or orientation input, and
-  nothing in its children or behind it moves.
+- Draw a node once, not every frame, when nothing about it changes: no layer reads a time or orientation input, no layer
+  takes a touch argument that changed, and nothing in its children or behind it moves.
 - Draw fewer frames.
 - Draw fewer pixels, with `sl_resolution` reporting the pixels drawn.
 - Freeze: draw one still frame with the reduced-motion inputs.
@@ -270,6 +274,105 @@ alpha has alpha 1. The noise image has one channel, so it fills only a `samplerF
 with clamped edges, the noise image nearest with repeat. Images between layers keep 32-bit float precision. Where a GPU
 cannot sample them linearly, the host filters them in the shader.
 
+### Touch
+
+A `Touch` node takes the finger over its bounds. It feeds the finger to the `Materials` nodes inside it through
+arguments the host fills, and tells the product what happened through triggers. The material format does not change: the
+host fills a declared parameter itself, as it fills one with the noise image. A material author previews in Shaderlab by
+moving that parameter by hand. `Touch` takes variant index 13.
+
+```rust
+pub enum RendererNode {
+    // Nil to Materials, as above.
+    /// Takes the finger over its bounds and feeds it to the `Materials` nodes
+    /// inside. As large as its children, which it places at the top start
+    /// like a `Box`.
+    Touch { props: TouchProps, children: Vec<RendererNode> },
+}
+
+/// Properties of a `Touch` node.
+pub struct TouchProps {
+    /// Which finger movement the node keeps from the scroll around it.
+    pub drag: DragAxis,
+    /// The trail the finger leaves, when the node keeps one.
+    pub trail: Option<TrailProps>,
+    /// What the host tells the product, at most 8.
+    pub triggers: Vec<TouchTrigger>,
+}
+
+pub enum DragAxis {
+    /// A drag mostly sideways. A drag mostly up or down scrolls.
+    Horizontal,
+    /// Every drag that starts inside the node.
+    Any,
+}
+
+pub struct TrailProps {
+    /// Brush radius in logical pixels.
+    pub radius: Size,
+}
+
+pub struct TouchTrigger {
+    pub when: TouchCondition,
+    /// Sent with an empty payload on `Renderer::action_subscribe`.
+    pub action: String,
+}
+
+pub enum TouchCondition {
+    /// Down and up inside the region, having moved under 10 logical pixels.
+    /// Fires every time.
+    Tap(Region),
+    /// Down inside `from`, then inside `to` before lifting. Fires once per tree.
+    Drag { from: Region, to: Region },
+    /// At least this many per mille of the trail cells are marked. Fires once
+    /// per tree.
+    TrailCovers(u16),
+}
+
+/// A rectangle in per mille of the node, from its top left.
+pub struct Region { pub x: u16, pub y: u16, pub width: u16, pub height: u16 }
+
+pub enum Parameter {
+    // Float to SamplerVec4, as above.
+    /// Fills a `vec4`: the finger's last position, then where that touch went down.
+    Touch,
+    /// Fills a `vec2`: 1 while the finger is down and 0 otherwise, then seconds
+    /// since it last went down or lifted.
+    TouchState,
+    /// Fills a `float`: seconds since the host first drew this tree.
+    Elapsed,
+}
+
+pub enum ImageRef {
+    // Source and Noise, as above.
+    /// The trail of the enclosing `Touch` node. Fills only `samplerFloat`.
+    Trail,
+}
+```
+
+The values are the same on every host:
+
+- Positions are in the `Touch` node's unit square, `(0, 0)` at the top left and `(1, 1)` at the bottom right, clamped.
+  In the usual tree, a `Touch` node around one `Materials` node, this equals the shader's `uv`.
+- Before any touch, `Touch` is `(0, 0, 0, 0)` and `TouchState` is `(0, -1)`. After a lift the last position stays.
+- `Elapsed` keeps counting while the body is off screen, and restarts when the product renders a new tree for the body.
+  With reduced motion on it reads 3600, so an entry animation shows its end.
+- The trail has one byte per cell, in row order from the top left. The longer side has 128 cells, the other
+  `max(1, round(128 × short / long))`. A cell becomes 255 when its centre lies within `radius` of the segment between
+  two consecutive finger samples of one touch, or of the first sample. Cells never clear. The trail samples linearly
+  with clamped edges. `TrailCovers(p)` holds when `marked × 1000 >= p × cells`.
+- The trail, the fired triggers and the last touch last as long as the app shows the body and the node's `TouchProps`
+  stay equal across new trees, counting `Touch` nodes depth first. Different props or another node size start them
+  empty. They do not outlive the app, so a product keeps a result by sending the tree that shows it.
+- A layer with a `TouchState` or `Elapsed` argument draws every frame while on screen. A layer with only `Touch` or
+  `Trail` draws when the finger moves.
+- Touch works with reduced motion on.
+
+A `Touch` node that breaks a limit draws its children like a `Box` and takes no touch. A `Materials` node with a
+`Touch`, `TouchState` or `Trail` argument and no `Touch` node around it that takes touch, or with `Trail` where that
+node keeps no trail, falls back with `InvalidStack`. The nearest `Touch` node around it decides. `Trail` in a sampler
+other than `samplerFloat` falls back with `InvalidStack`, as the noise image does.
+
 ### Capability
 
 A product asks before it sends a material of a given format version and features. `System::feature_supported` learns one
@@ -292,6 +395,18 @@ pub enum HostFeatureSupportedRequest {
 
 The answer is yes only when the host reads that version and every named feature, and has materials switched on. A host
 that answers yes serves `Renderer::failure_subscribe`.
+
+A second question asks whether the host draws `Touch` nodes and fills the touch arguments. The core answers it beside
+the materials question. An older host cannot decode it, and the product reads that error as no, then sends a tree with a
+button instead.
+
+```rust
+pub enum HostFeatureSupportedRequest {
+    // Chain and Materials, as above.
+    /// Ask whether the host draws `Touch` nodes and fills the touch arguments.
+    RendererTouch,
+}
+```
 
 ## Compatibility
 

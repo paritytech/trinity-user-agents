@@ -34,6 +34,7 @@ mod renderer;
 mod runtime;
 mod sso;
 mod subscribers;
+mod touch;
 mod ws_bridge;
 
 pub use crate::{
@@ -75,6 +76,7 @@ pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
 pub use sso::SsoRequestOutcome;
+pub use touch::NativeTouchArea;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};

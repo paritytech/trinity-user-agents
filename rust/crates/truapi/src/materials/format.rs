@@ -118,10 +118,15 @@ impl ParamKind {
 			(Self::Vec2, Parameter::Vec2(values)) => finite(values),
 			(Self::Vec3, Parameter::Vec3(values)) => finite(values),
 			(Self::Vec4, Parameter::Vec4(values)) => finite(values),
+			(Self::Vec4, Parameter::Touch) |
+			(Self::Vec2, Parameter::TouchState) |
+			(Self::Float, Parameter::Elapsed) |
 			(Self::SamplerFloat, Parameter::SamplerFloat(_)) => true,
 			(Self::SamplerVec2, Parameter::SamplerVec2(image)) |
 			(Self::SamplerVec3, Parameter::SamplerVec3(image)) |
-			(Self::SamplerVec4, Parameter::SamplerVec4(image)) => *image != ImageRef::Noise,
+			(Self::SamplerVec4, Parameter::SamplerVec4(image)) => {
+				!matches!(image, ImageRef::Noise | ImageRef::Trail)
+			},
 			_ => false,
 		}
 	}
@@ -145,7 +150,8 @@ pub struct Material {
 
 impl Material {
 	/// Whether `args` fill the parameters: one each, in order, of the declared
-	/// type, with finite numbers, and noise only where one channel is read.
+	/// type, with finite numbers, and noise or the trail only where one channel
+	/// is read.
 	pub fn arguments_match(&self, args: &[Parameter]) -> bool {
 		self.params.len() == args.len() &&
 			self.params

@@ -58,6 +58,41 @@ struct MaterialUniformPackerTests {
         ])
     }
 
+    /// The host fills touch arguments at their declared offsets, the finger first, then where it went
+    /// down, so a scratch card opens under the finger and not one argument over.
+    @Test func touchArgumentsAreWrittenAtTheirOffsets() {
+        // Given
+        let layer = WidgetMaterialLayer(
+            material: Data(repeating: 1, count: 32),
+            shader: .init(
+                vertex: "",
+                fragment: "",
+                blockSizes: .init(vertex: 0, fragment: 32),
+                readsTime: false,
+                readsMotion: false
+            ),
+            uniforms: [
+                .init(stage: .fragment, offset: 0, kind: .vec4, role: .argument(0)),
+                .init(stage: .fragment, offset: 16, kind: .vec2, role: .argument(1)),
+                .init(stage: .fragment, offset: 24, kind: .float, role: .argument(2))
+            ],
+            textures: [],
+            arguments: [.touch, .touchState, .elapsed]
+        )
+        let inputs = MaterialFrameInputs(
+            resolution: .zero,
+            touch: WidgetTouchInputs(touch: [0.5, 0.25, 0.1, 0.75], state: [1, 0.5]),
+            elapsed: 2
+        )
+
+        // When
+        let blocks = MaterialUniformPacker.pack(layer, inputs: inputs)
+
+        // Then
+        #expect(floats(blocks.fragment) == [0.5, 0.25, 0.1, 0.75, 1, 0.5, 2, 0])
+        #expect(layer.isAnimated)
+    }
+
     /// The angles the Android host reads from the same rotations, its `MaterialUniformsTest`, so a
     /// material tilts the same way on both. Beta runs past vertical instead of turning back.
     @Test func anglesFollowTheDevicePastVertical() {

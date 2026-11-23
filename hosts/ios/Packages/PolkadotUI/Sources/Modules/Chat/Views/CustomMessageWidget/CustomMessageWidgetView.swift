@@ -133,6 +133,10 @@ private struct WidgetNodeContent: View {
             MaterialsNodeView(index: index) {
                 NodeBoxView(props: .init(), children: children, modifiers: node.modifiers)
             }
+        case let .touch(touch, children):
+            TouchNodeView(node: touch) {
+                NodeBoxView(props: .init(), children: children, modifiers: node.modifiers)
+            }
         }
     }
 }

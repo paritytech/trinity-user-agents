@@ -3,26 +3,28 @@ import SwiftUI
 import UIKit
 
 /// A chat card wrapped in one `Materials` node, drawn the way a message card is, with no product
-/// in the way. A plain line under it shows where the card ends.
+/// in the way. A plain line under it shows where the card ends. The cards scroll as a chat does, so a
+/// drag on a card shows whether it keeps the finger from the scroll.
 struct DebugMaterialsCardView: View {
     @State var viewModel: DebugMaterialsCardViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ProductWidgetChatView(
-                messageId: DebugMaterialsCardViewModel.messageId,
-                nodeProvider: viewModel,
-                onAction: nil,
-                resolveImage: WidgetImageResolver { _ in UIImage.debugPicture() },
-                materials: viewModel.materials
-            )
-            Text("A plain line under the card")
-            if let refusal = viewModel.refusal {
-                Text(refusal).foregroundStyle(.red)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ProductWidgetChatView(
+                    messageId: DebugMaterialsCardViewModel.messageId,
+                    nodeProvider: viewModel,
+                    onAction: nil,
+                    resolveImage: WidgetImageResolver { _ in UIImage.debugPicture() },
+                    materials: viewModel.materials
+                )
+                Text("A plain line under the card")
+                if let refusal = viewModel.refusal {
+                    Text(refusal).foregroundStyle(.red)
+                }
             }
-            Spacer()
+            .padding(16)
         }
-        .padding(16)
         .task { await viewModel.load() }
     }
 }

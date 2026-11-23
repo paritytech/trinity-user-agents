@@ -1,9 +1,11 @@
+use parity_scale_codec::Compact;
 use truapi::latest::{
-	BoxProps, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Parameter,
-	RendererNode,
+	BoxProps, DragAxis, ImageRef, ImageSource, MaterialFailure, MaterialInstance, MaterialsProps,
+	Parameter, Region, RendererNode, TouchCondition, TouchProps, TouchTrigger, TrailProps,
 };
 
 use super::*;
+use crate::materials::touch_nodes;
 
 const OVER: Option<MaterialFailure> = Some(MaterialFailure::LimitExceeded);
 
@@ -120,4 +122,70 @@ fn a_node_over_one_total_adds_nothing_to_the_others() {
 	let mut expected = vec![None, OVER];
 	expected.extend([None; 15]);
 	assert_eq!(tree_failures(&tree(nodes)), expected);
+}
+
+const INVALID: Option<MaterialFailure> = Some(MaterialFailure::InvalidStack);
+
+fn touch_layer(args: Vec<Parameter>) -> RendererNode {
+	node(vec![MaterialInstance { material: [0; 32], args }], vec![])
+}
+
+fn touch(trail: bool, triggers: Vec<TouchCondition>, children: Vec<RendererNode>) -> RendererNode {
+	RendererNode::Touch {
+		props: TouchProps {
+			drag: DragAxis::Any,
+			trail: trail.then_some(TrailProps { radius: Compact(20) }),
+			triggers: triggers
+				.into_iter()
+				.map(|when| TouchTrigger { when, action: "revealed".to_string() })
+				.collect(),
+		},
+		children,
+	}
+}
+
+/// A touch argument outside a `Touch` node has no finger to read, so every
+/// host draws its node plain. The clock needs no `Touch` node.
+#[test]
+fn a_touch_argument_needs_a_touch_node_around_it() {
+	let finger = || touch_layer(vec![Parameter::Touch, Parameter::TouchState]);
+	let clock = touch_layer(vec![Parameter::Elapsed]);
+
+	assert_eq!(tree_failures(&tree(vec![finger(), clock])), [INVALID, None]);
+	assert_eq!(tree_failures(&touch(false, Vec::new(), vec![finger()])), [None]);
+}
+
+#[test]
+fn the_trail_needs_a_touch_node_that_keeps_one() {
+	let trail = || touch_layer(vec![Parameter::SamplerFloat(ImageRef::Trail)]);
+
+	assert_eq!(tree_failures(&touch(false, Vec::new(), vec![trail()])), [INVALID]);
+	assert_eq!(tree_failures(&touch(true, Vec::new(), vec![trail()])), [None]);
+}
+
+/// The fifth `Touch` node, a nested one, and one breaking its own limits draw
+/// like a `Box`, so the materials inside read no finger.
+#[test]
+fn a_touch_node_past_a_limit_takes_no_touch() {
+	let finger = || touch_layer(vec![Parameter::Touch]);
+	let five: Vec<_> = (0..5).map(|_| touch(false, Vec::new(), vec![finger()])).collect();
+	let five = tree(five);
+	assert_eq!(touch_nodes(&five), [true, true, true, true, false]);
+	assert_eq!(tree_failures(&five), [None, None, None, None, INVALID]);
+
+	let nested = touch(false, Vec::new(), vec![touch(false, Vec::new(), vec![finger()])]);
+	assert_eq!(touch_nodes(&nested), [true, false]);
+	assert_eq!(tree_failures(&nested), [INVALID]);
+
+	let region = Region { x: 900, y: 0, width: 101, height: 1000 };
+	let invalid = [
+		touch(false, vec![TouchCondition::TrailCovers(600)], vec![finger()]),
+		touch(false, vec![TouchCondition::Tap(region)], vec![finger()]),
+		touch(true, vec![TouchCondition::TrailCovers(600); 9], vec![finger()]),
+	];
+	for node in invalid {
+		assert_eq!((touch_nodes(&node), tree_failures(&node)), (vec![false], vec![INVALID]));
+	}
+	let eight = touch(true, vec![TouchCondition::TrailCovers(600); 8], vec![finger()]);
+	assert_eq!(touch_nodes(&eight), [true]);
 }

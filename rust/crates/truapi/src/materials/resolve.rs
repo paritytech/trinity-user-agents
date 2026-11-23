@@ -245,15 +245,15 @@ impl Resolver {
 		let nodes = materials_nodes(tree)
 			.into_iter()
 			.zip(tree_failures(tree))
-			.map(|((props, _), limit)| {
+			.map(|(node, limit)| {
 				let settled = if !drawn_here {
 					Some((None, MaterialFailure::Unsupported))
 				} else if let Some(failure) = limit {
 					Some((None, failure))
 				} else {
-					inline_image_failure(&props.layers)
+					inline_image_failure(&node.props.layers)
 				};
-				TrackedNode { layers: props.layers.clone(), settled, reported: false }
+				TrackedNode { layers: node.props.layers.clone(), settled, reported: false }
 			})
 			.collect();
 		Self {
