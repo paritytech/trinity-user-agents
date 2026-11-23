@@ -230,9 +230,9 @@ pub struct MockConfig {
 	/// Whether `feature_supported` reports support.
 	pub feature_supported: bool,
 	/// When set, `feature_supported` answers from `served_chains`, as a real
-	/// host does, so a chain outside that set is unsupported. It becomes the
-	/// default in a later breaking release. The JS mock's `onlyServedChains` is
-	/// the same option.
+	/// host does, so a chain outside that set is unsupported. Set by default;
+	/// unset reports every chain as supported. The JS mock's `onlyServedChains`
+	/// is the same option.
 	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
@@ -260,7 +260,7 @@ impl Default for MockConfig {
 			device_permissions: PermissionPolicy::AllowAll,
 			remote_permissions: PermissionPolicy::AllowAll,
 			feature_supported: true,
-			only_served_chains: false,
+			only_served_chains: true,
 			theme: latest::ThemeVariant::Dark,
 			language_tag: "en".to_string(),
 			confirm_user_actions: true,

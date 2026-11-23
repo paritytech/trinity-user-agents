@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_settings_impl.presentation.main.components.privacyMode
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -9,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
+import io.paritytech.polkadotapp.design.components.text.PolkadotBulletText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 
 @Composable
@@ -23,21 +25,25 @@ internal fun SelectedModeDescription(appearance: ModeAppearance) {
                 .fillMaxWidth()
                 .padding(
                     horizontal = PolkadotTheme.spacings.mediumIncreased,
-                    vertical = PolkadotTheme.spacings.medium
-                )
+                    vertical = PolkadotTheme.spacings.extraMedium
+                ),
+            verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall)
         ) {
             NovaText(
                 text = appearance.label,
-                style = PolkadotTheme.typography.title.small,
+                style = PolkadotTheme.typography.title.medium,
                 color = PolkadotTheme.colors.fg.primary
             )
 
-            NovaText(
-                text = appearance.description,
-                style = PolkadotTheme.typography.body.small,
-                color = PolkadotTheme.colors.fg.secondary
-            )
+            appearance.bullets.forEach { bullet ->
+                PolkadotBulletText(
+                    modifier = Modifier.padding(start = PolkadotTheme.spacings.tiny),
+                    text = bullet,
+                    style = PolkadotTheme.typography.paragraph.medium
+                )
+            }
         }
     }
 }
+
 private val DESCRIPTION_RADIUS = 12.dp
