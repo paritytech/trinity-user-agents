@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_statement_store_api.domain
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.EncodedMessage
 
 interface MessageCompactor {
+    fun canCompact(message: EncodedMessage): Boolean
+
     suspend fun compact(messages: List<EncodedMessage>): Result<List<CompactedBatch>>
 }
 

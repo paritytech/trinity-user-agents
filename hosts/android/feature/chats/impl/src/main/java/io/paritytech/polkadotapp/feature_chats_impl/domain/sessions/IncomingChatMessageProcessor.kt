@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.onTokenContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.username.FallbackUsernameGenerator
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.compaction.CompactionExpansionStarter
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.download.FileDownloadStarter
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.partitionTransient
 import io.paritytech.polkadotapp.feature_chats_impl.data.model.toChatMessageOrUnsupported
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
@@ -47,6 +48,7 @@ class IncomingChatMessageProcessor @Inject constructor(
     private val compactionExpansionStarter: CompactionExpansionStarter,
     private val fallbackUsernameGenerator: FallbackUsernameGenerator,
     private val chatSigners: ContactChatSigners,
+    private val transientMessageProcessor: TransientMessageProcessor,
 ) {
     suspend fun processRaw(
         contactAccountId: AccountId,
@@ -59,7 +61,10 @@ class IncomingChatMessageProcessor @Inject constructor(
             return
         }
 
-        val parsedMessages = rawMessages.mapNotNull { encodedMessage ->
+        val (transientMessages, chatMessages) = rawMessages.partitionTransient()
+        transientMessageProcessor.processReceived(contact, transientMessages)
+
+        val parsedMessages = chatMessages.mapNotNull { encodedMessage ->
             encodedMessage.toChatMessageOrUnsupported(
                 authorAccountId = contactAccountId,
                 contactAccountId = contactAccountId,

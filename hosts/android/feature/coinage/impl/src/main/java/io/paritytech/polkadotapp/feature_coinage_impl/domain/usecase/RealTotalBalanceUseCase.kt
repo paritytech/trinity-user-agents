@@ -4,8 +4,7 @@ import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclingVerdicts
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.BalanceEvaluationMode
-import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
-import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
+import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingParams
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.coinageBalanceOf
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyCoins
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyVouchers
@@ -15,6 +14,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedCoin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedVoucher
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.CoinRecyclingEvaluator
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.RecyclingParamsProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.RecyclingStrategyProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.VoucherReadinessUpdates
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.VoucherUsabilityContextFactory
@@ -35,33 +35,26 @@ class RealTotalBalanceUseCase @Inject constructor(
     private val coinageAssetsUseCase: CoinageAssetsUseCase,
     private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase,
     private val strategyProvider: RecyclingStrategyProvider,
-    private val settings: CoinageRecyclingStrategySettings,
+    private val paramsProvider: RecyclingParamsProvider,
     private val evaluator: CoinRecyclingEvaluator,
     private val usabilityContextFactory: VoucherUsabilityContextFactory,
     private val readinessUpdates: VoucherReadinessUpdates,
 ) : TotalBalanceUseCase {
-    private data class Input(
-        val coins: List<TrackedCoin>,
-        val vouchers: List<TrackedVoucher>,
-        val strategyType: RecyclingStrategyType,
-        val verdicts: RecyclingVerdicts,
-    )
-
     override fun subscribeTotalBalance(): Flow<Result<CoinageBalance>> = combine(
         coinageAssetsUseCase.subscribeCoins(),
         coinageAssetsUseCase.subscribeVouchers(),
-        settings.strategyFlow(),
+        paramsProvider.paramsUpdates(),
         evaluator.verdicts,
-        ::Input,
-    ).withReadinessUpdates(readinessUpdates, { it.vouchers }, { it.strategyType })
-        .map { calculateCoinageBalance(it.coins, it.vouchers, it.strategyType, it.verdicts) }
+        ::CoinageEvaluationInput,
+    ).withReadinessUpdates(readinessUpdates, { it.vouchers }, { it.params })
+        .map { calculateCoinageBalance(it.coins, it.vouchers, it.params, it.verdicts) }
         .distinctUntilChanged()
 
     override suspend fun getBalance(): Result<CoinageBalance> {
         return calculateCoinageBalance(
             coins = coinageAssetsUseCase.getCoins(),
             vouchers = coinageAssetsUseCase.getVouchers(),
-            strategyType = settings.getStrategy(),
+            params = paramsProvider.currentParams(),
             verdicts = evaluator.verdicts.first(),
         )
     }
@@ -74,13 +67,13 @@ class RealTotalBalanceUseCase @Inject constructor(
     internal suspend fun calculateCoinageBalance(
         coins: List<TrackedCoin>,
         vouchers: List<TrackedVoucher>,
-        strategyType: RecyclingStrategyType,
+        params: RecyclingParams,
         verdicts: RecyclingVerdicts,
     ): Result<CoinageBalance> {
         if (coins.isEmpty() && vouchers.isEmpty()) return Result.success(CoinageBalance.EMPTY)
 
         return coinageBalanceConverterUseCase.create().map { conversionContext ->
-            val strategy = strategyProvider.voucherStrategyFor(strategyType)
+            val strategy = strategyProvider.voucherStrategyFor(params)
             val denominations = vouchers.mapToSet { it.voucher.recyclerValue }
 
             // We use IMMEDIATE since we don't want to delay balance computation
