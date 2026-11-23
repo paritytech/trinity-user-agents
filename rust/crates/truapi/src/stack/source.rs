@@ -263,20 +263,19 @@ impl StackSource {
 			expired: self.expired,
 			restart_required: self.next_start.is_some(),
 			last_refresh: self.last_refresh.clone(),
-			mismatches: self.mismatches(),
+			mismatches: self.wrong_chains().collect(),
 		}
 	}
 
-	fn mismatches(&self) -> Vec<StackMismatch> {
-		let chains = self.running.descriptor.chains.iter();
-		chains
-			.filter_map(|chain| {
-				let named = chain.genesis();
-				let wrong = self.wrong_genesis.iter().find(|wrong| wrong.named == named)?;
-				let answered = wrong.answered;
-				Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
-			})
-			.collect()
+	/// The chains of the running copy whose last answer was a different
+	/// genesis hash from the one it names, in the copy's order.
+	fn wrong_chains(&self) -> impl Iterator<Item = StackMismatch> {
+		self.running.descriptor.chains.iter().filter_map(|chain| {
+			let named = chain.genesis();
+			let wrong = self.wrong_genesis.iter().find(|wrong| wrong.named == named)?;
+			let answered = wrong.answered;
+			Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
+		})
 	}
 
 	/// Records the genesis hash a new connection's chain gave.
@@ -320,14 +319,17 @@ impl StackSource {
 		if self.first_fetch.is_some() {
 			return Some(Duration::ZERO);
 		}
-		let hourly = self.reader.due_in(&self.pointer, now_unix_seconds)?;
-		// Once a newer copy waits for the next start, the sooner fetch has
+		let until_an_hour_old = self.reader.due_in(&self.pointer, now_unix_seconds)?;
+		// Once a newer copy waits for the next start, fetching sooner has
 		// done its job.
-		let sooner = match self.mismatches().is_empty() || self.next_start.is_some() {
-			true => 0,
-			false => REFRESH_MAX_AGE_SECS - MISMATCH_REFRESH_MAX_AGE_SECS,
+		let chain_is_wrong = self.wrong_chains().next().is_some();
+		let max_age = if chain_is_wrong && self.next_start.is_none() {
+			MISMATCH_REFRESH_MAX_AGE_SECS
+		} else {
+			REFRESH_MAX_AGE_SECS
 		};
-		Some(Duration::from_secs(hourly.saturating_sub(sooner)))
+		let sooner_by = REFRESH_MAX_AGE_SECS - max_age;
+		Some(Duration::from_secs(until_an_hour_old.saturating_sub(sooner_by)))
 	}
 
 	/// A fetch to make now whatever the copy's age, unless one is out. Answer
