@@ -66,13 +66,13 @@ impl PgasClaimPolicy {
 		excluded: &BTreeSet<ClaimSlot>,
 		now: u64,
 	) -> PreparedClaim {
-		if claim.attempts >= MAX_ATTEMPTS {
+		if claim.attempts >= MAX_ATTEMPTS || now >= claim.params.give_up_after {
 			return PreparedClaim::answered(Some(Preparation::GiveUp));
 		}
 		let ClaimParams { target, identity, .. } = &claim.params;
 		match self.builder.build_claim(*target, *identity, excluded).await {
 			Ok(built) => PreparedClaim::built(claim, built),
-			Err(error) => PreparedClaim::answered(answer_unbuilt_claim(claim, &error, now)),
+			Err(error) => PreparedClaim::answered(answer_unbuilt_claim(claim, &error)),
 		}
 	}
 
@@ -162,20 +162,13 @@ fn ready_preparation(claim: &PlannedClaim, built: BuiltClaim) -> Preparation {
 	Preparation::Ready { extrinsic: built.extrinsic, params: Some(params.into()) }
 }
 
-/// What `claim` answers at unix time `now` when it could not be built for
-/// `error`: a lost session waits until the claim's deadline, a transient
-/// failure waits, and anything else gives up at once.
-fn answer_unbuilt_claim(
-	claim: &PlannedClaim,
-	error: &ClaimBuildError,
-	now: u64,
-) -> Option<Preparation> {
+/// What `claim` answers when it could not be built for `error`: a lost
+/// session or a transient failure waits, which ends at the claim's
+/// deadline, and anything else gives up at once.
+fn answer_unbuilt_claim(claim: &PlannedClaim, error: &ClaimBuildError) -> Option<Preparation> {
 	tracing::warn!(id = claim.id.0, %error, "PGAS claim not built");
 	match error {
-		ClaimBuildError::NoSession => {
-			(now >= claim.params.give_up_after).then_some(Preparation::GiveUp)
-		},
-		ClaimBuildError::Transient(_) => None,
+		ClaimBuildError::NoSession | ClaimBuildError::Transient(_) => None,
 		ClaimBuildError::OtherIdentity |
 		ClaimBuildError::NoPersonhood |
 		ClaimBuildError::NoFreeSlot { .. } => Some(Preparation::GiveUp),

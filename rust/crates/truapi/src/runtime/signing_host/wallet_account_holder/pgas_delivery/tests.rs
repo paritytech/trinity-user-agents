@@ -4,11 +4,12 @@ use futures::executor::block_on;
 
 use super::*;
 use crate::{
-	durable::{DurableTxFailureKind, DurableTxId},
+	durable::DurableTxFailureKind,
 	pgas_claims::{
 		ClaimBuildError, ClaimsHarness, FakeClaimBuilder, TEST_IDENTITY, UndeliveredClaim,
 		destination, transient,
 	},
+	runtime::authority::AuthorityError,
 	test_support::wait_until,
 };
 
@@ -17,15 +18,11 @@ fn request() -> DurablePgasClaim {
 	DurablePgasClaim { target: destination(7), identity: TEST_IDENTITY }
 }
 
-/// Delivers `request` with its caller already gone, so the answer names the
-/// claim it waited on without waiting for it.
-fn claim_waited_on(harness: &ClaimsHarness, request: DurablePgasClaim) -> DurableTxId {
-	let cancel = CancellationToken::default();
-	cancel.cancel();
-	match block_on(request.deliver(harness.claims(), &cancel)) {
-		Err(AllowanceAllocationError::PgasClaimNotDelivered { claim, .. }) => claim,
-		other => panic!("the request waited on no claim: {other:?}"),
-	}
+/// A context whose caller has already gone.
+fn cancelled_call() -> CallContext {
+	let call = CallContext::default();
+	call.cancel().cancel();
+	call
 }
 
 /// Products are answered `Allocated` once the claim is in a best block.
@@ -35,7 +32,7 @@ fn a_request_is_answered_once_its_claim_is_in_a_best_block() {
 	let events = harness.script_watch();
 	let delivering = harness.clone();
 	let delivery = thread::spawn(move || {
-		block_on(request().deliver(delivering.claims(), &CancellationToken::default()))
+		block_on(request().deliver(delivering.claims(), &CallContext::default()))
 	});
 	wait_until(|| harness.claims_into(destination(7)).len() == 1, "a claim is registered");
 	let claim = harness.claims_into(destination(7))[0];
@@ -53,7 +50,7 @@ fn a_request_whose_claim_fails_is_not_delivered() {
 	let harness =
 		ClaimsHarness::new(FakeClaimBuilder::failing_with(|| ClaimBuildError::NoPersonhood));
 
-	let answer = block_on(request().deliver(harness.claims(), &CancellationToken::default()));
+	let answer = block_on(request().deliver(harness.claims(), &CallContext::default()));
 
 	assert!(
 		matches!(
@@ -74,8 +71,21 @@ fn a_request_waits_on_the_live_claim_and_registers_none() {
 	let harness = ClaimsHarness::new(FakeClaimBuilder::failing_with(transient));
 	let live = harness.claim_into(destination(7));
 
-	let waited_on = claim_waited_on(&harness, request());
+	block_on(request().deliver(harness.claims(), &cancelled_call())).unwrap_err();
 
-	assert_eq!(waited_on, live);
 	assert_eq!(harness.claims_into(destination(7)), vec![live]);
+}
+
+/// A product that withdraws its request hears `Cancelled`, as from every
+/// other withdrawn allocation, not that PGAS is unavailable.
+#[test]
+fn a_cancelled_request_answers_cancelled() {
+	let harness = ClaimsHarness::new(FakeClaimBuilder::failing_with(transient));
+
+	let answer = block_on(request().deliver(harness.claims(), &cancelled_call()));
+
+	assert!(
+		matches!(answer, Err(AllowanceAllocationError::Authority(AuthorityError::Cancelled(_)))),
+		"{answer:?}"
+	);
 }

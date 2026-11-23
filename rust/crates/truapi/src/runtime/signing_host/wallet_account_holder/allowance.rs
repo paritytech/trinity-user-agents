@@ -386,7 +386,7 @@ impl WalletAccountHolder {
 		#[cfg(not(target_arch = "wasm32"))]
 		if let Some(claims) = self.services.pgas_claims() {
 			let request = super::pgas_delivery::DurablePgasClaim::new(session, target);
-			return request.deliver(&claims, invocation.call.cancel()).await;
+			return request.deliver(&claims, invocation.call).await;
 		}
 		let claim = self.pgas_claim(&asset_hub, &proof, &signer, &target);
 		self.claim_pgas_directly(product_id, claim).await

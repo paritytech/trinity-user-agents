@@ -143,8 +143,13 @@ fn a_claim_without_a_session_waits_until_its_deadline() {
 	assert_eq!(answer, None);
 }
 
+/// No wait and no rebuild outlives the deadline: a lost session, a
+/// failure that keeps repeating or a refused attempt all end there, and the
+/// next request for the destination registers a fresh claim.
 #[test]
-fn a_claim_without_a_session_gives_up_past_its_deadline() {
+fn a_claim_past_its_deadline_gives_up_without_building() {
+	let builder = FakeClaimBuilder::building();
+	let policy = PgasClaimPolicy::new(builder.clone());
 	let past_deadline = ClaimParams {
 		target: destination(7),
 		identity: TEST_IDENTITY,
@@ -152,14 +157,14 @@ fn a_claim_without_a_session_gives_up_past_its_deadline() {
 		attempt: None,
 	};
 
-	let answer =
-		answer_when_build_fails(deferred(1, 0, past_deadline), || ClaimBuildError::NoSession);
+	let answer = prepare_with(&policy, &[deferred(1, 1, past_deadline)]).remove(&DurableTxId(1));
 
 	assert_eq!(answer, Some(Preparation::GiveUp));
+	assert_eq!(builder.calls(), Vec::new());
 }
 
 /// A slow ring revision or a dropped connection is not a reason to fail the
-/// claim: it is asked about again.
+/// claim before its deadline: it is asked about again.
 #[test]
 fn a_transient_build_failure_keeps_the_claim_waiting() {
 	let answer = answer_when_build_fails(waiting_claim(1, destination(7)), || {
