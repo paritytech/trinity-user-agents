@@ -70,17 +70,18 @@ refresh it.
   chains: key cached chain data by it. `mismatches` lists each chain whose last
   connection reached one with a different genesis hash from the descriptor's.
 
-The core asks every chain connection it opens for the chain's genesis hash
-before anything else uses the connection. A chain that gives a different hash
-from the descriptor's, as after it restarted from genesis, gets no connection:
-calls to it fail, connections opened earlier for it are closed, and
-`stackStatus()` lists it in `mismatches`. While it is listed, a host with
-`fetchStackDescriptor` is asked for the descriptor every five minutes instead
-of every hour, until `restartRequired` is set. A chain that cannot be reached
-is only unavailable, and so is one a light client runs: it answers from its
-chain spec, so a chain that restarted is out of its reach, not a mismatch. A
-`WasmProductRuntime` built on its own refuses a chain with a different hash
-too, and has no status to report it in.
+After a stack's chains restart from genesis, the same endpoints serve new
+chains with new genesis hashes. To catch that, the core asks every chain
+connection for its genesis hash before anything else uses it. If the hash is
+not the descriptor's, calls to that chain fail, the core closes the connections
+it opened earlier for it, and `stackStatus()` lists the chain in `mismatches`.
+While a chain is listed, the core asks `fetchStackDescriptor` every five
+minutes instead of every hour, until `restartRequired` is set.
+
+A chain that cannot be reached is unavailable and is not listed. A light client
+never lists a restarted chain either, because it answers from its own chain
+spec. A `WasmProductRuntime` built on its own also refuses a chain with a
+different hash, but has no status to report it in.
 
 The core keeps the last copy it verified in core storage, under the
 `StackRecord` key, and starts from it when it is newer than the bundled one.
