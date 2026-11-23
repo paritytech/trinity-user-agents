@@ -27,14 +27,6 @@ pub fn edit_stack(edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
 	Document::parse(&plain).expect("invalid test descriptor").descriptor().clone()
 }
 
-/// The bundled paseo-next-v2 descriptor with `role`'s chain edited.
-pub fn edit_chain(role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
-	edit_stack(|descriptor| {
-		let chains = descriptor["chains"].as_array_mut().expect("chains is not an array");
-		edit(chains.iter_mut().find(|chain| chain["role"] == role).expect("role missing"));
-	})
-}
-
 impl Stack {
 	/// The descriptor this stack reads.
 	pub fn descriptor(&self) -> &Descriptor {

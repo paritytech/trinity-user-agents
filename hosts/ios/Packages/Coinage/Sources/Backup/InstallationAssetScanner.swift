@@ -3,6 +3,13 @@ import Foundation
 import SDKLogger
 import SubstrateSdk
 
+/// One batch of a previous installation's coin keys: the coins of the app's Coinage instance to recover, and
+/// how many keys hold a coin at all. A foreign coin counts as used, so a run of them does not end a gap scan.
+struct CoinScanBatch {
+    let coins: [Coin]
+    let usedCount: Int
+}
+
 /// Reads one batch of a previous installation's subtree from chain: the coins and vouchers that exist
 /// there, keyed to the indices they were derived from.
 protocol InstallationAssetScanning: Sendable {
@@ -10,7 +17,7 @@ protocol InstallationAssetScanning: Sendable {
         installation: CoinageInstallationId,
         startIndex: DerivationIndex,
         count: DerivationIndex
-    ) async throws -> [Coin]
+    ) async throws -> CoinScanBatch
 
     func scanVouchers(
         installation: CoinageInstallationId,
@@ -48,30 +55,39 @@ final class InstallationAssetScanner: InstallationAssetScanning, @unchecked Send
         installation: CoinageInstallationId,
         startIndex: DerivationIndex,
         count: DerivationIndex
-    ) async throws -> [Coin] {
+    ) async throws -> CoinScanBatch {
         let indexedKeys = try Self.indices(of: installation, from: startIndex, count: count).map {
             try (index: $0, publicKey: coinKeypairFactory.derivePublicKey(index: $0))
         }
-        guard !indexedKeys.isEmpty else { return [] }
+        guard !indexedKeys.isEmpty else { return CoinScanBatch(coins: [], usedCount: 0) }
 
         let finalizedHash = try await finalizedHead()
-        let onChain = try await coinOnChainQuery.fetchCoins(
+        let reads = try await coinOnChainQuery.fetchCoinReads(
             for: indexedKeys.map(\.publicKey),
             atBlockHash: finalizedHash
         )
 
-        return zip(indexedKeys, onChain).compactMap { key, info -> Coin? in
-            guard let info else { return nil }
-            // Recovered from a read that found it, so it is on chain by construction. Recovery reads value
-            // and age, never where the coin has been, so its provenance stays unknown.
-            return Coin(
-                exponent: Int16(info.value),
-                derivationIndex: key.index,
-                age: info.age,
-                isOnchain: true,
-                publicKey: key.publicKey
-            )
+        let coins = zip(indexedKeys, reads).compactMap { key, read -> Coin? in
+            switch read {
+            case let .present(info):
+                // Recovered from a read that found it, so it is on chain by construction. Recovery reads value
+                // and age, never where the coin has been, so its provenance stays unknown.
+                return Coin(
+                    exponent: Int16(info.value),
+                    derivationIndex: key.index,
+                    age: info.age,
+                    isOnchain: true,
+                    publicKey: key.publicKey
+                )
+            case let .foreign(instanceId):
+                logger?.warning("Recovery: skipped foreign coin \(key.publicKey.toHex()) of instance \(instanceId)")
+                return nil
+            case .absent:
+                return nil
+            }
         }
+
+        return CoinScanBatch(coins: coins, usedCount: reads.filter { $0 != .absent }.count)
     }
 
     func scanVouchers(

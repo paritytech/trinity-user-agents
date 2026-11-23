@@ -64,7 +64,21 @@ export function ExampleEditor({
           if (action) void action.run();
         }}
         options={{
-          minimap: { enabled: false },
+          // Section headers, links, word-based suggestions and unicode
+          // highlights are computed in Monaco's editor worker, which hosts
+          // remove.
+          minimap: {
+            enabled: false,
+            showMarkSectionHeaders: false,
+            showRegionSectionHeaders: false,
+          },
+          links: false,
+          wordBasedSuggestions: "off",
+          unicodeHighlight: {
+            ambiguousCharacters: false,
+            invisibleCharacters: false,
+            nonBasicASCII: false,
+          },
           fontSize: 13,
           lineNumbers: "off",
           lineDecorationsWidth: 0,

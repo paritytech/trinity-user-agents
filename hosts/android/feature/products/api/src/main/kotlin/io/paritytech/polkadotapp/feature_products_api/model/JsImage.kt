@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import uniffi.truapi.ImageSource
 
 /** Where an image's bytes come from. The host fetches them; the tree carries no URL. */
 @Serializable
@@ -14,6 +15,13 @@ sealed interface JsImageSource {
     @Serializable
     @SerialName("archive")
     data class Archive(val path: String) : JsImageSource
+}
+
+/** The source the image loader fetches for a core image source; inline bytes have none. */
+fun ImageSource.toJsImageSource(): JsImageSource? = when (this) {
+    is ImageSource.Bulletin -> JsImageSource.Bulletin(v1)
+    is ImageSource.Archive -> JsImageSource.Archive(v1)
+    is ImageSource.Inline -> null
 }
 
 @Serializable
