@@ -6,7 +6,6 @@
 //! told.
 
 use core::time::Duration;
-use std::collections::HashMap;
 
 use trinity_stack::{
 	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
@@ -212,9 +211,9 @@ pub struct StackSource {
 	stale: bool,
 	expired: bool,
 	last_refresh: Option<StackRefreshOutcome>,
-	/// The genesis hash each chain gave in place of the one the running copy
-	/// names, keyed by the named one.
-	wrong_genesis: HashMap<[u8; 32], [u8; 32]>,
+	/// The last answer of each chain that gave a different genesis hash from
+	/// the one the running copy names.
+	wrong_genesis: Vec<GenesisHashes>,
 	/// People's `NetworkSuffix` as last read, or `None` before any read.
 	people_suffix: Option<Vec<u8>>,
 }
@@ -254,7 +253,7 @@ impl StackSource {
 			stale,
 			expired,
 			last_refresh: None,
-			wrong_genesis: HashMap::new(),
+			wrong_genesis: Vec::new(),
 			people_suffix: None,
 		})
 	}
@@ -303,7 +302,8 @@ impl StackSource {
 	fn wrong_chains(&self) -> impl Iterator<Item = StackMismatch> {
 		self.running.descriptor.chains.iter().filter_map(|chain| {
 			let named = chain.genesis();
-			let answered = *self.wrong_genesis.get(&named)?;
+			let wrong = self.wrong_genesis.iter().find(|wrong| wrong.named == named)?;
+			let answered = wrong.answered;
 			Some(StackMismatch::GenesisHash { role: chain.role.clone(), named, answered })
 		})
 	}
@@ -331,15 +331,13 @@ impl StackSource {
 		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;
 		}
+		let listed = self.wrong_genesis.iter().position(|wrong| wrong.named == named);
+		let before = listed.map(|index| self.wrong_genesis.swap_remove(index).answered);
 		let wrong = (answered != named).then_some(answered);
-		if self.wrong_genesis.get(&named).copied() == wrong {
-			return false;
+		if wrong.is_some() {
+			self.wrong_genesis.push(hashes);
 		}
-		match wrong {
-			Some(answered) => self.wrong_genesis.insert(named, answered),
-			None => self.wrong_genesis.remove(&named),
-		};
-		true
+		before != wrong
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
