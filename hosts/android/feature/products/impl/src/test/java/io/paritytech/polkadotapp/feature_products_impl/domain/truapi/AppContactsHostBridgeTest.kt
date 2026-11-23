@@ -1,15 +1,19 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRequestId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import uniffi.truapi.HostContactLookup
+import uniffi.truapi.HostContactUsernames
+import uniffi.truapi.ProductId
 
 /**
  * The bridge answers lookups from the latest contact snapshot and a handle
@@ -21,7 +25,9 @@ class AppContactsHostBridgeTest {
     private val otherKey = ByteArray(32) { 0x12 }
     private val alice = ByteArray(32) { 0xA1.toByte() }
     private val bob = ByteArray(32) { 0xB0.toByte() }
-    private val bridge = AppContactsHostBridge(mockk<ContactDirectory>(), mockk(relaxed = true))
+    private val carol = ByteArray(32) { 0xC0.toByte() }
+    private val directory = mockk<ContactDirectory>()
+    private val bridge = AppContactsHostBridge(directory, mockk(relaxed = true))
 
     @Test
     fun `a handle resolves to the contact it hashes from`() {
@@ -57,7 +63,90 @@ class AppContactsHostBridgeTest {
         assertArrayEquals(alice, matches.accounts[1])
     }
 
-    private fun contact(account: ByteArray): Contact = mockk {
+    @Test
+    fun `usernames leave out a contact without one and keep the label as stored`() {
+        bridge.update(
+            listOf(
+                contact(alice, username = "alice.07"),
+                contact(bob, username = null),
+                contact(carol, username = ""),
+            ),
+        )
+
+        val listing = bridge.contactUsernames(ProductId.parse("dim2.dot").getOrThrow())
+
+        assertEquals(HostContactUsernames.Listed(listOf("alice.07")), listing)
+    }
+
+    @Test
+    fun `usernames come from the directory when no snapshot has landed`() {
+        coEvery { directory.getContacts() } returns listOf(
+            contact(alice, username = "alice.07"),
+            contact(carol, username = ""),
+        )
+
+        val listing = bridge.contactUsernames(ProductId.parse("dim2.dot").getOrThrow())
+
+        assertEquals(HostContactUsernames.Listed(listOf("alice.07")), listing)
+    }
+
+    @Test
+    fun `usernames follow the latest snapshot`() {
+        bridge.update(listOf(contact(alice, username = "alice.07")))
+        bridge.update(listOf(contact(bob, username = "bob.03")))
+
+        val listing = bridge.contactUsernames(ProductId.parse("dim2.dot").getOrThrow())
+
+        assertEquals(HostContactUsernames.Listed(listOf("bob.03")), listing)
+    }
+
+    @Test
+    fun `usernames read again from the directory while no snapshot has landed`() {
+        coEvery { directory.getContacts() } returnsMany listOf(
+            listOf(contact(alice, username = "alice.07")),
+            listOf(contact(bob, username = "bob.03")),
+        )
+        val productId = ProductId.parse("dim2.dot").getOrThrow()
+        bridge.contactUsernames(productId)
+
+        val listing = bridge.contactUsernames(productId)
+
+        assertEquals(HostContactUsernames.Listed(listOf("bob.03")), listing)
+    }
+
+    @Test
+    fun `usernames leave out a contact with a pending chat request`() {
+        bridge.update(
+            listOf(
+                contact(alice, username = "alice.07"),
+                contact(bob, username = "bob.03", pendingChatRequestId = "chat-request"),
+            ),
+        )
+
+        val listing = bridge.contactUsernames(ProductId.parse("dim2.dot").getOrThrow())
+
+        assertEquals(HostContactUsernames.Listed(listOf("alice.07")), listing)
+    }
+
+    @Test
+    fun `usernames from the directory leave out a contact with a pending chat request`() {
+        coEvery { directory.getContacts() } returns listOf(
+            contact(alice, username = "alice.07"),
+            contact(bob, username = "bob.03", pendingChatRequestId = "chat-request"),
+        )
+
+        val listing = bridge.contactUsernames(ProductId.parse("dim2.dot").getOrThrow())
+
+        assertEquals(HostContactUsernames.Listed(listOf("alice.07")), listing)
+    }
+
+    private fun contact(
+        account: ByteArray,
+        username: String? = "test_user",
+        pendingChatRequestId: ChatRequestId? = null,
+    ): Contact = mockk {
         every { accountId } returns DataByteArray(account)
+        every { this@mockk.username } returns username
+        every { this@mockk.pendingChatRequestId } returns pendingChatRequestId
     }
 }

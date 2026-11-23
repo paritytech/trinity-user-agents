@@ -27,7 +27,7 @@ use crate::{
 	host_logic::{
 		funding_providers::{
 			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
-			FundingOptions, FundingProviderApp, FundingProviderEntry, FundingProviderOrigin,
+			FundingOptions, FundingProviderEntry,
 			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
 			provider_config,
 		},
@@ -45,28 +45,20 @@ use crate::{
 struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
-	origin: FundingProviderOrigin,
-	/// Whether it ships an App, as the host said.
-	app: FundingProviderApp,
 	/// What dotNS last said the provider publishes: its Worker manifest, or
 	/// `None` for nothing usable. `None` until dotNS has answered.
 	live: Option<Option<WorkerManifest>>,
 	/// Whether its manifest is being read.
 	reading: bool,
-	/// The name and icon its root manifest gives it: the host's for a
-	/// bundled provider, dotNS's once read for a published one.
+	/// The name and icon its root manifest gives it, once dotNS has been read.
 	brand: Option<ProductBrand>,
 }
 
 impl OfferedProvider {
-	/// The manifest the core goes by: the host's for a bundled provider;
-	/// otherwise dotNS's answer once it has one, the host's snapshot until
-	/// then.
+	/// The manifest the core goes by: dotNS's answer once it has one, the
+	/// host's snapshot until then.
 	fn manifest(&self) -> Option<WorkerManifest> {
-		match (&self.live, self.origin) {
-			(Some(live), FundingProviderOrigin::Published) => live.clone(),
-			_ => self.snapshot.clone(),
-		}
+		self.live.clone().unwrap_or_else(|| self.snapshot.clone())
 	}
 }
 
@@ -169,9 +161,7 @@ impl FundingProviders {
 			if let Some(known) = entries.iter().find(|known| known.product_id == entry.product_id) {
 				entry.live = known.live.clone();
 				entry.reading = known.reading;
-				if entry.origin == FundingProviderOrigin::Published && known.brand.is_some() {
-					entry.brand = known.brand.clone();
-				}
+				entry.brand = known.brand.clone();
 			}
 		}
 		*entries = offered;
@@ -214,12 +204,12 @@ impl FundingProviders {
 			.and_then(|entry| entry.brand.clone())
 	}
 
-	/// Mark every published provider whose manifest is not being read as
-	/// being read, and return them.
+	/// Mark every provider whose manifest is not being read as being read, and
+	/// return them.
 	fn start_reads(&self) -> Vec<ProductId> {
 		lock(&self.entries)
 			.iter_mut()
-			.filter(|entry| entry.origin == FundingProviderOrigin::Published && !entry.reading)
+			.filter(|entry| !entry.reading)
 			.map(|entry| {
 				entry.reading = true;
 				entry.product_id.clone()
@@ -259,14 +249,6 @@ impl FundingProviders {
 	) -> Vec<FundingCountry> {
 		let learned = lock(&self.learned).clone();
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
-	}
-
-	/// Whether `provider_id` ships an App, as the host said.
-	pub fn app(&self, provider_id: &ProductId) -> FundingProviderApp {
-		lock(&self.entries)
-			.iter()
-			.find(|entry| entry.product_id == *provider_id)
-			.map_or(FundingProviderApp::Unknown, |entry| entry.app)
 	}
 
 	/// Whether the host offers no funding provider.
@@ -608,9 +590,9 @@ struct Offered {
 }
 
 /// The host's `entries` with their shipped manifests read, in its order,
-/// each product once. An entry whose shipped manifest does not parse, or a
-/// bundled one shipped without its manifest, is the host's mistake for that
-/// provider alone: it is logged and left out, and the rest are still offered.
+/// each product once. An entry whose shipped manifest does not parse is the
+/// host's mistake for that provider alone: it is logged and left out, and
+/// the rest are still offered.
 fn offered_providers(entries: Vec<FundingProviderEntry>) -> Vec<OfferedProvider> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
@@ -622,26 +604,13 @@ fn offered_providers(entries: Vec<FundingProviderEntry>) -> Vec<OfferedProvider>
 				continue;
 			},
 		};
-		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
-			warn!(%product_id, "bundled provider shipped without its manifest; provider left out");
-			continue;
-		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
-			let brand = entry.root_manifest.as_deref().and_then(|json| {
-				ProductBrand::parse(json)
-					.inspect_err(
-						|reason| tracing::warn!(%product_id, %reason, "shipped root manifest gives no brand"),
-					)
-					.ok()
-			});
 			offered.push(OfferedProvider {
 				product_id,
 				snapshot,
-				origin: entry.origin,
-				app: entry.app,
 				live: None,
 				reading: false,
-				brand,
+				brand: None,
 			});
 		}
 	}

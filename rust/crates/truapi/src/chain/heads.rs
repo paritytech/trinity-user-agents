@@ -30,6 +30,9 @@ pub trait ChainHeads: Send + Sync {
 	/// The current finalized and best blocks.
 	async fn heads(&self, genesis: H256) -> Result<Heads, RuntimeFailure>;
 
+	/// The current finalized block, without reading the best one.
+	async fn finalized_block(&self, genesis: H256) -> Result<HashAndNumber, RuntimeFailure>;
+
 	/// A fresh stream of the finalized and best blocks the node announces,
 	/// starting with the current ones. Finalized blocks it skips are not
 	/// filled in. An error is reported as an item and later heads still
