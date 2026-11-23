@@ -1,15 +1,15 @@
 import Foundation
 import IssueMonitoring
+import os
 
 final class RecordingIssueReporter: IssueReporting, @unchecked Sendable {
-    private let lock = NSLock()
-    private var reportedIssues: [CriticalIssue] = []
+    private let reportedIssues = OSAllocatedUnfairLock(initialState: [CriticalIssue]())
 
     var issues: [CriticalIssue] {
-        lock.withLock { reportedIssues }
+        reportedIssues.withLock { $0 }
     }
 
     func report(_ issue: CriticalIssue) {
-        lock.withLock { reportedIssues.append(issue) }
+        reportedIssues.withLock { $0.append(issue) }
     }
 }
