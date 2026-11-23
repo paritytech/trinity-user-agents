@@ -12,19 +12,24 @@ private let gameProductId = try! ProductId("game.paseo")
 @Suite(.timeLimit(.minutes(1)))
 struct PocketHandlersTests {
     @Test func onlyThePresentedCardTakesAClaimSharedByItsViews() async throws {
-        let workers = StubWorkerManager()
-        let published = StubPublishedCards()
-        published.checkLookup = { cardId in #expect(cardId == loyalty.key.cardId) }
-        let handlers = makeHandlers(workers: workers, published: published)
-        let dismissWallet = handlers.present(loyalty.key, expanded: false)
-        handlers.settle([loyalty, streak])
-        _ = try #require(await handlers.awaitStreams(for: loyalty.key))
-        let dismissOpened = handlers.present(loyalty.key, expanded: true)
-        dismissWallet()
-        dismissWallet()
-        #expect(workers.references.log == ["acquire \(gameProductId)"])
-        dismissOpened()
-        #expect(workers.references.log == ["acquire \(gameProductId)", "release \(gameProductId)"])
+        let references = StubWorkerReferences()
+        let resolverLifetime: AsyncStream<Void>
+        do {
+            let workers = StubWorkerManager(references: references)
+            let published = StubPublishedCards()
+            resolverLifetime = published.lifetime.stream
+            let handlers = makeHandlers(workers: workers, published: published)
+            let dismissWallet = handlers.present(loyalty.key, expanded: false)
+            handlers.settle([loyalty, streak])
+            _ = try #require(await handlers.awaitStreams(for: loyalty.key))
+            let dismissOpened = handlers.present(loyalty.key, expanded: true)
+            dismissWallet()
+            dismissWallet()
+            #expect(workers.references.log == ["acquire \(gameProductId)"])
+            dismissOpened()
+        }
+        for await _ in resolverLifetime {}
+        #expect(references.log == ["acquire \(gameProductId)", "release \(gameProductId)"])
     }
 
     @Test func chatAndPocketOwnTheirWorkAcrossARenderRestart() async throws {
@@ -170,7 +175,10 @@ final class StubPublishedCards: PublishedPocketCardsResolving, @unchecked Sendab
     /// lookup succeeds.
     var failures: [any Error] = []
     var back: String?
+    let lifetime = AsyncStream.makeStream(of: Void.self)
     var checkLookup: @Sendable (PocketCardId) -> Void = { _ in }
+
+    deinit { lifetime.continuation.finish() }
 
     func find(productId: ProductId, cardId: PocketCardId) async throws -> PublishedPocketCard {
         checkLookup(cardId)
