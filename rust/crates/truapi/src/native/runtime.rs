@@ -679,8 +679,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// The stack the runtime runs: its verified descriptor, whether it is
 	/// stale or has shut down, whether a newer copy waits for the next
-	/// start, and which of its chains gave a different genesis hash from the
-	/// one the descriptor names.
+	/// start, and where its chains answered differently from the descriptor.
 	pub fn stack_status(&self) -> StackStatus {
 		self.stack_refresh.status()
 	}

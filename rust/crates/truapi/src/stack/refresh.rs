@@ -82,9 +82,8 @@ struct Shared {
 
 /// Checks the chains of a [`StackRefresh`]'s stack against its descriptor.
 ///
-/// A chain that gives a different genesis hash from the one the descriptor
-/// names is reported in [`StackStatus::mismatches`], and the refresh fetches
-/// the descriptor sooner.
+/// A chain whose genesis hash is not the descriptor's is reported in
+/// [`StackStatus::mismatches`], and the refresh fetches the descriptor sooner.
 #[derive(Clone)]
 pub struct StackChecks {
 	shared: Arc<Shared>,
@@ -179,9 +178,8 @@ impl StackRefresh {
 
 	/// The stack the core runs, with the checks of its chains.
 	///
-	/// A runtime built on it puts every chain connection it opens through
-	/// them. The stack stays the same for the life of the runtime: a newer
-	/// copy that changes it applies at the next start.
+	/// It stays the same for the life of the runtime: a newer copy that
+	/// changes it applies at the next start.
 	pub fn stack(&self) -> Stack {
 		let stack = self.shared.source().stack().clone();
 		Stack { checks: Some(StackChecks { shared: self.shared.clone() }), ..stack }
@@ -210,11 +208,10 @@ impl StackRefresh {
 
 	/// Tells `changed` the stack's status, for a host that does not fetch it.
 	///
-	/// `changed` is called once before this returns. After that a task on
-	/// `spawner` calls it each time a chain's answer changes the status, until
-	/// this value drops. Nothing is fetched, so the core stays on the copy it
-	/// started from. `changed` has to return promptly, and must not start the
-	/// refresh or the reports itself.
+	/// `changed` is called once before this returns, then from a task on
+	/// `spawner` each time a chain's answer changes the status, until this
+	/// value drops. It has to return promptly and must not call this or
+	/// [`Self::start`]. Nothing is fetched.
 	///
 	/// Set-once, together with [`Self::start`]: answers whether this call
 	/// started the reports.

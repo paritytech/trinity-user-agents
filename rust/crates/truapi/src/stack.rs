@@ -6,9 +6,8 @@
 //! stored, and fetches newer copies while the core runs. The [`Stack`] it
 //! resolves holds the network, the dotNS TLD, each chain's genesis hash and
 //! the `AccountDataStore` contract address, and answers `get_chain_info`. A
-//! runtime built on that [`Stack`] also asks each chain it connects to for
-//! its genesis hash, and the refresh reports a chain that gives a different
-//! one from the descriptor's.
+//! runtime built on that [`Stack`] also checks the genesis hash of each chain
+//! it connects to, and the refresh reports the ones that differ.
 
 mod records;
 mod refresh;
@@ -72,8 +71,7 @@ const RESERVED_TLD: &str = "dot";
 /// contracts the core reads.
 ///
 /// Two stacks are equal when all of these are. The stack a [`StackRefresh`]
-/// hands out also has its chains checked against the descriptor, and equality
-/// does not look at that.
+/// hands out also carries the checks of its chains, which equality ignores.
 #[derive(derive_more::Debug, Clone, derive_more::PartialEq, derive_more::Eq)]
 pub struct Stack {
 	network: String,

@@ -2,8 +2,6 @@
 //! chain it connects to.
 
 /// The genesis hash a connection was opened for, and the one its chain gave.
-///
-/// The two are equal when the connection reached the chain it was opened for.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq))]
 pub struct GenesisHashes {
 	/// The hash the connection was opened for.
@@ -14,10 +12,8 @@ pub struct GenesisHashes {
 
 /// Is told the genesis hash each new connection's chain gives.
 ///
-/// A [`ChainRuntime`](super::ChainRuntime) given one asks every connection it
-/// opens for its chain's genesis hash before anything else uses the
-/// connection, and hands out only a connection whose chain gives the hash it
-/// was opened for.
+/// Set on a runtime with
+/// [`ChainRuntime::checking_genesis`](super::ChainRuntime::checking_genesis).
 pub trait GenesisCheck: Send + Sync {
 	/// A new connection's chain gave its genesis hash.
 	///
