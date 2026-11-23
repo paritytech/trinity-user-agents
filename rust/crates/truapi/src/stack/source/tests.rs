@@ -486,11 +486,10 @@ fn suffix_is(answered: &str) -> StackMismatch {
 	StackMismatch::NetworkSuffix { named: "paseo".to_string(), answered: answered.to_string() }
 }
 
-/// Identities derive under `peopl.<tld>`, and People checks proofs under its
-/// own suffix. A descriptor whose `tld` is not that suffix makes every proof
-/// fail, and the host is told which of the two is wrong. No published copy
-/// can follow a suffix without a restart, so the descriptor's server is not
-/// asked any sooner.
+/// The core derives identities under `peopl.<tld>` and builds proof contexts
+/// with People's suffix, so an identity derived under one does not match the
+/// other, and the host is told both values. Nothing is refused over a suffix,
+/// so the descriptor's server is not asked any sooner.
 #[test]
 fn a_people_suffix_that_is_not_the_tld_is_reported() {
 	let (bundled, mut source) = fetched_at_start();
@@ -533,6 +532,22 @@ fn a_people_suffix_read_as_the_tld_later_is_no_longer_reported() {
 	let changed = source.people_suffix_answered(b"paseo");
 
 	assert_eq!((changed, source.status()), (true, status(&bundled, None)));
+}
+
+/// Every allowance flow reads the suffix again, so the same wrong answer
+/// comes back each time. Only a different one is news to the host.
+#[test]
+fn a_wrong_people_suffix_read_again_changes_nothing_until_it_differs() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	source.people_suffix_answered(b"testnet");
+
+	let again = source.people_suffix_answered(b"testnet");
+	let another = source.people_suffix_answered(b"other");
+
+	assert_eq!(
+		(again, another, source.status().mismatches),
+		(false, true, vec![suffix_is("other")])
+	);
 }
 
 /// A host shows the chains it must keep off first, then the suffix, and the

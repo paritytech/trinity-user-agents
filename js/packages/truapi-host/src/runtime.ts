@@ -117,10 +117,10 @@ export type StackMismatch =
     }
   | {
       /**
-       * People's `NetworkSuffix` is not the descriptor's `tld`. Identities
-       * derive under `peopl.<tld>` and People scopes proof contexts with its
-       * suffix, so what the core derives is not what People expects. The
-       * core keeps using People.
+       * People's `NetworkSuffix` is not the descriptor's `tld`. The core
+       * derives its identities under `peopl.<tld>` and builds proof contexts
+       * with People's suffix, so an identity derived under one does not match
+       * the other. The core keeps using People.
        */
       kind: "networkSuffix";
       /** The descriptor's `tld`. */

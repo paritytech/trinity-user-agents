@@ -97,9 +97,9 @@ pub enum StackMismatch {
 	},
 	/// People's `NetworkSuffix.NetworkSuffix` is not the descriptor's `tld`.
 	///
-	/// Identities derive under `peopl.<tld>` and People scopes proof contexts
-	/// with its suffix, so what the core derives is not what People expects.
-	/// The core keeps using People.
+	/// The core derives its identities under `peopl.<tld>` and builds proof
+	/// contexts with People's suffix, so an identity derived under one does
+	/// not match the other. The core keeps using People.
 	NetworkSuffix {
 		/// The descriptor's `tld`.
 		named: String,
@@ -213,7 +213,7 @@ pub struct StackSource {
 	/// The genesis hash each chain gave in place of the one the running copy
 	/// names, keyed by the named one.
 	wrong_genesis: HashMap<[u8; 32], [u8; 32]>,
-	/// People's `NetworkSuffix` as last read, once it was.
+	/// People's `NetworkSuffix` as last read, or `None` before any read.
 	people_suffix: Option<Vec<u8>>,
 }
 
@@ -282,16 +282,18 @@ impl StackSource {
 	}
 
 	fn mismatches(&self) -> Vec<StackMismatch> {
+		self.wrong_chains().chain(self.wrong_suffix()).collect()
+	}
+
+	/// People's suffix as last read, when it is not the running copy's `tld`.
+	fn wrong_suffix(&self) -> Option<StackMismatch> {
 		let tld = self.running.stack.tld();
-		let wrong_suffix = self
-			.people_suffix
-			.as_deref()
-			.filter(|answered| *answered != tld.as_bytes())
-			.map(|answered| StackMismatch::NetworkSuffix {
-				named: tld.to_owned(),
-				answered: String::from_utf8_lossy(answered).into_owned(),
-			});
-		self.wrong_chains().chain(wrong_suffix).collect()
+		let answered =
+			self.people_suffix.as_deref().filter(|answered| *answered != tld.as_bytes())?;
+		Some(StackMismatch::NetworkSuffix {
+			named: tld.to_owned(),
+			answered: String::from_utf8_lossy(answered).into_owned(),
+		})
 	}
 
 	/// The chains of the running copy whose last answer was a different
@@ -307,13 +309,13 @@ impl StackSource {
 	/// Takes People's `NetworkSuffix.NetworkSuffix` as read from the chain.
 	///
 	/// Returns whether that changed [`Self::status`], which lists the last
-	/// suffix read when it is not the running copy's `tld`. A suffix does not
-	/// change when the descriptor is fetched: no published copy can follow it
-	/// without a restart.
+	/// suffix read when it is not the running copy's `tld`. The core refuses
+	/// nothing over a suffix, so unlike a wrong genesis hash it does not
+	/// bring the next fetch forward.
 	pub fn people_suffix_answered(&mut self, answered: &[u8]) -> bool {
-		let listed = self.mismatches();
+		let listed = self.wrong_suffix();
 		self.people_suffix = Some(answered.to_vec());
-		self.mismatches() != listed
+		self.wrong_suffix() != listed
 	}
 
 	/// Takes the genesis hash a connection opened for `named` got from it.

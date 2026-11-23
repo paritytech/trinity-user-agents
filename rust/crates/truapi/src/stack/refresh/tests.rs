@@ -7,18 +7,17 @@ use std::{
 	time::Instant,
 };
 
+use parity_scale_codec::Encode;
 use truapi::latest::GenericError;
 
 use super::*;
-use parity_scale_codec::Encode;
-
 use crate::{
 	platform::HostInfo,
 	runtime::services::RuntimeServices,
 	stack::{ReplaceCheck, StackMismatch, StackRefreshOutcome},
 	test_support::{
 		StubPlatform, TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor,
-		sign_test_descriptor,
+		recorded_rpc_method_count, sign_test_descriptor,
 	},
 	time::ManualTimer,
 };
@@ -728,10 +727,9 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 	assert_eq!(refresh.status().mismatches, people_gave(TEST_STACK_WIPED_PEOPLE));
 }
 
-/// A signing host's allowance work is where a wrong `tld` bites: the proofs
-/// it builds are checked under People's suffix. The suffix that work reads
-/// is what the host is told about, at no extra request to People, and the
-/// work goes on with the suffix People gave.
+/// A signing host's allowance work builds its proof contexts with People's
+/// suffix. The suffix that work reads is what the host is told about, at no
+/// extra request to People, and the work goes on with the suffix People gave.
 #[test]
 fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
@@ -742,15 +740,12 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 		services.people_network_suffix(people.rpc()).await.ok()
 	});
 
-	let reads = node
-		.sent_rpc
-		.lock()
-		.expect("sent rpc mutex poisoned")
-		.iter()
-		.filter(|request| request.contains("state_getStorage"))
-		.count();
 	assert_eq!(
-		(read, refresh.status().mismatches, reads),
+		(
+			read,
+			refresh.status().mismatches,
+			recorded_rpc_method_count(&node.sent_rpc, "state_getStorage"),
+		),
 		(
 			Some(b"testnet".to_vec()),
 			vec![StackMismatch::NetworkSuffix {
@@ -762,12 +757,29 @@ fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld(
 	);
 }
 
+/// A People chain that holds no usable suffix fails the allowance work with
+/// that error. The host is not shown it as a suffix that differs from the
+/// `tld`, which would name a value People never gave.
+#[test]
+fn a_people_suffix_that_cannot_be_read_is_not_reported() {
+	let refresh = load(Arc::default(), Arc::default(), manual_clock());
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "");
+
+	let failed = futures::executor::block_on(async {
+		let people = services.statement_store.chain_client("test").await.ok()?;
+		Some(services.people_network_suffix(people.rpc()).await.is_err())
+	});
+
+	assert_eq!((failed, refresh.status().mismatches), (Some(true), vec![]));
+}
+
 /// The host hears of a wrong suffix as it hears of a wrong chain, through the
-/// status its refresh reports.
+/// status its refresh reports, and while a fetch is out.
 #[test]
 fn the_host_is_told_of_a_people_suffix_that_is_not_the_tld() {
 	let started = start(Arc::default(), vec![]);
 	let _at_start = started.next_status();
+	started.wait_for_fetches(1);
 	let stack = started.refresh.stack();
 	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
 

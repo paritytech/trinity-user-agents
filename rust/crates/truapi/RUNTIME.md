@@ -236,12 +236,16 @@ its reach, not a mismatch, so there only the hourly fetch brings the new
 descriptor.
 
 A signing host's allowance work reads People's `NetworkSuffix.NetworkSuffix` to
-build its proofs, and the stack's checks hear each read. A suffix that is not
-the descriptor's `tld` is listed in `StackStatus::mismatches` until a later
-read gives the `tld`. The core keeps using People, and fetches the descriptor
-no sooner for it. The entry means the build's stack and its People chain
-disagree, so allowances fail until one of them is corrected. A host that does
-no allowance work, such as a pairing host, never lists it.
+build its proofs, and the stack's checks hear each suffix it reads. A suffix
+that is not the descriptor's `tld` is listed in `StackStatus::mismatches` until
+a later read gives the `tld`. The core keeps using People, and fetches the
+descriptor no sooner for it. The entry means the build's stack and its People
+chain disagree: the core derives its identities under the `tld` and builds
+proof contexts with People's suffix, so an identity derived under one does not
+match the other. A read that fails lists nothing, and neither does a People
+chain that holds no suffix of one to sixteen bytes: the allowance work fails
+with that error instead. A host that does no allowance work, such as a pairing
+host, never lists it.
 
 The core does not check the chains of a `Stack` built any other way, such as
 with `Stack::new` or from `testStack`.

@@ -312,11 +312,11 @@ impl RuntimeServices {
 		self.permission_status.set(host).is_ok()
 	}
 
-	/// The stack the host runs.
 	/// People's `NetworkSuffix`, read over `people`, the People chain's client.
 	///
-	/// The stack's checks hear the answer and report one that is not the
-	/// stack's `tld`. Fails when the suffix cannot be read.
+	/// The stack's checks hear the suffix and report one that is not the
+	/// stack's `tld`. Fails when the read fails or People holds no suffix of
+	/// one to sixteen bytes, and the checks then hear nothing.
 	pub async fn people_network_suffix(
 		&self,
 		people: &crate::runtime::statement_allowance::rpc::RpcClient,
