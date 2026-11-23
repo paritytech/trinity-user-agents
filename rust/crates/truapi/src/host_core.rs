@@ -536,7 +536,10 @@ impl HostRuntime<PairingHost> {
 	/// Stop the product's executions first: a value a running execution
 	/// writes after the clear is kept.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.role.clear_product_state(product_id).await?;
 		self.services
 			.platform
@@ -1054,7 +1057,10 @@ impl HostRuntime<SigningHost> {
 			return;
 		};
 		start_materials(&self.services, db.clone());
-		let Some(engine) = start_durable_engine(&self.services, db.clone(), &self.role) else {
+		let signer = Arc::new(Arc::downgrade(&self.role));
+		let claim_builder = Arc::new(Arc::downgrade(&self.role));
+		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer, claim_builder)
+		else {
 			return;
 		};
 		self.start_nft_purses(db, engine);
@@ -1408,16 +1414,17 @@ fn materials(services: &Arc<RuntimeServices>, db: crate::store::Db) -> crate::ma
 	crate::materials::Materials::new(db, Arc::new(bulletin), timer, services.spawner.clone())
 }
 
-/// Installs the durable transaction engine over `db`, and the PGAS claims
+/// Installs the durable transaction engine over `db` and the PGAS claims
 /// registered with it, reports its pending work and starts its submissions.
 /// `None` when an engine is already installed.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_durable_engine(
 	services: &Arc<RuntimeServices>,
 	db: crate::store::Db,
-	host: &Arc<SigningHost>,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> Option<Arc<crate::durable::DurableTxEngine>> {
-	let engine = durable_engine(services, db, host);
+	let engine = durable_engine(services, db, signer, claim_builder);
 	if !services.install_durable_engine(engine.clone()) {
 		return None;
 	}
@@ -1427,13 +1434,14 @@ fn start_durable_engine(
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections. It serves PGAS claims built by `host`, and
-/// NFT transfers signed by it.
+/// the runtime's chain connections. It serves PGAS claims, and NFT transfers
+/// when an Asset Hub genesis is configured.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
-	host: &Arc<SigningHost>,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> Arc<crate::durable::DurableTxEngine> {
 	use crate::{
 		durable::{DurableDeps, DurableTxEngine},
@@ -1441,7 +1449,7 @@ fn durable_engine(
 	};
 
 	let chain = Arc::new(services.chain.clone());
-	let registry = durable_registry(services, Arc::downgrade(host));
+	let registry = durable_registry(services, signer, claim_builder);
 	DurableTxEngine::new(DurableDeps {
 		db,
 		registry,
@@ -1454,44 +1462,37 @@ fn durable_engine(
 	})
 }
 
-/// The domains the durable engine serves, all on Asset Hub: PGAS claims, and
-/// NFT transfers on the Scarcity pallet. NFT transfers need encrypted
-/// storage, which keeps the secrets of imported item keys. `host` builds the
-/// claims and signs the transfers, held weakly because it owns the engine.
+/// The domains the durable engine serves, on Asset Hub: PGAS claims that
+/// `claim_builder` builds, and NFT transfers on the Scarcity pallet. NFT
+/// transfers need encrypted storage, which keeps the secrets of imported item
+/// keys.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
-	host: std::sync::Weak<SigningHost>,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+	claim_builder: Arc<dyn crate::pgas_claims::PgasClaimBuilder>,
 ) -> crate::durable::DurableRegistry {
-	use crate::{nft::with_scarcity_transfers, pgas_claims::with_pgas_claims};
+	use crate::{
+		nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers},
+		pgas_claims::with_pgas_claims,
+	};
 
 	let genesis = services.asset_hub_chain_genesis_hash().into();
-	let registry =
-		with_pgas_claims(crate::durable::DurableRegistry::new(), genesis, Arc::new(host.clone()));
-	let Some(transfers) = scarcity_transfers_deps(services, host) else {
+	let registry = with_pgas_claims(crate::durable::DurableRegistry::new(), genesis, claim_builder);
+	let Some(encrypted) = services.encrypted_storage() else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
 	};
-	with_scarcity_transfers(registry, transfers)
-}
-
-/// What NFT transfers signed by `host` run on, or `None` without encrypted
-/// storage to keep the secrets of imported item keys.
-#[cfg(not(target_arch = "wasm32"))]
-fn scarcity_transfers_deps(
-	services: &RuntimeServices,
-	host: std::sync::Weak<SigningHost>,
-) -> Option<crate::nft::ScarcityTransfersDeps> {
-	let encrypted = services.encrypted_storage()?;
 	let chain = Arc::new(services.chain.clone());
-	Some(crate::nft::ScarcityTransfersDeps {
+	let deps = ScarcityTransfersDeps {
 		storage: chain.clone(),
 		heads: chain,
 		genesis: services.asset_hub_chain_genesis_hash().into(),
-		signer: Arc::new(host),
-		imported: crate::nft::ImportedSecretStore::new(encrypted),
+		signer,
+		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
-	})
+	};
+	with_scarcity_transfers(registry, deps)
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the
