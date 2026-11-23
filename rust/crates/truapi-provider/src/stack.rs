@@ -17,6 +17,7 @@ use crate::{ChainSource, ProviderError};
 
 /// Where a chain's light spec is published.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct LightSpecSource {
 	/// The chain's genesis hash.
 	pub genesis_hash: [u8; 32],
