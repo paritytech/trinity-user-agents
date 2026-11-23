@@ -24,7 +24,7 @@ final class TrUAPIStorageTests {
         defaults.set(Data([2]), forKey: "io.polkadotapp.truapi.core.\(Data([3]).toHex())")
         defaults.set(Data([3]), forKey: "io.polkadotapp.truapi.core-other.0x04")
         defaults.set(Data([4]), forKey: "io.polkadotapp.truapi.product.store.demo.0x05")
-        let backend = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults))
+        let backend = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults, storageDomain: suiteName))
         #expect(Set(try backend.keys()) == Set([Data([1, 2]), Data([3])]))
         try backend.clear(key: Data([3]))
         #expect(try backend.keys() == [Data([1, 2])])
@@ -33,7 +33,7 @@ final class TrUAPIStorageTests {
     @Test func productStorageRoundTrip() throws {
         let storage = TrUAPILocalStorage.createProductLocalStorage(
             productId: "test.product",
-            defaults: defaults
+            defaults: defaults, storageDomain: suiteName
         )
         let value = Data([0x01, 0x02])
 
@@ -45,8 +45,8 @@ final class TrUAPIStorageTests {
     }
 
     @Test func productStorageIsolatesProducts() throws {
-        let first = TrUAPILocalStorage.createProductLocalStorage(productId: "a", defaults: defaults)
-        let second = TrUAPILocalStorage.createProductLocalStorage(productId: "b", defaults: defaults)
+        let first = TrUAPILocalStorage.createProductLocalStorage(productId: "a", defaults: defaults, storageDomain: suiteName)
+        let second = TrUAPILocalStorage.createProductLocalStorage(productId: "b", defaults: defaults, storageDomain: suiteName)
 
         try first.write(key: "k", value: Data([0x01]))
 
@@ -56,8 +56,8 @@ final class TrUAPIStorageTests {
     /// The core addresses a granted foreign read with the owner's key; it must
     /// land in the owner's store, not the reader's.
     @Test func foreignReadReachesTheOwnersStorage() throws {
-        let owner = TrUAPILocalStorage.createProductLocalStorage(productId: "counter.paseo", defaults: defaults)
-        let reader = TrUAPILocalStorage.createProductLocalStorage(productId: "oracle.paseo", defaults: defaults)
+        let owner = TrUAPILocalStorage.createProductLocalStorage(productId: "counter.paseo", defaults: defaults, storageDomain: suiteName)
+        let reader = TrUAPILocalStorage.createProductLocalStorage(productId: "oracle.paseo", defaults: defaults, storageDomain: suiteName)
         let key = "truapi:product-storage:v1:13:counter.paseo:count"
 
         try owner.write(key: key, value: Data([0x07]))
@@ -68,8 +68,8 @@ final class TrUAPIStorageTests {
     /// Only reads follow the owner in the key, so a write or clear addressed at
     /// another product can never land in that product's store.
     @Test func writesAndClearsStayInTheCallersStore() throws {
-        let owner = TrUAPILocalStorage.createProductLocalStorage(productId: "counter.paseo", defaults: defaults)
-        let other = TrUAPILocalStorage.createProductLocalStorage(productId: "oracle.paseo", defaults: defaults)
+        let owner = TrUAPILocalStorage.createProductLocalStorage(productId: "counter.paseo", defaults: defaults, storageDomain: suiteName)
+        let other = TrUAPILocalStorage.createProductLocalStorage(productId: "oracle.paseo", defaults: defaults, storageDomain: suiteName)
         let key = "truapi:product-storage:v1:13:counter.paseo:count"
         try owner.write(key: key, value: Data([0x01]))
 
@@ -80,7 +80,7 @@ final class TrUAPIStorageTests {
     }
 
     @Test func ownKeysKeepTheirPhysicalKey() throws {
-        let storage = TrUAPILocalStorage.createProductLocalStorage(productId: "counter.paseo", defaults: defaults)
+        let storage = TrUAPILocalStorage.createProductLocalStorage(productId: "counter.paseo", defaults: defaults, storageDomain: suiteName)
         let key = "truapi:product-storage:v1:13:counter.paseo:count"
 
         try storage.write(key: key, value: Data([0x01]))
@@ -91,7 +91,7 @@ final class TrUAPIStorageTests {
     /// The core lowercases the owner in the key, but the store keeps the id's
     /// original casing, so an own key must read from the caller's prefix.
     @Test func ownKeysReadFromTheCallersCasing() throws {
-        let storage = TrUAPILocalStorage.createProductLocalStorage(productId: "Counter.paseo", defaults: defaults)
+        let storage = TrUAPILocalStorage.createProductLocalStorage(productId: "Counter.paseo", defaults: defaults, storageDomain: suiteName)
         let key = "truapi:product-storage:v1:13:counter.paseo:count"
 
         try storage.write(key: key, value: Data([0x01]))
@@ -111,7 +111,7 @@ final class TrUAPIStorageTests {
     }
 
     @Test func coreStorageRoundTrip() throws {
-        let storage = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
+        let storage = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults, storageDomain: suiteName)
         let key = Data([0x00]).toHex() // CoreStorageKey.AuthSession
         let value = Data([0xAA])
 
@@ -123,10 +123,10 @@ final class TrUAPIStorageTests {
     }
 
     @Test func coreStorageIsolatedFromProductStorage() throws {
-        let core = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
+        let core = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults, storageDomain: suiteName)
         let product = TrUAPILocalStorage.createProductLocalStorage(
             productId: "test.product",
-            defaults: defaults
+            defaults: defaults, storageDomain: suiteName
         )
 
         try core.write(key: "k", value: Data([0x01]))
@@ -135,7 +135,7 @@ final class TrUAPIStorageTests {
     }
 
     @Test func independentNativeWalletRefusesRustPurseCustody() throws {
-        let storage = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults))
+        let storage = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults, storageDomain: suiteName))
         // MainPurseCoinage is wallet-root/network scoped. Refusing its read is
         // essential: nil would authorize Core to create a competing allocator.
         let key = Data([13]) + Data(repeating: 0x42, count: 64)
@@ -147,7 +147,7 @@ final class TrUAPIStorageTests {
     @Test func nativeChatSnapshotsSurviveReadThenRepeatedReplacement() throws {
         let nonce = withUnsafeBytes(of: UUID().uuid) { Data($0) }
         let key = Data([16]) + nonce + nonce + Data(repeating: 0, count: 32)
-        let storage = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults))
+        let storage = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults, storageDomain: suiteName))
         defer { try? storage.clear(key: key) }
 
         #expect(try storage.read(key: key) == nil)

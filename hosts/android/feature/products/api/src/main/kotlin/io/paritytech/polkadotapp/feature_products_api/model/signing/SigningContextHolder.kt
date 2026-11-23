@@ -7,10 +7,12 @@ import javax.inject.Singleton
 class SigningContextHolder @Inject constructor() {
     private var context: SigningContext? = null
 
+    @Synchronized
     fun set(context: SigningContext) {
         this.context = context
     }
 
+    @Synchronized
     fun get(): SigningContext? = context
 
     /**
@@ -19,6 +21,7 @@ class SigningContextHolder @Inject constructor() {
      * the holder may already carry the next request's context; an
      * unconditional clear would wipe it and crash that screen on recreation.
      */
+    @Synchronized
     fun clear(owner: SigningContext) {
         if (context === owner) {
             context = null

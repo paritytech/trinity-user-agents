@@ -78,8 +78,13 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.PreimageSubmit ->
         TrUAPIConfirmation.PreimageSubmit(
-            requesterProductId = callingProductId,
-            sizeBytes = v1.size.toLong(),
+            requesterProductId = v1.productId,
+            sizeBytes = v1.size,
+            rootPublicKey = v1.rootPublicKey.hex(),
+            genesisHash = v1.genesisHash.hex(),
+            automaticMaxBytes = v1.automaticMaxBytes,
+            automaticMaxUploads = v1.automaticMaxUploads,
+            automaticWindowSeconds = v1.automaticWindowSeconds,
         )
 
     is UserConfirmationReview.MainPurseChatPayment ->
@@ -104,6 +109,8 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProfileDisclosure ->
         TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
+    is UserConfirmationReview.Calling ->
+        TrUAPIConfirmation.Calling(v1.productId, v1.network.displayHex(), v1.account.displayHex())
 }
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -112,12 +119,18 @@ private fun RingLocation.describe(): String = chainId.toHexString()
 @OptIn(ExperimentalStdlibApi::class)
 private fun ByteArray.hex(): String = toHexString()
 
+private fun DerivationIndex.describe(): String = when (this) {
+    is DerivationIndex.Index -> "Index($v1)"
+    is DerivationIndex.Raw -> "Raw(${v1.displayHex()})"
+}
+
 private fun AllocatableResource.describe(): String = when (this) {
     is AllocatableResource.StatementStoreAllowance -> "statement-store allowance"
+    is AllocatableResource.ProductStatementStoreAllowance ->
+        "product-account statement-store allowance for ${v1.describe()}"
     is AllocatableResource.BulletinAllowance -> "bulletin allowance"
     is AllocatableResource.SmartContractAllowance -> "smart-contract allowance"
     is AllocatableResource.AutoSigning -> "auto-signing"
-    is AllocatableResource.ProductStatementStoreAllowance -> "product statement-store allowance"
 }
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(
@@ -163,11 +176,8 @@ private fun RawPayload.toContent(): RawPayloadContent = when (this) {
 }
 
 /**
- * An unwatermarked payload carries no `<Bytes>` protection, so a signature over it can authorize a
- * transaction; the core requires a host to say so. This sheet shows a raw payload as an ordinary
- * message and has nowhere to put that warning, and carrying the flag into the domain model would
- * reach the SSO SCALE mappers, which encode a wire message to the paired wallet. So the request is
- * refused rather than presented as the harmless thing it is not; a sheet that can warn lifts this.
+ * Without `<Bytes>` protection a signature can authorize a transaction. The
+ * existing signing sheet cannot present that risk, so preserve its refusal.
  */
 private fun SignRawReview.toSigningRequestBody(): SigningRequestBody = when (this) {
     is SignRawReview.Product -> {
@@ -185,6 +195,8 @@ private fun SignRawReview.toSigningRequestBody(): SigningRequestBody = when (thi
 private fun requireWatermark(watermarked: Boolean) {
     if (!watermarked) throw UnsupportedReviewException("raw payload without transaction-payload protection")
 }
+
+private fun ByteArray.displayHex(): String = "0x" + joinToString("") { "%02x".format(it) }
 
 private fun TxPayloadExtension.toDomain() = EncodedTransactionExtensionValue(
     id = id,

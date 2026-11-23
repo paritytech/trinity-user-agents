@@ -25,10 +25,117 @@ struct DeviceCapabilityPermissionHandlerTests {
         osAsker.requestResult = osRequestResult
         let handler = DeviceCapabilityPermissionHandler(
             repository: repository,
-            requester: requester,
+            requester: TrustedRemoteProductPermissionRequester(
+                isTrustedForRemoteAccess: { $0 == "peopl.dot" },
+                wrapped: requester
+            ),
             osAsker: osAsker
         )
         return (handler, repository, requester, osAsker)
+    }
+
+    @Test(arguments: [OSPermissionStatus.allowed, .notDetermined])
+    func blessedNotificationDecisionRequiresOsAuthorization(osStatus: OSPermissionStatus) async throws {
+        let (handler, repository, requester, osAsker) = makeSUT(
+            osStatus: osStatus,
+            promptDecision: .deny
+        )
+
+        let decision = try await handler.requestDecision(productId: "peopl.dot", capability: .notifications)
+
+        #expect(decision == .allowAlways)
+        #expect(requester.promptCalls.isEmpty)
+        #expect(osAsker.checkCalls == [.notifications])
+        #expect(osAsker.requestCalls == (osStatus.isNotDetermined ? [.notifications] : []))
+        // The runtime owns persistence for this route; app consent alone must
+        // not write a second grant into the native repository.
+        #expect(repository.grantCalls.isEmpty)
+    }
+
+    @Test(arguments: [OSPermissionStatus.denied, .notDetermined])
+    func blessedNotificationOsRefusalNeverReturnsAGrant(osStatus: OSPermissionStatus) async throws {
+        let (handler, repository, requester, osAsker) = makeSUT(
+            osStatus: osStatus,
+            osRequestResult: false
+        )
+
+        await #expect(throws: DevicePermissionRequestError.self) {
+            try await handler.requestDecision(productId: "peopl.dot", capability: .notifications)
+        }
+
+        #expect(requester.promptCalls.isEmpty)
+        #expect(osAsker.checkCalls == [.notifications])
+        #expect(osAsker.requestCalls == (osStatus.isNotDetermined ? [.notifications] : []))
+        #expect(try await repository.getPermissionState(
+            productId: "peopl.dot", permission: .deviceCapability(.notifications)
+        ) == .notDetermined)
+    }
+
+    @Test
+    func blessedNotificationStoredRefusalWinsBeforeAppConsent() async throws {
+        let (handler, repository, requester, osAsker) = makeSUT()
+        repository.stubState(
+            productId: "peopl.dot", permission: .deviceCapability(.notifications), state: .denied
+        )
+
+        let decision = try await handler.requestDecision(productId: "peopl.dot", capability: .notifications)
+
+        #expect(decision == .deny)
+        #expect(requester.promptCalls.isEmpty)
+        #expect(osAsker.requestCalls.isEmpty)
+        #expect(try await repository.getPermissionState(
+            productId: "peopl.dot", permission: .deviceCapability(.notifications)
+        ) == .denied)
+    }
+
+    @Test
+    func ordinaryNotificationStillPromptsAndRefusalStopsOsRequest() async throws {
+        let (handler, _, requester, osAsker) = makeSUT(promptDecision: .deny)
+
+        let decision = try await handler.requestDecision(productId: productId, capability: .notifications)
+
+        #expect(decision == .deny)
+        #expect(requester.promptCalls.map(\.permission) == [.deviceCapability(.notifications)])
+        #expect(osAsker.requestCalls.isEmpty)
+    }
+
+    @Test(arguments: [DeviceCapabilityType.camera, .microphone])
+    func blessedSensitiveDeviceStillPrompts(capability: DeviceCapabilityType) async throws {
+        let (handler, _, requester, osAsker) = makeSUT(promptDecision: .deny)
+
+        let decision = try await handler.requestDecision(productId: "peopl.dot", capability: capability)
+
+        #expect(decision == .deny)
+        #expect(requester.promptCalls.map(\.permission) == [.deviceCapability(capability)])
+        #expect(osAsker.requestCalls.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func blessedLegacyNotificationRequestStillDependsOnOs(osGranted: Bool) async throws {
+        let (handler, _, requester, osAsker) = makeSUT(
+            osRequestResult: osGranted,
+            promptDecision: .deny
+        )
+
+        let allowed = try await handler.request(productId: "peopl.dot", capability: .notifications)
+
+        #expect(allowed == osGranted)
+        #expect(requester.promptCalls.isEmpty)
+        #expect(osAsker.requestCalls == [.notifications])
+    }
+
+    @Test
+    func blessedNotificationStorageFailureDoesNotAuthorizeOrRequestOs() async throws {
+        let (handler, repository, requester, osAsker) = makeSUT()
+        repository.readError = CocoaError(.fileReadUnknown)
+
+        await #expect(throws: CocoaError.self) {
+            try await handler.requestDecision(productId: "peopl.dot", capability: .notifications)
+        }
+
+        #expect(requester.promptCalls.isEmpty)
+        #expect(osAsker.requestCalls.isEmpty)
+        #expect(repository.grantCalls.isEmpty)
     }
 
     // MARK: - isGranted

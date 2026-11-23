@@ -10,11 +10,8 @@ enum DefaultProductWorkerFactoryError: Error {
     case invalidNativeApi
 }
 
-/// Boots one product's headless native worker for the ``ProductWorkerManager``.
-///
-/// This is the single place the native worker is assembled — the same wiring the
-/// chat bot used inline before unification, now sourced by product id so SPA,
-/// operations and chat all keep the one shared instance alive.
+/// Boots legacy Chat workers for ``ProductWorkerManager``. Canonical workers,
+/// including background-only workers, belong to ``TrUAPIWorkerManager``.
 final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendable {
     private let productResolver: ProductResolving
     private let dotNsResolver: DotNsResolverProtocol
@@ -82,7 +79,6 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
         )
 
         let nativeApi = try makeNativeApi(productId: productId)
-
         let scriptExecutor = ProductsScriptExecutor(
             productUrl: engineContext.productUrl,
             scriptsFactory: nativeScriptsFactory,

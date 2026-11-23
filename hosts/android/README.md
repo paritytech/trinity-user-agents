@@ -33,6 +33,26 @@
 - **Manual backups** — Keep your account stored only in the secure enclave storage locally.
 - **Customization** — Fully customizable UI design system with 5 default themes.
 
+### Bulletin upload consent
+
+Native TrUAPI uploads ask for **Upload once**, **bounded automatic uploads**, or
+**Reject**. The review displays the product, root account, Bulletin genesis,
+upload size, and host-owned limits. Automatic consent applies only to that
+product/account/network: at most 262144 bytes per upload and four automatic
+uploads per rolling hour. Larger uploads and exhausted budgets still prompt;
+AutoSigning and trusted-product status do not grant upload consent.
+
+App permissions includes a separate **Automatic Bulletin uploads** setting backed
+by CoreAdmin. Revoking or resetting it removes only automatic approval: individual
+uploads can still ask, and usage is not reset. The setting follows the active
+account and rejects actions from an earlier account's row; it is unavailable
+without an authenticated account snapshot.
+
+These settings coexist with the core-owned camera, microphone, and scoped Calling
+permissions. Automatic-upload consent does not authorize Media, and Media
+revocation still refreshes live executions. Wallet changes invalidate the settings
+snapshot while the shared runtime disconnects and activates the next account.
+
 ## Getting started
 
 <details>
@@ -171,6 +191,13 @@ starts or after it tears down its component. Tests needing app dependencies use
 the debug-only `IntegrationTestEntryPoint`; production service injection remains
 unchanged.
 
+Network security exceptions in `app/src/main/res/xml/network_security_config.xml`
+are shared by all host features. Declare each hostname only once: Android rejects
+duplicate domains while initializing the application, before instrumentation can
+run. Product bridges use the exact `127.0.0.1` and `localhost` exceptions; keep
+the default cleartext policy disabled and do not duplicate these entries when
+adding a bridge.
+
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain). Which chains
 and RPC nodes it uses is not hard-coded: the `chains` / `chains_v2` Remote Config keys of your
 Firebase project define the set, so a fork can point the same build at Polkadot, at the
@@ -230,6 +257,11 @@ grant profile-disclosure authority. The native confirmation identifies the
 requesting product and asks before sharing a profile reference with all Chat
 contacts. Permission and single-action callbacks both await user review; prompt
 failures propagate rather than becoming a persisted permission decision.
+
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
 
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time

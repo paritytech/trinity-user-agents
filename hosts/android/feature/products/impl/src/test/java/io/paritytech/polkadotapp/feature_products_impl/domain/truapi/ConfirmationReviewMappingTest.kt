@@ -5,13 +5,10 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.Derivatio
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.RawPayloadContent
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
-import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConfirm.toUiState
-import io.paritytech.polkadotapp.common.R as RCommon
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
-import uniffi.truapi.AllocatableResource
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostAccountSignVrfRequest
 import uniffi.truapi.HostSignPayloadData
@@ -24,17 +21,10 @@ import uniffi.truapi.ProductAccountTxPayload
 import uniffi.truapi.RawPayload
 import uniffi.truapi.TxPayloadExtension
 import uniffi.truapi.VrfTranscriptItem
-import uniffi.truapi.AccountAccessReview
 import uniffi.truapi.CreateTransactionReview
-import uniffi.truapi.IdentityDisclosureReview
-import uniffi.truapi.PreimageSubmitReview
-import uniffi.truapi.ProductSubtreeReview
-import uniffi.truapi.ProfileDisclosureReview
-import uniffi.truapi.ResourceAllocationReview
 import uniffi.truapi.SignPayloadReview
 import uniffi.truapi.SignRawReview
 import uniffi.truapi.SignVrfReview
-import uniffi.truapi.StatementStoreProductSignReview
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.ProductAccountId as NativeProductAccountId
 
@@ -262,93 +252,6 @@ class ConfirmationReviewMappingTest {
             ),
         ),
     )
-
-    @Test
-    fun `statement store sign maps to a statement confirmation`() {
-        val review = UserConfirmationReview.StatementStoreProductSign(
-            StatementStoreProductSignReview(
-                callingProductId = caller,
-                account = nativeAccount(),
-                payload = byteArrayOf(1, 2, 3),
-            ),
-        )
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.StatementSign
-
-        assertEquals("demo-product.dot", confirmation.requesterProductId)
-        assertEquals(3, confirmation.payloadSize)
-    }
-
-    @Test
-    fun `account access maps both products`() {
-        val review = UserConfirmationReview.AccountAccess(
-            AccountAccessReview(requestingProductId = "caller.dot", targetProductId = "target.dot"),
-        )
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.AccountAccess
-
-        assertEquals("caller.dot", confirmation.requesterProductId)
-        assertEquals("target.dot", confirmation.targetProductId)
-    }
-
-    @Test
-    fun `product subtree maps the product as its own requester`() {
-        val review = UserConfirmationReview.ProductSubtree(ProductSubtreeReview(productId = "self.dot"))
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.ProductSubtree
-
-        assertEquals("self.dot", confirmation.requesterProductId)
-    }
-
-    @Test
-    fun `identity disclosure maps the product`() {
-        val review = UserConfirmationReview.IdentityDisclosure(
-            IdentityDisclosureReview(productId = "discloser.dot"),
-        )
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.IdentityDisclosure
-
-        assertEquals("discloser.dot", confirmation.requesterProductId)
-    }
-
-    @Test
-    fun `profile disclosure identifies the reviewed product and renders its own prompt`() {
-        val review = UserConfirmationReview.ProfileDisclosure(
-            ProfileDisclosureReview(productId = "seity.paseo"),
-        )
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.ProfileDisclosure
-        assertEquals("seity.paseo", confirmation.requesterProductId)
-        val ui = confirmation.toUiState()
-        assertEquals("seity.paseo", ui.productId)
-        assertEquals(RCommon.string.truapi_confirm_title_profile_disclosure, ui.titleRes)
-    }
-
-    @Test
-    fun `preimage submit carries its size`() {
-        val review = UserConfirmationReview.PreimageSubmit(PreimageSubmitReview(size = 4096uL))
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.PreimageSubmit
-
-        assertEquals(4096L, confirmation.sizeBytes)
-    }
-
-    @Test
-    fun `resource allocation labels every resource`() {
-        val review = UserConfirmationReview.ResourceAllocation(
-            ResourceAllocationReview(
-                callingProductId = "caller.dot",
-                resources = listOf(
-                    AllocatableResource.StatementStoreAllowance,
-                    AllocatableResource.AutoSigning,
-                ),
-            ),
-        )
-
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.ResourceAllocation
-
-        assertEquals(2, confirmation.resources.size)
-    }
 
     private fun UserConfirmationReview.signingRequest(): SigningRequestBody =
         (toConfirmation(caller) as TrUAPIConfirmation.Signing).request

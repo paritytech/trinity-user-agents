@@ -522,7 +522,7 @@ impl Transport {
         Ok(stream)
     }
 
-    /// Queue one framed message; `fin` finishes the send side after it.
+    /// Queue one framed message, or only FIN for an empty terminal send.
     pub(super) fn send(&self, stream: u32, message: &[u8], fin: bool) -> Result<(), SendError> {
         if message.len() > MAX_MESSAGE_BYTES {
             return Err(SendError::TooLarge);
@@ -537,11 +537,14 @@ impl Transport {
             .get(&entry.conn)
             .map(|conn| conn.buffered.clone())
             .ok_or(SendError::Closed)?;
-        let framed_len = message.len() + 4;
+        let fin_only = fin && message.is_empty();
+        let framed_len = if fin_only { 0 } else { message.len() + 4 };
         let reservation = Reservation::new(&buffered, framed_len).ok_or(SendError::Limit)?;
         let mut bytes = Vec::with_capacity(framed_len);
-        bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(message);
+        if !fin_only {
+            bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(message);
+        }
         let entry = inner.streams.get_mut(&stream).expect("checked above");
         if fin {
             entry.send_open = false;
@@ -989,6 +992,22 @@ mod tests {
             async { server.accept().await.unwrap().await.unwrap() },
         );
         (client.unwrap(), peer)
+    }
+
+    #[tokio::test]
+    async fn empty_terminal_send_is_fin_only_but_nonterminal_empty_send_is_framed() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let (conn, peer) = connect(&transport, &server, &identity).await;
+        let stream = transport.open(conn, 0).await.unwrap();
+        let (_send, mut recv) = peer.accept_bi().await.unwrap();
+        let mut kind = [0];
+        recv.read_exact(&mut kind).await.unwrap();
+        transport.send(stream, b"", false).unwrap();
+        transport.send(stream, b"", true).unwrap();
+        let bytes = tokio::time::timeout(Duration::from_secs(1), recv.read_to_end(8))
+            .await.unwrap().unwrap();
+        assert_eq!(bytes, [0, 0, 0, 0]);
     }
 
     #[tokio::test]

@@ -25,6 +25,7 @@ lane :base_build_app do |options|
   debug_mode = options[:debug] == true || options[:debug] == 'true'
   app_identifier = ENV["IOS_BUNDLE_ID"]
   extension_identifier = ENV["IOS_EXTENSION_BUNDLE_ID"]
+  broadcast_identifier = "#{app_identifier}.MediaBroadcastExtension"
 
   destination_plist = "../#{target}/GoogleService-Info.plist"
 
@@ -48,6 +49,7 @@ lane :base_build_app do |options|
 
   profile_name = ENV["PROVISIONING_PROFILE_SPECIFIER"]
   extension_profile_name = ENV["EXTENSION_PROVISIONING_PROFILE_SPECIFIER"]
+  broadcast_profile_name = "#{profile_name}.MediaBroadcastExtension"
   output_name = scheme
   export_method = options[:export_method] || ENV["EXPORT_METHOD"] || "app-store"
   compile_bitcode = false
@@ -83,8 +85,22 @@ lane :base_build_app do |options|
     )
   end
 
+  # Resolve the broadcast target explicitly: gym cannot infer APP_MAIN_BUNDLE
+  # from the synchronized base xcconfig, and the app's profile cannot sign it.
+  update_code_signing_settings(
+    use_automatic_signing: false,
+    targets: ["MediaBroadcastExtension"],
+    code_sign_identity: ENV["CODE_SIGN_IDENTITY"],
+    bundle_identifier: broadcast_identifier,
+    profile_name: broadcast_profile_name,
+    build_configurations: [configuration]
+  )
+
   # Prepare provisioning profiles mapping
-  provisioning_profiles = { app_identifier => profile_name }
+  provisioning_profiles = {
+    app_identifier => profile_name,
+    broadcast_identifier => broadcast_profile_name
+  }
   if extension_identifier && !extension_identifier.empty?
     provisioning_profiles[extension_identifier] = extension_profile_name
   end

@@ -21,6 +21,7 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod media;
 mod platform;
 mod renderer;
 mod runtime;
@@ -39,9 +40,8 @@ pub use callbacks::{
     NativeScannerCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{
-	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
-};
+pub use errors::{HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError};
+pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
@@ -73,6 +73,8 @@ pub struct NativeCoreStorageKeyDescription {
     pub kind: String,
     /// Product owning this slot, absent for wallet-owned state.
     pub product_id: Option<String>,
+    /// Scoped authorization represented by this slot, absent for other storage.
+    pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
 }
 
 /// Describe exactly one encoded storage key without duplicating SCALE in hosts.
@@ -85,6 +87,7 @@ pub fn native_describe_core_storage_key(
     Ok(NativeCoreStorageKeyDescription {
         kind: description.kind.to_owned(),
         product_id: description.product_id,
+        permission_request: description.permission_request,
     })
 }
 

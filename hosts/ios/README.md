@@ -134,6 +134,11 @@ App permission settings use the shared Rust runtime's canonical authorization re
 
 Consent prompts and app settings share permission descriptions and icon metadata, including the exact Statement Store allowance selector. Canonical authorization conversion separates remote permissions from device, identity, Chat and allowance permissions; raw allowance selectors still require exactly 32 bytes. The permission-presentation refactor received Linux Swift syntax parsing and structural mapping checks only. The macOS app build, unit tests and unchanged warning ratchet must pass in CI before this revision is considered iOS-qualified.
 
+Native Media waits up to two seconds for optional TURN credentials before using
+direct ICE. The shared credential request continues for up to fifteen seconds
+and caches successful responses for later peers. Cancelling a caller releases
+only its own wait; a concurrent Chat request or Media cache warmup is preserved.
+
 ### What it doesn't do
 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
@@ -144,6 +149,26 @@ Consent prompts and app settings share permission descriptions and icon metadata
 ### Under the hood
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
+
+TrUAPI SPA and chat executions share the app's DesignSystem `ThemeManager`,
+initialized by `SceneDelegate`. Their initial theme is captured synchronously;
+the subscription then forwards ordered changes using the selected theme's ID
+and its resolved main surface color for the light/dark variant. Execution
+teardown cancels and detaches that observation before closing the Rust execution.
+`RustRuntimeBridgeTests` covers the initial selection, variant/name transitions,
+and buffered changes during teardown; native compilation and these tests require
+the macOS iOS CI app jobs (`ios-simulator-build`), not a Linux-only core check.
+
+Bulletin upload reviews offer **Allow once**, **Allow bounded automatic uploads**,
+or **Deny**, displaying the reviewed product, byte count, root account and Bulletin
+genesis. Automatic approval is separate from AutoSigning and remote upload access:
+it covers at most 262144 bytes per upload and four uploads per rolling 3600 seconds.
+The app's permission settings read and update this grant through CoreAdmin, binding
+each edit to the displayed root account. Turning the automatic-upload toggle off
+resets that approval without blocking individual upload prompts or resetting the
+quota. Settings hide stale account rows on service/session transitions and reject
+late reads or edits. `ProductsRouterTests` and `AppPermissionsPresenterTests`
+cover decision lifetime, dismissal and account-transition/revocation behavior.
 
 Permission prompts and revocation settings share the `ProductPermission` presentation metadata so capability descriptions stay consistent. JAM peer consent displays the full network genesis and remains scoped to that network and product; it does not grant accounts or signing.
 

@@ -19,7 +19,7 @@ fun ProductWebViewHost(modifier: Modifier = Modifier, webView: WebView?) {
         modifier = modifier,
         factory = { context -> FrameLayout(context) },
         update = { host ->
-            if (host.getChildAt(0) !== webView) {
+            if (webView?.parent !== host) {
                 host.removeAllViews()
                 webView?.let {
                     (it.parent as? ViewGroup)?.removeView(it)

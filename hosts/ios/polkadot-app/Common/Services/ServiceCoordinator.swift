@@ -165,6 +165,7 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
             lifecycleGeneration = generation
             coinageService.setActive(false)
             truapiRuntimeProvider.setCoinageAvailable(false)
+            truapiRuntimeProvider.setAuthorizationAvailable(false)
             return generation
         }
 
@@ -192,6 +193,10 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         guard isCurrentSetup(generation) else { return }
         await signInHostCoordinator.setup()
         guard isCurrentSetup(generation) else { return }
+        lifecycleLock.withLock {
+            guard lifecycleGeneration == generation else { return }
+            truapiRuntimeProvider.setAuthorizationAvailable(true)
+        }
         await setupDeviceSyncService()
         guard isCurrentSetup(generation) else { return }
         guard await setupCoinage(for: generation) else { return }
@@ -249,6 +254,7 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
             lifecycleGeneration = nil
             coinageService.setActive(false)
             truapiRuntimeProvider.setCoinageAvailable(false)
+            truapiRuntimeProvider.setAuthorizationAvailable(false)
             durableTransactionEngine.txService.stop()
         }
 

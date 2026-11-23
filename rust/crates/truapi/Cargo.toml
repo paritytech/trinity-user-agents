@@ -65,6 +65,8 @@ runtime = [
     "dep:substrate-bip39",
     "dep:getrandom",
     "dep:hkdf",
+    "dep:hpke",
+    "dep:rand_core",
     "dep:chacha20poly1305",
     "dep:x25519-dalek",
     "dep:sha2",
@@ -137,6 +139,8 @@ substrate-bip39 = { workspace = true, optional = true }
 zeroize = { workspace = true, default-features = false, features = ["alloc", "derive"] }
 getrandom = { workspace = true, features = ["js"], optional = true }
 hkdf = { workspace = true, optional = true }
+hpke = { workspace = true, features = ["alloc", "x25519"], optional = true }
+rand_core = { workspace = true, features = ["getrandom"], optional = true }
 chacha20poly1305 = { workspace = true, features = ["alloc"], optional = true }
 x25519-dalek = { workspace = true, features = ["static_secrets", "zeroize"], optional = true }
 sha2 = { workspace = true, optional = true }
@@ -185,6 +189,10 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 
 [dev-dependencies]
 scale-info = { workspace = true, features = ["std"] }
+
+[[test]]
+name = "validator_contract"
+required-features = ["runtime"]
 
 [[test]]
 name = "device_permission_revalidation"

@@ -62,6 +62,7 @@ actor TrUAPIWorkerRuntime {
     func dispose() async {
         guard !disposed else { return }
         disposed = true
+        await executionModel.media.close()
 
         engineMonitor?.stop()
         engineMonitor = nil
@@ -74,24 +75,31 @@ actor TrUAPIWorkerRuntime {
         self.engine = nil
         await engine?.destroy()
 
-        executionModel.execution.stopWsBridge()
-        executionModel.execution.close()
-        executionModel.chainConnections.closeAll()
+        await executionModel.close()
 
         logger.debug("[truapi] worker stopped: \(productUrl)")
     }
 
-    /// The capability handler is installed before the page exists, so a script
-    /// that asks for a camera on its first line is prompted rather than denied.
+    /// Direct guest capture is never allowed; trusted native Media owns OS consent.
     private func bootEngine(scripts: [JSEngineScript]) async throws -> JSEngineProtocol {
         let jsEngine = engineFactory()
         do {
-            await jsEngine.registerJSDeviceCapabilityHandler(
-                executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
-            )
+            await jsEngine.registerJSDeviceCapabilityHandler { _ in .denied }
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }
+            try checkNotDisposed()
+        } catch {
+            await jsEngine.destroy()
+            throw error
+        }
+        await executionModel.media.watchEngine {
+            switch await jsEngine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
+        do {
             try checkNotDisposed()
         } catch {
             await jsEngine.destroy()

@@ -26,18 +26,16 @@ use crate::{
 };
 
 use crate::platform::{
-    AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
+    AccountAccessReview, AuthPresenter, AuthState, ChainProvider, ChatAuthorityReview,
     CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
-    Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-    Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-    Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
-    ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-    ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-    SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-    ChatAuthorityReview, HopProvider, MainPurseChatPaymentReview,
-    NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile,
-    ProfileDisclosureReview,
-    UserConfirmationReview,
+    Features as PlatformFeatures, HopProvider, HostInfo, JsonRpcConnection, LocaleHost,
+    MainPurseChatPaymentReview, NativeChatFileExportRequest, NativeChatFilePickRequest,
+    NativeChatFilesHost, NativeChatPickedFile, Navigation as PlatformNavigation,
+    Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
+    PlatformInfo, PreimageHost, ProductContext, ProductOperations as PlatformProductOperations,
+    ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProfileDisclosureReview,
+    ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+    StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -173,6 +171,12 @@ pub struct StubPlatform {
     /// Permission answers retain their lifetime separately from action confirmations.
     pub permission_confirmation_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+    pub preimage_reviews: parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>,
+    pub preimage_confirmation_gate:
+        parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    /// Pause a captured consent read to exercise independent runtime writers.
+    pub preimage_read_gate:
+        parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Inverted so the derived default (`false`) approves, matching the
     /// pre-consent behavior where a cold own-account resolve was not gated.
     pub profile_disclosure_confirmed: bool,
@@ -194,6 +198,9 @@ pub struct StubPlatform {
     /// Pause disclosure consent to exercise session changes while the UI awaits.
     pub identity_disclosure_confirmation_gate:
         parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    pub calling_confirmed: bool,
+    pub calling_error: Option<&'static str>,
+    pub calling_reviews: Arc<Mutex<Vec<crate::platform::CallingReview>>>,
     pub sign_payload_confirmed: bool,
     /// Every `SignPayload` review passed to `confirm_user_action`, in order.
     /// Empty proves an AutoSigning grant suppressed the prompt.
@@ -225,6 +232,7 @@ pub struct StubPlatform {
     pub preimage_submit_denied: bool,
     pub preimage_submit_reviews: Arc<parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>>,
     pub session_blob: Option<Vec<u8>>,
+    pub session_storage: Mutex<Option<Option<Vec<u8>>>>,
     pub session_error: Option<&'static str>,
     pub session_clears: Arc<Mutex<usize>>,
     pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -253,6 +261,7 @@ pub struct StubPlatform {
     pub notification_id: u32,
     pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
     pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
+    pub notification_activations: Option<v01::NotificationActivations>,
     pub receiving_authority: parking_lot::Mutex<Option<crate::platform::ReceivingAuthority>>,
     pub receiving_consent: AtomicBool,
     pub receiving_prompts: AtomicUsize,
@@ -327,6 +336,7 @@ pub struct StubPlatform {
     /// reason, standing in for a host that drops the operation and still
     /// reports an error.
     pub end_operation_error: Option<&'static str>,
+    pub core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
     /// When set, product/core storage reads fail with this reason.
     pub local_storage_error: Option<&'static str>,
     /// When set, only `PermissionAuthorization` reads fail. Narrower than
@@ -1158,7 +1168,8 @@ impl PlatformCoreStorage for StubPlatform {
             if let Some(reason) = self.session_error {
 				return Err(v01::GenericError { reason: reason.to_string() });
             }
-            return Ok(self.session_blob.clone());
+            return Ok(self.session_storage.lock().expect("session storage mutex poisoned")
+                .as_ref().unwrap_or(&self.session_blob).clone());
         }
         if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
@@ -1168,12 +1179,19 @@ impl PlatformCoreStorage for StubPlatform {
         {
 			return Err(v01::GenericError { reason: reason.to_string() });
         }
-        Ok(self
+        let value = self
             .local_storage
             .lock()
             .expect("local storage mutex poisoned")
-            .get(&core_storage_test_key(key))
-            .cloned())
+            .get(&core_storage_test_key(key.clone()))
+            .cloned();
+        if matches!(key, CoreStorageKey::AutomaticPreimageUploads { .. }) {
+            let gate = self.preimage_read_gate.lock().take();
+            if let Some(gate) = gate {
+                let _ = gate.await;
+            }
+        }
+        Ok(value)
     }
 
     async fn write_core_storage(
@@ -1191,14 +1209,21 @@ impl PlatformCoreStorage for StubPlatform {
                 reason: "injected core write failure".into(),
             });
         }
-        if key == CoreStorageKey::NotificationReceiving && self.receiving_write_failure.load(Ordering::SeqCst) {
-            return Err(v01::GenericError { reason: "receiving storage unavailable".to_owned() });
+        if key == CoreStorageKey::NotificationReceiving
+            && self.receiving_write_failure.load(Ordering::SeqCst)
+        {
+            return Err(v01::GenericError {
+                reason: "receiving storage unavailable".to_owned(),
+            });
         }
         if let CoreStorageKey::AuthSession = key {
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            *storage = Some(Some(value.clone()));
             self.session_writes
                 .lock()
                 .expect("session write list mutex poisoned")
                 .push(value);
+            drop(storage);
             let hook = self
                 .on_auth_session_write
                 .lock()
@@ -1222,7 +1247,12 @@ impl PlatformCoreStorage for StubPlatform {
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
         self.check_coinage_storage(&key)?;
         if let CoreStorageKey::AuthSession = key {
-			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            *storage = Some(None);
+            *self
+                .session_clears
+                .lock()
+                .expect("session clear counter mutex poisoned") += 1;
             return Ok(());
         }
         if let Some(reason) = self.local_storage_error {
@@ -1233,6 +1263,60 @@ impl PlatformCoreStorage for StubPlatform {
             .expect("local storage mutex poisoned")
             .remove(&core_storage_test_key(key));
         Ok(())
+    }
+
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, v01::GenericError> {
+        self.check_coinage_storage(&key)?;
+        if self.core_read_failures.lock().contains(&core_storage_test_key(key.clone())) {
+            return Err(v01::GenericError { reason: "injected core read failure".into() });
+        }
+        if self.core_write_failures.lock().contains(&core_storage_test_key(key.clone())) {
+            return Err(v01::GenericError { reason: "injected core write failure".into() });
+        }
+        if let CoreStorageKey::AuthSession = key {
+        if let Some(reason) = self.session_error {
+            return Err(v01::GenericError { reason: reason.into() });
+        }
+        {
+            let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+            if storage.as_ref().unwrap_or(&self.session_blob) != &expected {
+                return Ok(false);
+            }
+            *storage = Some(Some(replacement.clone()));
+            self.session_writes.lock().expect("session write list mutex poisoned")
+                .push(replacement);
+            if notify_on_success {
+                self.core_storage_changed(key);
+            }
+        }
+        let hook = self.on_auth_session_write.lock()
+            .expect("auth session write hook mutex poisoned").clone();
+        if let Some(hook) = hook {
+            hook();
+        }
+        return Ok(true);
+    }
+    if let Some(reason) = self.local_storage_error {
+        return Err(v01::GenericError { reason: reason.into() });
+    }
+    if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
+        (&key, self.permission_storage_error)
+    {
+        return Err(v01::GenericError { reason: reason.into() });
+    }
+    let encoded = core_storage_test_key(key.clone());
+    let mut storage = self.local_storage.lock().expect("local storage mutex poisoned");
+    if storage.get(&encoded) != expected.as_ref() {
+        return Ok(false);
+    }
+    storage.insert(encoded, replacement);
+    if notify_on_success {
+        self.core_storage_changed(key);
+    }
+    Ok(true) }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.core_storage_changes.lock().expect("storage changes mutex poisoned").push(key);
     }
 }
 
@@ -1251,14 +1335,27 @@ impl PlatformNavigation for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformNotifications for StubPlatform {
-    async fn receiver_authority(&self, product_id: &str) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
-        Ok(self.receiving_authority.lock().clone().filter(|a| a.product_id == product_id))
+    async fn receiver_authority(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+        Ok(self
+            .receiving_authority
+            .lock()
+            .clone()
+            .filter(|a| a.product_id == product_id))
     }
 
-    async fn receiver_consent(&self, _authority: crate::platform::ReceivingAuthority, _watches: Vec<crate::latest::ReceivingWatch>) -> Result<bool, v01::GenericError> {
+    async fn receiver_consent(
+        &self,
+        _authority: crate::platform::ReceivingAuthority,
+        _watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, v01::GenericError> {
         self.receiving_prompts.fetch_add(1, Ordering::SeqCst);
         let gate = self.receiving_consent_gate.lock().take();
-        if let Some(gate) = gate { let _ = gate.await; }
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(self.receiving_consent.load(Ordering::SeqCst))
     }
 
@@ -1279,6 +1376,14 @@ impl PlatformNotifications for StubPlatform {
             .expect("notification cancellation list mutex poisoned")
             .push(id);
         Ok(())
+    }
+
+    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+        self.notification_activations
+            .clone()
+            .ok_or_else(|| v01::GenericError {
+                reason: "notification activation is unsupported".to_string(),
+            })
     }
 }
 
@@ -2040,6 +2145,7 @@ impl UserConfirmation for StubPlatform {
         &self,
         review: UserConfirmationReview,
     ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
+        let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
         let confirmed = self.confirm_user_action(review).await?;
         Ok(self
             .permission_confirmation_decisions
@@ -2047,7 +2153,11 @@ impl UserConfirmation for StubPlatform {
             .expect("permission confirmation mutex poisoned")
             .pop_front()
             .unwrap_or(if confirmed {
-                crate::platform::PermissionDecision::AllowAlways
+                if upload {
+                    crate::platform::PermissionDecision::AllowOnce
+                } else {
+                    crate::platform::PermissionDecision::AllowAlways
+                }
             } else {
                 crate::platform::PermissionDecision::Deny
             }))
@@ -2140,6 +2250,13 @@ impl UserConfirmation for StubPlatform {
                     self.main_purse_chat_payment_confirmed,
                 )
             }
+            UserConfirmationReview::Calling(review) => {
+                self.calling_reviews
+                    .lock()
+                    .expect("calling review list mutex poisoned")
+                    .push(review);
+                (self.calling_error, self.calling_confirmed)
+            }
             UserConfirmationReview::ResourceAllocation(review) => {
                 self.resource_allocation_reviews
                     .lock()
@@ -2153,14 +2270,20 @@ impl UserConfirmation for StubPlatform {
                 if let Some(gate) = gate {
                     gate.await.expect("resource confirmation gate was released");
                 }
-				(self.resource_allocation_error, self.resource_allocation_confirmed)
-			},
+                (
+                    self.resource_allocation_error,
+                    self.resource_allocation_confirmed,
+                )
+            }
             UserConfirmationReview::PreimageSubmit(review) => {
-                self.preimage_submit_reviews
-                    .lock()
-                    .push(review);
+                self.preimage_submit_reviews.lock().push(review.clone());
+                self.preimage_reviews.lock().push(review);
+                let gate = self.preimage_confirmation_gate.lock().take();
+                if let Some(gate) = gate {
+                    let _ = gate.await;
+                }
                 (None, !self.preimage_submit_denied)
-            },
+            }
             UserConfirmationReview::ProductSubtree(review) => {
                 self.product_subtree_reviews
                     .lock()

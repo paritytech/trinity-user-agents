@@ -11,6 +11,7 @@ android {
 
 dependencies {
 
+    api(project(":bindings:truapi-host"))
     implementation(project(":tools:media-connection:api"))
     implementation(project(":tools:jwt-auth:api"))
     implementation(project(":common"))
@@ -18,4 +19,11 @@ dependencies {
     implementation(libs.bundles.webrtc)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
+
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.squareup.okhttp3.core)
 }

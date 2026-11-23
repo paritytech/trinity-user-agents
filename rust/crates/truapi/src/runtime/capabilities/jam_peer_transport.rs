@@ -5,6 +5,10 @@
 //! gating every dial on [`ProductRuntimeHost::require_jam_peers`]. The browser
 //! core keeps the trait's `NotGranted` defaults: its JavaScript session answers
 //! trait 111 before frames reach the core.
+//!
+//! Listener custody and trusted execution-only consent are not available here.
+//! Both platforms retain the trait's explicit listener refusal even with a
+//! persisted outbound grant; streaming methods retain `Unsupported` defaults.
 
 use crate::runtime::ProductRuntimeHost;
 

@@ -486,7 +486,7 @@ e2e-cross-product: ## One product uses another's storage, keys or accounts on th
 	@test -x scripts/cross-product-$(SCENARIO)-e2e.sh || { echo "SCENARIO must be one of: $(CROSS_PRODUCT_SCENARIOS)" >&2; exit 1; }
 	scripts/cross-product-$(SCENARIO)-e2e.sh
 
-e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant, retaining one size review per upload.
+e2e-preimage-submit-prompt: ## Ensure noninteractive auto-accept never grants automatic-upload consent.
 	scripts/preimage-submit-prompt-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.

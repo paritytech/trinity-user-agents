@@ -1,12 +1,12 @@
 // `preimage.submit` under a `PreimageSubmit` grant against a real signing-host CLI.
-// The remote permission authorizes the capability; each upload still requires a
-// size review. The runner uses `--auto-accept` and `TRUAPI_APPROVALS_LOG` so the
-// transcript contains one permission prompt followed by one review per upload.
+// The remote permission does not grant bounded automatic-upload consent.
+// Noninteractive `--auto-accept` must refuse every upload instead of silently
+// granting that consent. The approvals transcript records each denied review.
 import { existsSync, readFileSync } from "node:fs";
 
 const UPLOADS = 3;
 const PERMISSION_PROMPT = "approved remote permission";
-const UPLOAD_PROMPT = "approved submit preimage";
+const UPLOAD_PROMPT = "denied submit preimage";
 
 const log = process.env.TRUAPI_APPROVALS_LOG;
 assert(
@@ -33,10 +33,14 @@ for (let upload = 1; upload <= UPLOADS; upload++) {
     `0x${crypto.getRandomValues(new Uint8Array(1024)).toHex()}` as `0x${string}`;
   const submitted = await truapi.preimage.submit(value);
   assert(
-    submitted.isOk(),
-    `upload ${upload} failed: ${JSON.stringify(submitted.isOk() ? null : submitted.error)}`,
+    submitted.isErr() &&
+      submitted.error.tag === "Domain" &&
+      submitted.error.value.tag === "V1" &&
+      submitted.error.value.value.tag === "Unknown" &&
+      submitted.error.value.value.value.reason === "User rejected preimage submission",
+    `upload ${upload} did not require explicit consent: ${JSON.stringify(submitted.isErr() ? submitted.error : submitted.value)}`,
   );
-  console.log(`upload ${upload}: ${submitted.value}`);
+  console.log(`upload ${upload}: explicit consent required`);
 }
 
 const prompts = transcript();
@@ -47,5 +51,5 @@ assert(
   `expected one permission prompt and ${UPLOADS} upload reviews, got: ${JSON.stringify(prompts)}`,
 );
 console.log(
-  `${UPLOADS} uploads after one permission prompt and ${UPLOADS} upload reviews`,
+  `${UPLOADS} uploads refused without explicit consent after one capability grant`,
 );

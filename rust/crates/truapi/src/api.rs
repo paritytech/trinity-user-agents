@@ -11,6 +11,7 @@ pub mod game;
 pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -24,6 +25,7 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
+pub mod validator;
 pub mod worker;
 
 pub use account::Account;
@@ -37,6 +39,7 @@ pub use game::Game;
 pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
@@ -50,6 +53,7 @@ pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
 pub use theme::Theme;
+pub use validator::Validator;
 pub use worker::Worker;
 
 /// The unified TrUAPI contract.
@@ -65,6 +69,7 @@ pub trait TrUApi:
     + Game
     + LocalStorage
     + Locale
+    + Media
     + Notifications
     + Payment
     + Permissions
@@ -79,6 +84,7 @@ pub trait TrUApi:
     + System
     + Theme
     + Worker
+    + Validator
     + Send
     + Sync
 {
@@ -96,6 +102,7 @@ impl<T> TrUApi for T where
         + Game
         + LocalStorage
         + Locale
+        + Media
         + Notifications
         + Payment
         + Permissions
@@ -110,6 +117,7 @@ impl<T> TrUApi for T where
         + System
         + Theme
         + Worker
+        + Validator
         + Send
         + Sync
 {

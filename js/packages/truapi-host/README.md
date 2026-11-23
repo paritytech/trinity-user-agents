@@ -305,6 +305,9 @@ const callbacks: HostCallbacks = {
 a stored device grant against it before answering the product, so a capability the OS has since revoked or reset stops
 reading as usable. Omit it and a stored grant answers on its own.
 
+Worker-backed hosts route permission reads, writes and refreshes through the currently active pairing or signing
+runtime. Local-session activation must not leave `refreshPermissionAuthorization` bound to a superseded runtime.
+
 `pocket` serves the host's card collection. `subscribePocketCards` emits the calling product's cards and every later
 replacement, and `removePocketCard` takes one out. The host owns the collection: removing an absent card succeeds, and a
 card the host pins is refused with `Privileged`.

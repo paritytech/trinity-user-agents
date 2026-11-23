@@ -87,57 +87,92 @@ pub mod latest {
     use crate::versioned::{self, Versioned};
 
     pub use crate::v01::{
-        AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background, BlendingMode,
-        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
-        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
-        ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostJamPeerTransportCloseError,
-        HostJamPeerTransportCloseRequest, HostJamPeerTransportDialError,
-        HostJamPeerTransportDialRequest, HostJamPeerTransportDialResponse,
-        HostJamPeerTransportEventsError, HostJamPeerTransportEventsResponse,
-        HostJamPeerTransportOpenError, HostJamPeerTransportOpenRequest,
-        HostJamPeerTransportOpenResponse, HostJamPeerTransportRecvError,
-        HostJamPeerTransportRecvRequest, HostJamPeerTransportRecvResponse,
-        HostJamPeerTransportResetError, HostJamPeerTransportResetRequest,
-        HostJamPeerTransportSendError, HostJamPeerTransportSendRequest,
-        HostNotificationAcknowledgeReceiverEventRequest, HostNotificationDisableReceiverRequest,
-        HostNotificationReceiptResult, HostNotificationReceiverEventsRequest,
-        HostNotificationReceiverStatus, HostNotificationReceivingError,
-        HostNotificationRecordReceiptRequest, HostNotificationReplaceReceiverRequest, HostPlatform,
-        HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps, ImageSource,
-        JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
-        JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION,
-        JamPeerTransportEvent, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind, ReceivingReceiptKind,
-        ReceivingWatch, RegisteredRingVrfKey, RemotePermission,
-        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
-        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
-        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
-        ChatRoomFooter, HostAccountGetError, HostWorkerBeginOperationRequest, ProductAccount,
-        RemoteChainTransactionStopRequest, ResourceAllocationError,
-        NotificationActivation, NotificationActivations, NotificationActivationAcknowledgeRequest,
+        HostValidatorAuditProveRequest, HostValidatorAuditProveResponse, HostValidatorCloseRequest,
+        HostValidatorCommitRequest, HostValidatorCommitResponse, HostValidatorEntropySourceRequest,
+        HostValidatorEntropySourceResponse, HostValidatorError, HostValidatorFullSignRequest,
+        HostValidatorFullSignResponse, HostValidatorOpenRequest, HostValidatorOpenResponse,
+        HostValidatorSealRequest, HostValidatorSealResponse, HostValidatorSignRequest,
+        HostValidatorSignResponse, HostValidatorTicketProveRequest,
+        HostValidatorTicketProveResponse, HostValidatorVrfOutputRequest,
+        HostValidatorVrfOutputResponse, VALIDATOR_MAX_CHUNK_BYTES, VALIDATOR_MAX_PARAMETERS_BYTES,
+        VALIDATOR_MAX_RECOVERY_BYTES, VALIDATOR_MAX_RING, ValidatorAuditInput,
+        ValidatorAuditReport, ValidatorAuthority, ValidatorFullDuty, ValidatorFullIntent,
+        ValidatorGrandpaDuty, ValidatorIntent, ValidatorProtection, ValidatorRecoveryRef,
+        ValidatorSealDuty, ValidatorSealInput, ValidatorSealIntent,
     };
-    pub use crate::v02::{
-        HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
-        HostNativeChatAttachmentMetadata, HostNativeChatAttachmentState, HostNativeChatDevice,
-        HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
-        HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
-        HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
-        HostNativeChatRichMessageKind, OwnAvatarSlot, ProfileAudience, ProfileContact,
-    };
-    pub use crate::v03::{
-        ContactAvatarSlot, HostNativeChatBinding, HostNativeChatMigrationInvitation,
-        HostNativeChatOpenPage, HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute,
-        HostNativeChatStatePage,
+
+    pub use crate::{
+        v01::{
+            AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background,
+            BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
+            ChatAction, ChatActionLayout, ChatActions, ChatBotRegistrationStatus,
+            ChatCustomMessage, ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText,
+            ChatRoom, ChatRoomFooter, ChatRoomParticipation, ChatRoomRegistrationStatus,
+            CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
+            ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
+            GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+            HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
+            HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+            HostAccountSignVrfError, HostAccountSignVrfRequest, HostJamPeerTransportCloseError,
+            HostJamPeerTransportCloseRequest, HostJamPeerTransportDialError,
+            HostJamPeerTransportDialRequest, HostJamPeerTransportDialResponse,
+            HostJamPeerTransportEventsError, HostJamPeerTransportEventsResponse,
+            HostJamPeerTransportListenError, HostJamPeerTransportListenRequest,
+            HostJamPeerTransportListenResponse, HostJamPeerTransportOpenError,
+            HostJamPeerTransportOpenRequest, HostJamPeerTransportOpenResponse,
+            HostJamPeerTransportRecvChunkError, HostJamPeerTransportRecvChunkRequest,
+            HostJamPeerTransportRecvChunkResponse, HostJamPeerTransportRecvError,
+            HostJamPeerTransportRecvRequest, HostJamPeerTransportRecvResponse,
+            HostJamPeerTransportResetError, HostJamPeerTransportResetRequest,
+            HostJamPeerTransportSendChunkError, HostJamPeerTransportSendChunkRequest,
+            HostJamPeerTransportSendError, HostJamPeerTransportSendRequest,
+            HostNotificationAcknowledgeReceiverEventRequest,
+            HostNotificationDisableReceiverRequest, HostNotificationReceiptResult,
+            HostNotificationReceiverEventsRequest, HostNotificationReceiverStatus,
+            HostNotificationReceivingError, HostNotificationRecordReceiptRequest,
+            HostNotificationReplaceReceiverRequest, HostPlatform, HostSignPayloadData,
+            HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+            ImageSource, JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION,
+            JAM_PEER_TRANSPORT_MAX_CHUNK_BYTES, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
+            JAM_PEER_TRANSPORT_MAX_LOGICAL_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES,
+            JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION, JamPeerTransportEvent, MediaAccount,
+            MediaAudioRoute, MediaCallOutcome, MediaCameraKind, MediaCapabilities, MediaEvent,
+            MediaFit, MediaIncomingDecision, MediaIncomingId, MediaIncomingOffer,
+            MediaIncomingResolution, MediaIncomingResponse, MediaLocalState, MediaLocalTracks,
+            MediaNetwork, MediaOperationFailure, MediaOperationId, MediaOperationKind,
+            MediaOperationResult, MediaOperationSnapshot, MediaOperationState, MediaParticipantId,
+            MediaParticipantSnapshot, MediaParticipantState, MediaPeer, MediaPictureKind,
+            MediaPictureSource, MediaPlacement, MediaRect, MediaRemoteState, MediaResource,
+            MediaRuntimeLimits, MediaSessionId, MediaSessionSnapshot, MediaSessionState,
+            MediaSurface, MediaTrackState, MediaViewport, Modifier, NotificationActivation,
+            NotificationActivationAcknowledgeRequest, NotificationActivations,
+            OperationStartedResult, PocketCard, ProductAccount, ProductAccountId,
+            ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind,
+            ReceivingReceiptKind, ReceivingWatch, RegisteredRingVrfKey,
+            RemoteChainTransactionStopRequest, RemotePermission,
+            RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+            RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+            RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode,
+            ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+            RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement,
+            Size, Statement, StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem,
+            TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+            TypographyStyle, VerticalAlignment, VrfSignature,
+        },
+        v02::{
+            HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
+            HostNativeChatAttachmentMetadata, HostNativeChatAttachmentState, HostNativeChatDevice,
+            HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
+            HostNativeChatPaymentDirection, HostNativeChatPaymentFailure,
+            HostNativeChatPaymentState, HostNativeChatPeer, HostNativeChatPeerDevice,
+            HostNativeChatRichMessage, HostNativeChatRichMessageKind, OwnAvatarSlot,
+            ProfileAudience, ProfileContact,
+        },
+        v03::{
+            ContactAvatarSlot, HostNativeChatBinding, HostNativeChatMigrationInvitation,
+            HostNativeChatOpenPage, HostNativeChatOpened, HostNativeChatPrepared,
+            HostNativeChatRoute, HostNativeChatStatePage,
+        },
     };
 
     /// Latest payload type of a versioned envelope.
@@ -333,6 +368,100 @@ pub mod latest {
     /// Local storage operation error.
     pub type HostLocalStorageReadError =
         LatestOf<versioned::local_storage::HostLocalStorageReadError>;
+    /// Sanitized shared Media domain error.
+    pub type HostMediaError = LatestOf<versioned::media::HostMediaError>;
+    /// Media discovery request.
+    pub type HostMediaGetCapabilitiesRequest =
+        LatestOf<versioned::media::HostMediaGetCapabilitiesRequest>;
+    /// Complete Media service capabilities.
+    pub type HostMediaGetCapabilitiesResponse =
+        LatestOf<versioned::media::HostMediaGetCapabilitiesResponse>;
+    /// Media discovery failure.
+    pub type HostMediaGetCapabilitiesError =
+        LatestOf<versioned::media::HostMediaGetCapabilitiesError>;
+    /// Passive runtime-wide Media subscription request.
+    pub type HostMediaSessionSubscribeRequest =
+        LatestOf<versioned::media::HostMediaSessionSubscribeRequest>;
+    /// Authoritative runtime-wide Media event.
+    pub type HostMediaSessionSubscribeItem =
+        LatestOf<versioned::media::HostMediaSessionSubscribeItem>;
+    /// Media subscription interruption.
+    pub type HostMediaSessionSubscribeError =
+        LatestOf<versioned::media::HostMediaSessionSubscribeError>;
+    /// Correlated Media session creation request.
+    pub type HostMediaCreateSessionRequest =
+        LatestOf<versioned::media::HostMediaCreateSessionRequest>;
+    /// Media session creation result.
+    pub type HostMediaCreateSessionResponse =
+        LatestOf<versioned::media::HostMediaCreateSessionResponse>;
+    /// Media session creation failure.
+    pub type HostMediaCreateSessionError = LatestOf<versioned::media::HostMediaCreateSessionError>;
+    /// Correlated remote endpoint invitation request.
+    pub type HostMediaAddParticipantRequest =
+        LatestOf<versioned::media::HostMediaAddParticipantRequest>;
+    /// Admitted Media participant.
+    pub type HostMediaAddParticipantResponse =
+        LatestOf<versioned::media::HostMediaAddParticipantResponse>;
+    /// Media participant admission failure.
+    pub type HostMediaAddParticipantError =
+        LatestOf<versioned::media::HostMediaAddParticipantError>;
+    /// Incoming Media offer decision.
+    pub type HostMediaRespondIncomingRequest =
+        LatestOf<versioned::media::HostMediaRespondIncomingRequest>;
+    /// Incoming Media decision result.
+    pub type HostMediaRespondIncomingResponse =
+        LatestOf<versioned::media::HostMediaRespondIncomingResponse>;
+    /// Incoming Media decision failure.
+    pub type HostMediaRespondIncomingError =
+        LatestOf<versioned::media::HostMediaRespondIncomingError>;
+    /// Idempotent Media participant removal request.
+    pub type HostMediaRemoveParticipantRequest =
+        LatestOf<versioned::media::HostMediaRemoveParticipantRequest>;
+    /// Media participant removal result.
+    pub type HostMediaRemoveParticipantResponse =
+        LatestOf<versioned::media::HostMediaRemoveParticipantResponse>;
+    /// Media participant removal failure.
+    pub type HostMediaRemoveParticipantError =
+        LatestOf<versioned::media::HostMediaRemoveParticipantError>;
+    /// Correlated complete capture-intent replacement request.
+    pub type HostMediaSetLocalTracksRequest =
+        LatestOf<versioned::media::HostMediaSetLocalTracksRequest>;
+    /// Authoritative session after capture-intent commitment.
+    pub type HostMediaSetLocalTracksResponse =
+        LatestOf<versioned::media::HostMediaSetLocalTracksResponse>;
+    /// Capture-intent replacement failure.
+    pub type HostMediaSetLocalTracksError =
+        LatestOf<versioned::media::HostMediaSetLocalTracksError>;
+    /// Atomic host-owned Media layout replacement request.
+    pub type HostMediaSetSurfacesRequest = LatestOf<versioned::media::HostMediaSetSurfacesRequest>;
+    /// Accepted Media layout revision.
+    pub type HostMediaSetSurfacesResponse =
+        LatestOf<versioned::media::HostMediaSetSurfacesResponse>;
+    /// Media layout replacement failure.
+    pub type HostMediaSetSurfacesError = LatestOf<versioned::media::HostMediaSetSurfacesError>;
+    /// Idempotent Media session teardown request.
+    pub type HostMediaEndSessionRequest = LatestOf<versioned::media::HostMediaEndSessionRequest>;
+    /// Media session teardown result.
+    pub type HostMediaEndSessionResponse = LatestOf<versioned::media::HostMediaEndSessionResponse>;
+    /// Media session teardown failure.
+    pub type HostMediaEndSessionError = LatestOf<versioned::media::HostMediaEndSessionError>;
+    /// Exact Media operation outcome query.
+    pub type HostMediaGetOperationRequest =
+        LatestOf<versioned::media::HostMediaGetOperationRequest>;
+    /// Authoritative Media operation outcome.
+    pub type HostMediaGetOperationResponse =
+        LatestOf<versioned::media::HostMediaGetOperationResponse>;
+    /// Media operation query failure.
+    pub type HostMediaGetOperationError = LatestOf<versioned::media::HostMediaGetOperationError>;
+    /// Authoritative cancellation or pre-admission tombstone request.
+    pub type HostMediaCancelOperationRequest =
+        LatestOf<versioned::media::HostMediaCancelOperationRequest>;
+    /// Media operation state after cancellation linearizes against commitment.
+    pub type HostMediaCancelOperationResponse =
+        LatestOf<versioned::media::HostMediaCancelOperationResponse>;
+    /// Media operation cancellation failure.
+    pub type HostMediaCancelOperationError =
+        LatestOf<versioned::media::HostMediaCancelOperationError>;
     /// Locale the host currently presents its interface in.
     pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
     /// Batched host-local calendar conversion request.

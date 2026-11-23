@@ -1,7 +1,9 @@
 import Foundation
 import PolkadotUI
 import Products
+import SubstrateSdk
 
+import TrUAPIHost
 final class AppPermissionsPresenter {
     weak var view: AppPermissionsViewProtocol?
 
@@ -13,6 +15,9 @@ final class AppPermissionsPresenter {
 
     private var grantsByItemId: [String: ProductPermissionGrant] = [:]
     private var grants: [ProductPermissionGrant] = []
+    private var mediaPermissions: [TrUAPIMediaPermissionSetting] = []
+    private var automaticUploadScope: TrUAPIAutomaticUploadScope?
+    private var automaticUploadsAllowed = false
     private var revoking = false
 
     init(
@@ -37,6 +42,19 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
     }
 
     func toggle(_ item: AppPermissionsViewLayout.Item, isOn: Bool) {
+        guard !revoking else { return }
+        if let setting = mediaPermissions.first(where: { $0.id == item.id }) {
+            revoking = true
+            view?.setRevoking(true)
+            interactor.setMediaPermission(setting, allowed: isOn)
+            return
+        }
+        if let scope = automaticUploadScope, item.id == automaticUploadItemId(scope) {
+            revoking = true
+            view?.setRevoking(true)
+            interactor.setAutomaticUploads(allowed: isOn, scope: scope)
+            return
+        }
         guard !isOn, !revoking, let grant = grantsByItemId[item.id] else { return }
         revoking = true
         view?.setRevoking(true)
@@ -46,12 +64,23 @@ extension AppPermissionsPresenter: AppPermissionsPresenterProtocol {
 }
 
 extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
+    func didReceiveAutomaticUploads(scope: TrUAPIAutomaticUploadScope?, allowed: Bool) {
+        automaticUploadScope = scope
+        automaticUploadsAllowed = allowed
+        refreshItems()
+    }
+
     func didReceive(grants: [ProductPermissionGrant]) {
         self.grants = grants
         grantsByItemId = Dictionary(
             uniqueKeysWithValues: grants.map { ($0.identifier, $0) }
         )
 
+        refreshItems()
+    }
+
+    func didReceive(mediaPermissions: [TrUAPIMediaPermissionSetting]) {
+        self.mediaPermissions = mediaPermissions
         refreshItems()
     }
 
@@ -71,8 +100,33 @@ extension AppPermissionsPresenter: AppPermissionsInteractorOutputProtocol {
 }
 
 private extension AppPermissionsPresenter {
+    func automaticUploadItemId(_ scope: TrUAPIAutomaticUploadScope) -> String {
+        "automatic-preimage:\(scope.generation):\(scope.rootPublicKey.toHex(includePrefix: true))"
+    }
+
     func refreshItems() {
-        let items = viewModelFactory.createItems(from: grants)
+        var items = viewModelFactory.createItems(from: grants)
+        items.append(contentsOf: mediaPermissions.map { setting in
+            let status: String
+            switch setting.status {
+            case .authorized: status = "Allowed"
+            case .denied: status = "Denied"
+            case .notDetermined: status = "Ask"
+            }
+            return AppPermissionsViewLayout.Item(id: setting.id, title: setting.title,
+                description: "\(status)\n\(setting.detail)", isOn: setting.status == .authorized)
+        })
+        if let scope = automaticUploadScope {
+            items.append(AppPermissionsViewLayout.Item(
+                id: automaticUploadItemId(scope),
+                title: String(localized: .Products.appPermissionAutomaticPreimageTitle),
+                description: String(localized: .Products.appPermissionAutomaticPreimageBody(
+                    rootAccount: scope.rootPublicKey.toHex(includePrefix: true),
+                    bulletinNetwork: scope.bulletinGenesis.toHex(includePrefix: true)
+                )),
+                isOn: automaticUploadsAllowed
+            ))
+        }
         view?.didReceive(items: items)
     }
 }

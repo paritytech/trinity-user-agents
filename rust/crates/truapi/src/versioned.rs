@@ -46,6 +46,7 @@ pub mod game;
 pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -59,6 +60,7 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
+pub mod validator;
 pub mod worker;
 
 #[cfg(test)]

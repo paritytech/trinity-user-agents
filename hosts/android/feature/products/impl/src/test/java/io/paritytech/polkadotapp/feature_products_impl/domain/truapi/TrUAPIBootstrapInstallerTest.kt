@@ -12,10 +12,10 @@ import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.mockStatic
-import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
@@ -43,17 +43,16 @@ class TrUAPIBootstrapInstallerTest {
 
                     TrUAPIBootstrapInstaller(context).installerFor(productOrigins)("endpoint();")(webView)
 
-                    assertEquals(
-                        listOf(
-                            Registration("if (window === window.top) {\nendpoint();\n}", productOrigins),
-                            Registration(
-                                "window.__truapi_localhost = {...window.__truapi_localhost, nativeHttp: true};\ncontainer();",
-                                setOf("*"),
-                            ),
+                    assertEquals(2, registered.size)
+                    assertEquals(Registration("if (window === window.top) {\nendpoint();\n}", productOrigins), registered[0])
+                    assertEquals(setOf("*"), registered[1].origins)
+                    // Media isolation runs in every frame before the shared container.
+                    assertTrue(registered[1].script.contains("RTCPeerConnection"))
+                    assertTrue(
+                        registered[1].script.endsWith(
+                            "\nwindow.__truapi_localhost = {...window.__truapi_localhost, nativeHttp: true};\ncontainer();",
                         ),
-                        registered,
                     )
-                    verify(chromeClient).useContainerPermissions()
                 }
             }
         }

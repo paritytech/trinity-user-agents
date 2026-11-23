@@ -94,6 +94,76 @@ fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 }
 
 #[test]
+fn notification_activation_rejects_foreign_scope_fields() {
+    use truapi::versioned::notifications::{
+        NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+        NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+        NotificationActivationEventsRequest, NotificationActivationEventsResponse,
+    };
+
+    let core = make_core();
+    let requests = [
+        (8, NotificationActivationEventsRequest::V1.encode()),
+        (
+            9,
+            NotificationActivationAcknowledgeRequest::V1(
+                v01::NotificationActivationAcknowledgeRequest { sequence: 42 },
+            )
+            .encode(),
+        ),
+    ];
+    for (method_id, request) in requests {
+        for foreign_scope in [false, true] {
+            let mut value = request.clone();
+            if foreign_scope {
+                (
+                    "another-product.paseo",
+                    "another-account",
+                    "another-environment",
+                )
+                    .encode_to(&mut value);
+            }
+            let response = dispatch(
+                &core,
+                ProtocolMessage {
+                    request_id: format!("activation:{method_id}:{foreign_scope}"),
+                    payload: Payload {
+                        trait_id: 8,
+                        method_id,
+                        message_type: MESSAGE_TYPE_REQUEST,
+                        value,
+                    },
+                },
+            );
+            assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+            if method_id == 8 {
+                let result = Result::<
+                    NotificationActivationEventsResponse,
+                    CallError<NotificationActivationEventsError>,
+                >::decode(&mut &response.payload.value[..])
+                .unwrap();
+                if foreign_scope {
+                    assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+                } else {
+                    assert!(matches!(result, Err(CallError::Domain(_))));
+                }
+            } else {
+                let result = Result::<
+                    NotificationActivationAcknowledgeResponse,
+                    CallError<NotificationActivationAcknowledgeError>,
+                >::decode(&mut &response.payload.value[..])
+                .unwrap();
+                if foreign_scope {
+                    assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+                } else {
+                    assert!(matches!(result, Err(CallError::Domain(_))));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn feature_supported_ok_response_uses_ok_discriminant() {
     let core = make_core();
 	let request = v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] };
@@ -603,7 +673,7 @@ fn a_chain_follow_that_cannot_start_interrupts_with_the_failure() {
 fn make_core() -> TrUApiCore {
     let (host_config, product) = test_runtime_config();
     TrUApiCore::from_platform_with_config(
-        Arc::new(WireShapePlatform),
+        Arc::new(WireShapePlatform::default()),
         host_config,
         product,
         test_spawner(),

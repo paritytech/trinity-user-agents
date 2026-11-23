@@ -17,6 +17,18 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
+> **NOTE (2026-10-06): trusted native products skip only notification app consent.**
+> The iOS and Android TrUAPI notification permission callbacks reuse the canonical
+> `hasTrustedRemotePermissions` classifier for the application-consent step only.
+> The core still reads product-scoped decisions before invoking the callback:
+> stored denial, one-use consumption and storage errors retain their existing
+> behavior. The native callback still checks/requests the host application's OS
+> notification permission; OS refusal never returns an authorization or reaches
+> notification scheduling. Camera, microphone and other device capabilities do
+> not inherit this exception. Browser hosts must make the same separation in
+> their concrete permission callback, not bypass that callback in Rust: the
+> shared callback can own both application consent and browser/OS authorization.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.
@@ -43,6 +55,34 @@ not an empty grant list or a successful revocation. Multi-domain denials remain
 bundle-specific and are not flattened into stronger per-domain denials.
 
 The Host API currently has two underdefined permission calls — `host_device_permission` and `remote_permission` — that lack coverage for several device capabilities (NFC, Clipboard, OpenUrl, Biometrics), do not support batched remote-permission requests, and have no specified lifecycle for when prompts occur or how decisions are persisted. This RFC defines the complete set of device and remote permissions, updates the `remote_permission` signature to accept a batch, specifies lasting and one-use permission decisions, and establishes that business methods (`host_sign_raw`, `host_sign_payload`, `host_create_transaction`, `host_create_transaction_with_non_product_account`, `remote_statement_store_submit`, `remote_preimage_submit`, `remote_chain_transaction_broadcast`) implicitly trigger permission prompts if permission has not yet been granted.
+
+## Bounded automatic preimage uploads
+
+`RemotePermission::PreimageSubmit` permits the capability, not an unattended upload.
+The core separately requests upload consent, including the product id, active root
+public key, configured Bulletin genesis hash and byte count. `AllowOnce` approves
+only that attempt. `AllowAlways` explicitly enables automatic uploads for that
+product/account/network, limited to **262,144 bytes per upload and four attempts
+per rolling 3,600 seconds**. Larger uploads and an exhausted budget still require
+per-upload review. Trusted products and unrelated automatic-signing grants do not
+bypass this consent.
+
+The host-owned `AutomaticPreimageSubmit { rootPublicKey }` authorization request
+reads or changes this separate setting. The core verifies the root against the
+active session; products cannot administer it. `NotDetermined` and `Denied`
+revoke automatic approval without disabling individually reviewed uploads.
+Revocation or an account change invalidates a pending consent sheet, and the core
+rechecks approval after allowance acquisition. Revocation cannot withdraw a
+transaction already handed to the chain backend.
+
+The core serializes reservations across product connections in its runtime and
+uses storage compare-and-exchange for every persisted reservation and consent
+edit. Independent runtimes sharing a store therefore share the quota; a stale
+consent answer cannot overwrite another runtime's revocation. Storage contention
+fails closed. Usage is persisted before contacting the backend. Failed or
+cancelled attempts remain charged; the existing internal allowance retry is the
+same attempt. Restarting, revoking or regranting does not reset the rolling budget.
+Legacy boolean host confirmation callbacks mean `AllowOnce`, never a durable grant.
 
 ## Motivation
 
@@ -279,6 +319,100 @@ The following business methods relate to signing and require the user's active c
 For the remote-gated methods: if the user has already granted the relevant `RemotePermission`, the business method proceeds without prompting. If permission is not yet resolved, the Host presents the permission prompt first, then proceeds or returns `GenericErr` (wrapping a permission-denied reason) if the user denies.
 
 > **Design rationale:** Requiring products to always call `remote_permission` before calling `remote_statement_store_submit` would add boilerplate with no safety benefit, since the Host already controls whether the operation proceeds. Implicit triggering lets simple products work correctly without explicit permission preambles while preserving full user control.
+
+### JAM peer transport: listeners and bounded messages
+
+`JamPeerTransport` (wire trait 111) extends its existing methods with
+`listen` (7), `send_chunk` (8) and `recv_chunk` (9). These are transport
+capabilities, not account access, signing authority or proof of validator
+membership. `RemotePermission::JamPeers { genesis }` authorizes bidirectional
+peer messaging for the full genesis and product; it is not a read-only grant
+and does not by itself authorize an inbound listener. No manifest field grants
+either capability. The guest must still authenticate and validate chain data.
+
+#### Listener authority and lifetime
+
+`listen({ genesis, ip, port, allowed_peers })` requests one execution-scoped
+native listener and returns its bound `{ ip, port }`. Admission requires both
+the genesis-scoped `JamPeers` grant and **separate trusted execution-only
+consent** for the exact listener policy. That consent binds the verified
+product/artifact, execution and custodied local identity to the full genesis,
+bind endpoint and allowed peer identities. A guest request cannot supply its
+own approval; an existing outbound permission decision cannot substitute for
+it. Hosts without this trusted consent/custody integration must refuse the
+listener rather than create an anonymous fallback identity.
+
+The listener policy is deliberately restricted:
+
+- Bind only IPv6 loopback (`::1`) or IPv4-mapped IPv6 loopback (`127.0.0.0/8`).
+  Wildcard, LAN and public addresses are refused.
+- Require 1–64 unique Ed25519 peer identities, excluding the custodied local
+  identity. Empty or oversized lists return `Limit`; duplicates, self-admission
+  and non-loopback endpoints return `Refused`.
+- Mutually authenticate peers through TLS and admit only allowlisted identities.
+  An IP address is not an authenticated identity.
+- Establish and latch the immutable policy before any connection is opened.
+  The first dial attempt closes the configuration window, even if the dial
+  fails. Latch policy before attempting the bind, including on bind failure;
+  retries cannot change the endpoint, genesis, allowlist or custody owner.
+  Consent compares the allowed identities as a set, not as an ordering.
+- Missing genesis permission or exact listener consent returns `NotGranted`;
+  unsupported listeners or changed policy return `Refused`, admission/resource
+  exhaustion returns `Limit`, and bind failure returns `Unreachable`.
+
+Inbound and outbound connections share the execution's eight-connection cap;
+each connection permits at most 16 streams. Successful admission emits
+`PeerAccepted { conn, ed25519, ip, port }` before any stream event for that
+connection. `ed25519` is the TLS-authenticated peer identity. Existing
+`Accepted { conn, stream, kind }` events describe streams, not connections,
+and apply to both inbound and outbound connections.
+
+Consent and transport handles do not survive execution restart, cancellation,
+permission revocation or custody release. Fence the execution before draining
+the custodied transport: stop admission, close the listener, connections and
+streams, and discard the latched policy. A replacement execution or custody
+handle must obtain its own consent; it cannot inherit the old listener.
+Browser WebTransport sessions do not support inbound listeners and return
+`Refused`; outbound WebTransport support does not imply listener support.
+The shared `ProductRuntimeHost` has no trusted listener custody integration
+and retains this refusal on native platforms too. Its chunk methods, like
+the browser session's, remain `Unsupported`; experimental execution hosts
+implement the contract against their custodied transport.
+
+#### Message framing and chunk limits
+
+The existing `send`/`recv` interface retains its 1 MiB complete-message limit.
+`send_chunk`/`recv_chunk` carry at most 256 KiB per fragment and permit logical
+messages up to 64 MiB without allocating the complete message. The shared
+per-connection buffering budget remains 4 MiB; chunking is not permission to
+raise it or multiply it per stream. The host owns the JAMNP-S `u32`
+little-endian length prefix, which is not included in fragment bytes.
+
+`send_chunk({ stream, total, offset, bytes, fin })` starts at offset zero,
+emits exactly one length prefix, and requires contiguous offsets and an
+unchanged total until the logical message completes. Empty bytes are allowed
+only for a zero-length logical message. FIN is allowed only on the final
+fragment. An incorrect offset, changed total, empty nonfinal fragment or
+premature FIN returns `InvalidChunk` and resets the stream. Oversized
+fragments/messages return `TooLarge`; exhausted connection credit returns
+`Limit`, leaving the caller to retry the identical fragment unchanged.
+Do not interleave `send` with an in-progress chunked message or switch from
+`recv_chunk` to `recv` midway through a logical message.
+
+`recv_chunk({ stream, max_bytes })` is a nonblocking poll; `max_bytes` must be
+1–256 KiB inclusive or it returns `InvalidMaxBytes`. Its response is
+`{ total, offset, bytes, complete, fin, reset }`: `total: None` means no
+fragment is available, whereas `total: Some(0)` with `complete: true` is a
+real framed empty message. The declared length is checked before payload
+allocation. Clean FIN is reported only after complete messages are drained;
+a reset or malformed/truncated frame reports `reset`, and the caller must
+discard any incomplete logical message.
+
+For the existing `send`, an empty message with `fin: true` sends **only FIN**,
+not a zero-length framed message. An empty nonterminal `send` still emits a
+zero-length prefix. In contrast, a zero-length `send_chunk` represents an
+actual framed empty message even when it also finishes the send side.
+
 
 ### Complete Updated Interface (Permissions Section)
 
