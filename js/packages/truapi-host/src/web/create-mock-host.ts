@@ -416,8 +416,8 @@ export interface MockHostConfig {
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `servedChains`, as a real host
-   * does, so a chain outside that set is unsupported. Default `false`. It
-   * becomes the default in a later breaking release. The Rust
+   * does, so a chain outside that set is unsupported. Default `true`. `false`
+   * reports every chain as supported. The Rust
    * `MockConfig::only_served_chains` is the same option.
    */
   onlyServedChains?: boolean;
@@ -898,7 +898,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
-    onlyServedChains = false,
+    onlyServedChains = true,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
