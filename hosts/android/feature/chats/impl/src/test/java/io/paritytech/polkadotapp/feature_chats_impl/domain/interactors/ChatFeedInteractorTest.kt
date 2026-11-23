@@ -24,7 +24,7 @@ class ChatFeedInteractorTest {
         dmChatMessageOriginDisplayResolver = mockk(),
         accountRepository = mockk(),
         addContactUseCase = mockk(),
-        removeContactUseCase = mockk(),
+        deleteLocalChat = mockk(),
         incomingChatRequestProcessor = mockk(),
         callController = mockk(),
         callStateTracker = mockk(),
@@ -35,6 +35,9 @@ class ChatFeedInteractorTest {
         hopNodeUrlProvider = mockk(),
         chatSigners = mockk(),
         identitySigningConsent = mockk(),
+        chatSeenRepository = mockk(),
+        chatRequestRepository = mockk(),
+        outgoingChatRequestCanceller = mockk(),
     )
 
     private val chatId = ChatId.fromRawValue(byteArrayOf(0x01))
