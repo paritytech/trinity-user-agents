@@ -160,6 +160,7 @@ class RealAddContactUseCase @Inject constructor(
             content = ChatMessage.Content.ChatRequest(welcomeMessage),
             origin = ChatMessageOrigin.User,
             status = ChatMessage.Status.PROCESSING,
+            sortOrder = null,
         )
 
         chatEngine.saveMessage(chatMessage)

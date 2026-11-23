@@ -124,9 +124,9 @@ class RealExternalCallSignaling @Inject constructor(
         .onEach { message -> chatMessageRepository.markMessageAsRead(message.id) }
         .mapToUnit()
 
-    override fun observeOfferReadStatus(offerId: OfferId): Flow<Boolean> {
+    override fun observeOfferDeliveredStatus(offerId: OfferId): Flow<Boolean> {
         return chatMessageRepository.subscribeMessageStatus(offerId)
-            .map { it == ChatMessage.Status.IS_READ }
+            .map { it == ChatMessage.Status.IS_DELIVERED }
             .distinctUntilChanged()
     }
 }
