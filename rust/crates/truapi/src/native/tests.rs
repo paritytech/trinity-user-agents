@@ -3596,19 +3596,6 @@ fn a_chat_icon_is_screened_as_create_room_screens_it() {
 	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
 }
 
-/// A host that shows a room before its product runs must name the room that
-/// the product's own `create_room` resolves, for each spelling of the source.
-#[test]
-fn a_host_derives_the_room_id_that_create_room_answers() {
-	let product = ProductId::for_test("dim2.paseo");
-
-	assert_eq!(
-		chat_room_id(product.clone(), " cafe\u{301} ".to_string()).unwrap(),
-		product.chat_room_id("caf\u{e9}")
-	);
-	assert!(chat_room_id(product, "room\u{202e}".to_string()).is_err());
-}
-
 /// Both sides NFC-normalize, so a host that compares raw bytes against what
 /// the core stored would miss a card it holds.
 #[test]

@@ -1,4 +1,3 @@
-import func TrUAPIHost.chatRoomId
 import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
@@ -11,11 +10,11 @@ import Products
 ///
 /// Placing one grants no permissions; it still prompts like any other product.
 struct HostPlacedProduct: Sendable {
-    /// Must match the room the product gives to `createRoom`, which iOS gives the host no way to
-    /// check. A product that registers another room, or none, gets that chat as well and leaves this
-    /// one empty beside it. Pocket's `Definition` names its `cardId` the same way, but owns card ids
+    /// Must match the room the product registers, which iOS gives the host no way to check. A
+    /// product that registers another room, or none, gets that chat as well and leaves this one
+    /// empty beside it. Pocket's `Definition` names its `cardId` the same way, but owns card ids
     /// in a way no host owns a room id.
-    let room: HostPlacedRoom
+    let roomId: String
 
     /// Shown until the published manifest resolves and supplies the real name.
     let fallbackName: String
@@ -24,29 +23,10 @@ struct HostPlacedProduct: Sendable {
     let productId: @Sendable (String) throws -> ProductId
 }
 
-/// How a host-placed product names its room in `createRoom`, so the host places the room under the
-/// id that the call resolves.
-enum HostPlacedRoom: Sendable, Equatable {
-    /// The product gives the room id itself, as a product built against the earlier client does.
-    case roomId(String)
-    /// The product gives a `roomIdSource`, and the core derives the room id from the product and it.
-    case roomIdSource(String)
-
-    /// The id under which the product's own `createRoom` resolves the room.
-    func roomId(of productId: ProductId) throws -> String {
-        switch self {
-        case let .roomId(roomId): roomId
-        case let .roomIdSource(source): try chatRoomId(productId: productId, roomIdSource: source)
-        }
-    }
-}
-
 enum HostPlacedProducts {
     /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
     static let all: [HostPlacedProduct] = [
-        // Jollity still gives its own `roomId`. When it gives a `roomIdSource`, this becomes
-        // `.roomIdSource("jollity")`, and the room it keeps under "jollity" moves to the derived id.
-        HostPlacedProduct(room: .roomId("jollity"), fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
+        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
     ]
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing

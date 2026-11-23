@@ -1,7 +1,6 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Keystore_iOS
-import Operation_iOS
-import TrUAPIHost
 @testable import polkadot_app
 
 @Suite("Host-placed products")
@@ -14,26 +13,6 @@ struct HostPlacedProductsTests {
 
         #expect(HostPlacedProducts.all.count == 1)
         #expect(hostPlaced.fallbackName == "Jollity")
-    }
-
-    /// Jollity's `createRoom` still gives its own `roomId`, and the core keeps that id for the room.
-    /// Placed under the derived id, the row would stay empty beside the room Jollity writes to.
-    @Test("Jollity's room is placed under the id Jollity gives")
-    func jollityRoomKeepsTheIdJollityGives() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
-
-        #expect(hostPlaced.room == .roomId("jollity"))
-    }
-
-    @Test("A room id stays as given, and a room source resolves to the id the core derives")
-    func placedRoomResolvesTheIdOfCreateRoom() throws {
-        let productId = try ProductId("dim2.paseo")
-
-        #expect(try HostPlacedRoom.roomId("jollity").roomId(of: productId) == "jollity")
-        #expect(
-            try HostPlacedRoom.roomIdSource("jollity").roomId(of: productId)
-                == chatRoomId(productId: productId, roomIdSource: "jollity")
-        )
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
@@ -53,43 +32,6 @@ struct HostPlacedProductsTests {
     )
     func neighbouringIdentifiersAreNotHostPlaced(input: String) throws {
         #expect(try !HostPlacedProducts.contains(productId: ProductId(input)))
-    }
-}
-
-@Suite("Placing a host-placed room")
-struct HostPlacedRoomPlacerTests {
-    /// The product's own `createRoom` must find the placed row, or the user sees a second, empty
-    /// chat beside it.
-    @Test("The placed room has the id that the product's createRoom resolves")
-    func placedRoomHasTheIdOfCreateRoom() async throws {
-        let factory = ChatRepositoryFactory(storageFacade: UserDataStorageTestFacade())
-        let settings = InMemorySettingsManager()
-        settings.set(value: true, for: .hostPlacementEnabled)
-        let placer = HostPlacedRoomPlacer(
-            chatRepositoryFactory: factory,
-            tldProvider: StubDotNsTldProvider(tld: "paseo"),
-            settingsManager: settings
-        )
-
-        await placer.placeRooms()
-
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
-        let productId = try hostPlaced.productId("paseo")
-        let roomId = try hostPlaced.room.roomId(of: productId)
-        let derivedId = try chatRoomId(productId: productId, roomIdSource: "jollity")
-        let repository = factory.createRepository(forFilter: nil)
-        let placed = try await repository.fetchOperation(
-            by: { Chat.Id.chatExtension(productId.rawValue, roomId: roomId).rawRepresentation },
-            options: RepositoryFetchOptions()
-        ).asyncExecute()
-        let underDerivedId = try await repository.fetchOperation(
-            by: { Chat.Id.chatExtension(productId.rawValue, roomId: derivedId).rawRepresentation },
-            options: RepositoryFetchOptions()
-        ).asyncExecute()
-
-        #expect(roomId == "jollity")
-        #expect(placed != nil)
-        #expect(underDerivedId == nil)
     }
 }
 

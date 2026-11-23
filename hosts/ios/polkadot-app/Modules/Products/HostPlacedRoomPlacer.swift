@@ -50,10 +50,8 @@ private extension HostPlacedRoomPlacer {
     /// A failure costs the placeholder, not the room: the product's own `createRoom` still runs.
     func place(_ hostPlaced: HostPlacedProduct, tld: String) async {
         do {
-            let productId = try hostPlaced.productId(tld)
-            let extensionId = productId.rawValue
-            let roomId = try hostPlaced.room.roomId(of: productId)
-            let chatId = Chat.Id.chatExtension(extensionId, roomId: roomId)
+            let extensionId = try hostPlaced.productId(tld).rawValue
+            let chatId = Chat.Id.chatExtension(extensionId, roomId: hostPlaced.roomId)
 
             let existing = try await chatRepository
                 .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
@@ -63,9 +61,9 @@ private extension HostPlacedRoomPlacer {
 
             let chat = Chat.LocalModel.newChatWithRoom(
                 extensionId: extensionId,
-                roomId: roomId,
+                roomId: hostPlaced.roomId,
                 roomMetadata: Chat.RoomMetadata(
-                    chatRelativeId: roomId,
+                    chatRelativeId: hostPlaced.roomId,
                     name: hostPlaced.fallbackName,
                     icon: nil
                 )
