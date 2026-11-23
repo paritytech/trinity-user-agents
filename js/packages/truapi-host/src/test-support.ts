@@ -38,6 +38,7 @@ export function makeHostCallbacks(
       read: async () => undefined,
       write: async () => {},
       clear: async () => {},
+      clearProduct: async () => {},
       async *subscribeStorage() {},
     },
     productOperations: {

@@ -131,6 +131,11 @@ impl X25519SharedSecret {
 pub struct AeadKey(Zeroizing<[u8; 32]>);
 
 impl AeadKey {
+	/// A key derived by another scheme than an X25519 agreement.
+	pub fn from_bytes(key: Zeroizing<[u8; 32]>) -> Self {
+		Self(key)
+	}
+
 	/// Encrypts `plaintext` with the given `nonce` into `nonce ‖ ciphertext ‖ tag`.
 	pub fn encrypt_with_nonce(
 		&self,

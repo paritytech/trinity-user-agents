@@ -61,6 +61,7 @@ private extension PaymentRequestViewFactory {
         context: PaymentRequestContext,
         chainAsset: ChainAsset
     ) -> TitleDetailsSheetViewModel {
+        let authorizer = DeviceOwnerAuthorizer()
         let formattedAmount = formatAmount(
             context.amountInPlanks,
             chainAsset: chainAsset
@@ -78,7 +79,14 @@ private extension PaymentRequestViewFactory {
             message: LocalizableResource { _ in .normal(formattedAmount) },
             mainAction: makeAction(
                 title: String(localized: .Common.approve)
-            ) { context.deliverApproved() },
+            ) {
+                authorizer.authorize(animated: true, retriable: false) { isAuthorized in
+                    guard isAuthorized else {
+                        return
+                    }
+                    context.deliverApproved()
+                }
+            },
             secondaryAction: makeAction(
                 title: String(localized: .Common.reject)
             ) { context.deliverRejected() }

@@ -200,7 +200,7 @@ Publishers MUST set `kind` to match the subname label the manifest is written un
 
 #### Funding configuration
 
-`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding; an omitted key or `"funding": null` means it does not. The provider's worker answers quotes, and a Host asks every funding provider for every quote. The funding providers are the ones the Host offers, bundled with it or resolved from their published names, whose Worker manifest declares `includes.funding`. What the provider moves comes from those quotes; `routes` can declare it up front so a Host can show what the provider serves before quotes arrive.
+`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding; an omitted key or `"funding": null` means it does not. The provider's worker answers quotes, and a Host asks every funding provider for every quote. The funding providers are the ones the Host offers, resolved from their published names, whose Worker manifest declares `includes.funding`. What the provider moves comes from those quotes; `routes` can declare it up front so a Host can show what the provider serves before quotes arrive.
 
 ```typescript
 type FundingConfig = {
