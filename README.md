@@ -373,21 +373,19 @@ registered again.
 
 ### PGAS claims
 
-Native signing hosts claim PGAS through the durable ledger. A
-`SmartContractAllowance` resource, from a product or from a paired host over
-SSO, registers a deferred claim of one slot into the product account and
-answers once the claim is in a best block. A
-destination has at most one claim waiting to be built or to reach a block, so
-a retried or concurrent request waits on that claim instead of spending
-another slot. A claim is built only from a session of the account that
-registered it, and gives up when another account is signed in. A refused or
-expired attempt is built again in a fresh slot, up to five attempts, and no
-attempt is built later than ten minutes after registration. The engine
-decides a claim by finding its extrinsic in a block, because
+Native signing hosts register a PGAS claim domain with the durable engine,
+for NFT transfers to depend on. `PgasClaims::claim` registers a deferred claim
+of one slot into a destination account. A destination has at most one claim
+waiting to be built or to reach a block, and a second claim into it is refused
+with the id of the active one. A claim is built only from a session of the
+account that registered it, and gives up when another account is signed in.
+A refused or expired attempt is built again in a fresh slot, up to five
+attempts, and no attempt is built later than ten minutes after registration.
+The engine decides a claim by finding its extrinsic in a block, because
 `Pgas.ClaimedGasAliases` records only the person's alias for a day and slot,
-whichever claim of that slot landed. A request stops waiting after three minutes, answering `NotAvailable`,
-or answers `Cancelled` when it is cancelled, and the claim carries on. Hosts without a core
-database, the wasm test host and the CLI tools claim directly.
+whichever claim of that slot landed. Nothing registers claims yet: a
+`SmartContractAllowance` request claims PGAS directly, without the durable
+ledger.
 
 ### NFT purses
 

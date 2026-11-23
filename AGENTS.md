@@ -28,9 +28,10 @@ rust/crates/
                          and receive cheques over the statement store; recovery reads the
                          seed's installations through `installation_registry` and scans
                          keys with the generic `gap_scan`, which coinage can reuse; its
-                         `pgas_claims` module claims PGAS as deferred durable transactions,
-                         at most one active claim per destination, each built only by the
-                         account that registered it; its `public_profile` domain resolves and caches
+                         `pgas_claims` module claims PGAS as deferred durable transactions
+                         for NFT transfers to depend on, at most one active claim per
+                         destination, each built only by the account that registered it;
+                         its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them; its `materials` module keeps
                          the materials renderer trees name in the same database, read from
