@@ -1,5 +1,5 @@
 ---
-"@parity/truapi-host": minor
+"@parity/truapi-host": major
 "@parity/truapi": patch
 ---
 
