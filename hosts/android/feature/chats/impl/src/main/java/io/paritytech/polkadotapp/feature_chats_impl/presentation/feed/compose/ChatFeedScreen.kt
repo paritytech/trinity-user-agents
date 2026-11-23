@@ -269,16 +269,16 @@ private fun ChatFeedScreenInternal(
                                 dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
                             )
                         }
-                    }
 
-                    if (it.messages.isEmpty() && emptyRoomText != null) {
-                        EmptyRoomText(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .padding(bottom = footerHeight)
-                                .padding(horizontal = PolkadotTheme.spacings.extraMedium),
-                            text = emptyRoomText,
-                        )
+                        if (it.messages.isEmpty() && emptyRoomText != null) {
+                            EmptyRoomText(
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .padding(bottom = footerHeight)
+                                    .padding(horizontal = PolkadotTheme.spacings.extraMedium),
+                                text = emptyRoomText,
+                            )
+                        }
                     }
                 }
 
