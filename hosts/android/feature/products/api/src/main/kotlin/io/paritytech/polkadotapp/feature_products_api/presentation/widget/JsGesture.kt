@@ -31,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
@@ -414,6 +415,33 @@ internal fun JsGesture(
                                 send(pan.moveAction, JsGesturePhase.MOVED, point.x, point.y, width)
                             }
                         }
+                        // The pan takes the finger: Started at the touch-down point, then this change's place.
+                        fun claim(change: PointerInputChange) {
+                            claimed = true
+                            node.position?.let { position ->
+                                if (pan.moveAction != null) {
+                                    moves.clear()
+                                    moves.noteAnswer(position.value.value.answer)
+                                    moveJob = scope.launchGestureMoves(moves, position, pan.moveIntervalMs) { point ->
+                                        if (current.enabled && current.position === position) {
+                                            sendKeyed(position, pan.moveAction, point, width)
+                                        } else {
+                                            moves.clear()
+                                        }
+                                    }
+                                }
+                            }
+                            val start = at(down.position)
+                            traced(down.position, begin = true)
+                            send(pan.startAction, JsGesturePhase.STARTED, start.x, start.y, width)
+                            last = at(change.position)
+                            traced(change.position)
+                            offer(last, change.uptimeMillis)
+                            change.consume()
+                        }
+                        // As in the existing card: a free location pan (a scratch) starts where the finger lands,
+                        // so a press with no movement still leaves its dab.
+                        if (GestureRules.claimsAtTouchDown(pan.axis, pan.location)) claim(down)
                         try {
                             while (true) {
                                 val event = awaitPointerEvent()
@@ -436,29 +464,7 @@ internal fun JsGesture(
                                 }
                                 total += change.positionChangeIgnoreConsumed()
                                 when (GestureRules.decide(pan.axis, total.x, total.y, slop)) {
-                                    SlideDragDecision.CLAIM -> {
-                                        claimed = true
-                                        node.position?.let { position ->
-                                            if (pan.moveAction != null) {
-                                                moves.clear()
-                                                moves.noteAnswer(position.value.value.answer)
-                                                moveJob = scope.launchGestureMoves(moves, position, pan.moveIntervalMs) { point ->
-                                                    if (current.enabled && current.position === position) {
-                                                        sendKeyed(position, pan.moveAction, point, width)
-                                                    } else {
-                                                        moves.clear()
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        val start = at(down.position)
-                                        traced(down.position, begin = true)
-                                        send(pan.startAction, JsGesturePhase.STARTED, start.x, start.y, width)
-                                        last = at(change.position)
-                                        traced(change.position)
-                                        offer(last, change.uptimeMillis)
-                                        change.consume()
-                                    }
+                                    SlideDragDecision.CLAIM -> claim(change)
                                     SlideDragDecision.RELEASE -> break
                                     SlideDragDecision.WAIT -> Unit
                                 }

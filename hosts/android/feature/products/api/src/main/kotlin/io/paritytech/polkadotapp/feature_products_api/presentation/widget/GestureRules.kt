@@ -29,6 +29,12 @@ internal object GestureRules {
     }
 
     /**
+     * Whether a pan takes the finger where it lands rather than once it crosses the slop: a free pan that reports the
+     * finger's place (a scratch), as the existing card does, so a press with no movement still scratches.
+     */
+    fun claimsAtTouchDown(axis: JsPanAxis, location: Boolean): Boolean = location && axis == JsPanAxis.FREE
+
+    /**
      * How far, in px, the children may move: for [JsPanTravel.ParentWidth] the gesture node's own width less its
      * children's, never below zero.
      */
