@@ -290,13 +290,17 @@ impl StackSource {
 		if !self.running.descriptor.chains.iter().any(|chain| chain.genesis() == named) {
 			return false;
 		}
-		let listed = self.wrong_genesis.iter().position(|wrong| wrong.named == named);
-		let before = listed.map(|index| self.wrong_genesis.swap_remove(index).answered);
+		let entry = self.wrong_genesis.iter().find(|entry| entry.named == named);
+		let listed = entry.map(|entry| entry.answered);
 		let wrong = (answered != named).then_some(answered);
+		if listed == wrong {
+			return false;
+		}
+		self.wrong_genesis.retain(|entry| entry.named != named);
 		if wrong.is_some() {
 			self.wrong_genesis.push(hashes);
 		}
-		before != wrong
+		true
 	}
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
