@@ -31,6 +31,17 @@ struct GestureSettleTests {
         #expect(GestureSettle.animation(.home, reduceMotion: false) != nil)
         #expect(GestureSettle.endDuration >= 0.12 && GestureSettle.endDuration <= 0.16)
     }
+
+    @Test("A pan with a feel settles with the feel's own motion: its spring home, its approach to the end")
+    func animationWithFeel() {
+        let feel = SlideStyle.feel
+        #expect(GestureSettle.animation(.home, reduceMotion: false, feel: feel) == feel.springHome)
+        #expect(
+            GestureSettle.animation(.end, reduceMotion: false, feel: feel, remaining: 10)
+                == CustomMessageWidgetNode.PanFeel.easeOutQuad(feel.approach(distance: 10))
+        )
+        #expect(GestureSettle.animation(.home, reduceMotion: true, feel: feel) == nil)
+    }
 }
 
 @MainActor

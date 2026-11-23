@@ -152,7 +152,7 @@ public final class GestureOffsetChannel {
 }
 
 /// How a keyed every-move thumb settles when the finger lifts, on the host, so it does not jump in one frame: back home
-/// with the native slide-to-confirm's spring, or, released at or past the worker's completion point (90% of the
+/// with the native slide-to-confirm's spring (the pan's feel's, when it has one), or, released at or past the worker's completion point (90% of the
 /// travel, as its slider decides), to the end with a short ease-out. Tracking while the finger is down stays direct.
 enum GestureSettle: Equatable {
     case home
@@ -183,11 +183,19 @@ enum GestureSettle: Equatable {
         CGPoint(x: (answeredMove.x - answer.x).rounded(), y: (answeredMove.y - answer.y).rounded())
     }
 
-    static func animation(_ kind: GestureSettle, reduceMotion: Bool) -> Animation? {
+    /// With a feel, the worker's own motion: its spring home, or its ease-out approach over the `remaining` way to the end.
+    static func animation(
+        _ kind: GestureSettle,
+        reduceMotion: Bool,
+        feel: CustomMessageWidgetNode.PanFeel? = nil,
+        remaining: CGFloat = 0
+    ) -> Animation? {
         if reduceMotion { return nil }
         switch kind {
-        case .home: return .spring(response: 0.35, dampingFraction: 0.6)
-        case .end: return .easeOut(duration: endDuration)
+        case .home: return feel?.springHome ?? .spring(response: 0.35, dampingFraction: 0.6)
+        case .end:
+            if let feel { return CustomMessageWidgetNode.PanFeel.easeOutQuad(feel.approach(distance: remaining)) }
+            return .easeOut(duration: endDuration)
         }
     }
 }

@@ -52,17 +52,17 @@ struct NodeGestureView<Content: View>: View {
         .overlay {
             GestureSurface(props: interactiveProps, onPan: receive, onTap: tap, onPress: press)
         }
-            .accessibilityElement(children: props.accessibilityLabel == nil ? .contain : .ignore)
-            .accessibilityLabel(props.accessibilityLabel ?? "")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { activate() }
-            .sensoryFeedback(.success, trigger: confirmations)
-            .applyWidgetNodeModifiers(modifiers, alignment: .leading)
-            .onChange(of: props.isEnabled) { _, enabled in
-                if !enabled, dragging { cancel() }
-                if enabled { held = false; setOffset(.zero) }
-            }
-            .onDisappear { pacer.stop() }
+        .accessibilityElement(children: props.accessibilityLabel == nil ? .contain : .ignore)
+        .accessibilityLabel(props.accessibilityLabel ?? "")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { activate() }
+        .sensoryFeedback(.success, trigger: confirmations)
+        .applyWidgetNodeModifiers(modifiers, alignment: .leading)
+        .onChange(of: props.isEnabled) { _, enabled in
+            if !enabled, dragging { cancel() }
+            if enabled { held = false; setOffset(.zero) }
+        }
+        .onDisappear { pacer.stop() }
     }
 }
 
@@ -204,7 +204,12 @@ private extension NodeGestureView {
         )
         channel.settle(
             to: target,
-            animation: GestureSettle.animation(kind, reduceMotion: reduceMotion),
+            animation: GestureSettle.animation(
+                kind,
+                reduceMotion: reduceMotion,
+                feel: props.feel,
+                remaining: max(panTravel - along, 0)
+            ),
             now: ProcessInfo.processInfo.systemUptime
         )
     }
@@ -223,7 +228,8 @@ private extension NodeGestureView {
     /// The host's drag offset, and the place the fading nodes read, in one transaction.
     func setOffset(_ value: CGPoint) {
         offset = value
-        if let key = props.key { gestureOffsets?.place(for: key).drag = props.pan?.axis == .vertical ? value.y : value.x }
+        if let key = props
+            .key { gestureOffsets?.place(for: key).drag = props.pan?.axis == .vertical ? value.y : value.x }
     }
 
     func updatePlace() {
