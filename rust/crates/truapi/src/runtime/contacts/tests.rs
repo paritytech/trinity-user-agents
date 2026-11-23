@@ -8,13 +8,13 @@ fn product(id: &str) -> ProductId {
 }
 
 /// One identity's handle key in `product_id`, derived the way a live session's is.
-fn handle_key_in(product_id: &str) -> ContactHandleKey {
-	ContactHandleKey::from_root_entropy_source(&[1u8; 32], &product(product_id))
+fn handle_key_in(product_id: &ProductId) -> ContactHandleKey {
+	ContactHandleKey::from_root_entropy_source(&[1u8; 32], product_id)
 }
 
 /// The handle key a host holds for one identity in one product.
 fn handle_key() -> ContactHandleKey {
-	handle_key_in("voting.dot")
+	handle_key_in(&product("voting.dot"))
 }
 
 /// The same product's handle key for another identity.
@@ -41,35 +41,35 @@ fn the_handle_key_mints_under_the_product_key() {
 fn one_contact_has_one_handle_within_a_product() {
 	// Stable across the user's hosts: the same root source and product give
 	// the same handle.
-	assert_eq!(handle_key_in("voting.dot").mint(&ALICE), handle_key_in("voting.dot").mint(&ALICE));
+	assert_eq!(handle_key_in(&product("voting.dot")).mint(&ALICE), handle_key_in(&product("voting.dot")).mint(&ALICE));
 }
 
 #[test]
 fn one_contact_has_a_different_handle_in_each_product() {
-	assert_ne!(handle_key_in("voting.dot").mint(&ALICE), handle_key_in("games.dot").mint(&ALICE));
+	assert_ne!(handle_key_in(&product("voting.dot")).mint(&ALICE), handle_key_in(&product("games.dot")).mint(&ALICE));
 }
 
 #[test]
 fn a_handle_from_one_product_names_nobody_in_another() {
-	let handle = handle_key_in("games.dot").mint(&ALICE);
-	assert!(!handle_key_in("voting.dot").matches(&handle, &ALICE));
+	let handle = handle_key_in(&product("games.dot")).mint(&ALICE);
+	assert!(!handle_key_in(&product("voting.dot")).matches(&handle, &ALICE));
 }
 
 #[test]
 fn a_cached_handle_from_another_product_is_a_miss() {
 	// The cache is shared by every product runtime of a host.
 	let cache = ContactHandleCache::default();
-	let games = handle_key_in("games.dot");
+	let games = handle_key_in(&product("games.dot"));
 	let handle = games.mint(&BOB);
 	cache.insert(&games, handle, BOB, cache.generation());
-	assert_eq!(cache.get(&handle, &handle_key_in("voting.dot")), None);
+	assert_eq!(cache.get(&handle, &handle_key_in(&product("voting.dot"))), None);
 }
 
 #[test]
 fn another_products_cached_handle_does_not_refuse_a_call() {
 	// One product's picks must not decide whether another's call goes through.
 	let cache = ContactHandleCache::default();
-	let games = handle_key_in("games.dot");
+	let games = handle_key_in(&product("games.dot"));
 	let handle = games.mint(&BOB);
 	cache.insert(&games, handle, BOB, cache.generation());
 

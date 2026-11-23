@@ -58,7 +58,7 @@ Jollity gets a domain error with the reason `No active session`.
 
 The handle is one value per contact and product: the same on every Host of this user, different in
 every other product, so two products cannot join contacts on it. It is keyed on the user's entropy and
-the product's dotNS identifier, so no product can turn it back into an account. It is not an address: a product
+the full product id, network suffix or localhost port included, so no product can turn it back into an account. It is not an address: a product
 names it as the recipient and the core substitutes the account when it builds the transaction. A
 product-scoped address is not derivable at all, which is why the handle is resolvable rather than
 directly usable.

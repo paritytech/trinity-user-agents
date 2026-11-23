@@ -9,7 +9,10 @@
 //! product, so two products cannot join their users' contacts on it. Within a
 //! product it is stable on every host of this user, because the key comes from
 //! the session's root entropy source, which the wallet supplies alike to each
-//! host, and from the product's dotNS identifier.
+//! host, and from the product's id. The id is the full one the host runs the
+//! product under, network suffix or localhost port included, so the same
+//! product on another network or port is a different product here, as it is
+//! for its accounts.
 //!
 //! No product can reach the root entropy source, so the mapping cannot be
 //! recovered by hashing candidate accounts.
@@ -24,8 +27,12 @@ use crate::{host_logic::keyed_hash::blake2b_256_keyed, product_id::ProductId};
 /// it stays small; reaching the bound empties it rather than evicting in order.
 const HANDLE_CACHE_MAX_ENTRIES: usize = 256;
 
-/// Domain separator for the contact-handle key.
-pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle";
+/// Domain separator for the user's handle key.
+///
+/// The user's handle key only ever hashes product ids, and only product
+/// handle keys mint handles, so a product handle key cannot equal a handle:
+/// no handle is minted under the key a product id is hashed with.
+pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle-key/user";
 
 /// Domain-separate the session's root entropy source into the user's handle
 /// key, so it cannot collide with another key derived from the same source.
