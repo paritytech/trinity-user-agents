@@ -23,7 +23,7 @@ fun voucherInRecycler(index: Int, exponent: Int) = RecyclerVoucher(
     ringVrfKeyIndex = testKey(index),
     ringVrfPublicKey = byteArrayOf(index.toByte()).toDataByteArray(),
     recyclerValue = ValueExponent(exponent),
-    location = RecyclerVoucher.Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 32, enteredAt = null),
+    location = RecyclerVoucher.Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = 32, enteredAt = null, recyclerUnloaded = null),
     recyclerFungibility = RecyclerFungibility.NONE,
     maxRecyclerFungibility = RecyclerFungibility.NONE,
 )

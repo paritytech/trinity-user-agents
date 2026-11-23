@@ -39,6 +39,7 @@ import {
   type MockHostConfig,
   type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
+import { stackGenesisHashes } from "./networks.js";
 import {
   checkDerivationIndex,
   resolveAccount,
@@ -257,10 +258,13 @@ export function publishTestHostGlobals(control: TestHostControl): () => void {
 export async function startTestHost(
   options: TestHostPageOptions,
 ): Promise<TestHostPage> {
-  const host = createMockHost(options.mock);
   const { productId: hostProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
+  const host = createMockHost({
+    servedChains: stackGenesisHashes(hostConfig.testStack),
+    ...options.mock,
+  });
 
   // A signing host, not a pairing host: a test host owns its keys. Note the
   // behavioural consequence -- a signing host answers `request_login` with
