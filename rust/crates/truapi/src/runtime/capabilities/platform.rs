@@ -512,8 +512,11 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 					}));
 				}
 				let trusted = self.connection.product.product_id.has_trusted_remote_permissions();
-				notification.title =
-					notification.title.filter(|title| trusted && !title.trim().is_empty());
+				notification.title = notification
+					.title
+					.filter(|_| trusted)
+					.map(|title| title.trim_matches(is_blank_title_char).to_string())
+					.filter(|title| !title.is_empty());
 				self.connection.platform.push_notification(notification).await.map_err(|err| {
 					CallError::Domain(latest::HostPushNotificationError::Unknown {
 						reason: err.reason,
@@ -539,4 +542,9 @@ impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 			})
 			.await
 	}
+}
+
+fn is_blank_title_char(character: char) -> bool {
+	character.is_whitespace() ||
+		matches!(character, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}')
 }
