@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -126,11 +127,11 @@ class FundingUiMapperTest {
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount)
 
     /** The ask's list, as the funding service reports it. */
-    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount })
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() })
 
     private fun flow() = FundingFlowState.initial(
         direction = FundingDirection.IN,
-        cash = FundingCash(precision = 6),
+        cashPrecision = 6,
         format = testCashFormat(),
         spendable = null,
         options = FundingOptions(
@@ -149,7 +150,7 @@ class FundingUiMapperTest {
 
     private fun cryptoFlow(vararg candidates: FundingCandidate) = FundingFlowState.initial(
         direction = FundingDirection.IN,
-        cash = FundingCash(precision = 6),
+        cashPrecision = 6,
         format = testCashFormat(),
         spendable = null,
         options = FundingOptions(
@@ -230,10 +231,8 @@ class FundingUiMapperTest {
     /** A fee under a cent still costs something, so it rounds up. A balance rounding down is in FundingUnitsTest. */
     @Test
     fun `a fee rounds up to the cent`() {
-        val cash = FundingCash(precision = 6)
-
-        assertEquals("$0.01 CASH", testCashFormat().cost(cash.decimal("9000")))
-        assertEquals("$1,000.26 CASH", testCashFormat().cost(cash.decimal("1000250001")))
+        assertEquals("$0.01 CASH", testCashFormat().cost(flow().cashAmount(9000.intoBalance())))
+        assertEquals("$1,000.26 CASH", testCashFormat().cost(flow().cashAmount(1_000_250_001.intoBalance())))
     }
 
     @Test

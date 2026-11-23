@@ -47,7 +47,7 @@ class FundingAmountViewModel @AssistedInject constructor(
         .map { Triple(it.units, it.options, it.list) to it }
         .distinctUntilChanged { old, new -> old.first == new.first }
         .mapLatest { (key, flow) ->
-            key.first?.let { units -> service.amountIssue(units, flow.spendable?.let(flow.cash::units), sheet.sessionId) }
+            key.first?.let { units -> service.amountIssue(units, flow.spendable, sheet.sessionId) }
                 ?: Result.success(null)
         }
 

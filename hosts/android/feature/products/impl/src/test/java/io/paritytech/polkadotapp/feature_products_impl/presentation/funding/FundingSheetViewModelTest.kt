@@ -40,8 +40,8 @@ class FundingSheetViewModelTest {
     private val service = FakeFundingService()
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val interactor = mockk<FundingFlowInteractor> {
-        coEvery { cash() } returns FundingFixtures.cash
-        coEvery { spendable(any()) } returns null
+        coEvery { cashPrecision() } returns FundingFixtures.CASH_PRECISION
+        coEvery { spendable() } returns null
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg<ProductId>().value, null) }
     }
 

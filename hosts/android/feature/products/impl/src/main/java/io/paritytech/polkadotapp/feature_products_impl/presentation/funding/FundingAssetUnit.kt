@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.canonical
-import uniffi.truapi.U128
+import io.paritytech.polkadotapp.chains.network.binding.Balance
+import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
@@ -40,11 +40,10 @@ data class FundingAssetUnit(
             }.format(value)
     }
 
-    fun decimal(units: U128): BigDecimal =
-        units.toBigIntegerOrNull()?.toBigDecimal()?.movePointLeft(decimals)?.canonical() ?: BigDecimal.ZERO
+    fun decimal(units: Balance): BigDecimal = units.amountFromPlanks(decimals).canonical()
 
     /** "€50.05" for fiat, "51.80 USDT" for crypto. */
-    fun format(units: U128, locale: Locale = Locale.getDefault()): String = format(decimal(units), locale)
+    fun format(units: Balance, locale: Locale = Locale.getDefault()): String = format(decimal(units), locale)
 
     fun format(value: BigDecimal, locale: Locale = Locale.getDefault()): String {
         val currency = if (isFiat) isoCurrency(code) else null
@@ -58,8 +57,11 @@ data class FundingAssetUnit(
     }
 
     /** "25.10 EUR", the way the provider list sets a quote. */
-    fun formatWithCode(units: U128): String {
+    fun formatWithCode(units: Balance): String {
         val digits = if (isFiat) decimals else CRYPTO_DISPLAY_DIGITS
         return "${plain(decimal(units), digits, CODE_MINIMUM_DIGITS)} $code"
     }
 }
+
+/** One scale per value, so equal amounts compare equal as data. */
+internal fun BigDecimal.canonical(): BigDecimal = stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }

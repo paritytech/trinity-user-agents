@@ -1,8 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.chains.network.binding.Balance
+import io.paritytech.polkadotapp.chains.util.amountFromPlanks
+import io.paritytech.polkadotapp.chains.util.planksFromAmount
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
@@ -34,9 +37,11 @@ data class FundingLimits(
  */
 data class FundingFlowState(
     val direction: FundingDirection,
-    val cash: FundingCash,
+    /** The payment balance's decimals. */
+    val cashPrecision: Int,
     val format: FundingCashFormat,
-    val spendable: BigDecimal?,
+    /** What a withdrawal can spend, in balance units. */
+    val spendable: Balance?,
     /** What the core offers for the selection on screen; `null` until it has said. */
     val options: FundingOptions?,
     val rail: FundingRail,
@@ -49,7 +54,7 @@ data class FundingFlowState(
     /** The quotes on screen before the same amount was asked again, shown greyed while the new ones arrive. */
     val staleQuotes: Map<ProductId, FundingQuote>,
     /** The amount of the latest ask, in balance units; `null` while none is. */
-    val askedAmount: U128?,
+    val askedAmount: Balance?,
     /** The core's list for [askedAmount]; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
     /** Why the typed amount cannot go ahead, as the core last answered for it. */
@@ -60,20 +65,20 @@ data class FundingFlowState(
     companion object {
         fun initial(
             direction: FundingDirection,
-            cash: FundingCash,
+            cashPrecision: Int,
             format: FundingCashFormat,
-            spendable: BigDecimal?,
+            spendable: Balance?,
             options: FundingOptions?,
-            amount: BigDecimal?,
+            amount: Balance?,
             country: FundingCountry?,
         ) = FundingFlowState(
             direction = direction,
-            cash = cash,
+            cashPrecision = cashPrecision,
             format = format,
             spendable = spendable,
             options = options,
             rail = options.defaultRail,
-            amountText = amount?.let(::textFor).orEmpty(),
+            amountText = amount?.amountFromPlanks(cashPrecision)?.let(::textFor).orEmpty(),
             country = country,
             network = null,
             asset = null,
@@ -90,12 +95,15 @@ data class FundingFlowState(
             value.setScale(2, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
     }
 
-    /** The typed amount in balance units, rounded down; `null` for text that is not a plain decimal amount. */
-    val units: U128?
-        get() = amountText.takeIf(AMOUNT_TEXT::matches)?.toBigDecimalOrNull()?.let(cash::units)
+    /**
+     * The typed amount in balance units, rounded down so the host never asks for more than the user typed; `null`
+     * for text that is not a plain decimal amount.
+     */
+    val units: Balance?
+        get() = amountText.takeIf(AMOUNT_TEXT::matches)?.toBigDecimalOrNull()?.planksFromAmount(cashPrecision)
 
     val amount: BigDecimal
-        get() = units?.let(cash::decimal) ?: BigDecimal.ZERO
+        get() = units?.let(::cashAmount) ?: BigDecimal.ZERO
 
     val candidates: List<FundingCandidate>
         get() = options?.candidates.orEmpty()
@@ -120,6 +128,9 @@ data class FundingFlowState(
     /** What [quote]'s provider-side figures are counted in: the asked asset, at the decimals the quote states. */
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
+
+    /** [units] of the balance, as the screens read them. */
+    fun cashAmount(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
@@ -161,7 +172,7 @@ data class FundingFlowState(
 
     /** The least [networkId] takes, as the core says. */
     fun minimum(networkId: String): BigDecimal? =
-        options?.networks?.firstOrNull { it.network == networkId }?.limits?.min?.let(cash::decimal)
+        options?.networks?.firstOrNull { it.network == networkId }?.limits?.min?.let(::cashDecimal)
 
     /** The tokens the core offers on the network picked, or on any before one is. */
     val tokens: List<FundingToken>
@@ -178,11 +189,11 @@ data class FundingFlowState(
     /** The least each supported country takes, where a provider showed one. */
     val countryMinimums: Map<String, BigDecimal>
         get() = countrySupport.mapNotNull { (code, support) ->
-            (support as? FundingCountrySupport.Supported)?.min?.let { code to cash.decimal(it) }
+            (support as? FundingCountrySupport.Supported)?.min?.let(::cashDecimal)?.let { code to it }
         }.toMap()
 
     /** The amount to ask quotes for: the typed one, once the asset is known: the token picked for crypto, else the one the core names. */
-    val askAmount: U128?
+    val askAmount: Balance?
         get() {
             val asked = if (rail == FundingRail.CRYPTO) asset else options?.asset
             return units?.takeIf { amount.signum() > 0 && asked != null }
@@ -210,7 +221,7 @@ data class FundingFlowState(
      * The service's latest ask, [asked], and its list. Asking the same amount again keeps the quotes on screen greyed
      * while their providers have not answered again.
      */
-    fun withQuotes(newList: FundingQuoteList?, asked: U128?): FundingFlowState {
+    fun withQuotes(newList: FundingQuoteList?, asked: Balance?): FundingFlowState {
         if (asked == null) return copy(rows = emptyMap(), staleQuotes = emptyMap(), askedAmount = null, list = null)
 
         val onScreen = if (asked == askedAmount) quotedProviders.toMap() + staleQuotes else emptyMap()
@@ -239,9 +250,12 @@ data class FundingFlowState(
         )
 
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
-        minimum = this?.min?.let(cash::decimal),
-        maximum = this?.max?.let(cash::decimal),
+        minimum = this?.min?.let(::cashDecimal),
+        maximum = this?.max?.let(::cashDecimal),
     )
+
+    /** A core amount in balance units; `null` when it is not a number. */
+    private fun cashDecimal(units: U128): BigDecimal? = units.toBalanceOrNull()?.let(::cashAmount)
 }
 
 /** The order the rail tabs are drawn in. */

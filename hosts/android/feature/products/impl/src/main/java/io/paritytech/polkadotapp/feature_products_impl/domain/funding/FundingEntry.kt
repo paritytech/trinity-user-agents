@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingOptions
@@ -7,7 +9,6 @@ import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
-import uniffi.truapi.U128
 
 enum class FundingPhase {
     /** Not handed to a provider yet. */
@@ -23,7 +24,7 @@ enum class FundingPhase {
 data class FundingEntry(
     val id: FundingSessionId,
     val direction: FundingDirection,
-    val amount: U128?,
+    val amount: Balance?,
     val openedAtMs: ULong,
     val session: FundingSession?,
     val progress: FundingProgress?,
@@ -32,7 +33,7 @@ data class FundingEntry(
     /** What the core offers for the reported selection, while the session is being set up. */
     val options: FundingOptions?,
     /** The amount of the latest ask; `null` while none is. */
-    val askedAmount: U128?,
+    val askedAmount: Balance?,
     /** The core's list for [askedAmount]; `null` from a new ask until its first list. */
     val quotes: FundingQuoteList?,
     /** The core waits on the session's screens for the user to start it or leave. */
@@ -57,18 +58,18 @@ data class FundingEntry(
         fun of(
             id: FundingSessionId,
             fallbackDirection: FundingDirection,
-            fallbackAmount: U128?,
+            fallbackAmount: Balance?,
             session: FundingSession?,
             progress: FundingProgress?,
             summary: FundingSessionSummary?,
             options: FundingOptions?,
-            askedAmount: U128?,
+            askedAmount: Balance?,
             quotes: FundingQuoteList?,
             isPresented: Boolean,
         ) = FundingEntry(
             id = id,
             direction = session?.direction ?: summary?.direction ?: fallbackDirection,
-            amount = session?.amount ?: summary?.amount ?: fallbackAmount,
+            amount = (session?.amount ?: summary?.amount)?.toBalanceOrNull() ?: fallbackAmount,
             openedAtMs = session?.openedAtMs ?: summary?.openedAtMs ?: 0uL,
             session = session,
             progress = progress,

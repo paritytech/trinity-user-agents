@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
@@ -13,7 +14,6 @@ import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
-import uniffi.truapi.U128
 
 /** The core's funding calls, as [FundingService] makes them. Each boots the core first when it is not running. */
 interface FundingCore {
@@ -21,7 +21,7 @@ interface FundingCore {
 
     suspend fun available(): Result<Boolean>
 
-    suspend fun open(direction: FundingDirection, amount: U128?): Result<String?>
+    suspend fun open(direction: FundingDirection, amount: Balance?): Result<String?>
 
     suspend fun session(intent: String): Result<FundingSession?>
 
@@ -42,13 +42,13 @@ interface FundingCore {
     suspend fun select(intent: String, selection: FundingSelection): Result<Unit>
 
     /** The request id the quote list for [amount] carries; `null` while the selection names no asset. */
-    suspend fun requestQuote(intent: String, amount: U128): Result<ULong?>
+    suspend fun requestQuote(intent: String, amount: Balance): Result<ULong?>
 
     suspend fun startWhenQuoted(intent: String, requestId: ULong): Result<Unit>
 
     suspend fun cancelAutoStart(intent: String): Result<Unit>
 
-    suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?>
+    suspend fun amountIssue(intent: String, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?>
 
     suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean>
 

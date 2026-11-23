@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -31,7 +32,6 @@ class FundingFlowStateTest {
         const val REFRESH_AT_MS = 120_000uL
     }
 
-    private val cash = FundingCash(precision = 6)
     private val germany = FundingCountry(code = "DE", name = "Germany", currencyCode = "EUR", currencyName = "Euro")
     private val providerA = ProductId.parse("a.dot").getOrThrow()
     private val providerB = ProductId.parse("b.dot").getOrThrow()
@@ -48,7 +48,7 @@ class FundingFlowStateTest {
 
     @Test
     fun `quotes are asked once the core names the asset`() {
-        assertEquals("50000000", state(options(asset = "EUR"), amount = "50").askAmount)
+        assertEquals(50_000_000.intoBalance(), state(options(asset = "EUR"), amount = "50").askAmount)
         assertNull(state(options(asset = null), amount = "50").askAmount)
         assertNull(state(options(asset = "EUR"), amount = "0").askAmount)
     }
@@ -65,9 +65,15 @@ class FundingFlowStateTest {
     fun `text that is no amount asks for nothing`() {
         val flow = state(options(asset = "EUR"), amount = "5.")
 
-        assertEquals("5000000", flow.units)
+        assertEquals(5_000_000.intoBalance(), flow.units)
         assertNull(state(options(asset = "EUR"), amount = "abc").units)
         assertNull(state(options(asset = "EUR"), amount = "abc").askAmount)
+    }
+
+    @Test
+    fun `typed amounts round down to balance units`() {
+        assertEquals(1.intoBalance(), state(options(asset = "EUR"), amount = "0.0000019").units)
+        assertEquals(BigDecimal("0.000001"), state(options(asset = "EUR"), amount = "0.0000019").amount)
     }
 
     @Test
@@ -181,7 +187,7 @@ class FundingFlowStateTest {
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount)
 
     /** The ask's list, as the funding service reports it; none is the core withdrawing it, which drops the ask. */
-    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount })
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() })
 
     private fun state(
         options: FundingOptions?,
@@ -189,9 +195,9 @@ class FundingFlowStateTest {
         amount: String = "",
     ) = FundingFlowState.initial(
         direction = direction,
-        cash = cash,
+        cashPrecision = 6,
         format = testCashFormat(),
-        spendable = BigDecimal("226.78"),
+        spendable = 226_780_000.intoBalance(),
         options = options,
         amount = null,
         country = germany,

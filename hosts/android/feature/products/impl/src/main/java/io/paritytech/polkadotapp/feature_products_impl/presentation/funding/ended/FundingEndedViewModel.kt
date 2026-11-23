@@ -47,7 +47,7 @@ class FundingEndedViewModel @Inject constructor(
 
     private val details = flow {
         val summary = service.entryState(sessionId).firstOrNull()?.summary
-        val ended = summary?.let { FundingEndedMapper(interactor.cash(), cashFormat).map(it) }
+        val ended = summary?.let { FundingEndedMapper(interactor.cashPrecision(), cashFormat).map(it) }
         if (summary == null || ended == null) {
             close()
             return@flow

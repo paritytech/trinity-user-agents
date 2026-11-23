@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
+import io.paritytech.polkadotapp.chains.network.binding.orZero
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -23,9 +25,9 @@ import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStep
 import uniffi.truapi.ProductId
+import uniffi.truapi.U128
 import uniffi.truapi.fundingNetworkName
 import java.math.BigDecimal
-import java.math.BigInteger
 import java.math.RoundingMode
 import kotlin.math.ceil
 import kotlin.math.max
@@ -43,7 +45,7 @@ fun FundingFlowState.toAmountUiState(history: FundingHistoryClock): FundingAmoun
         rails = FUNDING_RAIL_ORDER.map { FundingRailTab(it, selected = it == rail, enabled = it in available) }.toImmutableList(),
         amount = format.figure(amount),
         hasAmount = amount.signum() > 0,
-        available = spendable?.takeIf { withdraw }?.let(format::label),
+        available = spendable?.takeIf { withdraw }?.let { format.label(cashAmount(it)) },
         note = amountNote(),
         presets = if (withdraw) persistentListOf() else PRESETS.map { FundingPreset(it, format.figure(it)) }.toImmutableList(),
         canContinue = canContinue,
@@ -52,8 +54,8 @@ fun FundingFlowState.toAmountUiState(history: FundingHistoryClock): FundingAmoun
 }
 
 private fun FundingFlowState.amountNote(): FundingAmountNote? = when (val issue = amountIssue) {
-    is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(format.label(cash.decimal(issue.min)))
-    is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(format.label(cash.decimal(issue.max)))
+    is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(cashLabel(issue.min))
+    is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(cashLabel(issue.max))
     FundingAmountIssue.NotEnoughBalance -> FundingAmountNote.NotEnough(format.symbol())
     null -> amountLimits.minimum?.let {
         FundingAmountNote.Minimum(format.label(it), withdraw = direction == FundingDirection.OUT)
@@ -76,12 +78,12 @@ fun FundingFlowState.toSummaryUiState(
     return FundingSummaryUiState(
         isWithdraw = !inbound,
         rail = rail,
-        headline = quote?.let { if (inbound) unitOf(it).format(it.sendAmount) else format.label(cash.decimal(it.sendAmount)) },
+        headline = quote?.let { if (inbound) unitOf(it).format(it.sendAmount.balance()) else cashLabel(it.sendAmount) },
         isQuoting = isQuoting,
         showCountry = rail != FundingRail.CRYPTO,
         country = country?.toUi(refused = false, minimum = null, selected = true),
         provider = selectedProviderId?.let { brands.brandOf(it) },
-        payout = quote?.let { if (inbound) format.label(cash.decimal(it.receiveAmount)) else unitOf(it).format(it.receiveAmount) },
+        payout = quote?.let { if (inbound) cashLabel(it.receiveAmount) else unitOf(it).format(it.receiveAmount.balance()) },
         eta = quote?.etaSecs?.let(::etaOf),
         bankRateNoteSymbol = format.symbol().takeIf { rail == FundingRail.BANK && inbound },
         problem = summaryProblem(start, failure),
@@ -95,8 +97,8 @@ private fun FundingFlowState.summaryProblem(start: FundingStartState, failure: F
     start == FundingStartState.StartFailed -> FundingSummaryProblem.StartFailed
     !noProviderQuoted -> null
     else -> when (val issue = unavailableIssue) {
-        is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(format.label(cash.decimal(issue.min)))
-        is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(format.label(cash.decimal(issue.max)))
+        is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(cashLabel(issue.min))
+        is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(cashLabel(issue.max))
         FundingAmountIssue.NotEnoughBalance, null -> noProviderProblem()
     }
 }
@@ -130,7 +132,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val quote = selectedQuote ?: return null
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
-    val feeText = { units: String -> if (inbound) quoteUnit.format(units) else format.cost(cash.decimal(units)) }
+    val feeText = { units: Balance -> if (inbound) quoteUnit.format(units) else format.cost(cashAmount(units)) }
     val total = quote.totalFee()
 
     return FundingFeesUiState(
@@ -139,29 +141,27 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
             rail == FundingRail.CARD -> FundingPayTitle.YOU_PAY
             else -> FundingPayTitle.AMOUNT_TO_SEND
         },
-        amount = feeText(quote.netOfFees().toString()),
-        providerFee = feeText(quote.providerFee),
-        networkFee = feeText(quote.networkFee),
-        totalFee = feeText(total.toString()),
-        pay = if (inbound) quoteUnit.format(quote.sendAmount) else format.label(cash.decimal(quote.sendAmount)),
+        amount = feeText(quote.netOfFees()),
+        providerFee = feeText(quote.providerFee.balance()),
+        networkFee = feeText(quote.networkFee.balance()),
+        totalFee = feeText(total),
+        pay = if (inbound) quoteUnit.format(quote.sendAmount.balance()) else cashLabel(quote.sendAmount),
         rate = rateOf(quote),
     )
 }
 
-private fun FundingQuote.totalFee(): BigInteger =
-    (providerFee.toBigIntegerOrNull() ?: BigInteger.ZERO) + (networkFee.toBigIntegerOrNull() ?: BigInteger.ZERO)
+private fun FundingQuote.totalFee(): Balance = providerFee.balance() + networkFee.balance()
 
 /** What the user pays less the fees, in the unit of `sendAmount`. */
-private fun FundingQuote.netOfFees(): BigInteger =
-    ((sendAmount.toBigIntegerOrNull() ?: BigInteger.ZERO) - totalFee()).max(BigInteger.ZERO)
+private fun FundingQuote.netOfFees(): Balance = (sendAmount.balance() - totalFee()).atLeastZero()
 
 /** What one unit of the balance is worth in the provider-side asset, net of fees as the amount line. */
 private fun FundingFlowState.rateOf(quote: FundingQuote): FundingRate? {
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
-    val net = quote.netOfFees().toString()
-    val providerSide = quoteUnit.decimal(if (inbound) net else quote.receiveAmount)
-    val cashSide = cash.decimal(if (inbound) quote.receiveAmount else net)
+    val net = quote.netOfFees()
+    val providerSide = quoteUnit.decimal(if (inbound) net else quote.receiveAmount.balance())
+    val cashSide = cashAmount(if (inbound) quote.receiveAmount.balance() else net)
     if (cashSide.signum() <= 0) return null
 
     val perCash = providerSide.divide(cashSide, RATE_SCALE, RoundingMode.HALF_EVEN)
@@ -248,8 +248,8 @@ private fun FundingFlowState.providerBadge(state: FundingQuoteState, isBest: Boo
     return when (val reason = state.reason) {
         FundingQuoteUnavailable.Timeout -> FundingProviderBadge.Unavailable
         is FundingQuoteUnavailable.Refused -> when (val refusal = reason.reason) {
-            is FundingQuoteRefusal.BelowMinimum -> FundingProviderBadge.Minimum(format.label(cash.decimal(refusal.min)))
-            is FundingQuoteRefusal.AboveMaximum -> FundingProviderBadge.Maximum(format.label(cash.decimal(refusal.max)))
+            is FundingQuoteRefusal.BelowMinimum -> FundingProviderBadge.Minimum(cashLabel(refusal.min))
+            is FundingQuoteRefusal.AboveMaximum -> FundingProviderBadge.Maximum(cashLabel(refusal.max))
             FundingQuoteRefusal.CountryUnsupported -> FundingProviderBadge.CountryUnsupported
             FundingQuoteRefusal.Unavailable, is FundingQuoteRefusal.Other -> FundingProviderBadge.Unavailable
         }
@@ -263,7 +263,7 @@ private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: Fund
         val inbound = direction == FundingDirection.IN
         val quote = state.quote
         FundingProviderPrice.Quoted(
-            price = unitOf(quote).formatWithCode(if (inbound) quote.sendAmount else quote.receiveAmount),
+            price = unitOf(quote).formatWithCode((if (inbound) quote.sendAmount else quote.receiveAmount).balance()),
             forAmount = forAmount(quote),
         )
     }
@@ -272,7 +272,7 @@ private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: Fund
 }
 
 private fun FundingFlowState.forAmount(quote: FundingQuote): String =
-    format.label(cash.decimal(if (direction == FundingDirection.IN) quote.receiveAmount else quote.sendAmount))
+    cashLabel(if (direction == FundingDirection.IN) quote.receiveAmount else quote.sendAmount)
 
 private fun Map<ProductId, FundingProviderBrand>.brandOf(providerId: ProductId) =
     get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId.value, iconUrl = null)
@@ -308,7 +308,7 @@ fun FundingFlowState.toDepositUiState(
             progress?.hasReceived() == true -> FundingDepositContent.ProgressOnly
             else -> FundingDepositContent.Crypto(
                 qrPayload = deposit.uri ?: deposit.address,
-                amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount),
+                amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount.balance()),
                 exact = deposit.exact,
                 address = deposit.address,
                 networkName = fundingNetworkName(deposit.network),
@@ -317,7 +317,7 @@ fun FundingFlowState.toDepositUiState(
         }
 
         is FundingDeposit.Bank -> FundingDepositContent.Bank(
-            amount = FundingAssetUnit.of(deposit.currency, deposit.decimals.toInt()).format(deposit.amount),
+            amount = FundingAssetUnit.of(deposit.currency, deposit.decimals.toInt()).format(deposit.amount.balance()),
             beneficiary = deposit.beneficiary,
             account = deposit.account,
             bankCode = deposit.bankCode,
@@ -337,7 +337,7 @@ fun FundingFlowState.toDepositUiState(
         started = session.started,
         failed = session.failure != null,
         isCancelling = isCancelling,
-        cancel = session.cancel?.toUi(cash, format),
+        cancel = session.cancel?.let(::cancelUi),
         moneyMoved = progress?.moneyMoved == true,
         cancelAvailability = progress?.cancel ?: FundingCancelAvailability.UNAVAILABLE,
         figure = format.figure(amount),
@@ -400,14 +400,19 @@ fun FundingFlowState.bandLine(band: FundingBand, asset: String?): FundingBandUi?
     }
 }
 
-private fun FundingCancel.toUi(cash: FundingCash, format: FundingCashFormat): FundingCancelUiState? = when (this) {
+private fun FundingFlowState.cancelUi(cancel: FundingCancel): FundingCancelUiState? = when (cancel) {
     FundingCancel.Requested -> FundingCancelUiState.Requested
-    is FundingCancel.Refused -> FundingCancelUiState.Refused(reason)
+    is FundingCancel.Refused -> FundingCancelUiState.Refused(cancel.reason)
     is FundingCancel.Offered -> FundingCancelUiState.Offered(
-        fee = format.cost(cash.decimal(fee)),
-        refund = format.label(cash.decimal(refund)),
-        expiresAt = expiresAt?.let { Instant.fromEpochMilliseconds(it.toLong()) },
+        fee = format.cost(cashAmount(cancel.fee.balance())),
+        refund = cashLabel(cancel.refund),
+        expiresAt = cancel.expiresAt?.let { Instant.fromEpochMilliseconds(it.toLong()) },
     )
     is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
     FundingCancel.Declined, is FundingCancel.Overtaken -> null
 }
+
+private fun FundingFlowState.cashLabel(units: U128): String = format.label(cashAmount(units.balance()))
+
+/** A core amount as a balance; zero when it is not a number. */
+private fun U128.balance(): Balance = toBalanceOrNull().orZero()
