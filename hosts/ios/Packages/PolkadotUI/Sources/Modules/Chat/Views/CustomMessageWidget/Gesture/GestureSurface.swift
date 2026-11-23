@@ -25,6 +25,9 @@ struct GestureSurface: UIViewRepresentable {
     func updateUIView(_ view: GestureSurfaceView, context _: Context) {
         view.isInteractive = props.isEnabled
         view.axis = props.pan?.axis
+        view.startsAtTouchDown = GestureSurfaceView.claimsAtTouchDown(
+            axis: props.pan?.axis, reportsLocation: props.pan?.reportsLocation == true
+        )
         view.acceptsTap = props.tapAction != nil
         view.onPan = onPan
         view.onTap = onTap
@@ -37,6 +40,10 @@ final class GestureSurfaceView: UIView {
     let panRecognizer: any DragRecognizing = GestureSurfaceView.makeDragRecognizer(GestureDragThreshold.current)
     let tapRecognizer = UITapGestureRecognizer()
     var axis: CustomMessageWidgetNode.PanAxis?
+    /// The pan begins where the finger lands, with no movement (`claimsAtTouchDown`).
+    var startsAtTouchDown = false {
+        didSet { (panRecognizer as? ThresholdPanGestureRecognizer)?.beginsAtTouchDown = startsAtTouchDown }
+    }
     var isInteractive = false
     var acceptsTap = false
     var onPan: ((CustomMessageWidgetNode.GesturePhase, PanTranslation) -> Void)?
@@ -92,6 +99,12 @@ final class GestureSurfaceView: UIView {
         }
     }
 
+    /// Whether a pan takes the finger where it lands rather than once it crosses the threshold: a free pan that reports
+    /// the finger's place (a scratch), as the existing card does, so a press with no movement still scratches.
+    static func claimsAtTouchDown(axis: CustomMessageWidgetNode.PanAxis?, reportsLocation: Bool) -> Bool {
+        reportsLocation && axis == .free
+    }
+
     /// One finger, starting after `threshold` points; nil threshold is the system pan recogniser and its own slop.
     static func makeDragRecognizer(_ threshold: CGFloat?) -> any DragRecognizing {
         guard let threshold else {
@@ -120,6 +133,7 @@ extension GestureSurfaceView: UIGestureRecognizerDelegate {
         guard isInteractive else { return false }
         if recognizer === tapRecognizer { return acceptsTap }
         guard let axis else { return false }
+        if startsAtTouchDown { return true }
         return Self.claimsDrag(
             axis: axis,
             translation: panRecognizer.translation(in: window),
