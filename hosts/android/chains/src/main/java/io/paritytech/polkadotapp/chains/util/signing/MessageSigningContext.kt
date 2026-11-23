@@ -32,3 +32,11 @@ class GeneralUntrustedMessage(
         return prefix + unsafeMessage + suffix
     }
 }
+
+class PrefixedSigningContext(
+    private val prefix: ByteArray
+) : MessageSigningContext {
+    override fun messageInContext(unsafeMessage: ByteArray): ByteArray {
+        return prefix + unsafeMessage
+    }
+}

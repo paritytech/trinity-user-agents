@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinRecyclingState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.BalanceEvaluationMode
-import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.VoucherBuckets
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyCoins
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.preClassifyVouchers
@@ -40,7 +39,7 @@ enum class SpendScope {
 class CoinageAssetSelector @Inject constructor(
     private val coinageAssetsUseCase: CoinageAssetsUseCase,
     private val strategyProvider: RecyclingStrategyProvider,
-    private val settings: CoinageRecyclingStrategySettings,
+    private val paramsProvider: RecyclingParamsProvider,
     private val evaluator: CoinRecyclingEvaluator,
     private val voucherUsabilityContextFactory: VoucherUsabilityContextFactory,
 ) {
@@ -95,7 +94,7 @@ class CoinageAssetSelector @Inject constructor(
 
     private suspend fun confirmedSpendAllowed(): Boolean = currentStrategy().allowsConfirmedSpend()
 
-    private suspend fun currentStrategy() = strategyProvider.voucherStrategyFor(settings.getStrategy())
+    private suspend fun currentStrategy() = strategyProvider.voucherStrategyFor(paramsProvider.currentParams())
 
     private suspend fun voucherBuckets(): VoucherBuckets {
         val tracked = coinageAssetsUseCase.getVouchers()

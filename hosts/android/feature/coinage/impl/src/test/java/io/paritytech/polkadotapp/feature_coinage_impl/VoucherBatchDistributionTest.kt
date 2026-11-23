@@ -116,7 +116,7 @@ class VoucherBatchDistributionTest {
         ringVrfKeyIndex = testKey(voucherIndexCounter++),
         ringVrfPublicKey = mock(),
         recyclerValue = ValueExponent(exponent),
-        location = Location.InRecycler(RingIndex(ring.toBigInteger()), recyclerMembers = FULL_RING, enteredAt = null),
+        location = Location.InRecycler(RingIndex(ring.toBigInteger()), recyclerMembers = FULL_RING, enteredAt = null, recyclerUnloaded = null),
         recyclerFungibility = RecyclerFungibility.NONE,
         maxRecyclerFungibility = RecyclerFungibility.NONE,
     )
