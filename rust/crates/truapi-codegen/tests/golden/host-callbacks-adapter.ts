@@ -6,8 +6,8 @@
 // primitives and byte blobs pass through unchanged.
 
 import {
+  ChatRoomRegistrationStatus,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -59,6 +59,7 @@ export interface RawCallbacks {
   chainConnect: ChainConnect;
   createChatRoom?(
     product: Uint8Array,
+    roomId: string,
     request: Uint8Array,
   ): Promise<Uint8Array>;
   registerChatBot?(
@@ -153,10 +154,11 @@ export function createWasmRawCallbacks(
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
-          createChatRoom: async (product, request) =>
-            HostChatCreateRoomResponse.enc(
+          createChatRoom: async (product, roomId, request) =>
+            ChatRoomRegistrationStatus.enc(
               await chat.createChatRoom(
                 ProductContext.dec(product),
+                roomId,
                 HostChatCreateRoomRequest.dec(request),
               ),
             ),
