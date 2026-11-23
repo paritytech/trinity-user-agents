@@ -9,18 +9,19 @@ import TrUAPIHost
 /// its direction and rail, and what the user may still need, such as the bank
 /// details to pay to. Once the session ends it shows the ended screen.
 struct FundingProgressView: View {
-    let model: FundingScreenModel<FundingProgressViewModel>
+    let viewModel: FundingProgressViewModel
     let presenter: FundingProgressPresenterProtocol
+    let branding: FundingProviderBranding
 
     @State private var copied: String?
 
     var body: some View {
         Group {
-            if let ended = model.ended, let endedViewModel = model.viewModel.ended {
+            if let ended = viewModel.ended {
                 FundingEndedView(
-                    ended: ended,
-                    viewModel: endedViewModel,
-                    branding: model.branding,
+                    ended: ended.session,
+                    viewModel: ended.viewModel,
+                    branding: branding,
                     onFees: presenter.showFees,
                     onClose: presenter.close,
                     onStartOver: presenter.startOver
@@ -29,74 +30,26 @@ struct FundingProgressView: View {
                 inProgress
             }
         }
-        .task(id: model.progress?.longerAtMs) { await follow() }
+        .task(id: viewModel.longerAtMs) { await follow() }
         .sheet(isPresented: offerShown) {
-            if let offer = model.cancelOffer, let text = model.viewModel.cancelOffer {
-                FundingCancelOfferView(model: model, presenter: presenter, terms: offer, text: text)
+            if let offer = viewModel.cancelOffer {
+                FundingCancelOfferView(offer: offer, isAnswering: viewModel.isAnsweringOffer, presenter: presenter)
                     .presentationDetents([.medium])
                     .interactiveDismissDisabled()
             }
         }
-    }
-}
-
-// MARK: - State
-
-private extension FundingProgressView {
-    /// The band line, worded for the session's rail and amount.
-    var band: (text: String, isWarning: Bool)? {
-        guard let progress = model.progress else { return nil }
-        return FundingWording.band(
-            progress.band,
-            direction: model.direction,
-            rail: model.rail,
-            asset: model.asset,
-            amount: model.viewModel.amount
-        )
-    }
-
-    /// Retrying or delayed: the session's dot and line turn amber.
-    var isSlow: Bool {
-        model.progress.map { [.retrying, .delayed].contains($0.band) } ?? false
-    }
-
-    var steps: [FundingStepBar.Step] {
-        let reported = model.progress?.steps ?? []
-        let firstUnreached = reported.firstIndex { $0.reachedAtMs == nil }
-
-        return reported.enumerated().map { index, step in
-            let state: FundingStepBar.State =
-                if step.reachedAtMs != nil {
-                    .done
-                } else if index == firstUnreached {
-                    .current(isAmber: isSlow)
-                } else {
-                    .upcoming
-                }
-            return FundingStepBar.Step(title: FundingStepBar.title(step.step, direction: model.direction), state: state)
-        }
-    }
-
-    /// The provider's cancel offer stays up until the user answers it.
-    var offerShown: Binding<Bool> {
-        Binding(get: { model.cancelOffer != nil }, set: { _ in })
-    }
-
-    /// The line under the steps: where a cancel stands, else the band's.
-    var note: (text: String, color: Color)? {
-        if let line = model.progress?.status.cancelLine(direction: model.direction) {
-            return (line.text, line.isWarning ? .fgWarning : .fgSecondary)
-        }
-        if model.progress?.status.cancelCameTooLate == true {
-            return (String(localized: .Funding.cancelCameTooLate), .fgWarning)
-        }
-        return band.map { ($0.text, $0.isWarning ? .fgWarning : .fgSecondary) }
+        .fundingScreen()
     }
 }
 
 // MARK: - Sections
 
 private extension FundingProgressView {
+    /// The provider's cancel offer stays up until the user answers it.
+    var offerShown: Binding<Bool> {
+        Binding(get: { viewModel.cancelOffer != nil }, set: { _ in })
+    }
+
     var inProgress: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: "", onBack: presenter.close)
@@ -109,8 +62,8 @@ private extension FundingProgressView {
                 }
             }
 
-            if model.canRequestCancel {
-                DSButton(model.cancelTitle, style: .destructive, expands: true, action: presenter.confirmCancel)
+            if let cancelTitle = viewModel.cancelTitle {
+                DSButton(cancelTitle, style: .destructive, expands: true, action: presenter.confirmCancel)
             }
         }
         .fundingToast($copied)
@@ -120,13 +73,13 @@ private extension FundingProgressView {
         VStack(spacing: DSSpacings.small) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(isSlow ? Color.fgWarning : Color.fgPrimary)
+                .foregroundStyle(viewModel.isSlow ? Color.fgWarning : Color.fgPrimary)
                 .frame(width: 40, height: 40)
                 .background(.bgSurfaceMain, in: Circle())
-            if let figure = model.viewModel.figure {
+            if let figure = viewModel.figure {
                 DSAmount(
                     amount: figure,
-                    symbol: model.viewModel.symbol,
+                    symbol: viewModel.symbol,
                     typography: .fundingFigure(digits: figure.filter(\.isNumber).count)
                 )
                 .foregroundStyle(.fgPrimary)
@@ -139,21 +92,18 @@ private extension FundingProgressView {
 
     var stepCard: some View {
         VStack(spacing: 0) {
-            FundingStepBar(steps: steps, between: FundingStepBar.between(model.progress?.band))
+            FundingStepBar(steps: viewModel.steps, between: viewModel.stepsBetween)
                 .padding(.horizontal, DSSpacings.mediumIncreased)
                 .padding(.vertical, DSSpacings.medium)
                 .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
-            if let note {
+            if let note = viewModel.note {
                 VStack(spacing: 2) {
                     Text(verbatim: note.text)
                         .typography(.bodySmall)
-                        .foregroundStyle(note.color)
-                    if let progress = model.progress, progress.lastHeardAtMs != nil || progress.detail != nil {
-                        FundingLiveLine(
-                            heardAt: progress.lastHeardAtMs.map(Date.init(milliseconds:)),
-                            detail: progress.detail
-                        )
+                        .foregroundStyle(note.isWarning ? Color.fgWarning : Color.fgSecondary)
+                    if let liveLine = viewModel.liveLine {
+                        FundingLiveLine(heardAt: liveLine.heardAt, detail: liveLine.detail)
                     }
                 }
                 .multilineTextAlignment(.center)
@@ -165,64 +115,42 @@ private extension FundingProgressView {
         .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.large))
     }
 
-    @ViewBuilder
     var rows: some View {
         VStack(spacing: DSSpacings.extraSmall) {
-            switch (model.direction, model.rail) {
-            case (.in, .card):
-                feesRow(String(localized: .Funding.progressYouSent), model.viewModel.quotedSend)
-                arrivesRow
-            case (.in, .bank):
-                bankRows
-            case (.in, .crypto):
-                cryptoRow
-                arrivesRow
-            case (.out, _):
-                feesRow(String(localized: .Funding.summaryWithdrawCaption), model.viewModel.quotedReceive)
-                arrivesRow
+            switch viewModel.details {
+            case let .amount(title, amount):
+                feesRow(title, amount)
+            case let .bank(bank):
+                bankRows(bank)
+            case let .crypto(deposit):
+                cryptoRow(deposit)
             }
+            arrivesRow
         }
-    }
-
-    /// "Send this exact amount" until the transfer is seen, then what was sent.
-    var bankAmountTitle: String {
-        model.state.hasReached(.received)
-            ? String(localized: .Funding.progressYouSent)
-            : String(localized: .Funding.summaryBankCaption)
     }
 
     @ViewBuilder
-    var bankRows: some View {
-        if case let .bank(_, _, _, beneficiary, account, bankCode, reference, _)? = model.progress?.deposit {
-            feesRow(bankAmountTitle, model.viewModel.deposit)
-            beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
-            account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
-            bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }
-            copyRow(String(localized: .Funding.depositReference), reference)
-        } else {
-            feesRow(bankAmountTitle, model.viewModel.quotedSend)
-            if let reference = model.progress?.reference {
-                copyRow(String(localized: .Funding.depositReference), reference)
-            } else if !model.state.hasReached(.received) {
-                pending(.Funding.depositPreparing)
-            }
+    func bankRows(_ bank: FundingProgressViewModel.Bank) -> some View {
+        feesRow(bank.amountTitle, bank.amount)
+        ForEach(bank.copyLines, id: \.title) { line in
+            copyRow(line.title, line.text)
         }
-        arrivesRow
+        if bank.isPreparing {
+            pending(.Funding.depositPreparing)
+        }
     }
 
     /// While the funds are not seen, the way back to the address to pay.
     @ViewBuilder
-    var cryptoRow: some View {
-        if !model.state.hasReached(.received) {
-            if case let .crypto(_, _, _, _, _, exact, _, _)? = model.progress?.deposit {
-                FundingValueRow(
-                    title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
-                    action: presenter.showDeposit
-                ) {
-                    model.viewModel.deposit.map { value($0) }
-                }
-            } else {
-                pending(.Funding.depositPreparing)
+    func cryptoRow(_ deposit: FundingProgressViewModel.CryptoDeposit) -> some View {
+        switch deposit {
+        case .hidden:
+            EmptyView()
+        case .preparing:
+            pending(.Funding.depositPreparing)
+        case let .deposit(title, amount):
+            FundingValueRow(title: title, action: presenter.showDeposit) {
+                amount.map { value($0) }
             }
         }
     }
@@ -230,13 +158,13 @@ private extension FundingProgressView {
     /// When the money lands; a top-up's Cash follows the rate on arrival.
     @ViewBuilder
     var arrivesRow: some View {
-        if let eta = model.chosenQuote?.etaSecs {
+        if let arrival = viewModel.arrival {
             VStack(alignment: .trailing, spacing: 2) {
                 FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
-                    value(FundingEta.text(seconds: eta))
+                    value(arrival.eta)
                 }
-                if model.direction == .in, model.rail != .card {
-                    Text(verbatim: model.viewModel.bankRateNote)
+                if let rateNote = arrival.rateNote {
+                    Text(verbatim: rateNote)
                         .typography(.captionSmall)
                         .foregroundStyle(.fgSecondary)
                 }
@@ -249,7 +177,7 @@ private extension FundingProgressView {
 
 private extension FundingProgressView {
     func feesRow(_ title: String, _ amount: String?) -> some View {
-        let showFees: (() -> Void)? = model.chosenQuote == nil ? nil : { presenter.showFees() }
+        let showFees: (() -> Void)? = viewModel.hasFees ? { presenter.showFees() } : nil
         return FundingValueRow(title: title, action: showFees) {
             if let amount {
                 value(amount)
@@ -285,7 +213,7 @@ private extension FundingProgressView {
     /// session turning to taking longer, which no report announces: read the
     /// session again at the time the core gave for it.
     func follow() async {
-        guard model.hasStarted, let longerAtMs = model.progress?.longerAtMs else { return }
+        guard viewModel.hasStarted, let longerAtMs = viewModel.longerAtMs else { return }
 
         let wait = Date(milliseconds: longerAtMs).timeIntervalSinceNow
         if wait > 0 {
@@ -419,14 +347,13 @@ struct FundingLiveLine: View {
 /// The provider's terms for cancelling: what it keeps and what comes back to
 /// the balance, accepted or declined by the user.
 struct FundingCancelOfferView: View {
-    let model: FundingScreenModel<FundingProgressViewModel>
+    let offer: FundingProgressViewModel.CancelOffer
+    let isAnswering: Bool
     let presenter: FundingProgressPresenterProtocol
-    let terms: (fee: Balance, refund: Balance)
-    let text: FundingProgressViewModel.CancelOffer
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
-            Text(model.direction == .out ? .Funding.offerTitleWithdraw : .Funding.offerTitle)
+            Text(offer.title)
                 .typography(.headlineMedium)
                 .foregroundStyle(.fgPrimary)
             Text(.Funding.offerBody)
@@ -435,16 +362,16 @@ struct FundingCancelOfferView: View {
                 .multilineTextAlignment(.center)
 
             VStack(spacing: DSSpacings.small) {
-                row(String(localized: .Funding.offerFee), text.fee)
-                row(String(localized: .Funding.offerRefund), text.refund)
+                row(String(localized: .Funding.offerFee), offer.fee)
+                row(String(localized: .Funding.offerRefund), offer.refund)
             }
             .padding(DSSpacings.medium)
             .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: 16))
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.offerAccept, style: .destructive, expands: true, isLoading: model.isAnsweringOffer) {
-                presenter.answerCancelOffer(accepting: CancelTerms(fee: terms.fee.units, refund: terms.refund.units))
+            DSButton(.Funding.offerAccept, style: .destructive, expands: true, isLoading: isAnswering) {
+                presenter.answerCancelOffer(accepting: offer.terms)
             }
             DSButton(.Funding.offerKeepGoing, expands: true) {
                 presenter.answerCancelOffer(accepting: nil)

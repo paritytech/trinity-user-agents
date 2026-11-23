@@ -4,9 +4,11 @@ import TrUAPIHost
 /// The flow's first screen: which rail, and how much. A keypad change asks
 /// for quotes once the user pauses, so the screen can show a provider's
 /// limit before Continue.
-final class FundingAmountPresenter: FundingScreenPresenter<FundingAmountViewModel> {
+final class FundingAmountPresenter: FundingScreenPresenter {
+    weak var view: FundingAmountViewProtocol?
     private let interactor: FundingAmountInteractorInputProtocol
     private let wireframe: FundingAmountWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
     private let clock: any Clock<Duration>
     /// The ask waiting on the keypad pause.
     private var pause: Task<Void, Never>?
@@ -20,8 +22,13 @@ final class FundingAmountPresenter: FundingScreenPresenter<FundingAmountViewMode
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
+        self.viewModelFactory = viewModelFactory
         self.clock = clock
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeAmountViewModel(for: $0) }
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeAmountViewModel(for: state))
     }
 
     override func setup() {

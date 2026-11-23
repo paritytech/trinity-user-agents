@@ -1,6 +1,10 @@
 import Foundation
+import UIKitExt
 
-typealias FundingNetworkViewProtocol = FundingScreenViewProtocol
+@MainActor
+protocol FundingNetworkViewProtocol: ControllerBackedProtocol {
+    func didReceive(viewModel: FundingNetworkViewModel)
+}
 
 @MainActor
 protocol FundingNetworkPresenterProtocol: AnyObject {

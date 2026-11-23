@@ -2,8 +2,10 @@ import Foundation
 
 /// Which network a crypto session pays on, from those the core says a route
 /// takes.
-final class FundingNetworkPresenter: FundingScreenPresenter<FundingNetworkViewModel> {
+final class FundingNetworkPresenter: FundingScreenPresenter {
+    weak var view: FundingNetworkViewProtocol?
     private let wireframe: FundingNetworkWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
         context: FundingFlowContext,
@@ -12,7 +14,12 @@ final class FundingNetworkPresenter: FundingScreenPresenter<FundingNetworkViewMo
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeNetworkViewModel(for: $0) }
+        self.viewModelFactory = viewModelFactory
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeNetworkViewModel(for: state))
     }
 }
 

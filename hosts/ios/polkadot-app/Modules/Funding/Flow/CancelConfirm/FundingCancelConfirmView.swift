@@ -5,17 +5,17 @@ import SwiftUI
 /// Asks before cancelling: a deposit the user may already have paid, or a
 /// session the provider is working on.
 struct FundingCancelConfirmView: View {
-    let model: FundingScreenModel<Void>
+    let viewModel: FundingCancelConfirmViewModel
     let presenter: FundingCancelConfirmPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
             FundingScreenHeader(title: "", onBack: presenter.back)
 
-            Text(model.direction == .in ? .Funding.cancelTitle : .Funding.cancelTitleWithdraw)
+            Text(viewModel.title)
                 .typography(.headlineMedium)
                 .foregroundStyle(.fgPrimary)
-            Text(message)
+            Text(viewModel.message)
                 .typography(.bodyMedium)
                 .foregroundStyle(.fgPrimary)
                 .multilineTextAlignment(.center)
@@ -26,15 +26,11 @@ struct FundingCancelConfirmView: View {
                 .Funding.depositCancel,
                 style: .destructive,
                 expands: true,
-                isLoading: model.isCancelling,
+                isLoading: viewModel.isCancelling,
                 action: presenter.requestCancel
             )
             DSButton(.Funding.cancelKeep, expands: true, action: presenter.back)
         }
-    }
-
-    private var message: LocalizedStringResource {
-        guard model.isUnpaidTopUp else { return .Funding.cancelBodyProvider }
-        return model.rail == .bank ? .Funding.cancelBodyBank : .Funding.cancelBody
+        .fundingScreen()
     }
 }

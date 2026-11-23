@@ -5,14 +5,14 @@ import SwiftUI
 /// The networks the providers' crypto routes name, each closed to amounts
 /// below the lowest minimum a provider has refused with there.
 struct FundingNetworkView: View {
-    let model: FundingScreenModel<FundingNetworkViewModel>
+    let viewModel: FundingNetworkViewModel
     let presenter: FundingNetworkPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
             FundingScreenHeader(title: String(localized: .Funding.networkTitle), onBack: presenter.back)
 
-            if model.networks.isEmpty {
+            if viewModel.rows.isEmpty {
                 Text(.Funding.errorNoProvider)
                     .typography(.bodyMedium)
                     .foregroundStyle(.fgSecondary)
@@ -21,19 +21,20 @@ struct FundingNetworkView: View {
 
             ScrollView {
                 VStack(spacing: DSSpacings.small) {
-                    ForEach(model.networks) { network in
+                    ForEach(viewModel.rows) { network in
                         row(network)
                     }
                 }
             }
         }
+        .fundingScreen()
     }
 
-    private func row(_ network: FundingNetwork) -> some View {
-        let minimum = model.viewModel.minimums[network.id]
+    private func row(_ network: FundingNetworkViewModel.Row) -> some View {
+        let minimum = network.minimum
 
-        return DisclosureListRow(title: network.name, subtitle: minimum, isEnabled: minimum == nil) {
-            FundingAssetMark(icon: model.state.icon(network: network.id), letter: network.monogram)
+        return DisclosureListRow(title: network.mark.name, subtitle: minimum, isEnabled: minimum == nil) {
+            FundingAssetMark(icon: network.mark.icon, letter: network.mark.monogram)
         } onTap: {
             presenter.chooseNetwork(network.id)
         }

@@ -1,8 +1,10 @@
 import Foundation
 
 /// What the quote the session is on charges, line by line.
-final class FundingFeesPresenter: FundingScreenPresenter<FundingFeesViewModel?> {
+final class FundingFeesPresenter: FundingScreenPresenter {
+    weak var view: FundingFeesViewProtocol?
     private let wireframe: FundingFeesWireframeProtocol
+    private let viewModelFactory: FundingViewModelFactoryProtocol
 
     init(
         context: FundingFlowContext,
@@ -11,7 +13,12 @@ final class FundingFeesPresenter: FundingScreenPresenter<FundingFeesViewModel?> 
         viewModelFactory: FundingViewModelFactoryProtocol
     ) {
         self.wireframe = wireframe
-        super.init(context: context, interactor: interactor) { viewModelFactory.makeFeesViewModel(for: $0) }
+        self.viewModelFactory = viewModelFactory
+        super.init(context: context, interactor: interactor)
+    }
+
+    override func render() {
+        view?.didReceive(viewModel: viewModelFactory.makeFeesViewModel(for: state))
     }
 }
 

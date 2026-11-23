@@ -4,19 +4,21 @@ import FoundationExt
 import SubstrateSdk
 import TrUAPIHost
 
-/// Turns what the funding screens draw into their text. CASH is set as the
-/// app sets the digital dollar figure, with its cents only when there are
+/// Turns what the funding screens draw into their view models. CASH is set as
+/// the app sets the digital dollar figure, with its cents only when there are
 /// any, followed by the payment asset's symbol; a provider's asset as the app
 /// sets a price for a currency and a token balance for anything else.
 protocol FundingViewModelFactoryProtocol {
     func makeAmountViewModel(for state: FundingFlowState) -> FundingAmountViewModel
     func makeSummaryViewModel(for state: FundingFlowState) -> FundingSummaryViewModel
-    func makeFeesViewModel(for state: FundingFlowState) -> FundingFeesViewModel?
+    func makeFeesViewModel(for state: FundingFlowState) -> FundingFeesViewModel
     func makeProvidersViewModel(for state: FundingFlowState) -> FundingProvidersViewModel
     func makeNetworkViewModel(for state: FundingFlowState) -> FundingNetworkViewModel
+    func makeTokenViewModel(for state: FundingFlowState) -> FundingTokenViewModel
     func makeCountryViewModel(for state: FundingFlowState) -> FundingCountryViewModel
     func makeDepositViewModel(for state: FundingFlowState) -> FundingDepositViewModel
     func makeProgressViewModel(for state: FundingFlowState) -> FundingProgressViewModel
+    func makeCancelConfirmViewModel(for state: FundingFlowState) -> FundingCancelConfirmViewModel
     func makeEndedViewModel(for ended: FundingEndedSession) -> FundingEndedViewModel
     func makeActivityTitle(for item: FundingActivityItem) -> String
 }
@@ -52,7 +54,7 @@ final class FundingViewModelFactory {
 
 // MARK: - Amounts
 
-private extension FundingViewModelFactory {
+extension FundingViewModelFactory {
     /// "$50.20", with cents only when there are any.
     func cashFigure(_ amount: Balance) -> String {
         cashFigure(amount.decimal(assetInfo: cashInfo))
@@ -125,16 +127,26 @@ extension FundingViewModelFactory: FundingViewModelFactoryProtocol {
         let minimumCaption = state.direction == .in
             ? String(localized: .Funding.amountMinimum(amount: minimum))
             : String(localized: .Funding.amountWithdrawMinimum(amount: minimum))
+        let amount = state.amount ?? 0
 
         return FundingAmountViewModel(
+            title: state.direction == .in
+                ? String(localized: .Funding.amountAddTitle)
+                : String(localized: .Funding.amountWithdrawTitle),
+            history: state.historyClock,
+            rail: state.rail,
+            availableRails: state.availableRails,
             available: state.direction == .out ? state.spendable.map(cashLabel) : nil,
-            figure: cashFigure(state.amount ?? 0),
+            amountText: state.amountText,
+            figure: cashFigure(amount),
+            hasAmount: amount > 0,
             symbol: cashSymbol,
             presets: state.direction == .in ? Self.presets.map { preset in
                 FundingAmountViewModel.Preset(text: preset.stringWithPointSeparator, figure: cashFigure(preset))
             } : [],
             issue: state.amountIssue.map(issueText),
-            minimum: minimumCaption
+            minimum: minimumCaption,
+            canContinue: state.canContinue
         )
     }
 
@@ -147,65 +159,90 @@ extension FundingViewModelFactory: FundingViewModelFactoryProtocol {
         }
 
         return FundingSummaryViewModel(
+            title: summaryTitle(for: state),
+            feesCaption: summaryFeesCaption(for: state),
+            showsCountry: state.rail != .crypto,
+            country: state.country,
+            provider: state.selectedProviderId.map(state.brand(for:)),
             headline: quote.flatMap { quote in
                 quoteAmount(state.direction == .in ? quote.sendAmount : quote.receiveAmount, of: quote, in: state)
             },
+            isQuoting: state.isQuoting,
+            payoutTitle: state.direction == .in
+                ? String(localized: .Funding.summaryMinPayout)
+                : String(localized: .Funding.summaryYouReceive),
             payout: payout,
-            bankRateNote: bankRateNote,
-            problem: summaryProblem(for: state)
+            eta: quote?.etaSecs.map(FundingEta.text(seconds:)),
+            bankRateNote: state.rail == .bank && state.direction == .in ? bankRateNote : nil,
+            problem: summaryProblem(for: state),
+            hasQuote: quote != nil,
+            isStarting: state.isStarting
         )
     }
 
-    func makeFeesViewModel(for state: FundingFlowState) -> FundingFeesViewModel? {
-        guard let quote = state.chosenQuote else { return nil }
+    func makeFeesViewModel(for state: FundingFlowState) -> FundingFeesViewModel {
+        let payTitle =
+            switch (state.direction, state.rail) {
+            case (.in, .card): String(localized: .Funding.feesYouPay)
+            case (.in, _): String(localized: .Funding.feesAmountToSend)
+            case (.out, _): String(localized: .Funding.feesYouSend)
+            }
 
-        let fees = FundingFees(quote: quote, direction: state.direction, cashPrecision: cashInfo.assetPrecision)
-        // Fees are counted in what the user pays: the ask's asset for value
-        // in, the balance for value out.
-        let feeText: (Balance?) -> String? = { [self] amount in
-            amount.map { state.direction == .in ? assetAmount($0, info: state.quoteUnit(quote)) : cashLabel($0) }
-        }
-
-        return FundingFeesViewModel(
-            amount: feeText(fees.net),
-            providerFee: feeText(Balance(units: quote.providerFee)),
-            networkFee: feeText(Balance(units: quote.networkFee)),
-            total: feeText(fees.total),
-            pay: feeText(Balance(units: quote.sendAmount)),
-            rate: rate(fees, of: quote, in: state)
-        )
+        return FundingFeesViewModel(payTitle: payTitle, breakdown: feesBreakdown(for: state))
     }
 
     func makeProvidersViewModel(for state: FundingFlowState) -> FundingProvidersViewModel {
-        var prices: [ProductId: FundingProvidersViewModel.Price] = [:]
-        var unavailable: [ProductId: String] = [:]
+        let quotedCount = state.quotedProviders.count
+        let rows = state.listedProviderIds.map { providerId in
+            let quoteState = state.rows[providerId] ?? .pending
+            let badge: FundingProvidersViewModel.Row.Badge? =
+                if case let .unavailable(reason) = quoteState {
+                    .unavailable(unavailableText(reason))
+                } else if providerId == state.bestProviderId, quotedCount > 1 {
+                    .lowestPrice
+                } else {
+                    nil
+                }
 
-        for (providerId, quoteState) in state.rows {
-            switch quoteState {
-            case let .quoted(quote):
-                let providerSide = state.direction == .in ? quote.sendAmount : quote.receiveAmount
-                let cashSide = state.direction == .in ? quote.receiveAmount : quote.sendAmount
-                prices[providerId] = FundingProvidersViewModel.Price(
-                    provider: quoteAmount(providerSide, of: quote, in: state).map { "≈ " + $0 },
-                    cash: cashLabel(units: cashSide).map { String(localized: .Funding.providersFor(amount: $0)) }
-                )
-            case let .unavailable(reason):
-                unavailable[providerId] = unavailableText(reason)
-            case .pending:
-                break
-            }
+            return FundingProvidersViewModel.Row(
+                providerId: providerId,
+                brand: state.brand(for: providerId),
+                isSelected: providerId == state.selectedProviderId,
+                badge: badge,
+                price: providerPrice(quoteState, in: state)
+            )
         }
 
-        return FundingProvidersViewModel(prices: prices, unavailable: unavailable)
+        return FundingProvidersViewModel(
+            rows: rows,
+            isRefreshing: state.rows.values.contains(where: \.isPending),
+            refreshAt: state.quotesRefreshAt
+        )
     }
 
     func makeNetworkViewModel(for state: FundingFlowState) -> FundingNetworkViewModel {
         let amount = state.amount ?? 0
-        let minimums = state.networks.reduce(into: [String: String]()) { minimums, network in
-            guard let minimum = state.minimum(network: network.id), minimum > amount else { return }
-            minimums[network.id] = String(localized: .Funding.networkMinimum(amount: cashLabel(minimum)))
+        let rows = state.networks.map { network in
+            let minimum = state.minimum(network: network.id).flatMap { minimum in
+                minimum > amount ? String(localized: .Funding.networkMinimum(amount: cashLabel(minimum))) : nil
+            }
+            return FundingNetworkViewModel.Row(mark: mark(network, in: state), minimum: minimum)
         }
-        return FundingNetworkViewModel(minimums: minimums)
+        return FundingNetworkViewModel(rows: rows)
+    }
+
+    func makeTokenViewModel(for state: FundingFlowState) -> FundingTokenViewModel {
+        FundingTokenViewModel(
+            network: state.network.map { mark(FundingNetwork(id: $0), in: state) },
+            tokens: state.tokens.map { token in
+                FundingAssetMarkViewModel(
+                    id: token.symbol,
+                    name: token.symbol,
+                    monogram: token.monogram,
+                    icon: state.icon(token: token.symbol)
+                )
+            }
+        )
     }
 
     func makeCountryViewModel(for state: FundingFlowState) -> FundingCountryViewModel {
@@ -214,38 +251,26 @@ extension FundingViewModelFactory: FundingViewModelFactoryProtocol {
             guard let minimum = state.minimum(country: code) else { return }
             minimums[code] = String(localized: .Funding.countryMinimum(amount: cashLabel(minimum)))
         }
-        return FundingCountryViewModel(minimums: minimums)
+        return FundingCountryViewModel(
+            detected: state.detectedCountry,
+            selected: state.country,
+            unsupported: state.unsupportedCountries,
+            minimums: minimums
+        )
     }
 
-    func makeDepositViewModel(for state: FundingFlowState) -> FundingDepositViewModel {
-        switch state.progress?.deposit {
-        case let .crypto(_, _, asset, amount, decimals, _, _, _):
-            FundingDepositViewModel(amount: assetAmount(units: amount, asset: asset, decimals: decimals))
-        case let .bank(amount, currency, decimals, _, _, _, _, _):
-            FundingDepositViewModel(amount: assetAmount(units: amount, asset: currency, decimals: decimals))
-        case nil:
-            FundingDepositViewModel(amount: nil)
-        }
-    }
+    func makeCancelConfirmViewModel(for state: FundingFlowState) -> FundingCancelConfirmViewModel {
+        let message: LocalizedStringResource =
+            if !state.isUnpaidTopUp {
+                .Funding.cancelBodyProvider
+            } else {
+                state.rail == .bank ? .Funding.cancelBodyBank : .Funding.cancelBody
+            }
 
-    func makeProgressViewModel(for state: FundingFlowState) -> FundingProgressViewModel {
-        let quote = state.chosenQuote
-        let cashAmount = state.session
-            .flatMap { FundingActivityItem(session: $0, progress: state.progress).amount }
-            ?? quote.flatMap { Balance(units: state.direction == .in ? $0.receiveAmount : $0.sendAmount) }
-
-        return FundingProgressViewModel(
-            figure: cashAmount.map(cashFigure),
-            symbol: cashSymbol,
-            amount: cashAmount.map(cashLabel),
-            quotedSend: quote.flatMap { quoteAmount($0.sendAmount, of: $0, in: state) },
-            quotedReceive: quote.flatMap { quoteAmount($0.receiveAmount, of: $0, in: state) },
-            deposit: makeDepositViewModel(for: state).amount,
-            bankRateNote: bankRateNote,
-            cancelOffer: state.cancelOffer.map { offer in
-                FundingProgressViewModel.CancelOffer(fee: cashLabel(offer.fee), refund: cashLabel(offer.refund))
-            },
-            ended: state.ended.map(makeEndedViewModel)
+        return FundingCancelConfirmViewModel(
+            title: String(localized: state.direction == .in ? .Funding.cancelTitle : .Funding.cancelTitleWithdraw),
+            message: String(localized: message),
+            isCancelling: state.isCancelling
         )
     }
 
@@ -288,6 +313,25 @@ extension FundingViewModelFactory: FundingViewModelFactoryProtocol {
 }
 
 private extension FundingViewModelFactory {
+    func summaryTitle(for state: FundingFlowState) -> String {
+        switch (state.direction, state.rail) {
+        case (.in, .card): String(localized: .Funding.summaryCardTitle)
+        case (.in, .bank): String(localized: .Funding.summaryBankTitle)
+        case (.in, .crypto): String(localized: .Funding.summaryCryptoTitle)
+        case (.out, .card): String(localized: .Funding.summaryWithdrawCardTitle)
+        case (.out, .bank): String(localized: .Funding.summaryWithdrawBankTitle)
+        case (.out, .crypto): String(localized: .Funding.summaryWithdrawCryptoTitle)
+        }
+    }
+
+    func summaryFeesCaption(for state: FundingFlowState) -> String {
+        switch (state.direction, state.rail) {
+        case (.in, .card): String(localized: .Funding.summaryCardCaption)
+        case (.in, _): String(localized: .Funding.summaryBankCaption)
+        case (.out, _): String(localized: .Funding.summaryWithdrawCaption)
+        }
+    }
+
     func summaryProblem(for state: FundingFlowState) -> String? {
         if let failure = state.failure {
             return failure.failedText
@@ -306,6 +350,26 @@ private extension FundingViewModelFactory {
         }
     }
 
+    func feesBreakdown(for state: FundingFlowState) -> FundingFeesViewModel.Breakdown? {
+        guard let quote = state.chosenQuote else { return nil }
+
+        let fees = FundingFees(quote: quote, direction: state.direction, cashPrecision: cashInfo.assetPrecision)
+        // Fees are counted in what the user pays: the ask's asset for value
+        // in, the balance for value out.
+        let feeText: (Balance?) -> String? = { [self] amount in
+            amount.map { state.direction == .in ? assetAmount($0, info: state.quoteUnit(quote)) : cashLabel($0) }
+        }
+
+        return FundingFeesViewModel.Breakdown(
+            amount: feeText(fees.net),
+            providerFee: feeText(Balance(units: quote.providerFee)),
+            networkFee: feeText(Balance(units: quote.networkFee)),
+            total: feeText(fees.total),
+            pay: feeText(Balance(units: quote.sendAmount)),
+            rate: rate(fees, of: quote, in: state)
+        )
+    }
+
     /// What one CASH is worth in the provider-side asset, net of fees as the
     /// amount line above it.
     func rate(_ fees: FundingFees, of quote: FundingQuote, in state: FundingFlowState) -> String? {
@@ -317,6 +381,25 @@ private extension FundingViewModelFactory {
         let perCash = assetAmount((providerSide / cashSide).rounded(scale: 4), info: info)
         let oneCash = "\(cashFigure(Decimal(1))) \(cashSymbol)"
         return String(localized: .Funding.feesRateValue(cash: oneCash, value: perCash))
+    }
+
+    func providerPrice(
+        _ quoteState: FundingQuoteState,
+        in state: FundingFlowState
+    ) -> FundingProvidersViewModel.Row.Price {
+        switch quoteState {
+        case let .quoted(quote):
+            let providerSide = state.direction == .in ? quote.sendAmount : quote.receiveAmount
+            let cashSide = state.direction == .in ? quote.receiveAmount : quote.sendAmount
+            return .quoted(
+                provider: quoteAmount(providerSide, of: quote, in: state).map { "≈ " + $0 },
+                cash: cashLabel(units: cashSide).map { String(localized: .Funding.providersFor(amount: $0)) }
+            )
+        case .unavailable:
+            return .unavailable
+        case .pending:
+            return .pending
+        }
     }
 
     func unavailableText(_ reason: FundingQuoteUnavailable) -> String {
@@ -333,6 +416,15 @@ private extension FundingViewModelFactory {
              .refused:
             String(localized: .Funding.providersUnavailable)
         }
+    }
+
+    func mark(_ network: FundingNetwork, in state: FundingFlowState) -> FundingAssetMarkViewModel {
+        FundingAssetMarkViewModel(
+            id: network.id,
+            name: network.name,
+            monogram: network.monogram,
+            icon: state.icon(network: network.id)
+        )
     }
 }
 

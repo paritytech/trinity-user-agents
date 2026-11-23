@@ -1,55 +1,19 @@
 import DesignSystem
-import Observation
 import SwiftUI
 import UIKit
-import UIKitExt
-
-/// What every funding screen's presenter draws through: the flow's state,
-/// and the screen's text from its view-model factory.
-@MainActor
-protocol FundingScreenViewProtocol<ViewModel>: ControllerBackedProtocol {
-    associatedtype ViewModel
-
-    func didReceive(state: FundingFlowState, viewModel: ViewModel)
-}
-
-/// The state one funding screen draws, read by its view as if its own
-/// properties, and its text.
-@MainActor
-@Observable
-@dynamicMemberLookup
-final class FundingScreenModel<ViewModel> {
-    var state: FundingFlowState
-    var viewModel: ViewModel
-
-    init(state: FundingFlowState, viewModel: ViewModel) {
-        self.state = state
-        self.viewModel = viewModel
-    }
-
-    subscript<Value>(dynamicMember keyPath: KeyPath<FundingFlowState, Value>) -> Value {
-        state[keyPath: keyPath]
-    }
-}
 
 /// Hosts one funding screen's SwiftUI view, on the funding sheet's colours
-/// with the navigation bar hidden, and hands the presenter's state to it.
-final class FundingScreenController<Content: View, ViewModel>: UIHostingController<Content>,
-    FundingScreenViewProtocol, FundingFlowScreenTagged {
+/// with the navigation bar hidden. Each screen's controller draws the view
+/// for every view model its presenter pushes; there is none before the
+/// presenter's setup, which runs as the view loads and pushes the first.
+class FundingScreenController<Content: View>: UIHostingController<Content?>, FundingFlowScreenTagged {
     let screen: FundingFlowScreen
-    let model: FundingScreenModel<ViewModel>
     private let onLoad: () -> Void
 
-    init(
-        screen: FundingFlowScreen,
-        model: FundingScreenModel<ViewModel>,
-        content: Content,
-        onLoad: @escaping () -> Void
-    ) {
+    init(screen: FundingFlowScreen, onLoad: @escaping () -> Void) {
         self.screen = screen
-        self.model = model
         self.onLoad = onLoad
-        super.init(rootView: content)
+        super.init(rootView: nil)
     }
 
     @available(*, unavailable)
@@ -66,11 +30,6 @@ final class FundingScreenController<Content: View, ViewModel>: UIHostingControll
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: false)
-    }
-
-    func didReceive(state: FundingFlowState, viewModel: ViewModel) {
-        model.state = state
-        model.viewModel = viewModel
     }
 }
 

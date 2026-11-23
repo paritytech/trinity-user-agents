@@ -6,14 +6,14 @@ import TrUAPIHost
 
 /// How the chosen quote's charge breaks down.
 struct FundingFeesView: View {
-    let model: FundingScreenModel<FundingFeesViewModel?>
+    let viewModel: FundingFeesViewModel
     let presenter: FundingFeesPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: String(localized: .Funding.feesTitle), onBack: presenter.back)
 
-            if let fees = model.viewModel {
+            if let fees = viewModel.breakdown {
                 breakdown(fees)
             }
 
@@ -21,11 +21,12 @@ struct FundingFeesView: View {
 
             DSButton(.Funding.backAction, style: .secondary, expands: true, action: presenter.back)
         }
+        .fundingScreen()
     }
 }
 
 private extension FundingFeesView {
-    func breakdown(_ fees: FundingFeesViewModel) -> some View {
+    func breakdown(_ fees: FundingFeesViewModel.Breakdown) -> some View {
         VStack(spacing: DSSpacings.small) {
             fees.amount.map { line(String(localized: .Funding.feesAmount), $0) }
             fees.providerFee.map { line(String(localized: .Funding.feesProvider), $0) }
@@ -37,7 +38,7 @@ private extension FundingFeesView {
 
             if let pay = fees.pay {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(payTitle)
+                    Text(viewModel.payTitle)
                         .typography(.bodyLarge)
                         .foregroundStyle(.fgSecondary)
                     Spacer()
@@ -51,14 +52,6 @@ private extension FundingFeesView {
             if let rate = fees.rate {
                 line(String(localized: .Funding.feesRate), rate, emphasized: false)
             }
-        }
-    }
-
-    var payTitle: String {
-        switch (model.direction, model.rail) {
-        case (.in, .card): String(localized: .Funding.feesYouPay)
-        case (.in, _): String(localized: .Funding.feesAmountToSend)
-        case (.out, _): String(localized: .Funding.feesYouSend)
         }
     }
 
