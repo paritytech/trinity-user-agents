@@ -42,8 +42,8 @@ class CompactionStatusPropagationTest {
     }
 
     @Test
-    fun `propagation to IS_READ upgrades every status ranked below it`() = runBlocking<Unit> {
-        repository.propagateStatusToCompactedMessages("commit", ChatMessage.Status.IS_READ)
+    fun `propagation to IS_DELIVERED upgrades every status ranked below it`() = runBlocking<Unit> {
+        repository.propagateStatusToCompactedMessages("commit", ChatMessage.Status.IS_DELIVERED)
 
         verify(chatMessageCompactionDao).propagateStatusToCompactionDescendants(
             eq("commit"),
@@ -55,7 +55,7 @@ class CompactionStatusPropagationTest {
                     ChatMessageLocal.Status.DELIVERY_FAILED
                 )
             ),
-            eq(ChatMessageLocal.Status.IS_READ),
+            eq(ChatMessageLocal.Status.IS_DELIVERED),
             anyLong()
         )
     }

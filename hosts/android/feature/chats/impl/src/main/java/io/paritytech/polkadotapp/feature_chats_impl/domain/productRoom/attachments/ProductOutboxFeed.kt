@@ -42,6 +42,7 @@ internal fun ProductOutboxEntry.toPendingMessage() = ChatMessage(
     // The message keeps its first text. An edit shows through its revision.
     content = content(),
     status = if (isFailed) ChatMessage.Status.DELIVERY_FAILED else ChatMessage.Status.NEW,
+    sortOrder = null,
     replyToMessageId = replyTo,
 )
 

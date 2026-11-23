@@ -250,11 +250,13 @@ pub enum SystemEvent {
 	},
 	NotificationDelivered {
 		id: u32,
+		title: Option<String>,
 		text: String,
 		deeplink: Option<String>,
 	},
 	NotificationScheduled {
 		id: u32,
+		title: Option<String>,
 		text: String,
 		scheduled_at: u64,
 	},
@@ -373,6 +375,11 @@ fn send_to_active(event: UiEvent) -> bool {
 /// Return whether stdin and stdout are both attached to terminals.
 pub fn is_interactive_terminal() -> bool {
 	io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+/// One line per notification part that is present, title first.
+fn notification_detail(lines: impl IntoIterator<Item = Option<String>>) -> String {
+	lines.into_iter().flatten().collect::<Vec<_>>().join("\n")
 }
 
 /// Emit a lifecycle event using the same human copy in every presentation.
@@ -1773,22 +1780,29 @@ impl App {
                     );
                 }
             }
-            SystemEvent::NotificationDelivered { id, text, deeplink } => self.notice(
+            SystemEvent::NotificationDelivered {
+                id,
+                title,
+                text,
+                deeplink,
+            } => self.notice(
                 NoticeTone::Info,
                 format!("Notification #{id}"),
-                Some(match deeplink {
-                    Some(deeplink) => format!("{text}\n{deeplink}"),
-                    None => text,
-                }),
+                Some(notification_detail([title, Some(text), deeplink])),
             ),
             SystemEvent::NotificationScheduled {
                 id,
+                title,
                 text,
                 scheduled_at,
             } => self.notice(
                 NoticeTone::Info,
                 format!("Notification #{id} scheduled"),
-                Some(format!("{text}\nUnix time {scheduled_at} ms")),
+                Some(notification_detail([
+                    title,
+                    Some(text),
+                    Some(format!("Unix time {scheduled_at} ms")),
+                ])),
             ),
             SystemEvent::NotificationCancelled { id } => self.notice(
                 NoticeTone::Info,

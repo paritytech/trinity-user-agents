@@ -720,6 +720,7 @@ impl Notifications for CliPlatform {
 				self.ui.as_ref(),
 				SystemEvent::NotificationScheduled {
 					id,
+					title: notification.title.clone(),
 					text: notification.text.clone(),
 					scheduled_at,
 				},
@@ -734,6 +735,7 @@ impl Notifications for CliPlatform {
 						ui.as_ref(),
 						SystemEvent::NotificationDelivered {
 							id,
+							title: notification.title,
 							text: notification.text,
 							deeplink: notification.deeplink,
 						},
@@ -745,6 +747,7 @@ impl Notifications for CliPlatform {
 				self.ui.as_ref(),
 				SystemEvent::NotificationDelivered {
 					id,
+					title: notification.title,
 					text: notification.text,
 					deeplink: notification.deeplink,
 				},

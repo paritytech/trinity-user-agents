@@ -133,7 +133,7 @@ class ChatFeedInteractorProductRoomTest {
         dmChatMessageOriginDisplayResolver = mockk(relaxed = true),
         accountRepository = mockk(relaxed = true),
         addContactUseCase = mockk(relaxed = true),
-        removeContactUseCase = mockk(relaxed = true),
+        deleteLocalChat = mockk(relaxed = true),
         incomingChatRequestProcessor = mockk(relaxed = true),
         callController = mockk(relaxed = true),
         callStateTracker = mockk(relaxed = true),
@@ -146,5 +146,8 @@ class ChatFeedInteractorProductRoomTest {
         identitySigningConsent = mockk(relaxed = true),
         roomSourceContextFactory = roomSourceContextFactory,
         attachmentStager = attachmentStager,
+        chatSeenRepository = mockk(relaxed = true),
+        chatRequestRepository = mockk(relaxed = true),
+        outgoingChatRequestCanceller = mockk(relaxed = true),
     )
 }
