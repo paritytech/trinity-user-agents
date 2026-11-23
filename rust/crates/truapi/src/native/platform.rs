@@ -599,10 +599,17 @@ impl CoreStorage for CallbackPlatform {
 		replacement: Vec<u8>,
 		notify_on_success: bool,
 	) -> Result<bool, v01::GenericError> {
-		self.callbacks
+		let exchanged = self
+			.callbacks
 			.compare_exchange_core_storage(key.encode(), expected, replacement, notify_on_success)
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(v01::GenericError::from)?;
+		if exchanged {
+			if let CoreStorageKey::PermissionAuthorization { scope, .. } = key {
+				self.permission_callbacks.permission_authorizations_changed(scope);
+			}
+		}
+		Ok(exchanged)
 	}
 
 	fn core_storage_changed(&self, key: CoreStorageKey) {

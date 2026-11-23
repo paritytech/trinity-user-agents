@@ -643,6 +643,58 @@ pub fn event_platform() -> (Arc<EventCallbacks>, Arc<NativeEventBus>, CallbackPl
 }
 
 #[test]
+fn permission_compare_exchange_notifies_only_successful_permission_writes() {
+	use crate::platform::{CoreStorage, CoreStorageKey};
+
+	for notify_on_success in [false, true] {
+		let (callbacks, _events, mut platform) = event_platform();
+		let permission_callbacks = Arc::new(EventCallbacks::new());
+		platform.permission_callbacks = permission_callbacks.clone();
+		let key = CoreStorageKey::PermissionAuthorization {
+			scope: "camera-app".to_string(),
+			request: PermissionAuthorizationRequest::Device(
+				v01::HostDevicePermissionRequest::Camera,
+			)
+			.into(),
+		};
+		futures::executor::block_on(async {
+			assert!(
+				platform
+					.compare_exchange_core_storage(key.clone(), None, vec![1], notify_on_success,)
+					.await
+					.unwrap()
+			);
+			assert_eq!(&*permission_callbacks.permission_changes.lock(), &["camera-app"]);
+			assert_eq!(platform.read_core_storage(key.clone()).await.unwrap(), Some(vec![1]));
+			assert!(
+				!platform
+					.compare_exchange_core_storage(key.clone(), None, vec![2], notify_on_success,)
+					.await
+					.unwrap()
+			);
+			assert_eq!(&*permission_callbacks.permission_changes.lock(), &["camera-app"]);
+			assert!(
+				platform
+					.compare_exchange_core_storage(
+						CoreStorageKey::AuthSession,
+						None,
+						vec![3],
+						notify_on_success,
+					)
+					.await
+					.unwrap()
+			);
+			assert_eq!(&*permission_callbacks.permission_changes.lock(), &["camera-app"]);
+			assert!(callbacks.permission_changes.lock().is_empty());
+			assert_eq!(
+				callbacks.storage_changes.lock().unwrap().len(),
+				if notify_on_success { 2 } else { 0 }
+			);
+		});
+	}
+}
+
+#[test]
 fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
 	let (_callbacks, _events, platform) = event_platform();
 	let key = "myapp.dot/progress".to_string();
