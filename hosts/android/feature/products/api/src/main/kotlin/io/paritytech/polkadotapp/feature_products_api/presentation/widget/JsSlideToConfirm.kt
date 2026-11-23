@@ -84,6 +84,9 @@ internal fun JsSlideToConfirm(
     val travelPx = { SlideToConfirmRules.travelPx(widthPx.toFloat(), endInsetPx, sideInsetPx) }
     var dragging by remember { mutableStateOf(false) }
     var heldAtEnd by remember { mutableStateOf(false) }
+    // The release's spring home may dip below the start, as the existing slider's does; the newest release that started it.
+    var releaseNumber by remember { mutableIntStateOf(0) }
+    var dippingRelease by remember { mutableIntStateOf(-1) }
     // The existing slider's feel (SlideStyle.feel): the thumb grown while pressed, and its pop after a confirmation.
     val feel = SlideStyle.feel
     val pressScale = remember { Animatable(1f) }
@@ -206,7 +209,8 @@ internal fun JsSlideToConfirm(
                     ) {
                         press()
                     }
-                    var slid = progress.value
+                    dippingRelease = -1
+                    var slid = progress.value.coerceAtLeast(0f)
                     fun follow(dx: Float) {
                         slid = SlideToConfirmRules.slideBy(slid, dx, travelPx(), rtl)
                         val target = slid
@@ -250,7 +254,17 @@ internal fun JsSlideToConfirm(
                         if (claimed && SlideToConfirmRules.completes(slid, lifted)) {
                             currentConfirm()
                         } else {
-                            if (claimed && !heldAtEnd) scope.launch { progress.animateTo(0f, SliderSpringBack) }
+                            if (claimed && !heldAtEnd) {
+                                val number = ++releaseNumber
+                                dippingRelease = number
+                                scope.launch {
+                                    try {
+                                        progress.animateTo(0f, SliderSpringBack)
+                                    } finally {
+                                        if (dippingRelease == number) dippingRelease = -1
+                                    }
+                                }
+                            }
                             unpress()
                         }
                     }
@@ -267,6 +281,7 @@ internal fun JsSlideToConfirm(
                 heldAtEnd = heldAtEnd || widget.loading || widget.confirmed,
                 thumbScale = { popped?.first ?: pressScale.value },
                 thumbPast = { popped?.second ?: 0f },
+                dipsBelowHome = { dippingRelease == releaseNumber },
             )
             JsSlideToConfirmVariant.REVEAL -> SlideToConfirmRevealFace(
                 widget = widget,
@@ -289,6 +304,7 @@ private fun SlideToConfirmThumbFace(
     heldAtEnd: Boolean,
     thumbScale: () -> Float,
     thumbPast: () -> Float,
+    dipsBelowHome: () -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -344,9 +360,10 @@ private fun SlideToConfirmThumbFace(
             modifier = Modifier
                 .offset {
                     // The owner's travel: the lane inside the track's padding less the thumb, the distance the drag
-                    // divides by. A spring back that dips below the start stops at it.
+                    // divides by. Only the release's spring home may dip below the start, as the existing slider's does.
                     val past = thumbPast() * density * if (rtl) -1f else 1f
-                    IntOffset(((progress() * travelPx()).coerceAtLeast(0f) + past).roundToInt(), 0)
+                    val along = WorkerThumbSettle.along(progress() * travelPx(), travelPx(), dipsBelowHome())
+                    IntOffset((along + past).roundToInt(), 0)
                 }
                 .size(THUMB_SIZE)
                 .graphicsLayer {

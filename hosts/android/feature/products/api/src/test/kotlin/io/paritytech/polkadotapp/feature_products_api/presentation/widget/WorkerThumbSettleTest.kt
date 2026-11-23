@@ -53,4 +53,13 @@ class WorkerThumbSettleTest {
         assertEquals(Offset(120f, 0f), WorkerThumbSettle.onLane(Offset(120f, 0f), 240f))
         assertEquals(Offset.Zero, WorkerThumbSettle.onLane(Offset(30f, 0f), 0f))
     }
+
+    @Test
+    fun `a release home with the existing slider's motion dips below home but never passes the end`() {
+        assertEquals(Offset(-4.6f, 0f), WorkerThumbSettle.onLane(Offset(-4.6f, 0f), 240f, dipsBelowHome = true))
+        assertEquals(Offset(240f, 0f), WorkerThumbSettle.onLane(Offset(251f, 0f), 240f, dipsBelowHome = true))
+        assertEquals(-4.6f, WorkerThumbSettle.along(-4.6f, 240f, dipsBelowHome = true), 0f)
+        assertEquals(0f, WorkerThumbSettle.along(-4.6f, 240f), 0f)
+        assertEquals(120f, WorkerThumbSettle.along(120f, 240f, dipsBelowHome = true), 0f)
+    }
 }

@@ -34,12 +34,17 @@ internal object WorkerThumbSettle {
     }
 
     /**
-     * Where a settling thumb is drawn: kept on its lane, so the spring's overshoot past home (or the end) is not drawn,
-     * as the native slider and host drags draw their return spring.
+     * Where a settling thumb is drawn: kept on its lane, so the spring's overshoot past home (or the end) is not drawn.
+     * A release home with the existing slider's motion (a pan with a feel) may dip below home, as its spring does
+     * (about 1.7 dp from a mid-lane release); it still never passes the end.
      */
-    fun onLane(place: Offset, travelPx: Float): Offset {
+    fun onLane(place: Offset, travelPx: Float, dipsBelowHome: Boolean = false): Offset =
+        Offset(along(place.x, travelPx, dipsBelowHome), along(place.y, travelPx, dipsBelowHome))
+
+    /** One axis of [onLane]: between home and the end, or only short of the end while a release home may dip. */
+    fun along(place: Float, travelPx: Float, dipsBelowHome: Boolean = false): Float {
         val lane = travelPx.coerceAtLeast(0f)
-        return Offset(place.x.coerceIn(0f, lane), place.y.coerceIn(0f, lane))
+        return if (dipsBelowHome) place.coerceAtMost(lane) else place.coerceIn(0f, lane)
     }
 
     /** A settle is drawn only with animations on and somewhere to go. */

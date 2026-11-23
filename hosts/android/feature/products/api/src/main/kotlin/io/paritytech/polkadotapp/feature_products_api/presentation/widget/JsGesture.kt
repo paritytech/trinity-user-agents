@@ -56,6 +56,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.math.sign
@@ -100,6 +101,11 @@ internal fun JsGesture(
     val settle = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
     var settling by remember { mutableStateOf(false) }
     var settleJob by remember { mutableStateOf<Job?>(null) }
+    // A release home with the existing slider's motion may dip below home, as its spring does (WorkerThumbSettle.onLane):
+    // the every-move settle's, and the host drag's spring home (the newest moveTo that asked for it, by its number).
+    var settleDips by remember { mutableStateOf(false) }
+    var moveNumber by remember { mutableIntStateOf(0) }
+    var dippingMove by remember { mutableIntStateOf(-1) }
 
     // The worker's answer waited for in the frame that sent its move, laid out in that frame (GesturePacingSettings).
     var answeredInFrame by remember { mutableStateOf<Pair<JsGesturePosition, JsGesturePosition.Value>?>(null) }
@@ -120,7 +126,7 @@ internal fun JsGesture(
 
     /** Where the worker's place draws the children now, in px, as the offset below lays them out. */
     fun drawnWorkerPx(travel: Float): Offset {
-        if (settling) return WorkerThumbSettle.onLane(settle.value, travel)
+        if (settling) return WorkerThumbSettle.onLane(settle.value, travel, settleDips)
         val position = GestureRules.newest(
             workerPosition?.value,
             answeredInFrame?.takeIf { it.first === current.position }?.second,
@@ -240,6 +246,7 @@ internal fun JsGesture(
         if (!WorkerThumbSettle.animates(ValueAnimator.areAnimatorsEnabled(), from, to)) return
         settleJob?.cancel()
         settling = true
+        settleDips = kind == WorkerThumbSettle.Kind.HOME && current.feel != null
         settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 settle.snapTo(from)
@@ -257,12 +264,28 @@ internal fun JsGesture(
         settling = false
     }
 
-    fun moveTo(x: Float, y: Float, animated: Boolean, spec: AnimationSpec<Float> = current.feel?.springHome() ?: SpringBack) {
+    /** [dips]: a release home with the existing slider's motion, drawn dipping below home as its spring does. */
+    fun moveTo(
+        x: Float,
+        y: Float,
+        animated: Boolean,
+        spec: AnimationSpec<Float> = current.feel?.springHome() ?: SpringBack,
+        dips: Boolean = false,
+    ) {
+        val number = ++moveNumber
+        dippingMove = if (dips) number else -1
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             if (animated && ValueAnimator.areAnimatorsEnabled()) {
-                launch { placeX.animateTo(x, spec) }
-                placeY.animateTo(y, spec)
+                try {
+                    coroutineScope {
+                        launch { placeX.animateTo(x, spec) }
+                        placeY.animateTo(y, spec)
+                    }
+                } finally {
+                    if (dippingMove == number) dippingMove = -1
+                }
             } else {
+                if (dippingMove == number) dippingMove = -1
                 placeX.snapTo(x)
                 placeY.snapTo(y)
             }
@@ -482,7 +505,7 @@ internal fun JsGesture(
                                     GestureSettle.COMPLETE -> complete(travel)
                                     GestureSettle.SNAP_BACK -> {
                                         send(pan.endAction, JsGesturePhase.ENDED, x, y, travel)
-                                        moveTo(0f, 0f, animated = true)
+                                        moveTo(0f, 0f, animated = true, dips = current.feel != null)
                                         unpress()
                                     }
                                     GestureSettle.STAY -> {
@@ -511,9 +534,10 @@ internal fun JsGesture(
                     val worker = drawnWorkerPx(travel)
                     val workerX = worker.x
                     val workerY = worker.y
+                    val dips = dippingMove == moveNumber
                     IntOffset(
-                        (placeX.value.coerceIn(0f, travel) + workerX).roundToInt(),
-                        (placeY.value.coerceIn(0f, travel) + workerY).roundToInt(),
+                        (WorkerThumbSettle.along(placeX.value, travel, dips) + workerX).roundToInt(),
+                        (WorkerThumbSettle.along(placeY.value, travel, dips) + workerY).roundToInt(),
                     ).also { placed ->
                     }
                 }
