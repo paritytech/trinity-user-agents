@@ -37,6 +37,8 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUs
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.PrepareCoinageTransferUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.CoinagePrivacyConfigProvider
+import io.paritytech.polkadotapp.feature_coinage_impl.data.config.RemoteConfigCoinagePrivacyConfigProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.data.dataStore.AccountDataStoreConfigProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.data.dataStore.AccountDataStoreRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.dataStore.DataStoreAccountKeys
@@ -228,6 +230,9 @@ interface CoinageFeatureModule {
 
     @Binds
     fun bindAccountDataStoreConfigProvider(impl: RemoteConfigAccountDataStoreConfigProvider): AccountDataStoreConfigProvider
+
+    @Binds
+    fun bindCoinagePrivacyConfigProvider(impl: RemoteConfigCoinagePrivacyConfigProvider): CoinagePrivacyConfigProvider
 
     @Binds
     fun bindAccountDataStoreRepository(impl: RealAccountDataStoreRepository): AccountDataStoreRepository

@@ -44,7 +44,7 @@ class RealTextMessageDrawer @Inject constructor(
                 id = UUID.randomUUID().toString(),
                 timestamp = timestamp,
                 direction = if (isOutgoing) ChatMessageUiModel.Direction.OUTGOING else ChatMessageUiModel.Direction.INCOMING,
-                status = ChatMessageUiModel.Status.READ,
+                status = ChatMessageUiModel.Status.SEEN,
                 origin = ChatMessageOrigin.User,
                 text = text,
                 replyPreview = if (repliedTo != null && repliedText != null) {

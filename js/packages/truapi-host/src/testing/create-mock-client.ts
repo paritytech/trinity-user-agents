@@ -30,6 +30,7 @@ import {
   type MockHostConfig,
   type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
+import { stackGenesisHashes } from "./networks.js";
 import {
   resolveAccount,
   type DevAccount,
@@ -91,10 +92,13 @@ export async function createMockClient(
   const { createWasmRawCallbacks } =
     await import("../generated/host-callbacks-adapter.js");
 
-  const host = createMockHost(options.mock);
   const { productId, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
+  const host = createMockHost({
+    servedChains: stackGenesisHashes(hostConfig.testStack),
+    ...options.mock,
+  });
   const runtime = await glue.WasmSigningHostRuntime.create(
     {
       // Supplied outside the generated adapter, as the worker runtime does.
