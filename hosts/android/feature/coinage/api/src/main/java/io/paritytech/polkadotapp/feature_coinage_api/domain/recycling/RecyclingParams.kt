@@ -53,15 +53,11 @@ data class VoucherReadiness(
     /** Required ring fill for immediate readiness. */
     val requiredRingFill: Fraction,
     /** Alternative to the fill threshold; null means readiness depends on ring fill alone. */
-    val memberAndAgeRequirements: MemberAndAgeRequirements?,
+    val anonymityRequirements: AnonymityRequirements?,
 )
 
-/**
- * Allows readiness below the ring-fill threshold once both membership and waiting requirements are met.
- */
-data class MemberAndAgeRequirements(
-    /** Included members required for the timed route, regardless of how long the voucher has waited. */
-    val minimumMembers: Int,
-    /** Time since first confirmed inclusion; waiting to reach [minimumMembers] counts toward this delay. */
-    val delay: Duration,
+/** The member-minutes budget, [anonymityTime] × [anonymityMembers]; neither field is a threshold on its own. */
+data class AnonymityRequirements(
+    val anonymityTime: Duration,
+    val anonymityMembers: Int,
 )

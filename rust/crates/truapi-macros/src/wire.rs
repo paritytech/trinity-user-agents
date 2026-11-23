@@ -16,6 +16,7 @@ use syn::{
 struct WireArgs {
 	host_initiated: bool,
 	internal: bool,
+	request_fallback: bool,
 	id: Option<u8>,
 }
 
@@ -36,11 +37,16 @@ impl Parse for WireArgs {
 					return Err(syn::Error::new(key.span(), "duplicate `internal`"));
 				}
 				args.internal = true;
+			} else if key == "request_fallback" {
+				if args.request_fallback {
+					return Err(syn::Error::new(key.span(), "duplicate `request_fallback`"));
+				}
+				args.request_fallback = true;
 			} else {
 				if key != "id" {
 					return Err(syn::Error::new(
 						key.span(),
-						"expected `id = N`, `host_initiated`, or `internal`",
+						"expected `id = N`, `host_initiated`, `internal`, or `request_fallback`",
 					));
 				}
 				input.parse::<Token![=]>()?;
@@ -105,6 +111,9 @@ fn wire_tags(args: &WireArgs) -> Vec<String> {
 	}
 	if args.internal {
 		tags.push("@wire_internal".to_string());
+	}
+	if args.request_fallback {
+		tags.push("@wire_request_fallback".to_string());
 	}
 	tags
 }
