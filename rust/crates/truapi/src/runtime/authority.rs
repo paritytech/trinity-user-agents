@@ -27,7 +27,7 @@ use crate::{
 	},
 	host_logic::{
 		product_account::ProductAccountError,
-		raw_signing::RawPayloadError,
+		RawPayloadError,
 		session::{SessionInfo, SessionState},
 		statement_store::statement_public_key_from_secret,
 	},

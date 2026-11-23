@@ -30,7 +30,7 @@ use crate::{
 			ContentResolver, DotnsCallError, DotnsError, DotnsRegistry, DotnsTransport,
 			namehash_under,
 		},
-		worker_manifest::{WorkerManifest, check_app_manifest},
+		{WorkerManifest, check_app_manifest},
 	},
 	runtime::{
 		dotns_lookup::DotnsLookup,
@@ -220,8 +220,7 @@ pub struct CachedManifest {
 /// matches what the product actually publishes, so a host offering this owes
 /// the developer a way to tell the two apart.
 ///
-/// A Worker manifest is cached the same way, under
-/// [`worker_manifest_cache_key`].
+/// A Worker manifest is cached the same way, under `worker_manifest_cache_key`.
 pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> Vec<u8> {
 	CachedManifest { fetched_at_secs, json: json.map(str::to_string) }.encode()
 }

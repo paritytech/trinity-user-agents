@@ -2,7 +2,7 @@ use super::*;
 
 use truapi::latest::FundingRail;
 
-use crate::host_logic::worker_manifest::FundingRoute;
+use crate::host_logic::FundingRoute;
 
 // The network picker lists each network a crypto route declares once, in
 // the order the providers declare them: for the picked asset, or for any

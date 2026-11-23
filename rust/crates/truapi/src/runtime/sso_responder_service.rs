@@ -167,9 +167,9 @@ pub struct PairedSsoPeer {
 /// Peer-supplied description of the host proposing a pairing.
 ///
 /// Sanitized for direct rendering: every value is trimmed, stripped of control
-/// characters and bidirectional overrides, capped at
-/// [`MAX_PAIRING_METADATA_CHARS`] characters, and left `None` when nothing
-/// survives. A value the peer did not send is `None` too.
+/// characters and bidirectional overrides, capped at `MAX_PAIRING_METADATA_CHARS`
+/// characters, and left `None` when nothing survives. A value the peer did not
+/// send is `None` too.
 ///
 /// Sanitized is not verified. Nothing signs this metadata, so a prompt built
 /// from it states what the peer calls itself, never who it is.

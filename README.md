@@ -318,8 +318,7 @@ control of quota and of whether the bytes are backed up or encrypted.
 
 ### Building extrinsics
 
-The core builds its own extrinsics through `ExtrinsicService` in the `chain`
-module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
+The core builds its own extrinsics through `ExtrinsicService`: statement-store and long-term-storage allowances, PGAS claims, Bulletin
 preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
 extensions it cares about; the builder fills every other extension of the
 runtime's pipeline, computes each extension's value from the bytes of the
@@ -337,7 +336,7 @@ runtime's type by name.
 
 ### Contract calls
 
-`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`EvmContractCaller` reads pallet-revive contracts and prepares writes.
 `RuntimeApiCaller` transports support individual and batched reads of ABI data. For writes,
 `dry_run` simulates as the signer and returns a prepared transaction;
 `execute_until_finalized` submits it and waits for successful finalized dispatch.

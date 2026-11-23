@@ -5,10 +5,10 @@ use imagesize::ImageType;
 use super::ImageFormat;
 
 /// Largest image the core passes on.
-const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 /// Longest side in pixels. Decoders size a frame's buffer from the header, so this bounds the
 /// memory one frame takes. The number of frames in an animation is not bounded.
-const MAX_IMAGE_SIDE: usize = 4096;
+pub const MAX_IMAGE_SIDE: usize = 4096;
 
 /// Why bytes are not an image the core passes on.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]

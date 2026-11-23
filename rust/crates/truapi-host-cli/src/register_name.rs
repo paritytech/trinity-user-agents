@@ -16,8 +16,7 @@ use anyhow::{Context, Result, bail};
 use subxt::{tx::Signer, utils::H256};
 use tracing::debug;
 use truapi::{
-	Sr25519Signer,
-	chain::EvmContractCaller,
+	EvmContractCaller, Sr25519Signer,
 	host_logic::{
 		dotns_gateway::{
 			AsDotnsGatewayExtension, ClaimBlocker, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN,

@@ -33,24 +33,32 @@ mod runtime_api;
 mod storage_watch;
 mod subxt_chain;
 mod tx_submitter;
+#[cfg(not(target_arch = "wasm32"))]
 mod tx_validator;
 
 pub use crate::evm_contract::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
 pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
-	DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder,
-	ExtrinsicService, ExtrinsicServiceDeps, ExtrinsicVersion, InheritedImplication,
-	SubstrateSigner, TransactionExtension,
+	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicService,
+	InheritedImplication, SubstrateSigner, TransactionExtension,
 };
-pub use heads::{ChainHeads, HeadEvent, Heads};
+#[cfg(test)]
+pub use extrinsic::DEFAULT_MORTALITY_PERIOD;
+pub use heads::{ChainHeads, HeadEvent};
+#[cfg(not(target_arch = "wasm32"))]
+pub use heads::Heads;
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
-pub use runtime_api::{RpcClientAtBlock, RuntimeApiCaller};
-pub use storage_watch::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
-	StorageWatchError, WatchedHead, WatchedStorage,
-};
+pub use runtime_api::RuntimeApiCaller;
+#[cfg(not(target_arch = "wasm32"))]
+pub use runtime_api::RpcClientAtBlock;
+pub use storage_watch::{DecodableAtBlock, RawStorageChanges, WatchedHead, WatchedStorage};
+#[cfg(not(target_arch = "wasm32"))]
+pub use storage_watch::{DecodedEntryChanges, StorageWatchError};
+#[cfg(test)]
+pub use storage_watch::StorageSnapshot;
 pub use tx_submitter::{TxSubmitter, WatchEvent};
+#[cfg(not(target_arch = "wasm32"))]
 pub use tx_validator::TxValidator;
 
 #[cfg(test)]

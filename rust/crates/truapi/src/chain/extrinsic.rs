@@ -18,9 +18,11 @@ mod well_known;
 #[cfg(test)]
 mod tests;
 
-pub use builder::{DEFAULT_MORTALITY_PERIOD, ExtrinsicBuilder};
+pub use builder::ExtrinsicBuilder;
+#[cfg(test)]
+pub use builder::DEFAULT_MORTALITY_PERIOD;
 pub use error::ExtrinsicBuildError;
 pub use extension::{ExtensionError, InheritedImplication, TransactionExtension};
-pub use service::{ExtrinsicService, ExtrinsicServiceDeps};
+pub use service::ExtrinsicService;
 pub use signature::SubstrateSigner;
 pub use version::ExtrinsicVersion;

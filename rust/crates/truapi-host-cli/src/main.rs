@@ -65,10 +65,9 @@ use clap::{
 use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
-	AnnouncedPairing, DebugSink, HostRuntime, PairedSsoPeer, PairingHost, PairingHostConfig,
-	PairingProposal, ResponderExit, ResumePairingError, SigningHost, SigningHostConfig, Spawner,
-	StatementRenewalTarget, WsDebugSink,
-	chain::{EvmContractCaller, ExtrinsicService},
+	AnnouncedPairing, DebugSink, EvmContractCaller, ExtrinsicService, HostRuntime, PairedSsoPeer,
+	PairingHost, PairingHostConfig, PairingProposal, ResponderExit, ResumePairingError,
+	SigningHost, SigningHostConfig, Spawner, StatementRenewalTarget, WsDebugSink,
 	host_logic::{
 		dotns_gateway::{
 			MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,

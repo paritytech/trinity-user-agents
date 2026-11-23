@@ -11,7 +11,7 @@ use subxt::{
 	utils::H256,
 };
 
-use super::{failure, finalized_block};
+use super::failure;
 use crate::{
 	chain::{BlockBackend, DispatchOutcome, HashAndNumber},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure, encode_hex},
@@ -21,6 +21,7 @@ const DISPATCH_OUTCOME: &str = "dispatch_outcome";
 
 #[async_trait::async_trait]
 impl BlockBackend for ChainRuntime {
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn block_hash(&self, genesis: H256, number: u64) -> Result<Option<H256>, RuntimeFailure> {
 		const METHOD: &str = "block_hash";
 		let legacy = self.legacy(genesis).await?;
@@ -34,7 +35,7 @@ impl BlockBackend for ChainRuntime {
 		}
 		// Every height up to the finalized one has a block, so a missing hash
 		// there is one the node cannot serve, not one that does not exist.
-		if number <= finalized_block(&legacy, METHOD).await?.number {
+		if number <= super::finalized_block(&legacy, METHOD).await?.number {
 			return Err(RuntimeFailure::host_failure(
 				METHOD,
 				format!("node cannot serve the hash of finalized block {number}"),
@@ -55,6 +56,7 @@ impl BlockBackend for ChainRuntime {
 		Ok(header.map(|header| header.number()))
 	}
 
+	#[cfg(not(target_arch = "wasm32"))]
 	async fn extrinsic_hashes(
 		&self,
 		genesis: H256,

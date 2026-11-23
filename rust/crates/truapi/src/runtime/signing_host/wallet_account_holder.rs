@@ -23,7 +23,7 @@ use super::ring_vrf::RingResolver;
 use crate::{
 	host_internal::{extrinsic::Sr25519Signer, sso_messages::RingVrfError},
 	host_logic::{
-		device_key::{read_or_create_device_encryption_secret, store_device_encryption_secret},
+{read_or_create_device_encryption_secret, store_device_encryption_secret},
 		product_account::{ProductAccountError, derivation_index_bytes},
 		root_entropy::RootEntropy,
 		session::{SessionInfo, SessionState},
