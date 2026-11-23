@@ -10,22 +10,23 @@ use super::{
 	imported_secrets::ImportedSecretStore,
 	keys::{
 		ImportedItemKey, ItemIndex, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner,
-		ItemSlot, item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
+		ItemSlot,
 	},
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
 	purse::PurseId,
 	recovery::NftRecovery,
-	scarcity::{TRANSFER_POLICY, TransferParams},
+	scarcity::TransferParams,
 };
 use crate::{
 	durable::{
-		DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId, PolicyError, PolicyId,
-		PolicyParams, Preparation, ScheduledDurableTx, SubmissionPolicy, Unobservable,
-		VerdictFailureKind, engine_on,
+		DeferredDurableTx, DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId,
+		PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable, VerdictFailureKind,
+		engine_on,
 	},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
+	host_logic::root_entropy::RootEntropy,
 	installation::{InstallationId, InstallationIdProvider},
 	runtime::AuthorityError,
 	store::Db,
@@ -46,12 +47,13 @@ pub fn test_ledger(db: Db) -> NftLedger {
 /// What [`test_ledger`] runs on, for tests that replace one part. Transfers are
 /// registered with an engine that never builds them.
 pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
+	let entropy = Arc::new(FixedEntropy::new(TEST_ENTROPY));
 	NftLedgerDeps {
 		db: db.clone(),
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
-		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		keys: entropy.clone(),
 		durable: unbuilt_transfers_engine(db),
-		secrets: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		secrets: entropy,
 		imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 		recovery: Arc::new(NftRecovery::off()),
 	}
@@ -60,10 +62,12 @@ pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 /// An engine over `db` that serves the NFT domain, whose transfers stay waiting
 /// to be built.
 pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
-	let oracle = Arc::new(Unobservable(subxt::utils::H256::zero()));
-	let registry = DurableRegistry::new()
-		.with_domain(nft_domain(), oracle)
-		.with_policy(Arc::new(NeverBuilds));
+	let registry = DurableRegistry::new().with_domain(
+		nft_domain(),
+		subxt::utils::H256::zero(),
+		Arc::new(Unobservable),
+		Arc::new(NeverBuilds),
+	);
 	engine_on(db, registry)
 }
 
@@ -72,17 +76,13 @@ struct NeverBuilds;
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for NeverBuilds {
-	fn id(&self) -> PolicyId {
-		PolicyId::new(TRANSFER_POLICY)
-	}
-
 	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {
 		false
 	}
 
 	async fn prepare(
 		&self,
-		_: &[ScheduledDurableTx],
+		_: &[DeferredDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		Ok(HashMap::new())
 	}
@@ -99,25 +99,35 @@ impl InstallationIdProvider for FixedInstallation {
 }
 
 /// Item keys derived from one entropy.
-pub struct FixedEntropy(pub Vec<u8>);
+pub struct FixedEntropy(RootEntropy);
+
+impl FixedEntropy {
+	/// Derives every key from `entropy`.
+	pub fn new(entropy: impl Into<Vec<u8>>) -> Self {
+		Self(RootEntropy::new(entropy))
+	}
+}
 
 impl ItemKeyDeriver for FixedEntropy {
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
-		item_keys_from_entropy(&self.0, slots)
+		self.0
+			.item_keys(slots)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
 }
 
 impl ItemSecrets for FixedEntropy {
 	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
-		item_secrets_from_entropy(&self.0, slots)
+		self.0
+			.item_secrets(slots)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
 }
 
 impl ItemSigner for FixedEntropy {
 	fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, AuthorityError> {
-		item_signer_from_entropy(&self.0, slot)
+		self.0
+			.item_signer(slot)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
 }
@@ -129,7 +139,8 @@ const SENDER_ENTROPY: [u8; 16] = [0x77; 16];
 pub fn imported_test_key(index: u32) -> ImportedItemKey {
 	let slot =
 		ItemSlot { purse: PurseId(0), installation: TEST_INSTALLATION, index: ItemIndex(index) };
-	let secret = item_secrets_from_entropy(&SENDER_ENTROPY, &[slot]).unwrap().remove(0);
+	let sender = RootEntropy::new(SENDER_ENTROPY);
+	let secret = sender.item_secrets(&[slot]).unwrap().remove(0);
 	ImportedItemKey::from_secret(secret).expect("a derived secret is valid")
 }
 
