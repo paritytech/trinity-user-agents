@@ -12,6 +12,10 @@ struct NodeSlideToConfirmView: View {
     @State private var track: SlideToConfirmTrack
     @State private var width: CGFloat = 0
     @State private var confirmations = 0
+    /// The existing slider's press: the thumb grown while a finger holds it.
+    @State private var pressed = false
+    /// Its pop after a confirmed slide: when it starts and the scale it starts from.
+    @State private var pop: (start: Date, from: CGFloat)?
 
     init(props: CustomMessageWidgetNode.SlideToConfirmProps, modifiers: CustomMessageWidgetNode.Modifiers) {
         self.props = props
@@ -20,14 +24,20 @@ struct NodeSlideToConfirmView: View {
     }
 
     var body: some View {
-        SlideToConfirmFace(
-            props: props,
-            progress: track.progress,
-            isHinting: isInteractive && !track.isDragging,
-            trackHeight: SlideToConfirmMetrics.thumbTrackHeight(given: modifiers)
-        )
+        TimelineView(.animation(paused: pop == nil)) { timeline in
+            let popped = popState(at: timeline.date)
+            SlideToConfirmFace(
+                props: props,
+                progress: track.progress,
+                // The shimmer band runs while the slider waits, is dragged or springs home; not once it is held.
+                isHinting: props.acceptsSlide && !track.isHeldAtEnd,
+                trackHeight: SlideToConfirmMetrics.thumbTrackHeight(given: modifiers),
+                thumbScale: popped?.scale ?? (pressed ? feel.pressScale : 1),
+                thumbPast: popped?.past ?? 0
+            )
+        }
         .overlay {
-            SlideToConfirmDragSurface(isInteractive: isInteractive, onChange: follow, onEnd: release)
+            SlideToConfirmDragSurface(isInteractive: isInteractive, onChange: follow, onEnd: release, onPress: press)
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
         .opacity(props.isEnabled ? 1 : SlideToConfirmMetrics.disabledOpacity)
@@ -61,8 +71,11 @@ private extension NodeSlideToConfirmView {
         [props.displayedText, props.secondaryText].compactMap { $0 }.joined(separator: ", ")
     }
 
+    var feel: CustomMessageWidgetNode.PanFeel { SlideStyle.feel }
+
+    /// The existing slider's damped spring home (18 rad/s, 0.8), from rest.
     var springBack: Animation? {
-        reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.6)
+        reduceMotion ? nil : feel.springHome
     }
 
     var settleAnimation: Animation? {
@@ -76,17 +89,66 @@ private extension NodeSlideToConfirmView {
 
     func release(lifted: Bool) {
         var settled = track
+        let from = track.progress
         let outcome = settled.release(lifted: lifted)
-        withAnimation(outcome == .confirm ? settleAnimation : springBack) { track = settled }
-        if outcome == .confirm { fireConfirmAction() }
+        if outcome == .confirm {
+            finish(to: settled, from: from)
+            fireConfirmAction()
+            return
+        }
+        withAnimation(springBack) { track = settled }
+        unpress()
     }
 
     func confirm() {
         guard isInteractive else { return }
         var settled = track
+        let from = track.progress
         guard settled.confirm() == .confirm else { return }
-        withAnimation(settleAnimation) { track = settled }
+        finish(to: settled, from: from)
         fireConfirmAction()
+    }
+
+    /// The existing slider's finish: the thumb eases out to the end (117 ms, longer over a longer way) and pops as it arrives.
+    func finish(to settled: SlideToConfirmTrack, from progress: CGFloat) {
+        guard !reduceMotion else {
+            pressed = false
+            track = settled
+            return
+        }
+        let approach = feel.approach(distance: (1 - progress) * travel)
+        withAnimation(CustomMessageWidgetNode.PanFeel.easeOutQuad(approach)) { track = settled }
+        pop = (Date().addingTimeInterval(approach - feel.approachDuration), pressed ? feel.pressScale : 1)
+        pressed = false
+    }
+
+    /// A finger down on the thumb (within 10 points of it, as the existing slider takes it) grows it; lifting without a slide
+    /// lets it go.
+    func press(_ down: Bool, at location: CGPoint) {
+        guard props.variant == .thumb, isInteractive, pop == nil else { return }
+        guard down else {
+            if !track.isDragging { unpress() }
+            return
+        }
+        let trackHeight = SlideToConfirmMetrics.thumbTrackHeight(given: modifiers)
+        let inset = SlideToConfirmMetrics.thumbInset(trackHeight: trackHeight)
+        let radius = SlideToConfirmMetrics.thumbSize / 2
+        let center = CGPoint(x: inset + radius + track.progress * travel, y: trackHeight / 2)
+        let dx = location.x - center.x, dy = location.y - center.y
+        guard dx * dx + dy * dy <= (radius + 10) * (radius + 10) else { return }
+        withAnimation(reduceMotion ? nil : feel.press) { pressed = true }
+    }
+
+    func unpress() {
+        guard pressed else { return }
+        withAnimation(reduceMotion ? nil : feel.unpress) { pressed = false }
+    }
+
+    func popState(at date: Date) -> (scale: CGFloat, past: CGFloat)? {
+        guard let pop else { return nil }
+        if let state = feel.pop(at: date.timeIntervalSince(pop.start) * 60, from: pop.from) { return state }
+        Task { @MainActor in self.pop = nil }
+        return nil
     }
 
     func fireConfirmAction() {

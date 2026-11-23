@@ -12,6 +12,8 @@ struct SlideToConfirmDragSurface: UIViewRepresentable {
     let onChange: (CGFloat) -> Void
     /// Whether the finger lifted, rather than the system cancelling the drag.
     let onEnd: (Bool) -> Void
+    /// A finger touching down (true) or lifting (false), at its place, before any drag decides.
+    var onPress: ((Bool, CGPoint) -> Void)?
 
     func makeUIView(context _: Context) -> SlideToConfirmDragView {
         SlideToConfirmDragView()
@@ -21,6 +23,7 @@ struct SlideToConfirmDragSurface: UIViewRepresentable {
         view.isInteractive = isInteractive
         view.onChange = onChange
         view.onEnd = onEnd
+        view.onPress = onPress
     }
 }
 
@@ -29,6 +32,7 @@ final class SlideToConfirmDragView: UIView {
     var isInteractive = false
     var onChange: ((CGFloat) -> Void)?
     var onEnd: ((Bool) -> Void)?
+    var onPress: ((Bool, CGPoint) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -42,6 +46,24 @@ final class SlideToConfirmDragView: UIView {
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        if isInteractive, let touch = touches.first { onPress?(true, touch.location(in: self)) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        if let touch = touches.first { onPress?(false, touch.location(in: self)) }
+    }
+
+    /// A drag that takes the touch cancels it here first; the lift is reported after the drag has begun.
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        guard let touch = touches.first else { return }
+        let place = touch.location(in: self)
+        DispatchQueue.main.async { [weak self] in self?.onPress?(false, place) }
+    }
 
     /// Whether `other` has to wait for the slide's pan to fail before it may
     /// begin: any pan on a view that holds this one.

@@ -7,75 +7,107 @@ struct SlideToConfirmFace: View {
     let progress: CGFloat
     let isHinting: Bool
     var trackHeight: CGFloat = SlideToConfirmMetrics.trackHeight
+    /// The thumb's scale (pressed, popping) and how far past the end the pop stands it.
+    var thumbScale: CGFloat = 1
+    var thumbPast: CGFloat = 0
 
     var body: some View {
         switch props.variant {
         case .thumb:
-            SlideToConfirmThumbFace(props: props, progress: progress, isHinting: isHinting, trackHeight: trackHeight)
+            SlideToConfirmThumbFace(
+                props: props,
+                progress: progress,
+                isHinting: isHinting,
+                trackHeight: trackHeight,
+                thumbScale: thumbScale,
+                thumbPast: thumbPast
+            )
         case .reveal:
             SlideToConfirmRevealFace(props: props, progress: progress)
         }
     }
 }
 
-/// A pill track, a thumb that travels it, and a label the thumb fades as it passes.
+/// A pill track, a thumb that travels it, and a label the thumb fades as it passes, drawn as the existing slider is
+/// (`SlideStyle`).
 struct SlideToConfirmThumbFace: View {
     let props: CustomMessageWidgetNode.SlideToConfirmProps
     let progress: CGFloat
     let isHinting: Bool
     /// The product's height for the control, or the track's own; the thumb stays centred in it.
     var trackHeight: CGFloat = SlideToConfirmMetrics.trackHeight
+    var thumbScale: CGFloat = 1
+    var thumbPast: CGFloat = 0
 
     @Environment(\.self) private var environment
 
     var body: some View {
-        label
+        let inset = SlideToConfirmMetrics.thumbInset(trackHeight: trackHeight)
+        label(inset: inset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .overlay(alignment: .leading) {
                 GeometryReader { geometry in
-                    thumb.offset(x: progress * SlideToConfirmMetrics.thumbTravel(laneWidth: geometry.size.width))
+                    thumb
+                        .scaleEffect(thumbScale)
+                        .offset(x: progress * SlideToConfirmMetrics.thumbTravel(laneWidth: geometry.size.width) + thumbPast)
                 }
                 .frame(height: SlideToConfirmMetrics.thumbSize)
             }
-            .padding(SlideToConfirmMetrics.thumbInset(trackHeight: trackHeight))
+            .padding(inset)
             .frame(height: trackHeight)
-            .background(Color.bgSurfaceNested, in: Capsule())
-            .clipShape(Capsule())
+            // The existing slider's pill clips nothing: the thumb's shadow and its pop stand over the track's edge.
+            .background(SlideStyle.track, in: Capsule())
     }
 }
 
 private extension SlideToConfirmThumbFace {
-    var label: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(props.displayedText)
-                .typography(.bodyLargeEmphasized)
-                .foregroundStyle(Color.fgPrimary)
-                .lineLimit(1)
-                .modifier(SlideHintShimmer(isActive: isHinting))
-            if let secondaryText = props.secondaryText {
-                Text(secondaryText)
-                    .typography(.bodyLarge)
-                    .foregroundStyle(Color.fgTertiary)
-                    .lineLimit(1)
+    /// `#text`: two lines from 84 to 16 short of the pill's ends, centred under a 1-point padding, 4.6 apart; the
+    /// existing slider fades them with the thumb's progress, so a control held at the end shows none.
+    func label(inset: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: SlideStyle.gap) {
+            ValueFontText(text: props.displayedText, font: SlideStyle.line1Font, shimmer: isHinting ? SlideStyle.shimmer : nil)
+            if let secondaryText = props.secondaryText, !secondaryText.isEmpty {
+                ValueFontText(text: secondaryText, font: SlideStyle.line2Font, shimmer: nil)
             }
         }
-        // A control drawn as slid has its thumb at the end, so the label takes the start.
-        .padding(.leading, props.isHeldAtEnd ? DSSpacings.medium : thumbClearance)
-        .padding(.trailing, props.isHeldAtEnd ? thumbClearance : 0)
-        .opacity(props.isConfirmed ? 1 : max(0, 1 - progress / SlideToConfirmMetrics.labelGoneAt))
+        .padding(.top, SlideStyle.textPaddingTop)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(.leading, SlideStyle.textStart - inset)
+        .padding(.trailing, SlideStyle.textEnd - inset)
+        .opacity(SlideStyle.textOpacity(progress: props.isHeldAtEnd ? 1 : progress))
     }
 
-    var thumbClearance: CGFloat {
-        SlideToConfirmMetrics.thumbSize + DSSpacings.extraMedium
-    }
-
+    /// `#thumb`: 56, round, `--thumb` (or the product's accent) with its shadow; the chevron, or the spinner while
+    /// the product works.
     var thumb: some View {
-        let top = (props.accent ?? .fgPrimary).resolve(in: environment)
-        let bottom = top.mixed(with: Color.fgSecondary.resolve(in: environment), by: 0.3)
+        let fill = props.accent ?? SlideStyle.thumb
         return Circle()
-            .fill(LinearGradient(colors: [Color(top), Color(bottom)], startPoint: .top, endPoint: .bottom))
+            .fill(fill)
+            .background(
+                Circle()
+                    .fill(fill)
+                    .shadow(
+                        color: SlideStyle.shadow.color,
+                        radius: SlideStyle.shadow.blur / 2,
+                        x: SlideStyle.shadow.x,
+                        y: SlideStyle.shadow.y
+                    )
+            )
             .frame(width: SlideToConfirmMetrics.thumbSize, height: SlideToConfirmMetrics.thumbSize)
-            .overlay { SlideToConfirmGlyph(props: props, tint: .fgPrimaryInverted) }
+            .overlay {
+                if props.isLoading {
+                    SlideSpinner(tint: glyphTint(on: fill))
+                } else {
+                    SlideChevron()
+                        .stroke(glyphTint(on: fill), style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
+                        .flipsForRightToLeftLayoutDirection(true)
+                }
+            }
+    }
+
+    /// The existing slider's rule for an accent: a dark chevron on a light thumb, a white one on a dark thumb.
+    func glyphTint(on fill: Color) -> Color {
+        fill.resolve(in: environment).luminance > 0.55 ? SlideStyle.chevron : .white
     }
 }
 
