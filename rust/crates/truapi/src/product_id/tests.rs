@@ -1,6 +1,32 @@
 use super::*;
 use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
 
+// Hosts store rooms under this id, so a change to the derivation loses
+// every stored room.
+#[test]
+fn a_chat_room_id_is_stable_for_one_product_and_source() {
+	assert_eq!(
+		ProductId::for_test("chat.dot").chat_room_id("support"),
+		"0x4fb691cd1a1d7eb11cfd0b127b02f995c63329cad7e0fbcf470129d592d64d75"
+	);
+}
+
+#[test]
+fn a_chat_room_id_is_unique_to_its_product_and_source() {
+	let chat = ProductId::for_test("chat.dot");
+
+	assert_ne!(
+		chat.chat_room_id("support"),
+		ProductId::for_test("shop.dot").chat_room_id("support")
+	);
+	assert_ne!(chat.chat_room_id("support"), chat.chat_room_id("sales"));
+	// Without the length prefixes, both pairs give `localhost:3000a`.
+	assert_ne!(
+		ProductId::for_test("localhost:300").chat_room_id("0a"),
+		ProductId::for_test("localhost:3000").chat_room_id("a")
+	);
+}
+
 #[test]
 fn named_products_preserve_their_full_namespace() {
 	let identifier = ProductId::from_name("App.Arena.Coinflip", "paseo").unwrap();
