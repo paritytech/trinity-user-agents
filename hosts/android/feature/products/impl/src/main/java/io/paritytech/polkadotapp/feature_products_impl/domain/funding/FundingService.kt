@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import kotlinx.coroutines.flow.Flow
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
@@ -11,7 +12,6 @@ import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
-import uniffi.truapi.U128
 
 /**
  * Everything the funding screens ask of the core, in one place. The core owns every session: the screens follow a
@@ -37,16 +37,16 @@ interface FundingService {
      * Opens a session on the host's own behalf, for [amount] in the balance asset's planks or what the user types when
      * `null`. Its screens are asked for through [events]; answers its id, or `null` once the user left it.
      */
-    suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?>
+    suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingSessionId?>
 
     /** Tells the core what the user picked, in order with the asks after it. What it leads to comes back as options. */
     fun select(selection: FundingSelection, id: FundingSessionId)
 
     /** Asks every provider for the selection to quote [amount], or drops the quotes on screen when `null`. */
-    fun quote(amount: U128?, id: FundingSessionId)
+    fun quote(amount: Balance?, id: FundingSessionId)
 
     /** Why [amount] cannot go ahead for the reported selection, given what a withdrawal can spend. */
-    suspend fun amountIssue(amount: U128, spendable: U128?, id: FundingSessionId): Result<FundingAmountIssue?>
+    suspend fun amountIssue(amount: Balance, spendable: Balance?, id: FundingSessionId): Result<FundingAmountIssue?>
 
     /**
      * Hands the session to [provider] on the quote on screen. With no provider the core hands it to the latest ask's

@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
@@ -41,8 +42,8 @@ class FakeFundingCore : FundingCore {
 
     override suspend fun start(): Result<Unit> = Result.success(Unit).also { calls += "start" }
 
-    override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> =
-        Result.success<String?>("opened").also { calls += "open $direction $amount" }
+    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<String?> =
+        Result.success<String?>("opened").also { calls += "open $direction ${amount?.value}" }
 
     override suspend fun session(intent: String): Result<FundingSession?> = Result.success(sessions[intent])
 
@@ -62,8 +63,8 @@ class FakeFundingCore : FundingCore {
     override suspend fun select(intent: String, selection: FundingSelection): Result<Unit> =
         Result.success(Unit).also { calls += "select ${selection.rail}" }
 
-    override suspend fun requestQuote(intent: String, amount: U128): Result<ULong?> =
-        Result.success<ULong?>(nextRequestId++).also { calls += "quote $amount" }
+    override suspend fun requestQuote(intent: String, amount: Balance): Result<ULong?> =
+        Result.success<ULong?>(nextRequestId++).also { calls += "quote ${amount.value}" }
 
     override suspend fun startWhenQuoted(intent: String, requestId: ULong): Result<Unit> =
         Result.success(Unit).also { calls += "startWhenQuoted $requestId" }
@@ -71,7 +72,7 @@ class FakeFundingCore : FundingCore {
     override suspend fun cancelAutoStart(intent: String): Result<Unit> =
         Result.success(Unit).also { calls += "cancelAutoStart" }
 
-    override suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?> =
+    override suspend fun amountIssue(intent: String, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?> =
         Result.success(null)
 
     override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> {

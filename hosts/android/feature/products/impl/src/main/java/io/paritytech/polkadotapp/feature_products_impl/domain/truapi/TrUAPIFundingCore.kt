@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
@@ -16,7 +17,6 @@ import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
-import uniffi.truapi.U128
 import javax.inject.Inject
 
 class TrUAPIFundingCore @Inject constructor(
@@ -24,8 +24,8 @@ class TrUAPIFundingCore @Inject constructor(
 ) : FundingCore {
     override suspend fun start(): Result<Unit> = runtimeProvider.runtime().map { }
 
-    override suspend fun open(direction: FundingDirection, amount: U128?): Result<String?> =
-        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.openFunding(direction, amount) } }
+    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<String?> =
+        runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.openFunding(direction, amount?.toU128()) } }
 
     override suspend fun session(intent: String): Result<FundingSession?> =
         runtimeProvider.runtime().mapCatching { it.fundingSession(intent) }
@@ -51,8 +51,8 @@ class TrUAPIFundingCore @Inject constructor(
     override suspend fun select(intent: String, selection: FundingSelection): Result<Unit> =
         runtimeProvider.runtime().mapCatching { it.selectFundingOptions(intent, selection) }
 
-    override suspend fun requestQuote(intent: String, amount: U128): Result<ULong?> =
-        runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, amount) }
+    override suspend fun requestQuote(intent: String, amount: Balance): Result<ULong?> =
+        runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, amount.toU128()) }
 
     override suspend fun startWhenQuoted(intent: String, requestId: ULong): Result<Unit> =
         runtimeProvider.runtime().mapCatching { it.startFundingWhenQuoted(intent, requestId) }
@@ -60,8 +60,8 @@ class TrUAPIFundingCore @Inject constructor(
     override suspend fun cancelAutoStart(intent: String): Result<Unit> =
         runtimeProvider.runtime().mapCatching { it.cancelFundingAutoStart(intent) }
 
-    override suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?> =
-        runtimeProvider.runtime().mapCatching { it.fundingAmountIssue(intent, amount, spendable) }
+    override suspend fun amountIssue(intent: String, amount: Balance, spendable: Balance?): Result<FundingAmountIssue?> =
+        runtimeProvider.runtime().mapCatching { it.fundingAmountIssue(intent, amount.toU128(), spendable?.toU128()) }
 
     override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtimeProvider.runtime().flatMap { runtime -> runCancellableCatching { runtime.selectFundingProvider(intent, providerId, quoteId) } }

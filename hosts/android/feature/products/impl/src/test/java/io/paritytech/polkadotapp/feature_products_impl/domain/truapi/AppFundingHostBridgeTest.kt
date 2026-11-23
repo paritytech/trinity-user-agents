@@ -4,6 +4,7 @@ import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
@@ -26,7 +27,7 @@ class AppFundingHostBridgeTest {
     // The core reads anything but STARTED as the user walking away and discards the session.
     @Test
     fun `the service's answer reaches the core unchanged`() = runBlocking {
-        coEvery { funding.present(FundingSessionId("intent"), CoreFundingDirection.OUT, "1000") } returns FundingPresentOutcome.STARTED
+        coEvery { funding.present(FundingSessionId("intent"), CoreFundingDirection.OUT, 1000.intoBalance()) } returns FundingPresentOutcome.STARTED
 
         assertEquals(
             FundingPresentOutcome.STARTED,

@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import uniffi.truapi.FundingStatus
 
 /** The CASH card's line for the status the core gives a session. */
@@ -23,14 +23,14 @@ internal fun FundingStatus.toActivityStatus(): FundingActivityStatus = when (thi
     FundingStatus.ToppedUp -> FundingActivityStatus.ToppedUp
     FundingStatus.Sent, FundingStatus.PaidOutAfterCancel -> FundingActivityStatus.Sent
     FundingStatus.Refunded -> FundingActivityStatus.Refunded
-    is FundingStatus.PayoutFailed -> FundingActivityStatus.PayoutFailed(refunded?.toBalance())
+    is FundingStatus.PayoutFailed -> FundingActivityStatus.PayoutFailed(refunded?.toBalanceOrNull())
     is FundingStatus.Failed -> FundingActivityStatus.Failed(reason.toReason())
 
     FundingStatus.CancelRequested -> inProgress(FundingActivityStep.CancelRequested)
     is FundingStatus.CancelOffered -> inProgress(FundingActivityStep.CancelOffered)
     is FundingStatus.CancelRefused -> inProgress(FundingActivityStep.CancelRefused(reason))
     FundingStatus.Cancelling -> inProgress(FundingActivityStep.Cancelling)
-    is FundingStatus.Cancelled -> FundingActivityStatus.Cancelled(refunded?.toBalance())
+    is FundingStatus.Cancelled -> FundingActivityStatus.Cancelled(refunded?.toBalanceOrNull())
 }
 
 private fun inProgress(step: FundingActivityStep) = FundingActivityStatus.InProgress(step)

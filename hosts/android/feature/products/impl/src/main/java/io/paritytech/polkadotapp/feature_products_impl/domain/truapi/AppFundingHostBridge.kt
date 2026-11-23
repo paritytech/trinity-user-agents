@@ -2,8 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import dagger.Lazy
 import io.parity.truapi.FundingHostBridge
-import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
@@ -30,7 +28,7 @@ class AppFundingHostBridge @Inject constructor(
         intent: String,
         direction: CoreFundingDirection,
         amount: U128?,
-    ): FundingPresentOutcome = funding.get().present(FundingSessionId(intent), direction, amount)
+    ): FundingPresentOutcome = funding.get().present(FundingSessionId(intent), direction, amount?.toBalanceOrNull())
 
     override fun providerFrameRequested(providerId: ProductId, intent: String) {
         funding.get().frameRequested(providerId, FundingSessionId(intent))
@@ -62,7 +60,3 @@ internal fun FundingDirection.toCore(): CoreFundingDirection = when (this) {
     FundingDirection.IN -> CoreFundingDirection.IN
     FundingDirection.OUT -> CoreFundingDirection.OUT
 }
-
-internal fun U128.toBalance(): Balance = toBigInteger().intoBalance()
-
-internal fun Balance.toU128(): U128 = value.toString()
