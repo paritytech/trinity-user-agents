@@ -16,23 +16,33 @@ protocol FundingEntryInteractorOutputProtocol: AnyObject {
 class FundingEntryInteractor {
     let service: FundingServiceProtocol
     let entryId: String
+    let logger: LoggerProtocol
     weak var entryOutput: FundingEntryInteractorOutputProtocol?
 
-    private let following = FundingFollowing()
+    private var followingTask: Task<Void, Never>?
 
-    init(service: FundingServiceProtocol, entryId: String) {
+    init(service: FundingServiceProtocol, entryId: String, logger: LoggerProtocol = Logger.shared) {
         self.service = service
         self.entryId = entryId
+        self.logger = logger
+    }
+
+    deinit {
+        followingTask?.cancel()
     }
 
     func setup() {
-        following.task?.cancel()
-        following.task = Task { [weak self, service, entryId] in
+        followingTask?.cancel()
+        followingTask = Task { [weak self, service, entryId, logger] in
             do {
                 for try await entry in service.subscribeEntryState(entryId) {
                     self?.entryOutput?.didReceive(entry: entry)
                 }
-            } catch {}
+            } catch {
+                if !Task.isCancelled {
+                    logger.error("[funding] \(entryId): following the session failed: \(error)")
+                }
+            }
             guard !Task.isCancelled else { return }
             self?.entryOutput?.didStopFollowing()
         }
@@ -55,14 +65,5 @@ class FundingEntryInteractor {
     /// The user left the flow: a session that never started is dropped.
     func leave() {
         service.leave(entryId)
-    }
-}
-
-/// Holds a follow task, cancelled when its owner goes.
-final class FundingFollowing {
-    var task: Task<Void, Never>?
-
-    deinit {
-        task?.cancel()
     }
 }
