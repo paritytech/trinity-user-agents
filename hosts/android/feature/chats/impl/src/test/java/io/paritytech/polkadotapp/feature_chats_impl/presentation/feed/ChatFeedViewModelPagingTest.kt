@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFee
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPageOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -49,9 +51,11 @@ class ChatFeedViewModelPagingTest {
         coEvery { loadNewerMessages(any()) } returns ChatPageOutcome.Appended(0)
         coEvery { jumpToMessage(any(), any()) } returns false
         coEvery { isProductSource(roomId) } returns true
+        every { subscribePeerSeenOrder(roomId) } returns flowOf(Long.MAX_VALUE)
+        every { subscribeUserInputState(any()) } returns flowOf(ChatUserInputState.Nothing)
     }
     private val messageUiMapper = mockk<ChatMessageUiMapper> {
-        coEvery { map(any(), any(), any(), any(), any(), any(), any()) } returns persistentListOf()
+        coEvery { map(any(), any(), any(), any(), any(), any(), any(), any()) } returns persistentListOf()
     }
 
     @Before
