@@ -1,4 +1,7 @@
-import { asProductId } from "../../../../js/packages/truapi/src/index.ts";
+import {
+  asProductId,
+  ringCollectionId,
+} from "../../../../js/packages/truapi/src/index.ts";
 
 // A ring-VRF proof in a third product's context, for
 // paritytech/platform-bugs#99. Run by `scripts/cross-product-ringvrf-context-e2e.sh`,
@@ -22,9 +25,7 @@ const ringLocation = {
   junctions: [
     {
       tag: "CollectionId" as const,
-      // "pop:polkadot.network/people-lite"
-      value:
-        "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465",
+      value: ringCollectionId("pop:polkadot.network/people-lite"),
     },
   ],
 };
