@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime
+package io.paritytech.polkadotapp.app
 
 import android.annotation.SuppressLint
 import android.webkit.WebView
@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebViewProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
