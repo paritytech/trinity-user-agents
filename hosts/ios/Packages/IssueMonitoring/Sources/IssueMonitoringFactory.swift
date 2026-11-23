@@ -28,10 +28,10 @@ public enum IssueMonitoringFactory {
     }
 
     /// Log sink for the service `createService(dsn:)` starts, or nil when that service is a no-op.
-    /// Call it after that service's `setup()`: the sink keeps the logger of the SDK it started.
+    /// The sink writes to the logger of whichever SDK is running when it logs.
     public static func createLogSink(dsn: String) -> HostLogSink? {
         #if SENTRY_ENABLED
-            dsn.isEmpty ? nil : SentryHostLogSink(logger: SentrySDK.logger)
+            dsn.isEmpty ? nil : SentryHostLogSink()
         #else
             nil
         #endif

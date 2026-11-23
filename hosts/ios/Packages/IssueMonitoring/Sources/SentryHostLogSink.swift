@@ -1,17 +1,14 @@
 #if SENTRY_ENABLED
     import Foundation
-    @preconcurrency import Sentry
+    import Sentry
 
+    /// Holds no state: `SentrySDK.logger` is read on every call, since `SentryLogger` is not `Sendable`.
     struct SentryHostLogSink: HostLogSink {
-        private let logger: SentryLogger
-
-        init(logger: SentryLogger) {
-            self.logger = logger
-        }
-
         func log(level: HostLogLevel, tag: String, message: String, attributes: [String: HostLogAttribute]) {
             var fields: [String: Any] = attributes.mapValues(\.sentryValue)
             fields["tag"] = tag
+
+            let logger = SentrySDK.logger
 
             let send: (String, [String: Any]) -> Void =
                 switch level {
