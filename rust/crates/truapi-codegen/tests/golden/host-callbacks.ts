@@ -512,13 +512,14 @@ export type FundingQuoteUnavailable =
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export interface HostContactLookup {
   /**
-   * The key every handle here was minted under. Per session, and never
-   * given to a product.
+   * The key every handle here was minted under. Per session and product,
+   * and never given to a product.
    */
   handleKey: Bytes32;
 
@@ -1334,8 +1335,9 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
  *
  * A handle is `BLAKE2b-256(key = handle_key, message = account)`, the account
  * being its 32 raw bytes. The host holds the accounts, so it is the one that
- * can match: hash each contact's account under `handle_key`, or keep that hash
- * as an indexed column for the session, and look the handles up.
+ * can match: hash each contact's account under `handle_key` and look the
+ * handles up. The key differs per product and per session, so a host that
+ * keeps the hashes keeps them per key.
  */
 export const HostContactLookup: S.Codec<HostContactLookup> = S.lazy(
   (): S.Codec<HostContactLookup> =>
