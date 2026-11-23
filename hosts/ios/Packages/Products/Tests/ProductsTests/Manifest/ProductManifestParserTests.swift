@@ -195,6 +195,7 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.map(\.id.value) == ["loyalty", "trophy"])
         #expect(worker.pocketCards.map(\.title) == ["Loyalty", "Trophy"])
         #expect(worker.pocketCards.first?.preview == .archive(path: "faces/loyalty.json"))
+        #expect(worker.pocketCards.map(\.back) == ["back.json", nil])
     }
 
     /// A published manifest must never make the Host fetch an address of the
@@ -254,15 +255,6 @@ struct ProductManifestParserTests {
         #expect(worker.entrypoint == "src/worker.js")
         #expect(worker.serves(.chat))
         #expect(worker.pocketCards.isEmpty)
-    }
-
-    @Test func aCardDeclaresAnOptionalBackInItsArchive() throws {
-        let cards = """
-        [{"id":"loyalty","title":"Loyalty","preview":"front.json","back":"back.json"},
-         {"id":"trophy","title":"Trophy","preview":"trophy.json"}]
-        """
-        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
-        #expect(worker.pocketCards.map(\.back) == ["back.json", nil])
     }
 
     /// The request is the card's own, so one card asking for its face away
@@ -438,7 +430,7 @@ private enum Fixtures {
 
     static func cards() -> String {
         """
-        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json"},
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","back":"back.json"},
          {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
         """
     }

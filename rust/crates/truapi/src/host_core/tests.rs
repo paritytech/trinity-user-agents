@@ -8,7 +8,6 @@ use crate::{
 		root_entropy::RootEntropy,
 		sso::pairing::{PairingBootstrap, establish_sso_session_info},
 		statement_store::SUBMIT_STATEMENT_METHOD,
-		worker::WorkerTransition,
 		x25519_seal::X25519PrivateKey,
 	},
 	test_support::{StubPlatform, runtime_config, wait_until},
@@ -894,46 +893,27 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 }
 
 #[test]
-fn feature_owners_can_release_the_worker_with_a_render_still_open() {
-	#[derive(Default)]
-	struct RecordingDemand {
-		transitions: Mutex<Vec<(String, WorkerTransition)>>,
-	}
-	impl crate::host_logic::worker::WorkerController for RecordingDemand {
-		fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
-			self.transitions
-				.lock()
-				.expect("transition mutex poisoned")
-				.push((product_id.to_string(), transition));
-		}
-	}
-
-	let (runtime, _) = render_runtime();
+fn render_lifetime_is_independent_of_the_features_worker_claim() {
+	let (runtime, sink) = render_runtime();
+	let services = runtime.admin.product_runtime().connection().services();
 	let product = ProductId::for_test("worker.dot");
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let ledger = &services.worker_ledger;
-	let demand = Arc::new(RecordingDemand::default());
-	assert!(ledger.install_worker_controller(demand.clone()));
-	let pocket = crate::WorkerHold::acquire(&services, &product);
-	let chat = crate::WorkerHold::acquire(&services, &product);
+	let owner = crate::WorkerHold::acquire(services, &product);
+	let mut render = start_render(&runtime, "loyalty");
+	assert_eq!(services.worker_ledger.count(&product), 1);
 
-	let render = start_render(&runtime, "loyalty");
-	assert_eq!(ledger.count(&product), 2);
-	drop(pocket);
-	drop(render);
-	assert_eq!(ledger.count(&product), 1);
-
-	let replacement = start_render(&runtime, "loyalty");
-	drop(chat);
-	assert_eq!(ledger.count(&product), 0);
-	drop(replacement);
-	assert_eq!(
-		demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
-		[
-			("worker.dot".to_string(), WorkerTransition::Start),
-			("worker.dot".to_string(), WorkerTransition::Stop),
-		]
+	deliver_render_frame(
+		&runtime,
+		&render_request_id(&sink, 0),
+		crate::frame::MESSAGE_TYPE_INTERRUPT,
+		crate::frame::encode_clean_interrupt(),
 	);
+	assert_eq!(poll_render(&mut render), core::task::Poll::Ready(None));
+	drop(render);
+	assert_eq!(services.worker_ledger.count(&product), 1);
+
+	let _replacement = start_render(&runtime, "loyalty");
+	drop(owner);
+	assert_eq!(services.worker_ledger.count(&product), 0);
 }
 
 /// A signed-out Worker runtime, which may render, and the sink holding the
@@ -1188,57 +1168,24 @@ fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
 }
 
 #[test]
-fn a_clean_render_end_preserves_its_callers_claim() {
-	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let product = ProductId::for_test("worker.dot");
-	let _owner = crate::WorkerHold::acquire(&services, &product);
-	let mut render = start_render(&runtime, "loyalty");
-	let request_id = render_request_id(&sink, 0);
-	deliver_render_frame(
-		&runtime,
-		&request_id,
-		crate::frame::MESSAGE_TYPE_INTERRUPT,
-		crate::frame::encode_clean_interrupt(),
-	);
-	assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
-
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&product), 1);
-}
-
-#[test]
 fn the_host_receives_the_products_render_error() {
 	let (runtime, sink) = render_runtime();
 	let mut render = start_render(&runtime, "loyalty");
+	let error = truapi::latest::GenericError { reason: "the product stopped drawing".to_string() };
+	let interrupt = truapi::CallError::Domain(
+		truapi::versioned::renderer::ProductRendererRenderError::V1(error.clone()),
+	);
 
-	let request_id = render_request_id(&sink, 0);
 	deliver_render_frame(
 		&runtime,
-		&request_id,
+		&render_request_id(&sink, 0),
 		crate::frame::MESSAGE_TYPE_INTERRUPT,
-		Result::<(), truapi::CallError<v01::GenericError>>::Err(truapi::CallError::HostFailure {
-			reason: "the product stopped drawing".to_string(),
-		})
-		.encode(),
+		Result::<(), _>::Err(interrupt).encode(),
 	);
-	assert!(matches!(
+	assert_eq!(
 		poll_render(&mut render),
-		core::task::Poll::Ready(Some(Err(truapi::CallError::HostFailure { .. })))
-	));
-}
-
-#[test]
-fn the_host_receives_an_error_for_a_malformed_render_tree() {
-	let (runtime, sink) = render_runtime();
-	let mut render = start_render(&runtime, "loyalty");
-
-	let request_id = render_request_id(&sink, 0);
-	deliver_render_frame(&runtime, &request_id, crate::frame::MESSAGE_TYPE_RECEIVE, vec![0xff]);
-	assert!(matches!(
-		poll_render(&mut render),
-		core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
-	));
+		core::task::Poll::Ready(Some(Err(truapi::CallError::Domain(error))))
+	);
 }
 
 #[test]

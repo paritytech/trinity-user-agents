@@ -119,6 +119,12 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
         initialState: (acquired: [ProductId](), released: [ProductId](), log: [String]())
     )
 
+    private let onRelease: @Sendable (ProductId) -> Void
+
+    init(onRelease: @escaping @Sendable (ProductId) -> Void = { _ in }) {
+        self.onRelease = onRelease
+    }
+
     var acquired: [ProductId] { records.withLock { $0.acquired } }
     var released: [ProductId] { records.withLock { $0.released } }
     /// Both in the order they happened. A release reaching the core before its
@@ -135,6 +141,7 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
                 $0.released.append(productId)
                 $0.log.append("release \(productId)")
             }
+            onRelease(productId)
         }
     }
 

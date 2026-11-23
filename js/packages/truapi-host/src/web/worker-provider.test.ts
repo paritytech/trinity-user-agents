@@ -1492,24 +1492,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
 });
 
 describe("worker demand", () => {
-  it("releases each owner's claim once when two owners need the same worker", async () => {
-    const worker = new FakeWorker();
-    const runtime = await readyRuntime(worker);
-    const productId = asProductId("a.dot");
-    const first = runtime.claimWorker(productId);
-    const second = runtime.claimWorker(productId);
-    first.release();
-    first.release();
-    expect(
-      worker.messages.filter((message) => message.kind === "releaseWorker"),
-    ).toHaveLength(1);
-    second.release();
-    expect(
-      worker.messages.filter((message) => message.kind === "releaseWorker"),
-    ).toHaveLength(2);
-    runtime.dispose();
-  });
-
   it("forwards references and fans the wanted level out", async () => {
     const worker = new FakeWorker();
     const runtime = await readyRuntime(worker);

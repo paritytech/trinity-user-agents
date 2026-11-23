@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
-import io.mockk.Called
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -37,18 +36,10 @@ class TrUAPIPocketFaceStreamsTest {
     }
 
     @Test
-    fun `drawing on an existing execution leaves worker ownership with the caller`() = runTest {
-        val execution = mockk<TrUAPIProductExecution>()
-
-        drawnBy(execution).renderFaces(key).first()
-
-        verify { runtime wasNot Called }
-    }
-
-    @Test
-    fun `a resolution that throws leaves the face plain`() = runTest {
+    fun `a failed resolution leaves the face plain without claiming the worker`() = runTest {
         val execution = mockk<TrUAPIProductExecution> { every { resolveMaterials(any(), any(), any()) } throws IllegalStateException() }
 
         assertNull(drawnBy(execution).renderFaces(key).first().resolveMaterials())
+        verify(exactly = 0) { runtime.claimWorker(any()) }
     }
 }

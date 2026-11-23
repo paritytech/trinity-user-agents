@@ -170,32 +170,28 @@ class ManifestParserTest {
     fun `worker publishes pocket cards behind includes pocket`() {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true},
-               "pocket":{"cards":[{"id":" loyalty ","title":"Loyalty","preview":"faces/loyalty.json"}]}}""",
+               "pocket":{"cards":[{"id":" loyalty ","title":"Loyalty","preview":"faces/loyalty.json"},
+                                   {"id":"member","title":"Member","preview":"faces/member.json","back":"faces/back.json"}]}}""",
             ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
         assertEquals(true, worker?.includesPocket)
-        val expected = PocketCardDefinition(
+        val frontOnly = PocketCardDefinition(
             PocketCardId("loyalty"),
             "Loyalty",
             PocketCardPreview.Archive("faces/loyalty.json"),
             faceShown = true,
             back = null,
         )
-        assertEquals(listOf(expected), worker?.pocketCards)
-    }
-
-    @Test
-    fun `a card with a published back has two live sides when expanded`() {
-        val worker = parser.parseExecutable(
-            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"pocket":true},
-               "pocket":{"cards":[{"id":"loyalty","title":"Loyalty","preview":"front.json","back":"back.json"}]}}""",
-            ExecutableKind.WORKER,
-            host("worker.coinflip.dot"),
-        ).getOrThrow() as ProductExecutable.Worker
-
-        assertEquals(PocketCardPreview.Archive("back.json"), worker.pocketCards.single().back)
+        val twoSided = PocketCardDefinition(
+            PocketCardId("member"),
+            "Member",
+            PocketCardPreview.Archive("faces/member.json"),
+            faceShown = true,
+            back = PocketCardPreview.Archive("faces/back.json"),
+        )
+        assertEquals(listOf(frontOnly, twoSided), worker?.pocketCards)
     }
 
     /**

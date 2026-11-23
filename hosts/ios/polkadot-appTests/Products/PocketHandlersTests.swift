@@ -11,18 +11,13 @@ private let gameProductId = try! ProductId("game.paseo")
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct PocketHandlersTests {
-    @Test func storingCardsDoesNotStartTheirWorker() {
+    @Test func onlyThePresentedCardTakesAClaimSharedByItsViews() async throws {
         let workers = StubWorkerManager()
-        let handlers = makeHandlers(workers: workers)
-        handlers.settle([loyalty, streak])
-        #expect(workers.references.log.isEmpty)
-    }
-
-    @Test func twoPresentationsShareAFrontClaimEvenWithNoRenderStream() async throws {
-        let workers = StubWorkerManager()
-        let handlers = makeHandlers(workers: workers)
+        let published = StubPublishedCards()
+        published.checkLookup = { cardId in #expect(cardId == loyalty.key.cardId) }
+        let handlers = makeHandlers(workers: workers, published: published)
         let dismissWallet = handlers.present(loyalty.key, expanded: false)
-        handlers.settle([loyalty])
+        handlers.settle([loyalty, streak])
         _ = try #require(await handlers.awaitStreams(for: loyalty.key))
         let dismissOpened = handlers.present(loyalty.key, expanded: true)
         dismissWallet()
@@ -108,19 +103,31 @@ struct PocketHandlersTests {
         #expect(workers.references.log.isEmpty)
     }
 
-    @Test func withdrawingAnOfferReleasesTheVisibleSides() async throws {
-        let workers = StubWorkerManager()
+    @Test func aTransientRefreshKeepsBothSidesUntilTheOfferIsWithdrawn() async throws {
+        let releases = AsyncStream.makeStream(of: ProductId.self)
+        let references = StubWorkerReferences(onRelease: { releases.continuation.yield($0) })
+        let workers = StubWorkerManager(references: references)
         let published = StubPublishedCards()
         published.back = "back.json"
         let handlers = makeHandlers(workers: workers, published: published)
         handlers.settle([loyalty])
         let dismiss = handlers.present(loyalty.key, expanded: true)
         _ = try #require(await handlers.awaitStreams(for: loyalty.key))
-        published.failures = [PocketPublishError.unknownCard]
-        handlers.settle([loyalty])
-        try await waitUntil { workers.references.released.count == 2 }
+        await confirmation("transient refresh is retried", expectedCount: 2) { attempt in
+            published.checkLookup = { _ in
+                attempt()
+                #expect(references.acquired == [gameProductId, gameProductId])
+                #expect(references.released.isEmpty)
+            }
+            published.failures = [URLError(.notConnectedToInternet), PocketPublishError.unknownCard]
+            handlers.settle([loyalty])
+            var released = releases.stream.makeAsyncIterator()
+            #expect(await released.next() == gameProductId)
+            #expect(await released.next() == gameProductId)
+        }
+        #expect(await handlers.awaitStreams(for: loyalty.key) == nil)
         dismiss()
-        #expect(workers.references.released == workers.references.acquired)
+        #expect(references.released == references.acquired)
     }
 
     @Test func aTransientManifestFailureIsRetriedWhileTheCardIsVisible() async throws {
@@ -163,8 +170,10 @@ final class StubPublishedCards: PublishedPocketCardsResolving, @unchecked Sendab
     /// lookup succeeds.
     var failures: [any Error] = []
     var back: String?
+    var checkLookup: @Sendable (PocketCardId) -> Void = { _ in }
 
     func find(productId: ProductId, cardId: PocketCardId) async throws -> PublishedPocketCard {
+        checkLookup(cardId)
         if !failures.isEmpty { throw failures.removeFirst() }
 
         return PublishedPocketCard(

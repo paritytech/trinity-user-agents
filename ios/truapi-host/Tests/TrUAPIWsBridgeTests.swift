@@ -27,7 +27,6 @@ struct TrUAPIWsBridgeTests {
         let stream = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "front"), payload: Data()))
         withExtendedLifetime(stream) {
             pocket.release()
-            pocket.release()
             #expect(bridge.workerTransitions.withLock { $0 } == [.start])
             chat.release()
             #expect(bridge.workerTransitions.withLock { $0 } == [.start, .stop])

@@ -231,8 +231,8 @@ struct ChatRuntimeTests {
         }
     }
 
-    @Test func rustRuntimeReleasesItsClaimWhileReadinessIsPending() async throws {
-        let workers = StubWorkerManager(startupWindow: .milliseconds(100))
+    @Test(.timeLimit(.minutes(1))) func rustRuntimeReleasesItsClaimWhileReadinessIsPending() async throws {
+        let workers = workersRunning(MockProductExecution())
         workers.suspendsReadiness = true
         let runtime = makeRustRuntime(workers: workers)
 
@@ -243,7 +243,7 @@ struct ChatRuntimeTests {
         await runtime.dispose()
         #expect(workers.references.released == [chatProduct])
         workers.resumeReadiness()
-        _ = try? await starting.value
+        await #expect(throws: CancellationError.self) { try await starting.value }
 
         #expect(workers.references.log == ["acquire \(chatProduct)", "release \(chatProduct)"])
     }
