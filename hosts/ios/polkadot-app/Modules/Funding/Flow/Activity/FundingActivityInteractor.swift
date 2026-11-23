@@ -3,15 +3,24 @@ import TrUAPIHost
 
 @MainActor
 final class FundingActivityInteractor: FundingActivityInteractorInputProtocol {
+    /// How often the history reads the sessions again.
+    static let refreshInterval: Duration = .seconds(10)
+
     weak var presenter: FundingActivityInteractorOutputProtocol?
 
     private let service: FundingServiceProtocol
+    private let clock: any Clock<Duration>
     private let logger: LoggerProtocol
     private var followingTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
 
-    init(service: FundingServiceProtocol, logger: LoggerProtocol = Logger.shared) {
+    init(
+        service: FundingServiceProtocol,
+        clock: any Clock<Duration> = ContinuousClock(),
+        logger: LoggerProtocol = Logger.shared
+    ) {
         self.service = service
+        self.clock = clock
         self.logger = logger
     }
 
@@ -25,9 +34,8 @@ final class FundingActivityInteractor: FundingActivityInteractorInputProtocol {
         guard refreshes else { return }
 
         refreshTask?.cancel()
-        refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
+        refreshTask = Task { [weak self, clock] in
+            while await (try? clock.sleep(for: Self.refreshInterval)) != nil {
                 self?.follow()
             }
         }

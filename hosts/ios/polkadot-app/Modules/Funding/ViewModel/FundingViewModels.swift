@@ -234,9 +234,6 @@ struct FundingProgressViewModel: Equatable {
     let cancelTitle: String?
     let cancelOffer: CancelOffer?
     let isAnsweringOffer: Bool
-    /// When the session turns to taking longer, once started.
-    let hasStarted: Bool
-    let longerAtMs: UInt64?
     let ended: Ended?
 }
 

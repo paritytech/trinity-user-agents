@@ -148,8 +148,6 @@ extension FundingViewModelFactory {
                 )
             },
             isAnsweringOffer: state.isAnsweringOffer,
-            hasStarted: state.hasStarted,
-            longerAtMs: progress?.longerAtMs,
             ended: state.ended
                 .map { FundingProgressViewModel.Ended(session: $0, viewModel: makeEndedViewModel(for: $0)) }
         )

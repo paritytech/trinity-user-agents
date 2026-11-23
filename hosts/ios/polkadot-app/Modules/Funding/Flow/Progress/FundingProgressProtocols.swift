@@ -14,8 +14,6 @@ protocol FundingProgressPresenterProtocol: AnyObject {
     func showDeposit()
     func confirmCancel()
     func answerCancelOffer(accepting terms: CancelTerms?)
-    /// Reads the session again, as when it turns to taking longer.
-    func refresh()
     func startOver()
     func close()
 }
@@ -23,7 +21,9 @@ protocol FundingProgressPresenterProtocol: AnyObject {
 @MainActor
 protocol FundingProgressInteractorInputProtocol: AnyObject {
     func setup()
-    func refresh()
+    /// Reads the session again at `longerAtMs`, when the core turns it to
+    /// taking longer without a change to announce it; nil reads nothing.
+    func refreshWhenTakingLonger(atMs longerAtMs: UInt64?)
     func answerCancelOffer(accepting terms: CancelTerms?) async throws -> CancelConfirmation
     /// The user was shown how the session ended.
     func acknowledge()

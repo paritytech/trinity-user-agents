@@ -30,7 +30,6 @@ struct FundingProgressView: View {
                 inProgress
             }
         }
-        .task(id: viewModel.longerAtMs) { await follow() }
         .sheet(isPresented: offerShown) {
             if let offer = viewModel.cancelOffer {
                 FundingCancelOfferView(offer: offer, isAnswering: viewModel.isAnsweringOffer, presenter: presenter)
@@ -207,20 +206,6 @@ private extension FundingProgressView {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DSSpacings.small)
-    }
-
-    /// The core's change events keep the screen current, except for a
-    /// session turning to taking longer, which no report announces: read the
-    /// session again at the time the core gave for it.
-    func follow() async {
-        guard viewModel.hasStarted, let longerAtMs = viewModel.longerAtMs else { return }
-
-        let wait = Date(milliseconds: longerAtMs).timeIntervalSinceNow
-        if wait > 0 {
-            try? await Task.sleep(for: .seconds(wait))
-        }
-        guard !Task.isCancelled else { return }
-        presenter.refresh()
     }
 }
 

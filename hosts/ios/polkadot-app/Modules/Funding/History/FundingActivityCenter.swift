@@ -17,12 +17,14 @@ final class FundingActivityCenter {
     /// they did, so their rows arrive in the history with their completion.
     private(set) var justFinished: [String: Date] = [:]
 
+    @ObservationIgnored private let clock: any Clock<Duration>
     @ObservationIgnored private let logger: LoggerProtocol
     @ObservationIgnored private var followingTask: Task<Void, Never>?
     /// Draws the sessions again when one turns to taking longer.
     @ObservationIgnored private var longerTask: Task<Void, Never>?
 
-    init(logger: LoggerProtocol = Logger.shared) {
+    init(clock: any Clock<Duration> = ContinuousClock(), logger: LoggerProtocol = Logger.shared) {
+        self.clock = clock
         self.logger = logger
     }
 
@@ -109,9 +111,8 @@ private extension FundingActivityCenter {
         let now = Date()
         guard let next = deadlines.map(Date.init(milliseconds:)).filter({ $0 > now }).min() else { return }
 
-        longerTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(next.timeIntervalSince(now)))
-            guard !Task.isCancelled else { return }
+        longerTask = Task { [weak self, clock] in
+            guard await (try? clock.sleep(for: .seconds(next.timeIntervalSince(now)))) != nil else { return }
             self?.refresh()
         }
     }

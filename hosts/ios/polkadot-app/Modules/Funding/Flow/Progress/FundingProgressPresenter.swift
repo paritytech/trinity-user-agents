@@ -33,10 +33,12 @@ final class FundingProgressPresenter: FundingScreenPresenter {
     override func setup() {
         super.setup()
         showDepositOnceReported()
+        refreshWhenTakingLonger()
     }
 
     override func entryDidChange(from _: FundingEntry) {
         showDepositOnceReported()
+        refreshWhenTakingLonger()
         guard entry.hasEnded, !hasAcknowledged else { return }
 
         hasAcknowledged = true
@@ -57,6 +59,11 @@ private extension FundingProgressPresenter {
 
         hasShownDeposit = true
         wireframe.show(.deposit)
+    }
+
+    func refreshWhenTakingLonger() {
+        let current = state
+        interactor.refreshWhenTakingLonger(atMs: current.hasStarted ? current.progress?.longerAtMs : nil)
     }
 }
 
@@ -90,10 +97,6 @@ extension FundingProgressPresenter: FundingProgressPresenterProtocol {
                 wireframe.showToast(String(localized: .Funding.errorCancelFailed))
             }
         }
-    }
-
-    func refresh() {
-        interactor.refresh()
     }
 
     func startOver() {
