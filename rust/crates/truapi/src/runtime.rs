@@ -23,6 +23,7 @@ pub use dotns_lookup::DotnsLookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod funding_telemetry;
 mod host_accounts;
 mod host_grants;
 mod host_session;
@@ -79,7 +80,7 @@ pub use remote_account_holder::RemoteAccountHolder;
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
 type ContactsPicker =
-	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
+	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandleKey);
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
 pub use pairing_host::PairingHost;
@@ -956,15 +957,15 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		call_data: Vec<u8>,
 		declared: &[v01::ContactHandle],
 	) -> Result<Vec<u8>, ContactResolutionError> {
-		let cache = &self.connection.services.contact_handles;
+		let cache = &self.connection.services.contact_handle_cache;
 		let declared_bytes: Vec<[u8; 32]> = declared.iter().map(|handle| handle.bytes).collect();
-		if cache.has_undeclared_handle(&call_data, &declared_bytes) {
+		if cache.has_undeclared_handle(self.connection.product_id(), &call_data, &declared_bytes) {
 			return Err(ContactResolutionError::UnknownContact);
 		}
 		if declared.is_empty() {
 			return Ok(call_data);
 		}
-		let (platform, handles) = self.contacts_picker().map_err(|error| match error {
+		let (platform, handle_key) = self.contacts_picker().map_err(|error| match error {
 			CallError::Unsupported => ContactResolutionError::Unsupported,
 			CallError::Domain(v01::HostContactsPickError::NotConnected) => {
 				ContactResolutionError::NotConnected
@@ -976,7 +977,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		})?;
 		let mut resolved: Vec<([u8; 32], Option<[u8; 32]>)> = declared_bytes
 			.iter()
-			.map(|handle| (*handle, cache.get(handle, &handles)))
+			.map(|handle| (*handle, cache.get(handle, &handle_key)))
 			.collect();
 		// The host is asked only about handles the cache cannot answer, all
 		// of them in one lookup.
@@ -987,7 +988,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.collect();
 		if !misses.is_empty() {
 			let generation = cache.generation();
-			let lookup = handles.lookup(misses);
+			let lookup = handle_key.lookup(misses);
 			let matches = platform
 				.contacts(&lookup)
 				.await
@@ -1005,9 +1006,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				let answer = answers.next().expect("one answer per miss; qed");
 				// A host answer is checked, not trusted: an account that does
 				// not hash to its handle is treated as no contact at all.
-				*account = answer.filter(|account| handles.names(handle, account));
+				*account = answer.filter(|account| handle_key.matches(handle, account));
 				if let Some(account) = account {
-					cache.insert(*handle, *account, generation);
+					cache.insert(&handle_key, *handle, *account, generation);
 				}
 			}
 		}
@@ -1030,7 +1031,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.accounts
 			.current_session()
 			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
-		let handles = self.accounts.contact_handles(&session).map_err(|error| match error {
+		let handle_key = self.accounts.contact_handle_key(&session).map_err(|error| match error {
 			AuthorityError::Disconnected => {
 				CallError::Domain(latest::HostContactsPickError::NotConnected)
 			},
@@ -1038,7 +1039,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				reason: other.to_string(),
 			}),
 		})?;
-		Ok((platform, handles))
+		Ok((platform, handle_key))
 	}
 }
 
@@ -1376,7 +1377,7 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
 		version(request)
 			.exec(|_request| async move {
-				let (platform, handles) = self.contacts_picker()?;
+				let (platform, handle_key) = self.contacts_picker()?;
 
 				let unknown = |error: latest::GenericError| {
 					CallError::Domain(latest::HostContactsPickError::Unknown {
@@ -1386,7 +1387,7 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 
 				// Read before the picker opens: a removal signalled while the user is
 				// choosing must not be undone by caching their choice.
-				let generation = self.connection.services.contact_handles.generation();
+				let generation = self.connection.services.contact_handle_cache.generation();
 				let outcome =
 					match until_cancelled(cx, platform.pick_contact(&self.connection.product))
 						.await
@@ -1398,11 +1399,11 @@ impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 						.map_err(unknown)?
 					{
 						crate::platform::HostContactPick::Picked { account } => {
-							let handle = handles.mint(&account);
+							let handle = handle_key.mint(&account);
 							self.connection
 								.services
-								.contact_handles
-								.insert(handle, account, generation);
+								.contact_handle_cache
+								.insert(&handle_key, handle, account, generation);
 							latest::ContactPickOutcome::Picked {
 								handle: latest::ContactHandle { bytes: handle },
 							}
@@ -1749,14 +1750,15 @@ impl<H: AccountHolder> FundingProvider for ProductRuntimeHost<H> {
 				}
 				// The worker never puts a screen in front of the user on its own:
 				// the host opens it, at once or from a notice the user taps.
-				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				let shows = crate::runtime::funding_telemetry::FrameTarget::of(&target);
+				let mut frame = services.funding().request_frame(&intent, provider.clone(), shows);
 				if let Some(outcome) = frame.opened().await {
 					return Ok(latest::HostFundingPresentFrameResponse { outcome });
 				}
-				let outcome = platform
-					.present_provider_frame(provider, intent, target)
-					.await
-					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				let shown = platform.present_provider_frame(provider, intent, target).await;
+				frame.closed(crate::runtime::funding_telemetry::FrameClose::of(&shown));
+				let outcome =
+					shown.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
 			})
 			.await
