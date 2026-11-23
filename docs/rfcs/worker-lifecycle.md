@@ -42,6 +42,9 @@ one worker: a chat room the worker serves, a pocket artifact it contributed, and
 product are three references on the same worker. A modality names its holders in its own RFC. App and Widget executables
 hold no reference; their lifetime is their screen.
 
+Each holder acquires its own reference and releases it once. A renderer subscription can end or restart while its
+surface keeps the same reference. Looking up the execution or opening a product call leaves the count unchanged.
+
 Reference holders, by modality:
 
 | Holder  | Held while                                                                                               |

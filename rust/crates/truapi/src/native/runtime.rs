@@ -62,8 +62,6 @@ use super::{
 		ScannerCallbackPlatform, StackCallbackHost, TopUpCallbackPlatform,
 	},
 };
-#[cfg(doc)]
-use crate::WorkerTransition;
 
 /// Carries both kinds of core traffic to one host's callbacks.
 ///
@@ -747,25 +745,12 @@ impl NativeTrUApiHostRuntime {
 		})
 	}
 
-	/// Take one reference on the product's worker for a modality holder. The
-	/// first one requests [`WorkerTransition::Start`]; pair every call with
-	/// one [`Self::release_worker`].
-	pub fn acquire_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().acquire(&product_id);
-	}
-
 	/// Report that the product's worker stopped running without being asked
 	/// to: it crashed or the system killed it. While references remain, the
 	/// host is asked through [`HostCallbacks::request_worker_transition`] to
 	/// start it again.
 	pub fn worker_exited(&self, product_id: ProductId) {
 		self.runtime.worker_exited(&product_id);
-	}
-
-	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
-	/// Releasing with none held is a no-op.
-	pub fn release_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().release(&product_id);
 	}
 
 	/// Forget one product: revoke its grants and Allow once answers, then

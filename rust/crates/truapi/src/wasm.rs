@@ -949,25 +949,28 @@ fn install_worker_controller(
 	Ok(())
 }
 
-fn acquire_worker<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
-	if let Some(product_id) = worker_reference_id(product_id) {
-		runtime.worker_ledger().acquire(&product_id);
+/// A host consumer's reference on a worker, released explicitly or when the handle is freed.
+#[wasm_bindgen]
+pub struct WasmWorkerClaim {
+	reference: Option<crate::WorkerHold>,
+}
+
+#[wasm_bindgen]
+impl WasmWorkerClaim {
+	/// Release this handle's reference once.
+	pub fn release(&mut self) {
+		self.reference.take();
 	}
 }
 
-fn release_worker<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
-	if let Some(product_id) = worker_reference_id(product_id) {
-		runtime.worker_ledger().release(&product_id);
-	}
-}
-
-fn worker_reference_id(product_id: &str) -> Option<ProductId> {
-	product_id
+fn claim_worker<Role>(runtime: &HostRuntime<Role>, raw_id: &str) -> Option<WasmWorkerClaim> {
+	let product = raw_id
 		.parse()
 		.inspect_err(
 			|error| tracing::warn!(%error, "worker reference for an id that is not a product id"),
 		)
-		.ok()
+		.ok()?;
+	Some(WasmWorkerClaim { reference: Some(runtime.hold_worker(&product)) })
 }
 
 fn worker_exited<Role>(runtime: &HostRuntime<Role>, product_id: &str) {
@@ -1201,13 +1204,12 @@ impl WasmPairingHostRuntime {
 		self.runtime.reset_session_state().await;
 	}
 
-	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports `"Start"` to the host's `requestWorkerTransition`
-	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
-	#[wasm_bindgen(js_name = acquireWorker)]
-	pub fn acquire_worker(&self, raw_product_id: String) {
-		acquire_worker(&self.runtime, &raw_product_id);
+	/// Claim one reference until the returned handle is released or freed.
+	///
+	/// An invalid product id is logged and returns no handle.
+	#[wasm_bindgen(js_name = claimWorker)]
+	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
+		claim_worker(&self.runtime, &raw_product_id)
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1219,13 +1221,6 @@ impl WasmPairingHostRuntime {
 		worker_exited(&self.runtime, &product_id);
 	}
 
-	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op, and so
-	/// is an id that is not a product id.
-	#[wasm_bindgen(js_name = releaseWorker)]
-	pub fn release_worker(&self, raw_product_id: String) {
-		release_worker(&self.runtime, &raw_product_id);
-	}
 }
 
 /// Whether `productId` is a first-party product the host grants every
@@ -1473,13 +1468,12 @@ impl WasmSigningHostRuntime {
 		set_permission_authorization_status(&self.runtime, &raw_product_id, &payload, &status).await
 	}
 
-	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports `"Start"` to the host's `requestWorkerTransition`
-	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
-	#[wasm_bindgen(js_name = acquireWorker)]
-	pub fn acquire_worker(&self, raw_product_id: String) {
-		acquire_worker(&self.runtime, &raw_product_id);
+	/// Claim one reference until the returned handle is released or freed.
+	///
+	/// An invalid product id is logged and returns no handle.
+	#[wasm_bindgen(js_name = claimWorker)]
+	pub fn claim_worker(&self, raw_product_id: String) -> Option<WasmWorkerClaim> {
+		claim_worker(&self.runtime, &raw_product_id)
 	}
 
 	/// Report that the product's worker stopped running without being asked
@@ -1491,13 +1485,6 @@ impl WasmSigningHostRuntime {
 		worker_exited(&self.runtime, &product_id);
 	}
 
-	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op, and so
-	/// is an id that is not a product id.
-	#[wasm_bindgen(js_name = releaseWorker)]
-	pub fn release_worker(&self, raw_product_id: String) {
-		release_worker(&self.runtime, &raw_product_id);
-	}
 }
 
 /// Derive a product's hard-subtree public key from a session's root entropy.

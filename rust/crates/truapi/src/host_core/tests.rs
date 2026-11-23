@@ -894,8 +894,7 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 }
 
 #[test]
-fn an_open_render_holds_one_worker_reference() {
-	// The core owns the reference: no caller above it acquires or releases.
+fn feature_owners_can_release_the_worker_with_a_render_still_open() {
 	#[derive(Default)]
 	struct RecordingDemand {
 		transitions: Mutex<Vec<(String, WorkerTransition)>>,
@@ -909,37 +908,25 @@ fn an_open_render_holds_one_worker_reference() {
 		}
 	}
 
-	let (host_config, _) = runtime_config("worker.dot");
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("worker.dot"),
-		crate::platform::ExecutableKind::Worker,
-	);
-	let runtime = ProductRuntime::from_platform_with_config(
-		Arc::new(StubPlatform::default()),
-		host_config,
-		product,
-		Spawner::for_test(),
-		Arc::new(RecordingSink::default()),
-	);
+	let (runtime, _) = render_runtime();
+	let product = ProductId::for_test("worker.dot");
 	let services = runtime.admin.product_runtime().connection().services().clone();
+	let ledger = &services.worker_ledger;
 	let demand = Arc::new(RecordingDemand::default());
-	assert!(
-		services.worker_ledger.install_worker_controller(demand.clone()),
-		"the controller installs once"
-	);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+	assert!(ledger.install_worker_controller(demand.clone()));
+	let pocket = crate::WorkerHold::acquire(&services, &product);
+	let chat = crate::WorkerHold::acquire(&services, &product);
 
-	let render = runtime
-		.control()
-		.render(truapi::latest::ProductRendererRenderRequest {
-			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
-			payload: vec![],
-		})
-		.expect("a Worker connection may render");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
+	let render = start_render(&runtime, "loyalty");
+	assert_eq!(ledger.count(&product), 2);
+	drop(pocket);
 	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+	assert_eq!(ledger.count(&product), 1);
+
+	let replacement = start_render(&runtime, "loyalty");
+	drop(chat);
+	assert_eq!(ledger.count(&product), 0);
+	drop(replacement);
 	assert_eq!(
 		demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
 		[
@@ -1201,12 +1188,12 @@ fn a_rendered_tree_reaches_the_host_without_refused_inline_image_bytes() {
 }
 
 #[test]
-fn a_render_the_product_ends_releases_its_worker_reference() {
+fn a_clean_render_end_preserves_its_callers_claim() {
 	let (runtime, sink) = render_runtime();
 	let services = runtime.admin.product_runtime().connection().services().clone();
+	let product = ProductId::for_test("worker.dot");
+	let _owner = crate::WorkerHold::acquire(&services, &product);
 	let mut render = start_render(&runtime, "loyalty");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
 	let request_id = render_request_id(&sink, 0);
 	deliver_render_frame(
 		&runtime,
@@ -1216,19 +1203,13 @@ fn a_render_the_product_ends_releases_its_worker_reference() {
 	);
 	assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-		0,
-		"an ended stream holds no reference, whether or not the handle lives on"
-	);
 	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+	assert_eq!(services.worker_ledger.count(&product), 1);
 }
 
 #[test]
-fn a_render_the_product_interrupts_releases_its_worker_reference() {
+fn the_host_receives_the_products_render_error() {
 	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
 	let mut render = start_render(&runtime, "loyalty");
 
 	let request_id = render_request_id(&sink, 0);
@@ -1245,20 +1226,11 @@ fn a_render_the_product_interrupts_releases_its_worker_reference() {
 		poll_render(&mut render),
 		core::task::Poll::Ready(Some(Err(truapi::CallError::HostFailure { .. })))
 	));
-
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-		0,
-		"an interrupt ends the stream, so the reference goes with it"
-	);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 }
 
 #[test]
-fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
+fn the_host_receives_an_error_for_a_malformed_render_tree() {
 	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
 	let mut render = start_render(&runtime, "loyalty");
 
 	let request_id = render_request_id(&sink, 0);
@@ -1267,56 +1239,15 @@ fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
 		poll_render(&mut render),
 		core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
 	));
-
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 }
 
 #[test]
-fn disposing_the_core_releases_an_open_renders_worker_reference() {
+fn closing_the_execution_interrupts_an_open_render() {
 	let (runtime, _sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
 	let mut render = start_render(&runtime, "loyalty");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
-	// The render fails rather than finishing, so the host opens it again on
-	// the next connection; the failure is where its reference is released.
 	runtime.dispose();
 	assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
-
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-	drop(render);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
-}
-
-#[test]
-fn one_render_ending_leaves_the_other_renders_worker_reference() {
-	let (runtime, sink) = render_runtime();
-	let services = runtime.admin.product_runtime().connection().services().clone();
-	let mut first = start_render(&runtime, "loyalty");
-	let second = start_render(&runtime, "rewards");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 2);
-
-	let request_id = render_request_id(&sink, 0);
-	deliver_render_frame(
-		&runtime,
-		&request_id,
-		crate::frame::MESSAGE_TYPE_INTERRUPT,
-		crate::frame::encode_clean_interrupt(),
-	);
-	assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
-
-	drop(first);
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("worker.dot")),
-		1,
-		"dropping a stream that already released must not release again"
-	);
-
-	drop(second);
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 }
 
 #[test]

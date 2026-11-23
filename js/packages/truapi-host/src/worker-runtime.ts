@@ -190,10 +190,7 @@ function buildRawCallbacks(capabilities: OptionalCapabilities) {
       capabilities,
     ),
     /**
-     * Demand on a product's worker crossed zero. Every transition arrives
-     * here in ledger order, whether this thread asked for it through
-     * `acquireWorker`/`releaseWorker` or the core took the reference itself
-     * for an open render.
+     * Deliver worker demand changes in the order the Rust ledger reports them.
      */
     requestWorkerTransition(
       productId: ProductId,
@@ -241,6 +238,7 @@ let host: HostRuntime | null = null;
 /** Set while `init` builds the runtime. */
 let initializing = false;
 const cores = new Map<number, WorkerProductRuntime>();
+const workerClaims = new Map<number, { free(): void }>();
 // Outstanding receiveFrame calls per core. wasm-bindgen holds a borrow of the
 // core for the whole duration of an async method, so `free()` throws while one
 // is in flight. `disposeCore` aborts these then awaits them before freeing.
@@ -343,11 +341,14 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "notifyContactsChanged":
       host?.runtime.notifyContactsChanged();
       break;
-    case "acquireWorker":
-      host?.runtime.acquireWorker(msg.productId);
+    case "claimWorker": {
+      const claim = host?.runtime.claimWorker(msg.productId);
+      if (claim) workerClaims.set(msg.claimId, claim);
       break;
+    }
     case "releaseWorker":
-      host?.runtime.releaseWorker(msg.productId);
+      workerClaims.get(msg.claimId)?.free();
+      workerClaims.delete(msg.claimId);
       break;
     case "activateStoredSession":
       void handleSessionActivation(
@@ -592,6 +593,8 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       // down; free the captured handle after the cores finish disposing.
       const disposing = host?.runtime;
       host = null;
+      for (const claim of workerClaims.values()) claim.free();
+      workerClaims.clear();
       void (async () => {
         try {
           await Promise.all(

@@ -157,17 +157,6 @@ export interface WorkerPairingHostRuntime {
   /** Hold one reference until this consumer releases it. Repeated release is safe. */
   claimWorker(productId: ProductId): { release(): void };
   /**
-   * Take one reference on a product's worker for a modality holder that is on
-   * screen or in flight. Pair every call with one
-   * {@link WorkerPairingHostRuntime.releaseWorker}. The core counts; the
-   * resulting level reaches
-   * {@link WorkerPairingHostRuntime.subscribeWorkerDemand} listeners, and the
-   * host runs and stops the worker executable itself.
-   */
-  acquireWorker(productId: ProductId): void;
-  /** Release one reference. Releasing with none held is a no-op. */
-  releaseWorker(productId: ProductId): void;
-  /**
    * Observe which product workers the host should run. The listener first
    * receives `wanted: true` for every product wanted right now, then each
    * change as it happens, and `wanted: false` for every remaining product
@@ -1408,6 +1397,7 @@ function handleFrameError(
 }
 
 function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
+  let nextClaimId = 0;
   const runtime: WorkerPairingHostRuntime = {
     coreWireSchemaHash: state.coreWireSchemaHash,
     createProvider(product): Promise<TrUApiProductProvider> {
@@ -1524,21 +1514,16 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       postUnlessDisposed(state, { kind: "notifyContactsChanged" });
     },
     claimWorker(productId) {
-      postUnlessDisposed(state, { kind: "acquireWorker", productId });
+      const claimId = ++nextClaimId;
+      postUnlessDisposed(state, { kind: "claimWorker", claimId, productId });
       let released = false;
       return {
         release() {
           if (released) return;
-          postUnlessDisposed(state, { kind: "releaseWorker", productId });
+          postUnlessDisposed(state, { kind: "releaseWorker", claimId });
           released = true;
         },
       };
-    },
-    acquireWorker(productId: ProductId): void {
-      postUnlessDisposed(state, { kind: "acquireWorker", productId });
-    },
-    releaseWorker(productId: ProductId): void {
-      postUnlessDisposed(state, { kind: "releaseWorker", productId });
     },
     subscribeWorkerDemand(listener) {
       // Teardown cleared the listeners, so one added now would only be
@@ -1900,8 +1885,6 @@ function buildProvider(
         return () => {};
       }
       const renderId = nextRenderId++;
-      // No worker reference is taken here: the core holds the one an open
-      // render is worth and requests it through `requestWorkerTransition`.
       state.renders.set(renderId, {
         coreId: core.coreId,
         onUpdate: (node) => sink.onUpdate(node),

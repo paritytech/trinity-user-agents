@@ -185,21 +185,10 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
 
-	/// Request a product worker transition. `Start` means the host runs the
-	/// worker now; `Stop` means it is no longer needed and may stop. Every
-	/// transition arrives here, in ledger order: the ones the host asks for
-	/// through [`NativeTrUApiHostRuntime::acquire_worker`] and
-	/// [`NativeTrUApiHostRuntime::release_worker`], and the ones the core
-	/// causes on a product's behalf, such as an open render stream.
+	/// Report a product's first claim (`Start`) or final release (`Stop`) in ledger order.
 	///
-	/// Demand is runtime-wide, so this is invoked only on the callbacks the
-	/// runtime was built with, never on the per-execution callbacks passed to
-	/// [`NativeTrUApiHostRuntime::open_product_execution`]. Can arrive on any
-	/// thread, including synchronously on the calling thread during
-	/// [`NativeTrUApiHostRuntime::acquire_worker`] and
-	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
-	/// thread and re-entrantly: hand the transition off rather than blocking
-	/// on another thread from inside it.
+	/// The callback belongs to the host runtime and can run synchronously on the thread that
+	/// acquires or releases a claim. Dispatch work to the appropriate thread without blocking.
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// The product's worker crashed `crashes` times in a row while it was

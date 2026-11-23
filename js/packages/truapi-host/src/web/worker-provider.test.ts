@@ -1560,42 +1560,24 @@ describe("createWebWorkerPairingHostRuntime", () => {
     ).not.toThrow();
   });
 
-  it("leaves the render's worker reference to the core", async () => {
+  it("opening and closing a render sends no worker demand messages", async () => {
     const worker = new FakeWorker();
-    const runtime = await readyRuntime(worker);
-    const provider = await finishProviderReady(
-      worker,
-      runtime.createProvider({ productId: asProductId("dotli.dot") }),
-    );
-    const seen: WorkerDemandChange[] = [];
-    runtime.subscribeWorkerDemand((change) => seen.push(change));
-
+    const provider = await readyProvider(worker);
     const stop = provider.render!(renderRequest(), { onUpdate: () => {} });
-
-    // The core holds the reference, so this thread asks for none of its own.
-    expect(indexOfKind(worker, "acquireWorker")).toBe(-1);
-    // The demand the core's own reference caused still reaches the host.
-    worker.emit({
-      kind: "workerDemandChanged",
-      productId: asProductId("dotli.dot"),
-      wanted: true,
-    });
-    expect(seen).toEqual([
-      { productId: asProductId("dotli.dot"), wanted: true },
-    ]);
-
     stop();
-    expect(indexOfKind(worker, "releaseWorker")).toBe(-1);
-    worker.emit({
-      kind: "workerDemandChanged",
-      productId: asProductId("dotli.dot"),
-      wanted: false,
-    });
-    expect(seen).toEqual([
-      { productId: asProductId("dotli.dot"), wanted: true },
-      { productId: asProductId("dotli.dot"), wanted: false },
-    ]);
-    runtime.dispose();
+    expect(
+      worker.messages
+        .filter(({ kind }) =>
+          [
+            "renderStart",
+            "renderStop",
+            "claimWorker",
+            "releaseWorker",
+          ].includes(kind),
+        )
+        .map(({ kind }) => kind),
+    ).toEqual(["renderStart", "renderStop"]);
+    provider.dispose();
   });
 
   it("binds a method-valued onUpdate to its own receiver", async () => {
@@ -1708,7 +1690,8 @@ describe("worker demand", () => {
 
     const first = runtime.claimWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
-      kind: "acquireWorker",
+      kind: "claimWorker",
+      claimId: 1,
       productId: asProductId("a.dot"),
     });
     worker.emit({
@@ -1733,7 +1716,7 @@ describe("worker demand", () => {
     first.release();
     expect(worker.messages.at(-1)).toEqual({
       kind: "releaseWorker",
-      productId: asProductId("a.dot"),
+      claimId: 1,
     });
     worker.emit({
       kind: "workerDemandChanged",
