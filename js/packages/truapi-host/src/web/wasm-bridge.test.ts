@@ -1,8 +1,16 @@
-import { asProductId } from "@parity/truapi";
+import {
+  asProductId,
+  createClient,
+  createMessagePortProvider,
+  createTransport,
+} from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { CoreStorageKey } from "../generated/host-callbacks.js";
+import {
+  CoreStorageKey,
+  type JsonRpcConnection,
+} from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import type {
   StackCallbacks,
@@ -20,6 +28,34 @@ import { wasmIsBuilt } from "../testing/require-wasm.js";
 function bundledRuntimeConfig() {
   const { testStack: _testStack, ...config } = mockRuntimeConfig();
   return { ...config, stack: bundledTestStack() };
+}
+
+/**
+ * A connection to a node that gives `genesisHash` as its chain's and answers
+ * nothing else, as a node does once its chain restarted from genesis.
+ */
+function chainWithGenesis(genesisHash: string): JsonRpcConnection {
+  const answers: string[] = [];
+  let closed = false;
+  let wake = () => {};
+  return {
+    send(request) {
+      const { id, method } = JSON.parse(request);
+      if (method !== "chainSpec_v1_genesisHash") return;
+      answers.push(JSON.stringify({ jsonrpc: "2.0", id, result: genesisHash }));
+      wake();
+    },
+    async *responses() {
+      while (!closed) {
+        yield* answers.splice(0);
+        await new Promise<void>((resolve) => (wake = resolve));
+      }
+    },
+    close() {
+      closed = true;
+      wake();
+    },
+  };
 }
 
 // Drives the REAL truapi WASM core against createMockHost's callbacks —
@@ -251,6 +287,69 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     expect(statuses).toEqual([runtime.stackStatus()]);
     expect(statuses[0].lastRefresh).toBeUndefined();
     expect(statuses[0].mismatches).toEqual([]);
+  });
+
+  it("tells a host without fetchStackDescriptor of a chain that restarted", async () => {
+    // A stack can restart its chains while a page stays open. A host that
+    // does not fetch the descriptor still has to keep its own features off
+    // such a chain, so what the chain answered has to reach `stackChanged`
+    // in the shape `StackMismatch` documents.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId, ...hostConfig } = bundledRuntimeConfig();
+    const statuses: StackStatus[] = [];
+    const mock = createMockHost();
+    const restarted = `0x${"ab".repeat(32)}`;
+    mock.callbacks.chain.connect = async () => chainWithGenesis(restarted);
+    const runtime = await WasmPairingHostRuntime.create(
+      {
+        ...createWasmRawCallbacks(mock.callbacks),
+        requestWorkerTransition: () => {},
+        stackChanged: (status: StackStatus) => statuses.push(status),
+      },
+      hostConfig,
+    );
+    const channel = new MessageChannel();
+    const core = runtime.productRuntime(
+      { productId },
+      { emitFrame: (frame: Uint8Array) => channel.port1.postMessage(frame) },
+    );
+    channel.port1.onmessage = (event: MessageEvent) =>
+      void core.receiveFrame(event.data);
+    channel.port1.start();
+    const provider = createMessagePortProvider(channel.port2);
+    const client = createClient(createTransport(provider));
+    const people = JSON.parse(statuses[0].descriptor).chains.find(
+      (chain: { role: string }) => chain.role === "People",
+    );
+
+    const answer = await client.chain.getSpecGenesisHash({
+      genesisHash: people.genesisHash,
+    });
+
+    expect([
+      answer.isErr(),
+      statuses.map((status) => status.mismatches),
+    ]).toEqual([
+      true,
+      [
+        [],
+        [
+          {
+            kind: "genesisHash",
+            role: "People",
+            named: people.genesisHash,
+            answered: restarted,
+          },
+        ],
+      ],
+    ]);
+    provider.dispose();
+    core.dispose();
+    channel.port1.close();
+    channel.port2.close();
   });
 
   it("tells a host of its stack only once the runtime exists", async () => {

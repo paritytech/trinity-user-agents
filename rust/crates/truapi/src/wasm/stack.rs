@@ -71,26 +71,26 @@ pub async fn stack_from_js(
 
 /// Starts keeping `refresh` current through the host's `fetchStackDescriptor`
 /// callback, and reports the status to `stackChanged` at start and on each
-/// change. A host without `fetchStackDescriptor` gets the status once, at
-/// start, and reads a later one with `stackStatus`.
+/// change. Without `fetchStackDescriptor` the core stays on the copy it
+/// started from, and `stackChanged` gets the status at start and again
+/// whenever what a chain answered changes it.
 pub fn start_refresh(
 	refresh: &StackRefresh,
 	callbacks: &JsValue,
 	spawner: &Spawner,
 ) -> Result<(), JsValue> {
 	let changed = get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new);
-	match get_optional_function(callbacks, "fetchStackDescriptor")? {
-		Some(fetch) => {
+	let fetch = get_optional_function(callbacks, "fetchStackDescriptor")?;
+	let started = match (fetch, changed) {
+		(Some(fetch), changed) => {
 			let host = JsStackHost { fetch: SendWrapper::new(fetch), changed };
-			let started = refresh.start(Box::new(host), spawner);
-			debug_assert!(started, "a refresh that was just loaded has not started");
+			refresh.start(Box::new(host), spawner)
 		},
-		None => {
-			if let Some(changed) = &changed {
-				report_status(changed, &refresh.status());
-			}
-		},
-	}
+		(None, Some(changed)) => refresh
+			.start_reporting(Box::new(move |status| report_status(&changed, &status)), spawner),
+		(None, None) => return Ok(()),
+	};
+	debug_assert!(started, "a refresh that was just loaded has not started");
 	Ok(())
 }
 

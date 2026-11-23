@@ -62,9 +62,9 @@ refresh it.
   copy it stored was fetched less than an hour ago, and on `refreshStack()`.
   A sleeping device can stretch that hour, so call `refreshStack()` when the
   page becomes visible again.
-- `stackChanged(status)`: the `StackStatus` at start, and on each change for a
-  host with `fetchStackDescriptor`. A host without it gets the one at start and
-  reads later ones from `stackStatus()`. `restartRequired` means a newer copy
+- `stackChanged(status)`: the `StackStatus` at start, and on each change. For a
+  host without `fetchStackDescriptor` only `mismatches` changes, when a chain's
+  answer changes it. `restartRequired` means a newer copy
   changes a chain, the network, the TLD or the generation, and applies once
   the runtime is built again. `generation` changes when the stack restarts its
   chains: key cached chain data by it. `mismatches` lists each chain whose last

@@ -221,10 +221,11 @@ changes a chain sets `restart_required`, and the fetches are hourly again from
 then on.
 
 A host that installed its stack callbacks hears of a mismatch through them,
-and any host reads it from `stack_status`. A browser host is told only when it
-passes `fetchStackDescriptor`. Without the callbacks the chain is still
-refused, and nothing is fetched. A host shows the listed chains as out of
-service and keeps its own features off them.
+and any host reads it from `stack_status`. A browser host that passes
+`stackChanged` without `fetchStackDescriptor` is told too, through
+`StackRefresh::start_reporting`, and nothing is fetched for it. Without the
+callbacks the chain is still refused, and nothing is fetched. A host shows the
+listed chains as out of service and keeps its own features off them.
 
 The check runs when the core opens a connection. A host whose connection
 outlives its transport, redialling underneath as dotli does, is asked again
