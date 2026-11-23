@@ -238,7 +238,7 @@ private extension [Modifier] {
             case let .shimmer(value):
                 shimmer = CustomMessageWidgetNode.Shimmer(
                     color: Color(rgba: value.color | 0xFF),
-                    stops: Array(value.stops).map { CGFloat($0) / 255 },
+                    stops: value.stops.map { CGFloat($0) / 255 },
                     band: CGFloat(value.band) / 100,
                     lead: CGFloat(value.lead) / 100,
                     speed: CGFloat(value.speed) / 100,
