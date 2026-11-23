@@ -78,6 +78,7 @@ class ProductFeedApplier @Inject constructor(
                 origin = ChatMessageOrigin.Extension(extensionId),
                 content = message.content,
                 status = ChatMessage.Status.NEW,
+                sortOrder = null,
                 replyToMessageId = message.replyTo?.let { find(chatId, it, decoder)?.id },
             ),
         )

@@ -130,7 +130,8 @@ class RealVoucherRepository @Inject constructor(
                 recyclerMembers = update.location.recyclerMembers,
                 enteredAt = update.location.enteredAt?.toEpochMilliseconds(),
                 recyclerFungibility = update.recyclerFungibility?.percent,
-                maxRecyclerFungibility = update.maxRecyclerFungibility?.percent
+                maxRecyclerFungibility = update.maxRecyclerFungibility?.percent,
+                recyclerUnloaded = update.location.recyclerUnloaded
             )
         }
         recyclerVoucherDao.updateLocations(rows)
@@ -234,7 +235,8 @@ class RealVoucherRepository @Inject constructor(
         return RecyclerVoucher.Location.InRecycler(
             recyclerIndex = RecyclerIndex(index.toBigInteger()),
             recyclerMembers = members,
-            enteredAt = enteredAt?.let(Instant::fromEpochMilliseconds)
+            enteredAt = enteredAt?.let(Instant::fromEpochMilliseconds),
+            recyclerUnloaded = recyclerUnloaded
         )
     }
 
@@ -250,6 +252,7 @@ class RealVoucherRepository @Inject constructor(
             enteredAt = inRecycler?.enteredAt?.toEpochMilliseconds(),
             recyclerFungibility = recyclerFungibility.percent,
             maxRecyclerFungibility = maxRecyclerFungibility?.percent,
+            recyclerUnloaded = inRecycler?.recyclerUnloaded,
         )
     }
 }
