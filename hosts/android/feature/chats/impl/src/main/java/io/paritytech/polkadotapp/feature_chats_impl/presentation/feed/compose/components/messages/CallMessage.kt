@@ -231,7 +231,7 @@ private fun CallMessagePreview() {
                             id = "1",
                             timestamp = System.currentTimeMillis(),
                             direction = ChatMessageUiModel.Direction.INCOMING,
-                            status = ChatMessageUiModel.Status.READ,
+                            status = ChatMessageUiModel.Status.SEEN,
                             origin = ChatMessageOrigin.User,
                             purpose = ChatMessageUiModel.Call.Purpose.VIDEO_CALL,
                             state = state
@@ -247,7 +247,7 @@ private fun CallMessagePreview() {
                             id = "2",
                             timestamp = System.currentTimeMillis(),
                             direction = ChatMessageUiModel.Direction.OUTGOING,
-                            status = ChatMessageUiModel.Status.READ,
+                            status = ChatMessageUiModel.Status.SEEN,
                             origin = ChatMessageOrigin.User,
                             purpose = ChatMessageUiModel.Call.Purpose.AUDIO_CALL,
                             state = state

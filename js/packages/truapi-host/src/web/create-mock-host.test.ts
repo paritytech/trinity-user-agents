@@ -311,7 +311,7 @@ describe("createMockHost callbacks", () => {
     await expect(drain(lookup, 1)).rejects.toThrow("delivered 0 of 1");
   });
 
-  it("reports unserved chains as unsupported only when asked to", async () => {
+  it("reports unserved chains as unsupported unless told otherwise", async () => {
     const unserved = `0x${"ab".repeat(32)}`;
     const supported = async (
       genesisHash: string,
@@ -323,14 +323,12 @@ describe("createMockHost callbacks", () => {
           value: { genesisHash },
         })
       ).supported;
-    // The default keeps answering every chain as supported, so existing
-    // suites that rely on a silent chain they never declared keep working.
-    expect(await supported(unserved)).toBe(true);
-    // onlyServedChains answers as a real host does, which makes a product's
+    // The default answers as a real host does, which makes a product's
     // "network unavailable" path reachable.
-    const served = { onlyServedChains: true };
-    expect(await supported(MOCK_GENESIS.assetHub, served)).toBe(true);
-    expect(await supported(unserved, served)).toBe(false);
+    expect(await supported(MOCK_GENESIS.assetHub)).toBe(true);
+    expect(await supported(unserved)).toBe(false);
+    // Turning it off answers every chain as supported.
+    expect(await supported(unserved, { onlyServedChains: false })).toBe(true);
     expect(
       await supported(MOCK_GENESIS.assetHub, { featureSupported: false }),
     ).toBe(false);
@@ -680,7 +678,7 @@ describe("createMockHost TestHostAPI parity", () => {
     // The Rust mock declares the same three. A suite that routes on a chain
     // has to be answered the same way by either, and dropping one here would
     // otherwise only show up as a chain-routed call failing much later.
-    const host = createMockHost({ onlyServedChains: true });
+    const host = createMockHost();
     const supported = (genesisHash: string) =>
       host.callbacks.features
         .featureSupported({ tag: "Chain", value: { genesisHash } })
@@ -747,8 +745,8 @@ describe("createMockHost TestHostAPI parity", () => {
       executionKind: { tag: "Unknown" } as const,
     };
     for (const roomId of ["zulu", "alpha", "mike"]) {
-      await host.callbacks.chat!.createChatRoom(product, {
-        roomId,
+      await host.callbacks.chat!.createChatRoom(product, roomId, {
+        roomIdSource: roomId,
         name: roomId,
         icon: "https://example.invalid/i.png",
       });
@@ -856,7 +854,12 @@ describe("createMockHost TestHostAPI parity", () => {
     const rooms = host.callbacks.chat!.subscribeChatRooms();
     await host.callbacks.chat!.createChatRoom(
       { productId: asProductId("p"), executionKind: { tag: "Unknown" } },
-      { roomId: "lobby", name: "Lobby", icon: "https://example.invalid/i.png" },
+      "lobby",
+      {
+        roomIdSource: "lobby",
+        name: "Lobby",
+        icon: "https://example.invalid/i.png",
+      },
     );
 
     const seen = await drain(rooms, 2);
@@ -997,8 +1000,8 @@ describe("createMockHost TestHostAPI parity", () => {
     };
     const chat = createMockHost({ faults: { chatError: "chat down" } });
     await expect(
-      chat.callbacks.chat!.createChatRoom(product, {
-        roomId: "r",
+      chat.callbacks.chat!.createChatRoom(product, "r", {
+        roomIdSource: "r",
         name: "R",
         icon: "https://example.invalid/i.png",
       }),

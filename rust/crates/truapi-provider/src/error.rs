@@ -117,11 +117,6 @@ pub enum ProviderError {
 		"this provider was built without a stack, so it has no descriptor to check a light spec against"
 	)]
 	NoStack,
-	/// Warm start was asked of a provider built with both a stack and a store.
-	#[display(
-		"a stack's provider keeps no stored state: the store keys it by genesis hash, which a fork shares with its source"
-	)]
-	StackStorage,
 	/// A bundled chain spec does not yield a genesis hash.
 	#[cfg(feature = "networks")]
 	#[display("bundled {network} {service} chain spec yields no genesis hash: {source}")]

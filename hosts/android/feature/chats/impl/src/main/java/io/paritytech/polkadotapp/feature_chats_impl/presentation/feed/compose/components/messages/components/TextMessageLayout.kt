@@ -342,7 +342,7 @@ private fun previewTextMessage(
         id = "preview",
         timestamp = 0L,
         direction = direction,
-        status = ChatMessageUiModel.Status.READ,
+        status = ChatMessageUiModel.Status.SEEN,
         origin = ChatMessageOrigin.User,
         text = "",
         replyPreview = null,

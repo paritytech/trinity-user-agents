@@ -455,15 +455,16 @@ impl AccountHolder for RemoteAccountHolder {
 			.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })
 	}
 
-	fn contact_handles(
+	fn contact_handle_key(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<crate::runtime::contacts::ContactHandles, AuthorityError> {
+		product_id: &ProductId,
+	) -> Result<crate::runtime::contacts::ContactHandleKey, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), session)?;
 		let source = session.root_entropy_source.ok_or_else(|| AuthorityError::Unavailable {
 			reason: "Session secret missing".to_string(),
 		})?;
-		Ok(crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source))
+		Ok(crate::runtime::contacts::ContactHandleKey::from_root_entropy_source(&source, product_id))
 	}
 
 	async fn allocate_grants<'a>(
