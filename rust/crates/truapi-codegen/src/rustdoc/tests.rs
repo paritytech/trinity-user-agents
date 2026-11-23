@@ -26,8 +26,11 @@ fn clean_docs_strips_wire_markers() {
 #[test]
 fn internal_wire_metadata_preserves_method_address_and_direction() {
 	assert_eq!(
-		extract_wire_attrs("Method summary.\n@wire_id=2\n@wire_host_initiated\n@wire_internal\n"),
-		WireAttrs { host_initiated: true, internal: true, id: Some(2) }
+		extract_wire_attrs(
+			"Method summary.\n@wire_id=2\n@wire_host_initiated\n@wire_internal\n\
+			 @wire_request_fallback\n"
+		),
+		WireAttrs { host_initiated: true, internal: true, request_fallback: true, id: Some(2) }
 	);
 }
 

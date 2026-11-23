@@ -30,6 +30,7 @@ class HostStoreMessageSourceTest {
             origin = ChatMessageOrigin.User,
             content = ChatMessage.Content.Text("hi"),
             status = ChatMessage.Status.IS_READ,
+            sortOrder = 1,
         )
         val reactions = mapOf("m1" to listOf(ChatMessageReaction("m1", ChatMessageReactionContent("👍"), ChatMessageOrigin.User, 2)))
         val revisions = mapOf("m1" to MessageRevision("m1", ChatMessage.Content.Text("hello"), productRoom, 3))

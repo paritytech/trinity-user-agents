@@ -22,6 +22,11 @@ pub trait Notifications: Send + Sync {
 	/// persists the notification across restarts and fires it through the
 	/// platform-native scheduler. See [RFC 0019].
 	///
+	/// The host titles the notification with the product id. A trusted product,
+	/// one the core grants every remote permission without a prompt, may name
+	/// its own `title` instead. The core drops a blank title, and the title any
+	/// other product sends, and the call still succeeds.
+	///
 	/// [RFC 0019]: https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/0019-scheduled-notifications.md
 	///
 	/// ```ts
@@ -31,7 +36,7 @@ pub trait Notifications: Send + Sync {
 	/// assert(result.isOk(), "sendPushNotification failed:", result);
 	/// console.log("notification sent:", result.value);
 	/// ```
-	#[wire(id = 0)]
+	#[wire(id = 0, request_fallback)]
 	async fn send_push_notification(
 		&self,
 		cx: &CallContext,
