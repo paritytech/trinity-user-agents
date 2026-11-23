@@ -1,13 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,7 +27,6 @@ import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.ProductId
-import uniffi.truapi.U128
 import kotlin.time.Instant
 
 /** The funding service as plain state: each session's entries are pushed by the test, and every call is recorded. */
@@ -47,17 +47,17 @@ class FakeFundingService : FundingService {
 
     override suspend fun resume(): Result<Unit> = Result.success(Unit)
 
-    override suspend fun open(direction: FundingDirection, amount: U128?): Result<FundingSessionId?> = Result.success(null)
+    override suspend fun open(direction: FundingDirection, amount: Balance?): Result<FundingSessionId?> = Result.success(null)
 
     override fun select(selection: FundingSelection, id: FundingSessionId) {
         calls += "select ${selection.rail} ${selection.asset} ${selection.country}"
     }
 
-    override fun quote(amount: U128?, id: FundingSessionId) {
-        calls += "quote $amount"
+    override fun quote(amount: Balance?, id: FundingSessionId) {
+        calls += "quote ${amount?.value}"
     }
 
-    override suspend fun amountIssue(amount: U128, spendable: U128?, id: FundingSessionId): Result<FundingAmountIssue?> = Result.success(null)
+    override suspend fun amountIssue(amount: Balance, spendable: Balance?, id: FundingSessionId): Result<FundingAmountIssue?> = Result.success(null)
 
     override suspend fun start(id: FundingSessionId, provider: ProductId?): Result<Unit> =
         startResult.also { calls += "start ${provider?.value}" }
@@ -137,7 +137,7 @@ class FakeFundingSheet(state: FundingFlowState, entry: FundingEntry?) : FundingS
 
 object FundingFixtures {
     val ramp: ProductId = ProductId.parse("ramp.dot").getOrThrow()
-    val cash = FundingCash(precision = 6)
+    const val CASH_PRECISION = 6
 
     fun entry(
         session: FundingSession? = FakeFundingCore.session("intent"),
@@ -153,14 +153,14 @@ object FundingFixtures {
         progress = progress,
         summary = null,
         options = options,
-        askedAmount = quotes?.amount,
+        askedAmount = quotes?.amount?.toBalanceOrNull(),
         quotes = quotes,
         isPresented = isPresented,
     )
 
     fun flow(options: FundingOptions? = FakeFundingCore.options(ramp), amount: String = "") = FundingFlowState.initial(
         direction = FundingDirection.IN,
-        cash = cash,
+        cashPrecision = CASH_PRECISION,
         format = testCashFormat(),
         spendable = null,
         options = options,

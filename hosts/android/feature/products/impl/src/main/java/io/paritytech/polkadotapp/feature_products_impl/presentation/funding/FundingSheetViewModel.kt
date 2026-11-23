@@ -2,10 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPhase
@@ -30,7 +30,6 @@ import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.ProductId
-import java.math.BigDecimal
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -72,8 +71,7 @@ class FundingSheetViewModel @Inject constructor(
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val wallet: StateFlow<FundingWallet?> = flow {
-        val cash = interactor.cash()
-        emit(FundingWallet(cash, interactor.spendable(cash)))
+        emit(FundingWallet(interactor.cashPrecision(), interactor.spendable()))
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     override val flow: StateFlow<FundingFlowState?> = combine(entry, picks, wallet, ::Triple)
@@ -170,11 +168,11 @@ class FundingSheetViewModel @Inject constructor(
         val detected = options?.detectedCountry?.let(FundingCountries::country) ?: previous?.country
         val base = FundingFlowState.initial(
             direction = entry.direction,
-            cash = wallet.cash,
+            cashPrecision = wallet.cashPrecision,
             format = cashFormat,
             spendable = wallet.spendable,
             options = options,
-            amount = entry.amount?.let(wallet.cash::decimal),
+            amount = entry.amount,
             country = detected,
         )
         val choice = entry.session?.choice?.takeIf { entry.hasStarted }
@@ -223,5 +221,5 @@ class FundingSheetViewModel @Inject constructor(
 
     private fun top(): FundingScreen? = stack.value.lastOrNull()?.screen
 
-    private data class FundingWallet(val cash: FundingCash, val spendable: BigDecimal?)
+    private data class FundingWallet(val cashPrecision: Int, val spendable: Balance?)
 }

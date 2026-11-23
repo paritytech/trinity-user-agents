@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FakeFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingStartError
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.entry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.flow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.ramp
@@ -103,7 +104,7 @@ class FundingScreenViewModelsTest {
 
     @Test
     fun `starting hands the session to the quoted provider, and a refusal lets the user try again`() = runTest(testDispatcher) {
-        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount) }, entry())
+        val sheet = FakeFundingSheet(quotedByRamp().let { flow().withQuotes(it, it.amount.toBalanceOrNull()) }, entry())
         val model = FundingSummaryViewModel(sheet, service)
         model.state.launchIn(backgroundScope)
         service.startResult = Result.failure(FundingStartError.NotSelected(null))

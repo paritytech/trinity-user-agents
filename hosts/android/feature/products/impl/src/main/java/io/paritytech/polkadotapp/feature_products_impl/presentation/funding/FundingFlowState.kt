@@ -40,7 +40,8 @@ data class FundingFlowState(
     /** The payment balance's decimals. */
     val cashPrecision: Int,
     val format: FundingCashFormat,
-    val spendable: BigDecimal?,
+    /** What a withdrawal can spend, in balance units. */
+    val spendable: Balance?,
     /** What the core offers for the selection on screen; `null` until it has said. */
     val options: FundingOptions?,
     val rail: FundingRail,
@@ -66,9 +67,9 @@ data class FundingFlowState(
             direction: FundingDirection,
             cashPrecision: Int,
             format: FundingCashFormat,
-            spendable: BigDecimal?,
+            spendable: Balance?,
             options: FundingOptions?,
-            amount: BigDecimal?,
+            amount: Balance?,
             country: FundingCountry?,
         ) = FundingFlowState(
             direction = direction,
@@ -77,7 +78,7 @@ data class FundingFlowState(
             spendable = spendable,
             options = options,
             rail = options.defaultRail,
-            amountText = amount?.let(::textFor).orEmpty(),
+            amountText = amount?.amountFromPlanks(cashPrecision)?.let(::textFor).orEmpty(),
             country = country,
             network = null,
             asset = null,
@@ -102,7 +103,7 @@ data class FundingFlowState(
         get() = amountText.takeIf(AMOUNT_TEXT::matches)?.toBigDecimalOrNull()?.planksFromAmount(cashPrecision)
 
     val amount: BigDecimal
-        get() = units?.let(::decimal) ?: BigDecimal.ZERO
+        get() = units?.let(::cashAmount) ?: BigDecimal.ZERO
 
     val candidates: List<FundingCandidate>
         get() = options?.candidates.orEmpty()
@@ -127,6 +128,9 @@ data class FundingFlowState(
     /** What [quote]'s provider-side figures are counted in: the asked asset, at the decimals the quote states. */
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
+
+    /** [units] of the balance, as the screens read them. */
+    fun cashAmount(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
@@ -250,10 +254,8 @@ data class FundingFlowState(
         maximum = this?.max?.let(::cashDecimal),
     )
 
-    private fun decimal(units: Balance): BigDecimal = units.amountFromPlanks(cashPrecision).canonical()
-
     /** A core amount in balance units; `null` when it is not a number. */
-    private fun cashDecimal(units: U128): BigDecimal? = units.toBalanceOrNull()?.let(::decimal)
+    private fun cashDecimal(units: U128): BigDecimal? = units.toBalanceOrNull()?.let(::cashAmount)
 }
 
 /** The order the rail tabs are drawn in. */

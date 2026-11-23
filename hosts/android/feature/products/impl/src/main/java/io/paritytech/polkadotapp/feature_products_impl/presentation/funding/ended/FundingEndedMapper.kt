@@ -1,13 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
+import io.paritytech.polkadotapp.chains.network.binding.orZero
+import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline.milestone
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.canonical
 import kotlinx.collections.immutable.toImmutableList
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingEndedOutcome
@@ -17,6 +20,7 @@ import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.U128
 import uniffi.truapi.fundingNetworkName
+import java.math.BigDecimal
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -28,7 +32,8 @@ private const val SENDING_DOT = 5
  * where it stopped; the wording, the figures and the dots are the app's.
  */
 class FundingEndedMapper(
-    private val cash: FundingCash,
+    /** The balance's decimals. */
+    private val cashPrecision: Int,
     private val format: FundingCashFormat,
 ) {
     /** `null` for a session that has not ended. */
@@ -38,7 +43,7 @@ class FundingEndedMapper(
         if (outcome is FundingEndedOutcome.Open) return null
         val succeeded = outcome is FundingEndedOutcome.Succeeded
         val inbound = summary.direction == FundingDirection.IN
-        val amount = ended.cashAmount?.let(cash::decimal)
+        val amount = ended.cashAmount?.let(::cash)
 
         return FundingEndedUiState(
             succeeded = succeeded,
@@ -182,7 +187,11 @@ class FundingEndedMapper(
         null -> null
     }
 
-    private fun label(units: U128): String = format.label(cash.decimal(units))
+    private fun label(units: U128): String = format.label(cash(units))
+
+    /** A core amount in the balance's units; zero when it is not a number. */
+    private fun cash(units: U128): BigDecimal =
+        units.toBalanceOrNull()?.amountFromPlanks(cashPrecision)?.canonical() ?: BigDecimal.ZERO
 
     private fun res(res: Int, vararg args: String) = FundingEndedText.Res(res, args.toList().toImmutableList())
 }
@@ -201,5 +210,5 @@ private fun FundingSessionSummary.settledAt(): Instant? = when (val stage = stag
 /** What the user paid for value in, or received for value out, in the quote's asset at the decimals it states. */
 private fun FundingSessionSummary.quotedAmount(): String? = choice?.let { choice ->
     val units = if (direction == FundingDirection.IN) choice.quote.sendAmount else choice.quote.receiveAmount
-    FundingAssetUnit.of(choice.asset, choice.quote.assetDecimals.toInt()).format(units)
+    FundingAssetUnit.of(choice.asset, choice.quote.assetDecimals.toInt()).format(units.toBalanceOrNull().orZero())
 }

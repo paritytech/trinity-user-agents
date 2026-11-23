@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalanceOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -186,7 +187,7 @@ class FundingFlowStateTest {
     private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, askAmount)
 
     /** The ask's list, as the funding service reports it; none is the core withdrawing it, which drops the ask. */
-    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount })
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, list?.let { askedAmount ?: it.amount.toBalanceOrNull() })
 
     private fun state(
         options: FundingOptions?,
@@ -196,7 +197,7 @@ class FundingFlowStateTest {
         direction = direction,
         cashPrecision = 6,
         format = testCashFormat(),
-        spendable = BigDecimal("226.78"),
+        spendable = 226_780_000.intoBalance(),
         options = options,
         amount = null,
         country = germany,
