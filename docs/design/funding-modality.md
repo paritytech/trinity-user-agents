@@ -182,7 +182,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
   [*] --> Presenting: request
-  Presenting --> [*]: dismissed → Failed{Cancelled}
+  Presenting --> [*]: dismissed or cancelled → Failed{Cancelled}
   Presenting --> Open: user starts (stored)
   Open --> Assigned: provider picked
   Open --> Expired: 24 h
@@ -211,7 +211,10 @@ transfer, which is still added.
 
 ```mermaid
 flowchart TD
-  c[user cancels] --> assigned{provider assigned?}
+  c[user cancels] --> up{overlay up?}
+  up -- "yes, never started" --> dropped[Ended · session dropped]
+  up -- "yes, provider chosen" --> mm
+  up -- no --> assigned{provider assigned?}
   assigned -- no --> none[Cancelled]
   assigned -- yes --> mm{money moved?}
   mm -- no --> stop[cancel → Stopped] --> none
@@ -225,6 +228,10 @@ flowchart TD
   confirm -- accepted --> refund[settleCancel Accepted → refund]
   refund -. payout landed first .-> paid[PaidOutAfterCancel]
 ```
+
+`cancel_funding` is the host's one way to stop a session; the core picks the effect from its state and answers
+`Refused` once it has ended. Closing the overlay is not a cancel: before the session starts the host answers
+`present_funding` with `Dismissed`, which drops it the same way; after it starts the session runs on.
 
 A cancel that moved no money is left out of history.
 
