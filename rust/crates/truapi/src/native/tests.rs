@@ -831,10 +831,16 @@ fn process_runtime_counts_worker_references_per_product() {
 	.expect("host runtime config should be valid");
 	let product = || ProductId::for_test("shared.dot");
 
-	host.acquire_worker(product());
-	host.acquire_worker(product());
-	host.release_worker(product());
-	host.release_worker(product());
+	let first = host.claim_worker(product());
+	let second = host.claim_worker(product());
+	first.release();
+	first.release();
+	drop(first);
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start)]
+	);
+	drop(second);
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),

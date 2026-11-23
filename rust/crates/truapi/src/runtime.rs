@@ -59,6 +59,7 @@ pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 mod test_resource_controls;
 mod versioning;
 mod vrf;
+mod worker_hold;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -96,6 +97,7 @@ pub use sso_responder_service::{
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
+pub use worker_hold::WorkerHold;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
@@ -677,8 +679,8 @@ impl ProductConnection {
 	}
 
 	/// Hold this connection's product worker until the hold is dropped.
-	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
-		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	pub(crate) fn hold_worker(&self) -> WorkerHold {
+		WorkerHold::acquire(&self.services, &self.product.product_id)
 	}
 
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.

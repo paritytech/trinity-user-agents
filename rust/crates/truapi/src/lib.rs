@@ -535,7 +535,7 @@ cfg_select! {
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
 			PairedSsoPeer, PairingHost, PairingProposal, PairingProposalMetadata, ResponderExit,
-			ResumePairingError, SigningHost, StatementRenewalTarget,
+			ResumePairingError, SigningHost, StatementRenewalTarget, WorkerHold,
 			contacts::contact_handle,
 			login_failure::reports_exhausted_period,
 			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},

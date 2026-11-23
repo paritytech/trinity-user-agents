@@ -1683,12 +1683,30 @@ describe("createWebWorkerPairingHostRuntime", () => {
 });
 
 describe("worker demand", () => {
+  it("releases each owner's claim once when two owners need the same worker", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readyRuntime(worker);
+    const productId = asProductId("a.dot");
+    const first = runtime.claimWorker(productId);
+    const second = runtime.claimWorker(productId);
+    first.release();
+    first.release();
+    expect(
+      worker.messages.filter((message) => message.kind === "releaseWorker"),
+    ).toHaveLength(1);
+    second.release();
+    expect(
+      worker.messages.filter((message) => message.kind === "releaseWorker"),
+    ).toHaveLength(2);
+    runtime.dispose();
+  });
+
   it("forwards references and fans the wanted level out", async () => {
     const worker = new FakeWorker();
     const runtime = await readyRuntime(worker);
     const seen: WorkerDemandChange[] = [];
 
-    runtime.acquireWorker(asProductId("a.dot"));
+    const first = runtime.claimWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
       kind: "acquireWorker",
       productId: asProductId("a.dot"),
@@ -1705,14 +1723,14 @@ describe("worker demand", () => {
     );
     expect(seen).toEqual([{ productId: asProductId("a.dot"), wanted: true }]);
 
-    runtime.acquireWorker(asProductId("b.dot"));
+    const second = runtime.claimWorker(asProductId("b.dot"));
     worker.emit({
       kind: "workerDemandChanged",
       productId: asProductId("b.dot"),
       wanted: true,
     });
 
-    runtime.releaseWorker(asProductId("a.dot"));
+    first.release();
     expect(worker.messages.at(-1)).toEqual({
       kind: "releaseWorker",
       productId: asProductId("a.dot"),
@@ -1728,6 +1746,7 @@ describe("worker demand", () => {
       { productId: asProductId("a.dot"), wanted: false },
     ]);
 
+    second.release();
     unsubscribe();
     worker.emit({
       kind: "workerDemandChanged",
@@ -1757,7 +1776,7 @@ describe("worker demand", () => {
 
     // Nothing is posted to a disposed worker, and a late subscriber sees nothing.
     const before = worker.messages.length;
-    runtime.acquireWorker(asProductId("a.dot"));
+    runtime.claimWorker(asProductId("a.dot")).release();
     expect(worker.messages.length).toBe(before);
     const late: WorkerDemandChange[] = [];
     runtime.subscribeWorkerDemand((change) => late.push(change));

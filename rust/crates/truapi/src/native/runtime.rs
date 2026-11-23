@@ -87,6 +87,23 @@ impl crate::logging::HostSink for CallbackSink {
 	}
 }
 
+/// One consumer's reference on a product worker.
+///
+/// Release the claim when its owner finishes. Dropping the last handle also releases it.
+#[derive(uniffi::Object)]
+pub struct NativeWorkerClaim {
+	reference: Mutex<Option<crate::WorkerHold>>,
+}
+
+#[uniffi::export]
+impl NativeWorkerClaim {
+	/// Release this claim once, even if several owners of this handle call concurrently.
+	pub fn release(&self) {
+		let reference = self.reference.lock().expect("worker claim mutex poisoned").take();
+		drop(reference);
+	}
+}
+
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
 pub struct NativeTrUApiHostRuntime {
@@ -719,6 +736,15 @@ impl NativeTrUApiHostRuntime {
 			game_callbacks,
 			execution_config.into(),
 		))
+	}
+
+	/// Claim a product's worker while this consumer needs it.
+	///
+	/// The returned handle owns one reference regardless of how many product calls are open.
+	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
+		Arc::new(NativeWorkerClaim {
+			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
+		})
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The

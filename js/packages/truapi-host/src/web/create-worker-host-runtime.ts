@@ -154,6 +154,8 @@ export interface WorkerPairingHostRuntime {
     productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
+  /** Hold one reference until this consumer releases it. Repeated release is safe. */
+  claimWorker(productId: ProductId): { release(): void };
   /**
    * Take one reference on a product's worker for a modality holder that is on
    * screen or in flight. Pair every call with one
@@ -1520,6 +1522,17 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
     },
     notifyContactsChanged(): void {
       postUnlessDisposed(state, { kind: "notifyContactsChanged" });
+    },
+    claimWorker(productId) {
+      postUnlessDisposed(state, { kind: "acquireWorker", productId });
+      let released = false;
+      return {
+        release() {
+          if (released) return;
+          postUnlessDisposed(state, { kind: "releaseWorker", productId });
+          released = true;
+        },
+      };
     },
     acquireWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "acquireWorker", productId });

@@ -315,6 +315,13 @@ impl<Role> HostRuntime<Role> {
 		&self.services.worker_ledger
 	}
 
+	/// Hold the product's worker until this reference is dropped.
+	///
+	/// The first reference requests startup and the last release requests a stop.
+	pub fn hold_worker(&self, product_id: &ProductId) -> crate::WorkerHold {
+		crate::WorkerHold::acquire(&self.services, product_id)
+	}
+
 	/// Report that the product's worker stopped without being asked to:
 	/// it is started again while something holds it, with a growing wait
 	/// when it keeps crashing.
