@@ -24,6 +24,7 @@ public extension CustomMessageWidgetNode {
         case button(ButtonProps)
         case textField(TextFieldProps)
         case image(ImageProps)
+        case gesture(GestureProps, children: [CustomMessageWidgetNode])
     }
 }
 

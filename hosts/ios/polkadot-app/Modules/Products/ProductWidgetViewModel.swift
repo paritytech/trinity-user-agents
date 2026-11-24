@@ -5,6 +5,8 @@ import Products
 @Observable
 final class ProductWidgetViewModel: WidgetNodeProviding {
     @MainActor private(set) var node: CustomMessageWidgetNode?
+    /// Offsets the product set on its keyed gestures since its last tree.
+    let gestureOffsets: GestureOffsets? = GestureOffsets()
 
     private let messageId: String
     private let render: () async -> AsyncThrowingStream<ChatRendererOutput, Error>
@@ -123,6 +125,18 @@ private extension ProductWidgetViewModel {
             for try await output in stream {
                 guard !Task.isCancelled else { return .cancelled }
 
+                // An offset update moves one keyed gesture: no tree to map, and nothing else draws again.
+                if case let .native(.setOffset(key, offsetX, offsetY)) = output {
+                    await MainActor.run {
+                        // Offsets travel in hundredths of a logical pixel.
+                        self.gestureOffsets?.set(
+                            key: key,
+                            offset: CGPoint(x: Double(offsetX) / 100, y: Double(offsetY) / 100)
+                        )
+                    }
+                    continue
+                }
+
                 let resolved: CustomMessageWidgetNode? =
                     switch output {
                     case let .scaleEncoded(hexString):
@@ -131,7 +145,11 @@ private extension ProductWidgetViewModel {
                     case let .native(node):
                         node.toWidgetNode(resolver: tokenResolver)
                     }
-                await MainActor.run { self.node = resolved }
+                await MainActor.run {
+                    // A tree always wins over the offsets set before it.
+                    self.gestureOffsets?.treeArrived()
+                    self.node = resolved
+                }
                 drew = true
                 #if targetEnvironment(simulator)
                     TrUAPIE2EMarkers.write("custom-renderer-update", logger: logger)

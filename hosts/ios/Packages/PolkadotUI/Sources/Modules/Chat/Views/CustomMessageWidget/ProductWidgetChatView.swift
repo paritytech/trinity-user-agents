@@ -2,6 +2,12 @@ import SwiftUI
 
 public protocol WidgetNodeProviding: AnyObject, Observable {
     @MainActor var node: CustomMessageWidgetNode? { get }
+    /// Offsets the product set on keyed gestures since its last tree; nil when it cannot set any.
+    var gestureOffsets: GestureOffsets? { get }
+}
+
+public extension WidgetNodeProviding {
+    var gestureOffsets: GestureOffsets? { nil }
 }
 
 public struct ProductWidgetChatView: View, Hashable {
@@ -25,6 +31,7 @@ public struct ProductWidgetChatView: View, Hashable {
     public var body: some View {
         if let node = nodeProvider.node {
             CustomMessageWidgetView(node: node, onAction: onAction, resolveImage: resolveImage)
+                .environment(\.gestureOffsets, nodeProvider.gestureOffsets)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             ProgressView()

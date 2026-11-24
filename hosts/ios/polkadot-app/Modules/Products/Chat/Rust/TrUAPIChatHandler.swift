@@ -128,7 +128,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         messageId: String,
         messageType: String?,
         actionId: String,
-        payload: String?
+        payload: Data?
     ) async {
         do {
             try checkNotDisposed()
@@ -155,7 +155,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         roomId: String,
         messageType: String,
         actionId: String,
-        payload: String?
+        payload: Data?
     ) async {
         do {
             try checkNotDisposed()
@@ -296,11 +296,11 @@ private extension TrUAPIChatHandler {
         }
     }
 
-    func publishRendererAction(_ context: RenderContext, actionId: String, payload: String?) throws {
+    func publishRendererAction(_ context: RenderContext, actionId: String, payload: Data?) throws {
         try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
             context: context,
             actionId: actionId,
-            payload: payload.map { Data($0.utf8) } ?? Data()
+            payload: payload ?? Data()
         ))
     }
 

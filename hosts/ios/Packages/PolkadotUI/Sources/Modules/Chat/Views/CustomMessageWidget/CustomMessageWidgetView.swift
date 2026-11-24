@@ -4,7 +4,7 @@ import DesignSystem
 
 // MARK: - Action Handler
 
-public typealias WidgetActionHandler = (String, String?) -> Void
+public typealias WidgetActionHandler = (String, Data?) -> Void
 
 private struct WidgetActionHandlerKey: EnvironmentKey {
     static let defaultValue: WidgetActionHandler? = nil
@@ -95,6 +95,14 @@ private struct WidgetNodeContent: View {
             NodeTextFieldView(props: props, modifiers: node.modifiers)
         case let .image(props):
             NodeImageView(props: props, modifiers: node.modifiers)
+        case let .gesture(props, children):
+            NodeGestureView(props: props, modifiers: node.modifiers) {
+                ZStack(alignment: .leading) {
+                    ForEach(Array(children.enumerated()), id: \.offset) { _, child in
+                        WidgetNodeContent(node: child)
+                    }
+                }
+            }
         }
     }
 }
@@ -403,7 +411,7 @@ private struct NodeTextFieldView: View {
             .disabled(!props.isEnabled)
             .onChange(of: text) { _, newValue in
                 if let actionId = props.valueChangeAction {
-                    actionHandler?(actionId, newValue)
+                    actionHandler?(actionId, Data(newValue.utf8))
                 }
             }
         }
@@ -419,7 +427,7 @@ private struct NodeTextFieldView: View {
             CustomMessageWidgetView(
                 node: .previewTransferCard,
                 onAction: { actionId, payload in
-                    print("Action: \(actionId), payload: \(payload ?? "nil")")
+                    print("Action: \(actionId), payload bytes: \(payload?.count ?? 0)")
                 },
                 resolveImage: nil
             )
