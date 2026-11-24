@@ -115,7 +115,7 @@ pub struct NativeTrUApiHostRuntime {
 	events: Arc<NativeEventBus>,
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
-	workers: workers::Workers,
+	workers: parking_lot::Mutex<Option<workers::Session>>,
 	/// The host's top-up engine, once installed, which later statuses are
 	/// pushed through.
 	top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
@@ -137,7 +137,7 @@ impl NativeTrUApiHostRuntime {
 	fn from_resolved(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: NativeResolvedHostRuntimeConfig,
-		workers: workers::Workers,
+		worker_host: Option<Arc<dyn NativeWebViewWorkerHost>>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
 		// Installed before the rest of startup, so the warnings raised on the way
@@ -204,12 +204,6 @@ impl NativeTrUApiHostRuntime {
 		let spawner = executor.spawner();
 		let runtime =
 			Arc::new(HostRuntime::<SigningHost>::new(platform.clone(), signing, spawner.clone()));
-		if matches!(workers, workers::Workers::External(_)) {
-			assert!(
-				runtime.worker_ledger().install_worker_controller(platform.clone()),
-				"a freshly built runtime installs its worker controller once"
-			);
-		}
 		assert!(
 			runtime.set_durable_work_observer(platform.clone()),
 			"a freshly built runtime installs its durable work observer once"
@@ -245,14 +239,15 @@ impl NativeTrUApiHostRuntime {
 				reason: err.reason,
 			})?;
 		}
-		Ok(Arc::new(Self {
+		let workers = workers::Session::new(&callbacks, worker_host);
+		let host = Arc::new(Self {
 			runtime,
 			events,
 			spawner,
 			ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
 				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			}))),
-			workers,
+			workers: parking_lot::Mutex::new(Some(workers)),
 			top_up: OnceLock::new(),
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
@@ -260,7 +255,9 @@ impl NativeTrUApiHostRuntime {
 			stack_refresh,
 			database_directory: runtime_config.database_directory.clone(),
 			_host_sink: host_sink,
-		}))
+		});
+		workers::install_controller(&host);
+		Ok(host)
 	}
 
 	fn open_product_execution_with_callbacks(
@@ -640,32 +637,16 @@ impl NativeTrUApiHostRuntime {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
-	/// Construct one host-level runtime and optionally activate its local session.
+	/// Construct the shared runtime and deliver worker demand acquired during initialization.
+	///
+	/// Without a worker host, worker claims report a failed execution until released.
 	#[uniffi::constructor]
 	pub fn with_runtime_config(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: HostRuntimeConfig,
+		worker_host: Option<Arc<dyn NativeWebViewWorkerHost>>,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		Self::from_resolved(
-			callbacks,
-			runtime_config.try_into()?,
-			workers::Workers::External(Mutex::default()),
-		)
-	}
-
-	/// Construct a runtime that starts and stops the session's product workers.
-	///
-	/// Demand acquired during initialization is delivered before returning.
-	#[uniffi::constructor]
-	pub fn with_managed_product_workers(
-		callbacks: Arc<dyn HostCallbacks>,
-		runtime_config: HostRuntimeConfig,
-		worker_host: Arc<dyn NativeWebViewWorkerHost>,
-	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
-		let workers = workers::Workers::managed(&callbacks, worker_host);
-		let runtime = Self::from_resolved(callbacks, runtime_config.try_into()?, workers)?;
-		workers::install_controller(&runtime);
-		Ok(runtime)
+		Self::from_resolved(callbacks, runtime_config.try_into()?, worker_host)
 	}
 
 	/// Install the host's contacts adapter, which owns the contact list and
@@ -729,8 +710,7 @@ impl NativeTrUApiHostRuntime {
 	/// Chat modality pass `None`. `game_callbacks` does the same for game
 	/// reminders.
 	///
-	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
-	/// parse throws in Swift and Kotlin.
+	/// Rejects a Worker context. A worker must open through its [`NativeWorkerAttempt`].
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
@@ -739,18 +719,18 @@ impl NativeTrUApiHostRuntime {
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
 		let product: ProductContext = execution_config.into();
-		let worker = product.execution_kind == ExecutableKind::Worker;
-		let execution = self.open_product_execution_with_callbacks(
+		if product.execution_kind == ExecutableKind::Worker {
+			return Err(NativeRuntimeConfigError::Invalid {
+				reason: "open a worker through its startup attempt".into(),
+			});
+		}
+		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			game_callbacks,
 			product,
 			None,
-		);
-		if worker {
-			self.workers.register_external(&execution)?;
-		}
-		Ok(execution)
+		))
 	}
 
 	/// Claim a product's worker while this consumer needs it.
@@ -760,16 +740,6 @@ impl NativeTrUApiHostRuntime {
 		Arc::new(NativeWorkerClaim {
 			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
 		})
-	}
-
-	/// Report that the product's worker stopped running without being asked
-	/// to: it crashed or the system killed it. While references remain, the
-	/// host is asked through [`HostCallbacks::request_worker_transition`] to
-	/// start it again. Managed WebViews report through their startup attempt.
-	pub fn worker_exited(&self, product_id: ProductId) {
-		if matches!(self.workers, workers::Workers::External(_)) {
-			self.runtime.worker_exited(&product_id);
-		}
 	}
 
 	/// Forget one product: revoke its grants and Allow once answers, then

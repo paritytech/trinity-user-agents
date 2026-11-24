@@ -348,22 +348,22 @@ is live.
 session/SSO crypto, key derivation, and permission policy, while all I/O
 (statement-store RPC, storage, prompts, chain RPC) stays in the layers above.
 
-`host_logic::worker::WorkerLedger` holds the reference count per product
-worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `claim_worker`, one reference per claim, and the host
-reports a worker that stopped without being asked, because it crashed, failed
-to boot or the system killed it, with `worker_exited`: while references remain
-the ledger requests `Start` again, and the core hands the restarted worker its
-funding sessions once it connects. Exits less than a minute apart form a run:
-the first restart is immediate, then each waits 1 s, doubling up to 5 min, and
-a restart still waiting is dropped once nothing holds the worker or it was
-started meanwhile. On the run's third crash the host hears
-`worker_crashing(product_id, crashes)` and tells the user that product is not
-working. The ledger delivers `start_worker(product_id, attempt_id)` and
-`stop_worker(product_id)` in order. A managed native runtime uses the attempt
-ID to publish readiness and dispose the correct execution. Hosts that manage
-their own workers receive the transition through `request_worker_transition`.
-On the web, `@parity/truapi-host` pushes the wanted level to the page.
+Each host has one `host_logic::worker::WorkerLedger` in `RuntimeServices`.
+Each `claim_worker` call holds one reference to a product's worker. The first
+claim starts an attempt. Releasing the last claim stops it.
+
+On native hosts, the Rust controller sends the startup attempt to the WebView
+host. The WebView opens its execution through that attempt, reports module
+startup through the execution, and reports a crash through the attempt. Rust
+publishes the execution when its module has started and its bridge has
+authenticated. On the web, `@parity/truapi-host` delivers
+`requestWorkerTransition` to the host, which reports a crash with `workerExited`.
+
+While claims remain, the ledger retries a crashed worker. The first restart is
+immediate. For repeated exits less than a minute apart, the delay starts at 1 s
+and doubles up to 5 min. On the third consecutive crash, the core notifies the
+host through `worker_crashing`. Releasing the last claim cancels a pending
+retry. When the replacement connects, it receives its active funding sessions.
 
 ### Inter-host SSO
 
