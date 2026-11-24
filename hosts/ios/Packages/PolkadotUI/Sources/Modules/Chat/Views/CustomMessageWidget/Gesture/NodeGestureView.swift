@@ -79,7 +79,7 @@ private extension NodeGestureView {
     func startPacing(_ pan: CustomMessageWidgetNode.PanGesture) {
         guard pacesMoves, let moveAction = pan.moveAction else { return }
         let handler = actionHandler
-        pacer.start { handler?(moveAction, $0) }
+        pacer.start(send: { handler?(moveAction, $0) }, offsets: gestureOffsets)
         channel?.onAnswer = { [pacer] in pacer.answered() }
     }
 
