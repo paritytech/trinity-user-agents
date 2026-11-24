@@ -174,7 +174,7 @@ struct MaskShareWatcher: View {
     @Environment(\.widgetActionHandler) private var actionHandler
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var watch: MaskShareWatch?
-    @State private var frame: CGRect = .zero
+    @State private var geometry = MaskGeometry()
 
     var body: some View {
         let input = MaskShareWatch.Input(
@@ -184,7 +184,7 @@ struct MaskShareWatcher: View {
             additions: channel?.additions ?? 0
         )
         Color.clear
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+            .onGeometryChange(for: MaskGeometry.self) { MaskGeometry($0) } action: { geometry = $0 }
             .onAppear { watch = MaskShareWatch(input) }
             .onChange(of: input) { _, input in
                 var next = watch ?? MaskShareWatch()
@@ -196,9 +196,9 @@ struct MaskShareWatcher: View {
 
     private func reached() -> Bool {
         let source = MaskSource.of(
-            mask: mask, trail: trail, frame: frame, mirrored: layoutDirection == .rightToLeft
+            mask: mask, trail: trail, geometry: geometry, mirrored: layoutDirection == .rightToLeft
         )
-        let count = MaskCoverage.count(source.picture(added: channel?.added ?? []).shapes, in: frame.size)
+        let count = MaskCoverage.count(source.picture(added: channel?.added ?? []).shapes, in: geometry.size)
         return share.reached(covered: count.covered, samples: count.total)
     }
 }
