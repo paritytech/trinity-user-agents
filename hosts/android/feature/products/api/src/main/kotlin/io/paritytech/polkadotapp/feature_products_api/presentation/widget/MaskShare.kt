@@ -42,6 +42,14 @@ internal object MaskCoverage {
         for (shape in shapes) {
             when (shape) {
                 JsMaskShape.All -> Unit
+                is JsMaskShape.Stamped -> {
+                    val radius = shape.width / 2.0
+                    for (centre in MaskStamps.centres(shape.width, shape.brush, shape.points)) {
+                        mark(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius) { x, y ->
+                            MaskStamps.covers(shape.width, shape.brush, centre, x, y)
+                        }
+                    }
+                }
                 is JsMaskShape.Circle -> {
                     val cx = shape.center.x.toDouble()
                     val cy = shape.center.y.toDouble()

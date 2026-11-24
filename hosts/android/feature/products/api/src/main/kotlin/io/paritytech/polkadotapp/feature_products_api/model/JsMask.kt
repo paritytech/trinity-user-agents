@@ -38,11 +38,32 @@ sealed interface JsMaskShape {
     @Serializable
     @SerialName("stroke")
     data class Stroke(val width: Long, val points: List<JsMaskPoint>) : JsMaskShape
+
+    @Serializable
+    @SerialName("stamped")
+    data class Stamped(val width: Long, val brush: JsMaskBrush, val points: List<JsMaskPoint>) : JsMaskShape
 }
 
 /** The location pan whose strokes the host draws into the mask itself, and their width in hundredths of a dp. */
 @Serializable
-data class JsMaskFollow(val pan: String, val width: Long)
+data class JsMaskFollow(val pan: String, val width: Long, val brush: JsMaskBrush? = null)
+
+@Serializable
+enum class JsMaskBrushTip {
+    @SerialName("ellipse")
+    ELLIPSE,
+
+    @SerialName("capsule")
+    CAPSULE,
+}
+
+@Serializable
+data class JsMaskBrush(
+    val tip: JsMaskBrushTip,
+    val aspectPermille: Int,
+    val angleCentideg: Int,
+    val spacingPermille: Int,
+)
 
 /**
  * Has the host send [action], with no payload, once a mask's shapes cover [atPermille] thousandths of its node: the

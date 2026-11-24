@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
 import androidx.compose.ui.geometry.Offset
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrush
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskBrushTip
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
 import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
@@ -20,8 +22,11 @@ import uniffi.truapi.GestureProps
 import uniffi.truapi.ImageProps
 import uniffi.truapi.ImageSource
 import uniffi.truapi.Mask
+import uniffi.truapi.MaskBrush
+import uniffi.truapi.MaskBrushTip
 import uniffi.truapi.MaskFollow
 import uniffi.truapi.MaskMode
+import uniffi.truapi.MaskPoint
 import uniffi.truapi.MaskShape
 import uniffi.truapi.Modifier
 import uniffi.truapi.PanAxis
@@ -188,6 +193,22 @@ class RendererGestureOffsetsTest {
         offsets.receive(RendererNode.ExtendMask("other", listOf(MaskShape.All)))
 
         assertTrue(requireNotNull(keyedMask(box).channel).added.isEmpty())
+    }
+
+    @Test
+    fun `stamped shapes keep their brush through trees and keyed extends`() {
+        val brush = MaskBrush(MaskBrushTip.CAPSULE, 350u, -4500, 200u)
+        val shape = MaskShape.Stamped(5200u, brush, listOf(MaskPoint(100, 200)))
+        val expected = JsMaskShape.Stamped(
+            5200, JsMaskBrush(JsMaskBrushTip.CAPSULE, 350, -4500, 200), listOf(JsMaskPoint(100, 200)),
+        )
+        val offsets = RendererGestureOffsets()
+        val box = offsets.receive(maskedTree(listOf(shape))) as JsWidget.Box
+        val mask = keyedMask(box)
+        offsets.receive(RendererNode.ExtendMask("mask", listOf(shape)))
+
+        assertEquals(listOf(expected), mask.shapes)
+        assertEquals(listOf(expected), requireNotNull(mask.channel).added)
     }
 
     private fun keyedMask(box: JsWidget.Box): JsModifier.Mask =

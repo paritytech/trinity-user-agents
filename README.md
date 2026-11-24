@@ -1106,3 +1106,4 @@ precedence. See [keyed gesture rendering](hosts/android/README.md#keyed-gesture-
 
 On Android, a node keeps its blend mode when opacity, a pan fade or an exit fade makes it translucent.
 A following mask counts the current tree's shapes together with new strokes when checking its cleared share after a lift.
+Android mask strokes and followed pans can use fixed-angle ellipse or capsule stamps, with the same tip geometry used to measure their cleared share.
