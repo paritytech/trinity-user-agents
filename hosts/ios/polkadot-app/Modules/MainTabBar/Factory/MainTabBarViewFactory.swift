@@ -53,8 +53,7 @@ enum MainTabBarViewFactory {
             urlHandlingService: urlHandler,
             deferredLinkHandler: deepLinkHandling,
             browserCoordinator: browserCoordinator,
-            productGamePills: RootDependencyLocator.getDependency(),
-            fundingServiceProvider: RootDependencyLocator.getDependency()
+            productGamePills: RootDependencyLocator.getDependency()
         )
 
         let qrHandler = WalletQRScanResultHandler(
@@ -82,7 +81,8 @@ enum MainTabBarViewFactory {
         let presenter = MainTabBarPresenter(
             interactor: interactor,
             wireframe: wireframe,
-            chipViewModelFactory: chipViewModelFactory
+            chipViewModelFactory: chipViewModelFactory,
+            fundingActivity: serviceCoordinator.fundingActivityCenter
         )
 
         interactor.presenter = presenter

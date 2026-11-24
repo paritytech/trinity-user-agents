@@ -44,7 +44,6 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceiveProductGamePill(_ pill: ProductGamePill?)
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool)
-    func didReceive(fundingService: FundingServiceProtocol)
     func didReceive(fundingEvent: FundingEvent)
     func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool)
 }
@@ -58,9 +57,8 @@ protocol MainTabBarWireframeProtocol: AnyObject {
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)
     func showSettings(from view: MainTabBarViewProtocol?)
 
-    func attachFunding(service: FundingServiceProtocol, view: MainTabBarViewProtocol?)
+    func attachFunding(view: MainTabBarViewProtocol?)
     func presentFunding(_ entry: FundingEntry)
-    func isShowingFunding(entryId: String) -> Bool
     func presentProviderFrame(_ frame: FundingFrame)
     func closeProviderFrames(entryId: String)
     func showProviderFrameNotice(for request: FundingFrameRequest, onShow: @escaping () -> Void)

@@ -24,7 +24,12 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset) {
         guard let searchView = SearchAccountViewFactory.createView(
             for: chainAsset,
-            coinageServicing: context.coinageService
+            coinageServicing: context.coinageService,
+            fundingOpener: ServiceFundingOpener(
+                service: context.fundingService,
+                activity: context.fundingActivityCenter,
+                logger: Logger.shared
+            )
         ) else {
             return
         }

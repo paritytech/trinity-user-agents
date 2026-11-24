@@ -103,27 +103,14 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
 }
 
 extension MainTabBarWireframe {
-    func attachFunding(service: FundingServiceProtocol, view: MainTabBarViewProtocol?) {
-        guard funding == nil else { return }
+    func attachFunding(view: MainTabBarViewProtocol?) {
+        guard funding == nil, let view else { return }
 
-        let router = ProductsRouter()
-        if let view { router.setPresentationView(view) }
-        let screens = FundingScreens(
-            service: service,
-            environment: AppFundingEnvironment(router: router),
-            notice: FundingFrameNoticePresenter(application: UIApplication.shared),
-            logger: Logger.shared
-        )
-        funding = screens
-        FundingActivityCenter.attach(service: service, router: screens.router)
+        funding = FundingScreensFactory.createScreens(serviceCoordinator: serviceCoordinator, presentationView: view)
     }
 
     func presentFunding(_ entry: FundingEntry) {
         funding?.present(entry)
-    }
-
-    func isShowingFunding(entryId: String) -> Bool {
-        funding?.isShowing(entryId: entryId) ?? false
     }
 
     func presentProviderFrame(_ frame: FundingFrame) {

@@ -12,7 +12,6 @@ protocol FundingOpening: Sendable {
 /// The overlay could not be opened. Says so in the user's words, since what
 /// the core answered is not meant for them.
 enum FundingOpeningError: Error, ErrorContentConvertible {
-    case runtimeUnavailable
     case refused
 
     func toErrorContent() -> ErrorContent {
@@ -47,26 +46,19 @@ enum FundingOpened {
 /// Opens a session through the funding service, after showing the sessions
 /// already in flight in that direction, if any.
 struct ServiceFundingOpener: FundingOpening {
-    let serviceProvider: FundingServiceProviding?
-    /// Shows the sessions in flight in a direction, answering false when
-    /// there are none.
-    var showPending: @Sendable (FundingDirection) async -> Bool = { direction in
-        await FundingActivityCenter.shared.showPending(direction: direction)
-    }
+    let service: FundingServiceProtocol
+    let activity: FundingActivityCenterProtocol
+    let logger: LoggerProtocol
 
     func openFunding(direction: FundingDirection) async throws -> String? {
-        guard let serviceProvider else {
-            Logger.shared.error("[funding] opening the overlay failed: no funding service provider")
-            throw FundingOpeningError.runtimeUnavailable
-        }
-        if await showPending(direction) { return nil }
+        if await activity.showPending(direction: direction) { return nil }
 
         do {
-            return try await serviceProvider.fundingService().open(direction, amount: nil)
+            return try await service.open(direction, amount: nil)
         } catch let error as CancellationError {
             throw error
         } catch {
-            Logger.shared.error("[funding] opening the overlay failed: \(error)")
+            logger.error("[funding] opening the overlay failed: \(error)")
             throw FundingOpeningError.refused
         }
     }

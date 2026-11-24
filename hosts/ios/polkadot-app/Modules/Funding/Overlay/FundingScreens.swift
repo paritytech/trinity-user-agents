@@ -17,9 +17,10 @@ final class FundingScreens {
         service: FundingServiceProtocol,
         environment: FundingOverlayEnvironment,
         notice: FundingFrameNoticePresenting,
+        tracker: FundingFlowTracking,
         logger: LoggerProtocol
     ) {
-        router = FundingFlowRouter(service: service, environment: environment, logger: logger)
+        router = FundingFlowRouter(service: service, environment: environment, tracker: tracker, logger: logger)
         frames = FundingFramePresenter(service: service, environment: environment)
         self.notice = notice
         self.environment = environment
@@ -27,10 +28,6 @@ final class FundingScreens {
 
     func present(_ entry: FundingEntry) {
         router.present(entry)
-    }
-
-    func isShowing(entryId: String) -> Bool {
-        router.isShowing(entryId: entryId)
     }
 
     func present(_ frame: FundingFrame) {

@@ -42,27 +42,18 @@ struct FundingTabBarTests {
         #expect(wireframe.notices.isEmpty)
     }
 
-    @Test
-    func theServiceReachesThoseWhoWaitedForIt() async {
-        let slot = FundingServiceSlot()
-        let early = Task { await slot.built().first { _ in true } }
-        let service = FundingService(runtime: MockFundingRuntime(), logger: MockLogger())
-
-        slot.fill(service)
-
-        #expect(await early.value === service)
-        #expect(await slot.built().first { _ in true } === service)
-    }
-
     private func makePresenter(
         showing: Set<String>
     ) -> (MainTabBarPresenter, FundingWireframeSpy, FundingInteractorSpy) {
-        let wireframe = FundingWireframeSpy(showing: showing)
+        let wireframe = FundingWireframeSpy()
         let interactor = FundingInteractorSpy()
+        let activity = FundingActivityCenter(service: FundingService(logger: MockLogger()), logger: MockLogger())
+        showing.forEach { activity.flowOpened(entryId: $0) }
         let presenter = MainTabBarPresenter(
             interactor: interactor,
             wireframe: wireframe,
-            chipViewModelFactory: SPATabChipViewModelFactory(flowStateProvider: SPAFlowStateProvider())
+            chipViewModelFactory: SPATabChipViewModelFactory(flowStateProvider: SPAFlowStateProvider()),
+            fundingActivity: activity
         )
         return (presenter, wireframe, interactor)
     }
@@ -94,18 +85,9 @@ private final class FundingInteractorSpy: MainTabBarInteractorInputProtocol {
 
 @MainActor
 private final class FundingWireframeSpy: MainTabBarWireframeProtocol {
-    private let showing: Set<String>
     private(set) var presentedFrames: [String] = []
     /// What each notice's Show does.
     private(set) var notices: [() -> Void] = []
-
-    init(showing: Set<String>) {
-        self.showing = showing
-    }
-
-    func isShowingFunding(entryId: String) -> Bool {
-        showing.contains(entryId)
-    }
 
     func presentProviderFrame(_ frame: FundingFrame) {
         presentedFrames.append(frame.entryId)
@@ -121,7 +103,7 @@ private final class FundingWireframeSpy: MainTabBarWireframeProtocol {
     func openChat(_: ChatOpenModel) {}
     func showConnectionStatus(_: ConnectionStatusSheetViewModel, from _: MainTabBarViewProtocol?) {}
     func showSettings(from _: MainTabBarViewProtocol?) {}
-    func attachFunding(service _: FundingServiceProtocol, view _: MainTabBarViewProtocol?) {}
+    func attachFunding(view _: MainTabBarViewProtocol?) {}
     func presentFunding(_: FundingEntry) {}
     func closeProviderFrames(entryId _: String) {}
     func showProviderNotWorking(_: ProductId) {}

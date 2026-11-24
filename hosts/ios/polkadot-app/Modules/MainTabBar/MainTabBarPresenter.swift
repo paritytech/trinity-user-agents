@@ -16,21 +16,25 @@ final class MainTabBarPresenter {
     #endif
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
+    private let fundingActivity: FundingActivityCenterProtocol
     private let connectionStatusViewModel = ConnectionStatusSheetViewModel()
 
     init(
         interactor: MainTabBarInteractorInputProtocol,
         wireframe: MainTabBarWireframeProtocol,
-        chipViewModelFactory: SPATabChipViewModelFactory
+        chipViewModelFactory: SPATabChipViewModelFactory,
+        fundingActivity: FundingActivityCenterProtocol
     ) {
         self.interactor = interactor
         self.wireframe = wireframe
         self.chipViewModelFactory = chipViewModelFactory
+        self.fundingActivity = fundingActivity
     }
 }
 
 extension MainTabBarPresenter: MainTabBarPresenterProtocol {
     func setup() {
+        wireframe.attachFunding(view: view)
         interactor.setup()
     }
 
@@ -56,10 +60,6 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
-    func didReceive(fundingService: FundingServiceProtocol) {
-        wireframe.attachFunding(service: fundingService, view: view)
-    }
-
     func didReceive(fundingEvent: FundingEvent) {
         switch fundingEvent {
         case let .presentationRequested(entry):
@@ -132,7 +132,7 @@ private extension MainTabBarPresenter {
     /// screen, and otherwise after the user taps the notice about it. A
     /// closed notice leaves the screen waiting in the core.
     func openWhenOnScreen(_ request: FundingFrameRequest) {
-        if wireframe.isShowingFunding(entryId: request.entryId) {
+        if fundingActivity.isShowingFlow(entryId: request.entryId) {
             interactor.openProviderFrame(request)
         } else {
             wireframe.showProviderFrameNotice(for: request) { [interactor] in

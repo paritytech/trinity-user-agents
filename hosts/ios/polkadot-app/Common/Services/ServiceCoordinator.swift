@@ -19,10 +19,11 @@ import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
 import DesignSystem
-import TrUAPIHost
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
+    var fundingService: FundingServiceProtocol { get }
+    var fundingActivityCenter: FundingActivityCenterProtocol { get }
     var polkadotHandshakeService: PolkadotHandshakeServicing { get }
     var chatExtensionsRegistry: ChatExtensionsRegistering { get }
     var signInHostCoordinator: MessageExchangeSignInHostCoordinating { get }
@@ -46,6 +47,8 @@ protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
 final class ServiceCoordinator {
     let chatCoordinator: MessageExchangeChatCoordinating
     let depositService: DepositServiceProtocol
+    let fundingService: FundingServiceProtocol
+    let fundingActivityCenter: FundingActivityCenterProtocol
     let polkadotHandshakeService: PolkadotHandshakeServicing
     let signInHostCoordinator: MessageExchangeSignInHostCoordinating
     let chatExtensionsRegistry: ChatExtensionsRegistering
@@ -93,6 +96,8 @@ final class ServiceCoordinator {
     init(
         chatCoordinator: MessageExchangeChatCoordinating,
         depositService: DepositServiceProtocol,
+        fundingService: FundingServiceProtocol,
+        fundingActivityCenter: FundingActivityCenterProtocol,
         polkadotHandshakeService: PolkadotHandshakeServicing,
         signInHostCoordinator: MessageExchangeSignInHostCoordinating,
         chatExtensionsRegistry: ChatExtensionsRegistering,
@@ -125,6 +130,8 @@ final class ServiceCoordinator {
     ) {
         self.chatCoordinator = chatCoordinator
         self.depositService = depositService
+        self.fundingService = fundingService
+        self.fundingActivityCenter = fundingActivityCenter
         self.polkadotHandshakeService = polkadotHandshakeService
         self.signInHostCoordinator = signInHostCoordinator
         self.chatExtensionsRegistry = chatExtensionsRegistry
@@ -230,17 +237,18 @@ extension ServiceCoordinator {
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
+        let fundingService = FundingService(logger: logger)
         let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            fundingService: fundingService,
             remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
-        RootDependencyLocator.setDependency(truapiRuntimeProvider as FundingServiceProviding)
         RootDependencyLocator.setDependency(
             PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
                 as PublicProfileAvatarViewModelMaking
@@ -331,20 +339,7 @@ extension ServiceCoordinator {
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
         truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
-
-        // The core resumes funding when it starts; start it now, with payments
-        // attached, if the core says a provider was still working on a session
-        // when the app last ran.
-        if let directory = try? TrUAPIHostRuntimeProvider.coreDatabaseDirectory(),
-           fundingResumePending(databaseDirectory: directory) {
-            Task.detached {
-                do {
-                    _ = try truapiRuntimeProvider.sharedRuntime()
-                } catch {
-                    logger.error("[funding] starting the core to resume funding failed: \(error)")
-                }
-            }
-        }
+        truapiRuntimeProvider.setup()
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -422,6 +417,8 @@ extension ServiceCoordinator {
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
             depositService: depositService,
+            fundingService: fundingService,
+            fundingActivityCenter: FundingActivityCenter(service: fundingService, logger: logger),
             polkadotHandshakeService: PolkadotHandshakeService(
                 rootWallet: DynamicDerivedWallet(derivationPath: nil),
                 identityWallet: mainWallet,
