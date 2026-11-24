@@ -6,10 +6,15 @@ public extension CustomMessageWidgetNode.Mask {
     struct ClearedShare: Equatable {
         public let atPermille: Int
         public let action: String
+        /// Also checked while the followed finger is down, so the action is sent mid-stroke.
+        public let whileDown: Bool
+        public let rescue: Rescue?
 
-        public init(atPermille: some BinaryInteger, action: String) {
+        public init(atPermille: some BinaryInteger, action: String, whileDown: Bool = false, rescue: Rescue? = nil) {
             self.atPermille = Int(atPermille)
             self.action = action
+            self.whileDown = whileDown
+            self.rescue = rescue
         }
 
         /// Whether `covered` samples of `samples` reach the share, as the core counts it:
@@ -122,9 +127,9 @@ public final class PanTouch {
 /// Decides when a mask's cleared share is checked, and so when its action may be sent.
 ///
 /// A mask that follows a pan is checked when the finger lifts, and again whenever shapes are added before it touches
-/// down again, so shapes a worker adds in answer to the pan's end count; never while the finger is down; at most once
-/// per lift. A mask with no pan to follow is checked whenever shapes are added, at most once per tree. A tree's own
-/// shapes are never a reason to check.
+/// down again, so shapes a worker adds in answer to the pan's end count; while the finger is down only with
+/// `whileDown`, as it moves; at most once per lift. A mask with no pan to follow is checked whenever shapes are added,
+/// at most once per tree. A tree's own shapes are never a reason to check.
 struct MaskShareWatch: Equatable {
     struct Input: Equatable {
         /// Whether the followed pan's finger is down.
@@ -135,11 +140,15 @@ struct MaskShareWatch: Equatable {
         var trees = 0
         /// How many times shapes were added to this mask.
         var additions = 0
+        /// The places the followed finger has passed since the tree, counted only where a check while down needs them.
+        var moves = 0
     }
 
     private var seen: Input
     private var armed = false
     private var sentThisTree = false
+    /// The lift whose check was spent by a send while the finger was down.
+    private var spentLift: Int?
 
     /// What happened before the mask was drawn, which must not send its action.
     init(_ input: Input = Input()) {
@@ -147,16 +156,19 @@ struct MaskShareWatch: Equatable {
     }
 
     /// Whether to check the share now. `reached` is asked only then.
-    mutating func update(_ input: Input, follows: Bool, reached: () -> Bool) -> Bool {
+    mutating func update(_ input: Input, follows: Bool, whileDown: Bool = false, reached: () -> Bool) -> Bool {
         let lifted = input.lifts != seen.lifts
         let added = input.additions != seen.additions
+        let moved = input.moves != seen.moves
         if input.trees != seen.trees { sentThisTree = false }
         seen = input
         if follows {
-            if lifted { armed = true }
+            if lifted { armed = spentLift != input.lifts }
             guard !input.down else {
                 armed = false
-                return false
+                guard whileDown, spentLift != input.lifts + 1, moved || added, reached() else { return false }
+                spentLift = input.lifts + 1
+                return true
             }
             guard armed, lifted || added, reached() else { return false }
             armed = false
@@ -168,10 +180,11 @@ struct MaskShareWatch: Equatable {
     }
 }
 
-/// Sends a mask's cleared-share action: an empty view that reads the shapes added since the tree, the followed pan's
-/// touch and the node's frame, so only it draws again when they change, never the masked node.
+/// Sends a mask's cleared-share action, rescues a share that stopped growing, and plays the mask's haptics: an empty
+/// view that reads the shapes added since the tree, the followed pan's touch and the node's frame, so only it draws
+/// again when they change, never the masked node. It reads the finger's places only where a check while down, a rescue
+/// or haptics need the cover as it grows.
 struct MaskShareWatcher: View {
-    let share: CustomMessageWidgetNode.Mask.ClearedShare
     let mask: CustomMessageWidgetNode.Mask
     let channel: MaskChannel?
     let trail: PanTrail?
@@ -180,31 +193,93 @@ struct MaskShareWatcher: View {
     @Environment(\.widgetActionHandler) private var actionHandler
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var watch: MaskShareWatch?
+    @State private var cover = MaskCoverWatch()
     @State private var geometry = MaskGeometry()
+    @State private var rescueAt: TimeInterval?
 
     var body: some View {
         let input = MaskShareWatch.Input(
             down: touch?.isDown ?? false,
             lifts: touch?.lifts ?? 0,
             trees: channel?.trees ?? 0,
-            additions: channel?.additions ?? 0
+            additions: channel?.additions ?? 0,
+            moves: readsMoves ? trail?.points ?? 0 : 0
         )
         Color.clear
             .onGeometryChange(for: MaskGeometry.self) { MaskGeometry($0) } action: { geometry = $0 }
-            .onAppear { watch = MaskShareWatch(input) }
-            .onChange(of: input) { _, input in
-                var next = watch ?? MaskShareWatch()
-                let send = next.update(input, follows: mask.follow != nil, reached: reached)
-                watch = next
-                if send { actionHandler?(share.action, nil) }
+            .onAppear {
+                watch = MaskShareWatch(input)
+                startTree()
             }
+            .onChange(of: geometry.size) { before, _ in
+                if before == .zero { startTree() }
+            }
+            .onChange(of: input) { before, input in
+                if input.trees != before.trees { startTree() } else { measure() }
+                guard let share = mask.clearedShare else { return }
+                var next = watch ?? MaskShareWatch()
+                let send = next.update(
+                    input, follows: mask.follow != nil, whileDown: share.whileDown, reached: { reached(share) }
+                )
+                watch = next
+                if send { sendAction(share) }
+            }
+            .task(id: rescueAt) { await rescueWhenDue() }
+    }
+}
+
+private extension MaskShareWatcher {
+    /// The cover is measured as it grows only for a rescue or haptics.
+    var measuresCover: Bool {
+        mask.haptics != nil || mask.clearedShare?.rescue != nil
     }
 
-    private func reached() -> Bool {
+    var readsMoves: Bool {
+        mask.follow != nil && (measuresCover || mask.clearedShare?.whileDown == true)
+    }
+
+    func count() -> (covered: Int, total: Int) {
         let source = MaskSource.of(
             mask: mask, trail: trail, geometry: geometry, mirrored: layoutDirection == .rightToLeft
         )
-        let count = MaskCoverage.count(source.picture(added: channel?.added ?? []).shapes, in: geometry.size)
+        return MaskCoverage.count(source.picture(added: channel?.added ?? []).shapes, in: geometry.size)
+    }
+
+    func reached(_ share: CustomMessageWidgetNode.Mask.ClearedShare) -> Bool {
+        let count = count()
         return share.reached(covered: count.covered, samples: count.total)
+    }
+
+    /// The tree's own cover is where haptic steps count from and where the rescue's clock starts.
+    func startTree() {
+        guard measuresCover else { return }
+        let count = count()
+        cover.tree(covered: count.covered, total: count.total, at: CACurrentMediaTime())
+        rescueAt = mask.clearedShare.flatMap { cover.rescueDue(share: $0) }
+    }
+
+    func measure() {
+        guard measuresCover else { return }
+        let count = count()
+        let step = cover.measured(
+            covered: count.covered, total: count.total, at: CACurrentMediaTime(), haptics: mask.haptics
+        )
+        if step, let haptics = mask.haptics { HapticPlayer.play(haptics.step) }
+        rescueAt = mask.clearedShare.flatMap { cover.rescueDue(share: $0) }
+    }
+
+    func sendAction(_ share: CustomMessageWidgetNode.Mask.ClearedShare) {
+        actionHandler?(share.action, nil)
+        cover.sent()
+        rescueAt = nil
+        if let reach = mask.haptics?.reach { HapticPlayer.play(reach) }
+    }
+
+    func rescueWhenDue() async {
+        guard let rescueAt, let share = mask.clearedShare else { return }
+        let wait = rescueAt - CACurrentMediaTime()
+        if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+        guard !Task.isCancelled, self.rescueAt == rescueAt else { return }
+        sendAction(share)
     }
 }

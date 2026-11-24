@@ -65,6 +65,8 @@ public extension CustomMessageWidgetNode {
     /// How a gesture's children move when pressed and released, by value (the renderer's `PanFeel`).
     struct PanFeel: Equatable {
         public var pressScale: CGFloat = 1
+        /// Scale down the y axis while pressed; nil scales both axes by `pressScale`.
+        public var pressScaleY: CGFloat?
         public var pressDuration: TimeInterval = 0
         public var unpressDuration: TimeInterval = 0
         /// The return spring, from rest: angular frequency (radians a second) and damping ratio.

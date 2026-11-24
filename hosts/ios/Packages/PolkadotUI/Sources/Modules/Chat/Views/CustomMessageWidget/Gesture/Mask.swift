@@ -46,6 +46,8 @@ public extension CustomMessageWidgetNode {
         public let fade: TimeInterval
         /// The action the host sends once the shapes cover enough of the node.
         public let clearedShare: ClearedShare?
+        /// Haptics played as the shapes grow.
+        public let haptics: Haptics?
 
         public init(
             key: String? = nil,
@@ -53,7 +55,8 @@ public extension CustomMessageWidgetNode {
             shapes: [Shape] = [],
             follow: Follow? = nil,
             fade: TimeInterval = 0,
-            clearedShare: ClearedShare? = nil
+            clearedShare: ClearedShare? = nil,
+            haptics: Haptics? = nil
         ) {
             self.key = key
             self.mode = mode
@@ -61,6 +64,7 @@ public extension CustomMessageWidgetNode {
             self.follow = follow
             self.fade = fade
             self.clearedShare = clearedShare
+            self.haptics = haptics
         }
     }
 }
@@ -314,6 +318,8 @@ struct MaskSource {
 @Observable
 public final class PanTrail {
     public private(set) var strokes: [[CGPoint]] = []
+    /// How many places the strokes hold.
+    public private(set) var points = 0
     /// The pan's top-left corner on screen.
     var origin: CGPoint = .zero
 
@@ -323,18 +329,25 @@ public final class PanTrail {
     @MainActor
     func begin(at point: CGPoint) {
         strokes.append([point])
+        points += 1
     }
 
     /// The finger reached `point` on the current stroke; with no stroke begun, it starts one.
     @MainActor
     func extend(to point: CGPoint) {
-        guard let last = strokes.indices.last else { strokes.append([point]); return }
-        if strokes[last].last != point { strokes[last].append(point) }
+        guard let last = strokes.indices.last else { begin(at: point); return }
+        if strokes[last].last != point {
+            strokes[last].append(point)
+            points += 1
+        }
     }
 
     @MainActor
     func reset() {
-        if !strokes.isEmpty { strokes = [] }
+        if !strokes.isEmpty {
+            strokes = []
+            points = 0
+        }
     }
 }
 
@@ -351,9 +364,8 @@ struct NodeMaskModifier: ViewModifier {
             content
                 .mask { MaskLayer(mask: mask, channel: channel, trail: trail) }
                 .background {
-                    if let share = mask.clearedShare {
+                    if mask.clearedShare != nil || mask.haptics != nil {
                         MaskShareWatcher(
-                            share: share,
                             mask: mask,
                             channel: channel,
                             trail: trail,

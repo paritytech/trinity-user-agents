@@ -11,10 +11,34 @@ extension Mask {
             shapes: shapes.map(\.widgetShape),
             follow: follow.map { .init(pan: $0.pan, width: CGFloat($0.width) / 100, brush: $0.brush?.widgetBrush) },
             fade: TimeInterval(fadeMs ?? 0) / 1_000,
-            // The iPhone mask-progress layer checks mid-stroke, rescues a stalled share and plays `haptics`; until
-            // then `whileDown`, `rescue` and `haptics` are ignored.
-            clearedShare: clearedShare.map { .init(atPermille: $0.atPermille, action: $0.action) }
+            clearedShare: clearedShare.map(\.widgetShare),
+            haptics: haptics.map {
+                .init(everyPermille: $0.everyPermille, step: $0.step.widgetHaptic, reach: $0.reach?.widgetHaptic)
+            }
         )
+    }
+}
+
+extension ClearedShare {
+    var widgetShare: CustomMessageWidgetNode.Mask.ClearedShare {
+        CustomMessageWidgetNode.Mask.ClearedShare(
+            atPermille: atPermille,
+            action: action,
+            whileDown: whileDown == true,
+            rescue: rescue.map { .init(after: TimeInterval($0.afterMs) / 1_000, fromPermille: $0.fromPermille) }
+        )
+    }
+}
+
+extension Haptic {
+    var widgetHaptic: CustomMessageWidgetNode.Haptic {
+        switch self {
+        case .tick: .tick
+        case .light: .light
+        case .medium: .medium
+        case .heavy: .heavy
+        case .success: .success
+        }
     }
 }
 
