@@ -1,19 +1,27 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
+import io.paritytech.polkadotapp.feature_products_api.model.JsClearedShare
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskFollow
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShapes
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanAxis
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanDrag
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanFeel
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanGesture
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanRelease
+import io.paritytech.polkadotapp.feature_products_api.model.JsPanTrail
 import io.paritytech.polkadotapp.feature_products_api.model.JsPanTravel
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.Background
@@ -21,6 +29,7 @@ import uniffi.truapi.BorderStyle
 import uniffi.truapi.BoxProps
 import uniffi.truapi.ButtonProps
 import uniffi.truapi.ButtonVariant
+import uniffi.truapi.ClearedShare
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ColumnProps
 import uniffi.truapi.Dimensions
@@ -28,6 +37,11 @@ import uniffi.truapi.DropShadow
 import uniffi.truapi.Fill
 import uniffi.truapi.GestureProps
 import uniffi.truapi.HorizontalAlignment
+import uniffi.truapi.Mask
+import uniffi.truapi.MaskFollow
+import uniffi.truapi.MaskMode
+import uniffi.truapi.MaskPoint
+import uniffi.truapi.MaskShape
 import uniffi.truapi.MaterialsProps
 import uniffi.truapi.Modifier
 import uniffi.truapi.PanAxis
@@ -306,5 +320,102 @@ class RendererNodeMappingTest {
             ),
             widget.feel,
         )
+    }
+
+    @Test
+    fun `a mask modifier carries its shapes in hundredths, its follow, fade and keyed state`() {
+        val shapes = JsMaskShapes()
+        val trail = JsPanTrail()
+        val mask = Mask(
+            key = "mask",
+            mode = MaskMode.HIDE,
+            shapes = listOf(
+                MaskShape.All,
+                MaskShape.Circle(MaskPoint(1050, -200), 2600u),
+                MaskShape.Stroke(5200u, listOf(MaskPoint(0, 0), MaskPoint(100, 250))),
+            ),
+            follow = MaskFollow("pan", 5200u),
+            fadeMs = 350u.toUShort(),
+            clearedShare = ClearedShare(atPermille = 550u.toUShort(), action = "cleared"),
+        )
+        val node = RendererNode.Box(
+            modifiers = listOf(Modifier.Mask(mask)),
+            props = BoxProps(contentAlignment = null),
+            children = emptyList(),
+        )
+
+        val keyed = RendererKeyed(
+            panTrail = { key -> trail.takeIf { key == "pan" } },
+            maskShapes = { key -> shapes.takeIf { key == "mask" } },
+        )
+        val mapped = (node.toJsWidget(keyed) as JsWidget.Box).modifiers.single() as JsModifier.Mask
+
+        assertEquals("mask", mapped.key)
+        assertEquals(JsMaskMode.HIDE, mapped.mode)
+        assertEquals(
+            listOf(
+                JsMaskShape.All,
+                JsMaskShape.Circle(JsMaskPoint(1050, -200), 2600),
+                JsMaskShape.Stroke(5200, listOf(JsMaskPoint(0, 0), JsMaskPoint(100, 250))),
+            ),
+            mapped.shapes,
+        )
+        assertEquals(JsMaskFollow("pan", 5200), mapped.follow)
+        assertEquals(350L, mapped.fadeMs)
+        assertEquals(JsClearedShare(550, "cleared"), mapped.clearedShare)
+        assertSame(shapes, mapped.channel)
+        assertSame(trail, mapped.trail)
+    }
+
+    @Test
+    fun `a show mask with no key keeps no state`() {
+        val node = RendererNode.Spacer(
+            modifiers = listOf(Modifier.Mask(Mask(key = null, mode = MaskMode.SHOW, shapes = emptyList(), follow = null, fadeMs = null, clearedShare = null))),
+        )
+
+        val mapped = (node.toJsWidget() as JsWidget.Spacer).modifiers.single() as JsModifier.Mask
+
+        assertEquals(JsModifier.Mask(mode = JsMaskMode.SHOW), mapped)
+    }
+
+    @Test
+    fun `mask updates inside a tree draw nothing`() {
+        val node = RendererNode.Box(
+            modifiers = emptyList(),
+            props = BoxProps(contentAlignment = null),
+            children = listOf(RendererNode.ExtendMask(key = "mask", shapes = listOf(MaskShape.All))),
+        )
+
+        assertEquals(emptyList<JsWidget>(), (node.toJsWidget() as JsWidget.Box).children)
+    }
+
+    @Test
+    fun `a location pan reports where the finger is`() {
+        val node = RendererNode.Gesture(
+            modifiers = emptyList(),
+            props = GestureProps(
+                key = "pan",
+                tapAction = null,
+                pan = PanGesture(
+                    axis = PanAxis.FREE,
+                    drag = null,
+                    startAction = "start",
+                    moveAction = "move",
+                    moveIntervalMs = null,
+                    endAction = "end",
+                    location = true,
+                ),
+                accessibilityLabel = null,
+                enabled = null,
+                hapticOnComplete = null,
+                feel = null,
+            ),
+            children = emptyList(),
+        )
+
+        val pan = requireNotNull((node.toJsWidget() as JsWidget.Gesture).pan)
+
+        assertTrue(pan.location)
+        assertEquals(JsPanAxis.FREE, pan.axis)
     }
 }

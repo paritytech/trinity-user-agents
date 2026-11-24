@@ -1,15 +1,31 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer
 
+import androidx.compose.ui.geometry.Offset
 import io.paritytech.polkadotapp.feature_products_api.model.JsGesturePosition
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskMode
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskPoint
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsMaskShapes
+import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.BoxProps
 import uniffi.truapi.GestureProps
+import uniffi.truapi.ImageProps
+import uniffi.truapi.ImageSource
+import uniffi.truapi.Mask
+import uniffi.truapi.MaskFollow
+import uniffi.truapi.MaskMode
+import uniffi.truapi.MaskShape
+import uniffi.truapi.Modifier
+import uniffi.truapi.PanAxis
+import uniffi.truapi.PanGesture
 import uniffi.truapi.RendererNode
 
 class RendererGestureOffsetsTest {
@@ -118,11 +134,88 @@ class RendererGestureOffsetsTest {
         assertEquals(before.copy(attached = false), position.value.value)
     }
 
-    private fun gesture(key: String) = RendererNode.Gesture(
+    @Test
+    fun `mask shapes reach their mask, emit no tree and answer the pan under way, even with none`() {
+        val offsets = RendererGestureOffsets()
+        val box = offsets.receive(maskedTree()) as JsWidget.Box
+        val gesture = box.children[0] as JsWidget.Gesture
+        val position = requireNotNull(gesture.position)
+        val shapes = requireNotNull(keyedMask(box).channel)
+        val answer = position.value.value.answer
+
+        assertNull(offsets.receive(RendererNode.ExtendMask("mask", listOf(MaskShape.All))))
+        assertNull(offsets.receive(RendererNode.ExtendMask("mask", emptyList())))
+
+        assertEquals(listOf<JsMaskShape>(JsMaskShape.All), shapes.added)
+        assertEquals(answer + 2, position.value.value.answer)
+        assertEquals(0, position.value.value.x)
+    }
+
+    @Test
+    fun `a tree after mask shapes wins, keeps the same mask and trail, and drops the strokes`() {
+        val offsets = RendererGestureOffsets()
+        val first = offsets.receive(maskedTree()) as JsWidget.Box
+        val trail = requireNotNull((first.children[0] as JsWidget.Gesture).trail)
+        trail.begin(Offset(1f, 2f))
+        offsets.receive(RendererNode.ExtendMask("mask", listOf(MaskShape.All)))
+
+        val next = offsets.receive(maskedTree()) as JsWidget.Box
+
+        assertSame(keyedMask(first).channel, keyedMask(next).channel)
+        assertSame(trail, keyedMask(next).trail)
+        assertTrue(requireNotNull(keyedMask(next).channel).added.isEmpty())
+        assertTrue(trail.strokes.isEmpty())
+    }
+
+    @Test
+    fun `a tree that changes a fading mask fades from what was drawn`() {
+        val offsets = RendererGestureOffsets()
+        val first = offsets.receive(maskedTree()) as JsWidget.Box
+        val channel = requireNotNull(keyedMask(first).channel)
+        val drawn = JsMaskShapes.Picture(JsMaskMode.HIDE, listOf(JsMaskShape.Stroke(5200, listOf(JsMaskPoint(1, 2)))))
+        channel.source = { drawn }
+
+        offsets.receive(maskedTree(listOf(MaskShape.All), fadeMs = 350u))
+
+        assertEquals(drawn, channel.fade?.from)
+        assertEquals(350_000_000L, channel.fade?.durationNanos)
+    }
+
+    @Test
+    fun `unknown masks are ignored`() {
+        val offsets = RendererGestureOffsets()
+        val box = offsets.receive(maskedTree()) as JsWidget.Box
+        offsets.receive(RendererNode.ExtendMask("other", listOf(MaskShape.All)))
+
+        assertTrue(requireNotNull(keyedMask(box).channel).added.isEmpty())
+    }
+
+    private fun keyedMask(box: JsWidget.Box): JsModifier.Mask =
+        (box.children[1] as JsWidget.Image).modifiers.filterIsInstance<JsModifier.Mask>().single()
+
+    private fun maskedTree(shapes: List<MaskShape> = emptyList(), fadeMs: UShort? = null) = RendererNode.Box(
+        modifiers = emptyList(),
+        props = BoxProps(contentAlignment = null),
+        children = listOf(
+            gesture("pan", location = true),
+            RendererNode.Image(
+                modifiers = listOf(
+                    Modifier.Mask(Mask("mask", MaskMode.HIDE, shapes, MaskFollow("pan", 5200u), fadeMs, null)),
+                ),
+                props = ImageProps(source = ImageSource.Archive("picture.png"), fit = null),
+            ),
+        ),
+    )
+
+    private fun gesture(key: String, location: Boolean = false) = RendererNode.Gesture(
         modifiers = emptyList(),
         props = GestureProps(
             tapAction = null,
-            pan = null,
+            pan = if (location) {
+                PanGesture(PanAxis.FREE, null, null, "move", null, null, true)
+            } else {
+                null
+            },
             accessibilityLabel = null,
             enabled = null,
             hapticOnComplete = null,

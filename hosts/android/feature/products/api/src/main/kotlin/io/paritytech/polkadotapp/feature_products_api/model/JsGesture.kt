@@ -66,6 +66,8 @@ data class JsPanGesture(
     val moveAction: String? = null,
     val moveIntervalMs: Int = 0,
     val endAction: String? = null,
+    /** Events carry where the finger is inside the node, clamped to it, instead of how far it moved. */
+    val location: Boolean = false,
 )
 
 /**

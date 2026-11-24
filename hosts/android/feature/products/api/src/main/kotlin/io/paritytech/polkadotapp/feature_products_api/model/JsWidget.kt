@@ -67,7 +67,8 @@ sealed interface JsWidget {
     ) : JsWidget
 
     /**
-     * Draws its children and reports taps and pans on them; no styling of its own.
+     * Draws its children and reports taps and pans on them; no styling of its own. A keyed location pan keeps the
+     * finger's strokes in [trail] for masks that follow it.
      * @param tapAction Action ID invoked on a tap that did not become a pan
      * @param pan The pan the node accepts, if any
      * @param accessibilityLabel What a screen reader's action on the node is called
@@ -78,6 +79,7 @@ sealed interface JsWidget {
     @SerialName("gesture")
     data class Gesture(
         @Transient val position: JsGesturePosition? = null,
+        @Transient val trail: JsPanTrail? = null,
         val tapAction: String? = null,
         val pan: JsPanGesture? = null,
         val accessibilityLabel: String? = null,
@@ -128,4 +130,26 @@ sealed interface JsWidget {
         val node: Int,
         val children: List<JsWidget>,
     ) : JsWidget
+}
+
+/** Every keyed mask in the tree, by key; of two with the same key, the first. */
+fun JsWidget.keyedMasks(): Map<String, JsModifier.Mask> = buildMap { collectMasks(this) }
+
+private fun JsWidget.collectMasks(into: MutableMap<String, JsModifier.Mask>) {
+    val (modifiers, children) = when (this) {
+        is JsWidget.Box -> modifiers to children
+        is JsWidget.Column -> modifiers to children
+        is JsWidget.Row -> modifiers to children
+        is JsWidget.Gesture -> modifiers to children
+        is JsWidget.Spacer -> modifiers to emptyList()
+        is JsWidget.Text -> modifiers to emptyList()
+        is JsWidget.Button -> modifiers to emptyList()
+        is JsWidget.Materials -> emptyList<JsModifier>() to children
+        is JsWidget.TextField -> modifiers to emptyList()
+        is JsWidget.Image -> modifiers to emptyList()
+    }
+    modifiers.filterIsInstance<JsModifier.Mask>().lastOrNull()?.let { mask ->
+        mask.key?.let { key -> if (key !in into) into[key] = mask }
+    }
+    children.forEach { it.collectMasks(into) }
 }

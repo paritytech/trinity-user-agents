@@ -85,7 +85,7 @@ class TrUAPIPocketFaceStreams @Inject constructor(
 
     private fun TrUAPIProductExecution.faces(key: PocketCardKey): Flow<RenderedFace> =
         render(ProductRendererRenderRequest(key.renderContext(), payload = ByteArray(0)))
-            .filterNot { it is RendererNode.SetOffset }
+            .filterNot { it is RendererNode.SetOffset || it is RendererNode.ExtendMask }
             .retryWhileConnecting()
             .map { tree -> RenderedFace(tree) { resolveDrawn(key, tree) } }
 

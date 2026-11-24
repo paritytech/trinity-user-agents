@@ -116,4 +116,12 @@ class GestureRulesTest {
         assertEquals(waited, GestureRules.newest(null, waited))
         assertNull(GestureRules.newest(null, null))
     }
+
+    @Test
+    fun `a free location pan takes the finger where it lands, any other pan once it crosses the slop`() {
+        assertTrue(GestureRules.claimsAtTouchDown(JsPanAxis.FREE, location = true))
+        assertFalse(GestureRules.claimsAtTouchDown(JsPanAxis.FREE, location = false))
+        assertFalse(GestureRules.claimsAtTouchDown(JsPanAxis.HORIZONTAL, location = true))
+        assertFalse(GestureRules.claimsAtTouchDown(JsPanAxis.VERTICAL, location = true))
+    }
 }
