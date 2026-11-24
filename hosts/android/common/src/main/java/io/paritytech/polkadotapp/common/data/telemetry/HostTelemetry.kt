@@ -11,10 +11,23 @@ data class HostEventOrigin(
     val appBuild: Long,
 )
 
+enum class HostEventLevel {
+    INFO,
+    ERROR,
+}
+
 data class HostEvent(
     val name: String,
     val tags: Map<String, String>,
     val extras: Map<String, Any>,
+    val level: HostEventLevel,
+)
+
+/** A flow that broke. It is grouped on its flow and kind, and only the type of [error] leaves the device. */
+data class CriticalIssue(
+    val flow: String,
+    val kind: String,
+    val error: Throwable?,
 )
 
 const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
@@ -49,6 +62,10 @@ fun interface HostEventOriginProvider {
 
 fun interface HostEventCapture {
     fun capture(event: () -> HostEvent)
+}
+
+fun interface CriticalIssueCapture {
+    fun capture(issue: CriticalIssue)
 }
 
 fun interface HostMonotonicTimeProvider {

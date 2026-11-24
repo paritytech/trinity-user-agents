@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.app.root.domain.debug.IssueReportApi
 import io.paritytech.polkadotapp.app.root.network.RemoteConfigIdentityBackendUrlProvider
 import io.paritytech.polkadotapp.app.telemetry.HostProcessTelemetryInitializer
 import io.paritytech.polkadotapp.app.telemetry.HostTelemetryEnabledProvider
+import io.paritytech.polkadotapp.app.telemetry.RealCriticalIssueCapture
 import io.paritytech.polkadotapp.app.telemetry.RealHostEventCapture
 import io.paritytech.polkadotapp.app.telemetry.RealHostEventOriginProvider
 import io.paritytech.polkadotapp.app.telemetry.RealHostMonotonicTimeProvider
@@ -25,6 +26,7 @@ import io.paritytech.polkadotapp.app.telemetry.RealSentryEventCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryEventCapture
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.data.telemetry.CoreEventSink
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
@@ -67,6 +69,9 @@ internal interface AppModule {
 
     @Binds
     fun bindHostEventCapture(impl: RealHostEventCapture): HostEventCapture
+
+    @Binds
+    fun bindCriticalIssueCapture(impl: RealCriticalIssueCapture): CriticalIssueCapture
 
     @Binds
     fun bindCoreEventSink(impl: SentryCoreEventSink): CoreEventSink

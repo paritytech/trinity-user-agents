@@ -12,8 +12,11 @@ import io.mockk.mockk
 import io.mockk.mockkConstructor
 import io.mockk.mockkStatic
 import io.mockk.unmockkAll
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssue
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationStep
@@ -50,10 +53,16 @@ class RealProductNotificationSchedulerTelemetryTest {
         )
     }
     private val captured = mutableListOf<HostEvent>()
+    private val issues = mutableListOf<CriticalIssue>()
     private val scheduler = RealProductNotificationScheduler(
         context,
         repository,
-        ProductNotificationTelemetry(timeProvider, originProvider, HostEventCapture { captured += it() }),
+        ProductNotificationTelemetry(
+            timeProvider,
+            originProvider,
+            HostEventCapture { captured += it() },
+            CriticalIssueCapture { issues += it },
+        ),
     )
 
     private val productId = ProductId.parse("acme.dot").getOrThrow()
@@ -108,11 +117,12 @@ class RealProductNotificationSchedulerTelemetryTest {
 
         // Then
         assertSame(ProductPushNotificationException.ScheduleLimitReached, result.exceptionOrNull())
-        assertEquals(listOf(notScheduled(id = null, reason = "limit_reached")), captured)
+        assertEquals(listOf(notScheduled(id = null, reason = "limit_reached", HostEventLevel.INFO)), captured)
+        assertEquals(emptyList<CriticalIssue>(), issues)
     }
 
     @Test
-    fun `an id collision records not_scheduled id_collision with the id`() = runBlocking {
+    fun `an id collision records not_scheduled id_collision with the id and reports it`() = runBlocking {
         // Given
         val ids = mutableListOf<NotificationId>()
         coEvery { repository.exists(productId, capture(ids)) } returns true
@@ -121,12 +131,13 @@ class RealProductNotificationSchedulerTelemetryTest {
         val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
 
         // Then
-        assertTrue(result.isFailure)
-        assertEquals(listOf(notScheduled(ids.single().value, "id_collision")), captured)
+        val collision = checkNotNull(result.exceptionOrNull())
+        assertEquals(listOf(notScheduled(ids.single().value, "id_collision", HostEventLevel.ERROR)), captured)
+        assertEquals(listOf(issue("id-collision", collision)), issues)
     }
 
     @Test
-    fun `a refused alarm records add_failed and returns the same failure`() = runBlocking {
+    fun `a refused alarm records add_failed, reports it and returns the same failure`() = runBlocking {
         // Given
         val refusal = SecurityException("exact alarms are off")
         every { alarmManager.setAndAllowWhileIdle(any(), any(), any()) } throws refusal
@@ -138,11 +149,12 @@ class RealProductNotificationSchedulerTelemetryTest {
 
         // Then
         assertSame(refusal, result.exceptionOrNull())
-        assertEquals(listOf(notScheduled(ids.single().value, "add_failed")), captured)
+        assertEquals(listOf(notScheduled(ids.single().value, "add_failed", HostEventLevel.ERROR)), captured)
+        assertEquals(listOf(issue("add-failed", refusal)), issues)
     }
 
     @Test
-    fun `a failed insert records store_failed and returns the same failure`() = runBlocking {
+    fun `a failed insert records store_failed, reports it and returns the same failure`() = runBlocking {
         // Given
         val storeError = IllegalStateException("disk full")
         coEvery { repository.insert(any()) } throws storeError
@@ -154,7 +166,67 @@ class RealProductNotificationSchedulerTelemetryTest {
 
         // Then
         assertSame(storeError, result.exceptionOrNull())
-        assertEquals(listOf(notScheduled(ids.single().value, "store_failed")), captured)
+        assertEquals(listOf(notScheduled(ids.single().value, "store_failed", HostEventLevel.ERROR)), captured)
+        assertEquals(listOf(issue("store-failed", storeError)), issues)
+    }
+
+    @Test
+    fun `a failed count records not_scheduled read_failed without an id, reports it and returns the same failure`() =
+        runBlocking {
+            // Given
+            val readError = IllegalStateException("database closed")
+            coEvery { repository.countAll() } throws readError
+
+            // When
+            val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
+
+            // Then
+            assertSame(readError, result.exceptionOrNull())
+            assertEquals(
+                listOf(
+                    HostEvent(
+                        name = "host.product_notification.not_scheduled",
+                        tags = productTags + ("product_notification.reason" to "read_failed"),
+                        extras = baseExtras,
+                        level = HostEventLevel.ERROR,
+                    ),
+                ),
+                captured,
+            )
+            assertEquals(
+                listOf(CriticalIssue(flow = "product-notification", kind = "read-failed", error = readError)),
+                issues,
+            )
+        }
+
+    @Test
+    fun `a failed id lookup records not_scheduled read_failed without an id and reports it`() = runBlocking {
+        // Given
+        val readError = IllegalStateException("database closed")
+        coEvery { repository.exists(any(), any()) } throws readError
+
+        // When
+        val result = scheduler.schedule(productId, "hello", deeplink = null, scheduledAt)
+
+        // Then
+        assertSame(readError, result.exceptionOrNull())
+        assertEquals(listOf(notScheduled(id = null, reason = "read_failed", HostEventLevel.ERROR)), captured)
+        assertEquals(listOf(issue("read-failed", readError)), issues)
+    }
+
+    @Test
+    fun `a cancelled count records nothing and stays a cancellation`() = runBlocking {
+        // Given
+        val cancellation = CancellationException("closed")
+        coEvery { repository.countAll() } throws cancellation
+
+        // When
+        val thrown = runCatching { scheduler.schedule(productId, "hello", deeplink = null, scheduledAt) }
+
+        // Then
+        assertSame(cancellation, thrown.exceptionOrNull())
+        assertEquals(emptyList<HostEvent>(), captured)
+        assertEquals(emptyList<CriticalIssue>(), issues)
     }
 
     @Test
@@ -169,6 +241,7 @@ class RealProductNotificationSchedulerTelemetryTest {
         // Then
         assertSame(cancellation, result.exceptionOrNull())
         assertEquals(emptyList<HostEvent>(), captured)
+        assertEquals(emptyList<CriticalIssue>(), issues)
     }
 
     @Test
@@ -230,11 +303,15 @@ class RealProductNotificationSchedulerTelemetryTest {
         scheduledAt = scheduledAt,
     )
 
-    private fun notScheduled(id: Int?, reason: String) = event(
-        ProductNotificationStep.NOT_SCHEDULED,
+    private fun notScheduled(id: Int?, reason: String, level: HostEventLevel) = HostEvent(
+        name = ProductNotificationStep.NOT_SCHEDULED.eventName,
         tags = productTags + ("product_notification.reason" to reason),
         extras = baseExtras + listOfNotNull(id?.let { "product_notification.id" to it.toUInt().toLong() }),
+        level = level,
     )
+
+    private fun issue(kind: String, error: Throwable) =
+        CriticalIssue(flow = "product-notification", kind = kind, error = error)
 
     private fun cancelled(tags: Map<String, String>, id: Int) = event(
         ProductNotificationStep.CANCELLED,
@@ -243,7 +320,7 @@ class RealProductNotificationSchedulerTelemetryTest {
     )
 
     private fun event(step: ProductNotificationStep, tags: Map<String, String>, extras: Map<String, Any>) =
-        HostEvent(name = step.eventName, tags = tags, extras = extras)
+        HostEvent(name = step.eventName, tags = tags, extras = extras, level = HostEventLevel.INFO)
 
     private companion object {
         const val DUE = 2_000_000_000_000L

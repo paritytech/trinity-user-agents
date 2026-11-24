@@ -2,6 +2,8 @@
 
 package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssue
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
@@ -19,7 +21,12 @@ class ProductNotificationTelemetry @Inject internal constructor(
     private val timeProvider: TimeProvider,
     private val originProvider: HostEventOriginProvider,
     private val capture: HostEventCapture,
+    private val issueCapture: CriticalIssueCapture,
 ) {
+    private companion object {
+        const val ISSUE_FLOW = "product-notification"
+    }
+
     fun scheduled(notification: ScheduledProductNotification) = report(
         ProductNotificationStep.SCHEDULED,
         notification.productId,
@@ -27,8 +34,18 @@ class ProductNotificationTelemetry @Inject internal constructor(
         scheduledAt = notification.scheduledAt,
     )
 
-    fun notScheduled(productId: ProductId, notificationId: NotificationId?, reason: ProductNotificationReason) =
+    fun notScheduled(
+        productId: ProductId,
+        notificationId: NotificationId?,
+        reason: ProductNotificationReason,
+        error: Throwable?,
+    ) {
         report(ProductNotificationStep.NOT_SCHEDULED, productId, notificationId, reason)
+        reason.issueKind?.let { kind ->
+            runCatching { issueCapture.capture(CriticalIssue(flow = ISSUE_FLOW, kind = kind, error = error)) }
+                .logFailure("Failed to capture product notification issue")
+        }
+    }
 
     fun shown(productId: ProductId, notificationId: NotificationId, scheduledAt: Instant?) =
         report(ProductNotificationStep.SHOWN, productId, notificationId, scheduledAt = scheduledAt, delivered = true)

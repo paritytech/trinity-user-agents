@@ -29,14 +29,16 @@ enum class ProductNotificationStep(val value: String) {
     val eventName: String get() = "host.product_notification.$value"
 }
 
-enum class ProductNotificationReason(val value: String) {
-    LIMIT_REACHED("limit_reached"),
-    ID_COLLISION("id_collision"),
-    ADD_FAILED("add_failed"),
-    STORE_FAILED("store_failed"),
-    NOTIFICATIONS_DISABLED("notifications_disabled"),
-    CHANNEL_BLOCKED("channel_blocked"),
-    BOOKING_MISSING("booking_missing"),
+/** [issueKind] is the [CriticalIssue] kind of a broken booking, null for a booking the host refused or held back. */
+enum class ProductNotificationReason(val value: String, val issueKind: String?) {
+    LIMIT_REACHED("limit_reached", issueKind = null),
+    ID_COLLISION("id_collision", issueKind = "id-collision"),
+    ADD_FAILED("add_failed", issueKind = "add-failed"),
+    STORE_FAILED("store_failed", issueKind = "store-failed"),
+    READ_FAILED("read_failed", issueKind = "read-failed"),
+    NOTIFICATIONS_DISABLED("notifications_disabled", issueKind = null),
+    CHANNEL_BLOCKED("channel_blocked", issueKind = null),
+    BOOKING_MISSING("booking_missing", issueKind = null),
 }
 
 /**
@@ -64,5 +66,6 @@ fun HostEventOrigin.productNotification(
         scheduledAtMillis?.let { put("product_notification.scheduled_at_unix_ms", it) }
         deliveredAtMillis?.let { put("product_notification.delivered_at_unix_ms", it) }
     }
-    return HostEvent(name = step.eventName, tags = tags, extras = extras)
+    val level = if (reason?.issueKind == null) HostEventLevel.INFO else HostEventLevel.ERROR
+    return HostEvent(name = step.eventName, tags = tags, extras = extras, level = level)
 }

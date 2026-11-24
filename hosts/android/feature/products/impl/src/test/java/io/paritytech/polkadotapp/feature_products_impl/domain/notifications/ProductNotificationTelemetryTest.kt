@@ -5,8 +5,11 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssue
+import io.paritytech.polkadotapp.common.data.telemetry.CriticalIssueCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
@@ -66,7 +69,9 @@ class ProductNotificationTelemetryTest {
     @Test
     fun `not scheduled without an id has no id tag`() {
         // When
-        val events = captured { notScheduled(product, notificationId = null, ProductNotificationReason.LIMIT_REACHED) }
+        val events = captured {
+            notScheduled(product, notificationId = null, ProductNotificationReason.LIMIT_REACHED, error = null)
+        }
 
         // Then
         assertEquals(
@@ -79,6 +84,75 @@ class ProductNotificationTelemetryTest {
             ),
             events,
         )
+    }
+
+    @Test
+    fun `a booking that broke is an error and one the host refused or held back is info`() {
+        // When
+        val levels = ProductNotificationReason.entries.associateWith { reason ->
+            captured { notScheduled(product, booking, reason, error = null) }.single().level
+        }
+
+        // Then
+        assertEquals(
+            mapOf(
+                ProductNotificationReason.LIMIT_REACHED to HostEventLevel.INFO,
+                ProductNotificationReason.ID_COLLISION to HostEventLevel.ERROR,
+                ProductNotificationReason.ADD_FAILED to HostEventLevel.ERROR,
+                ProductNotificationReason.STORE_FAILED to HostEventLevel.ERROR,
+                ProductNotificationReason.READ_FAILED to HostEventLevel.ERROR,
+                ProductNotificationReason.NOTIFICATIONS_DISABLED to HostEventLevel.INFO,
+                ProductNotificationReason.CHANNEL_BLOCKED to HostEventLevel.INFO,
+                ProductNotificationReason.BOOKING_MISSING to HostEventLevel.INFO,
+            ),
+            levels,
+        )
+    }
+
+    @Test
+    fun `a booking that broke reports an issue with its error and one refused at the limit does not`() {
+        // Given
+        val error = IllegalStateException("disk full")
+
+        // When
+        val issues = ProductNotificationReason.entries.associateWith { reason ->
+            capturedIssues { notScheduled(product, booking, reason, error) }
+        }
+
+        // Then
+        assertEquals(
+            mapOf(
+                ProductNotificationReason.LIMIT_REACHED to emptyList(),
+                ProductNotificationReason.ID_COLLISION to listOf(issue("id-collision", error)),
+                ProductNotificationReason.ADD_FAILED to listOf(issue("add-failed", error)),
+                ProductNotificationReason.STORE_FAILED to listOf(issue("store-failed", error)),
+                ProductNotificationReason.READ_FAILED to listOf(issue("read-failed", error)),
+                ProductNotificationReason.NOTIFICATIONS_DISABLED to emptyList(),
+                ProductNotificationReason.CHANNEL_BLOCKED to emptyList(),
+                ProductNotificationReason.BOOKING_MISSING to emptyList<CriticalIssue>(),
+            ),
+            issues,
+        )
+    }
+
+    @Test
+    fun `suppressed is info and reports no issue`() {
+        // Given
+        val issues = mutableListOf<CriticalIssue>()
+        val events = mutableListOf<HostEvent>()
+        val telemetry = ProductNotificationTelemetry(
+            timeProvider,
+            originProvider,
+            HostEventCapture { events += it() },
+            CriticalIssueCapture { issues += it },
+        )
+
+        // When
+        suppressedReasons.forEach { reason -> telemetry.suppressed(product, booking, scheduledAt = null, reason) }
+
+        // Then
+        assertEquals(List(suppressedReasons.size) { HostEventLevel.INFO }, events.map { it.level })
+        assertEquals(emptyList<CriticalIssue>(), issues)
     }
 
     @Test
@@ -168,7 +242,8 @@ class ProductNotificationTelemetryTest {
     @Test
     fun `a disabled capture never builds the event`() {
         // Given
-        val telemetry = ProductNotificationTelemetry(timeProvider, originProvider, HostEventCapture { })
+        val telemetry =
+            ProductNotificationTelemetry(timeProvider, originProvider, HostEventCapture { }, CriticalIssueCapture { })
 
         // When
         telemetry.shown(product, booking, Instant.fromEpochMilliseconds(DUE))
@@ -180,12 +255,31 @@ class ProductNotificationTelemetryTest {
 
     private fun captured(report: ProductNotificationTelemetry.() -> Unit): List<HostEvent> {
         val events = mutableListOf<HostEvent>()
-        ProductNotificationTelemetry(timeProvider, originProvider, HostEventCapture { events += it() }).report()
+        ProductNotificationTelemetry(
+            timeProvider,
+            originProvider,
+            HostEventCapture { events += it() },
+            CriticalIssueCapture { },
+        ).report()
         return events
     }
 
+    private fun capturedIssues(report: ProductNotificationTelemetry.() -> Unit): List<CriticalIssue> {
+        val issues = mutableListOf<CriticalIssue>()
+        ProductNotificationTelemetry(
+            timeProvider,
+            originProvider,
+            HostEventCapture { },
+            CriticalIssueCapture { issues += it },
+        ).report()
+        return issues
+    }
+
+    private fun issue(kind: String, error: Throwable) =
+        CriticalIssue(flow = "product-notification", kind = kind, error = error)
+
     private fun event(step: ProductNotificationStep, tags: Map<String, String>, extras: Map<String, Any>) =
-        HostEvent(name = step.eventName, tags = tags, extras = extras)
+        HostEvent(name = step.eventName, tags = tags, extras = extras, level = HostEventLevel.INFO)
 
     private companion object {
         const val NOW = 1_000_000_000_000L
@@ -200,5 +294,10 @@ class ProductNotificationTelemetryTest {
         )
         val baseExtras = mapOf<String, Any>("host.app_build" to 42L)
         val bookingExtras = baseExtras + ("product_notification.id" to 7L)
+        val suppressedReasons = listOf(
+            ProductNotificationReason.NOTIFICATIONS_DISABLED,
+            ProductNotificationReason.CHANNEL_BLOCKED,
+            ProductNotificationReason.BOOKING_MISSING,
+        )
     }
 }
