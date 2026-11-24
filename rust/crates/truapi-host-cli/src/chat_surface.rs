@@ -989,16 +989,11 @@ mod tests {
 					room_id_source: room_id.to_string(),
 					name: name.to_string(),
 					icon: String::new(),
-					config: ChatRoomConfig::default(),
+					// The configuration arrives with the room, in one call.
+					config,
 				},
 			))
 			.expect("a new room is created");
-			futures::executor::block_on(chat.set_chat_room_config(
-				&product(),
-				room_id.to_string(),
-				config,
-			))
-			.expect("the room takes its configuration");
 		};
 		create("daily", "Daily", ChatRoomConfig::default());
 		create(

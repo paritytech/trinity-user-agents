@@ -44,18 +44,12 @@ fn create(host: &CliChatHost, request: HostChatCreateRoomRequest) {
 		.expect("a room is created");
 }
 
-fn configure(host: &CliChatHost, room_id: &str, config: ChatRoomConfig) {
-	futures::executor::block_on(host.set_chat_room_config(&product(), room_id.to_string(), config))
-		.expect("the room exists");
-}
-
 /// A host with the room `support` the host keeps and the room `kept`
-/// the product keeps.
+/// the product keeps. The configuration arrives with the room.
 fn host_with_rooms(transcript: Option<PathBuf>) -> Arc<CliChatHost> {
 	let host = CliChatHost::new(transcript);
 	create(&host, room("support"));
-	create(&host, room("kept"));
-	configure(&host, "kept", source_config());
+	create(&host, HostChatCreateRoomRequest { config: source_config(), ..room("kept") });
 	host
 }
 
@@ -78,16 +72,17 @@ fn feed(
 	room_id: &str,
 	update: ChatFeedUpdate,
 	persist: bool,
-) -> Result<(), HostChatUpdateFeedError> {
-	futures::executor::block_on(host.update_chat_feed(
+) -> Result<(), ChatFeedOutcome> {
+	let outcome = futures::executor::block_on(host.update_chat_feed(
 		&product(),
 		HostChatUpdateFeedRequest { room_id: room_id.to_string(), update },
 		persist,
 	))
-	.map_err(|error| match error {
-		CallError::Domain(error) => error,
-		error => panic!("the CLI host refuses an update only with a domain error: {error:?}"),
-	})
+	.expect("the room exists");
+	match outcome {
+		ChatFeedOutcome::Applied => Ok(()),
+		refusal => Err(refusal),
+	}
 }
 
 fn room_view(host: &CliChatHost, room_id: &str) -> Value {
@@ -248,22 +243,42 @@ fn a_room_the_product_keeps_takes_no_message_from_the_user_through_the_host() {
 	assert!(host.post_user_message("kept", body("hi"), None).is_err());
 }
 
+// A room that exists keeps its name and what it declared. Its configuration
+// is the one of its last `create_room`, which the core sends each time.
 #[test]
 fn a_room_that_exists_keeps_what_it_declared() {
 	let host = CliChatHost::new(None);
-	create(&host, room("kept"));
-	configure(&host, "kept", source_config());
+	create(&host, HostChatCreateRoomRequest { config: source_config(), ..room("kept") });
 
 	let again = futures::executor::block_on(host.create_chat_room(
 		&product(),
 		"kept".to_string(),
-		HostChatCreateRoomRequest { name: "Renamed".to_string(), ..room("kept") },
+		HostChatCreateRoomRequest {
+			name: "Renamed".to_string(),
+			config: source_config(),
+			..room("kept")
+		},
 	))
 	.expect("an existing room is found again");
 
 	assert_eq!(again, ChatRoomRegistrationStatus::Exists);
 	assert_eq!(host.room_config("kept"), Some(source_config()));
 	assert_eq!(room_view(&host, "kept")["name"], "Support");
+}
+
+// A `create_room` that moves the messages of a room to the product discards
+// the messages that the host stored for it.
+#[test]
+fn a_room_that_changes_its_store_discards_its_messages() {
+	let host = CliChatHost::new(None);
+	create(&host, room("support"));
+	host.post_user_message("support", body("mine"), None).expect("the room exists");
+	assert_eq!(host.observe().0.messages.len(), 1);
+
+	create(&host, HostChatCreateRoomRequest { config: source_config(), ..room("support") });
+
+	assert_eq!(host.room_config("support"), Some(source_config()));
+	assert!(host.observe().0.messages.is_empty());
 }
 
 #[test]
@@ -325,11 +340,11 @@ fn a_deleted_message_leaves_the_room() {
 
 	assert_eq!(
 		feed(&host, "support", deleted(&user.message_id), true),
-		Err(HostChatUpdateFeedError::NotOwner)
+		Err(ChatFeedOutcome::NotOwner)
 	);
 	assert_eq!(
 		feed(&host, "support", deleted("p-9"), true),
-		Err(HostChatUpdateFeedError::UnknownMessage)
+		Err(ChatFeedOutcome::UnknownMessage)
 	);
 	feed(&host, "support", deleted("p-1"), true).expect("the product deletes its message");
 
@@ -471,7 +486,7 @@ fn the_store_of_a_room_takes_every_feed_update() {
 		.expect("a new message is stored");
 	assert_eq!(
 		feed(&host, "support", ChatFeedUpdate::New(message("p-1", PRODUCT, "again")), true),
-		Err(HostChatUpdateFeedError::DuplicateMessage)
+		Err(ChatFeedOutcome::DuplicateMessage)
 	);
 	feed(
 		&host,
@@ -495,7 +510,7 @@ fn the_store_of_a_room_takes_every_feed_update() {
 			},
 			true
 		),
-		Err(HostChatUpdateFeedError::NotOwner)
+		Err(ChatFeedOutcome::NotOwner)
 	);
 	for participant_id in ["p1", "p1", "p2", "p3"] {
 		let update = ChatFeedUpdate::ReactionPlaced {
@@ -516,7 +531,7 @@ fn the_store_of_a_room_takes_every_feed_update() {
 			},
 			true
 		),
-		Err(HostChatUpdateFeedError::NotOwner)
+		Err(ChatFeedOutcome::NotOwner)
 	);
 	feed(
 		&host,
@@ -577,15 +592,24 @@ fn the_store_of_a_room_takes_every_feed_update() {
 			ChatFeedUpdate::Replaced(message(&user.message_id, PRODUCT, "not yours")),
 			true
 		),
-		Err(HostChatUpdateFeedError::NotOwner)
+		Err(ChatFeedOutcome::NotOwner)
 	);
 	assert_eq!(
 		feed(&host, "support", ChatFeedUpdate::Replaced(message("p-9", PRODUCT, "")), true),
-		Err(HostChatUpdateFeedError::UnknownMessage)
+		Err(ChatFeedOutcome::UnknownMessage)
 	);
+	// The core checks the room first, so a room that is gone by now is a
+	// failure of the host.
 	assert_eq!(
-		feed(&host, "gone", ChatFeedUpdate::Replaced(message("p-1", PRODUCT, "")), true),
-		Err(HostChatUpdateFeedError::UnknownRoom)
+		futures::executor::block_on(host.update_chat_feed(
+			&product(),
+			HostChatUpdateFeedRequest {
+				room_id: "gone".to_string(),
+				update: ChatFeedUpdate::Replaced(message("p-1", PRODUCT, "")),
+			},
+			true,
+		)),
+		Err(GenericError { reason: unknown_room("gone") })
 	);
 
 	let feed_lines: Vec<_> = transcript_lines(transcript.path())
@@ -860,4 +884,25 @@ fn a_body_is_shown_with_every_field_the_product_sent() {
 		body_json(&ChatMessageBody::Event(ChatContactEvent::LeftChat)),
 		json!({ "type": "Event", "event": "LeftChat", "text": "Left the chat" })
 	);
+}
+
+// The core reads the room list before each change to a room. A read through
+// the subscription would leave one subscriber for each read, so the room list
+// is read without one.
+#[test]
+fn a_room_check_leaves_no_subscriber() {
+	let host = CliChatHost::new(None);
+	futures::executor::block_on(host.create_chat_room(
+		&product(),
+		"support".to_string(),
+		room("support"),
+	))
+	.expect("a new room is created");
+
+	for _ in 0..3 {
+		let listed = futures::executor::block_on(host.list_chat_rooms(&product()))
+			.expect("the host lists its rooms");
+		assert_eq!(listed.rooms.len(), 1);
+	}
+	assert!(host.lock().subscribers.is_empty());
 }

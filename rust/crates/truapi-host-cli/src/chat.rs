@@ -32,7 +32,6 @@ use futures::{
 use parity_scale_codec::Encode;
 use serde_json::{Value, json};
 use truapi::{
-	CallError,
 	latest::{
 		ChatBotRegistrationStatus, ChatCallRecord, ChatContactEvent, ChatFeedUpdate, ChatMediaItem,
 		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageOrigin, ChatMessageStatus,
@@ -43,10 +42,10 @@ use truapi::{
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedRequest,
 		ProductChatUserActionResponse,
 	},
-	platform::{ChatPlatform, ProductContext},
+	platform::{ChatFeedOutcome, ChatPlatform, ProductContext},
 };
 
 use crate::transcript::Transcript;
@@ -614,20 +613,21 @@ enum FeedChange {
 	Deleted(String),
 }
 
-/// Apply one feed update to `room`. The answer is what changed. With `persist`
-/// the room is the host's store and the host refuses what a store cannot hold;
+/// Apply one feed update to `room`. The answer is what changed, or the outcome
+/// that names why the host did not apply it. With `persist` the room is the
+/// host's store and the host refuses what a store cannot hold;
 /// without it the update is for the screen only, and an update for a message
 /// the cache never saw changes nothing.
 fn apply_feed(
 	room: &mut RoomRecord,
 	update: &ChatFeedUpdate,
 	persist: bool,
-) -> Result<Option<FeedChange>, HostChatUpdateFeedError> {
-	let missing = || if persist { Err(HostChatUpdateFeedError::UnknownMessage) } else { Ok(None) };
+) -> Result<Option<FeedChange>, ChatFeedOutcome> {
+	let missing = || if persist { Err(ChatFeedOutcome::UnknownMessage) } else { Ok(None) };
 	let index = match update {
 		ChatFeedUpdate::New(message) => {
 			return match room.position(&message.message_id) {
-				Some(_) if persist => Err(HostChatUpdateFeedError::DuplicateMessage),
+				Some(_) if persist => Err(ChatFeedOutcome::DuplicateMessage),
 				Some(index) => {
 					room.messages[index] = StoredMessage::new(message.clone());
 					Ok(Some(FeedChange::Message(index)))
@@ -654,7 +654,7 @@ fn apply_feed(
 	if let ChatFeedUpdate::Deleted { message_id } = update {
 		// In the host store, the user's words are the user's own.
 		if persist && room.messages[index].message.origin.participant_id == USER {
-			return Err(HostChatUpdateFeedError::NotOwner);
+			return Err(ChatFeedOutcome::NotOwner);
 		}
 		room.messages.remove(index);
 		return Ok(Some(FeedChange::Deleted(message_id.clone())));
@@ -665,7 +665,7 @@ fn apply_feed(
 		ChatFeedUpdate::Edited { body, edited_at, .. } => {
 			// In the host's store the user's words are the user's own.
 			if persist && stored.message.origin.participant_id == USER {
-				return Err(HostChatUpdateFeedError::NotOwner);
+				return Err(ChatFeedOutcome::NotOwner);
 			}
 			stored.message.body = body.clone();
 			stored.message.edited_at = Some(*edited_at);
@@ -675,7 +675,7 @@ fn apply_feed(
 		// an edit does.
 		ChatFeedUpdate::Replaced(message) => {
 			if persist && stored.message.origin.participant_id == USER {
-				return Err(HostChatUpdateFeedError::NotOwner);
+				return Err(ChatFeedOutcome::NotOwner);
 			}
 			let origin = stored.message.origin.clone();
 			stored.message = message.clone();
@@ -688,7 +688,7 @@ fn apply_feed(
 		ChatFeedUpdate::ReactionRemoved { participant_id, .. }
 			if persist && participant_id == USER =>
 		{
-			return Err(HostChatUpdateFeedError::NotOwner);
+			return Err(ChatFeedOutcome::NotOwner);
 		},
 		ChatFeedUpdate::ReactionPlaced { participant_id, emoji, .. } => {
 			stored.react(participant_id, emoji, true, persist);
@@ -993,23 +993,45 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatCreateRoomRequest,
 	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
 		let mut state = self.lock();
-		// A room that exists keeps what it declared.
-		let status = if state.rooms.contains_key(&room_id) {
-			ChatRoomRegistrationStatus::Exists
-		} else {
-			let room = RoomRecord::new(
-				ChatRoomParticipation::RoomHost,
-				request.name.clone(),
-				request.icon.clone(),
-			);
-			let event = with_kind("room", room_json(&room_id, &room));
-			state.rooms.insert(room_id.clone(), room);
-			Self::republish(&mut state);
-			Self::broadcast(&mut state, event);
-			ChatRoomRegistrationStatus::New
+		// A room that exists keeps its name and its other declarations. The
+		// configuration is the one of this call, for a new room and for a room
+		// that exists.
+		let (status, config_changed) = match state.rooms.get_mut(&room_id) {
+			Some(room) => {
+				let changed = room.config != request.config;
+				// A room that changes its store discards the messages that it
+				// stored or the pages that it cached.
+				if room.config.product_source != request.config.product_source {
+					room.messages.clear();
+					room.last_seen = None;
+				}
+				room.config = request.config.clone();
+				if changed {
+					let event = with_kind("room", room_json(&room_id, room));
+					Self::broadcast(&mut state, event);
+				}
+				(ChatRoomRegistrationStatus::Exists, changed)
+			},
+			None => {
+				let mut room = RoomRecord::new(
+					ChatRoomParticipation::RoomHost,
+					request.name.clone(),
+					request.icon.clone(),
+				);
+				let changed = room.config != request.config;
+				room.config = request.config.clone();
+				let event = with_kind("room", room_json(&room_id, &room));
+				state.rooms.insert(room_id.clone(), room);
+				Self::republish(&mut state);
+				Self::broadcast(&mut state, event);
+				(ChatRoomRegistrationStatus::New, changed)
+			},
 		};
 		drop(state);
 		self.record_registration("room", &room_id, &request.name, &request.icon);
+		if config_changed {
+			self.record_declaration("config", &room_id, &request.config);
+		}
 		Ok(status)
 	}
 
@@ -1072,17 +1094,6 @@ impl ChatPlatform for CliChatHost {
 		Ok(self.room_config(&room_id).unwrap_or_default())
 	}
 
-	async fn set_chat_room_config(
-		&self,
-		_product: &ProductContext,
-		room_id: String,
-		config: ChatRoomConfig,
-	) -> Result<(), GenericError> {
-		self.declare("config", &room_id, &config, |room| {
-			room.config = config.clone();
-		})
-	}
-
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
@@ -1130,13 +1141,18 @@ impl ChatPlatform for CliChatHost {
 		_product: &ProductContext,
 		request: HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), CallError<HostChatUpdateFeedError>> {
+	) -> Result<ChatFeedOutcome, GenericError> {
 		let mut state = self.lock();
 		let room = state
 			.rooms
 			.get_mut(&request.room_id)
-			.ok_or(CallError::Domain(HostChatUpdateFeedError::UnknownRoom))?;
-		match apply_feed(room, &request.update, persist).map_err(CallError::Domain)? {
+			.ok_or_else(|| GenericError { reason: unknown_room(&request.room_id) })?;
+		let change = match apply_feed(room, &request.update, persist) {
+			Ok(change) => change,
+			// The host did not apply the update and says why.
+			Err(refusal) => return Ok(refusal),
+		};
+		match change {
 			Some(FeedChange::Message(index)) => {
 				Self::announce_message(&mut state, &request.room_id, index);
 			},
@@ -1155,7 +1171,17 @@ impl ChatPlatform for CliChatHost {
 			"messageId": message_id,
 			"payload": hex::encode(request.update.encode()),
 		}));
-		Ok(())
+		Ok(ChatFeedOutcome::Applied)
+	}
+
+	/// The core checks the room of each change to a room against this list.
+	/// The default reads the subscription, which would leave one subscriber
+	/// for each check until the next room list goes out.
+	async fn list_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> Result<HostChatListSubscribeItem, GenericError> {
+		Ok(Self::room_list(&self.lock()))
 	}
 }
 
