@@ -10,7 +10,7 @@ use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 use super::{Network, Stack};
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{FetchError, describe_pin_change, fetch, reads_same, unix_now},
+	stack_descriptor::{FetchError, describe_pin_change, fetch, pointer_of, reads_same, unix_now},
 };
 
 /// How long a command waits for a built-in stack's published descriptor
@@ -68,6 +68,22 @@ pub fn polkadot_reference() -> &'static Descriptor {
 	&REFERENCE
 }
 
+/// The key of the built-in stack published at `stack`, when `stack` is that URL with no key of
+/// its own. A built-in stack named by its bare URL is then verified, and is the same stack as
+/// under its network name.
+pub fn built_in_key(stack: &str) -> Option<String> {
+	let unsigned = pointer_of(stack, None)
+		.ok()
+		.flatten()
+		.filter(|pointer| pointer.key().is_none())?;
+	Network::value_variants().iter().find_map(|network| {
+		let built_in = network.built_in_stack().pointer();
+		let published = Pointer::new(built_in.url().as_str(), None).ok()?;
+		let key = built_in.key().filter(|_| published.same_stack(&unsigned))?;
+		Some(format!("0x{}", hex::encode(key)))
+	})
+}
+
 /// Fails when `descriptor`, fetched from `pointer`, is a built-in network's
 /// stack the CLI cannot run on, so a bundled copy cannot start every command
 /// with an error.
@@ -76,7 +92,7 @@ pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> R
 	let is_built_in = Network::value_variants()
 		.iter()
 		.any(|network| network.built_in_stack().pointer().stack_id() == stack_id);
-	if is_built_in && let Err(error) = Stack::new(descriptor.clone(), ChainBackend::Rpc) {
+	if is_built_in && let Err(error) = Stack::new(stack_id, descriptor.clone(), ChainBackend::Rpc) {
 		bail!("{} is a built-in network's stack the CLI cannot run: {error}", pointer.url());
 	}
 	Ok(())
@@ -95,7 +111,8 @@ impl Network {
 	/// `chain_backend`, without fetching anything.
 	#[cfg(test)]
 	pub fn bundled_stack(self, chain_backend: ChainBackend) -> Stack {
-		Stack::new(self.built_in_stack().open_bundled(), chain_backend)
+		let built_in = self.built_in_stack();
+		Stack::new(built_in.pointer().stack_id(), built_in.open_bundled(), chain_backend)
 			.expect("invalid bundled stack")
 	}
 
@@ -266,7 +283,7 @@ fn refresh_stack(
 			Some(reason) => Err(reason),
 			None => {
 				ensure!(!accepted.expired, "the {id} stack is past expiresAt; it has shut down");
-				Stack::new(accepted.stack.descriptor, chain_backend)
+				Stack::new(pointer.stack_id(), accepted.stack.descriptor, chain_backend)
 					.map_err(|error| format!("cannot run: {error:#}"))
 			},
 		};
@@ -278,7 +295,8 @@ fn refresh_stack(
 				pointer.url()
 			);
 			ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
-			let bundled = Stack::new(bundled_copy.stack.descriptor, chain_backend)?;
+			let bundled =
+				Stack::new(pointer.stack_id(), bundled_copy.stack.descriptor, chain_backend)?;
 			(bundled, bundled_copy.stale, BuiltInCopy::Rejected, None)
 		},
 	};
