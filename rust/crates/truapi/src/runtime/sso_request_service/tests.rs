@@ -2,7 +2,7 @@ use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
-	test_support::{StubPlatform, paseo_test_stack, sso_session_info},
+	test_support::{StubPlatform, external_sso_session_info, paseo_test_stack, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -15,6 +15,25 @@ struct CleanupStorage {
 	pause: Mutex<Option<(CoreStorageKey, oneshot::Receiver<()>)>>,
 	failure: Mutex<Option<CoreStorageKey>>,
 	write_pause: Mutex<Option<oneshot::Receiver<()>>>,
+	read_pause: Mutex<Option<ReadPause>>,
+}
+
+/// A read of `key` that reports it has started and answers once resumed.
+struct ReadPause {
+	key: CoreStorageKey,
+	started: oneshot::Sender<()>,
+	resume: oneshot::Receiver<()>,
+}
+
+impl CleanupStorage {
+	/// Holds the next read of `key` until the returned sender fires, and
+	/// reports through the receiver that the read has started.
+	fn pause_read(&self, key: CoreStorageKey) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+		let (started, has_started) = oneshot::channel();
+		let (resume, resumed) = oneshot::channel();
+		*self.read_pause.lock().unwrap() = Some(ReadPause { key, started, resume: resumed });
+		(has_started, resume)
+	}
 }
 
 #[async_trait::async_trait]
@@ -23,6 +42,11 @@ impl CoreStorage for CleanupStorage {
 		&self,
 		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
+		let pause = self.read_pause.lock().unwrap().take_if(|pause| pause.key == key);
+		if let Some(pause) = pause {
+			let _ = pause.started.send(());
+			let _ = pause.resume.await;
+		}
 		Ok(self.values.lock().unwrap().get(&key.encode()).cloned())
 	}
 
@@ -235,4 +259,103 @@ fn a_failed_username_lookup_changes_nothing() {
 
 	let record = block_on(storage.read_core_storage(CoreStorageKey::SessionUsernamesRun)).unwrap();
 	assert_eq!((host.session_state.current(), stored(), record), (Some(session), Some(blob), None));
+}
+
+/// A pairing host over `storage` whose chains do not connect, so no lookup of
+/// its own answers, with `installed` restored from the `AuthSession` slot.
+fn host_restored_from(
+	storage: &Arc<CleanupStorage>,
+	installed: &SessionInfo,
+) -> Arc<SsoRequestService> {
+	let platform = Arc::new(StubPlatform {
+		core_storage_override: Some(storage.clone()),
+		chain_connect_error: Some("offline"),
+		..Default::default()
+	});
+	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
+	let host = pairing.session().clone();
+	let blob = encode_persisted_session(installed);
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob)).unwrap();
+	block_on(host.activate_stored_session()).expect("the stored session activates");
+	host
+}
+
+/// `session` with a username a lookup found for it.
+fn named(session: &SessionInfo) -> SessionInfo {
+	SessionInfo { lite_username: Some("alice.01".to_string()), ..session.clone() }
+}
+
+/// An activation reads the session slot twice and takes a change between the
+/// reads for another writer's session, which ends the installed session and
+/// revokes its grants. The usernames a lookup found are the core's own
+/// rewrite of that slot, so they wait for the activation, and the session
+/// comes out of both installed, named and stored with its record.
+#[test]
+fn naming_a_session_waits_for_an_activation_in_progress() {
+	let storage = Arc::new(CleanupStorage::default());
+	let installed = external_sso_session_info();
+	let host = host_restored_from(&storage, &installed);
+	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
+
+	let (between_the_reads, resume) = storage.pause_read(CoreStorageKey::SessionUsernamesRun);
+	let activation = std::thread::spawn({
+		let host = host.clone();
+		move || block_on(host.activate_stored_session())
+	});
+	block_on(between_the_reads).expect("the activation reads the usernames record");
+	let (finished, naming) = std::sync::mpsc::channel();
+	std::thread::spawn({
+		let (host, installed, named) = (host.clone(), installed.clone(), named.clone());
+		move || {
+			block_on(host.name_session(&installed, named, Some(blob)));
+			let _ = finished.send(());
+		}
+	});
+	// A rewrite that did not wait lands here, between the activation's reads.
+	let _ = naming.recv_timeout(std::time::Duration::from_millis(200));
+	resume.send(()).expect("the activation is still reading");
+	let activated = activation.join().expect("the activation does not panic");
+	let _ = naming.recv_timeout(std::time::Duration::from_secs(5));
+
+	let named_blob = encode_persisted_session(&named);
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			activated,
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(
+			Ok(()),
+			Some(named),
+			Some(named_blob.clone()),
+			Some(crate::test_support::usernames_record(&paseo_test_stack(), &named_blob)),
+		)
+	);
+}
+
+/// By the time a lookup answers, another writer may have replaced the stored
+/// session. The usernames still belong to the installed session, but the slot
+/// is the other writer's and is left as it is, with no record.
+#[test]
+fn naming_a_session_leaves_a_slot_another_writer_replaced() {
+	let storage = Arc::new(CleanupStorage::default());
+	let installed = external_sso_session_info();
+	let host = host_restored_from(&storage, &installed);
+	let (blob, named) = (encode_persisted_session(&installed), named(&installed));
+	let replaced = b"another writer's session".to_vec();
+	block_on(storage.write_core_storage(CoreStorageKey::AuthSession, replaced.clone())).unwrap();
+
+	block_on(host.name_session(&installed, named.clone(), Some(blob)));
+
+	let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+	assert_eq!(
+		(
+			host.session_state.current(),
+			read(CoreStorageKey::AuthSession),
+			read(CoreStorageKey::SessionUsernamesRun),
+		),
+		(Some(named), Some(replaced), None)
+	);
 }

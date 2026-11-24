@@ -284,10 +284,27 @@ impl SsoRequestService {
 			LookupOutcome::Failed => return,
 		};
 		let named = SessionInfo { lite_username, full_username, ..installed.clone() };
+		self.name_session(&installed, named, stored).await;
+	}
+
+	/// Puts `named`, which is `installed` with the usernames a lookup found,
+	/// in its place while `installed` is still selected, and in the
+	/// `AuthSession` slot while that still holds `stored`.
+	///
+	/// It waits for an activation in progress. An activation reads the slot
+	/// twice and takes a change between the two reads for another writer's
+	/// session, which ends the installed one together with its grants.
+	async fn name_session(
+		&self,
+		installed: &SessionInfo,
+		named: SessionInfo,
+		stored: Option<Vec<u8>>,
+	) {
+		let _activation = self.session_store_activation.lock().await;
 		let barrier = self.owner.write_barrier().await;
 		self.drain_session_deletions(&barrier).await;
-		if self.session_state.replace_session_if_current(&installed, named.clone()) {
-			if named != installed {
+		if self.session_state.replace_session_if_current(installed, named.clone()) {
+			if named != *installed {
 				self.auth_state.connected(&Self::session_ui_info(&named));
 			}
 			if let Some(stored) = stored {
