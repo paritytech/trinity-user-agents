@@ -8,6 +8,7 @@ use std::{
 };
 
 use parity_scale_codec::Encode;
+use sp_crypto_hashing::twox_128;
 use truapi::{CallContext, latest::GenericError};
 
 use super::*;
@@ -956,14 +957,16 @@ const TEST_STACK_ASSET_HUB: [u8; 32] = [0xcc; 32];
 
 /// A runtime on the stack `refresh` hands out, over a People node that names
 /// `genesis` as its chain, gives `suffix` as its `NetworkSuffix`, and serves the
-/// runtime version and metadata an allowance reads first. Any other request
-/// gets a JSON-RPC error. Asset Hub is out of reach, so activating a wallet
-/// looks up no username.
+/// runtime version and metadata an allowance reads first. Any other storage is
+/// empty, and any other request gets a JSON-RPC error. Asset Hub is out of
+/// reach, so activating a wallet looks up no username.
 fn runtime_on(
 	refresh: &StackRefresh,
 	genesis: [u8; 32],
 	suffix: &'static str,
 ) -> (Arc<RuntimeServices>, Arc<StubPlatform>) {
+	let suffix_key = [twox_128(b"NetworkSuffix"), twox_128(b"NetworkSuffix")].concat();
+	let suffix_key = format!("0x{}", hex::encode(suffix_key));
 	let node = Arc::new(StubPlatform {
 		rpc_responder: Some(Arc::new(move |request| {
 			let request: serde_json::Value =
@@ -979,7 +982,10 @@ fn runtime_on(
 				(Some("state_call"), Some("Metadata_metadata_at_version")) => {
 					Ok(as_hex(&Some(PEOPLE_METADATA.to_vec()).encode()))
 				},
-				(Some("state_getStorage"), _) => Ok(as_hex(&suffix.as_bytes().to_vec().encode())),
+				(Some("state_getStorage"), Some(key)) if key == suffix_key => {
+					Ok(as_hex(&suffix.as_bytes().to_vec().encode()))
+				},
+				(Some("state_getStorage"), _) => Ok(serde_json::Value::Null),
 				(method, _) => Err(format!("the node serves no {method:?}")),
 			};
 			// An error, not a panic: a panic would end the node's answers, and
@@ -1085,7 +1091,7 @@ fn a_statement_store_allowance_reports_a_people_suffix_that_is_not_the_tld() {
 	let signing_host = SigningHost::new(services);
 	let product = ProductContext::new(ProductId::for_test("myapp.paseo"));
 
-	// The node serves nothing the allowance reads after the suffix, so the
+	// Past the suffix the node gives only empty storage and errors, so the
 	// allowance itself fails.
 	let allocated = within_answer_wait(async {
 		signing_host.activate_local_session(RootEntropy::new([0xab; 16])).await.ok()?;
