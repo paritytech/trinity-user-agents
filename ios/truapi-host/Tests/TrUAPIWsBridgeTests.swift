@@ -347,6 +347,13 @@ final class StubChatHostBridge: ChatHostBridge {
         icon _: String
     ) async throws -> ChatRoomRegistrationStatus { .new }
 
+    func createRoom(
+        roomId _: String,
+        name _: String,
+        icon _: String,
+        config _: ChatRoomConfig
+    ) async throws -> ChatRoomRegistrationStatus { .new }
+
     func registerBot(
         botId _: String,
         name _: String,
@@ -362,8 +369,6 @@ final class StubChatHostBridge: ChatHostBridge {
     func listRooms() async throws -> [ChatRoom] { [] }
 
     func roomConfig(roomId _: String) async throws -> ChatRoomConfig { .hostDefault }
-
-    func setRoomConfig(roomId _: String, config _: ChatRoomConfig) async throws {}
 
     func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
 

@@ -103,3 +103,46 @@ fn a_room_appears_in_the_list_a_subscriber_already_holds() {
 	assert_eq!(replacement.rooms.len(), 1);
 	assert_eq!(replacement.rooms[0].room_id, "support");
 }
+
+// The core reads the room list before each change to a room. A read through
+// the subscription would leave one subscriber for each read, so the room list
+// is read without one.
+#[test]
+fn a_room_check_leaves_no_subscriber() {
+	let host = CliChatHost::new(Transcript::new(None, "chat"));
+	futures::executor::block_on(host.create_chat_room(
+		&product(),
+		"support".to_string(),
+		room("support"),
+	))
+	.expect("a new room is created");
+
+	for _ in 0..3 {
+		let listed = futures::executor::block_on(host.list_chat_rooms(&product()))
+			.expect("the host lists its rooms");
+		assert_eq!(listed.rooms.len(), 1);
+	}
+	assert!(host.lock().subscribers.is_empty());
+}
+
+// This host keeps only the default configuration. It refuses another one in
+// the call that would create the room, so no room is left with the behaviour
+// that the product did not ask for.
+#[test]
+fn a_room_with_a_configuration_this_host_cannot_keep_is_not_created() {
+	let host = CliChatHost::new(Transcript::new(None, "chat"));
+	let sourced = HostChatCreateRoomRequest {
+		config: ChatRoomConfig { product_source: true, ..Default::default() },
+		..room("support")
+	};
+
+	assert_eq!(
+		futures::executor::block_on(host.create_chat_room(
+			&product(),
+			"support".to_string(),
+			sourced
+		)),
+		Err(HostChatCreateRoomError::UnsupportedConfig)
+	);
+	assert!(host.lock().rooms.is_empty());
+}
