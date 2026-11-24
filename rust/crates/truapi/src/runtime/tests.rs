@@ -17,7 +17,7 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
 	},
 	v02,
 	versioned::{
@@ -87,10 +87,6 @@ use truapi::{
 			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
-		worker::{
-			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
-			HostWorkerEndOperationRequest,
-		},
 	},
 };
 
@@ -1736,16 +1732,12 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: truapi::latest::HostChatCreateRoomRequest,
-	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
+		room_id: String,
+		_request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
 	{
-		self.created_rooms
-			.lock()
-			.expect("created rooms mutex poisoned")
-			.push(request.room_id);
-		Ok(truapi::latest::HostChatCreateRoomResponse {
-			status: v01::ChatRoomRegistrationStatus::New,
-		})
+		self.created_rooms.lock().expect("created rooms mutex poisoned").push(room_id);
+		Ok(truapi::latest::ChatRoomRegistrationStatus::New)
 	}
 
 	async fn register_chat_bot(
@@ -2039,28 +2031,48 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	install_pairing_session(&host, session_info());
 
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "caf\u{e9}".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "cafe".to_string(),
 			name: "Cafe".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 
-	// Decomposed here, precomposed when the room was created: the host must
-	// see the id it stored, or the footer lands on a room that does not exist.
+	// The host stored the room under the id of the answer, so the footer must
+	// reach the host under that id.
 	futures::executor::block_on(Chat::set_room_footer(
 		&host,
 		&CallContext::default(),
 		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
-			room_id: "cafe\u{301}".to_string(),
+			room_id: created.room_id.clone(),
 			footer: v01::ChatRoomFooter::Empty,
 		}),
 	))
-	.expect("set_room_footer accepts a normalizable id");
+	.expect("set_room_footer accepts the id that create_room returned");
+
+	// The source is the product's own name for the room, not its id.
+	let by_source = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "cafe".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	));
+	assert_eq!(
+		by_source,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
 
 	let rejected = futures::executor::block_on(Chat::set_room_footer(
 		&host,
@@ -2111,7 +2123,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("caf\u{e9}".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+		[(created.room_id, truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -2147,22 +2159,26 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 		payload: vec![1],
 	});
 
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "room".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "room".to_string(),
 			name: "Room".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 
 	futures::executor::block_on(Chat::set_room_footer(
 		&host,
 		&CallContext::default(),
 		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
-			room_id: "room".to_string(),
+			room_id: created.room_id.clone(),
 			footer: card.clone(),
 		}),
 	))
@@ -2184,7 +2200,7 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("room".to_string(), card)]
+		[(created.room_id, card)]
 	);
 }
 
@@ -2269,7 +2285,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 }
 
 #[test]
-fn chat_room_ids_agree_across_create_and_post() {
+fn each_spelling_of_a_room_source_names_one_room() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
@@ -2296,28 +2312,38 @@ fn chat_room_ids_agree_across_create_and_post() {
 	);
 	install_pairing_session(&host, session_info());
 
-	// Precomposed on create, decomposed on post: the host must see one id,
-	// or the message lands in a room that does not exist.
-	futures::executor::block_on(Chat::create_room(
-		&host,
-		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "caf\u{e9}".to_string(),
-			name: "Cafe".to_string(),
-			icon: String::new(),
-		}),
-	))
-	.expect("create_room accepts a normalizable id");
+	// Precomposed, then decomposed: both spellings must resolve one room, or
+	// a product that sends the other spelling gets a second room.
+	let room_ids = ["caf\u{e9}", "cafe\u{301}"].map(|room_id_source| {
+		let created = futures::executor::block_on(Chat::create_room(
+			&host,
+			&CallContext::default(),
+			HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+				room_id_source: room_id_source.to_string(),
+				name: "Cafe".to_string(),
+				icon: String::new(),
+				config: Default::default(),
+			}),
+		))
+		.expect("create_room accepts a normalizable source");
+		let HostChatCreateRoomResponse::V2(created) = created else {
+			panic!("a V2 request gets a V2 answer, got {created:?}");
+		};
+		created.room_id
+	});
+	let room_id = ProductId::for_test("chat.dot").chat_room_id("caf\u{e9}");
+	assert_eq!(room_ids, [room_id.clone(), room_id.clone()]);
 
 	futures::executor::block_on(Chat::post_message(
 		&host,
 		&CallContext::default(),
-		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
-			room_id: "cafe\u{301}".to_string(),
+		HostChatPostMessageRequest::V2(v02::HostChatPostMessageRequest {
+			room_id: room_id.clone(),
 			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+			alt: None,
 		}),
 	))
-	.expect("post_message accepts the other spelling of the same id");
+	.expect("post_message accepts the id that create_room returned");
 
 	let created = chat_platform
 		.created_rooms
@@ -2325,7 +2351,8 @@ fn chat_room_ids_agree_across_create_and_post() {
 		.expect("created rooms mutex poisoned")
 		.clone();
 	let posted = chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned").clone();
-	assert_eq!(created, posted);
+	assert_eq!(created, [room_id.clone(), room_id.clone()]);
+	assert_eq!(posted, [room_id]);
 
 	// create_room screens the same fields register_bot does.
 	for (room_id, icon) in [("", ""), ("room\u{202e}", ""), ("room", "javascript:x")] {
@@ -2348,6 +2375,107 @@ fn chat_room_ids_agree_across_create_and_post() {
 			"{room_id:?}/{icon:?} must be a domain error, got {rejected:?}"
 		);
 	}
+}
+
+#[test]
+fn a_room_of_the_earlier_client_keeps_the_id_the_product_gives() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.accounts().clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	// A product built against the earlier client, as Jollity is: its answer
+	// names no room, so its later calls can only name the room by its own id.
+	let created = futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "jollity".to_string(),
+			name: "Jollity".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+	assert_eq!(
+		created,
+		HostChatCreateRoomResponse::V1(v01::HostChatCreateRoomResponse {
+			status: v01::ChatRoomRegistrationStatus::New,
+		})
+	);
+
+	futures::executor::block_on(Chat::post_message(
+		&host,
+		&CallContext::default(),
+		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+			room_id: "jollity".to_string(),
+			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+		}),
+	))
+	.expect("post_message accepts the id the product gave");
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "jollity".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	))
+	.expect("set_room_footer finds the room under the id the product gave");
+
+	// The same name as a source makes another room, under the derived id.
+	let sourced = futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "jollity".to_string(),
+			name: "Jollity".to_string(),
+			icon: String::new(),
+			config: Default::default(),
+		}),
+	))
+	.expect("create_room accepts the source");
+	let derived = ProductId::for_test("chat.dot").chat_room_id("jollity");
+	assert_eq!(
+		sourced,
+		HostChatCreateRoomResponse::V2(v02::HostChatCreateRoomResponse {
+			status: v02::ChatRoomRegistrationStatus::New,
+			room_id: derived.clone(),
+		})
+	);
+
+	assert_eq!(
+		*chat_platform.created_rooms.lock().expect("created rooms mutex poisoned"),
+		["jollity".to_string(), derived]
+	);
+	assert_eq!(
+		*chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned"),
+		["jollity".to_string()]
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("jollity".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+	);
 }
 
 #[test]
@@ -4806,12 +4934,86 @@ fn push_notification_delegates_payload_and_returns_host_id() {
 			.lock()
 			.expect("notification list mutex poisoned")
 			.as_slice(),
-		&[v01::HostPushNotificationRequest {
+		&[latest::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: Some("https://example.invalid/launch".to_string()),
 			scheduled_at: Some(1_776_144_000_000),
 		}]
 	);
+}
+
+/// A title replaces the product id the person sees, so only a trusted product
+/// may set one. Any other product could otherwise pass for the Polkadot app.
+#[test]
+fn push_notification_keeps_a_title_only_from_a_trusted_product() {
+	let delivered_titles = ["dim2.dot", "other.dot"].map(|product| {
+		let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+		let platform = Arc::new(StubPlatform {
+			pushed_notifications: pushed_notifications.clone(),
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new(platform, runtime_config(product), Spawner::for_test());
+		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+			title: Some("Daily Dollar".to_string()),
+			text: "Your scratch card is ready".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		});
+		futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+			.expect("a notification the product may send is scheduled");
+		let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+		pushed.iter().map(|notification| notification.title.clone()).collect::<Vec<_>>()
+	});
+	assert_eq!(delivered_titles, [vec![Some("Daily Dollar".to_string())], vec![None]]);
+}
+
+/// Hosts show the product id only when the title is absent, so a blank title
+/// from a trusted product would otherwise leave the notification unattributed.
+#[test]
+fn push_notification_drops_a_blank_title() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
+	for title in ["", " \t\n", "\u{200B}\u{FEFF} \u{2060}"] {
+		let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+			title: Some(title.to_string()),
+			text: "Your scratch card is ready".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		});
+		futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+			.expect("a blank title does not fail the notification");
+	}
+	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+	let titles: Vec<Option<String>> =
+		pushed.iter().map(|notification| notification.title.clone()).collect();
+	assert_eq!(titles, [None, None, None]);
+}
+
+#[test]
+fn push_notification_trims_the_title() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("dim2.dot"), Spawner::for_test());
+	let request = HostPushNotificationRequest::V2(v02::HostPushNotificationRequest {
+		title: Some("\u{200B} Daily Dollar\n".to_string()),
+		text: "Your scratch card is ready".to_string(),
+		deeplink: None,
+		scheduled_at: None,
+	});
+	futures::executor::block_on(host.send_push_notification(&CallContext::default(), request))
+		.expect("a notification the product may send is scheduled");
+	let pushed = pushed_notifications.lock().expect("notification list mutex poisoned");
+	let titles: Vec<Option<String>> =
+		pushed.iter().map(|notification| notification.title.clone()).collect();
+	assert_eq!(titles, [Some("Daily Dollar".to_string())]);
 }
 
 /// A notification the product withdrew must not reach the person.
@@ -4861,7 +5063,8 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 		});
 		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 		let cx = CallContext::default();
-		let notification = v01::HostPushNotificationRequest {
+		let notification = latest::HostPushNotificationRequest {
+			title: None,
 			text: "Hello".to_string(),
 			deeplink: None,
 			scheduled_at: None,
@@ -4882,10 +5085,10 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 			);
 		}
 		let first = futures::executor::block_on(
-			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+			host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 		);
 		let second = futures::executor::block_on(
-			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+			host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 		);
 
 		assert_eq!(
@@ -4896,8 +5099,8 @@ fn push_notification_consumes_allow_once_before_scheduling() {
 				platform.device_permission_requests.lock().unwrap().clone(),
 			),
 			(
-				Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
-				Err(CallError::Domain(HostPushNotificationError::V1(
+				Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
+				Err(CallError::Domain(HostPushNotificationError::V2(
 					v01::HostPushNotificationError::Unknown {
 						reason: PERMISSION_DENIED_REASON.to_string(),
 					},
@@ -4959,16 +5162,17 @@ fn push_notification_reuses_allow_always() {
 	});
 	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 	let cx = CallContext::default();
-	let notification = v01::HostPushNotificationRequest {
+	let notification = latest::HostPushNotificationRequest {
+		title: None,
 		text: "Hello".to_string(),
 		deeplink: None,
 		scheduled_at: None,
 	};
 	let first = futures::executor::block_on(
-		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 	);
 	let second = futures::executor::block_on(
-		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		host.send_push_notification(&cx, HostPushNotificationRequest::V2(notification.clone())),
 	);
 
 	assert_eq!(
@@ -4979,8 +5183,8 @@ fn push_notification_reuses_allow_always() {
 			platform.device_permission_requests.lock().unwrap().clone(),
 		),
 		(
-			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
-			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V2(v01::HostPushNotificationResponse { id: 42 })),
 			vec![notification; 2],
 			vec![v01::HostDevicePermissionRequest::Notifications],
 		)
@@ -6352,127 +6556,6 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	);
 }
 
-#[test]
-fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let begin = |label: Option<&str>| {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: label.map(str::to_string),
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation")
-	};
-
-	assert_eq!(begin(Some("funding")), 1);
-	assert_eq!(begin(None), 2);
-	assert_eq!(
-		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
-		vec![
-			(ProductId::for_test("myapp.dot"), "funding".to_string()),
-			(ProductId::for_test("myapp.dot"), String::new()),
-		],
-		"begin reaches the platform under the calling product; a missing label is empty"
-	);
-
-	end(1);
-	end(99);
-	assert_eq!(
-		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
-		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
-		"end reaches the platform under the calling product, unknown ids included"
-	);
-}
-
-#[test]
-fn an_open_operation_holds_worker_demand_until_it_ends() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: Some("funding".to_string()),
-			}),
-		))
-		.expect("begin operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"an open operation is demand on the worker, so the host is told to run it"
-	);
-
-	futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	))
-	.expect("end operation");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"ending the last operation drops the demand it held"
-	);
-}
-
-#[test]
-fn ending_an_operation_twice_releases_only_the_demand_it_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-	let begin = || {
-		let HostWorkerBeginOperationResponse::V1(response) =
-			futures::executor::block_on(host.begin_operation(
-				&cx,
-				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-					label: None,
-				}),
-			))
-			.expect("begin operation");
-		response.id
-	};
-	let end = |id: u32| {
-		futures::executor::block_on(host.end_operation(
-			&cx,
-			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
-		))
-		.expect("end operation");
-	};
-
-	let first = begin();
-	begin();
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
-
-	end(first);
-	end(first);
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		1,
-		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
-	);
-}
-
 /// Records every worker-demand transition the ledger reports.
 #[derive(Default)]
 struct DemandRecorder {
@@ -6496,162 +6579,6 @@ impl crate::host_logic::worker::WorkerController for DemandRecorder {
 			.expect("demand recorder mutex poisoned")
 			.push((product_id.to_string(), transition));
 	}
-}
-
-#[test]
-fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
-	use crate::host_logic::worker::WorkerTransition;
-
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let recorder = Arc::new(DemandRecorder::default());
-	assert!(
-		host.connection
-			.services()
-			.worker_ledger
-			.install_worker_controller(recorder.clone())
-	);
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-
-	host.connection.release_open_operations();
-
-	// A native reconnect drops the replaced connection's last reference only
-	// after the new one exists, so a stop deferred to that point would reach
-	// the host as a stop for the worker it had just restarted.
-	assert_eq!(
-		recorder.seen(),
-		vec![
-			("myapp.dot".to_string(), WorkerTransition::Start),
-			("myapp.dot".to_string(), WorkerTransition::Stop),
-		],
-		"teardown reports the stop, rather than leaving it to the last Arc"
-	);
-
-	drop(host);
-
-	assert_eq!(recorder.seen().len(), 2, "the eventual drop has nothing left to report");
-}
-
-#[test]
-fn a_cancelled_begin_ends_the_operation_the_host_started() {
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		begin_operation_gate: Mutex::new(Some(gate)),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-
-	// Poll once so the call reaches the host, then drop it the way an aborted
-	// dispatch does while the host is still deciding.
-	let mut begun = Box::pin(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	));
-	assert!(
-		futures::executor::block_on(futures::future::poll_fn(|cx| {
-			std::task::Poll::Ready(futures::FutureExt::poll_unpin(&mut begun, cx).is_pending())
-		})),
-		"the host has not answered yet"
-	);
-	drop(begun);
-
-	// Without the fix the host's call went with the cancelled dispatch, so the
-	// gate may already be gone.
-	let _ = release.send(());
-
-	// Nobody is left to receive the id, so the operation the host started is
-	// ended rather than stranded in its store.
-	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-	loop {
-		let ended = platform
-			.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.clone();
-		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
-			break;
-		}
-		assert!(
-			std::time::Instant::now() < deadline,
-			"a cancelled begin leaves the host holding nothing; saw {ended:?}"
-		);
-		std::thread::yield_now();
-	}
-	assert_eq!(
-		host.connection
-			.services()
-			.worker_ledger
-			.count(&ProductId::for_test("myapp.dot")),
-		0
-	);
-}
-
-#[test]
-fn a_failed_end_still_drops_the_demand_the_operation_held() {
-	let platform = Arc::new(StubPlatform {
-		end_operation_error: Some("store unavailable"),
-		..Default::default()
-	});
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let cx = CallContext::default();
-	let ledger = &host.connection.services().worker_ledger;
-
-	let HostWorkerBeginOperationResponse::V1(response) =
-		futures::executor::block_on(host.begin_operation(
-			&cx,
-			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
-				label: None,
-			}),
-		))
-		.expect("begin operation");
-	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	let ended = futures::executor::block_on(host.end_operation(
-		&cx,
-		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
-	));
-	assert!(ended.is_err(), "the host's failure still reaches the product");
-
-	assert_eq!(
-		ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"the product declared the operation over, so the core stops counting it \
-         whatever the host made of the call"
-	);
-}
-
-#[test]
-fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
-	let platform = stub_platform();
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
-	let services = host.connection.services().clone();
-	let cx = CallContext::default();
-
-	futures::executor::block_on(host.begin_operation(
-		&cx,
-		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
-	))
-	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
-
-	drop(host);
-
-	assert_eq!(
-		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
-		0,
-		"a product that goes away without ending its operations leaves no demand behind"
-	);
 }
 
 #[test]
@@ -12057,22 +11984,26 @@ fn a_docked_card_is_screened_like_a_posted_custom_message() {
 		product,
 	);
 	install_pairing_session(&host, session_info());
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "room".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "room".to_string(),
 			name: "Room".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 	let dock = |message_type: &str, payload: Vec<u8>| {
 		futures::executor::block_on(Chat::set_room_footer(
 			&host,
 			&CallContext::default(),
 			HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
-				room_id: "room".to_string(),
+				room_id: created.room_id.clone(),
 				footer: v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
 					message_type: message_type.to_string(),
 					payload,
@@ -12095,7 +12026,7 @@ fn a_docked_card_is_screened_like_a_posted_custom_message() {
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
 		[(
-			"room".to_string(),
+			created.room_id.clone(),
 			v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
 				message_type: "register".to_string(),
 				payload: vec![1],

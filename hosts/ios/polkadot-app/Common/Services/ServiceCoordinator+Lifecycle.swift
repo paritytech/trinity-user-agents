@@ -41,6 +41,7 @@ extension ServiceCoordinator {
         statementRenewalLoop.setup()
 
         interactiveStart = Task { [self] in
+            await ProductNotificationScheduler.shared.start()
             await chainStatusProvider.start()
             await signInHostCoordinator.setup()
             await setupDeviceSyncService()

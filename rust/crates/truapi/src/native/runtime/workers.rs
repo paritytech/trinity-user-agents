@@ -18,7 +18,6 @@ use crate::{
 	host_logic::worker::WorkerController,
 	native::subscribers::Subscribers,
 	platform::{ExecutableKind, ProductContext, ProductId},
-	runtime::WorkerHold,
 };
 
 /// Operations the native UI thread performs on an individual WebView.
@@ -58,21 +57,6 @@ pub trait NativeWorkerExecutionObserver: Send + Sync {
 
 	/// Finish the observation after the session has delivered its last update.
 	fn finished(&self);
-}
-
-/// One consumer's reference on a product worker.
-#[derive(uniffi::Object)]
-pub struct NativeWorkerClaim {
-	reference: Mutex<Option<WorkerHold>>,
-}
-
-#[uniffi::export]
-impl NativeWorkerClaim {
-	/// Release this reference once. Subsequent calls leave other consumers' demand intact.
-	pub fn release(&self) {
-		let reference = self.reference.lock().expect("worker claim mutex poisoned").take();
-		drop(reference);
-	}
 }
 
 impl NativeProductExecution {
@@ -469,13 +453,6 @@ impl NativeTrUApiHostRuntime {
 		self.runtime
 			.worker_ledger()
 			.install_worker_controller(Arc::new(Controller(Arc::downgrade(self))))
-	}
-
-	/// Acquire one reference, released explicitly or when its claim is dropped.
-	pub fn claim_worker(&self, product_id: ProductId) -> Arc<NativeWorkerClaim> {
-		Arc::new(NativeWorkerClaim {
-			reference: Mutex::new(Some(self.runtime.hold_worker(&product_id))),
-		})
 	}
 
 	/// Borrow the current ready execution without taking another reference.

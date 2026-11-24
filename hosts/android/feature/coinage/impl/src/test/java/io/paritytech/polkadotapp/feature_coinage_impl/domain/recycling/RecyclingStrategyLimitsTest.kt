@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.BalanceEva
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinRecyclingStrategy
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingSnapshot
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
-import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.params
 import io.paritytech.polkadotapp.feature_coinage_impl.common.testConversionContext
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -136,13 +135,13 @@ class RecyclingStrategyLimitsTest {
     }
 
     private fun chainLimited(type: RecyclingStrategyType) = EnsureChainLimitsStrategy(
-        inner = ParametricRecyclingStrategy(type.params, forcedRecyclingAgeProvider),
+        inner = ParametricRecyclingStrategy(type.bundledParams, forcedRecyclingAgeProvider),
         forcedRecyclingAgeProvider = forcedRecyclingAgeProvider,
     )
 
     private fun fullChain(type: RecyclingStrategyType) = EnsureChainLimitsStrategy(
         inner = EnsureQuotaLimitsStrategy(
-            inner = ParametricRecyclingStrategy(type.params, forcedRecyclingAgeProvider),
+            inner = ParametricRecyclingStrategy(type.bundledParams, forcedRecyclingAgeProvider),
             quotaTracker = quotaTracker,
         ),
         forcedRecyclingAgeProvider = forcedRecyclingAgeProvider,

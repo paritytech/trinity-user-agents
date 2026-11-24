@@ -66,6 +66,7 @@ class ChatSummaryOrderTest {
             origin = ChatMessageOrigin.User,
             content = ChatMessage.Content.Text("hi"),
             status = ChatMessage.Status.IS_SENT,
+            sortOrder = null,
         )
         return summary(chatId, ChatPreview.Message(message, order), order, timestamp, sortOrder)
     }

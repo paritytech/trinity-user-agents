@@ -22,5 +22,5 @@ interface ExternalCallSignaling {
     suspend fun sendCloseSignal(offerId: OfferId, chatId: ChatId)
     fun subscribeIncomingCloseSignal(offerId: OfferId, chatId: ChatId): Flow<Unit>
 
-    fun observeOfferReadStatus(offerId: OfferId): Flow<Boolean>
+    fun observeOfferDeliveredStatus(offerId: OfferId): Flow<Boolean>
 }

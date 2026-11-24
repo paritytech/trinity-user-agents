@@ -6,9 +6,8 @@ import TrUAPIHost
 /// The live side of a face: the product's render stream, and the actions going
 /// back to it.
 protocol PocketFaceStreaming: Sendable {
-    /// Faces the product draws for `key`, each replacing the last. Iterating
-    /// holds one worker reference for the card's product, and the stream stays
-    /// silent while the worker is unavailable.
+    /// Faces the product draws for `key`, each replacing the last. The stream
+    /// stays silent while the worker is unavailable.
     func renderFaces(for key: PocketCardKey) -> AsyncThrowingStream<RendererNode, Error>
 
     func send(action: String, payload: Data, for key: PocketCardKey)
@@ -23,7 +22,7 @@ protocol PocketFaceStreaming: Sendable {
 ///
 /// A render stream that ends or fails leaves the last face on screen and is
 /// opened again; a worker that restarts gets a fresh stream.
-final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
+final class TrUAPIPocketHandler: PocketFaceStreaming, Sendable {
     private enum Retry {
         /// A worker that has just booted is not yet listening, so the first
         /// renders are expected to be refused.
@@ -31,12 +30,10 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
         static let connectDelay = Duration.milliseconds(250)
     }
 
-    private let productId: ProductId
+    let productId: ProductId
     private let workers: any TrUAPIWorkerManaging
     private let logger: LoggerProtocol
 
-    /// What this handler holds of the product's worker request, so a dispose
-    /// gives back exactly what the start asked for and never more.
     private let state = OSAllocatedUnfairLock(initialState: State())
 
     private struct State {
@@ -54,23 +51,20 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
         self.logger = logger
     }
 
-    /// Asks for the product's worker and returns once it is up, so the first
-    /// card to draw finds something to ask.
-    ///
-    /// The request is ours from the moment we ask, including when the ask
-    /// fails, so ``dispose()`` gives it back either way.
     func start() async throws {
-        let claim = try workers.claim(productId)
-        let held = state.withLock { state in
-            guard !state.disposed, state.claim == nil else { return false }
-            state.claim = claim
-            return true
+        try state.withLock { state in
+            guard !state.disposed, state.claim == nil else { throw CancellationError() }
+
+            state.claim = try workers.claim(productId)
         }
-        guard held else {
-            claim.release()
-            throw CancellationError()
+
+        do {
+            try await workers.waitUntilReady(productId)
+            guard !state.withLock({ $0.disposed }) else { throw CancellationError() }
+        } catch {
+            dispose()
+            throw error
         }
-        try await workers.waitUntilReady(productId)
     }
 
     func dispose() {

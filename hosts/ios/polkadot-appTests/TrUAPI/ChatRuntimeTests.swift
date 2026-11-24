@@ -217,8 +217,8 @@ struct ChatRuntimeTests {
         try await disposing(runtime) {
             let start = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
             try await withTimeout(.hangGuard) {
-                var asks = workers.asks.makeAsyncIterator()
-                _ = await asks.next()
+                var checks = workers.readinessChecks.makeAsyncIterator()
+                _ = await checks.next()
             }
 
             workers.publish([chatProduct: execution])
@@ -231,19 +231,19 @@ struct ChatRuntimeTests {
         }
     }
 
-    @Test func rustRuntimeReleasesItsClaimWhileStillWaitingForTheWebView() async throws {
-        let workers = StubWorkerManager(startupWindow: .milliseconds(100))
-        workers.holdsTheAsk = true
+    @Test(.timeLimit(.minutes(1))) func rustRuntimeReleasesItsClaimWhileReadinessIsPending() async throws {
+        let workers = workersRunning(MockProductExecution())
+        workers.suspendsReadiness = true
         let runtime = makeRustRuntime(workers: workers)
 
-        var asks = workers.asks.makeAsyncIterator()
+        var checks = workers.readinessChecks.makeAsyncIterator()
         let starting = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
-        await asks.next()
+        await checks.next()
 
         await runtime.dispose()
         #expect(workers.references.released == [chatProduct])
-        workers.openTheAsk()
-        _ = try? await starting.value
+        workers.resumeReadiness()
+        await #expect(throws: CancellationError.self) { try await starting.value }
 
         #expect(workers.references.log == ["acquire \(chatProduct)", "release \(chatProduct)"])
     }

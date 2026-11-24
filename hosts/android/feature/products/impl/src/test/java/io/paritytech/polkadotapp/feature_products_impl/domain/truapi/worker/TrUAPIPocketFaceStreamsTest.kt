@@ -25,15 +25,19 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostR
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -58,7 +62,7 @@ class TrUAPIPocketFaceStreamsTest {
             worker = ProductExecutable.Worker(
                 scriptUrl = "https://worker.game.dot/index.js",
                 appVersion = SemVer.ZERO,
-                includesChat = false,
+                includesChat = true,
                 includesPocket = true,
                 pocketCards = listOf(
                     PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true),
@@ -167,6 +171,37 @@ class TrUAPIPocketFaceStreamsTest {
         assertEquals(live, drawn.resolveMaterials())
         assertEquals(kept, faces.resolveKeptMaterials(key, tree))
         verify(exactly = 0) { runtime.currentWorkerExecution(any()) }
+    }
+
+    @Test
+    fun `reopening a Pocket render preserves its claim independently of Chat`() = runTest {
+        val chat = mockk<NativeWorkerClaim>(relaxed = true)
+        val pocket = mockk<NativeWorkerClaim>(relaxed = true)
+        every { runtime.claimWorker(gameProduct) } returnsMany listOf(chat, pocket)
+        every { runtime.workerExecutionState(gameProduct) } returns emptyFlow()
+        val chatJob = Job(coroutineContext.job)
+        TrUAPIChatWorker(gameProduct, runtime, mockk(), this + chatJob)
+
+        val execution = mockk<TrUAPIWorkerExecution>()
+        val faces = drawnBy(execution)
+        val reopened = CompletableDeferred<Unit>()
+        every { execution.render(any()) } returnsMany listOf(
+            flow { error("render interrupted") },
+            flow {
+                reopened.complete(Unit)
+                awaitCancellation()
+            },
+        )
+        val card = launch { faces.renderFaces(key).collect {} }
+        reopened.await()
+
+        verify(exactly = 2) { runtime.claimWorker(gameProduct) }
+        verify(exactly = 0) { pocket.release() }
+        card.cancelAndJoin()
+        verify(exactly = 1) { pocket.release() }
+        verify(exactly = 0) { chat.release() }
+        chatJob.cancelAndJoin()
+        verify(exactly = 1) { chat.release() }
     }
 
     @Test

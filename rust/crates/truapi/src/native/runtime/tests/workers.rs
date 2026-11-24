@@ -91,7 +91,6 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 		"connected worker published",
 	);
 	let consumer = runtime.current_worker_execution(product.clone()).unwrap();
-	runtime.release_worker(product.clone());
 	chat.release();
 	chat.release();
 	drop(chat);
@@ -100,7 +99,7 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 	use parity_scale_codec::Decode;
 	use tokio_tungstenite::tungstenite::Message;
 	let (send, drawn) = mpsc::channel();
-	let render = consumer
+	let _render = consumer
 		.render(
 			latest::ProductRendererRenderRequest {
 				context: latest::RenderContext::PocketCard { card_id: "weather".into() },
@@ -123,11 +122,6 @@ async fn a_chat_claim_can_only_release_its_own_share_of_the_pocket_worker() {
 			.encode();
 	socket.send(Message::Binary(reply.encode())).await.unwrap();
 	assert_eq!(drawn.recv_timeout(Duration::from_secs(5)).unwrap(), latest::RendererNode::Nil);
-	render.cancel();
-	crate::test_support::wait_until(
-		|| runtime.runtime.worker_ledger().count(&product) == 1,
-		"render cancellation released its demand",
-	);
 	drop(pocket);
 	assert!(runtime.current_worker_execution(product).is_none());
 	assert!(matches!(

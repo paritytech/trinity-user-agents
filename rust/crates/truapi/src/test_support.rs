@@ -29,10 +29,10 @@ use crate::platform::{
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
 	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
 	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
-	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductStorageKey, ProductSubtreeReview, ProviderError,
-	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductContext, ProductId, ProductStorage as PlatformProductStorage, ProductStorageKey,
+	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
+	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -41,7 +41,7 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey};
 use truapi::{
-	v01,
+	latest, v01,
 	versioned::{
 		account::{HostAccountCreateProofRequest, HostAccountGetAliasRequest},
 		resource_allocation::HostRequestResourceAllocationRequest,
@@ -184,7 +184,7 @@ pub struct StubPlatform {
 	/// to the topic, with no statement this host can open ever arriving.
 	pub pairing_silent_after_subscribe: bool,
 	pub notification_id: u32,
-	pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
+	pub pushed_notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
 	pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
 	pub sent_rpc: Arc<Mutex<Vec<String>>>,
 	pub rpc_responses: Vec<String>,
@@ -243,18 +243,6 @@ pub struct StubPlatform {
 	/// Open `subscribe_storage` streams by namespaced key; `write` and
 	/// `clear` push each change to the matching ones.
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
-	/// Every `begin_operation` as `(product_id, label)`, in order. The
-	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
-	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
-	/// Held open by a test so `begin_operation` is still in flight while the
-	/// dispatch awaiting it goes away.
-	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
-	/// When set, `end_operation` records the call and then fails with this
-	/// reason, standing in for a host that drops the operation and still
-	/// reports an error.
-	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
@@ -1195,59 +1183,6 @@ impl PlatformProductStorage for StubPlatform {
 }
 
 #[async_trait::async_trait]
-impl PlatformProductOperations for StubPlatform {
-	async fn begin_operation(
-		&self,
-		product: &ProductContext,
-		label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		let gate = self
-			.begin_operation_gate
-			.lock()
-			.expect("begin operation gate mutex poisoned")
-			.take();
-		if let Some(gate) = gate {
-			let _ = gate.await;
-		}
-		// The stub has no worker lifecycle to keep alive; it only records the
-		// call and hands back its position as the id.
-		let id = {
-			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
-			begun.push((product.product_id.clone(), label));
-			u32::try_from(begun.len()).expect("test product count fits in u32")
-		};
-		// The operation exists host-side from here on, so a test holding the
-		// gate keeps only the answer in flight.
-		let gate = self
-			.begin_operation_gate
-			.lock()
-			.expect("begin operation gate mutex poisoned")
-			.take();
-		if let Some(gate) = gate {
-			let _ = gate.await;
-		}
-		Ok(v01::HostWorkerBeginOperationResponse { id })
-	}
-
-	async fn end_operation(
-		&self,
-		product: &ProductContext,
-		id: u32,
-	) -> Result<(), v01::HostWorkerOperationError> {
-		self.ended_operations
-			.lock()
-			.expect("ended operations mutex poisoned")
-			.push((product.product_id.clone(), id));
-		match self.end_operation_error {
-			Some(reason) => {
-				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })
-			},
-			None => Ok(()),
-		}
-	}
-}
-
-#[async_trait::async_trait]
 impl PlatformCoreStorage for StubPlatform {
 	async fn read_core_storage(
 		&self,
@@ -1360,13 +1295,13 @@ impl PlatformNavigation for StubPlatform {
 impl PlatformNotifications for StubPlatform {
 	async fn push_notification(
 		&self,
-		notification: v01::HostPushNotificationRequest,
-	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		notification: latest::HostPushNotificationRequest,
+	) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
 		self.pushed_notifications
 			.lock()
 			.expect("notification list mutex poisoned")
 			.push(notification);
-		Ok(v01::HostPushNotificationResponse { id: self.notification_id })
+		Ok(latest::HostPushNotificationResponse { id: self.notification_id })
 	}
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
