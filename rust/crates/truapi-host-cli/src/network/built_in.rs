@@ -84,15 +84,24 @@ pub fn built_in_key(stack: &str) -> Option<String> {
 	})
 }
 
+/// The name of the built-in network whose stack has `stack_id`, or `None` for
+/// any other stack.
+pub fn built_in_name(stack_id: &str) -> Option<&'static str> {
+	Network::value_variants()
+		.iter()
+		.map(|network| network.built_in_stack())
+		.find(|built_in| built_in.pointer().stack_id() == stack_id)
+		.map(|built_in| built_in.name)
+}
+
 /// Fails when `descriptor`, fetched from `pointer`, is a built-in network's
 /// stack the CLI cannot run on, so a bundled copy cannot start every command
 /// with an error.
 pub fn ensure_built_in_runnable(pointer: &Pointer, descriptor: &Descriptor) -> Result<()> {
 	let stack_id = pointer.stack_id();
-	let is_built_in = Network::value_variants()
-		.iter()
-		.any(|network| network.built_in_stack().pointer().stack_id() == stack_id);
-	if is_built_in && let Err(error) = Stack::new(stack_id, descriptor.clone(), ChainBackend::Rpc) {
+	if built_in_name(&stack_id).is_some() &&
+		let Err(error) = Stack::new(stack_id, descriptor.clone(), ChainBackend::Rpc)
+	{
 		bail!("{} is a built-in network's stack the CLI cannot run: {error}", pointer.url());
 	}
 	Ok(())

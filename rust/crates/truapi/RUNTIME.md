@@ -194,6 +194,16 @@ to be equal. Taking the TLD from the stack keeps local activation and key
 derivation working offline. The core does not check it against the chain and
 does not check genesis hashes against the live chains.
 
+#### Storage per stack
+
+Nothing a host keeps for one stack is visible to another. The core's storage
+keys do not name the stack, so a host that can run more than one stack gives
+each its own `CoreStorage`, `ProductStorage`, encrypted store and core
+database directory, picked from the stack's pointer before it starts the core.
+A fork has its source's genesis hashes and TLD, so only the pointer tells the
+two apart. The CLI keeps each stack's state in a directory named from the
+stack's id.
+
 #### Descriptor refresh
 
 The core starts from the bundled descriptor or the last one it verified,

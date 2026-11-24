@@ -70,8 +70,8 @@ fn test_stack_shared_genesis_error() {
 	);
 }
 
-/// A stack id becomes a state directory name, so one that is not a plain
-/// label is not used as the namespace.
+/// The namespace names the network in the account store and in what the CLI
+/// prints, so an id that is not a plain label is not used as one.
 #[test]
 fn test_stack_id_not_label() {
 	let descriptor = edit_stack(|descriptor| descriptor["id"] = "../elsewhere".into());
@@ -79,8 +79,8 @@ fn test_stack_id_not_label() {
 }
 
 /// Earlier releases stored Polkadot mainnet sessions under `polkadot`, so no
-/// stack runs there; a `polkadot-fork` has its own state instead. A fork of
-/// any other stack shares its source's namespace, a `dot` TLD included.
+/// stack runs there; a `polkadot-fork` has its own namespace instead. A fork
+/// of any other stack shares its source's namespace, a `dot` TLD included.
 #[test]
 fn test_stack_namespace() {
 	let polkadot = edit_stack(|descriptor| descriptor["id"] = "polkadot".into());
@@ -98,6 +98,41 @@ fn test_stack_namespace() {
 		});
 		assert_eq!(stack.namespace(), namespace);
 	}
+}
+
+/// Nothing a stack keeps is visible to another, so each has a state directory
+/// of its own, named from its pointer's identity. A built-in network keeps
+/// the directory named after it, where earlier releases stored its state. A
+/// fork has its source's namespace, and so its accounts, but not its
+/// directory, and neither has a stack whose descriptor only calls itself by a
+/// built-in network's name. A refreshed descriptor that renames itself stays
+/// in its stack's directory.
+#[test]
+fn test_stack_state_directory() {
+	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
+	let named = |stack_id: &str, id: &str| {
+		let descriptor = paseo.with_edit(|descriptor| descriptor["id"] = id.into());
+		Stack::new(stack_id.to_string(), descriptor.descriptor().clone(), ChainBackend::Rpc)
+			.expect("stack is valid")
+	};
+	let fork = named("https://fork.test.invalid/trinity-stack.json", "paseo-next-v2-fork");
+	let namesake = named("https://namesake.test.invalid/trinity-stack.json", "paseo-next-v2");
+	let renamed = paseo.with_edit(|descriptor| descriptor["id"] = "renamed".into());
+
+	assert_eq!(
+		(
+			paseo.state_directory(),
+			(fork.namespace(), fork.state_directory()),
+			(namesake.namespace(), namesake.state_directory()),
+			renamed.state_directory(),
+		),
+		(
+			"paseo-next-v2".to_string(),
+			("paseo-next-v2", "stack-c1ff7d592da65155".to_string()),
+			("paseo-next-v2", "stack-458b86f54a9e42d4".to_string()),
+			"paseo-next-v2".to_string(),
+		)
+	);
 }
 
 #[test]

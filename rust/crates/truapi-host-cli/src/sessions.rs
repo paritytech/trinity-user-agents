@@ -266,9 +266,11 @@ pub struct SessionCatalog {
 }
 
 impl SessionCatalog {
-	pub fn new(base_path: PathBuf, network_id: &str) -> Result<Self> {
+	/// The sessions kept in `state_directory` under `base_path`, for the
+	/// network the account store names `network_id`.
+	pub fn new(base_path: PathBuf, network_id: &str, state_directory: &str) -> Result<Self> {
 		let base_path = absolute_path(base_path)?;
-		let network_path = base_path.join(network_id);
+		let network_path = base_path.join(state_directory);
 		let role_path = network_path.join("signing-host");
 		fs::create_dir_all(&role_path)
 			.with_context(|| format!("create session root {}", role_path.display()))?;

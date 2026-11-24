@@ -145,8 +145,7 @@ pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
 /// a change to the TLD, which every account derives under, or to the `id`,
-/// the namespace every session and account is stored under. `None` when both
-/// stay.
+/// the namespace every account is saved under. `None` when both stay.
 pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<String> {
 	if fetched.tld != stored.tld {
 		Some(format!(
@@ -155,8 +154,7 @@ pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<
 		))
 	} else if fetched.id != stored.id {
 		Some(format!(
-			"changes the id from {} to {}, which moves every session and account to another \
-			 namespace",
+			"changes the id from {} to {}, which moves every account to another namespace",
 			stored.id, fetched.id
 		))
 	} else {

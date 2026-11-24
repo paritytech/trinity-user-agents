@@ -11,12 +11,25 @@ use std::{
 	process::{Command, Stdio},
 };
 
+use sha2::{Digest, Sha256};
+
 fn command() -> Command {
 	offline::offline_host_command()
 }
 
+/// The state directory of the stack [`command`] runs on, from the base path.
+///
+/// A stack given as a local file is a stack of its own, whatever `id` its descriptor declares,
+/// so the directory is named from the file's path and is not paseo-next-v2's.
+fn state_directory() -> PathBuf {
+	let file = std::fs::canonicalize(&*offline::OFFLINE_PASEO_NEXT_V2_STACK)
+		.expect("the offline stack file exists");
+	let digest = Sha256::digest(format!("file:{}", file.display()));
+	Path::new("v2").join(format!("stack-{}", hex::encode(&digest[..8])))
+}
+
 fn seed_two_paired_hosts(base_path: &Path) -> PathBuf {
-	let profile = base_path.join("v2/paseo-next-v2/alice_signing_host");
+	let profile = base_path.join(state_directory()).join("alice_signing_host");
 	std::fs::create_dir_all(&profile).expect("create signing-host profile");
 	std::fs::write(
 		profile.join("paired-hosts.json"),
@@ -95,7 +108,7 @@ fn versioned_state_starts_fresh_and_preserves_previous_state() {
 				std::fs::read_to_string(base_path.join("v2/log-level"))
 					.expect("read log preference"),
 				std::fs::read_to_string(
-					base_path.join("v2/paseo-next-v2/signing-host/current-session")
+					base_path.join(state_directory()).join("signing-host/current-session")
 				)
 				.expect("read fresh session selection"),
 			),
@@ -227,7 +240,7 @@ fn bare_script_in_non_tty_exec_mode_fails_without_opening_an_editor() {
 		String::from_utf8_lossy(&output.stderr)
 			.contains("/script without a path requires an interactive terminal")
 	);
-	assert!(!temporary.path().join("v2/paseo-next-v2/signing-host/scripts").exists());
+	assert!(!temporary.path().join(state_directory()).join("signing-host/scripts").exists());
 }
 
 #[test]
@@ -268,7 +281,7 @@ fn startup_session_is_reported_and_restored() {
 #[test]
 fn exec_clear_removes_the_named_session_without_extra_confirmation() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let session_path = temporary.path().join("v2/paseo-next-v2/alice_signing_host");
+	let session_path = temporary.path().join(state_directory()).join("alice_signing_host");
 	std::fs::create_dir_all(&session_path).expect("seed session");
 	std::fs::write(session_path.join("state"), "local state").expect("seed session state");
 
@@ -292,7 +305,7 @@ fn exec_clear_removes_the_named_session_without_extra_confirmation() {
 #[test]
 fn exec_clear_all_removes_every_session_for_the_network() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let network_path = temporary.path().join("v2/paseo-next-v2");
+	let network_path = temporary.path().join(state_directory());
 	let role_path = network_path.join("signing-host");
 	let alice = network_path.join("alice_signing_host");
 	let bob = network_path.join("bob_signing_host");
@@ -458,7 +471,9 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
 	assert!(stdout.contains("Signing host ready"));
 	assert!(stdout.contains("User cachedalice.01"));
 	let metadata = std::fs::read_to_string(
-		base_path.join("v2/paseo-next-v2/cachedalice.01_signing_host/session.json"),
+		base_path
+			.join(state_directory())
+			.join("cachedalice.01_signing_host/session.json"),
 	)
 	.expect("read persisted session identity");
 	assert!(metadata.contains("cachedalice.01"));
@@ -467,7 +482,7 @@ fn existing_local_signer_is_activated_and_cached_at_startup() {
 #[test]
 fn imported_session_restores_the_exact_bound_account() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let network_path = temporary.path().join("v2/paseo-next-v2");
+	let network_path = temporary.path().join(state_directory());
 	let profile = network_path.join("importedalice.01_signing_host");
 	let role_path = network_path.join("signing-host");
 	std::fs::create_dir_all(&profile).expect("create imported profile");
@@ -521,7 +536,7 @@ fn imported_session_restores_the_exact_bound_account() {
 #[test]
 fn imported_session_without_dotns_username_restores_by_account_binding() {
 	let temporary = tempfile::tempdir().expect("create temporary session root");
-	let network_path = temporary.path().join("v2/paseo-next-v2");
+	let network_path = temporary.path().join(state_directory());
 	let session_name = "imported-0123456789abcdef";
 	let profile = network_path.join(format!("{session_name}_signing_host"));
 	let role_path = network_path.join("signing-host");

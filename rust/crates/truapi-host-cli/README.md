@@ -135,6 +135,13 @@ through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
 New script projects live separately under `<base-path>/scripts` so clearing
 host sessions does not delete them.
 
+Each stack keeps its sessions, pairings, and core and product storage in a
+directory of its own under `v2`. A built-in network's is its name, such as
+`v2/paseo-next-v2`. A stack given with `--stack` that is not a built-in
+network's gets `v2/stack-<tag>`, named from the stack's id, so a fork starts
+with none of its source's sessions or stored data. The account store,
+`v2/accounts.json`, is shared.
+
 The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices
 again; sign out first on any paired host that still uses an old identity.
@@ -1034,7 +1041,7 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 `bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
 copy was signed with another key (every derived account, or the namespace every
-session is stored under, would change; remove the copy to bundle it on purpose),
+account is saved under, would change; remove the copy to bundle it on purpose),
 and a built-in network's copy the CLI cannot run on.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields neither truapi-host nor
@@ -1170,9 +1177,11 @@ stack that lacks one of those roles, gives two of them one genesis hash, has a
 no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
-chain. `get_chain_info` reports the descriptor's `network`. The product
-namespace (the state directory) is the descriptor's `id` without a trailing
-`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
+chain. `get_chain_info` reports the descriptor's `network`. Accounts are saved
+under the product namespace, the descriptor's `id` without a trailing `-fork`,
+so a fork has its source's accounts; the `polkadot-fork` namespace is its full
+`id`. Everything else the stack stores is in its own
+[state directory](#state-directory). Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that

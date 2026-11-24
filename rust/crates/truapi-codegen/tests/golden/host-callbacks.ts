@@ -202,7 +202,8 @@ export type CoreStorageKey =
    *
    * Hosts must back this slot with storage scoped to the install, outliving
    * logout and any per-user namespacing: once it changes, peers addressing
-   * the previous key can no longer reach this device.
+   * the previous key can no longer reach this device. A host that runs more
+   * than one stack keeps one key per stack, like every other slot.
    */
   | { tag: "DeviceEncryptionKey"; value?: undefined }
   /**
@@ -1985,6 +1986,12 @@ export interface CoreAdmin {
 /**
  * Host-private persistence for core-owned state.
  *
+ * The keys do not name the stack. A host that can run more than one stack
+ * keeps a separate store for each, picked from the stack's pointer before it
+ * starts the core, so nothing kept for one stack is visible to another. The
+ * same holds for `ProductStorage`, the encrypted store and the core
+ * database directory of a native host.
+ *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
  * has no entry to drop, so those slots outlive the disconnect. A host that
@@ -2402,7 +2409,8 @@ export interface ProductOperations {
  * names the product that owns the value. Host implementations may treat
  * `key` as opaque in one shared store. A host that separates physical storage
  * by product must decode the owner with `ProductStorageKey` on read, since
- * that owner is another product on a granted foreign read.
+ * that owner is another product on a granted foreign read. A host that can run
+ * more than one stack keeps this store per stack, as `CoreStorage` describes.
  * Storage errors are pinned to `v01` rather than taken from `truapi::latest`.
  * The read error gained a cross-product refusal in v0.2 that the core decides
  * before it ever calls a host, so a host has no way to produce it and should

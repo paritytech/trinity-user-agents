@@ -47,7 +47,9 @@ pub async fn run(command: MaterialsCommand, network: &Stack) -> Result<()> {
 	let MaterialsCommand::Resolve { face, materials, metal, out, base_path } = command;
 	let json = fs::read_to_string(&face).with_context(|| format!("reading {}", face.display()))?;
 	let face = truapi::native::parse_renderer_node_json(json).context("reading the face")?;
-	let state = crate::state_base_path(base_path).join(network.namespace()).join("materials");
+	let state = crate::state_base_path(base_path)
+		.join(network.state_directory())
+		.join("materials");
 	let runtime = runtime(network, &state).await?;
 	if let Some(directory) = materials {
 		keep_all(&runtime, &directory).await?;

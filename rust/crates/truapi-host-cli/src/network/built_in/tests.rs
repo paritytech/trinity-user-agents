@@ -162,7 +162,7 @@ fn test_refresh_tld_change_bundle() {
 	assert_eq!(refresh.copy, BuiltInCopy::Rejected);
 }
 
-/// The id is the namespace every session and account is stored under, so a
+/// The id is the namespace every account is saved under, so a
 /// refresh that changes it would move them all.
 #[test]
 fn test_refresh_id_change_bundle() {

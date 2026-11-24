@@ -1251,7 +1251,7 @@ async fn run_pairing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
-	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
+	let storage_paths = CliStoragePaths::pairing(base_path.join(network.state_directory()));
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new_pairing(
 			network.namespace(),
@@ -1369,7 +1369,8 @@ async fn run_signing_host(
 	let product_id = product.current();
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path.clone());
-	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
+	let session_catalog =
+		SessionCatalog::new(base_path.clone(), network.namespace(), &network.state_directory())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
 	let initial_session_names = session_catalog.list()?;
 	let (terminal_ui, ui_handle) = if interactive {
