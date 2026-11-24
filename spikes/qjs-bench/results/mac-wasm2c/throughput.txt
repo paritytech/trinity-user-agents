@@ -1,0 +1,16 @@
+codec guard: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":557.810542,"roundTripsPerSecond":3585.4467590897552,"bytes":1170000}
+codec bounds: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":907.3720830000001,"roundTripsPerSecond":2204.1674385523274,"bytes":1170000}
+codec native: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":438.7995,"roundTripsPerSecond":4557.8903348795975,"bytes":1170000}
+codec wasmi: [info] BENCH_RESULT {"workload":"codec","iterations":2000,"elapsedMs":13015.712791999998,"roundTripsPerSecond":153.6604281272466,"bytes":1170000}
+rxjs guard: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":44.169999999999995,"eventsPerSecond":226398.00769753227,"folded":65922}
+rxjs bounds: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":65.91037499999999,"eventsPerSecond":151721.18198386827,"folded":65922}
+rxjs native: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":32.89625,"eventsPerSecond":303986.0166432344,"folded":65922}
+rxjs wasmi: [info] BENCH_RESULT {"workload":"rxjs","events":10000,"elapsedMs":1053.009208,"eventsPerSecond":9496.59312001002,"folded":65922}
+pingpong-64 guard: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.0024170000000012237,"p95Ms":0.0026250000000000995}
+pingpong-64 bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.003416999999998893,"p95Ms":0.0035410000000020148}
+pingpong-64 native: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.0009170000000000011,"p95Ms":0.0011249999999999316}
+pingpong-64 wasmi: [info] BENCH_RESULT {"workload":"pingpong","bytes":64,"iterations":500,"p50Ms":0.04000000000000625,"p95Ms":0.04262500000000102}
+pingpong-4k guard: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.0026250000000000995,"p95Ms":0.002874999999999517}
+pingpong-4k bounds: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.0035839999999982552,"p95Ms":0.0037920000000006837}
+pingpong-4k native: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.0010409999999999586,"p95Ms":0.0012080000000000979}
+pingpong-4k wasmi: [info] BENCH_RESULT {"workload":"pingpong","bytes":4096,"iterations":500,"p50Ms":0.042833000000001675,"p95Ms":0.044916999999983886}

@@ -15,6 +15,8 @@ never see it.
 - `runner/`: a macOS host on wasmi 2.0.2. It applies fuel per turn and a
   linear-memory cap, links only the WASI calls wasi-libc needs, and echoes
   every outbound frame back to the guest.
+- `runner-wasm2c/`: the same guest translated to C by wasm2c and compiled
+  into the runner, with guard pages or explicit bounds checks (T6).
 - `samples/`: scripts for the T1 checks.
 - `workloads/`: the bench worker, the host frames it is driven with, and
   `corpus/corpus.bin`, the recorded conversation every engine replays (T2).
@@ -149,6 +151,56 @@ instead, which is what Android could use.
 - Fuel metering costs nothing measurable in wasmi (151 against 149 codec
   round trips per second with `--fuel-per-turn 0`), so fuel stays the way to
   stop runaway scripts.
+
+## T6: wasm2c, the sandbox compiled ahead of time
+
+`runner-wasm2c/` translates the same guest module to C with wasm2c (WABT
+1.0.42, `brew install wabt`), compiles it at `-O2` with the wasm2c runtime
+and a small import glue (`c/glue.c`), and links it into the runner. Nothing
+is generated or interpreted at run time, so this is a form iOS allows. The
+generated C keeps the wasm rules: every load and store is checked against
+the guest's linear memory, indirect calls are type-checked, and the guest
+reaches the host only through its imports, whose pointers the glue checks
+before the host reads them. Two variants, chosen at build time with
+`QJS_W2C_MEMCHECK`:
+
+- `guard`: guard pages and a signal handler catch out-of-bounds accesses.
+  Each instance reserves about 8 GiB of address space.
+- `bounds`: an explicit check on every access and a call-depth counter, no
+  address-space reservation.
+
+`scripts/compare-wasm2c.sh` runs both beside native QuickJS and wasmi;
+raw lines are in `results/mac-wasm2c/`. Medians of three runs on the same
+Mac; Cranelift is from the T5 runs.
+
+| Mac | QuickJS native | wasm2c, guard pages | wasm2c, bounds checks | wasm, Cranelift | wasm, wasmi |
+|---|---|---|---|---|---|
+| Corpus replay, 401 steps | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches | 0 mismatches |
+| Render round trip p50 / p95 | 0.15 / 0.16 ms | 0.19 / 0.20 ms | 0.31 / 0.38 ms | 0.39 / 0.41 ms | 4.43 / 4.81 ms |
+| Worker bundle, boot to idle | 7.0 ms | 7.8 ms | 11 to 12 ms | 13.8 ms | 98 ms |
+| Memory per instance (10 live) | 2.1 MiB | 2.5 MiB | 2.5 MiB | 2.5 MiB | 3.7 MiB |
+| W3 codec, round trips/s | 4 558 | 3 585 | 2 204 | 1 772 | 154 |
+| W4 rxjs, events/s | 303 986 | 226 398 | 151 721 | 119 352 | 9 497 |
+| W5 ping-pong 64 B / 4 KB, p50 | 0.9 / 1.0 µs | 2.4 / 2.6 µs | 3.4 / 3.6 µs | | 40 / 43 µs |
+| Runner binary, stripped | 1.07 MB | 1.56 MB | 2.40 MB | | 1.71 MB + 0.88 MB guest |
+
+- The sandbox costs about 1.3 times native with guard pages and about 2
+  times with explicit bounds checks. Both beat Cranelift, because clang
+  optimises the generated C harder than Cranelift compiles wasm, and both
+  are 15 to 30 times faster than wasmi.
+- The memory cap works as on wasmi: the host lowers the guest memory's
+  maximum, and with 8 MiB the script gets a catchable `InternalError: out
+  of memory` after 6 MiB and keeps running.
+- There is no fuel. wasm2c has no instruction metering, so a runaway script
+  is not stopped by this runner. The fix belongs in the guest: QuickJS's
+  interrupt handler, which the native engine already uses, calling a
+  `should_interrupt` import that checks the host's deadline.
+- Guard pages need address space iOS may not give: about 8 GiB per
+  instance, against a per-app limit that depends on the device unless the
+  app has the extended virtual addressing entitlement. The bounds-check
+  variant needs no reservation, so it is the safe default until a device
+  run shows what guard pages allow.
+- Compiling the 13 MB of generated C takes about 10 s per variant here.
 
 ## T2: the corpus
 

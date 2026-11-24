@@ -1,0 +1,1 @@
+RESULT {"engine":"wasm2c-guard-O2","bootMs":7.9,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.194,"renderP95Ms":0.203,"linearMemoryKiB":3520}

@@ -1,0 +1,1 @@
+RESULT {"engine":"wasm2c-bounds-O2","bootMs":12.2,"steps":401,"mismatches":0,"renderSamples":200,"renderP50Ms":0.305,"renderP95Ms":0.382,"linearMemoryKiB":3520}

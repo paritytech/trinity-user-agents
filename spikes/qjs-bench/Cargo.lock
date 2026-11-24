@@ -648,6 +648,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qjs-runner-wasm2c"
+version = "0.0.0"
+dependencies = [
+ "bench-common",
+ "cc",
+ "getrandom",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

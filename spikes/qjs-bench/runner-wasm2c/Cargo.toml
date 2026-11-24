@@ -1,0 +1,12 @@
+[package]
+name = "qjs-runner-wasm2c"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+bench-common = { path = "../bench-common" }
+getrandom = "0.3"
+
+[build-dependencies]
+cc = "1"
