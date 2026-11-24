@@ -26,11 +26,13 @@ extension JSEngineLogger: JSEngineScriptHandling {
               let level = dict["level"] as? String,
               let message = dict["message"] as? String else { return }
 
+        // Console output stays on the device at its own level and carries no `[truapi.*]` tag, so none of
+        // it reaches Sentry. A product reports to its own Sentry project.
         switch level {
         case "error":
-            logger.error(Self.sentLine(message))
+            logger.error("JS: \(message)")
         case "warn":
-            logger.warning(Self.sentLine(message))
+            logger.warning("JS: \(message)")
         default:
             logger.debug("JS: \(message)")
         }
@@ -39,13 +41,6 @@ extension JSEngineLogger: JSEngineScriptHandling {
 
 private extension JSEngineLogger {
     static let handlerName = "__console__"
-
-    /// The same cap the core puts on the details it sends, since these lines leave the device.
-    static let sentMessageMaxCharacters = 512
-
-    static func sentLine(_ message: String) -> String {
-        "[truapi.product] \(message.prefix(sentMessageMaxCharacters))"
-    }
 
     static func consoleOverrideScript() -> String {
         """
