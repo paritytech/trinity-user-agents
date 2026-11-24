@@ -1077,3 +1077,158 @@ fn keyframes_out_of_order_or_at_one_time_jump() {
 		None
 	);
 }
+
+/// Debris from under a finger: two shapes and an image, falling and fading,
+/// with a burst for every kind of trigger.
+fn debris() -> Emitter {
+	Emitter {
+		looks: vec![
+			ParticleLook::Circle { diameter: 300, color: 0xC0C4_CCFF },
+			ParticleLook::Rectangle { width: 400, height: 200, color: 0x8A8F_99FF },
+			ParticleLook::Image {
+				source: ImageSource::Archive("particle.png".into()),
+				width: 600,
+				height: 600,
+			},
+		],
+		source: EmitSource::Pan("pan".into()),
+		rate_per_s: 0,
+		rate_per_100pt: 12,
+		life_ms: 700,
+		speed: ValueRange { min: 4000, max: 12_000 },
+		angle_centideg: -9000,
+		spread_centideg: 12_000,
+		gravity: 90_000,
+		spin: ValueRange { min: -36_000, max: 36_000 },
+		fade_from_permille: 600,
+		end_scale_permille: 400,
+		max_alive: 160,
+		bursts: vec![
+			Burst { count: 40, on: BurstTrigger::Action("done".into()) },
+			Burst { count: 8, on: BurstTrigger::Appear },
+			Burst { count: 20, on: BurstTrigger::Change(3) },
+		],
+	}
+}
+
+/// A still emitter of one dot from a point, bursting once on appearing.
+fn one_dot() -> Emitter {
+	Emitter {
+		looks: vec![ParticleLook::Circle { diameter: 100, color: 0xFFFF_FFFF }],
+		source: EmitSource::Point(point(500, -200)),
+		rate_per_s: 2,
+		rate_per_100pt: 0,
+		life_ms: 1000,
+		speed: ValueRange { min: 0, max: 0 },
+		angle_centideg: 0,
+		spread_centideg: 0,
+		gravity: 0,
+		spin: ValueRange { min: 0, max: 0 },
+		fade_from_permille: 1000,
+		end_scale_permille: 1000,
+		max_alive: 1,
+		bursts: vec![Burst { count: 1, on: BurstTrigger::Appear }],
+	}
+}
+
+/// `Emit` is the modifier after `Animate`. A look, a source and a trigger
+/// each lead with their variant's index.
+#[test]
+fn emit_is_the_modifier_after_animate() {
+	let bytes = Modifier::Emit(one_dot()).encode();
+	assert_eq!(
+		bytes[..20],
+		[23, 4, 0, 100, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 1, 0xF4, 1, 0, 0, 0x38, 0xFF, 0xFF, 0xFF]
+	);
+	// Each burst ends the encoding: one, of one particle, on appearing.
+	assert!(bytes.ends_with(&[4, 1, 0, 0]));
+	assert_eq!(BurstTrigger::Action("a".into()).encode(), vec![1, 4, b'a']);
+	assert_eq!(BurstTrigger::Change(3).encode(), vec![2, 3, 0, 0, 0]);
+	assert_eq!(EmitSource::Area.encode(), vec![2]);
+}
+
+#[test]
+fn emitters_round_trip_through_scale_json_and_uniffi() {
+	let node = RendererNode::Box {
+		modifiers: vec![Modifier::Emit(debris()), Modifier::Emit(one_dot())],
+		props: BoxProps { content_alignment: None },
+		children: vec![renderer_node()],
+	};
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	let json = r#"{"looks":[{"tag":"Circle","value":{"diameter":100,"color":4294967295}}],
+		"source":{"tag":"Point","value":{"x":500,"y":-200}},"ratePerS":2,"ratePer100pt":0,"lifeMs":1000,
+		"speed":{"min":0,"max":0},"angleCentideg":0,"spreadCentideg":0,"gravity":0,"spin":{"min":0,"max":0},
+		"fadeFromPermille":1000,"endScalePermille":1000,"maxAlive":1,"bursts":[{"count":1,"on":{"tag":"Appear"}}]}"#;
+	assert_eq!(serde_json::from_str::<Emitter>(json).unwrap(), one_dot());
+	let trigger: BurstTrigger = serde_json::from_str(r#"{"tag":"Action","value":"done"}"#).unwrap();
+	assert_eq!(trigger, BurstTrigger::Action("done".into()));
+	#[cfg(not(target_arch = "wasm32"))]
+	{
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		assert_eq!(<RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), node);
+	}
+}
+
+/// A particle moves at its speed, falls with gravity, fades after its share
+/// of life, shrinks towards its end scale, and is gone at the end.
+#[test]
+fn a_particle_moves_falls_fades_and_shrinks_over_its_life() {
+	let falling = Emitter {
+		life_ms: 2000,
+		gravity: 200,
+		fade_from_permille: 500,
+		end_scale_permille: 0,
+		..one_dot()
+	};
+	assert_eq!(falling.place_at((10.0, 20.0), 0.0, 0.0, 0), Some((10.0, 20.0, 1.0, 1.0)));
+	assert_eq!(falling.place_at((0.0, 0.0), 0.0, 0.0, 1000), Some((0.0, 100.0, 1.0, 0.5)));
+	assert_eq!(falling.place_at((0.0, 0.0), 1000.0, 0.0, 1500), Some((1500.0, 225.0, 0.5, 0.25)));
+	assert_eq!(falling.place_at((0.0, 0.0), 0.0, 0.0, 2000), None);
+	// Straight down at 1000 a second, with no gravity.
+	let (_, y, ..) = one_dot()
+		.place_at((0.0, 0.0), 1000.0, core::f64::consts::FRAC_PI_2, 500)
+		.unwrap();
+	assert!((y - 500.0).abs() < 1e-9);
+	// A fade from 1000 never fades.
+	assert_eq!(one_dot().place_at((0.0, 0.0), 0.0, 0.0, 999).map(|place| place.2), Some(1.0));
+}
+
+#[test]
+fn a_range_picks_between_its_ends_either_way_round() {
+	assert_eq!(ValueRange { min: 4000, max: 12_000 }.pick(0.25), 6000.0);
+	assert_eq!(ValueRange { min: 12_000, max: 4000 }.pick(0.25), 6000.0);
+	assert_eq!(ValueRange { min: -10, max: 10 }.pick(2.0), 10.0);
+}
+
+/// A particle image travels in the tree as an `Image` node's does, so the
+/// same bytes are refused; a refused look draws no particle.
+#[test]
+fn refused_inline_particle_images_are_emptied() {
+	let png = b"\x89PNG\r\n\x1a\nrest".to_vec();
+	let emitting = |image: Vec<u8>| RendererNode::Gesture {
+		modifiers: vec![Modifier::Emit(Emitter {
+			looks: vec![
+				ParticleLook::Image { source: ImageSource::Inline(image), width: 600, height: 600 },
+				ParticleLook::Image {
+					source: ImageSource::Inline(png.clone()),
+					width: 600,
+					height: 600,
+				},
+			],
+			..one_dot()
+		})],
+		props: GestureProps {
+			tap_action: None,
+			pan: None,
+			accessibility_label: None,
+			enabled: OptionBool(None),
+			haptic_on_complete: OptionBool(None),
+			key: None,
+			feel: None,
+		},
+		children: Vec::new(),
+	};
+	let mut node = emitting(b"<svg/>".to_vec());
+	node.clear_refused_inline_images();
+	assert_eq!(node, emitting(Vec::new()));
+}
