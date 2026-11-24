@@ -120,6 +120,25 @@ enum ItemStatus {
 }
 ```
 
+### Item moves
+
+The chain gives each NFT a budget of fee-less moves (`Scarcity::MaximumMoves`), counted since its last paid
+move. The host moves an NFT with no fee-less move left through a paid move. It pays the fee by claiming PGAS
+into the item's key first, implicitly and without a confirmation, as
+[RFC 0010](0010-allowance.md) does for product accounts. Each such claim spends one slot of the user's daily
+PGAS budget.
+
+| Call | Moves an item paid when it has |
+| --- | --- |
+| `rebalance_purse`, `transfer_item` | no fee-less move left |
+| `refund` | at most one fee-less move left, so the sender's `revoke_cheque` stays fee-less |
+| `deposit`, `revoke_cheque` | never: a sender leaves every handed-off item a fee-less move |
+
+A move whose claim fails, for example when the user has no personhood or no claim slot left today, is
+reported in `Status::Incomplete.failed`. So is a `deposit` or `revoke_cheque` move of an item with no
+fee-less move left. A call over an item whose moves the host has not read from the chain yet answers
+`ItemUnavailable`, and the product calls again.
+
 ### Purse management
 
 #### Create purse
@@ -467,6 +486,8 @@ a listen with `Other`, and the product listens again on the same channel.
 // The host keeps the returned cheque, and `list_cheques` returns it again, so a product
 // that gets OperationExists on a retry finds the cheque there.
 // Asks for a confirmation if owner(from) != PurseOwner::Product(self).
+// Refused with ItemsMovesExhausted, before any confirmation, when some item has no fee-less
+// move left for the recipient's deposit. The product rebalances those items first.
 fn create_cheque(
     from: PurseId,
     to: ChequeDestination,
@@ -483,6 +504,8 @@ enum CreateChequeError {
     // This product already created a cheque with the same id
     OperationExists,
     Other(GenericError),
+    // These items have no fee-less move left
+    ItemsMovesExhausted(Vec<ItemKey>),
 }
 ```
 
@@ -668,6 +691,10 @@ The host's only obligation during backup recovery is to recover all assets. In a
   and can be spent again by the sender, racing the recipient's deposit.
 - Recovered purses without metadata become root-owned, so the product that created them loses default access and has
   to go through the permission flow.
+- A paid move spends one of the user's daily PGAS claim slots without asking. A user without personhood cannot move an
+  NFT that has no fee-less move left.
+- `create_cheque` refuses items with no fee-less move left, so sending one takes a `rebalance_purse` that has landed
+  first.
 
 ## Testing, Security, and Privacy
 
@@ -675,6 +702,8 @@ The host's only obligation during backup recovery is to recover all assets. In a
 - The host stores every cheque it creates, including `encrypted_secrets`, which stay sealed to the recipient.
 - A cheque's cleartext part links item keys and, for `Ephemeral`, the receive key. Products must transmit cheques
   over an encrypted channel.
+- A paid move's PGAS claim names the item key on chain, as the target of `Pgas::claim_pgas`. The claim's ring proof
+  keeps the person who claimed anonymous.
 
 ## Prior Art and References
 
@@ -686,3 +715,5 @@ The host's only obligation during backup recovery is to recover all assets. In a
 - A device transfer feature, which changes the user's primary device and moves local data to the new one, could also
   transfer handoff marks and purse metadata (owning product and name). Unlike backup recovery, purses would then keep
   their owners and names, and items handed off in undeposited cheques would stay `InUse`.
+- Showing the fee of a paid move, which needs a fee estimate and a field in `Status`.
+- `create_cheque` moving items with no fee-less move left into fresh keys itself, instead of refusing them.
