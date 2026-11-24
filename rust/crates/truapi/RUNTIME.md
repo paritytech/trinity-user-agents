@@ -227,9 +227,13 @@ the request.
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
-without a People chain.
+without a People chain, and one on another TLD than the bundled copy, since
+accounts derive under the TLD. A stored descriptor it would refuse is ignored
+until the next one the core takes replaces it, whatever its `sequence`. After
+a refused or failed fetch, `last_refresh` reports that fetch even if writing
+the record fails.
 
-A newer descriptor that changes a genesis hash, the network, the TLD or the
+A newer descriptor that changes a genesis hash, the network or the
 `generation` applies from the next start. Once the core has stored it,
 `StackStatus` has `restart_required` set, and the host builds the runtime
 again. Any other change applies at once. `StackStatus` documents the rest,
@@ -359,7 +363,7 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`, and the host
+bindings expose it as `claim_worker`, one reference per claim, and the host
 reports a worker that stopped without being asked, because it crashed, failed
 to boot or the system killed it, with `worker_exited`: while references remain
 the ledger requests `Start` again, and the core hands the restarted worker its
