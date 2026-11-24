@@ -5,9 +5,7 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy. The [`Stack`] it resolves holds the network, the dotNS TLD,
-//! each chain's genesis hash and the `AccountDataStore` contract address, and
-//! answers `get_chain_info`.
+//! the same policy. It resolves the [`Stack`] the core runs on.
 
 mod records;
 mod refresh;
@@ -133,15 +131,32 @@ impl ReservedValuesPolicy {
 	}
 }
 
-/// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
-/// the genesis hash of each chain role the core uses, and the Asset Hub
-/// contracts the core reads.
+/// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
+/// reports, the dotNS TLD, the genesis hash of each chain role the core uses,
+/// and the Asset Hub contracts the core reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
+	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
 	account_data_store: Option<[u8; 20]>,
+}
+
+/// A stack's id and the generation of its chains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackIdentity {
+	/// An opaque, non-empty string that tells this stack apart from others,
+	/// including a fork with its source's genesis hashes.
+	///
+	/// [`Stack::bundled`] and [`StackRefresh::load`] take
+	/// `trinity_stack::Pointer::stack_id` of the pointer, the key in hex. The CLI takes the same
+	/// for a link or a URL, and `file:` and the canonical path for a local descriptor file. A
+	/// test host passes any string.
+	pub id: String,
+	/// The descriptor's `generation`, which changes whenever the stack
+	/// restarts its chains, as after a wipe. Must not be empty.
+	pub generation: String,
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -187,6 +202,12 @@ pub enum StackError {
 	ZeroGenesis {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
+	},
+	/// The stack's id or generation is empty.
+	#[display("stack {field} is empty")]
+	EmptyIdentity {
+		/// `id` or `generation`.
+		field: &'static str,
 	},
 	/// The TLD is not one the core serves dotNS names under.
 	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
@@ -243,14 +264,17 @@ impl Stack {
 		reserved_values.refuse_extras_that_reserve_nothing()?;
 		let pointer = signed_pointer(pointer)?;
 		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
-		Self::from_descriptor(&verified.descriptor, reserved_values)
+		Self::from_descriptor(&pointer, &verified.descriptor, reserved_values)
 	}
 
-	/// The stack a verified descriptor names, when the core can run it under
-	/// `reserved_values`, a policy already checked. A reserved genesis hash is
-	/// refused under any role, including one the core does not read.
+	/// The stack a verified descriptor read from `pointer` names, when the
+	/// core can run it under `reserved_values`, a policy already checked. Its
+	/// id is the pointer's and its generation the descriptor's. A reserved
+	/// genesis hash is refused under any role, including one the core does
+	/// not read.
 	/// `validUntil` and `expiresAt` are not checked.
 	fn from_descriptor(
+		pointer: &Pointer,
 		descriptor: &Descriptor,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
@@ -264,7 +288,10 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
+		let identity =
+			StackIdentity { id: pointer.stack_id(), generation: descriptor.generation.clone() };
 		let stack = Self::from_chains(
+			identity,
 			descriptor.network.clone(),
 			descriptor.tld.clone(),
 			chains,
@@ -277,25 +304,32 @@ impl Stack {
 	/// bundled descriptor, such as the CLI's. It names no contracts.
 	///
 	/// Applies the same policy, TLD and reserved-value rules as
-	/// [`Self::bundled`], and refuses an all-zero Relay or Asset Hub genesis
-	/// hash.
+	/// [`Self::bundled`], and refuses an empty id or generation and an
+	/// all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		reserved_values.refuse_extras_that_reserve_nothing()?;
-		Self::from_chains(network, tld, chains, reserved_values)
+		Self::from_chains(identity, network, tld, chains, reserved_values)
 	}
 
-	/// Checks a stack's TLD and chains under a policy already checked.
+	/// Checks a stack's identity, TLD and chains under a policy already
+	/// checked.
 	fn from_chains(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
+		let fields = [("id", &identity.id), ("generation", &identity.generation)];
+		if let Some((field, _)) = fields.into_iter().find(|(_, value)| value.is_empty()) {
+			return Err(StackError::EmptyIdentity { field });
+		}
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
 		}
@@ -308,7 +342,17 @@ impl Stack {
 		}
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
-		Ok(Self { network, tld, chains, account_data_store: None })
+		Ok(Self { identity, network, tld, chains, account_data_store: None })
+	}
+
+	/// The stack's identity. See [`StackIdentity::id`].
+	pub fn id(&self) -> &str {
+		&self.identity.id
+	}
+
+	/// The run of the stack's chains. See [`StackIdentity::generation`].
+	pub fn generation(&self) -> &str {
+		&self.identity.generation
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

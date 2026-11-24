@@ -49,7 +49,8 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	ProductStorageKey, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -1022,10 +1023,18 @@ pub fn mock_stack(
 	bulletin: truapi::Bytes32,
 	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
+	let identity =
+		crate::platform::StackIdentity { id: "mock".to_string(), generation: "mock".to_string() };
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	let reserved_values = crate::platform::ReservedValuesPolicy::default();
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, &reserved_values)
-		.expect("a mock stack names no reserved value")
+	crate::platform::Stack::new(
+		identity,
+		"mock".to_string(),
+		"paseo".to_string(),
+		chains,
+		&reserved_values,
+	)
+	.expect("a mock stack names no reserved value")
 }
 
 /// Placeholder genesis hashes for the chains a mock host serves.

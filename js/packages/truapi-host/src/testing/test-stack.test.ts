@@ -58,7 +58,7 @@ suite("test stack against the real core", () => {
     await expect(
       starting({ ...onDot, allowsReservedValues: true } as TestStack),
     ).rejects.toThrow(
-      "runtimeConfig.testStack.allowsReservedValues is not a field; runtimeConfig.testStack takes network, tld, relay, assetHub, people, bulletin, reservedValues",
+      "runtimeConfig.testStack.allowsReservedValues is not a field; runtimeConfig.testStack takes id, generation, network, tld, relay, assetHub, people, bulletin, reservedValues",
     );
   });
 });

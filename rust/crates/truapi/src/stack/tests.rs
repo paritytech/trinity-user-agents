@@ -41,6 +41,10 @@ fn bundled(
 	Stack::bundled(&pointer, &bytes, reserved_values)
 }
 
+fn identity() -> StackIdentity {
+	StackIdentity { id: "stack".to_string(), generation: "generation".to_string() }
+}
+
 fn info(
 	stack: &Stack,
 	chain: ChainIdentifier,
@@ -152,6 +156,7 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 
 	assert_eq!(
 		tlds.map(|tld| Stack::new(
+			identity(),
 			"paseo".into(),
 			tld.into(),
 			chains.clone(),
@@ -206,14 +211,21 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 	assert_eq!(
 		(
 			Stack::new(
+				identity(),
 				"polkadot".into(),
 				"paseo".into(),
 				chains.clone(),
 				&ReservedValuesPolicy::default()
 			)
 			.err(),
-			Stack::new("polkadot".into(), "paseo".into(), chains, &ReservedValuesPolicy::ALLOWED)
-				.is_ok(),
+			Stack::new(
+				identity(),
+				"polkadot".into(),
+				"paseo".into(),
+				chains,
+				&ReservedValuesPolicy::ALLOWED
+			)
+			.is_ok(),
 		),
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
@@ -283,7 +295,8 @@ fn allowed_reserved_values_with_extra_ones_are_refused() {
 		policies.map(|policy| {
 			(
 				bundled(&descriptor, &policy).err(),
-				Stack::new("paseo".into(), "paseo".into(), chains.clone(), &policy).err(),
+				Stack::new(identity(), "paseo".into(), "paseo".into(), chains.clone(), &policy)
+					.err(),
 			)
 		}),
 		[(); 2]
@@ -326,7 +339,7 @@ fn a_policy_fault_is_reported_before_the_stacks() {
 		[
 			bundled(&on_kusama, &policy),
 			Stack::bundled(&test_stack_link(None), &bytes, &policy),
-			Stack::new("paseo".into(), "kusama".into(), zero_asset_hub, &policy),
+			Stack::new(identity(), "paseo".into(), "kusama".into(), zero_asset_hub, &policy),
 		],
 		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })),
 	);
@@ -338,13 +351,70 @@ fn a_policy_fault_is_reported_before_the_stacks() {
 fn an_all_zero_relay_or_asset_hub_is_refused() {
 	let stack = |relay, asset_hub| {
 		let chains = StackChains { relay, asset_hub, people: [0xa1; 32], bulletin: [0xb2; 32] };
-		Stack::new("paseo".into(), "paseo".into(), chains, &ReservedValuesPolicy::ALLOWED)
+		Stack::new(
+			identity(),
+			"paseo".into(),
+			"paseo".into(),
+			chains,
+			&ReservedValuesPolicy::ALLOWED,
+		)
 	};
 
 	assert_eq!(
 		[stack(Some([0; 32]), [0xc3; 32]), stack(None, [0; 32])],
 		[ChainIdentifier::Relay, ChainIdentifier::AssetHub]
 			.map(|chain| Err(StackError::ZeroGenesis { chain })),
+	);
+}
+
+/// The id comes from the pointer's key and the generation from the
+/// descriptor.
+#[test]
+fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let (link, _) = sign_test_descriptor(&descriptor);
+	let stack = bundled(&descriptor, &ReservedValuesPolicy::default()).expect("stack is valid");
+
+	assert_eq!(
+		(stack.id(), stack.generation()),
+		(
+			Pointer::from_link(&link)
+				.expect("test link is a stack link")
+				.stack_id()
+				.as_str(),
+			descriptor["generation"].as_str().expect("test descriptor names a generation"),
+		)
+	);
+}
+
+/// An empty id or generation names no stack and no run of its chains, so
+/// either is refused.
+#[test]
+fn a_stack_without_an_id_or_a_generation_is_refused() {
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
+	let stack = |id: &str, generation: &str| {
+		let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
+		Stack::new(
+			identity,
+			"paseo".into(),
+			"paseo".into(),
+			chains.clone(),
+			&ReservedValuesPolicy::default(),
+		)
+		.err()
+	};
+
+	assert_eq!(
+		(stack("", "generation"), stack("stack", "")),
+		(
+			Some(StackError::EmptyIdentity { field: "id" }),
+			Some(StackError::EmptyIdentity { field: "generation" }),
+		)
 	);
 }
 

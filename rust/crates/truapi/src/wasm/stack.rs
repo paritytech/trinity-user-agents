@@ -10,15 +10,15 @@ use send_wrapper::SendWrapper;
 use truapi::latest::GenericError;
 use wasm_bindgen::{JsCast, JsValue};
 
+#[cfg(feature = "test-host")]
+use super::get_required_bytes32_at;
 use super::{
 	await_optional_promise, bytes32_from_js, call_js_function, get_optional_array_at,
 	get_optional_bool_at, get_optional_function, get_optional_object, get_optional_string_at,
 	get_required_object, get_required_string_at, js_to_string, string_from_js,
 };
 #[cfg(feature = "test-host")]
-use super::get_required_bytes32_at;
-#[cfg(feature = "test-host")]
-use crate::platform::StackChains;
+use crate::platform::{StackChains, StackIdentity};
 use crate::{
 	Spawner,
 	platform::{
@@ -100,15 +100,25 @@ pub fn stack_status_to_js(refresh: Option<&StackRefresh>) -> JsValue {
 	refresh.map_or(JsValue::UNDEFINED, |refresh| status_to_js(&refresh.status()))
 }
 
-/// `runtimeConfig.testStack`: `network`, `tld`, `assetHub`, `people`,
-/// `bulletin` and the optional `relay`, each `{ genesisHash }`, and the
-/// optional `reservedValues`.
+/// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
+/// `assetHub`, `people`, `bulletin` and the optional `relay`, each
+/// `{ genesisHash }`, and the optional `reservedValues`.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	refuse_unknown_fields(
 		stack,
 		"runtimeConfig.testStack",
-		&["network", "tld", "relay", "assetHub", "people", "bulletin", "reservedValues"],
+		&[
+			"id",
+			"generation",
+			"network",
+			"tld",
+			"relay",
+			"assetHub",
+			"people",
+			"bulletin",
+			"reservedValues",
+		],
 	)?;
 	let genesis = |role: &str| {
 		let path = format!("runtimeConfig.testStack.{role}");
@@ -129,7 +139,16 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		people: required("people")?,
 		bulletin: required("bulletin")?,
 	};
+	let identity = StackIdentity {
+		id: get_required_string_at(stack, "id", "runtimeConfig.testStack.id")?,
+		generation: get_required_string_at(
+			stack,
+			"generation",
+			"runtimeConfig.testStack.generation",
+		)?,
+	};
 	Stack::new(
+		identity,
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,

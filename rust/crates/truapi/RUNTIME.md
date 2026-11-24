@@ -175,9 +175,8 @@ after activation. A name the host passes is shown until a record answers.
 
 ### Stack
 
-Both host configs carry a `Stack`, the core's only chain configuration: the
-Relay, Asset Hub, People and Bulletin genesis hashes, the network
-`get_chain_info` reports, and the dotNS TLD.
+Both host configs carry a `Stack`, the core's only chain configuration. Its
+doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell puts three things in its runtime config: the stack's
 pointer, the signed descriptor its build bundles, and the build's

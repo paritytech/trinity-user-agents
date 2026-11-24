@@ -244,7 +244,12 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
 		let bundled = truapi::platform::Stack::bundled(&link, built_in.bundle, &allowed)
 			.expect("the bundled copy starts an app");
+		let identity = truapi::platform::StackIdentity {
+			id: bundled.id().to_string(),
+			generation: bundled.generation().to_string(),
+		};
 		let expected = truapi::platform::Stack::new(
+			identity,
 			bundled.network().to_string(),
 			bundled.tld().to_string(),
 			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
@@ -253,4 +258,24 @@ fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 
 		assert_eq!(network.bundled_stack(ChainBackend::Rpc).core_stack(), expected, "{network:?}");
 	}
+}
+
+/// A built-in stack is signed, so its bare URL has to resolve to the same
+/// stack as its network name. Read as an unsigned stack it would get another
+/// id, and the core would find none of the state stored under the name.
+#[test]
+fn a_built_in_stack_named_by_its_url_keeps_its_key() {
+	for network in Network::value_variants() {
+		let pointer = network.built_in_stack().pointer();
+		let key = pointer.key().map(|key| format!("0x{}", hex::encode(key)));
+		let link = pointer.to_link(trinity_stack::DEFAULT_LINK_BASE);
+
+		assert_eq!(
+			(built_in_key(pointer.url().as_str()), built_in_key(&link)),
+			(key, None),
+			"{network:?}"
+		);
+	}
+	assert_eq!(built_in_key("https://stack.test.invalid/other.json"), None);
+	assert_eq!(built_in_key("./stack.json"), None);
 }

@@ -109,17 +109,19 @@ struct HeldCopy {
 
 impl HeldCopy {
 	fn try_new(
+		pointer: &Pointer,
 		verified: Verified,
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
-		let stack = Stack::from_descriptor(&verified.descriptor, reserved_values)?;
+		let stack = Stack::from_descriptor(pointer, &verified.descriptor, reserved_values)?;
 		Ok(Self { descriptor: verified.descriptor, stack })
 	}
 
 	/// Whether the core can switch to `newer` while it runs: nothing it built
-	/// its services from differs, and the chains did not restart.
+	/// its services from differs, including the generation, so the chains did
+	/// not restart.
 	fn runs_as(&self, newer: &Self) -> bool {
-		self.stack == newer.stack && self.descriptor.generation == newer.descriptor.generation
+		self.stack == newer.stack
 	}
 }
 
@@ -146,7 +148,7 @@ impl Opened {
 		let read = reader.get(pointer, now_unix_seconds);
 		let current = read.current.expect("a reader loaded with a build copy has a copy");
 		Ok(Self {
-			running: HeldCopy::try_new(current.stack, reserved_values)?,
+			running: HeldCopy::try_new(pointer, current.stack, reserved_values)?,
 			reader,
 			first_fetch: read.fetch,
 			stale: current.stale,
@@ -307,7 +309,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		});
-		let held = match HeldCopy::try_new(accepted.stack, &self.reserved_values) {
+		let held = match HeldCopy::try_new(&self.pointer, accepted.stack, &self.reserved_values) {
 			Ok(held) => held,
 			Err(error) => {
 				self.last_refresh = Some(match outcome {
@@ -358,7 +360,7 @@ impl StackSource {
 	fn refusal(&self, served: Served) -> Option<String> {
 		let Served::Document { bytes, .. } = served else { return None };
 		let verified = open(bytes, &self.pointer).ok()?;
-		Stack::from_descriptor(&verified.descriptor, &self.reserved_values)
+		Stack::from_descriptor(&self.pointer, &verified.descriptor, &self.reserved_values)
 			.err()
 			.map(|error| error.to_string())
 	}

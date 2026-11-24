@@ -47,12 +47,12 @@ struct ProductNotificationSchedulerSweepTests {
     }
 
     private func book() async throws -> UInt32 {
-        try await scheduler.schedule(productId: productId, request: request)
+        try await scheduler.schedule(productId: productId, title: nil, request: request)
     }
 
     private func bookInBackground() -> Task<UInt32, any Error> {
         Task { [scheduler, productId, request] in
-            try await scheduler.schedule(productId: productId, request: request)
+            try await scheduler.schedule(productId: productId, title: nil, request: request)
         }
     }
 
@@ -209,7 +209,7 @@ struct ProductNotificationSchedulerSweepTests {
     func aBookingRecordsWhenItIsDue(requestedMs: UInt64, reportedMs: Int) async throws {
         let dated = ScheduledNotificationRequest(text: request.text, deeplink: nil, scheduledAtMs: requestedMs)
 
-        let id = try await scheduler.schedule(productId: productId, request: dated)
+        let id = try await scheduler.schedule(productId: productId, title: nil, request: dated)
 
         let expected = expectedProductNotificationHostEvent(
             "scheduled",
