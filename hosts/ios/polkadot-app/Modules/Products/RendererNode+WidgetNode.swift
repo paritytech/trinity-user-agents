@@ -166,6 +166,8 @@ private extension [Modifier] {
         var blendingMode: BlendMode?
         var style = NodeStyleByValue()
         var mask: CustomMessageWidgetNode.Mask?
+        var enter: CustomMessageWidgetNode.Enter?
+        var tracks: [CustomMessageWidgetNode.Track] = []
 
         for modifier in self {
             switch modifier {
@@ -216,10 +218,13 @@ private extension [Modifier] {
                 style.take(modifier)
             case let .mask(value):
                 mask = value.widgetMask
-            case .enter,
-                 .animate:
-                // The iPhone enter-and-keyframes layer plays these; until then the node draws as the tree does.
-                break
+            case let .enter(value):
+                enter = value.widgetEnter
+            case let .animate(track):
+                // A node keeps its last track per property.
+                let mapped = track.widgetTrack
+                tracks.removeAll { $0.property == mapped.property }
+                tracks.append(mapped)
             case .emit:
                 // The iPhone particle layer draws emitters; until then the node draws with no particles.
                 break
@@ -249,7 +254,9 @@ private extension [Modifier] {
             shimmer: style.shimmer,
             spinPeriod: style.spinPeriod,
             exitFade: style.exitFade,
-            mask: mask
+            mask: mask,
+            enter: enter,
+            tracks: tracks
         )
     }
 }

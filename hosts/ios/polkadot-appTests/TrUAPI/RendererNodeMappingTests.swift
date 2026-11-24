@@ -441,6 +441,54 @@ struct RendererNodeMappingTests {
         #expect(props.key == "pad")
     }
 
+    @Test func enterAndTracksMapInPointsDegreesAndSeconds() throws {
+        let linear = Curve(x1: 0, y1: 0, x2: 1_000, y2: 1_000)
+        let enter = Enter(
+            from: Pose(opacityPermille: 0, scalePermille: 900, x: 0, y: 1_200, rotationCentideg: -500),
+            motion: .spring(Spring(omegaCenti: 1_800, dampingCenti: 80)),
+            delayMs: 50
+        )
+        let pulse = Keyframes(
+            frames: [Keyframe(atMs: 0, value: 0, curve: linear), Keyframe(atMs: 100, value: 1_000, curve: linear)],
+            repeat: 0,
+            alternate: true
+        )
+        let node = RendererNode.box(
+            modifiers: [
+                .enter(enter),
+                .animate(Track(property: .scale, play: .keyframes(pulse))),
+                .animate(Track(
+                    property: .offsetX,
+                    play: .follow(target: -400, motion: .timed(ms: 250, curve: linear))
+                )),
+                .animate(Track(property: .scale, play: .follow(target: 1_500, motion: .timed(ms: 250, curve: linear)))),
+            ],
+            props: BoxProps(contentAlignment: nil),
+            children: []
+        )
+        let modifiers = try #require(node.toWidgetNode(resolver: resolver)).modifiers
+        #expect(modifiers.enter == .init(
+            from: .init(opacity: 0, scale: 0.9, offset: CGSize(width: 0, height: 12), rotation: -5),
+            motion: .spring(omega: 18, damping: 0.8),
+            delay: 0.05
+        ))
+        let timed = CustomMessageWidgetNode.Motion.timed(duration: 0.25, curve: .linear)
+        #expect(modifiers.tracks == [
+            .init(property: .offsetX, play: .follow(target: -4, motion: timed)),
+            .init(property: .scale, play: .follow(target: 1.5, motion: timed)),
+        ], "a node keeps its last track per property")
+        let keyframes = try #require(
+            RendererNode.box(
+                modifiers: [.animate(Track(property: .rotation, play: .keyframes(pulse)))],
+                props: BoxProps(contentAlignment: nil),
+                children: []
+            ).toWidgetNode(resolver: resolver)?.modifiers.tracks.first
+        )
+        #expect(keyframes == .init(property: .rotation, play: .keyframes(.init(
+            frames: [.init(at: 0, value: 0), .init(at: 0.1, value: 10)], runs: 0, alternate: true
+        ))))
+    }
+
     @Test func aPressFeelScalesTheAxesApart() throws {
         let feel = { (down: UInt16?) in
             PanFeel(

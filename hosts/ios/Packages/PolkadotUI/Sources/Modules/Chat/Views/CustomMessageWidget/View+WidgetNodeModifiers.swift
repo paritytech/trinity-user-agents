@@ -28,6 +28,8 @@ extension View {
             .modifier(PanFadeModifier(fade: modifiers.panFade))
             // 5b. Drawn moved, its layout unchanged
             .offset(modifiers.translate)
+            // 5c. Played in and moved on the host's clock, its layout unchanged
+            .modifier(NodeMotionModifier(enter: modifiers.enter, tracks: modifiers.tracks))
             // 6. Outer margin
             .padding(modifiers.margin)
             // 7. A dropped node's exit
