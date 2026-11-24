@@ -112,7 +112,7 @@ private extension WalletView {
             cardAt: position,
             openAt: openPosition,
             openOffset: viewModel.openPocketCardOffset,
-            cleared: viewModel.isPocketCleared
+            clearance: viewModel.pocketClearance
         )
     }
 
@@ -134,7 +134,7 @@ private extension WalletView {
         .alignmentGuide(.bottom) { dimensions in
             dimensions[.top] + collectiblesPeekHeight
         }
-        .opacity(viewModel.isPocketCleared || viewModel.collectiblesPeek == .lifted ? 0 : 1)
+        .opacity(viewModel.collectiblesPeek == .lifted ? 0 : 1 - viewModel.pocketClearance)
     }
 }
 

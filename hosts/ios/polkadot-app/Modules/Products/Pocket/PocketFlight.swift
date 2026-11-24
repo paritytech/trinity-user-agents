@@ -22,7 +22,7 @@ enum PocketFlightTiming {
     private static let curveStart = CGPoint(x: 0.34, y: 1.2)
     private static let curveEnd = CGPoint(x: 0.64, y: 1)
 
-    static var animation: Animation {
+    static func animation(duration: TimeInterval) -> Animation {
         .timingCurve(curveStart.x, curveStart.y, curveEnd.x, curveEnd.y, duration: duration)
     }
 
