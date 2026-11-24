@@ -25,7 +25,8 @@ pub struct HostChatCreateRoomRequest {
 	/// exists. The host keeps it across restarts. A change of
 	/// `product_source` discards the messages that the host stores for the
 	/// room, or the pages that it caches. A host that cannot keep this
-	/// configuration refuses the request and creates and changes nothing.
+	/// configuration refuses the request with `UnsupportedConfig` and creates
+	/// and changes nothing.
 	pub config: ChatRoomConfig,
 }
 
@@ -64,6 +65,10 @@ pub enum HostChatCreateRoomError {
 		/// Human-readable reason.
 		reason: String,
 	},
+	/// The host cannot keep the configuration of the request. It created and
+	/// changed nothing.
+	#[display("the host cannot keep this room configuration")]
+	UnsupportedConfig,
 }
 
 /// Request to post a message to a chat room.

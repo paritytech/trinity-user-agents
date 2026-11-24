@@ -294,7 +294,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// and for a room that exists. A change of `productSource` discards the
     /// stored messages or the cached pages of the room.
     ///
-    /// Throw ``HostChatCreateRoomError/Unknown(reason:)`` for a configuration
+    /// Throw ``HostChatCreateRoomError/UnsupportedConfig`` for a configuration
     /// the host cannot keep, before it creates or changes anything. The
     /// default keeps only ``ChatRoomConfig/hostDefault``.
     func createRoom(roomId: String, name: String, icon: String, config: ChatRoomConfig) async throws
@@ -366,9 +366,7 @@ public extension ChatHostBridge {
         icon: String,
         config: ChatRoomConfig
     ) async throws -> ChatRoomRegistrationStatus {
-        guard config == .hostDefault else {
-            throw HostChatCreateRoomError.Unknown(reason: "this host keeps only the default room configuration")
-        }
+        guard config == .hostDefault else { throw HostChatCreateRoomError.UnsupportedConfig }
         return try await createRoom(roomId: roomId, name: name, icon: icon)
     }
 

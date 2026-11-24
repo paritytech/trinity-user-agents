@@ -1965,15 +1965,13 @@ fn native_chat_adapter_creates_a_room_with_its_configuration() {
 	assert!(callbacks.chat_declared.lock().expect("declared mutex poisoned").is_empty());
 }
 
-// The host's own refusal of a configuration reaches the product as the host
-// wrote it, and no room is left behind.
+// The host's own refusal of a configuration reaches the product by its name,
+// and no room is left behind.
 #[test]
-fn native_chat_adapter_passes_a_refused_configuration_through() {
+fn native_chat_adapter_reports_a_refused_configuration_by_name() {
 	let (callbacks, platform, product) = chat_adapter();
-	let refusal = || truapi::latest::HostChatCreateRoomError::Unknown {
-		reason: "this host keeps only the default configuration".to_string(),
-	};
-	*callbacks.chat_room_refusal.lock().expect("room refusal mutex poisoned") = Some(refusal());
+	*callbacks.chat_room_refusal.lock().expect("room refusal mutex poisoned") =
+		Some(truapi::latest::HostChatCreateRoomError::UnsupportedConfig);
 
 	let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
@@ -1985,7 +1983,7 @@ fn native_chat_adapter_passes_a_refused_configuration_through() {
 		},
 	));
 
-	assert_eq!(created, Err(refusal()));
+	assert_eq!(created, Err(truapi::latest::HostChatCreateRoomError::UnsupportedConfig));
 	assert!(
 		callbacks
 			.chat_created_rooms

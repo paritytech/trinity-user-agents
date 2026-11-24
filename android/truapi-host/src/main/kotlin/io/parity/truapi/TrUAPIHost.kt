@@ -524,9 +524,9 @@ interface ChatHostBridge {
      * and for a room that exists. A change of `productSource` discards the
      * stored messages or the cached pages of the room.
      *
-     * Throw [HostChatCreateRoomException.Unknown] for a configuration the
-     * host cannot keep, before it creates or changes anything. The default
-     * keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
+     * Throw [HostChatCreateRoomException.UnsupportedConfig] for a
+     * configuration the host cannot keep, before it creates or changes
+     * anything. The default keeps only [HOST_DEFAULT_CHAT_ROOM_CONFIG].
      */
     @Throws(HostChatCreateRoomException::class)
     suspend fun createRoom(
@@ -535,9 +535,7 @@ interface ChatHostBridge {
         icon: String,
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
-        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) {
-            throw HostChatCreateRoomException.Unknown("this host keeps only the default room configuration")
-        }
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw HostChatCreateRoomException.UnsupportedConfig()
         return createRoom(roomId, name, icon)
     }
 

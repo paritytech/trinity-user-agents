@@ -8,6 +8,6 @@ the room and keeps it with the room in one step: `createRoom(roomId:name:icon:co
 `createRoom` in Kotlin. The three-argument `createRoom`, `postMessage` and `setRoomFooter` keep their shapes. A host
 that does not implement the new requests yet keeps serving products as before. The four-argument `createRoom` creates
 a room with the default configuration through the three-argument one, and refuses any other configuration with
-`HostChatCreateRoomError.Unknown` (`HostChatCreateRoomException` in Kotlin) before it creates anything. The other
-defaults accept the room metadata and refuse every other request. A `HostRejection` that `createRoom` or `updateFeed`
-throws reaches the product with the reason that the host wrote.
+`HostChatCreateRoomError.UnsupportedConfig` (`HostChatCreateRoomException` in Kotlin) before it creates anything. The
+other defaults accept the room metadata and refuse every other request. A `HostRejection` that `createRoom` or
+`updateFeed` throws reaches the product with the reason that the host wrote.

@@ -361,7 +361,7 @@ class ProductChatHostBridgeTest {
                 .createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
         }.exceptionOrNull()
 
-        assertTrue(thrown is HostChatCreateRoomException.Unknown)
+        assertTrue(thrown is HostChatCreateRoomException.UnsupportedConfig)
         coVerify(exactly = 0) { messaging.createRoom(any()) }
         coVerify(exactly = 0) { messaging.setRoomConfig(any(), any()) }
     }

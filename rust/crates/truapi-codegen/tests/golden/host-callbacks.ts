@@ -1771,9 +1771,9 @@ export interface ChatPlatform {
    * restarts, for a new room and for a room that exists: the configuration
    * replaces the one the host keeps. A change of `product_source` discards
    * the stored messages or the cached pages of the room. A host that cannot
-   * keep a configuration other than the default refuses it with `Unknown`,
-   * before it creates or changes anything. A request from a product built
-   * against the earlier client carries the default configuration.
+   * keep a configuration other than the default answers `UnsupportedConfig`
+   * for it, before it creates or changes anything. A request from a product
+   * built against the earlier client carries the default configuration.
    */
   createChatRoom(
     product: ProductContext,

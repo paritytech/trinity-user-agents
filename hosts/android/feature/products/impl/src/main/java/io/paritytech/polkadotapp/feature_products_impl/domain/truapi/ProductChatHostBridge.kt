@@ -47,9 +47,7 @@ class ProductChatHostBridge(
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        if (config.productSource) {
-            throw HostChatCreateRoomException.Unknown("this host does not serve product-source rooms")
-        }
+        if (config.productSource) throw HostChatCreateRoomException.UnsupportedConfig()
         val roomIcon = ProductChatIcon.fromString(icon).orReject()
         val room = ProductChatIdParameter(roomId)
         val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status
