@@ -235,7 +235,8 @@ refused the same way. A fresher relay checkpoint, and a fork made again from a
 later block, change the relay's `lightSpec` and so need a new build.
 
 The pins fix what the descriptor names for those fields, so a stolen
-descriptor key cannot name other chains, assets or contracts for such a stack.
+descriptor key cannot name other genesis hashes, assets or contracts for such a
+stack.
 They do not cover what a host reads from the chains. The descriptor's
 endpoints are not pinned and the core does not check genesis hashes against
 the live chains, so those reads are protected only by a light client that
