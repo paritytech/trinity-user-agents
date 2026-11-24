@@ -3106,6 +3106,31 @@ fn a_chain_that_stays_halted_is_unavailable() {
 	assert_eq!((failure, heard.heard()), (Some(RuntimeFailureKind::Unavailable), Vec::new()));
 }
 
+/// The check can pause for most of a minute while the chain is halted, with
+/// no request out for the silence deadline to time. A caller that gives up
+/// meanwhile must not leave the setup with nothing to drive it, holding the
+/// socket until the next caller on the chain or the scope's release. The setup
+/// goes on alone, and closes the socket once the halt outlasts its retries.
+#[test]
+fn a_connection_no_caller_waits_for_still_closes_once_the_halt_outlasts_the_check() {
+	let named = [0xa1; 32];
+	let provider = node_halted_for(usize::MAX, named);
+	let timer = Arc::new(crate::time::ManualTimer::default());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test())
+		.with_timer(timer.clone())
+		.checking_genesis(Arc::<HeardAnswers>::default());
+
+	let given_up = runtime.rpc_client("test", &named).now_or_never();
+	for (sleep, pause) in chain_halt::halt_schedule().into_iter().enumerate() {
+		crate::test_support::wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
+		timer.advance(pause);
+	}
+
+	assert!(given_up.is_none(), "a halted chain is not handed out at once");
+	let socket_closed = || provider.sender.lock().unwrap().is_none();
+	crate::test_support::wait_until(socket_closed, "the socket closes");
+}
+
 /// A product mints its follow id from the request id it chose, which is
 /// arbitrary text off the wire. The line naming the occupants leaves the
 /// device, so it names the runtime and not what the product called itself.

@@ -74,6 +74,7 @@ use truapi::v01::{
 
 use crate::{
 	Spawner,
+	background_task::BackgroundTask,
 	host_rpc_client::HostRpcClient,
 	time::{RealTimer, Timer},
 };
@@ -1181,9 +1182,14 @@ impl ChainRuntime {
 					}
 					.boxed()
 					.shared();
+					let driver = BackgroundTask::spawn(&self.spawner, setup.clone().map(drop));
 					connections.insert(
 						key,
-						ConnectionEntry::Connecting { identity, setup: setup.clone() },
+						ConnectionEntry::Connecting {
+							identity,
+							setup: setup.clone(),
+							_driver: driver,
+						},
 					);
 					setup
 				},
@@ -1366,7 +1372,15 @@ impl ChainRuntime {
 }
 
 enum ConnectionEntry {
-	Connecting { identity: Arc<()>, setup: ConnectionSetup },
+	/// A connection being opened through `setup`, which `_driver` polls as
+	/// well as each caller waiting for it. A setup every caller gave up on
+	/// still ends, so it lets go of its socket or leaves the connection ready
+	/// for the next caller. Dropping the entry stops the driver.
+	Connecting {
+		identity: Arc<()>,
+		setup: ConnectionSetup,
+		_driver: BackgroundTask,
+	},
 	Ready(Arc<ChainConnection>),
 }
 
