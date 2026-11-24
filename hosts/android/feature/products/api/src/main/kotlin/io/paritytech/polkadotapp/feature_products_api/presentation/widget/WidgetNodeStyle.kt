@@ -237,7 +237,9 @@ internal fun ExitFadeChildren(parent: JsWidget, content: @Composable (JsWidget) 
                     exits.leaving.remove(exit)
                     exits.finished.intValue += 1
                 }
-                Box(Modifier.graphicsLayer { this.alpha = alpha.value }) { content(slot.widget) }
+                // The exit layer must blend with the backdrop outside its alpha layer.
+                val blending = slot.widget.modifiers().filterIsInstance<JsModifier.BlendingMode>().toComposeModifier()
+                Box(blending.graphicsLayer { this.alpha = alpha.value }) { content(slot.widget) }
             }
         }
     }

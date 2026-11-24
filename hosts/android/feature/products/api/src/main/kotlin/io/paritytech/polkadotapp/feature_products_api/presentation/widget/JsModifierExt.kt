@@ -41,7 +41,7 @@ fun List<JsModifier>.toComposeModifier(): Modifier {
  * Compose applies modifiers outside-in, and each one covers only what the ones after it draw.
  * Opacity, blending and the mask therefore have to come before the background and border, or a faded
  * node keeps an opaque background, a blended one never blends the surface it paints, and a masked one
- * keeps its background whole. A node keeps its last mask.
+ * keeps its background whole. Blending surrounds opacity layers so it reaches the backdrop. A node keeps its last mask.
  *
  * The rest follows the frame: margin outside, then the surface, then the content's padding and size.
  * A shaped background also clips the content to its shape, after the border so the border stays whole.
@@ -57,9 +57,9 @@ internal fun List<JsModifier>.orderedForCompose(): List<JsModifier> = (lastMaskO
         when (it) {
             is JsModifier.Margin -> 0
             is JsModifier.Translate -> 1
-            is JsModifier.Opacity -> 2
-            is JsModifier.FadeWithPan -> 3
-            is JsModifier.BlendingMode -> 4
+            is JsModifier.Opacity -> 3
+            is JsModifier.FadeWithPan -> 4
+            is JsModifier.BlendingMode -> 2
             is JsModifier.Spin -> 5
             is JsModifier.Mask -> 6
             is JsModifier.Shadow -> 7

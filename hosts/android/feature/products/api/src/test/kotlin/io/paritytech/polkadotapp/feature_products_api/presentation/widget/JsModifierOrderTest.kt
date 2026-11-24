@@ -19,7 +19,15 @@ class JsModifierOrderTest {
     fun `opacity and blending come before the surface they are meant to cover`() {
         val ordered = listOf(background, opacity, border, blending).orderedForCompose()
 
-        assertEquals(listOf(opacity, blending, background, border), ordered)
+        assertEquals(listOf(blending, opacity, background, border), ordered)
+    }
+
+    @Test
+    fun `screen reaches the backdrop outside both opacity and pan fade`() {
+        val screen = JsModifier.BlendingMode(JsBlendingMode.SCREEN)
+        val fade = JsModifier.FadeWithPan("pan", 1f)
+
+        assertEquals(listOf(screen, opacity, fade), listOf(opacity, fade, screen).orderedForCompose())
     }
 
     // The protocol has no clip of its own, so a rounded background is how a face rounds an image.
@@ -72,6 +80,6 @@ class JsModifierOrderTest {
 
         val ordered = listOf(background, fill, first, shadow, opacity, last, spin, blending).orderedForCompose()
 
-        assertEquals(listOf(opacity, blending, spin, last, shadow, fill, background), ordered)
+        assertEquals(listOf(blending, opacity, spin, last, shadow, fill, background), ordered)
     }
 }

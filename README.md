@@ -1103,3 +1103,5 @@ The renderer also supports worker-drawn `Gesture` containers with tap and pan ac
 The Android host supports keyed gesture offset updates in chat and room footers,
 with one outstanding move per display frame and full-tree replacement taking
 precedence. See [keyed gesture rendering](hosts/android/README.md#keyed-gesture-rendering).
+
+On Android, a node keeps its blend mode when opacity, a pan fade or an exit fade makes it translucent.
