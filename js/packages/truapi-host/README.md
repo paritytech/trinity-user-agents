@@ -73,9 +73,11 @@ refresh it.
   chain data by it.
 
 The core keeps the last copy it verified in core storage, under the
-`StackRecord` key, and starts from it when it is newer than the bundled one.
-`create` waits a few seconds at most for that read, then starts from the
-bundled copy.
+`StackRecord` key. It starts from that copy when it is newer than the bundled
+one and passes the checks a fetched copy has to pass. A stored copy that names a
+value `reservedValues` reserves, or one on another TLD, is ignored, and the core
+starts from the bundled copy. `create` waits a few seconds at most for that
+read, then starts from the bundled copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.
