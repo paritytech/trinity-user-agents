@@ -135,7 +135,9 @@ impl ChatPlatform for CliChatHost {
 		// room for the product, so it keeps only the default configuration. It
 		// refuses another one before it creates anything.
 		if request.config != ChatRoomConfig::default() {
-			return Err(HostChatCreateRoomError::UnsupportedConfig);
+			return Err(HostChatCreateRoomError::Unknown {
+				reason: "this host keeps only the default room configuration".to_string(),
+			});
 		}
 		let mut state = self.lock();
 		let status = if state.rooms.contains_key(&room_id) {

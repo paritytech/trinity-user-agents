@@ -50,8 +50,8 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
-import uniffi.truapi.NativeChatRoomRejection
 import uniffi.truapi.ProductId
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
@@ -212,13 +212,13 @@ class ProductChatHostBridgeTest {
     @Test
     fun `a declared config is answered as declared`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
-        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)
+        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true)
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
             Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
 
         val config = ProductChatHostBridge(productId, messaging).roomConfig(ROOM)
 
-        assertTrue(config.reportSeen)
+        assertTrue(config.reactionDetails)
         assertFalse(config.productSource)
     }
 
@@ -234,7 +234,7 @@ class ProductChatHostBridgeTest {
         val bridge = ProductChatHostBridge(productId, messaging)
 
         // The configuration arrives with the room, in one call.
-        bridge.createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reportSeen = true))
+        bridge.createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reactionDetails = true))
         bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null, placeholder = null))
         bridge.setRoomPreview(
             ROOM,
@@ -250,7 +250,7 @@ class ProductChatHostBridgeTest {
         )
         bridge.deleteRoom(ROOM)
 
-        coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)) }
+        coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reactionDetails = true)) }
         coVerify { messaging.setRoomMetadata(room, "Lobby", null, ChatRoomMetadataModel("Play here", placeholder = null)) }
         coVerify {
             messaging.setRoomPreview(
@@ -361,7 +361,7 @@ class ProductChatHostBridgeTest {
                 .createRoom(ROOM, "Lobby", "", HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
         }.exceptionOrNull()
 
-        assertTrue(thrown is NativeChatRoomRejection.UnsupportedConfig)
+        assertTrue(thrown is HostChatCreateRoomException.Unknown)
         coVerify(exactly = 0) { messaging.createRoom(any()) }
         coVerify(exactly = 0) { messaging.setRoomConfig(any(), any()) }
     }

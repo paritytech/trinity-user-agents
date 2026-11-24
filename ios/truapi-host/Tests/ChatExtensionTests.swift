@@ -34,14 +34,14 @@ struct ChatHostBridgeDefaultsTests {
         var config = ChatRoomConfig.hostDefault
         config.productSource = true
 
-        await #expect(throws: NativeChatRoomRejection.UnsupportedConfig) {
+        await #expect(throws: HostChatCreateRoomError.self) {
             _ = try await bridge.createRoom(roomId: "room", name: "Room", icon: "", config: config)
         }
         #expect(bridge.createdRooms.isEmpty)
         await #expect(throws: HostRejection.self) {
             try await bridge.deleteRoom(roomId: "room")
         }
-        await #expect(throws: NativeChatFeedRejection.self) {
+        await #expect(throws: HostRejection.self) {
             try await bridge.updateFeed(
                 roomId: "room",
                 update: .statusChanged(messageId: "message", status: .read),

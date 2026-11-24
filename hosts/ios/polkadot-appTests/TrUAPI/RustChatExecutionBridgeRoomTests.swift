@@ -255,11 +255,11 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
 
 private extension RustChatExecutionBridgeRoomTests {
     var config: Chat.RoomConfig {
-        Chat.RoomConfig(productSource: true, reactionDetails: true, reportSeen: true)
+        Chat.RoomConfig(productSource: true, reactionDetails: true)
     }
 
     var wireConfig: ChatRoomConfig {
-        ChatRoomConfig(productSource: true, reactionDetails: true, reportSeen: true)
+        ChatRoomConfig(productSource: true, reactionDetails: true)
     }
 
     func makeBridge() async -> RustChatExecutionBridge {

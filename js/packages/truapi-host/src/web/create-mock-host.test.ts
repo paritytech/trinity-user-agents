@@ -783,7 +783,6 @@ describe("createMockHost TestHostAPI parity", () => {
     const config = {
       productSource: true,
       reactionDetails: false,
-      reportSeen: true,
     };
     // The configuration arrives with the room, in one call.
     await host.callbacks.chat!.createChatRoom(product, "main", {
@@ -792,18 +791,15 @@ describe("createMockHost TestHostAPI parity", () => {
       icon: "",
       config,
     });
-    // A feed update answers what the host did with it, not an error.
     const update = {
       tag: "Deleted",
       value: { messageId: "m1" },
     } as const;
-    expect(
-      await host.callbacks.chat!.updateChatFeed!(
-        product,
-        { roomId: "main", update },
-        false,
-      ),
-    ).toBe("Applied");
+    await host.callbacks.chat!.updateChatFeed!(
+      product,
+      { roomId: "main", update },
+      false,
+    );
 
     expect(host.chatRoomDeclarations("main")).toEqual({
       feed: [[update, false]],

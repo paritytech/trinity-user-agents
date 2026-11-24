@@ -22,8 +22,8 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.HostChatCreateRoomException
 import uniffi.truapi.HostRejection
-import uniffi.truapi.NativeChatRoomRejection
 import uniffi.truapi.ProductId
 
 /**
@@ -47,7 +47,9 @@ class ProductChatHostBridge(
         config: ChatRoomConfig,
     ): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        if (config.productSource) throw NativeChatRoomRejection.UnsupportedConfig()
+        if (config.productSource) {
+            throw HostChatCreateRoomException.Unknown("this host does not serve product-source rooms")
+        }
         val roomIcon = ProductChatIcon.fromString(icon).orReject()
         val room = ProductChatIdParameter(roomId)
         val status = chatMessaging.createRoom(CreateProductRoomRequest(room, name, roomIcon)).orReject().status

@@ -12,11 +12,11 @@ struct ChatRoomDeclarationsStoreTests {
     @Test func eachConfigurationPersistsAndStartsANewGeneration() async throws {
         try await createRoom()
 
-        try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: reportingSeen)
-        try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: reportingSeen)
+        try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: withReactionDetails)
+        try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: withReactionDetails)
 
         let declarations = try await fixture.context.roomDeclarations(for: fixture.bot, roomId: "lobby")
-        #expect(declarations.config == reportingSeen)
+        #expect(declarations.config == withReactionDetails)
         #expect(declarations.configGeneration == 2)
     }
 
@@ -55,7 +55,7 @@ struct ChatRoomDeclarationsStoreTests {
         try await createRoom()
         try await fixture.save(fixture.userMessage(.text("hello"), roomId: "lobby"))
 
-        try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: reportingSeen)
+        try await fixture.context.setRoomConfig(for: fixture.bot, roomId: "lobby", config: withReactionDetails)
 
         #expect(try await fixture.messages("lobby").count == 1)
     }
@@ -72,12 +72,12 @@ struct ChatRoomDeclarationsStoreTests {
 }
 
 private extension ChatRoomDeclarationsStoreTests {
-    var reportingSeen: Chat.RoomConfig {
-        Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
+    var withReactionDetails: Chat.RoomConfig {
+        Chat.RoomConfig(productSource: false, reactionDetails: true)
     }
 
     var productSource: Chat.RoomConfig {
-        Chat.RoomConfig(productSource: true, reactionDetails: false, reportSeen: false)
+        Chat.RoomConfig(productSource: true, reactionDetails: false)
     }
 
     func createRoom() async throws {

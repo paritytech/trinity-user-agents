@@ -11,9 +11,9 @@ import Testing
 /// expected bytes follow the field order of `v01::ChatRoomConfig`.
 struct ChatRoomDeclarationCodingTests {
     @Test func aConfigurationHasTheWireLayout() throws {
-        let config = Chat.RoomConfig(productSource: true, reactionDetails: false, reportSeen: true)
+        let config = Chat.RoomConfig(productSource: true, reactionDetails: false)
 
-        let expected = Data([1, 0, 1])
+        let expected = Data([1, 0])
         #expect(try config.scaleEncoded() == expected)
         #expect(try Chat.RoomConfig.fromScaleEncoded(expected) == config)
     }
@@ -23,7 +23,7 @@ struct ChatRoomDeclarationCodingTests {
         let facade = UserDataStorageTestFacade()
         let declarations = try await facade.databaseService.performWrite { context in
             let entity = try context.insertNew(CDChatRoomMetadata.self)
-            entity.config = Data([1, 0])
+            entity.config = Data([1])
             let declarations = Chat.RoomDeclarations(entity: entity)
             context.rollback()
             return declarations
