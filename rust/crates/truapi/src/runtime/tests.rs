@@ -4231,7 +4231,9 @@ fn showing_overlay(
 	answer: futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>,
 ) -> (
 	String,
-	std::thread::JoinHandle<Result<crate::host_logic::funding::FundingSession, super::funding::OpenFundingError>>,
+	std::thread::JoinHandle<
+		Result<crate::host_logic::funding::FundingSession, super::funding::OpenFundingError>,
+	>,
 ) {
 	let platform = GatedFundingPlatform::new(services, Some(answer));
 	assert!(services.funding().install_platform(platform.clone()));
@@ -9155,11 +9157,12 @@ const RAMP_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","ent
 
 /// Offer `provider_id` as a funding provider publishing `manifest`.
 fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {
-	services
-		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+	services.set_funding_providers(vec![
+		crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
-		}]);
+		},
+	]);
 }
 
 /// A provider's worker connection, signed in.
@@ -10260,15 +10263,14 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	services
-		.set_funding_providers(
-			["ramp.dot", "slow.dot"]
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	services.set_funding_providers(
+		["ramp.dot", "slow.dot"]
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10336,11 +10338,12 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 fn an_ask_without_a_country_takes_the_detected_one() {
 	let services = funding_services();
 	assert!(services.funding().install_platform(RecordingFundingPlatform::in_country("pt")));
-	services
-		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+	services.set_funding_providers(vec![
+		crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		}]);
+		},
+	]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10383,15 +10386,14 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	services
-		.set_funding_providers(
-			["ramp.dot", "cheap.dot"]
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	services.set_funding_providers(
+		["ramp.dot", "cheap.dot"]
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10503,11 +10505,12 @@ fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
 			.is_some_and(|rows| rows.is_empty())),
 		"no provider listed yet"
 	);
-	services
-		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+	services.set_funding_providers(vec![
+		crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: ProductId::for_test("ramp.dot"),
 			worker_manifest: Some(RAMP_MANIFEST.to_string()),
-		}]);
+		},
+	]);
 
 	let rows = shown_when(&services, &intent, |rows| {
 		rows.iter()
@@ -10571,15 +10574,14 @@ fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>,
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_feed(platform.clone()));
 	assert!(services.funding().install_platform(platform.clone()));
-	services
-		.set_funding_providers(
-			["ramp.dot", "slow.dot"]
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	services.set_funding_providers(
+		["ramp.dot", "slow.dot"]
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -10946,8 +10948,7 @@ fn quotes_in_flight_end_once_a_provider_takes_the_session() {
 		product_id: ProductId::for_test(provider_id),
 		worker_manifest: Some(RAMP_MANIFEST.to_string()),
 	};
-	services
-		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
+	services.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")]);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -11003,17 +11004,16 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 			.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
 		let crypto_only =
 			RAMP_MANIFEST.replace(r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]},"#, "");
-		services
-			.set_funding_providers(vec![
-				crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test("ramp.dot"),
-					worker_manifest: Some(germany_only),
-				},
-				crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test("chain.dot"),
-					worker_manifest: Some(crypto_only),
-				},
-			]);
+		services.set_funding_providers(vec![
+			crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test("ramp.dot"),
+				worker_manifest: Some(germany_only),
+			},
+			crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test("chain.dot"),
+				worker_manifest: Some(crypto_only),
+			},
+		]);
 		let intent = futures::executor::block_on(services.open_funding(
 			None,
 			new_intent(),
@@ -13050,15 +13050,14 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let first = served_session(&before, 10);
-	before
-		.set_funding_providers(
-			["ramp.dot", "other.dot"]
-				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(provider),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.to_vec(),
-		);
+	before.set_funding_providers(
+		["ramp.dot", "other.dot"]
+			.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(provider),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.to_vec(),
+	);
 	let second = futures::executor::block_on(before.open_funding(
 		None,
 		new_intent(),
@@ -13466,16 +13465,15 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let providers: Vec<String> = (0..12).map(|index| format!("ramp{index}.dot")).collect();
-	services
-		.set_funding_providers(
-			providers
-				.iter()
-				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: ProductId::for_test(product_id),
-					worker_manifest: Some(RAMP_MANIFEST.to_string()),
-				})
-				.collect(),
-		);
+	services.set_funding_providers(
+		providers
+			.iter()
+			.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+				product_id: ProductId::for_test(product_id),
+				worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			})
+			.collect(),
+	);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
 		new_intent(),
@@ -13816,7 +13814,8 @@ fn provider_frames_report_their_lifecycle() {
 			)
 		})
 		.collect();
-	let row = |name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
+	let row =
+		|name: &str, target: &str, value| (format!("truapi.funding.{name}"), text(target), value);
 	assert_eq!(
 		frames,
 		[
