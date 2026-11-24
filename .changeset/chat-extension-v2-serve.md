@@ -18,6 +18,10 @@ with `updateFeed`.
 and for a room that exists, or refuses it with the new `UnsupportedConfig` error of `createRoom` before it creates
 anything. A change of `productSource` discards the stored messages or the cached pages of the room.
 
+Breaking for a v2 product: the configuration has `productSource` and `reactionDetails`. A room with `productSource`
+also gets the `Seen` user action when the user sees its newest message, because RFC 0002 makes seen reports part of
+the message source. `setRoomPreview` and `updateFeed` have no `RateLimited` error.
+
 Breaking for a web host that serves chat: its `chat` callbacks must now also implement `listChatRooms`,
 `readChatRoomConfig`, `setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and `updateChatFeed`, and its
 `createChatRoom` keeps `request.config` with the room. A typed host that leaves out a callback does not compile, and a
@@ -29,6 +33,6 @@ Breaking for a Rust `ChatPlatform` host: `create_chat_room` keeps `request.confi
 `UnsupportedConfig` before it creates anything. `ChatPlatform` has `list_chat_rooms`, `read_chat_room_config`,
 `set_chat_room_metadata`, `set_chat_room_preview`, `delete_chat_room` and `update_chat_feed`, each with a default, and
 `update_chat_feed` answers a `ChatFeedOutcome`. A host whose room list subscription registers a listener implements
-`list_chat_rooms`. The Rust defaults and the Swift and Kotlin bridges
-have one contract: a room reads as the default configuration, a room with the default configuration and room metadata
-are accepted and the metadata changes nothing, and every other request is refused.
+`list_chat_rooms`. The Rust defaults and the Swift and Kotlin bridges have one contract: a room reads as the default
+configuration, a room with the default configuration and room metadata are accepted and the metadata changes nothing,
+and every other request is refused.

@@ -599,8 +599,7 @@ fn a_room_takes_the_configuration_of_its_last_create_room() {
 		.expect("create_room accepts the room");
 		created.into_latest().room_id
 	};
-	let sourced =
-		latest::ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true };
+	let sourced = latest::ChatRoomConfig { product_source: true, reaction_details: true };
 
 	let room_id = create(latest::ChatRoomConfig::default());
 	update_feed(&runtime, &room_id, text_message("product")).expect("a stored update");
@@ -643,7 +642,7 @@ fn a_host_that_cannot_keep_a_configuration_creates_no_room() {
 	};
 
 	assert_eq!(
-		create(latest::ChatRoomConfig { report_seen: true, ..Default::default() }),
+		create(latest::ChatRoomConfig { reaction_details: true, ..Default::default() }),
 		Err(CallError::Domain(HostChatCreateRoomError::V2(
 			latest::HostChatCreateRoomError::UnsupportedConfig
 		)))

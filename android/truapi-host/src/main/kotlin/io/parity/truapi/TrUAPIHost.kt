@@ -637,7 +637,7 @@ interface ChatHostBridge {
  * messages and serves every part of the room itself.
  */
 val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
-    ChatRoomConfig(productSource = false, reactionDetails = false, reportSeen = false)
+    ChatRoomConfig(productSource = false, reactionDetails = false)
 
 private fun unservedChatRequest(request: String): HostRejection =
     HostRejection.Rejected("this host does not serve chat $request")

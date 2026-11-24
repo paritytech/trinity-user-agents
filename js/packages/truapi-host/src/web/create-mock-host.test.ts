@@ -783,7 +783,6 @@ describe("createMockHost TestHostAPI parity", () => {
     const config = {
       productSource: true,
       reactionDetails: false,
-      reportSeen: true,
     };
     // The configuration arrives with the room, in one call.
     await host.callbacks.chat!.createChatRoom(product, "main", {

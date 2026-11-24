@@ -404,7 +404,7 @@ public extension ChatRoomConfig {
     /// The configuration of a room that declares nothing: the host stores the
     /// messages and serves every part of the room itself.
     static var hostDefault: ChatRoomConfig {
-        ChatRoomConfig(productSource: false, reactionDetails: false, reportSeen: false)
+        ChatRoomConfig(productSource: false, reactionDetails: false)
     }
 }
 
