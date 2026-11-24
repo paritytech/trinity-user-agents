@@ -21,7 +21,7 @@ struct ProductWorkerTests {
         let owner = try attempt.openExecution(bridge: StubHostBridge())
         let socket = try connect(owner)
         defer { socket.cancel(with: .normalClosure, reason: nil) }
-        #expect(owner.reportWorkerModuleStarted())
+        #expect(attempt.moduleStarted())
         let execution = try #require(await executions.next())
         let render = try execution.render(ProductRendererRenderRequest(context: .pocketCard(cardId: "live"), payload: Data()))
         defer { withExtendedLifetime(render) {} }
@@ -33,7 +33,7 @@ struct ProductWorkerTests {
         pocket.release()
         #expect(await stops.next() == attempt.id())
         #expect(runtime.currentWorkerExecution(productId: product) == nil)
-        #expect(!owner.reportWorkerModuleStarted())
+        #expect(!attempt.moduleStarted())
         runtime.shutdownProductWorkers()
     }
 
