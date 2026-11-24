@@ -2,7 +2,7 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, Weak, atomic::Ordering},
+	sync::{Arc, Weak, atomic::Ordering},
 };
 
 use futures::{StreamExt, channel::mpsc};
@@ -10,7 +10,7 @@ use parking_lot::{MappedMutexGuard, MutexGuard};
 
 use super::{
 	HostCallbacks, HostRejection, NativeChatCallbacks, NativeGameCallbacks, NativeProductExecution,
-	NativeRuntimeConfigError, NativeSubscription, NativeTrUApiHostRuntime, NativeWorkerExecution,
+	NativeSubscription, NativeTrUApiHostRuntime, NativeWorkerExecution,
 };
 use crate::{
 	background_task::BackgroundTask,
@@ -41,9 +41,9 @@ pub enum NativeWorkerExecutionState {
 		/// Consumer operations on this execution.
 		execution: Arc<dyn NativeWorkerExecution>,
 	},
-	/// The attempt exited and its retry has not started.
+	/// The worker failed to start or exited while still needed.
 	Failed {
-		/// Why startup or the running WebView failed.
+		/// Why this worker is unavailable.
 		reason: String,
 	},
 }
@@ -147,58 +147,26 @@ impl Drop for Registry {
 	}
 }
 
-/// The managed session and the platform services its controller uses.
+/// The session's worker state and the platform services its controller uses.
 pub struct Session {
 	registry: Registry,
-	worker_host: Arc<dyn NativeWebViewWorkerHost>,
+	worker_host: Option<Arc<dyn NativeWebViewWorkerHost>>,
 	callbacks: Weak<dyn HostCallbacks>,
 }
 
-/// Worker executions owned by the host or by this session's controller.
-pub enum Workers {
-	/// Host-owned executions, replaced when the host opens another worker for the product.
-	External(Mutex<HashMap<ProductId, Weak<NativeProductExecution>>>),
-	/// The managed session until shutdown.
-	Managed(parking_lot::Mutex<Option<Session>>),
+impl Session {
+	/// Keep worker state until shutdown, including failed starts on hosts without a launcher.
+	pub fn new(
+		callbacks: &Arc<dyn HostCallbacks>,
+		worker_host: Option<Arc<dyn NativeWebViewWorkerHost>>,
+	) -> Self {
+		Self { registry: Registry::default(), worker_host, callbacks: Arc::downgrade(callbacks) }
+	}
 }
 
-impl Workers {
-	/// Create the session that owns these workers.
-	pub fn managed(
-		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Arc<dyn NativeWebViewWorkerHost>,
-	) -> Self {
-		Self::Managed(parking_lot::Mutex::new(Some(Session {
-			registry: Registry::default(),
-			worker_host,
-			callbacks: Arc::downgrade(callbacks),
-		})))
-	}
-
-	/// Replace an externally controlled worker. Managed workers open through their attempt.
-	pub fn register_external(
-		&self,
-		execution: &Arc<NativeProductExecution>,
-	) -> Result<(), NativeRuntimeConfigError> {
-		let Self::External(external) = self else {
-			return Err(NativeRuntimeConfigError::Invalid {
-				reason: "open a managed worker through its startup attempt".into(),
-			});
-		};
-		let previous = external
-			.lock()
-			.expect("worker registry mutex poisoned")
-			.insert(execution.product.product_id.clone(), Arc::downgrade(execution))
-			.and_then(|previous| previous.upgrade());
-		if let Some(previous) = previous {
-			previous.shutdown();
-		}
-		Ok(())
-	}
-
-	fn session(&self) -> Option<MappedMutexGuard<'_, Session>> {
-		let Self::Managed(session) = self else { return None };
-		MutexGuard::try_map(session.lock(), Option::as_mut).ok()
+impl NativeTrUApiHostRuntime {
+	fn worker_session(&self) -> Option<MappedMutexGuard<'_, Session>> {
+		MutexGuard::try_map(self.workers.lock(), Option::as_mut).ok()
 	}
 }
 
@@ -229,7 +197,7 @@ impl NativeWorkerAttempt {
 		let stale =
 			|| HostRejection::Rejected { reason: "worker startup is no longer pending".into() };
 		let runtime = self.runtime.upgrade().ok_or_else(stale)?;
-		let mut session = runtime.workers.session().ok_or_else(stale)?;
+		let mut session = runtime.worker_session().ok_or_else(stale)?;
 		let Some(Entry::Active { id, phase: Phase::Starting { owner, .. }, .. }) =
 			session.registry.entries.get_mut(&self.product)
 		else {
@@ -271,7 +239,7 @@ impl NativeWorkerAttempt {
 	fn fail_if(&self, reason: String, applies: impl FnOnce(&Phase) -> bool) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
 		let old = {
-			let Some(mut session) = runtime.workers.session() else { return };
+			let Some(mut session) = runtime.worker_session() else { return };
 			let registry = &mut session.registry;
 			let Some(Entry::Active { id, phase, .. }) = registry.entries.get(&self.product) else {
 				return;
@@ -307,7 +275,7 @@ impl NativeWorkerAttempt {
 	/// Withdraw a disconnected worker until its WebView authenticates a new connection.
 	pub fn disconnected(self: &Arc<Self>) {
 		let Some(runtime) = self.runtime.upgrade() else { return };
-		let Some(mut session) = runtime.workers.session() else { return };
+		let Some(mut session) = runtime.worker_session() else { return };
 		let registry = &mut session.registry;
 		let Some(Entry::Active { id, phase, .. }) = registry.entries.get_mut(&self.product) else {
 			return;
@@ -326,7 +294,7 @@ impl NativeWorkerAttempt {
 
 	fn update_readiness(&self, module_started: bool) -> bool {
 		let Some(runtime) = self.runtime.upgrade() else { return false };
-		let Some(mut session) = runtime.workers.session() else { return false };
+		let Some(mut session) = runtime.worker_session() else { return false };
 		let registry = &mut session.registry;
 		let Some(Entry::Active { id, phase, .. }) = registry.entries.get_mut(&self.product) else {
 			return false;
@@ -378,18 +346,25 @@ pub fn install_controller(runtime: &Arc<NativeTrUApiHostRuntime>) {
 impl WorkerController for Controller {
 	fn start_worker(&self, product_id: &ProductId, id: u64) {
 		let Some(runtime) = self.0.upgrade() else { return };
-		let attempt = Arc::new(NativeWorkerAttempt {
-			product: product_id.clone(),
-			id,
-			runtime: self.0.clone(),
-		});
 		let (previous, webview) = {
-			let Some(mut session) = runtime.workers.session() else { return };
+			let Some(mut session) = runtime.worker_session() else { return };
 			if !runtime.runtime.worker_ledger().is_current(product_id, id) {
 				return;
 			}
-			let webview =
-				Arc::new(WebView { host: session.worker_host.clone(), attempt: attempt.clone() });
+			let Some(host) = session.worker_host.clone() else {
+				session
+					.registry
+					.entries
+					.insert(product_id.clone(), Entry::Failed("no worker host configured".into()));
+				session.registry.changed(product_id);
+				return;
+			};
+			let attempt = Arc::new(NativeWorkerAttempt {
+				product: product_id.clone(),
+				id,
+				runtime: self.0.clone(),
+			});
+			let webview = Arc::new(WebView { host, attempt });
 			// A stop racing startup must reach the native host after its start callback returns.
 			let started = webview.clone();
 			let entry = Entry::Active {
@@ -397,7 +372,7 @@ impl WorkerController for Controller {
 				phase: Phase::Starting {
 					owner: None,
 					module_ready: false,
-					_timeout: attempt.deadline(&runtime),
+					_timeout: webview.attempt.deadline(&runtime),
 				},
 				cancel: Box::new(move || drop(started)),
 			};
@@ -408,13 +383,13 @@ impl WorkerController for Controller {
 		if let Some(previous) = previous {
 			previous.stop();
 		}
-		webview.host.start(product_id.clone(), attempt);
+		webview.host.start(product_id.clone(), webview.attempt.clone());
 	}
 
 	fn stop_worker(&self, product_id: &ProductId) {
 		let Some(runtime) = self.0.upgrade() else { return };
 		let previous = {
-			let Some(mut session) = runtime.workers.session() else { return };
+			let Some(mut session) = runtime.worker_session() else { return };
 			let Some(previous) = session.registry.entries.remove(product_id) else { return };
 			session.registry.changed(product_id);
 			previous
@@ -426,17 +401,15 @@ impl WorkerController for Controller {
 		if let Some(callbacks) = self
 			.0
 			.upgrade()
-			.and_then(|runtime| runtime.workers.session()?.callbacks.upgrade())
+			.and_then(|runtime| runtime.worker_session()?.callbacks.upgrade())
 		{
 			callbacks.worker_crashing(product_id.clone(), crashes);
 		}
 	}
 
 	fn shutdown(&self) {
-		if let Some(runtime) = self.0.upgrade() &&
-			let Workers::Managed(managed) = &runtime.workers
-		{
-			let session = managed.lock().take();
+		if let Some(runtime) = self.0.upgrade() {
+			let session = runtime.workers.lock().take();
 			drop(session);
 		}
 	}
@@ -449,7 +422,7 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		product_id: ProductId,
 	) -> Option<Arc<dyn NativeWorkerExecution>> {
-		match self.workers.session()?.registry.entries.get(&product_id) {
+		match self.worker_session()?.registry.entries.get(&product_id) {
 			Some(Entry::Active { phase: Phase::Running(owner), .. }) => Some(owner.clone()),
 			_ => None,
 		}
@@ -465,7 +438,7 @@ impl NativeTrUApiHostRuntime {
 		observer: Arc<dyn NativeWorkerExecutionObserver>,
 	) -> Arc<NativeSubscription> {
 		let (sender, mut states) = mpsc::unbounded();
-		if let Some(mut session) = self.workers.session() {
+		if let Some(mut session) = self.worker_session() {
 			let registry = &mut session.registry;
 			sender
 				.unbounded_send(registry.state(&product_id))

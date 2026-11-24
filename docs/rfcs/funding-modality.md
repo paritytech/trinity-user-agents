@@ -373,7 +373,7 @@ The host app can be closed or crash at any point; a session carries on from its 
   payment requests recorded for it, by id. On start the core reloads them, takes the worker of every session a provider
   still serves, follows each named top-up and payment again, and assigns each session to its worker again once that
   worker connects.
-- **When only the worker crashes.** The host reports it with `worker_exited`. While a session or an open overlay still
+- **When only the worker crashes.** The host reports the failed worker to the core. While a session or an open overlay still
   holds that worker, the core asks the host to start it again, and assigns it every session it serves once it connects,
   each with its `last_update`. Crashes less than a minute apart form a run: the first restart is immediate, then each
   waits 1 s, doubling up to 5 min. On the run's third crash the host hears `worker_crashing` and tells the user the

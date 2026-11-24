@@ -4,7 +4,7 @@ use crate::platform::{
 };
 use truapi::latest;
 
-use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
+use crate::PairedSsoPeer;
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
@@ -184,12 +184,6 @@ pub trait HostCallbacks: Send + Sync {
 	async fn transaction_extension_versions(
 		&self,
 	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
-
-	/// Report a product's first claim (`Start`) or final release (`Stop`) in ledger order.
-	///
-	/// The callback belongs to the host runtime and can run synchronously on the thread that
-	/// acquires or releases a claim. Dispatch work to the appropriate thread without blocking.
-	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// The product's worker crashed `crashes` times in a row while it was
 	/// needed: tell the user that product is not working. The core keeps

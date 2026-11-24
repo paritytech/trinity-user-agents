@@ -28,7 +28,6 @@ use crate::{
 	DevicePairingObserver, PairedSsoPeer, Spawner,
 	encrypted_storage::EncryptedStorage,
 	host_internal::bulletin::preimage_key,
-	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
 	time::{RealTimer, Timer, retry},
 };
@@ -136,22 +135,6 @@ pub struct CallbackPlatform {
 	/// and the screen share one namespace, so they subscribe and publish on
 	/// the runtime-wide bus instead of this execution's own.
 	pub storage_events: Arc<NativeEventBus>,
-}
-
-impl crate::host_logic::worker::WorkerController for CallbackPlatform {
-	fn start_worker(&self, product_id: &ProductId, _attempt_id: u64) {
-		self.callbacks
-			.request_worker_transition(product_id.clone(), WorkerTransition::Start);
-	}
-
-	fn stop_worker(&self, product_id: &ProductId) {
-		self.callbacks
-			.request_worker_transition(product_id.clone(), WorkerTransition::Stop);
-	}
-
-	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
-		self.callbacks.worker_crashing(product_id.clone(), crashes);
-	}
 }
 
 impl crate::durable::DurableWorkObserver for CallbackPlatform {

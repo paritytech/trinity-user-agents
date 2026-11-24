@@ -34,10 +34,10 @@ impl WebViews {
 
 fn setup() -> (Arc<NativeTrUApiHostRuntime>, Arc<WebViews>, ProductId) {
 	let views = Arc::new(WebViews::default());
-	let runtime = NativeTrUApiHostRuntime::with_managed_product_workers(
+	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		native_host_runtime_config(),
-		views.clone(),
+		Some(views.clone()),
 	)
 	.unwrap();
 	(runtime, views, ProductId::for_test("shared.dot"))
@@ -136,6 +136,40 @@ impl NativeWorkerExecutionObserver for Observer {
 	fn finished(&self) {
 		let _ = self.0.send(None);
 	}
+}
+
+#[test]
+fn a_host_without_worker_support_reports_unavailable_until_the_claim_ends() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+		None,
+	)
+	.unwrap();
+	let product = ProductId::for_test("chat.dot");
+	let (send, receive) = mpsc::channel();
+	let _subscription = runtime.observe_worker_execution(product.clone(), Arc::new(Observer(send)));
+	let next = || receive.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
+	let claim = runtime.claim_worker(product);
+	assert!(
+		matches!(next(), NativeWorkerExecutionState::Failed { reason } if reason == "no worker host configured")
+	);
+	let direct = runtime.open_product_execution(
+		callbacks,
+		None,
+		None,
+		native_execution_config("chat.dot", ExecutableKind::Worker),
+	);
+	assert_eq!(
+		direct.err(),
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: "open a worker through its startup attempt".into()
+		})
+	);
+	drop(claim);
+	assert!(matches!(next(), NativeWorkerExecutionState::Idle));
 }
 
 #[tokio::test]
