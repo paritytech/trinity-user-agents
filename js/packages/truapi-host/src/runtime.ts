@@ -67,7 +67,8 @@ export type LogLevel = string;
  * The core refuses a policy that would reserve less than it says: a field this
  * type does not have, `allowed` together with extra values, which the allowed
  * stack may name anyway, and an extra TLD that no stack can have. It refuses
- * the policy before it reads the stack.
+ * such a policy before it reads the key from the pointer's link and verifies
+ * the descriptor under it.
  */
 export interface ReservedValuesPolicy {
   /**
