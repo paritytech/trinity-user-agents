@@ -1,8 +1,9 @@
 use super::bundled::paseo_next_v2;
 
-/// A local descriptor file with the bundled paseo-next-v2 id, so state paths stay those of the
-/// built-in network, whose chains are on loopback ports nothing listens on. Passed as
-/// `HOST_CLI_STACK`, it lets a command start without a descriptor fetch or a live chain.
+/// A local descriptor file with the bundled paseo-next-v2 descriptor, whose chains are on
+/// loopback ports nothing listens on. Passed as `HOST_CLI_STACK`, it lets a command start without
+/// a descriptor fetch or a live chain. A local file is a stack of its own, so its state is not
+/// in the built-in network's directory.
 pub static OFFLINE_PASEO_NEXT_V2_STACK: std::sync::LazyLock<std::path::PathBuf> =
 	std::sync::LazyLock::new(|| {
 		let mut descriptor = paseo_next_v2();

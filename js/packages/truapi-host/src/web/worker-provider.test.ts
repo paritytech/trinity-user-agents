@@ -18,7 +18,7 @@ import type {
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
 import {
   AuthState,
-  StackStorageKey,
+  CoreStorageKey,
   ProductContext,
 } from "../generated/host-callbacks.js";
 import type {
@@ -704,19 +704,13 @@ describe("createWebWorkerPairingHostRuntime", () => {
   it("dispatches callback requests to host hooks", async () => {
     const worker = new FakeWorker();
     let clears = 0;
-    const authSessionKey = StackStorageKey.enc({
-      stack: "stack",
-      slot: { tag: "AuthSession" },
-    });
+    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
     const providerPromise = createProviderFromRuntime(
       asWorker(worker),
       makeHostCallbacks({
         coreStorage: {
           clearCoreStorage: async (key) => {
-            expect(key).toEqual({
-              stack: "stack",
-              slot: { tag: "AuthSession", value: undefined },
-            });
+            expect(key).toEqual({ tag: "AuthSession", value: undefined });
             clears += 1;
           },
         },
@@ -751,9 +745,9 @@ describe("createWebWorkerPairingHostRuntime", () => {
     // host while the worker is still in init. Left unanswered until `ready`,
     // every start would wait out the read's timeout and lose the record.
     const worker = new FakeWorker();
-    const stackRecordKey = StackStorageKey.enc({
-      stack: "0xabc",
-      slot: { tag: "StackRecord", value: { stackId: "0xabc" } },
+    const stackRecordKey = CoreStorageKey.enc({
+      tag: "StackRecord",
+      value: { stackId: "0xabc" },
     });
     const reads: unknown[] = [];
     const runtimePromise = createWebWorkerPairingHostRuntime(

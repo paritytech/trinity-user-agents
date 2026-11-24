@@ -201,7 +201,8 @@ impl WalletAccountHolder {
 		if let Some(secret) = *cached {
 			return Ok(secret);
 		}
-		let secret = read_or_create_device_encryption_secret(&self.services.storage()).await?;
+		let secret =
+			read_or_create_device_encryption_secret(self.services.platform.as_ref()).await?;
 		*cached = Some(secret);
 		Ok(secret)
 	}
@@ -213,7 +214,7 @@ impl WalletAccountHolder {
 	/// so peers addressing that key stay reachable.
 	pub async fn adopt_encryption_secret(&self, secret: [u8; 32]) -> Result<(), String> {
 		let mut cached = self.device_encryption_secret.lock().await;
-		store_device_encryption_secret(&self.services.storage(), secret).await?;
+		store_device_encryption_secret(self.services.platform.as_ref(), secret).await?;
 		*cached = Some(secret);
 		Ok(())
 	}

@@ -86,7 +86,7 @@ use truapi::{
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner, SignerAccount},
-	chain::ChainBackend,
+	chain::{ChainAccess, ChainBackend},
 	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -132,8 +132,8 @@ struct Cli {
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
 	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
-	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
-	/// and `previewnet` only, without `--stack`).
+	/// `light-client` syncs them with the embedded light client, from the light
+	/// specs the stack's descriptor names.
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
 	/// Built-in network to run against; paseo-next-v2 when neither this nor
@@ -142,9 +142,9 @@ struct Cli {
 	network: Option<Network>,
 	/// Run against this Trinity stack instead of a built-in network: a
 	/// descriptor URL, a stack link (`polkadotapp://stack?...`) or a local
-	/// descriptor file. Its chains, identity backend and TLD are used, under
-	/// the product namespace of the descriptor's `id` without a trailing
-	/// `-fork`. Defaults to `HOST_CLI_STACK` when that is not blank.
+	/// descriptor file. Its chains, identity backend and TLD are used, and its
+	/// state is kept apart from every other stack's. Defaults to
+	/// `HOST_CLI_STACK` when that is not blank.
 	#[arg(long, global = true, value_name = "STACK")]
 	stack: Option<String>,
 	#[command(subcommand)]
@@ -606,7 +606,14 @@ async fn main() -> Result<()> {
 		None => normalized(std::env::var(STACK_ENV).ok())
 			.map(|value| StackArg { value, source: STACK_ENV }),
 	};
-	let source = NetworkSource::new(cli.chain_backend, cli.network, stack)?;
+	// Outside any `--base-path`: a light spec is the same for every session.
+	let chain_access = match cli.chain_backend {
+		ChainBackend::Rpc => ChainAccess::Rpc,
+		ChainBackend::LightClient => {
+			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
+		},
+	};
+	let source = NetworkSource::new(chain_access, cli.network, stack)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
@@ -715,6 +722,7 @@ fn print_network(stack: &Stack) {
 		serde_json::json!({
 			"schema_version": 1,
 			"network": stack.namespace(),
+			"state_directory": stack.state_directory(),
 			"namespace": stack.tld(),
 			"identity_backend_base": stack.identity_backend(),
 			"people": chain(&chains.people),
@@ -1251,8 +1259,7 @@ async fn run_pairing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
-	let storage_paths =
-		CliStoragePaths::pairing(base_path.join(network.namespace()), &network.identity().id);
+	let storage_paths = CliStoragePaths::pairing(base_path.join(network.state_directory()));
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new_pairing(
 			network.namespace(),
@@ -1370,7 +1377,7 @@ async fn run_signing_host(
 	let product_id = product.current();
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path.clone());
-	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
+	let session_catalog = SessionCatalog::new(base_path.clone(), network.state_directory())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
 	let initial_session_names = session_catalog.list()?;
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1729,12 +1736,7 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(
-		platform.as_ref(),
-		&network.core_stack().context("invalid stack")?,
-		&args.product_config,
-	)
-	.await?;
+	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2149,11 +2151,7 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(
-	platform: &CliPlatform,
-	stack: &truapi::platform::Stack,
-	paths: &[PathBuf],
-) -> Result<()> {
+async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
@@ -2162,7 +2160,7 @@ async fn apply_local_product_grants(
 		.duration_since(std::time::UNIX_EPOCH)
 		.context("system clock is before the Unix epoch")?
 		.as_secs();
-	let applied = product_config::apply(platform, stack, &configs, now).await?;
+	let applied = product_config::apply(platform, &configs, now).await?;
 	if applied.is_empty() {
 		return Ok(());
 	}
@@ -2523,7 +2521,7 @@ async fn prepare_pairing_response(
 					let account_base_path = current_account_base_path(session)?;
 					accounts::mark_account_exhausted(
 						&account_base_path,
-						session.network.namespace(),
+						session.network.state_directory(),
 						name,
 						period,
 					)?;
@@ -2799,7 +2797,7 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 	let account_base_path = current_account_base_path(session)?;
 	accounts::mark_account_exhausted(
 		&account_base_path,
-		session.network.namespace(),
+		session.network.state_directory(),
 		&name,
 		period,
 	)?;
@@ -3116,7 +3114,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	)?;
 	if is_lite_label(&name) &&
 		accounts::AccountStore::load(&provisional_profile.account_base_path)?
-			.created_at(session.network.namespace(), account.as_deref())?
+			.created_at(session.network.state_directory(), account.as_deref())?
 			.is_none()
 	{
 		bail!("session {name:?} has no saved account; choose a username base to create one");

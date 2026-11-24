@@ -5,10 +5,10 @@ use futures::stream::{self, BoxStream};
 use truapi::{
 	ProductId,
 	platform::{
-		AuthPresenter, ChainProvider, CoreStorage, Features, HostInfo, JsonRpcConnection,
-		LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions, PlatformInfo,
-		PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-		UserConfirmation, UserConfirmationReview,
+		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
+		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
+		PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
+		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -160,21 +160,18 @@ impl AuthPresenter for WireShapePlatform {}
 impl CoreStorage for WireShapePlatform {
 	async fn read_core_storage(
 		&self,
-		_key: truapi::platform::StackStorageKey,
+		_key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		Ok(None)
 	}
 	async fn write_core_storage(
 		&self,
-		_key: truapi::platform::StackStorageKey,
+		_key: CoreStorageKey,
 		_value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
 		Ok(())
 	}
-	async fn clear_core_storage(
-		&self,
-		_key: truapi::platform::StackStorageKey,
-	) -> Result<(), v01::GenericError> {
+	async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		Ok(())
 	}
 }

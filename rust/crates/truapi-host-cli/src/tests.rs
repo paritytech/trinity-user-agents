@@ -14,7 +14,7 @@ fn root_public_key(entropy: &RootEntropy) -> [u8; 32] {
 
 async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
 	let network = Network::default().bundled_stack(ChainBackend::Rpc);
-	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.namespace())?;
+	let catalog = SessionCatalog::new(base_path.to_path_buf(), network.state_directory())?;
 	catalog.set_current(name)?;
 	start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None).await
 }
@@ -25,7 +25,7 @@ fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
 		"version": 1,
 		"accounts": [{
 			"name": "auto-1",
-			"network": session.network.namespace(),
+			"network": session.network.state_directory(),
 			"mnemonic": SESSION_MNEMONIC,
 			"lite_username": "pending.01",
 			"public_key_hex": "0x00",

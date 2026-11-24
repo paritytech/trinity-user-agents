@@ -1,30 +1,37 @@
 //! The checks that make a descriptor a [`Stack`] the CLI can run on.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use trinity_stack::Descriptor;
 use truapi::platform::DOTNS_TLDS;
 
-use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
-use crate::{chain::ChainBackend, stack_descriptor::ROLE_NAMES};
+use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, built_in::built_in_name, namespace_of};
+use crate::{
+	chain::{ChainAccess, StackLightClient},
+	stack_descriptor::ROLE_NAMES,
+};
 
 impl Stack {
-	/// `descriptor`, read from the pointer whose identity is `stack_id`,
-	/// connected to over `chain_backend`. Fails when People, Asset Hub or
-	/// Bulletin is missing, when the TLD is not one the core serves, when the
-	/// namespace is not a lowercase label or is the `polkadot` one, and when
-	/// the stack has no `dub` service or no `dotns.popController`. No two of
-	/// its chains share a genesis hash, which the descriptor's own rules
-	/// refuse.
+	/// The stack `descriptor` describes, read from the pointer whose identity
+	/// is `stack_id`, connected to over `chain_access`. Fails when People,
+	/// Asset Hub or Bulletin is missing, when the TLD is not one the core
+	/// serves, when the namespace is not a lowercase label or is the
+	/// `polkadot` one, when the stack has no `dub` service or no
+	/// `dotns.popController`, and on the light client as
+	/// [`StackLightClient::new`] does. No two of its chains share a genesis
+	/// hash, which the descriptor's own rules refuse.
 	pub fn new(
 		stack_id: String,
 		descriptor: Descriptor,
-		chain_backend: ChainBackend,
+		chain_access: &ChainAccess,
 	) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
 			id != POLKADOT_NAMESPACE,
-			"a stack cannot run under the {POLKADOT_NAMESPACE} namespace, which may \
-			 contain sessions of real Polkadot identities; use a stack with another id"
+			"a stack cannot run under the {POLKADOT_NAMESPACE} namespace, which would \
+			 present it as Polkadot; use a stack with another id"
 		);
 		ensure!(
 			truapi::platform::is_dns_label(namespace_of(id)),
@@ -51,7 +58,28 @@ impl Stack {
 				"the {id} stack has no dotns.popController, which the CLI resolves usernames through"
 			)
 		})?;
-		Ok(Self { stack_id, descriptor, chain_backend, chains, identity_backend, pop_controller })
+		let state_directory = match built_in_name(&stack_id) {
+			Some(network) => network.to_owned(),
+			None => {
+				let digest = Sha256::digest(stack_id.as_bytes());
+				format!("stack-{}", hex::encode(&digest[..16]))
+			},
+		};
+		let light_client = match chain_access {
+			ChainAccess::Rpc => None,
+			ChainAccess::LightClient { spec_directory } => {
+				Some(Arc::new(StackLightClient::new(&descriptor, &chains, spec_directory.clone())?))
+			},
+		};
+		Ok(Self {
+			stack_id,
+			state_directory,
+			light_client,
+			descriptor,
+			chains,
+			identity_backend,
+			pop_controller,
+		})
 	}
 }
 

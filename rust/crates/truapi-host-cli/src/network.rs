@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
@@ -6,7 +6,10 @@ use truapi::platform::{
 	ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError, StackIdentity,
 };
 
-use crate::{chain::ChainBackend, stack_descriptor::Roles};
+use crate::{
+	chain::{ChainAccess, ChainBackend, StackLightClient},
+	stack_descriptor::Roles,
+};
 
 mod built_in;
 mod checks;
@@ -16,7 +19,10 @@ mod stack;
 #[cfg(test)]
 mod testing;
 
-pub use built_in::ensure_built_in_runnable;
+#[cfg(test)]
+pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, light_spec_genesis, serve_light_specs};
+
+pub use built_in::{bundled_light_spec, ensure_built_in_runnable};
 
 /// Networks the headless hosts know by name, each a test network this build
 /// ships a signed stack copy of. The CLI account store saves BIP-39 mnemonics
@@ -54,13 +60,13 @@ pub async fn within_check_timeout<T>(
 	})
 }
 
-/// The namespace no stack runs under, since it may contain sessions of real
-/// Polkadot identities.
+/// The namespace no stack runs under, so that the CLI presents none as
+/// Polkadot.
 const POLKADOT_NAMESPACE: &str = "polkadot";
 
-/// The product namespace of the stack `id`: `id` without a trailing `-fork`,
-/// except that the `polkadot-fork` namespace is its full `id` rather than the
-/// `polkadot` one.
+/// The product namespace of the stack whose descriptor names itself `id`: `id`
+/// without a trailing `-fork`, except that the `polkadot-fork` namespace is its
+/// full `id` rather than the `polkadot` one.
 fn namespace_of(id: &str) -> &str {
 	id.strip_suffix("-fork")
 		.filter(|source| *source != POLKADOT_NAMESPACE)
@@ -71,7 +77,7 @@ fn namespace_of(id: &str) -> &str {
 /// or `--stack`. Built only by [`NetworkSource::new`], which refuses the
 /// flag combinations no command can run.
 pub struct NetworkSource {
-	chain_backend: ChainBackend,
+	chain_access: ChainAccess,
 	network: NetworkChoice,
 }
 
@@ -98,8 +104,10 @@ pub struct StackArg {
 #[derive(Debug)]
 pub struct Stack {
 	stack_id: String,
+	state_directory: String,
 	descriptor: Descriptor,
-	chain_backend: ChainBackend,
+	/// Set exactly when the stack runs on the light client.
+	light_client: Option<Arc<StackLightClient>>,
 	chains: Roles<ChainEndpoint>,
 	identity_backend: String,
 	pop_controller: [u8; 20],
@@ -113,13 +121,25 @@ pub struct ChainEndpoint {
 }
 
 impl Stack {
-	/// The product namespace, where the CLI stores this network's state: the
-	/// descriptor's `id` without a trailing `-fork`, so a fork shares its
-	/// source's product storage and state directory, except that the
-	/// `polkadot-fork` namespace is its full `id`. The core's entries there
-	/// are still separate, because their keys include the stack's id.
+	/// The product namespace, the name the CLI prints for this network: the
+	/// descriptor's `id` without a trailing `-fork`, except that the
+	/// `polkadot-fork` namespace is its full `id`. Nothing is stored under it;
+	/// see [`Self::state_directory`].
 	pub fn namespace(&self) -> &str {
 		namespace_of(&self.descriptor.id)
+	}
+
+	/// The name everything the CLI stores for this stack is kept under: its
+	/// directory under the versioned base path, and its network in the account
+	/// store.
+	///
+	/// A built-in network's is its name. Any other stack's is `stack-` and the
+	/// first 32 hex digits of the SHA-256 of its id. It follows the stack's id
+	/// and not what the descriptor calls itself, so a fork does not read its
+	/// source's state, and a descriptor cannot pick another stack's by the
+	/// `id` it declares.
+	pub fn state_directory(&self) -> &str {
+		&self.state_directory
 	}
 
 	/// The network's dotNS TLD without the dot, as its runtimes report it in
@@ -157,11 +177,25 @@ impl Stack {
 
 	/// How this run reaches the chains, from `--chain-backend`.
 	pub fn chain_backend(&self) -> ChainBackend {
-		self.chain_backend
+		match self.light_client {
+			Some(_) => ChainBackend::LightClient,
+			None => ChainBackend::Rpc,
+		}
 	}
 
-	/// The id of the pointer the descriptor was read from, and the descriptor's
-	/// `generation`. The core keys its storage by the id.
+	/// The stack's light client, when it runs on one.
+	pub fn light_client(&self) -> Option<&StackLightClient> {
+		self.light_client.as_deref()
+	}
+
+	/// The stack's light client for a chain provider to hold. Every provider
+	/// built from this stack shares the one client, so a chain syncs once.
+	pub fn share_light_client(&self) -> Option<Arc<StackLightClient>> {
+		self.light_client.clone()
+	}
+
+	/// The identity of the pointer the descriptor was read from, and the
+	/// descriptor's `generation`.
 	pub fn identity(&self) -> StackIdentity {
 		StackIdentity { id: self.stack_id.clone(), generation: self.descriptor.generation.clone() }
 	}

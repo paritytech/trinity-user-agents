@@ -361,9 +361,10 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 	let _lock = AccountStoreLock::acquire(config.base_path)?;
 	let mut store = AccountStore::load(config.base_path)?;
 	if let Some(name) = config.account {
-		let record = store.get(config.network.namespace(), &name).cloned().with_context(|| {
-			format!("account {name:?} not found for {}", config.network.namespace())
-		})?;
+		let record =
+			store.get(config.network.state_directory(), &name).cloned().with_context(|| {
+				format!("account {name:?} not found for {}", config.network.namespace())
+			})?;
 		let record = ensure_record_ready(
 			&mut store,
 			config.network,
@@ -375,7 +376,7 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 	}
 
 	let period = current_statement_period()?;
-	if let Some(record) = store.auto_candidate(config.network.namespace(), period) {
+	if let Some(record) = store.auto_candidate(config.network.state_directory(), period) {
 		let record = ensure_record_ready(
 			&mut store,
 			config.network,
@@ -386,7 +387,7 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 		return resolved_from_record(record, true);
 	}
 
-	if let Some(record) = store.pending_auto_candidate(config.network.namespace()) {
+	if let Some(record) = store.pending_auto_candidate(config.network.state_directory()) {
 		let refreshed = ensure_record_ready(
 			&mut store,
 			config.network,
@@ -456,7 +457,7 @@ pub fn persist_imported_signer(
 	network: &Stack,
 	imported: &ImportedSigner,
 ) -> Result<SignerAccount> {
-	let network_id = network.namespace();
+	let network_id = network.state_directory();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let mut store = AccountStore::load(base_path)?;
 	let public_key_hex = format!("0x{}", hex::encode(imported.public_key));
@@ -498,7 +499,7 @@ pub fn resolve_cached_signer(
 	network: &Stack,
 	account: Option<&str>,
 ) -> Result<Option<ResolvedSigner>> {
-	let network_id = network.namespace();
+	let network_id = network.state_directory();
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let store = AccountStore::load(base_path)?;
 	let (record, auto_managed) = if let Some(name) = account {
@@ -542,7 +543,7 @@ async fn create_auto_account(
 	reserved_username: Option<&str>,
 ) -> Result<AccountRecord> {
 	let lite_username = lite_username_base(username_prefix)?;
-	let name = store.next_auto_name(network.namespace());
+	let name = store.next_auto_name(network.state_directory());
 	let mnemonic = Mnemonic::generate(12).context("generate BIP-39 mnemonic")?.to_string();
 	let identity = identity_from_mnemonic(&mnemonic, network.tld())?;
 
@@ -555,7 +556,7 @@ async fn create_auto_account(
 
 	let mut record = AccountRecord {
 		name,
-		network: network.namespace().to_owned(),
+		network: network.state_directory().to_owned(),
 		mnemonic,
 		lite_username,
 		public_key_hex: format!("0x{}", hex::encode(identity.public_key)),

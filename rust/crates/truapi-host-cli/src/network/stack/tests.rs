@@ -1,15 +1,16 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_descriptor, edit_stack},
+		testing::{edit_chain, edit_descriptor, edit_stack, test_access},
 	},
 	*,
 };
-use crate::stack_descriptor::Roles;
+use crate::{chain::ChainBackend, stack_descriptor::Roles};
+use clap::ValueEnum;
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	Stack::new("test-stack".to_string(), descriptor, ChainBackend::Rpc)
+	Stack::new("test-stack".to_string(), descriptor, &ChainAccess::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
@@ -70,17 +71,17 @@ fn test_stack_shared_genesis_error() {
 	);
 }
 
-/// A stack id becomes a state directory name, so one that is not a plain
-/// label is not used as the namespace.
+/// The namespace is what the CLI prints for the network, so an id that is not
+/// a plain label is not used as one.
 #[test]
 fn test_stack_id_not_label() {
 	let descriptor = edit_stack(|descriptor| descriptor["id"] = "../elsewhere".into());
 	assert!(read_stack(descriptor).is_err());
 }
 
-/// Earlier releases stored Polkadot mainnet sessions under `polkadot`, so no
-/// stack runs there; a `polkadot-fork` has its own state instead. A fork of
-/// any other stack shares its source's namespace, a `dot` TLD included.
+/// No stack runs under `polkadot`, so that none is presented as Polkadot; a
+/// `polkadot-fork` keeps its full id instead. A fork of any other stack has
+/// its source's namespace, a `dot` TLD included.
 #[test]
 fn test_stack_namespace() {
 	let polkadot = edit_stack(|descriptor| descriptor["id"] = "polkadot".into());
@@ -97,6 +98,46 @@ fn test_stack_namespace() {
 			descriptor["tld"] = "dot".into();
 		});
 		assert_eq!(stack.namespace(), namespace);
+	}
+}
+
+/// Everything the CLI stores for a stack is kept under a name that follows
+/// the stack's id. A fork runs on a pointer of its own, so it does not read
+/// its source's state, and neither does a stack whose descriptor only declares
+/// a built-in network's `id`. A descriptor that renames itself keeps its
+/// stack's state.
+#[test]
+fn test_stack_state_directory() {
+	let on = |stack_id: &str, id: &str| {
+		let descriptor = edit_stack(|descriptor| descriptor["id"] = id.into());
+		Stack::new(stack_id.to_string(), descriptor, &ChainAccess::Rpc).expect("stack is valid")
+	};
+	let fork = "https://fork.test.invalid/trinity-stack.json";
+	let namesake = "https://namesake.test.invalid/trinity-stack.json";
+
+	assert_eq!(
+		[
+			Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).state_directory(),
+			on(fork, "paseo-next-v2-fork").state_directory(),
+			on(namesake, "paseo-next-v2").state_directory(),
+			on(namesake, "renamed").state_directory(),
+		],
+		[
+			"paseo-next-v2",
+			"stack-c1ff7d592da6515589a30362b8ab952c",
+			"stack-458b86f54a9e42d4d99538ba9ca22a53",
+			"stack-458b86f54a9e42d4d99538ba9ca22a53",
+		]
+	);
+}
+
+/// A built-in network's state is kept under the name `--network` takes, which
+/// is where its users and the e2e scripts look for it.
+#[test]
+fn test_built_in_state_directory_is_the_network_name() {
+	for network in Network::value_variants() {
+		let name = network.to_possible_value().expect("every network has a value");
+		assert_eq!(network.bundled_stack(ChainBackend::Rpc).state_directory(), name.get_name());
 	}
 }
 
@@ -131,4 +172,35 @@ fn test_stack_missing_dub_or_pop_controller_error() {
 	});
 	let error = read_stack(without_pop_controller).unwrap_err();
 	assert!(error.to_string().contains("no dotns.popController"));
+}
+
+/// Every built-in network runs on the light client, whether or not
+/// `truapi-provider` bundles its specs: the descriptor names them.
+#[test]
+fn test_built_in_networks_name_their_light_specs() {
+	use clap::ValueEnum as _;
+
+	for network in Network::value_variants() {
+		assert!(network.bundled_stack(ChainBackend::LightClient).light_client().is_some());
+	}
+}
+
+/// A stack with no light spec for a chain the light client runs fails before
+/// the command starts, naming the chain, rather than on every connect.
+#[test]
+fn test_light_client_without_a_light_spec_error() {
+	let descriptor = edit_chain("Bulletin", |chain| {
+		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
+	});
+
+	let error = Stack::new(
+		"test-stack".to_string(),
+		descriptor.clone(),
+		&test_access(ChainBackend::LightClient),
+	)
+	.unwrap_err()
+	.to_string();
+
+	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
+	read_stack(descriptor).expect("RPC needs no light spec");
 }

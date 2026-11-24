@@ -25,7 +25,7 @@ fn record(name: &str, network: &str, attested: bool) -> AccountRecord {
 async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<()> {
 	let directory = tempdir()?;
 	let network = crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
-	let network_id = network.namespace();
+	let network_id = network.state_directory();
 	let mut store = AccountStore::load(directory.path())?;
 	let mut pending = record("auto-1", network_id, false);
 	pending.lite_username = "pending".to_string();

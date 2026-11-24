@@ -8,13 +8,15 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
-use trinity_stack::{Descriptor, Fetched, Pointer, accept};
+use trinity_stack::{Chain, Descriptor, Fetched, Pointer, accept};
 
-/// A local file has no URL of its own; the pointer only carries the key to check.
+/// A local file has no URL of its own; the pointer only carries the key to check. Every local
+/// file is read under it, so its `stack_id` does not tell one file's stack from another's.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
-/// The largest descriptor `fetch` reads; a descriptor is a few kilobytes.
-const MAX_DESCRIPTOR_BYTES: usize = 1024 * 1024;
+/// The largest body `fetch` reads. A descriptor is a few kilobytes, and the
+/// largest light spec, a relay's with its checkpoint, is under 300 KiB.
+const MAX_FETCH_BYTES: usize = 1024 * 1024;
 
 pub fn refused(error: trinity_stack::Error) -> anyhow::Error {
 	anyhow!("refused ({}): {error}", error.code())
@@ -124,12 +126,21 @@ impl<T> Roles<T> {
 	}
 }
 
-/// Whether `stack` and `other` agree in every field the CLI or the core reads:
-/// `id`, which is the product namespace, the TLD, `generation`, the `dub`
-/// service, `dotns.popController`, `contracts`, and the genesis hash and full
-/// `rpc` list of People, Asset Hub and Bulletin. The full lists are compared
-/// because the Polkadot fork check contacts every node the reference lists for
-/// a chain.
+/// The chains of `descriptor` the light client runs: the relay, then People,
+/// Asset Hub and Bulletin. One the descriptor does not have is left out.
+pub fn light_client_chains(descriptor: &Descriptor) -> impl Iterator<Item = &Chain> {
+	let roles = ROLE_NAMES.iter().filter_map(|role| descriptor.chain(role));
+	descriptor.relay().into_iter().chain(roles)
+}
+
+/// Whether `stack` and `other` agree in every field the CLI or the core reads
+/// apart from the light specs: `id`, which is the product namespace, the TLD,
+/// `generation`, the `dub` service, `dotns.popController`, `contracts`, and the
+/// genesis hash and full `rpc` list of People, Asset Hub and Bulletin. The full
+/// lists are compared because the Polkadot fork check contacts every node the
+/// reference lists for a chain. A light spec is left out because a relay's
+/// rotates with every fresh checkpoint and the light client fetches the one
+/// the descriptor names itself.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
@@ -143,10 +154,20 @@ pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
 }
 
+/// Whether a bundled copy of `stack` can stay in place of `other`: they
+/// [read the same](reads_same) and name the same `lightSpec.sha256` for the
+/// relay, People, Asset Hub and Bulletin, whose specs the binary ships.
+pub fn bundles_same(stack: &Descriptor, other: &Descriptor) -> bool {
+	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
+		light_client_chains(descriptor)
+			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
+	}
+	reads_same(stack, other) && light_specs(stack).eq(light_specs(other))
+}
+
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
 /// a change to the TLD, which every account derives under, or to the `id`,
-/// the namespace every session and account is stored under. `None` when both
-/// stay.
+/// which the CLI names the network by. `None` when both stay.
 pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<String> {
 	if fetched.tld != stored.tld {
 		Some(format!(
@@ -155,8 +176,7 @@ pub fn describe_pin_change(stored: &Descriptor, fetched: &Descriptor) -> Option<
 		))
 	} else if fetched.id != stored.id {
 		Some(format!(
-			"changes the id from {} to {}, which moves every session and account to another \
-			 namespace",
+			"changes the id from {} to {}, which the CLI names the network by",
 			stored.id, fetched.id
 		))
 	} else {
@@ -173,10 +193,14 @@ pub enum FetchError {
 	/// No answer, or a body that cannot be a descriptor.
 	#[display("{_0}")]
 	Transport(String),
+	/// The body is larger than `fetch` reads.
+	#[display("larger than {MAX_FETCH_BYTES} bytes")]
+	TooLarge,
 }
 
-/// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
-/// rules hold for the URL the pointer names, and a redirect could lead to plain http.
+/// The bytes a descriptor or light spec URL serves, or why it is unreachable. Redirects are
+/// refused: the URL rules hold for the URL the pointer names, and a redirect could lead to plain
+/// http.
 pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> {
 	let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
 	let client = reqwest::Client::builder()
@@ -199,19 +223,15 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> 
 	if !status.is_success() {
 		return Err(FetchError::Http(format!("HTTP {status}")));
 	}
-	let too_large = || FetchError::Transport(format!("larger than {MAX_DESCRIPTOR_BYTES} bytes"));
-	if response
-		.content_length()
-		.is_some_and(|length| length > MAX_DESCRIPTOR_BYTES as u64)
-	{
-		return Err(too_large());
+	if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES as u64) {
+		return Err(FetchError::TooLarge);
 	}
 	let mut response = response;
 	let mut body = Vec::new();
 	while let Some(chunk) = response.chunk().await.map_err(transport)? {
 		body.extend_from_slice(&chunk);
-		if body.len() > MAX_DESCRIPTOR_BYTES {
-			return Err(too_large());
+		if body.len() > MAX_FETCH_BYTES {
+			return Err(FetchError::TooLarge);
 		}
 	}
 	Ok(body)

@@ -90,11 +90,20 @@ fn stack_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
 	Descriptor::from_json(document).unwrap()
 }
 
+/// A `lightSpec` whose `sha256` repeats `byte`.
+fn light_spec(byte: &str) -> serde_json::Value {
+	let sha256 = format!("0x{}", byte.repeat(32));
+	serde_json::json!({ "url": "https://spec.example/light.json", "sha256": sha256 })
+}
+
 /// An edit to a descriptor's JSON.
 type DescriptorEdit = Box<dyn FnOnce(&mut serde_json::Value)>;
 
 /// The runtime notice and `stack bundle --skip-same-projection` read one list
 /// of fields: a change to any of them is news, and a change elsewhere is not.
+/// The light specs are news only to the bundle, which ships them: a relay's
+/// rotates with every fresh checkpoint, and a notice on every command for it
+/// would tell the user nothing they need to act on.
 #[test]
 fn test_reads_same_by_field() {
 	let base = stack_descriptor(|_| {});
@@ -141,22 +150,51 @@ fn test_reads_same_by_field() {
 			Box::new(people(|chain| chain["rpc"] = serde_json::json!(["ws://127.0.0.1:9998"]))),
 		),
 	];
-	let unnoticed: Vec<&str> = differs
-		.into_iter()
-		.filter_map(|(field, edit)| reads_same(&base, &stack_descriptor(edit)).then_some(field))
-		.collect();
-	assert_eq!(unnoticed, Vec::<&str>::new());
+	let light_specs: [(&str, DescriptorEdit); 2] = [
+		("role light spec", Box::new(people(|chain| chain["lightSpec"] = light_spec("06")))),
+		(
+			"relay light spec",
+			Box::new(|descriptor| descriptor["chains"][0]["lightSpec"] = light_spec("07")),
+		),
+	];
+	let noticed = |edits: Vec<(&'static str, DescriptorEdit)>| {
+		edits
+			.into_iter()
+			.map(|(field, edit)| {
+				let edited = stack_descriptor(edit);
+				(field, !reads_same(&base, &edited), !bundles_same(&base, &edited))
+			})
+			.collect::<Vec<_>>()
+	};
+	assert_eq!(
+		noticed(differs.into_iter().collect()),
+		[
+			("id", true, true),
+			("tld", true, true),
+			("generation", true, true),
+			("dub", true, true),
+			("popController", true, true),
+			("contracts", true, true),
+			("role genesis", true, true),
+			("role rpc", true, true),
+			("role first rpc", true, true),
+		]
+	);
+	assert_eq!(
+		noticed(light_specs.into_iter().collect()),
+		[("role light spec", false, true), ("relay light spec", false, true)]
+	);
 
 	let renamed = stack_descriptor(|descriptor| {
 		descriptor["name"] = "Renamed".into();
 		descriptor["sequence"] = 2.into();
 	});
-	assert!(reads_same(&base, &renamed));
+	assert!(bundles_same(&base, &renamed));
 }
 
 /// A source and its fork can both be local files with one descriptor `id`. If
-/// every local file were one stack, the core would give them one set of keys
-/// and the fork would read the source's session.
+/// every local file were one stack, the CLI would keep their state in one
+/// directory and the fork would read the source's session.
 #[tokio::test]
 async fn two_local_files_are_two_stacks_and_one_file_is_one() {
 	let directory = tempfile::tempdir().expect("tempdir");

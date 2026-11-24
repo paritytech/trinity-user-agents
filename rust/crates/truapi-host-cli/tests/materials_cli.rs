@@ -5,6 +5,8 @@
 mod bundled;
 #[path = "common/offline.rs"]
 mod offline;
+#[path = "common/state.rs"]
+mod state;
 
 use std::{fs, path::Path, process::Output};
 
@@ -85,6 +87,7 @@ fn a_face_plans_from_material_files_and_later_from_what_was_kept() {
 	assert!(fragment.starts_with("#version 300 es"), "{fragment}");
 	assert!(out.join("node0-layer0.vert").is_file());
 	assert!(out.join("node0-layer0.txt").is_file());
+	assert!(base.join("v2").join(state::offline_state_name()).join("materials").is_dir());
 
 	let later = resolve(&base, &[&face]);
 	assert_eq!(last_materials(&later), ["node 0: ready, 1 layer", "node 1: plain, LimitExceeded"]);

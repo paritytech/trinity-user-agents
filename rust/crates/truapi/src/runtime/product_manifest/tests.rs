@@ -206,30 +206,21 @@ fn concurrent_lookups_for_one_product_read_asset_hub_once() {
 /// a cached read still answers from the entry, and then from the new one.
 #[test]
 fn a_live_read_replaces_a_fresh_cached_entry() {
-	let platform = std::sync::Arc::new(crate::test_support::StubPlatform::default());
-	let services = RuntimeServices::new(
-		platform.clone(),
-		crate::platform::HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		crate::test_support::paseo_test_stack(),
-		crate::Spawner::for_test(),
-	);
+	use crate::platform::CoreStorage;
+	let platform = crate::test_support::StubPlatform::default();
 	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
-	let storage = services.storage();
 	let read = |policy: CachePolicy| {
-		cached_dotns_json(&storage, key.clone(), policy, || async {
+		cached_dotns_json(&platform, key.clone(), policy, || async {
 			Ok::<_, String>(Some("republished".to_string()))
 		})
 	};
 
 	let (before, live, after) = futures::executor::block_on(async {
-		services
-			.storage()
-			.write(key.clone(), encode_cached_root_manifest(Some("published"), current_unix_secs()))
+		platform
+			.write_core_storage(
+				key.clone(),
+				encode_cached_root_manifest(Some("published"), current_unix_secs()),
+			)
 			.await
 			.expect("seeded");
 		let before = read(CachePolicy::UseCache).await.expect("cached");

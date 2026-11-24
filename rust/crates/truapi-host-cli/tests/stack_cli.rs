@@ -10,6 +10,8 @@ use std::{
 	thread,
 };
 
+use sha2::{Digest, Sha256};
+
 fn stack(args: &[&str]) -> Output {
 	Command::new(env!("CARGO_BIN_EXE_truapi-host"))
 		.arg("stack")
@@ -442,7 +444,8 @@ fn write_descriptor(dir: &Path, descriptor: &[u8]) -> String {
 }
 
 /// A local stack resolves from the file alone: exit 0 without any node on the loopback ports
-/// shows no chain was contacted.
+/// shows no chain was contacted. Its state directory is named from the file's path, the id of a
+/// local stack, and not from the `id` its descriptor declares.
 #[test]
 fn test_network_check_local_stack() {
 	let dir = tempfile::tempdir().unwrap();
@@ -451,11 +454,14 @@ fn test_network_check_local_stack() {
 	assert!(output.status.success());
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	let genesis = |byte: &str| format!("0x{}", byte.repeat(32));
+	let stack_id = format!("file:{}", fs::canonicalize(&file).unwrap().display());
+	let tag = hex::encode(&Sha256::digest(stack_id)[..16]);
 	assert_eq!(
 		report,
 		serde_json::json!({
 			"schema_version": 1,
 			"network": "staging",
+			"state_directory": format!("stack-{tag}"),
 			"namespace": "paseo",
 			"identity_backend_base": "https://dub.example/api/v1",
 			"people": { "ws": "ws://127.0.0.1:2", "genesis": genesis("02") },
@@ -463,6 +469,30 @@ fn test_network_check_local_stack() {
 			"bulletin": { "ws": "ws://127.0.0.1:4", "genesis": genesis("04") },
 		})
 	);
+}
+
+/// A host keeps its state under the name `network-check` prints, and not under the descriptor's
+/// namespace, which a fork has in common with its source. The pairing host stops at a script
+/// that does not exist, after it has opened its storage.
+#[test]
+fn test_pairing_host_state_directory() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
+	let report: serde_json::Value =
+		serde_json::from_str(&stdout(&network_check(&file, &[]))).unwrap();
+	let base = dir.path().join("base");
+	let script = dir.path().join("no-such-script.ts");
+	let pairing_host = ["pairing-host", "--frame-listen", "127.0.0.1:0", "--base-path"];
+	let mut command = vec!["--stack", &file];
+	command.extend(pairing_host);
+	command.extend([base.to_str().unwrap(), "--script", script.to_str().unwrap()]);
+	host_with_env(&command, &[]);
+
+	let stored: Vec<_> = fs::read_dir(base.join("v2"))
+		.unwrap()
+		.map(|entry| entry.unwrap().file_name().into_string().unwrap())
+		.collect();
+	assert_eq!(stored, [report["state_directory"].as_str().unwrap()]);
 }
 
 #[test]
@@ -487,8 +517,8 @@ fn test_network_check_url_and_link() {
 	assert!(stderr(&wrong_key).contains("bad-signature"));
 }
 
-/// A stack never runs under the `polkadot` namespace, which may contain sessions of real Polkadot
-/// identities. A Polkadot fork on the `dot` TLD and Polkadot's genesis resolves under its own
+/// A stack never runs under the `polkadot` namespace, so that the CLI presents none as Polkadot.
+/// A Polkadot fork on the `dot` TLD and Polkadot's genesis resolves under its own
 /// namespace: whether its chains are Polkadot itself is checked against the chains before a command
 /// runs, which `network-check` does not contact.
 #[test]
