@@ -961,14 +961,15 @@ const TEST_STACK_ASSET_HUB: [u8; 32] = [0xcc; 32];
 
 /// A runtime on the stack `refresh` hands out, over nodes that each name the
 /// chain they were dialled for, apart from People's, which names `genesis`.
-/// Each node serves a runtime version, and People also its metadata and
-/// `suffix` as its `NetworkSuffix`, which an allowance reads first. Any other
-/// storage is empty, and any other request gets a JSON-RPC error. Asset Hub is
-/// out of reach, so activating a wallet looks up no username.
+/// Each node serves a runtime version. People also serves its metadata and
+/// `suffix` as its `NetworkSuffix`, or no suffix when `suffix` is `None`,
+/// which is what an allowance reads first. Any other storage is empty, and any
+/// other request gets a JSON-RPC error. Asset Hub is out of reach, so
+/// activating a wallet looks up no username.
 fn runtime_on(
 	refresh: &StackRefresh,
 	genesis: [u8; 32],
-	suffix: &'static str,
+	suffix: Option<&'static str>,
 ) -> (Arc<RuntimeServices>, Arc<StubPlatform>) {
 	let suffix_key = [twox_128(b"NetworkSuffix"), twox_128(b"NetworkSuffix")].concat();
 	let suffix_key = format!("0x{}", hex::encode(suffix_key));
@@ -988,7 +989,8 @@ fn runtime_on(
 					Ok(as_hex(&Some(PEOPLE_METADATA.to_vec()).encode()))
 				},
 				(Some("state_getStorage"), Some(key)) if people && key == suffix_key => {
-					Ok(as_hex(&suffix.as_bytes().to_vec().encode()))
+					let stored = suffix.map(|suffix| as_hex(&suffix.as_bytes().to_vec().encode()));
+					Ok(stored.unwrap_or(serde_json::Value::Null))
 				},
 				(Some("state_getStorage"), _) => Ok(serde_json::Value::Null),
 				(method, _) => Err(format!("the node serves no {method:?}")),
@@ -1032,7 +1034,7 @@ fn runtime_on(
 #[test]
 fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let (services, _node) = runtime_on(&refresh, TEST_STACK_WIPED_PEOPLE, "paseo");
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_WIPED_PEOPLE, Some("paseo"));
 
 	let people = within_answer_wait(services.chain.rpc_client("test", &TEST_STACK_PEOPLE));
 
@@ -1046,7 +1048,7 @@ fn a_runtime_on_the_refreshed_stack_refuses_a_chain_that_restarted() {
 #[test]
 fn a_runtime_on_the_refreshed_stack_reports_a_people_suffix_that_is_not_the_tld() {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let (services, node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "testnet");
+	let (services, node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
 
 	let read = within_answer_wait(async {
 		let people = services.statement_store.chain_client("test").await.ok()?;
@@ -1078,13 +1080,14 @@ fn testnet_suffix_listed() -> Vec<StackMismatch> {
 	}]
 }
 
-/// A People chain that holds no suffix of one to sixteen bytes fails the
-/// allowance work with that error. The failed read says nothing about the
-/// suffix People holds, so a suffix listed before stays listed.
-#[test]
-fn a_people_suffix_that_cannot_be_read_leaves_the_listing_as_it_was() {
+/// What reading People's suffix comes to over a People node that holds
+/// `suffix`, on a runtime whose host was told of `testnet` before, and what
+/// the host is told after the read.
+fn read_after_testnet_was_listed(
+	suffix: Option<&'static str>,
+) -> (Option<Result<Vec<u8>, StatementAllowanceError>>, Vec<StackMismatch>) {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "");
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, suffix);
 	let stack = refresh.stack();
 	let checks = crate::stack::checks(&stack).expect("a refreshed stack has its chains checked");
 	checks.people_suffix_answered(b"testnet");
@@ -1093,6 +1096,15 @@ fn a_people_suffix_that_cannot_be_read_leaves_the_listing_as_it_was() {
 		let people = services.statement_store.chain_client("test").await.ok()?;
 		Some(services.people_network_suffix(people.rpc()).await)
 	});
+	(read, refresh.status().mismatches)
+}
+
+/// A People chain that holds a suffix that is not one to sixteen bytes long
+/// fails the read with that error. A failed read says nothing about the
+/// suffix People holds, so a suffix listed before stays listed.
+#[test]
+fn a_people_suffix_of_the_wrong_length_leaves_the_listing_as_it_was() {
+	let (read, listed) = read_after_testnet_was_listed(Some(""));
 
 	assert!(
 		matches!(
@@ -1103,7 +1115,20 @@ fn a_people_suffix_that_cannot_be_read_leaves_the_listing_as_it_was() {
 		),
 		"the empty suffix fails the read: {read:?}"
 	);
-	assert_eq!(refresh.status().mismatches, testnet_suffix_listed());
+	assert_eq!(listed, testnet_suffix_listed());
+}
+
+/// A People chain that holds no suffix at all fails the read outright, and
+/// that changes nothing the host is told either.
+#[test]
+fn a_people_suffix_that_is_missing_leaves_the_listing_as_it_was() {
+	let (read, listed) = read_after_testnet_was_listed(None);
+
+	assert!(
+		matches!(read, Some(Err(StatementAllowanceError::Slot(SlotError::MissingNetworkSuffix)))),
+		"the missing suffix fails the read: {read:?}"
+	);
+	assert_eq!(listed, testnet_suffix_listed());
 }
 
 /// A signing host with an active wallet, on a runtime over [`runtime_on`]'s
@@ -1112,7 +1137,7 @@ fn a_people_suffix_that_cannot_be_read_leaves_the_listing_as_it_was() {
 /// errors, so any allowance work the host starts fails after reading it.
 fn signing_host_over_a_testnet_suffix() -> (StackRefresh, Arc<SigningHost>) {
 	let refresh = load(Arc::default(), Arc::default(), manual_clock());
-	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, "testnet");
+	let (services, _node) = runtime_on(&refresh, TEST_STACK_PEOPLE, Some("testnet"));
 	let signing_host = SigningHost::new(services);
 	within_answer_wait(signing_host.activate_local_session(RootEntropy::new([0xab; 16])))
 		.expect("activation succeeds");
