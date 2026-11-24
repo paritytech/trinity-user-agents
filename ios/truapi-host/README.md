@@ -121,7 +121,7 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 
 ## Shared product workers
 
-Install the WebView worker host on the signed-in runtime. Rust requests a start with an attempt specific to this product and boot. Swift opens the execution through that attempt, loads the module into its WKWebView and acknowledges the execution it opened. Rust discards late acknowledgements if demand ended or a replacement has started.
+Pass the WebView worker host when constructing the signed-in runtime. For each start, Swift opens the execution through the supplied attempt, loads the module in its WKWebView and calls `execution.reportWorkerModuleStarted()`. Rust discards late acknowledgements if demand ended or a replacement has started.
 
 Chat and Pocket each hold the result of `claimWorker(productId:)` and observe the ready execution to send Chat actions or render. Each consumer calls `release()` on its own claim. Rust requests disposal of the WKWebView after the final reference ends.
 

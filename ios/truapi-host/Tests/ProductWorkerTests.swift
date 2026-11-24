@@ -21,7 +21,7 @@ struct ProductWorkerTests {
         let owner = try attempt.openExecution(bridge: StubHostBridge())
         let socket = try connect(owner)
         defer { socket.cancel(with: .normalClosure, reason: nil) }
-        #expect(owner.reportReady(for: attempt))
+        #expect(owner.reportWorkerModuleStarted())
         let execution = try #require(await executions.next())
         chat.release()
         chat.release()
@@ -31,7 +31,7 @@ struct ProductWorkerTests {
         pocket.release()
         #expect(await stops.next() == attempt.id())
         #expect(runtime.currentWorkerExecution(productId: product) == nil)
-        #expect(!owner.reportReady(for: attempt))
+        #expect(!owner.reportWorkerModuleStarted())
         runtime.shutdownProductWorkers()
     }
 
