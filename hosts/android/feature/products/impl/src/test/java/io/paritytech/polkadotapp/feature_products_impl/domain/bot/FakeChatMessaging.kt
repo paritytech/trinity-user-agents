@@ -22,6 +22,9 @@ class FakeChatMessaging(
     val sentText = mutableListOf<Pair<String, String>>()
     val footers = mutableListOf<Pair<ProductChatIdParameter, ProductRoomFooter>>()
 
+    /** The configuration that each `createRoom` keeps, in order. */
+    val configs = mutableListOf<Pair<ProductChatIdParameter, ChatRoomConfigModel>>()
+
     override suspend fun createRoom(request: CreateProductRoomRequest): Result<CreateProductRoomResult> =
         onCreateRoom(request)
 
@@ -43,7 +46,10 @@ class FakeChatMessaging(
     override suspend fun roomDeclarations(chatIdParameter: ProductChatIdParameter): Result<ChatRoomDeclarations?> =
         Result.success(null)
 
-    override suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel) = notStubbed<Result<Unit>>()
+    override suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel): Result<Unit> {
+        configs += chatIdParameter to config
+        return Result.success(Unit)
+    }
 
     override suspend fun setRoomMetadata(
         chatIdParameter: ProductChatIdParameter,

@@ -16,13 +16,25 @@ struct RustChatExecutionBridgeRoomTests {
         #expect(try await bridge.roomConfig(roomId: "r") == wireConfig)
     }
 
-    @Test func aConfigurationReachesTheStoreWithEveryField() async throws {
+    /// The configuration arrives with the room, in one call, so the room never has a configuration that the
+    /// product did not declare.
+    @Test func aConfigurationReachesTheStoreWithItsRoom() async throws {
         let bridge = await makeBridge()
 
-        try await bridge.setRoomConfig(roomId: "r", config: wireConfig)
+        _ = try await bridge.createRoom(roomId: "r", name: "Lobby", icon: "", config: wireConfig)
 
+        #expect(api.createdRooms.map(\.roomId) == ["r"])
         #expect(api.roomConfigs.map(\.roomId) == ["r"])
         #expect(api.roomConfigs.map(\.config) == [config])
+    }
+
+    /// A room of a product built against the earlier client has the default configuration.
+    @Test func aRoomCreatedWithoutAConfigurationKeepsTheDefault() async throws {
+        let bridge = await makeBridge()
+
+        _ = try await bridge.createRoom(roomId: "r", name: "Lobby", icon: "")
+
+        #expect(api.roomConfigs.map(\.config) == [Chat.RoomConfig.hostDefault])
     }
 
     /// The native chat draws no description, so the host keeps the name, the icon and the placeholder and drops
@@ -75,9 +87,6 @@ struct RustChatExecutionBridgeRoomTests {
 
         await #expect(throws: ChatRoomError.self) { try await bridge.roomConfig(roomId: "gone") }
         await #expect(throws: ChatRoomError.self) {
-            try await bridge.setRoomConfig(roomId: "gone", config: .hostDefault)
-        }
-        await #expect(throws: ChatRoomError.self) {
             try await bridge.setRoomMetadata(
                 roomId: "gone",
                 metadata: ChatRoomMetadata(name: "x", description: nil, icon: nil, placeholder: nil)
@@ -91,7 +100,9 @@ struct RustChatExecutionBridgeRoomTests {
     @Test func aRequestWithoutARoomIsRefused() async {
         let bridge = await makeBridge()
 
-        await #expect(throws: HostRejection.self) { try await bridge.setRoomConfig(roomId: "", config: .hostDefault) }
+        await #expect(throws: HostRejection.self) {
+            _ = try await bridge.createRoom(roomId: "", name: "x", icon: "", config: .hostDefault)
+        }
         await #expect(throws: HostRejection.self) {
             try await bridge.setRoomPreview(roomId: "", preview: PreviewCase.all[0].wire)
         }
