@@ -13,7 +13,6 @@ import {
 } from "@parity/truapi/internal";
 import type { ConnectionStatus, HostTransport } from "@parity/truapi/sandbox";
 import { SYSTEM_HANDSHAKE } from "@parity/truapi/wire-table";
-import { createLegacyPort, type LegacyPort } from "./legacy-port.js";
 
 /** One native host connection shared by product calls and browser authorization. */
 export interface HostConnection {
@@ -21,8 +20,6 @@ export interface HostConnection {
   readonly transport: HostTransport;
   /** Private generated authorization methods on the same transport. */
   readonly internal: InternalTrUApiClient;
-  /** Frame channel for SDKs that predate the injected transport. */
-  readonly legacyPort: MessagePort;
   /** Observe the connection's status, starting with the current one. */
   subscribeConnectionStatus(
     callback: (status: ConnectionStatus) => void,
@@ -59,7 +56,6 @@ export function createHostConnection(
   let reset: ((error: Error) => void) | undefined;
   let productReceive: ((frame: Uint8Array) => void) | undefined;
   let productReset: ((error: Error) => void) | undefined;
-  let legacy: LegacyPort | undefined;
   let status: ConnectionStatus = "disconnected";
   let retries = 0;
   let nextDial: Promise<void> | undefined;
@@ -81,7 +77,6 @@ export function createHostConnection(
   function retire(connection: Connection, cause?: unknown): void {
     if (current !== connection) return;
     current = undefined;
-    legacy?.lost();
     for (const notify of [reset, productReset]) {
       try {
         notify?.(new ConnectionResetError({ cause }));
@@ -130,7 +125,6 @@ export function createHostConnection(
       if (decoded.isErr()) return retire(connection, decoded.error);
       if (decoded.value.requestId.startsWith("host:")) return receive?.(frame);
       productReceive?.(frame);
-      legacy?.receive(frame, decoded.value);
     });
     provider.subscribeClose?.((error) => retire(connection, error));
     setStatus("connecting");
@@ -148,7 +142,6 @@ export function createHostConnection(
         connection.checkedAt = now();
         retries = 0;
         setStatus("connected");
-        legacy?.connected();
       })
       .catch((error) => {
         retire(connection, error);
@@ -163,9 +156,7 @@ export function createHostConnection(
     try {
       void ready(open()).catch(() => {});
     } catch {
-      // A later call can try again, but nothing will carry the frames
-      // waiting on the port.
-      legacy?.lost();
+      // A later call can try again.
     }
   }
 
@@ -240,12 +231,6 @@ export function createHostConnection(
     }
   }
 
-  function sendFromPort(frame: Uint8Array): boolean {
-    if (!current?.verified) return false;
-    write(current, frame);
-    return true;
-  }
-
   function subscribeConnectionStatus(
     callback: (status: ConnectionStatus) => void,
   ): () => void {
@@ -285,13 +270,6 @@ export function createHostConnection(
       subscribeConnectionStatus,
     },
     internal: createInternalClient(transport),
-    get legacyPort() {
-      if (!legacy) {
-        legacy = createLegacyPort({ send: sendFromPort, dial: activate });
-        activate();
-      }
-      return legacy.port;
-    },
     subscribeConnectionStatus,
     dispose() {
       try {

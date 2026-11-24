@@ -84,11 +84,6 @@ async function main() {
     "__HOST_API_TRANSPORT__",
     Object.freeze(connection.transport),
   );
-  Object.defineProperty(globalThis, "__HOST_API_PORT__", {
-    get: () => connection.legacyPort,
-    set() {},
-    configurable: false,
-  });
 
   const authorization = createPermissionAuthorization(
     globalThis as Window & typeof globalThis,

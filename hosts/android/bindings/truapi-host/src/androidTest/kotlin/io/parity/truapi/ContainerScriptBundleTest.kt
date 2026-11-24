@@ -55,7 +55,6 @@ class ContainerScriptBundleTest {
                         frameReport.receive(
                           location.href,
                           host !== undefined && window.__HOST_API_TRANSPORT__ === host && Object.isFrozen(host),
-                          typeof Object.getOwnPropertyDescriptor(window, '__HOST_API_PORT__')?.get === 'function',
                           window.__truapi_localhost === undefined,
                           window.__HOST_WEBVIEW_MARK__ === true,
                           window.fetch === originalFetch,
@@ -85,9 +84,9 @@ class ContainerScriptBundleTest {
             assertTrue("missing frame reports: ${reports.values}", complete)
             assertEquals(
                 mapOf(
-                    "https://product.test/" to FrameState(true, true, true, true, !nativeHttp, true, true),
-                    "https://product.test/child" to FrameState(false, false, true, false, !nativeHttp, true, true),
-                    "https://other.test/child" to FrameState(false, false, true, false, !nativeHttp, true, true),
+                    "https://product.test/" to FrameState(true, true, true, !nativeHttp, true, true),
+                    "https://product.test/child" to FrameState(false, true, false, !nativeHttp, true, true),
+                    "https://other.test/child" to FrameState(false, true, false, !nativeHttp, true, true),
                 ),
                 reports.values,
             )
@@ -98,7 +97,6 @@ class ContainerScriptBundleTest {
 
     private data class FrameState(
         val hasClient: Boolean,
-        val hasLegacyPort: Boolean,
         val endpointPrivate: Boolean,
         val legacyHostedFlag: Boolean,
         val fetchLocked: Boolean,
@@ -114,14 +112,13 @@ class ContainerScriptBundleTest {
         fun receive(
             url: String,
             hasClient: Boolean,
-            hasLegacyPort: Boolean,
             endpointPrivate: Boolean,
             legacyHostedFlag: Boolean,
             fetchLocked: Boolean,
             webSocketLocked: Boolean,
             mediaLocked: Boolean,
         ) {
-            values[url] = FrameState(hasClient, hasLegacyPort, endpointPrivate, legacyHostedFlag, fetchLocked, webSocketLocked, mediaLocked)
+            values[url] = FrameState(hasClient, endpointPrivate, legacyHostedFlag, fetchLocked, webSocketLocked, mediaLocked)
             finished.countDown()
         }
     }

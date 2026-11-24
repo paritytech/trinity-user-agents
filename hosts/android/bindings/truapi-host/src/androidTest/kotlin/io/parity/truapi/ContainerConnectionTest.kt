@@ -32,12 +32,7 @@ import javax.net.ServerSocketFactory
 @RunWith(AndroidJUnit4::class)
 class ContainerConnectionTest {
     @Test
-    fun productAndPermissionsShareSocketAndRecoverAfterAbruptLoss() = verifyConnection(legacy = false)
-
-    @Test
-    fun legacyMessagePortSupportsStartupHandshake() = verifyConnection(legacy = true)
-
-    private fun verifyConnection(legacy: Boolean) {
+    fun productAndPermissionsShareSocketAndRecoverAfterAbruptLoss() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = ContainerScriptBundle.load(context)
@@ -78,7 +73,7 @@ class ContainerConnectionTest {
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                         val html = """
                             <!doctype html><html><script>
-                            ${if (legacy) LEGACY_CLIENT else SHARED_CLIENT}
+                            $SHARED_CLIENT
                             sendCall();
                             window.checkPermission = () => {
                               const deniedSocket = new WebSocket('wss://denied.test/');
@@ -105,18 +100,16 @@ class ContainerConnectionTest {
                 assertEquals(true, reports.denied.poll(15, TimeUnit.SECONDS))
                 assertEquals(listOf(1, 1), listOf(connections.get(), permissionChecks.get()))
 
-                if (!legacy) {
-                    sockets.accepted.remove().apply {
-                        setSoLinger(true, 0)
-                        close()
-                    }
-                    assertTrue("shared SDK client did not signal loss", reports.lost.await(15, TimeUnit.SECONDS))
-                    instrumentation.runOnMainSync { webView.evaluateJavascript("sendCall(); checkPermission()", null) }
-
-                    assertEquals("true", reports.responses.poll(15, TimeUnit.SECONDS))
-                    assertEquals(true, reports.denied.poll(15, TimeUnit.SECONDS))
-                    assertEquals(listOf(2, 2), listOf(connections.get(), permissionChecks.get()))
+                sockets.accepted.remove().apply {
+                    setSoLinger(true, 0)
+                    close()
                 }
+                assertTrue("shared SDK client did not signal loss", reports.lost.await(15, TimeUnit.SECONDS))
+                instrumentation.runOnMainSync { webView.evaluateJavascript("sendCall(); checkPermission()", null) }
+
+                assertEquals("true", reports.responses.poll(15, TimeUnit.SECONDS))
+                assertEquals(true, reports.denied.poll(15, TimeUnit.SECONDS))
+                assertEquals(listOf(2, 2), listOf(connections.get(), permissionChecks.get()))
             } finally {
                 instrumentation.runOnMainSync { webView.destroy() }
             }
@@ -179,16 +172,6 @@ class ContainerConnectionTest {
             window.sendCall = async () => {
               const result = await client.system.handshake();
               connectionReport.response(String(result.isOk() && truapiTestSdk.getClientSync() === client));
-            };
-        """.trimIndent()
-
-        val LEGACY_CLIENT = """
-            const port = window.__HOST_API_PORT__;
-            window.sendCall = () => {
-              port.onmessage = event => connectionReport.response(String(
-                JSON.stringify(Array.from(event.data)) === '[16,112,105,110,103,1,0,1,0,0]'
-              ));
-              port.postMessage(new Uint8Array([16,112,105,110,103,1,0,0,0,3]));
             };
         """.trimIndent()
     }
