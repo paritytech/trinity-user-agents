@@ -92,7 +92,7 @@ import uniffi.truapi.ExpandedCardTurnOutcome
 import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
-import uniffi.truapi.NativeWebViewWorkerHost
+import uniffi.truapi.NativeHostWebViewWorker
 import uniffi.truapi.NativeWorkerClaim
 import uniffi.truapi.NativeWorkerExecutionState
 import uniffi.truapi.NativeWorkerExecutionObserver
@@ -991,7 +991,7 @@ object LocalhostBridgeBootstrap {
 class TrUAPIHostRuntime @JvmOverloads @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
     runtimeConfig: HostRuntimeConfig,
-    workers: NativeWebViewWorkerHost? = null,
+    workers: NativeHostWebViewWorker? = null,
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.

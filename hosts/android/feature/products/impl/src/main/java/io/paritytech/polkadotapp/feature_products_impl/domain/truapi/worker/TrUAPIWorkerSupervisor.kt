@@ -23,7 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import uniffi.truapi.NativeWebViewWorkerHost
+import uniffi.truapi.NativeHostWebViewWorker
 import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 import javax.inject.Inject
@@ -39,7 +39,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
-) : NativeWebViewWorkerHost {
+) : NativeHostWebViewWorker {
     private class WebViewWorker(val scope: CoroutineScope) {
         var runtime: WebViewRuntime? = null
     }

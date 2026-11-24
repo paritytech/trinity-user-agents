@@ -89,7 +89,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 ## Shared product workers
 
-Pass a `NativeWebViewWorkerHost` as `workers` when creating the runtime. An app or widget host can omit it. Rust asks the host to start one WebView for the first claim on a product. The host opens an execution through that startup attempt, loads the worker module and acknowledges the same execution. Rust publishes the ready execution to Chat and Pocket.
+Pass a `NativeHostWebViewWorker` as `workers` when creating the runtime. An app or widget host can omit it. Rust asks the host to start one WebView for the first claim on a product. The host opens an execution through that startup attempt, loads the worker module and acknowledges the same execution. Rust publishes the ready execution to Chat and Pocket.
 
 A consumer calls `claimWorker(productId)` and holds the returned claim for as long as it needs the worker. Collect `workerExecutionState(productId)` to follow startup and retries. The running execution exposes Chat and renderer operations. Call `claim.release()` when the consumer leaves. Releasing the same claim twice is safe. Rust requests WebView disposal when the last claim or core-held reference ends.
 
@@ -143,7 +143,7 @@ val runtime = TrUAPIHostRuntime(
 // Chat needs an active session; without one every Chat call answers `Denied`.
 runtime.activateLocalSession(secret)
 
-// In NativeWebViewWorkerHost.start(productId, attempt):
+// In NativeHostWebViewWorker.start(productId, attempt):
 val execution = attempt.openExecution(bridge, chat = MyChatBridge(store), game = null)
 val endpoint = execution.startWsBridge()
 val bootstrap = LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token)

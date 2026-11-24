@@ -21,7 +21,7 @@ use crate::{
 
 /// Operations the native UI thread performs on an individual WebView.
 #[uniffi::export(rust, foreign)]
-pub trait NativeWebViewWorkerHost: Send + Sync {
+pub trait NativeHostWebViewWorker: Send + Sync {
 	/// Begin booting the product, reporting readiness or failure through this attempt.
 	fn start(&self, product_id: ProductId, attempt: Arc<NativeWorkerAttempt>);
 
@@ -150,7 +150,7 @@ impl Drop for Registry {
 /// The session's worker state and the platform services its controller uses.
 pub struct Session {
 	registry: Registry,
-	worker_host: Option<Arc<dyn NativeWebViewWorkerHost>>,
+	worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
 	callbacks: Weak<dyn HostCallbacks>,
 }
 
@@ -158,7 +158,7 @@ impl Session {
 	/// Keep worker state until shutdown, including failed starts on hosts without a launcher.
 	pub fn new(
 		callbacks: &Arc<dyn HostCallbacks>,
-		worker_host: Option<Arc<dyn NativeWebViewWorkerHost>>,
+		worker_host: Option<Arc<dyn NativeHostWebViewWorker>>,
 	) -> Self {
 		Self { registry: Registry::default(), worker_host, callbacks: Arc::downgrade(callbacks) }
 	}
@@ -321,7 +321,7 @@ impl NativeWorkerAttempt {
 }
 
 struct WebView {
-	host: Arc<dyn NativeWebViewWorkerHost>,
+	host: Arc<dyn NativeHostWebViewWorker>,
 	attempt: Arc<NativeWorkerAttempt>,
 }
 

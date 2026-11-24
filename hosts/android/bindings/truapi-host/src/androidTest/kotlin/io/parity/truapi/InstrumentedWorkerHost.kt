@@ -1,12 +1,12 @@
 package io.parity.truapi
 
-import uniffi.truapi.NativeWebViewWorkerHost
+import uniffi.truapi.NativeHostWebViewWorker
 import uniffi.truapi.NativeWorkerAttempt
 import uniffi.truapi.ProductId
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
-internal class InstrumentedWorkerHost : NativeWebViewWorkerHost {
+internal class InstrumentedWorkerHost : NativeHostWebViewWorker {
     private val started = CompletableFuture<NativeWorkerAttempt>()
     val stopped = CompletableFuture<ULong>()
 

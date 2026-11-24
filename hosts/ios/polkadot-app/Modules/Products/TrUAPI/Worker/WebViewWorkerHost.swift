@@ -3,7 +3,7 @@ import os
 import TrUAPIHost
 
 /// Owns the platform views opened for the core's startup attempts.
-final class WebViewWorkerHost: NativeWebViewWorkerHost, Sendable {
+final class WebViewWorkerHost: NativeHostWebViewWorker, Sendable {
     typealias Builder = @Sendable (ProductId, NativeWorkerAttempt) async throws -> TrUAPIWorkerRuntime
 
     private struct WebView {
