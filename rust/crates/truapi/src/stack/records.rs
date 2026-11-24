@@ -56,7 +56,7 @@ impl ReplaceCheck {
 /// The `sequence` of the copy in `record`, or `None` when it holds none that
 /// passes `rules`.
 fn passing_sequence(rules: &CopyRules, record: &[u8]) -> Option<u32> {
-	Some(rules.stored_copy(record).ok()??.descriptor.sequence)
+	rules.stored_copy(record).ok().flatten().map(|copy| copy.descriptor.sequence)
 }
 
 /// The stack's record kept in a host's [`CoreStorage`], under
