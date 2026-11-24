@@ -21,9 +21,7 @@ use crate::{
 	chain::{ExtrinsicService, FixedExtensionVersions, live_asset_hub, live_asset_hub_genesis},
 	chain_runtime::ChainRuntime,
 	durable::{DurableRegistry, DurableTxEngine, DurableTxId, DurableTxStatus, live_engine},
-	host_logic::product_account::{
-		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
-	},
+	host_logic::root_entropy::RootEntropy,
 	nft::ASSET_HUB_PIPELINE,
 	runtime::statement_allowance::{
 		self as alloc, CollectionCandidate, FixedPersonhoodSigner, StatementAllowanceError,
@@ -36,7 +34,7 @@ use crate::{
 
 /// The person behind a mnemonic, with the chains its claims are built from.
 struct LivePerson {
-	entropy: Vec<u8>,
+	entropy: RootEntropy,
 	network_suffix: Vec<u8>,
 	asset_hub: alloc::rpc::RpcClient,
 	asset_hub_metadata: alloc::extension::Metadata,
@@ -49,7 +47,7 @@ struct LivePerson {
 impl LivePerson {
 	/// The person behind `entropy`, on `chain`, the Asset Hub with `genesis`,
 	/// and the People node the environment names.
-	async fn connect(chain: &ChainRuntime, genesis: H256, entropy: Vec<u8>) -> Self {
+	async fn connect(chain: &ChainRuntime, genesis: H256, entropy: RootEntropy) -> Self {
 		let asset_hub_rpc = chain.rpc_client("live PGAS claim", &genesis.0).await.unwrap();
 		let asset_hub = alloc::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(asset_hub_rpc));
 		let people_ws = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
@@ -74,11 +72,11 @@ impl LivePerson {
 		[
 			CollectionCandidate {
 				collection: PersonhoodCollection::People,
-				entropy: derive_full_person_ring_vrf_entropy(&self.entropy, suffix),
+				entropy: self.entropy.derive_full_person_ring_vrf_entropy(suffix),
 			},
 			CollectionCandidate {
 				collection: PersonhoodCollection::LitePeople,
-				entropy: derive_lite_person_ring_vrf_entropy(&self.entropy, suffix),
+				entropy: self.entropy.derive_lite_person_ring_vrf_entropy(suffix),
 			},
 		]
 	}
@@ -166,7 +164,7 @@ async fn a_durable_claim_lands_on_asset_hub_and_the_engine_sees_it() {
 		eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
 		return;
 	};
-	let entropy = bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy();
+	let entropy = RootEntropy::new(bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy());
 	let genesis = live_asset_hub_genesis();
 	let chain = live_asset_hub(genesis);
 	let person = Arc::new(LivePerson::connect(&chain, genesis, entropy).await);
