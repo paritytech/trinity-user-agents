@@ -5,8 +5,11 @@
 //! the key in the stack's link and against the build's
 //! [`ReservedValuesPolicy`], starts from it or from a newer copy the core
 //! stored, and fetches newer copies while the core runs. Every copy is held to
-//! the same policy. It resolves the [`Stack`] the core runs on.
+//! the same policy, and a copy on another TLD than the bundled one is refused.
+//! It resolves the [`Stack`] the core runs on.
 
+mod held;
+mod pinned;
 mod records;
 mod refresh;
 mod source;
@@ -242,6 +245,12 @@ pub enum StackError {
 	ReservedGenesis {
 		/// The reserved genesis hash.
 		genesis_hash: [u8; 32],
+	},
+	/// A stored or fetched copy changes a field the bundled copy pins.
+	#[display("stack descriptor changes {field}, which the bundled copy pins")]
+	PinnedFieldChanged {
+		/// The field, as the descriptor spells it.
+		field: &'static str,
 	},
 }
 

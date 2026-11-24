@@ -7,11 +7,12 @@
 
 use core::time::Duration;
 
-use trinity_stack::{
-	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
-};
+use trinity_stack::{FetchRequest, Pointer, Refresh, Served, StackReader, Status, open};
 
-use super::{ReplaceCheck, ReservedValuesPolicy, Stack, StackError};
+use super::{
+	ReplaceCheck, ReservedValuesPolicy, Stack, StackError,
+	held::{CopyRules, HeldCopy},
+};
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
@@ -93,75 +94,20 @@ pub struct StackStatus {
 	/// The newest copy was past `expiresAt` when the core last looked, at
 	/// start and after each fetch: the stack has shut down.
 	pub expired: bool,
-	/// The core stored a newer copy that changes a chain, the network, the
-	/// TLD or the generation. It runs that copy from its next start, so build
-	/// the runtime again to follow it.
+	/// The core stored a newer copy that changes a chain, the network or the
+	/// generation. It runs that copy from its next start, so build the
+	/// runtime again to follow it. A copy on another TLD is refused and never
+	/// sets it.
 	pub restart_required: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
 }
 
-/// One verified copy of the descriptor, and the stack it names.
-struct HeldCopy {
-	descriptor: Descriptor,
-	stack: Stack,
-}
-
-impl HeldCopy {
-	fn try_new(
-		pointer: &Pointer,
-		verified: Verified,
-		reserved_values: &ReservedValuesPolicy,
-	) -> Result<Self, StackError> {
-		let stack = Stack::from_descriptor(pointer, &verified.descriptor, reserved_values)?;
-		Ok(Self { descriptor: verified.descriptor, stack })
-	}
-
-	/// Whether the core can switch to `newer` while it runs: nothing it built
-	/// its services from differs, including the generation, so the chains did
-	/// not restart.
-	fn runs_as(&self, newer: &Self) -> bool {
-		self.stack == newer.stack
-	}
-}
-
-/// A reader loaded with the build copy and a stored record, and the copy it
-/// starts from.
-struct Opened {
-	reader: StackReader,
-	running: HeldCopy,
-	first_fetch: Option<FetchRequest>,
-	stale: bool,
-	expired: bool,
-}
-
-impl Opened {
-	fn try_new(
-		pointer: &Pointer,
-		bundled: &[u8],
-		stored: Option<&[u8]>,
-		reserved_values: &ReservedValuesPolicy,
-		now_unix_seconds: i64,
-	) -> Result<Self, StackError> {
-		let mut reader = StackReader::new(Refresh::MaxAge(REFRESH_MAX_AGE_SECS));
-		reader.load(pointer, Some(bundled), stored).map_err(StackError::Descriptor)?;
-		let read = reader.get(pointer, now_unix_seconds);
-		let current = read.current.expect("a reader loaded with a build copy has a copy");
-		Ok(Self {
-			running: HeldCopy::try_new(pointer, current.stack, reserved_values)?,
-			reader,
-			first_fetch: read.fetch,
-			stale: current.stale,
-			expired: current.expired,
-		})
-	}
-}
-
 /// The stack a host build runs: the copy the core started from, and each
 /// newer copy a fetch brings.
 pub struct StackSource {
-	pointer: Pointer,
-	reserved_values: ReservedValuesPolicy,
+	/// What the core checks every copy against.
+	rules: CopyRules,
 	reader: StackReader,
 	/// The fetch the reader handed out when it was loaded.
 	first_fetch: Option<FetchRequest>,
@@ -183,7 +129,8 @@ impl StackSource {
 	/// bundled, stored or fetched, is held to it.
 	///
 	/// Fails when `bundled` does not verify under the pointer's key or is not
-	/// a stack the core can run. A stored record that fails either is ignored.
+	/// a stack the core can run. A stored record the core would refuse is
+	/// ignored until the next stored record replaces it.
 	pub fn load(
 		pointer: Pointer,
 		bundled: &[u8],
@@ -191,33 +138,36 @@ impl StackSource {
 		reserved_values: ReservedValuesPolicy,
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
-		let open =
-			|stored| Opened::try_new(&pointer, bundled, stored, &reserved_values, now_unix_seconds);
-		let opened = match (open(stored), stored) {
-			(Err(error), Some(_)) => {
+		let rules = CopyRules::new(pointer, bundled, reserved_values)?;
+		let stored = stored.filter(|record| match rules.stored_copy(record) {
+			Ok(copy) => copy.is_some(),
+			Err(error) => {
 				tracing::warn!("starting from the bundled stack descriptor: {error}");
-				open(None)?
+				false
 			},
-			(opened, _) => opened?,
-		};
-		let Opened { reader, running, first_fetch, stale, expired } = opened;
+		});
+		let mut reader = StackReader::new(Refresh::MaxAge(REFRESH_MAX_AGE_SECS));
+		reader
+			.load(rules.pointer(), Some(bundled), stored)
+			.map_err(StackError::Descriptor)?;
+		let read = reader.get(rules.pointer(), now_unix_seconds);
+		let current = read.current.expect("a reader loaded with a build copy has a copy");
 		Ok(Self {
-			pointer,
-			reserved_values,
+			running: rules.hold(current.stack)?,
+			rules,
 			reader,
-			first_fetch,
-			running,
+			first_fetch: read.fetch,
 			unstored: None,
 			next_start: None,
-			stale,
-			expired,
+			stale: current.stale,
+			expired: current.expired,
 			last_refresh: None,
 		})
 	}
 
 	/// What identifies the stack. The caller stores its record under it.
 	pub fn stack_id(&self) -> String {
-		self.pointer.stack_id()
+		self.rules.pointer().stack_id()
 	}
 
 	/// The stack the core runs.
@@ -244,7 +194,7 @@ impl StackSource {
 	pub fn due_fetch(&mut self, now_unix_seconds: i64) -> Option<FetchRequest> {
 		self.first_fetch
 			.take()
-			.or_else(|| self.reader.get(&self.pointer, now_unix_seconds).fetch)
+			.or_else(|| self.reader.get(self.rules.pointer(), now_unix_seconds).fetch)
 	}
 
 	/// How long until [`Self::due_fetch`] has a fetch to make, or `None` while
@@ -253,7 +203,10 @@ impl StackSource {
 	pub fn next_fetch_in(&self, now_unix_seconds: i64) -> Option<Duration> {
 		match self.first_fetch {
 			Some(_) => Some(Duration::ZERO),
-			None => self.reader.due_in(&self.pointer, now_unix_seconds).map(Duration::from_secs),
+			None => self
+				.reader
+				.due_in(self.rules.pointer(), now_unix_seconds)
+				.map(Duration::from_secs),
 		}
 	}
 
@@ -263,16 +216,17 @@ impl StackSource {
 	pub fn forced_fetch(&mut self, now_unix_seconds: i64) -> Option<FetchRequest> {
 		self.first_fetch
 			.take()
-			.or_else(|| self.reader.refresh(&self.pointer, now_unix_seconds))
+			.or_else(|| self.reader.refresh(self.rules.pointer(), now_unix_seconds))
 	}
 
 	/// Takes the answer to a fetch, or why the fetch failed, and returns the
 	/// record to store when it changed. Store it, then call
-	/// [`Self::record_stored`]. The record goes back to [`Self::load`] as
-	/// `stored`.
+	/// [`Self::record_stored`], or [`Self::record_not_stored`] when the store
+	/// failed. The record goes back to [`Self::load`] as `stored`.
 	///
-	/// A copy the core cannot run is refused like one that breaks a
-	/// descriptor rule: it is not stored, so the core never starts from it.
+	/// A copy the core cannot run, or that changes a pinned field, is refused
+	/// and not stored. After a refused or failed fetch the record holds the
+	/// copy the core already had, without its `ETag`.
 	#[must_use = "the record is the copy the next start reads"]
 	pub fn fetched(
 		&mut self,
@@ -280,7 +234,7 @@ impl StackSource {
 		now_unix_seconds: i64,
 	) -> Option<Vec<u8>> {
 		// The reader judges every later fetch against a copy it takes, so one
-		// the core cannot run never reaches it.
+		// the core refuses never reaches it.
 		let (served, unusable) = match answer {
 			Ok(served) => match self.refusal(served) {
 				Some(reason) => {
@@ -290,7 +244,7 @@ impl StackSource {
 			},
 			Err(reason) => (Served::Unreachable, Some(StackRefreshOutcome::Unreachable { reason })),
 		};
-		let refreshed = match self.reader.fetched(&self.pointer, served, now_unix_seconds) {
+		let refreshed = match self.reader.fetched(self.rules.pointer(), served, now_unix_seconds) {
 			Ok(refreshed) => refreshed,
 			Err(error) => {
 				self.last_refresh =
@@ -309,7 +263,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		});
-		let held = match HeldCopy::try_new(&self.pointer, accepted.stack, &self.reserved_values) {
+		let held = match self.rules.hold(accepted.stack) {
 			Ok(held) => held,
 			Err(error) => {
 				self.last_refresh = Some(match outcome {
@@ -345,24 +299,27 @@ impl StackSource {
 	}
 
 	/// Says the record the last [`Self::fetched`] returned could not be
-	/// stored, and why. The host sees it in [`StackStatus::last_refresh`].
+	/// stored, and why.
+	///
+	/// It shows in [`StackStatus::last_refresh`] only after a fetch that came
+	/// to `Current`. A refused or failed fetch stays reported as such.
 	pub fn record_not_stored(&mut self, reason: String) {
-		self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });
+		if self.last_refresh == Some(StackRefreshOutcome::Current) {
+			self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });
+		}
 	}
 
 	/// The check for storing `record`, which [`Self::fetched`] returned.
 	pub fn replace_check(&self, record: &[u8]) -> ReplaceCheck {
-		ReplaceCheck::new(self.pointer.clone(), record)
+		ReplaceCheck::new(self.rules.clone(), record)
 	}
 
-	/// Why the core cannot run a served document that verifies under the
-	/// pointer. `None` for one it can run, and for one the reader refuses.
+	/// Why the core refuses a served document that verifies under the
+	/// pointer. `None` when the core takes it or the reader refuses it.
 	fn refusal(&self, served: Served) -> Option<String> {
 		let Served::Document { bytes, .. } = served else { return None };
-		let verified = open(bytes, &self.pointer).ok()?;
-		Stack::from_descriptor(&self.pointer, &verified.descriptor, &self.reserved_values)
-			.err()
-			.map(|error| error.to_string())
+		let verified = open(bytes, self.rules.pointer()).ok()?;
+		self.rules.hold(verified).err().map(|error| error.to_string())
 	}
 }
 
