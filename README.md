@@ -387,9 +387,9 @@ in. A refused or expired attempt is built again in a fresh slot, up to five
 attempts, and no attempt is built later than ten minutes after registration.
 The engine decides a claim by finding its extrinsic in a block, because
 `Pgas.ClaimedGasAliases` records only the person's alias for a day and slot,
-whichever claim of that slot landed. Nothing registers claims yet: a
-`SmartContractAllowance` request claims PGAS directly, without the durable
-ledger.
+whichever claim of that slot landed. NFT transfers that must be paid
+register their claims; a `SmartContractAllowance` request claims PGAS
+directly, without the durable ledger.
 
 ### NFT purses
 
@@ -408,8 +408,16 @@ or handoff spends. The same grant covers both.
 `rebalancePurse` and `transferItem` register an operation under an idempotency
 key the product chooses and return; `observeOperationStatus` follows it by that
 key until it is `Cleared` or `Incomplete`. Each transfer is a deferred durable
-transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
-submitted, and proven landed when its instance is at the destination. What
+transaction signed by the item key when it is submitted, and proven landed
+when its instance is at the destination one revision on. Scarcity gives an NFT
+a budget of fee-less moves (`Scarcity::MaximumMoves`); the tracker records the
+moves each held NFT used, and registration decides from them whether a move is
+a fee-less `Scarcity::transfer` or a paid `Scarcity::transfer_by_holder`. A
+move is paid once its NFT has no fee-less move left, and a refund's move once
+the NFT would reach the cheque key with none left, so the sender can still
+reclaim it. A paid move first registers a PGAS claim into its item key and
+waits for it as a dependency; the runtime takes the fee from that PGAS, and
+the move gives up when the claim fails. What
 each transfer spends is recorded in `nft_consumption`, whether the key is one
 of ours or a cheque key, and a key a live transfer spends cannot be spent by
 another. A failed transfer frees its item again. Transferring items out of Root's or another product's
@@ -427,7 +435,10 @@ core database keeps the cheque as returned, with its source purse, destination
 and creation time, in `nft_cheque`. A second cheque with the same id from the
 same product answers `OperationExists`, and `listCheques` returns every cheque
 the calling product created since the core started keeping them, oldest first,
-so a product that lost one can deliver the same bytes again or revoke it.
+so a product that lost one can deliver the same bytes again or revoke it. The
+recipient deposits a cheque with one fee-less move per item, so a cheque over
+items with no fee-less move left answers `ItemsMovesExhausted`, naming them,
+before the user is asked to confirm; the product rebalances them first.
 
 `deposit` opens a received cheque and registers one move per item into fresh
 keys of the purse the product names, under the cheque id, and returns;
