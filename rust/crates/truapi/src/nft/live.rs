@@ -10,6 +10,12 @@
 //! until it clears. It burns everything and deletes the collection whatever happened.
 //! The collection's owner is `//Alice` unless `LIVE_NFT_OWNER_MNEMONIC` names
 //! another funded account, which then signs with its root key.
+//!
+//! A second run moves an item paid: with the move budget lowered to 0, a
+//! rebalance claims PGAS into the item's key and moves it through
+//! `Scarcity::transfer_by_holder`. It needs a person in a People ring, named
+//! by `TRUAPI_LIVE_PERSON_MNEMONIC`, spends one of the person's PGAS slots for
+//! the day, and skips without it.
 //! `LIVE_ASSET_HUB_WS` and `LIVE_ASSET_HUB_GENESIS` point it at another
 //! Asset Hub.
 
@@ -30,7 +36,7 @@ use truapi::latest::{
 use super::{
 	ImportedSecretStore, ItemKey, NftLedger, NftLedgerDeps, PurseId, ScarcityMoveBudget,
 	ScarcityTransfersDeps,
-	scarcity::ASSET_HUB_PIPELINE,
+	scarcity::{ASSET_HUB_PIPELINE, FixedMoveBudget, MoveBudget, MoveBudgetSource},
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
 	with_scarcity_transfers,
 };
@@ -46,7 +52,7 @@ use crate::{
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::root_entropy::RootEntropy,
 	nft::HoldingTracker,
-	pgas_claims::PgasClaims,
+	pgas_claims::{LivePerson, PgasClaims, with_pgas_claims},
 	nft_purse::{
 		FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize, ScriptedStatements,
 	},
@@ -138,6 +144,22 @@ struct LivePurses {
 }
 
 fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
+	let budget = Arc::new(ScarcityMoveBudget::new(
+		Arc::new(chain.clone()),
+		Arc::new(chain.clone()),
+		genesis,
+	));
+	live_purses_over(chain, genesis, budget, DurableRegistry::new())
+}
+
+/// [`live_purses`] whose moves pay by `budget`, with the domains of `registry`
+/// served next to NFT transfers.
+fn live_purses_over(
+	chain: &ChainRuntime,
+	genesis: H256,
+	budget: Arc<dyn MoveBudgetSource>,
+	registry: DurableRegistry,
+) -> LivePurses {
 	let (dir, db) = open_temporary_core_db();
 	let keys = Arc::new(FixedEntropy::new(rand::random::<[u8; 16]>()));
 	let imported = ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default()));
@@ -151,10 +173,9 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		signer: keys.clone(),
 		imported: imported.clone(),
 		extrinsics: Arc::new(ExtrinsicService::over_chain(chain.clone(), versions)),
-		budget: Arc::new(ScarcityMoveBudget::new(storage.clone(), Arc::new(chain.clone()), genesis)),
+		budget: budget.clone(),
 	};
-	let engine =
-		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));
+	let engine = live_engine(chain, db.clone(), with_scarcity_transfers(registry, transfers));
 	let installation = Arc::new(FixedInstallation(TEST_INSTALLATION));
 	let secrets = keys.clone();
 	let deps = NftLedgerDeps {
@@ -165,7 +186,7 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		secrets,
 		imported,
 		recovery: Arc::new(super::NftRecovery::off()),
-		budget: Arc::new(ScarcityMoveBudget::new(storage.clone(), Arc::new(chain.clone()), genesis)),
+		budget,
 		claims: PgasClaims::new(engine.clone()),
 	};
 	let ledger = NftLedger::new(deps);
@@ -308,6 +329,49 @@ async fn every_purse_call_moves_items_on_the_live_chain() {
 	}
 }
 
+/// A rebalance of an item with no fee-less move left claims PGAS into its
+/// key and moves it paid, which the runtime takes its fee for from the PGAS.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a live Asset Hub, a funded collection owner and a person's mnemonic"]
+async fn a_rebalance_without_fee_less_moves_claims_pgas_and_moves_paid() {
+	let Ok(mnemonic) = std::env::var("TRUAPI_LIVE_PERSON_MNEMONIC") else {
+		eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
+		return;
+	};
+	let entropy = RootEntropy::new(bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy());
+	let genesis = live_asset_hub_genesis();
+	let chain = live_asset_hub(genesis);
+	let owner = CollectionOwner::from_env(chain.clone(), genesis);
+	let person = Arc::new(LivePerson::connect(&chain, genesis, entropy).await);
+	let claims = with_pgas_claims(DurableRegistry::new(), genesis, person);
+	let no_fee_less_moves = Arc::new(FixedMoveBudget(MoveBudget::new(0)));
+	let live = live_purses_over(&chain, genesis, no_fee_less_moves, claims);
+	let purses = live_product_purses(&live);
+	let collection = owner.create_collection().await;
+
+	let run = LiveRun { owner: &owner, purses: &purses, collection };
+	let ran =
+		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(run.rebalance_one_paid(&live.db)))
+			.await;
+
+	owner.clean_up(collection, &every_item_key(&live.ledger).await).await;
+	if let Err(panic) = ran {
+		std::panic::resume_unwind(panic);
+	}
+}
+
+/// The fee-less moves the tracker recorded for what `key` holds, once it
+/// holds something.
+async fn tracked_moves(db: &Db, key: ItemKey) -> Option<u16> {
+	let read = move |conn: &rusqlite::Connection| {
+		let moves = conn.query_row("SELECT moves FROM nft_holding WHERE key = ?1", [key.0], |row| {
+			row.get::<_, Option<u16>>(0)
+		});
+		Ok(rusqlite::OptionalExtension::optional(moves)?.flatten())
+	};
+	db.read(read).await.expect("the holding reads")
+}
+
 /// Every key the ledger allocated, in this run's purses or as an import's
 /// destination.
 async fn every_item_key(ledger: &NftLedger) -> Vec<ItemKey> {
@@ -348,7 +412,7 @@ impl LiveRun<'_> {
 	/// Every purse call a product makes, in the order a product would make them.
 	/// The last one transfers an item to `foreign`, outside the purses.
 	async fn every_call(&self, foreign: ItemKey) {
-		let minted = self.mint_into_new_purse().await;
+		let minted = self.mint_into_new_purse(ITEM_COUNT).await;
 		let rebalanced = self.rebalance_into_spare_purse(minted).await;
 		let into = self.purses.create_purse(&receiver(), "received".into()).await.unwrap();
 		self.deposit_ephemeral_cheque(rebalanced.purse, rebalanced.keys[0], into).await;
@@ -356,6 +420,17 @@ impl LiveRun<'_> {
 		self.revoke_undelivered_cheque(rebalanced.purse, rebalanced.keys[2]).await;
 		self.refund_then_revoke(rebalanced.purse, rebalanced.keys[3], into).await;
 		self.transfer_out_of_the_purses(into, foreign).await;
+	}
+
+	/// Mints one item and rebalances it while no move is fee-less, then
+	/// checks it reached its new key with its moves reset, as only a paid
+	/// move leaves them.
+	async fn rebalance_one_paid(&self, db: &Db) {
+		let minted = self.mint_into_new_purse(1).await;
+		let rebalanced = self.rebalance_into_spare_purse(minted).await;
+		let moved_to = ItemKey(rebalanced.keys[0].0);
+		let moves = wait_for("the moved NFT's holding", || tracked_moves(db, moved_to)).await;
+		assert_eq!(moves, 0, "a paid move resets the NFT's moves");
 	}
 
 	/// The sender hands `item` of `from` off in a cheque nobody deposits,
@@ -402,9 +477,9 @@ impl LiveRun<'_> {
 
 	/// Creates a sender purse with new keys, mints into them, and waits until
 	/// the purse lists them.
-	async fn mint_into_new_purse(&self) -> ListedItems {
+	async fn mint_into_new_purse(&self, count: u32) -> ListedItems {
 		let purse = self.purses.create_purse(&sender(), "minted".into()).await.unwrap();
-		let count = ItemCount::new(ITEM_COUNT).unwrap();
+		let count = ItemCount::new(count).unwrap();
 		let keys = self.purses.create_items(purse, count).await.unwrap();
 		let item_keys: Vec<_> = keys.iter().map(|key| ItemKey(key.0)).collect();
 		self.owner.mint_into(self.collection, &item_keys).await;

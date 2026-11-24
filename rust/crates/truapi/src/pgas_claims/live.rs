@@ -33,7 +33,7 @@ use crate::{
 };
 
 /// The person behind a mnemonic, with the chains its claims are built from.
-struct LivePerson {
+pub struct LivePerson {
 	entropy: RootEntropy,
 	network_suffix: Vec<u8>,
 	asset_hub: alloc::rpc::RpcClient,
@@ -47,7 +47,7 @@ struct LivePerson {
 impl LivePerson {
 	/// The person behind `entropy`, on `chain`, the Asset Hub with `genesis`,
 	/// and the People node the environment names.
-	async fn connect(chain: &ChainRuntime, genesis: H256, entropy: RootEntropy) -> Self {
+	pub async fn connect(chain: &ChainRuntime, genesis: H256, entropy: RootEntropy) -> Self {
 		let asset_hub_rpc = chain.rpc_client("live PGAS claim", &genesis.0).await.unwrap();
 		let asset_hub = alloc::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(asset_hub_rpc));
 		let people_ws = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
