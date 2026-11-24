@@ -320,7 +320,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// the text input.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
-    /// Return the current product-scoped native Chat rooms.
+    /// Return the current product-scoped native Chat rooms. The core checks the
+    /// room of each change to a room against this list, so a host that cannot
+    /// read its rooms throws: an empty list makes the core answer `UnknownRoom`
+    /// for a room that exists.
     func listRooms() async throws -> [ChatRoom]
 
     /// Return the configuration of the last `createRoom` of a room. The core

@@ -145,8 +145,9 @@ the host stores, with the name and icon of `createRoom` and the text input.
 | `setRoomFooter` | Shows the text input, or nothing |
 
 The core checks that the product created the room before it calls any of
-these, except `createRoom` and `roomConfig`, and bounds and screens every
-field.
+these, except `createRoom` and `deleteRoom`, and bounds and screens every
+field. It calls `deleteRoom` for every room except one that the product takes
+part in as a bot, so a room that does not exist is not an error.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be

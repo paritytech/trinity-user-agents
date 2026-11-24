@@ -49,6 +49,65 @@ struct ChatHostBridgeDefaultsTests {
             )
         }
     }
+
+    /// The core reaches a bridge as `any ChatHostBridge`. A host that keeps
+    /// configurations overrides the four-argument `createRoom` and
+    /// `roomConfig`, so both must be protocol requirements: a method that only
+    /// the extension declares would run its default instead.
+    @Test
+    func aHostThatKeepsConfigurationsServesThemThroughTheProtocol() async throws {
+        let declaring = DeclaringChatHostBridge()
+        let bridge: any ChatHostBridge = declaring
+        var config = ChatRoomConfig.hostDefault
+        config.productSource = true
+
+        let status = try await bridge.createRoom(roomId: "room", name: "Room", icon: "", config: config)
+
+        #expect(status == .new)
+        #expect(declaring.configs == ["room": config])
+        #expect(try await bridge.roomConfig(roomId: "room") == config)
+    }
+}
+
+/// A host that keeps the configuration of each room.
+private final class DeclaringChatHostBridge: ChatHostBridge, @unchecked Sendable {
+    private(set) var configs: [String: ChatRoomConfig] = [:]
+
+    func createRoom(
+        roomId _: String,
+        name _: String,
+        icon _: String
+    ) async throws -> ChatRoomRegistrationStatus {
+        throw HostRejection.Rejected(reason: "the core creates rooms with their configuration")
+    }
+
+    func createRoom(
+        roomId: String,
+        name _: String,
+        icon _: String,
+        config: ChatRoomConfig
+    ) async throws -> ChatRoomRegistrationStatus {
+        configs[roomId] = config
+        return .new
+    }
+
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
+        configs[roomId] ?? .hostDefault
+    }
+
+    func registerBot(
+        botId _: String,
+        name _: String,
+        icon _: String
+    ) async throws -> ChatBotRegistrationStatus { .new }
+
+    func postMessage(roomId _: String, content _: ChatMessageContent, alt _: String?) async throws -> String {
+        "message-id"
+    }
+
+    func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
+
+    func listRooms() async throws -> [ChatRoom] { [] }
 }
 
 /// A host that implements only the requests of the first chat version.
