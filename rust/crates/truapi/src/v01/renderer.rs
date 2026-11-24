@@ -808,6 +808,74 @@ impl Emitter {
 	}
 }
 
+/// How a [`Parallax`] follows the device's tilt.
+///
+/// The tilt is measured from a rest attitude: the device's when the node
+/// appeared, which then follows the device's own with a time constant of
+/// `settle_ms` (zero keeps it), so the node drifts home when the device is
+/// held still another way. Each axis's tilt, clamped to `max_tilt_centideg`
+/// either way, moves the node in proportion, up to `travel` at the clamp:
+/// lowering the device's end edge (its right, in a left-to-right layout)
+/// moves it towards the end, and lowering its top edge moves it down.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct TiltParallax {
+	/// The move at the clamp, in hundredths of a logical pixel.
+	pub travel: u32,
+	/// The tilt that moves it all the way, in hundredths of a degree; zero
+	/// never moves.
+	pub max_tilt_centideg: u16,
+	/// How fast the rest attitude follows the device, in milliseconds.
+	pub settle_ms: u16,
+}
+
+/// Moves a node by the device's tilt, a keyed pan's children, or both,
+/// scaled by its depth, so layers at different depths move apart.
+///
+/// The move is `depth_permille / 1000` times the sum of the tilt's (see
+/// [`TiltParallax`]) and the offset at which the children of the `Gesture`
+/// keyed `pan` are drawn, whoever moves them: the finger, a worker's offsets,
+/// or the host settling them. 1000 moves with them, 0 not at all, a negative
+/// depth the other way. It is drawn after layout, as [`Translate`] moves the
+/// node, and composes with it and with tracks. [`Self::offset`] is the rule
+/// both hosts follow. A key that names no gesture adds nothing. Where the
+/// person asked for less motion, or on a host with no tilt to read, the tilt
+/// adds nothing; the pan's part still follows the finger.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct Parallax {
+	/// How far the node moves for its sources, in thousandths.
+	pub depth_permille: i16,
+	/// Follows the device's tilt; absent does not.
+	pub tilt: Option<TiltParallax>,
+	/// The `key` of the gesture whose children's offset it follows; absent
+	/// does not.
+	pub pan: Option<String>,
+}
+
+impl Parallax {
+	/// The node's move, in hundredths of a logical pixel along the layout
+	/// direction and down, for a `tilt` from the rest attitude in degrees
+	/// (end edge lowered, top edge lowered) and the pan's children drawn at
+	/// `pan_offset`.
+	pub fn offset(&self, tilt: (f64, f64), pan_offset: (f64, f64)) -> (f64, f64) {
+		let (tilt_x, tilt_y) = match &self.tilt {
+			Some(follow) if follow.max_tilt_centideg > 0 => {
+				let max = f64::from(follow.max_tilt_centideg) / 100.0;
+				let travel = f64::from(follow.travel);
+				let along = |degrees: f64| travel * (degrees / max).clamp(-1.0, 1.0);
+				(along(tilt.0), along(tilt.1))
+			},
+			_ => (0.0, 0.0),
+		};
+		let (pan_x, pan_y) = if self.pan.is_some() { pan_offset } else { (0.0, 0.0) };
+		let depth = f64::from(self.depth_permille) / 1000.0;
+		(depth * (tilt_x + pan_x), depth * (tilt_y + pan_y))
+	}
+}
+
 /// Layout and styling applied to one node.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(tag = "tag", content = "value")]
@@ -869,6 +937,9 @@ pub enum Modifier {
 	Animate(Track),
 	/// Sends particles from the node. A node keeps its last `Emit`.
 	Emit(Emitter),
+	/// Moves the node by the device's tilt or a pan, scaled by its depth. A
+	/// node keeps its last `Parallax`.
+	Parallax(Parallax),
 }
 
 /// Properties of a `Box`.

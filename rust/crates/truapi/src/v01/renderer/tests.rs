@@ -1232,3 +1232,70 @@ fn refused_inline_particle_images_are_emptied() {
 	node.clear_refused_inline_images();
 	assert_eq!(node, emitting(Vec::new()));
 }
+
+/// A back layer that drifts against the tilt and lags behind a dragged card.
+fn back_layer() -> Parallax {
+	Parallax {
+		depth_permille: -300,
+		tilt: Some(TiltParallax { travel: 2400, max_tilt_centideg: 2000, settle_ms: 3000 }),
+		pan: Some("card".into()),
+	}
+}
+
+/// `Parallax` is the modifier after `Emit`: the depth, then the tilt and the
+/// pan, each optional.
+#[test]
+fn parallax_is_the_modifier_after_emit() {
+	assert_eq!(
+		Modifier::Parallax(back_layer()).encode(),
+		vec![
+			24, 0xD4, 0xFE, //
+			1, 0x60, 0x09, 0, 0, 0xD0, 0x07, 0xB8, 0x0B, //
+			1, 16, b'c', b'a', b'r', b'd',
+		]
+	);
+	let still = Parallax { depth_permille: 1000, tilt: None, pan: None };
+	assert_eq!(Modifier::Parallax(still).encode(), vec![24, 0xE8, 0x03, 0, 0]);
+}
+
+#[test]
+fn parallax_round_trips_through_scale_json_and_uniffi() {
+	let node = RendererNode::Box {
+		modifiers: vec![Modifier::Parallax(back_layer())],
+		props: BoxProps { content_alignment: None },
+		children: vec![renderer_node()],
+	};
+	assert_eq!(RendererNode::decode(&mut node.encode().as_slice()).unwrap(), node);
+	let json = r#"{"tag":"Parallax","value":{"depthPermille":-300,
+		"tilt":{"travel":2400,"maxTiltCentideg":2000,"settleMs":3000},"pan":"card"}}"#;
+	assert_eq!(serde_json::from_str::<Modifier>(json).unwrap(), Modifier::Parallax(back_layer()));
+	let bare: Parallax = serde_json::from_str(r#"{"depthPermille":500}"#).unwrap();
+	assert_eq!(bare, Parallax { depth_permille: 500, tilt: None, pan: None });
+	#[cfg(not(target_arch = "wasm32"))]
+	{
+		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
+		assert_eq!(<RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), node);
+	}
+}
+
+/// The tilt moves in proportion up to its clamp, the pan's offset adds to it,
+/// and the depth scales and turns the sum.
+#[test]
+fn parallax_scales_the_tilt_and_the_pan_by_its_depth() {
+	let front = Parallax { depth_permille: 1000, ..back_layer() };
+	assert_eq!(front.offset((10.0, -5.0), (0.0, 0.0)), (1200.0, -600.0));
+	assert_eq!(front.offset((45.0, -90.0), (0.0, 0.0)), (2400.0, -2400.0));
+	assert_eq!(front.offset((10.0, 0.0), (300.0, 100.0)), (1500.0, 100.0));
+	assert_eq!(back_layer().offset((10.0, 0.0), (300.0, 100.0)), (-450.0, -30.0));
+	// With no tilt to follow, or none to measure, only the pan moves it.
+	let pan_only = Parallax { tilt: None, ..front.clone() };
+	assert_eq!(pan_only.offset((10.0, 10.0), (300.0, 100.0)), (300.0, 100.0));
+	let flat = Parallax {
+		tilt: Some(TiltParallax { travel: 2400, max_tilt_centideg: 0, settle_ms: 0 }),
+		..pan_only.clone()
+	};
+	assert_eq!(flat.offset((10.0, 10.0), (0.0, 0.0)), (0.0, 0.0));
+	// With no pan, the pan's offset is not followed.
+	let tilt_only = Parallax { pan: None, ..front };
+	assert_eq!(tilt_only.offset((0.0, 0.0), (300.0, 100.0)), (0.0, 0.0));
+}

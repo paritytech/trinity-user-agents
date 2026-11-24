@@ -223,6 +223,9 @@ private extension [Modifier] {
             case .emit:
                 // The iPhone particle layer draws emitters; until then the node draws with no particles.
                 break
+            case .parallax:
+                // The iPhone parallax layer moves the node by tilt and pan; until then it stays where the tree puts it.
+                break
             }
         }
 
