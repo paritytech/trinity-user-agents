@@ -243,8 +243,8 @@ What the core stored about the chains carries the run it was written in:
 - The ring-VRF registry is the wallet's own record, so it is kept. Each ring
   names its chain, and the registry loses the rings on the chains of its run
   that restarted: all of them when the `generation` changed, otherwise those
-  whose genesis hash the stack no longer has. A registry stored without a run
-  keeps only the rings on this run's chains.
+  whose genesis hash the stack no longer has. One stored without a run is not
+  read.
 - The `SessionUsernamesRun` slot records the run in which the usernames of the
   `AuthSession` blob were read, with a hash of that blob.
 

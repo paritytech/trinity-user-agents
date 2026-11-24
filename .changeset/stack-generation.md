@@ -15,4 +15,5 @@ A restored session comes up without waiting for its usernames. The core looks th
 `SessionUsernamesRun` next to it.
 
 On the first start after the update, with no wipe, cached manifests are read again, a pairing host asks for each
-product's allowance again, and a stored ring-VRF registry keeps only the rings on the stack's chains.
+product's allowance again, and the stored ring-VRF registry is not read, so a provider chosen for a ring has to be
+chosen again.

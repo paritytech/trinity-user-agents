@@ -134,7 +134,7 @@ impl StackRun {
 	}
 
 	/// Whether one of the chains of this run has `genesis_hash`.
-	pub fn has_chain(&self, genesis_hash: [u8; 32]) -> bool {
+	fn has_chain(&self, genesis_hash: [u8; 32]) -> bool {
 		[self.asset_hub, self.people, self.bulletin].contains(&genesis_hash)
 	}
 

@@ -126,33 +126,15 @@ fn a_registry_loses_only_the_rings_on_chains_a_wipe_replaced() {
 	);
 }
 
-/// A registry stored without a run does not say which chains it was written
-/// on, so only the rings on this run's chains can be told from ones a wipe
-/// removed, and the rest are dropped. It is stored again with the run, so
-/// this happens once and the next start reads what this one kept.
+/// A registry stored without a run does not say which chains its rings were
+/// on, so it is not read, like the other values the core stores about the
+/// chains.
 #[test]
-fn a_registry_stored_without_a_run_keeps_the_rings_on_this_runs_chains_once() {
+fn a_registry_stored_without_a_run_is_not_read() {
 	let paseo = paseo_test_stack();
-	let (people, elsewhere) = (paseo.chains().people, [0xee; 32]);
-	let registry = registered_on(&[people, elsewhere]);
-	let platform = Arc::new(StubPlatform::default());
-	let key = CoreStorageKey::RingVrfRegistry { root_public_key: [1; 32] };
-	futures::executor::block_on(platform.write_core_storage(key.clone(), registry.encode()))
-		.expect("stub core storage writes");
+	let registry = registered_on(&[paseo.chains().people]);
 
-	let store = RingVrfRegistryStore::new(platform.clone(), &paseo);
-	let dropped = &registry.selected_providers[1].handle;
-	let first = futures::executor::block_on(store.entry([1; 32], dropped)).unwrap();
-	let stored = futures::executor::block_on(platform.read_core_storage(key))
-		.expect("stub core storage reads")
-		.expect("the registry is stored");
-
-	let mut on_people = registered_on(&[people]);
-	on_people.complete_owners.clear();
-	assert_eq!(
-		(first, stored.clone(), listed(stored, &paseo, &registry)),
-		(None, paseo.run().stamp(&on_people.encode()), (vec![(true, true), (false, false)], false))
-	);
+	assert_eq!(listed(registry.encode(), &paseo, &registry), (vec![(false, false)], false));
 }
 
 #[test]
