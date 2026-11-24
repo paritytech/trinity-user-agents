@@ -409,15 +409,35 @@ fn every_shape() -> Vec<MaskShape> {
 			points: vec![point(0, 0), point(1050, 2075), point(-5, 30000)],
 		},
 		MaskShape::Stroke { width: 300, points: vec![point(4, 4)] },
+		MaskShape::Stamped {
+			width: 5200,
+			brush: slanted_nib(),
+			points: vec![point(0, 0), point(2000, 900)],
+		},
 		MaskShape::All,
 	]
+}
+
+/// A narrow ellipse turned 30 degrees anticlockwise, stamped every quarter of
+/// its length.
+fn slanted_nib() -> MaskBrush {
+	MaskBrush {
+		tip: MaskBrushTip::Ellipse,
+		aspect_permille: 350,
+		angle_centideg: -3000,
+		spacing_permille: 250,
+	}
 }
 
 #[test]
 fn a_masked_node_round_trips_with_every_shape_follow_fade_and_share() {
 	for mask in [
 		mask(Vec::new(), None, None),
-		mask(every_shape(), Some(MaskFollow { pan: "pan".into(), width: 5200 }), Some(350)),
+		mask(
+			every_shape(),
+			Some(MaskFollow { pan: "pan".into(), width: 5200, brush: None }),
+			Some(350),
+		),
 		Mask {
 			key: None,
 			mode: MaskMode::Show,
@@ -449,16 +469,41 @@ fn a_mask_is_the_modifier_after_exit_fade() {
 		key: Some("k".into()),
 		mode: MaskMode::Show,
 		shapes: vec![MaskShape::All],
-		follow: Some(MaskFollow { pan: "p".into(), width: 100 }),
+		follow: Some(MaskFollow { pan: "p".into(), width: 100, brush: None }),
 		fade_ms: Some(350),
 		cleared_share: Some(ClearedShare { at_permille: 550, action: "a".into() }),
 	});
 	// The share follows the fade: present, 550 as a little-endian u16, the action.
 	assert_eq!(
 		show.encode(),
-		vec![20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, b'a']
+		vec![20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, b'a']
 	);
 	assert_eq!(Modifier::decode(&mut show.encode().as_slice()).unwrap(), show);
+}
+
+/// The box the client's wire-contract test encodes, so both sides pin one
+/// vector: the box's index, one modifier, the mask, no alignment, no children.
+#[test]
+fn a_masked_box_has_the_bytes_the_client_pins() {
+	let node = RendererNode::Box {
+		modifiers: vec![Modifier::Mask(Mask {
+			key: Some("k".into()),
+			mode: MaskMode::Show,
+			shapes: vec![MaskShape::All],
+			follow: Some(MaskFollow { pan: "p".into(), width: 100, brush: None }),
+			fade_ms: Some(350),
+			cleared_share: Some(ClearedShare { at_permille: 550, action: "a".into() }),
+		})],
+		props: BoxProps { content_alignment: None },
+		children: Vec::new(),
+	};
+	assert_eq!(
+		node.encode(),
+		vec![
+			2, 4, 20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4,
+			b'a', 0, 0
+		]
+	);
 }
 
 #[test]
@@ -605,7 +650,7 @@ fn masks_and_extends_round_trip_through_uniffi() {
 	for node in [
 		masked_tree(mask(
 			every_shape(),
-			Some(MaskFollow { pan: "pan".into(), width: 5200 }),
+			Some(MaskFollow { pan: "pan".into(), width: 5200, brush: None }),
 			Some(350),
 		)),
 		RendererNode::ExtendMask { key: "mask".into(), shapes: every_shape() },
@@ -683,4 +728,82 @@ fn a_mask_wraps_any_node_and_leaves_its_bytes_unchanged() {
 		assert!(bytes.ends_with(&child.encode()), "{child:?}");
 		assert_eq!(RendererNode::decode(&mut bytes.as_slice()).unwrap(), wrapped);
 	}
+}
+
+/// A stamped line is the shape after `Stroke`: its width, then the brush's
+/// tip, aspect, angle and spacing, then its points. A followed brush is the
+/// field after the width.
+#[test]
+fn a_stamped_line_and_a_followed_brush_have_the_same_bytes_on_hosts_and_clients() {
+	let stamped = MaskShape::Stamped {
+		width: 5200,
+		brush: MaskBrush {
+			tip: MaskBrushTip::Capsule,
+			aspect_permille: 350,
+			angle_centideg: -3000,
+			spacing_permille: 250,
+		},
+		points: vec![point(1, 2)],
+	};
+	let expected = [
+		3, 80, 20, 0, 0, //
+		1, 94, 1, 72, 244, 250, 0, //
+		4, 1, 0, 0, 0, 2, 0, 0, 0,
+	];
+	assert_eq!(stamped.encode(), expected);
+	assert_eq!(MaskShape::decode(&mut expected.as_slice()).unwrap(), stamped);
+	let follow = MaskFollow { pan: "p".into(), width: 100, brush: Some(slanted_nib()) };
+	assert_eq!(follow.encode(), vec![4, b'p', 100, 0, 0, 0, 1, 0, 94, 1, 72, 244, 250, 0]);
+	assert_eq!(MaskFollow::decode(&mut follow.encode().as_slice()).unwrap(), follow);
+}
+
+#[test]
+fn a_followed_brush_reads_from_json_and_is_absent_when_left_out() {
+	let round: MaskFollow = serde_json::from_str(r#"{"pan":"pan","width":5200}"#).unwrap();
+	assert_eq!(round, MaskFollow { pan: "pan".into(), width: 5200, brush: None });
+	let json = r#"{"pan":"pan","width":5200,"brush":{"tip":"Ellipse","aspectPermille":350,"angleCentideg":-3000,"spacingPermille":250}}"#;
+	let stamped: MaskFollow = serde_json::from_str(json).unwrap();
+	assert_eq!(stamped, MaskFollow { pan: "pan".into(), width: 5200, brush: Some(slanted_nib()) });
+}
+
+/// Stamps fall every spacing along the line, the distance carried across its
+/// corners, with one more on a last point the spacing leaves bare.
+#[test]
+fn stamps_fall_every_spacing_along_the_line_and_on_its_ends() {
+	let every = |spacing_permille| MaskBrush { spacing_permille, ..slanted_nib() };
+	let straight = [point(0, 0), point(1000, 0)];
+	assert_eq!(
+		every(1000).stamps(400, &straight),
+		vec![(0.0, 0.0), (400.0, 0.0), (800.0, 0.0), (1000.0, 0.0)]
+	);
+	assert_eq!(every(1000).stamps(500, &straight), vec![(0.0, 0.0), (500.0, 0.0), (1000.0, 0.0)]);
+	let corner = [point(0, 0), point(300, 0), point(300, 300)];
+	assert_eq!(every(1000).stamps(400, &corner), vec![(0.0, 0.0), (300.0, 100.0), (300.0, 300.0)]);
+	assert_eq!(every(1000).stamps(400, &[point(7, 9)]), vec![(7.0, 9.0)]);
+	assert!(every(1000).stamps(400, &[]).is_empty());
+	// A spacing of zero is clamped to a twentieth of the width.
+	assert_eq!(every(0).stamps(1000, &straight).len(), 21);
+}
+
+/// A one-stamp line over a 10 by 2 logical pixel node, one row of samples:
+/// the tip lying flat covers three, turned upright only the one under it.
+#[test]
+fn a_stamp_covers_the_samples_its_turned_tip_covers() {
+	let nib = |tip, angle_centideg| MaskShape::Stamped {
+		width: 400,
+		brush: MaskBrush { tip, aspect_permille: 250, angle_centideg, spacing_permille: 1000 },
+		points: vec![point(500, 100)],
+	};
+	assert_eq!(cleared_share(&[nib(MaskBrushTip::Ellipse, 0)], 1000, 200), (3, 5));
+	assert_eq!(cleared_share(&[nib(MaskBrushTip::Ellipse, 9000)], 1000, 200), (1, 5));
+	// Over two rows, a flat tip 8 long and 2 thick centred between them: the
+	// ellipse reaches the rows only at its middle, the capsule along its
+	// straight sides.
+	let flat = |tip| MaskShape::Stamped {
+		width: 800,
+		brush: MaskBrush { tip, aspect_permille: 250, angle_centideg: 0, spacing_permille: 1000 },
+		points: vec![point(500, 200)],
+	};
+	assert_eq!(cleared_share(&[flat(MaskBrushTip::Ellipse)], 1000, 400), (2, 10));
+	assert_eq!(cleared_share(&[flat(MaskBrushTip::Capsule)], 1000, 400), (6, 10));
 }

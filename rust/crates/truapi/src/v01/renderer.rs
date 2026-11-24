@@ -765,6 +765,104 @@ pub enum MaskShape {
 		/// The points it passes through.
 		points: Vec<MaskPoint>,
 	},
+	/// A line through `points` in order drawn with a shaped tip: copies of
+	/// `brush`, `width` long, stamped along it ([`MaskBrush`]). A single point
+	/// is one stamp.
+	Stamped {
+		/// The tip's length along its own axis.
+		width: u32,
+		/// The tip and how far apart its stamps are.
+		brush: MaskBrush,
+		/// The points it passes through.
+		points: Vec<MaskPoint>,
+	},
+}
+
+/// The outline of a [`MaskBrush`] tip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum MaskBrushTip {
+	/// An ellipse: the stroke's width along its axis, the aspect's share of it
+	/// across.
+	Ellipse,
+	/// A rectangle with fully round ends, as long and as thick as the ellipse.
+	Capsule,
+}
+
+/// A shaped tip for a mask stroke, such as a slanted nib: copies of the tip
+/// stamped along the line instead of a round pen.
+///
+/// The tip is the stroke's `width` long along its own axis and
+/// `width * aspect_permille / 1000` across, turned `angle_centideg` from the
+/// horizontal (clockwise, as the y axis points down). The stamps keep that
+/// angle whichever way the line goes. The first stamp is centred on the first
+/// point, and each next one `width * spacing_permille / 1000` further along
+/// the line, the distance carried across its corners, with one more on the
+/// last point when the spacing leaves it bare. The host clamps
+/// `aspect_permille` to 1 through 1000 and `spacing_permille` to 50 through
+/// 4000. A host that cannot stamp draws the line as a round stroke of the same
+/// width, and counts it so.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct MaskBrush {
+	/// The tip's outline.
+	pub tip: MaskBrushTip,
+	/// The tip's thickness as a share of its length, in thousandths.
+	pub aspect_permille: u16,
+	/// The tip's turn from the horizontal, in hundredths of a degree.
+	pub angle_centideg: i16,
+	/// The distance between stamps as a share of the width, in thousandths.
+	pub spacing_permille: u16,
+}
+
+impl MaskBrush {
+	/// The centres of the stamps along `points` for a tip `width` long, in
+	/// hundredths of a logical pixel: the rule both hosts follow.
+	pub fn stamps(&self, width: u32, points: &[MaskPoint]) -> Vec<(f64, f64)> {
+		let at = |point: &MaskPoint| (f64::from(point.x), f64::from(point.y));
+		let (Some(first), Some(last)) = (points.first(), points.last()) else { return Vec::new() };
+		let spacing =
+			(f64::from(width) * f64::from(self.spacing_permille.clamp(50, 4000)) / 1000.0).max(1.0);
+		let mut centres = vec![at(first)];
+		let mut since_last = 0.0;
+		for pair in points.windows(2) {
+			let ((ax, ay), (bx, by)) = (at(&pair[0]), at(&pair[1]));
+			let length = (bx - ax).hypot(by - ay);
+			let mut along = spacing - since_last;
+			while along <= length {
+				let t = along / length;
+				centres.push((ax + t * (bx - ax), ay + t * (by - ay)));
+				along += spacing;
+			}
+			since_last = length - (along - spacing);
+		}
+		if since_last > 0.0 {
+			centres.push(at(last));
+		}
+		centres
+	}
+
+	/// Whether `(x, y)` lies in the stamp centred at `centre` for a tip
+	/// `width` long.
+	fn covers(&self, width: u32, centre: (f64, f64), x: f64, y: f64) -> bool {
+		let half_length = f64::from(width) / 2.0;
+		let half_thickness = half_length * f64::from(self.aspect_permille.clamp(1, 1000)) / 1000.0;
+		let angle = (f64::from(self.angle_centideg) / 100.0).to_radians();
+		let (dx, dy) = (x - centre.0, y - centre.1);
+		let along = dx * angle.cos() + dy * angle.sin();
+		let across = -dx * angle.sin() + dy * angle.cos();
+		match self.tip {
+			MaskBrushTip::Ellipse => {
+				(along / half_length).powi(2) + (across / half_thickness).powi(2) <= 1.0
+			},
+			MaskBrushTip::Capsule => {
+				let core = (half_length - half_thickness).max(0.0);
+				let beyond = (along.abs() - core).max(0.0);
+				beyond * beyond + across * across <= half_thickness * half_thickness
+			},
+		}
+	}
 }
 
 /// Lets the host draw a pan's own strokes into a [`Mask`] as the finger
@@ -772,9 +870,9 @@ pub enum MaskShape {
 ///
 /// From the tree on, each stroke of the finger on the `Gesture` keyed `pan`
 /// (touch-down to lift) is added to the mask as a [`MaskShape::Stroke`]
-/// `width` wide through every place the host saw the finger, in the frame of
-/// the touch: before the move is sent, and whether or not pacing drops it. The
-/// pan must report its `location`. Its places are moved from the gesture's
+/// `width` wide, or a [`MaskShape::Stamped`] with a `brush`, through every place the host saw the
+/// finger, in the frame of the touch: before the move is sent, and whether or not pacing drops it.
+/// The pan must report its `location`. Its places are moved from the gesture's
 /// frame to the masked node's by where the two are on screen. Like keyed
 /// shapes, these strokes last until the next tree: a worker that wants them
 /// kept puts them in that tree, as it heard them.
@@ -785,6 +883,10 @@ pub struct MaskFollow {
 	pub pan: String,
 	/// The stroke's width, in hundredths of a logical pixel.
 	pub width: u32,
+	/// The tip the strokes are drawn with: each is then added as a
+	/// [`MaskShape::Stamped`]. Absent draws them round.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub brush: Option<MaskBrush>,
 }
 
 /// Hides part of a node, or shows only part of it, with shapes the worker
@@ -866,7 +968,9 @@ pub const MASK_SAMPLE: u32 = 200;
 /// each at the centre of its 2 by 2 logical pixel square from the top-start
 /// corner (`(i * 200 + 100, j * 200 + 100)`). A sample is covered when it lies
 /// in any shape: the whole node; a circle, at most `radius` from its centre; a
-/// stroke, at most `width / 2` from its line (a single point is a dot).
+/// stroke, at most `width / 2` from its line (a single point is a dot); a
+/// stamped line, inside or on the edge of any of its
+/// [`MaskBrush::stamps`].
 pub fn cleared_share(shapes: &[MaskShape], width: u32, height: u32) -> (u32, u32) {
 	let columns = width.div_ceil(MASK_SAMPLE);
 	let rows = height.div_ceil(MASK_SAMPLE);
@@ -923,6 +1027,18 @@ pub fn cleared_share(shapes: &[MaskShape], width: u32, height: u32) -> (u32, u32
 						(x - ax - t * dx).powi(2) + (y - ay - t * dy).powi(2) <= r * r
 					};
 					mark(ax.min(bx) - r, ay.min(by) - r, ax.max(bx) + r, ay.max(by) + r, &inside);
+				}
+			},
+			MaskShape::Stamped { width, brush, points } => {
+				let reach = f64::from(*width) / 2.0;
+				for centre in brush.stamps(*width, points) {
+					mark(
+						centre.0 - reach,
+						centre.1 - reach,
+						centre.0 + reach,
+						centre.1 + reach,
+						&|x, y| brush.covers(*width, centre, x, y),
+					);
 				}
 			},
 		}

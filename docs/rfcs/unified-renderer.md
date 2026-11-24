@@ -584,6 +584,27 @@ is sent. The worker answers each move with an empty `ExtendMask`, a dozen bytes,
 and hears the points to decide what happens next. The followed strokes last
 until the next tree, like keyed shapes.
 
+A stroke can have a shaped tip instead of a round pen, such as a slanted nib.
+`Stamped { width, brush, points }` (index 3 of `MaskShape`) stamps copies of
+the tip along the line, and a `follow` with a `brush` adds the finger's strokes
+that way. A `brush` is `{ tip, aspectPermille, angleCentideg, spacingPermille }`:
+
+| Field | What it says | Range | Default |
+| --- | --- | --- | --- |
+| `tip` | `Ellipse`, or `Capsule` (a rectangle with fully round ends) | | |
+| `aspectPermille` | thickness across the tip as a share of its length, the stroke's `width` | clamped to 1 to 1000 | |
+| `angleCentideg` | the tip's turn from the horizontal, clockwise, kept whichever way the line goes | any `i16` | |
+| `spacingPermille` | distance between stamp centres as a share of the width | clamped to 50 to 4000 | |
+| `follow.brush` | the tip of the followed strokes | | absent: round |
+
+The first stamp is centred on the first point and each next one a spacing
+further along the line, the distance carried across its corners; a last point
+the spacing leaves bare gets one more. One point is one stamp.
+`MaskBrush::stamps` in the core crate places them, and `cleared_share` counts
+the samples inside any stamp, so both hosts agree on the share. A host that
+cannot stamp draws a stamped line as a round `Stroke` of the same width, and
+counts it so.
+
 A keyed mask may set `fadeMs`: when a new tree changes it, the host cross-fades
 from the mask it drew to the tree's over that many milliseconds, on the CSS
 `ease` curve. Keyed adds and followed strokes are drawn at once. A tree with
