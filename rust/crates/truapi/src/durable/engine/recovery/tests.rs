@@ -16,7 +16,7 @@ use crate::{
 		policy::Preparation,
 		testing::{
 			DeferredTxHarness, FakeChain, GENESIS, ScriptedPolicy, ServesTestDomains,
-			answer_all_with, block, engine_with, extrinsic, insert,
+			answer_all_with, block, cascading_dependency, engine_with, extrinsic, insert,
 		},
 	},
 	test_support::wait_until,
@@ -377,4 +377,23 @@ fn a_lost_chain_fails_recovery_while_a_row_waits_to_be_built() {
 		running.join().unwrap(),
 		Err(RecoveryError::HeadsLost { genesis, .. }) if genesis == GENESIS
 	));
+}
+
+/// A watch that fails a dependency wakes nothing, since the failure is
+/// final. The waiting dependent keeps recovery running, so the pass the
+/// next head drives fails it, and recovery then ends.
+#[test]
+fn recovery_fails_a_cascading_dependent_on_the_next_head() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let dependency = harness.insert_unwatched(extrinsic(1, 100, 64), None);
+	let dependent = harness.defer_with_dependencies(vec![cascading_dependency(dependency)]);
+	let running = run_in_background(harness.engine());
+	harness.settle();
+
+	harness.record_status(dependency, DurableTxStatus::Failure(DurableTxFailureKind::Expired));
+	harness.finalize(131);
+
+	harness.wait_for(dependent, DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
+	wait_until(|| running.is_finished(), "recovery returns");
+	assert_eq!(running.join().unwrap(), Ok(()));
 }

@@ -8,8 +8,11 @@ import StructuredConcurrency
 import UserNotifications
 
 protocol ProductNotificationScheduling {
+    /// Shows `title` when given and the product id otherwise. Only the core
+    /// decides a product may name its title, so callers pass one from the core.
     func schedule(
         productId: ProductId,
+        title: String?,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32
 
@@ -84,10 +87,11 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 
     func schedule(
         productId: ProductId,
+        title: String?,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32 {
         let notificationId = try await operations.run { [self] in
-            try await book(productId: productId, request: request)
+            try await book(productId: productId, title: title, request: request)
         }
         guard Task.isCancelled else {
             return notificationId
@@ -109,12 +113,38 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
             try await cancelBookings(productId: productId)
         }
     }
+
+    static func makeContent(
+        productId: ProductId,
+        title: String?,
+        request: ScheduledNotificationRequest
+    ) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = title ?? productId.rawValue
+        content.body = request.text
+        content.sound = .default
+
+        var userInfo: [String: Any] = [
+            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue
+        ]
+
+        if let deeplink = request.deeplink {
+            userInfo[PushNotificationKeys.deeplink] = deeplink
+        }
+
+        content.userInfo = userInfo
+        return content
+    }
 }
 
 // MARK: - Private
 
 private extension ProductNotificationScheduler {
-    func book(productId: ProductId, request: ScheduledNotificationRequest) async throws -> UInt32 {
+    func book(
+        productId: ProductId,
+        title: String?,
+        request: ScheduledNotificationRequest
+    ) async throws -> UInt32 {
         let repository = createRepository()
         try await reporting(.sweepFailed, productId: productId) { try await sweep() }
         let (currentCount, notificationId) = try await reporting(.readFailed, productId: productId) {
@@ -133,7 +163,7 @@ private extension ProductNotificationScheduler {
         )
 
         try await reporting(.addFailed, productId: productId, notificationId: notificationId) {
-            try await notificationCenter.add(makeRequest(entry: entry, request: request))
+            try await notificationCenter.add(makeRequest(entry: entry, title: title, request: request))
         }
         try await reporting(.storeFailed, productId: productId, notificationId: notificationId) {
             try await store(entry, in: repository)
@@ -173,26 +203,12 @@ private extension ProductNotificationScheduler {
 
     func makeRequest(
         entry: ScheduledNotificationEntry,
+        title: String?,
         request: ScheduledNotificationRequest
     ) -> UNNotificationRequest {
-        let content = UNMutableNotificationContent()
-        content.title = entry.productId.rawValue
-        content.body = request.text
-        content.sound = .default
-
-        var userInfo: [String: Any] = [
-            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue
-        ]
-
-        if let deeplink = request.deeplink {
-            userInfo[PushNotificationKeys.deeplink] = deeplink
-        }
-
-        content.userInfo = userInfo
-
-        return UNNotificationRequest(
+        UNNotificationRequest(
             identifier: entry.unIdentifier,
-            content: content,
+            content: Self.makeContent(productId: entry.productId, title: title, request: request),
             trigger: makeTrigger(scheduledAtMs: request.scheduledAtMs)
         )
     }
