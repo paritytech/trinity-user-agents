@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
 use trinity_stack::{Chain, Descriptor, Fetched, Pointer, accept};
+use truapi::platform::{Pinned, ReservedValuesPolicy};
 
 /// A local file has no URL of its own; the pointer only carries the key to check. Every local
 /// file is read under it, so its `stack_id` does not tell one file's stack from another's.
@@ -140,7 +141,9 @@ pub fn light_client_chains(descriptor: &Descriptor) -> impl Iterator<Item = &Cha
 /// lists are compared because the Polkadot fork check contacts every node the
 /// reference lists for a chain. A light spec is left out because a relay's
 /// rotates with every fresh checkpoint and the light client fetches the one
-/// the descriptor names itself.
+/// the descriptor names itself. So are the other fields the core pins for a
+/// stack its build allows reserved values, such as `assets` and `coinage`,
+/// which only [`bundles_same`] compares.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
@@ -155,14 +158,21 @@ pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 }
 
 /// Whether a bundled copy of `stack` can stay in place of `other`: they
-/// [read the same](reads_same) and name the same `lightSpec.sha256` for the
-/// relay, People, Asset Hub and Bulletin, whose specs the binary ships.
+/// [read the same](reads_same), name the same `lightSpec.sha256` for the
+/// relay, People, Asset Hub and Bulletin, whose specs the binary ships, and
+/// agree in every field the core's [`Pinned`] pins for a stack its build
+/// allows reserved values. A build that bundles a copy older in one of those
+/// would refuse every published copy that has the change.
 pub fn bundles_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
 		light_client_chains(descriptor)
 			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
 	}
-	reads_same(stack, other) && light_specs(stack).eq(light_specs(other))
+	reads_same(stack, other) &&
+		light_specs(stack).eq(light_specs(other)) &&
+		Pinned::new(stack.clone())
+			.refuse_change(other, &ReservedValuesPolicy::ALLOWED)
+			.is_ok()
 }
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:
