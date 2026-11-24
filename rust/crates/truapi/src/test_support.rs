@@ -348,6 +348,9 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// Identity of every [`test_stack`].
+pub const TEST_STACK_ID: &str = "test-stack";
+
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -356,8 +359,12 @@ pub fn test_stack(
 	bulletin: [u8; 32],
 	asset_hub: [u8; 32],
 ) -> crate::platform::Stack {
+	let identity = crate::platform::StackIdentity {
+		id: TEST_STACK_ID.to_string(),
+		generation: "test-generation".to_string(),
+	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
+	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
 }
 

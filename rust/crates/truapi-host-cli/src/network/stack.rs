@@ -8,13 +8,18 @@ use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
 use crate::{chain::ChainBackend, stack_descriptor::ROLE_NAMES};
 
 impl Stack {
-	/// `descriptor` connected to over `chain_backend`. Fails when People,
-	/// Asset Hub or Bulletin is missing, when the TLD is not one the core
-	/// serves, when the namespace is not a lowercase label or is the `polkadot`
-	/// one, and when the stack has no `dub` service or no `dotns.popController`.
-	/// No two of its chains share a genesis hash, which the descriptor's own
-	/// rules refuse.
-	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
+	/// `descriptor`, read from the pointer whose identity is `stack_id`,
+	/// connected to over `chain_backend`. Fails when People, Asset Hub or
+	/// Bulletin is missing, when the TLD is not one the core serves, when the
+	/// namespace is not a lowercase label or is the `polkadot` one, and when
+	/// the stack has no `dub` service or no `dotns.popController`. No two of
+	/// its chains share a genesis hash, which the descriptor's own rules
+	/// refuse.
+	pub fn new(
+		stack_id: String,
+		descriptor: Descriptor,
+		chain_backend: ChainBackend,
+	) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
 			id != POLKADOT_NAMESPACE,
@@ -46,7 +51,7 @@ impl Stack {
 				"the {id} stack has no dotns.popController, which the CLI resolves usernames through"
 			)
 		})?;
-		Ok(Self { descriptor, chain_backend, chains, identity_backend, pop_controller })
+		Ok(Self { stack_id, descriptor, chain_backend, chains, identity_backend, pop_controller })
 	}
 }
 
