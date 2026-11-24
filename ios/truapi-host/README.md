@@ -111,8 +111,11 @@ one the wallet's reserved identities derive under. An invalid stack makes
 `TrUAPIHostRuntime(bridge:runtimeConfig:)` throw
 `NativeRuntimeConfigError.Invalid(reason:)`. An `extraGenesisHashes` entry of
 another length fails earlier, where the bindings convert the config, and the
-initializer throws the bindings' internal error instead. Include this
-configuration update in the embedding app's package upgrade.
+initializer throws the bindings' internal error instead. That error type is
+`fileprivate` to the bindings, so a host can only catch it as a plain `Error`.
+Its message starts with `Failed to convert arg 'runtime_config'` and gives the
+cause as `could not convert slice to array`, without naming the field. Include
+this configuration update in the embedding app's package upgrade.
 
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
 
