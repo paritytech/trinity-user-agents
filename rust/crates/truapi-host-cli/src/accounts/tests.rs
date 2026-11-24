@@ -203,14 +203,15 @@ fn removing_managed_accounts_preserves_other_sessions_and_networks() -> Result<(
 	store.upsert(record("bob", "paseo-next-v2", true));
 	store.upsert(record("alice", "other", true));
 	store.save()?;
+	let lock = AccountStoreLock::acquire(dir.path())?;
 
-	assert_eq!(remove_managed_accounts(dir.path(), "paseo-next-v2", Some("alicelite.01"))?, 1);
+	assert_eq!(lock.remove_managed_accounts("paseo-next-v2", Some("alicelite.01"))?, 1);
 	let loaded = AccountStore::load(dir.path())?;
 	assert!(loaded.get("paseo-next-v2", "alice").is_none());
 	assert!(loaded.get("paseo-next-v2", "bob").is_some());
 	assert!(loaded.get("other", "alice").is_some());
 
-	assert_eq!(remove_managed_accounts(dir.path(), "paseo-next-v2", None)?, 1);
+	assert_eq!(lock.remove_managed_accounts("paseo-next-v2", None)?, 1);
 	let loaded = AccountStore::load(dir.path())?;
 	assert!(loaded.get("paseo-next-v2", "bob").is_none());
 	assert!(loaded.get("other", "alice").is_some());

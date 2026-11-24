@@ -441,7 +441,9 @@ impl SessionCatalog {
 	/// Permanently remove the selected local signing-host session data.
 	///
 	/// Callers must stop an active runtime before clearing its profile. The
-	/// catalog only removes paths it derives from validated, listed names.
+	/// catalog only removes paths it derives from validated, listed names. The
+	/// account store's lock is taken before anything is removed, so a clear
+	/// the lock refuses leaves every session and account in place.
 	pub fn clear(&self, target: &SessionClearTarget) -> Result<Vec<String>> {
 		// Resolve once here, so a name promoted away clears the session it
 		// created just as it selects it everywhere else.
@@ -454,6 +456,7 @@ impl SessionCatalog {
 			SessionClearTarget::All => target,
 		};
 		self.validate_clear_target(target)?;
+		let account_store = accounts::AccountStoreLock::acquire(&self.base_path)?;
 		match target {
 			SessionClearTarget::Named(name) => {
 				let was_current = matches!(
@@ -464,7 +467,7 @@ impl SessionCatalog {
 				if was_current {
 					remove_file_if_exists(&self.role_path.join(CURRENT_SESSION_FILE))?;
 				}
-				accounts::remove_managed_accounts(&self.base_path, &self.network_id, Some(name))?;
+				account_store.remove_managed_accounts(&self.network_id, Some(name))?;
 				Ok(vec![name.clone()])
 			},
 			SessionClearTarget::All => {
@@ -473,7 +476,7 @@ impl SessionCatalog {
 					self.remove_named_data(name)?;
 				}
 				remove_dir_if_exists(&self.role_path)?;
-				accounts::remove_managed_accounts(&self.base_path, &self.network_id, None)?;
+				account_store.remove_managed_accounts(&self.network_id, None)?;
 				Ok(names)
 			},
 		}

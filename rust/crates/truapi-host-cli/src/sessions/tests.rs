@@ -314,6 +314,37 @@ fn clearing_a_missing_session_has_an_actionable_error() -> Result<()> {
 	Ok(())
 }
 
+/// A clear the account store's lock refuses removes nothing, so it never leaves
+/// a session's directory gone while its account, mnemonic included, stays in
+/// the store.
+#[test]
+fn a_clear_the_account_store_lock_refuses_leaves_everything_in_place() -> Result<()> {
+	let temporary = tempdir()?;
+	let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+	let default = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
+	let alice = catalog.ensure_profile("alice")?;
+	fs::write(default.path.join("core-storage.json"), "{}")?;
+	fs::write(alice.path.join("state"), "alice")?;
+	let store = temporary.path().join("accounts.json");
+	let stored = r#"{"version":1,"accounts":[{"name":"auto-1","network":"testnet","mnemonic":"m","lite_username":"alice","public_key_hex":"0x00","address":"a","created_at_unix":1}]}"#;
+	fs::write(&store, stored)?;
+	let _held = accounts::AccountStoreLock::acquire(temporary.path())?;
+
+	let refused = [SessionClearTarget::Named("alice".to_string()), SessionClearTarget::All]
+		.map(|target| catalog.clear(&target).is_err());
+
+	assert_eq!(
+		(
+			refused,
+			default.path.join("core-storage.json").is_file(),
+			alice.path.join("state").is_file(),
+			fs::read_to_string(&store)?,
+		),
+		([true, true], true, true, stored.to_string())
+	);
+	Ok(())
+}
+
 #[test]
 fn promotes_a_provisional_profile_to_the_username_host_root() -> Result<()> {
 	let temporary = tempdir()?;

@@ -177,12 +177,15 @@ pub struct AccountStore {
 /// syscall — the holder's timer can never be polled, so it never releases and
 /// the wait never ends. Refusing immediately makes the contention visible and
 /// keeps the runtime schedulable.
-struct AccountStoreLock {
+pub struct AccountStoreLock {
 	file: fs::File,
+	base_path: PathBuf,
 }
 
 impl AccountStoreLock {
-	fn acquire(base_path: &Path) -> Result<Self> {
+	/// Takes the lock on the account store under `base_path`. Fails at once
+	/// when another process holds it.
+	pub fn acquire(base_path: &Path) -> Result<Self> {
 		fs::create_dir_all(base_path).with_context(|| format!("create {}", base_path.display()))?;
 		let path = base_path.join(ACCOUNT_STORE_LOCK_FILE);
 		let file = OpenOptions::new()
@@ -200,7 +203,31 @@ impl AccountStoreLock {
 				base_path.display()
 			)
 		})?;
-		Ok(Self { file })
+		Ok(Self { file, base_path: base_path.to_path_buf() })
+	}
+
+	/// Remove cached local accounts owned by one network and, optionally, one
+	/// durable Lite username, from the store this lock guards. Records for
+	/// other networks are always preserved.
+	pub fn remove_managed_accounts(
+		&self,
+		network_id: &str,
+		lite_username: Option<&str>,
+	) -> Result<usize> {
+		if !self.base_path.join(ACCOUNT_STORE_FILE).is_file() {
+			return Ok(0);
+		}
+		let mut store = AccountStore::load(&self.base_path)?;
+		let before = store.data.accounts.len();
+		store.data.accounts.retain(|record| {
+			record.network != network_id ||
+				lite_username.is_some_and(|username| record.lite_username != username)
+		});
+		let removed = before - store.data.accounts.len();
+		if removed > 0 {
+			store.save()?;
+		}
+		Ok(removed)
 	}
 }
 
@@ -324,30 +351,6 @@ impl AccountStore {
 		record.exhausted_statement_periods.insert(period);
 		self.save()
 	}
-}
-
-/// Remove cached local accounts owned by one network and, optionally, one
-/// durable Lite username. Records for other networks are always preserved.
-pub fn remove_managed_accounts(
-	base_path: &Path,
-	network_id: &str,
-	lite_username: Option<&str>,
-) -> Result<usize> {
-	if !base_path.join(ACCOUNT_STORE_FILE).is_file() {
-		return Ok(0);
-	}
-	let _lock = AccountStoreLock::acquire(base_path)?;
-	let mut store = AccountStore::load(base_path)?;
-	let before = store.data.accounts.len();
-	store.data.accounts.retain(|record| {
-		record.network != network_id ||
-			lite_username.is_some_and(|username| record.lite_username != username)
-	});
-	let removed = before - store.data.accounts.len();
-	if removed > 0 {
-		store.save()?;
-	}
-	Ok(removed)
 }
 
 pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedSigner> {
