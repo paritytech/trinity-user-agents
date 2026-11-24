@@ -624,6 +624,30 @@ tree. The tree's own shapes alone never send it. The worker decides what
 follows, typically a tree with `[All]` and `fadeMs`, and ignores a repeat.
 `cleared_share` in the core crate is the reference count the hosts mirror.
 
+#### Mask progress
+
+A share, and the cover a mask has reached, can drive more than one action at
+the lift:
+
+| Field | What the host does | Range | Default |
+| --- | --- | --- | --- |
+| `clearedShare.whileDown` | also checks while the followed finger is down, at most once per display frame, so the action is sent mid-stroke; still at most once per lift | | false |
+| `clearedShare.rescue { afterMs, fromPermille }` | sends the action as if the share were reached once the cover has not grown for `afterMs` while it is at least `fromPermille`, finger down or not; at most once per tree | `fromPermille` above the share never sends | absent: no rescue |
+| `mask.haptics { everyPermille, step, reach }` | plays `step` each display frame in which the cover passed another multiple of `everyPermille`, and `reach` when the share is reached or rescued | `everyPermille` 0 plays no steps | absent: none |
+| `feel.pressScaleYPermille` | scales a pressed gesture's children down the y axis by this, and across by `pressScalePermille` alone | | absent: both axes by `pressScalePermille` |
+
+The rescue's clock starts when the tree arrives and restarts whenever an added
+or followed shape covers a new sample; a new tree starts it over. Haptic steps
+count from the cover the tree gave, so a tree plays nothing, and a mask whose
+shapes never grow between trees never plays; `MaskHaptics::steps_passed` is
+the rule. A haptic is one of `Tick` (a selection tick), `Light`, `Medium`,
+`Heavy` and `Success`, from the host's own set.
+
+A host that cannot check mid-stroke checks at the lift. A host with no haptics,
+or where the person turned them off, plays none. A host that cannot scale the
+axes apart scales both by `pressScalePermille`. A host with no clock for the
+rescue sends nothing for it.
+
 To hear where the finger is rather than how far it moved, a pan sets
 `location: true`: each event's `x` and `y` are then the finger's place inside
 the gesture, from its top-start corner and clamped to its frame (hundredths of

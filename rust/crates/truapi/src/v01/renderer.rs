@@ -647,6 +647,7 @@ pub struct GestureProps {
 /// a product's design keeps its own motion.
 ///
 /// While a pan or a press holds, the children grow to `press_scale_permille`
+/// across and `press_scale_y_permille` (or the same) down, about their centre
 /// (a quadratic ease-out over `press_ms`). When the finger lifts short of
 /// completing, they go back to the start on a damped spring that starts at
 /// rest (`spring_omega_centi`, `spring_damping_centi`) and back to their size
@@ -662,7 +663,8 @@ pub struct GestureProps {
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct PanFeel {
-	/// Scale while pressed, in thousandths.
+	/// Scale while pressed, in thousandths: across, and down too unless
+	/// `press_scale_y_permille` is set.
 	pub press_scale_permille: u16,
 	/// How long the press takes to grow.
 	pub press_ms: u16,
@@ -680,6 +682,11 @@ pub struct PanFeel {
 	pub pop_permille: Vec<u16>,
 	/// How far past the end the children stand at the pop's peak.
 	pub pop_offset: u32,
+	/// Scale while pressed down the y axis, in thousandths, so a press can
+	/// squash or stretch: `press_scale_permille` is then the x scale alone.
+	/// Absent scales both axes alike.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub press_scale_y_permille: Option<u16>,
 }
 
 /// Stage of a gesture action.
@@ -918,6 +925,9 @@ pub struct Mask {
 	/// Has the host send an action once the shapes cover enough of the node:
 	/// see [`ClearedShare`].
 	pub cleared_share: Option<ClearedShare>,
+	/// Has the host play haptics as the shapes grow: see [`MaskHaptics`].
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub haptics: Option<MaskHaptics>,
 }
 
 /// Sends an action once a [`Mask`]'s shapes cover `at_permille` thousandths
@@ -932,12 +942,13 @@ pub struct Mask {
 ///
 /// With [`Mask::follow`], the host checks when the finger lifts from that pan,
 /// and again whenever shapes are added before it touches down again, so the
-/// shapes a worker adds in answer to the pan's end count; nothing is sent
-/// while the finger is down, and a new touch starts over. With no `follow`,
-/// it checks whenever shapes are added. Either way it sends `action`, with no
-/// payload, at most once per lift (with no `follow`, once per tree), and never
-/// for the tree's own shapes alone: a tree that keeps the mask covered sends
-/// nothing.
+/// shapes a worker adds in answer to the pan's end count; with `while_down`
+/// it also checks while the finger is down, at most once per display frame.
+/// A new touch starts over. With no `follow`, it checks whenever shapes are
+/// added. Either way it sends `action`, with no payload, at most once per lift
+/// (with no `follow`, once per tree), and never for the tree's own shapes
+/// alone: a tree that keeps the mask covered sends nothing. A [`ShareRescue`]
+/// sends it too when the shapes stop growing short of the share.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
@@ -947,6 +958,89 @@ pub struct ClearedShare {
 	pub at_permille: u16,
 	/// The action sent once the share is reached.
 	pub action: String,
+	/// Also check while the followed finger is down, so the action is sent
+	/// mid-stroke instead of on the lift; absent means false. Without a
+	/// `follow` it changes nothing.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub while_down: OptionBool,
+	/// Sends the action when the shapes stop growing short of the share.
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
+	pub rescue: Option<ShareRescue>,
+}
+
+/// Sends a [`ClearedShare`]'s action when the shapes have covered at least
+/// `from_permille` of the node but stopped growing short of its share, so a
+/// last corner nobody can reach does not hold the node back.
+///
+/// The host keeps the time the cover last grew: the tree's arrival, then each
+/// added or followed shape that covers a new sample. Once `after_ms` pass with
+/// no growth while the cover is at least `from_permille`, whether the finger
+/// is down or not, it sends the action as if the share were reached, at most
+/// once per tree. A new tree starts the time over. A `from_permille` above
+/// the share's own never sends.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ShareRescue {
+	/// How long the cover must stand still, in milliseconds.
+	pub after_ms: u32,
+	/// The least cover that may be rescued, in thousandths.
+	pub from_permille: u16,
+}
+
+/// A feedback the host plays through the device's haptics, from its own
+/// set: the lightest is a selection tick, as a picker plays between values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum Haptic {
+	/// A selection tick.
+	Tick,
+	/// A light impact.
+	Light,
+	/// A medium impact.
+	Medium,
+	/// A heavy impact.
+	Heavy,
+	/// A success notice.
+	Success,
+}
+
+/// Haptics a [`Mask`] plays as its shapes grow: `step` each time the cover
+/// passes another `every_permille` of the node, and `reach` when its
+/// [`ClearedShare`] is reached (by its share or a rescue).
+///
+/// The cover is the share [`cleared_share`] counts. The host measures it as
+/// added and followed shapes arrive, at most once per display frame, and
+/// plays `step` once for a frame however many steps it passed. Steps count
+/// from the cover the tree gave, so a tree plays nothing, and a mask with no
+/// shapes added between trees never plays. `every_permille` zero plays no
+/// steps. The host plays nothing where the person turned haptics off, and a
+/// host with no haptics ignores them.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct MaskHaptics {
+	/// The cover between steps, in thousandths.
+	pub every_permille: u16,
+	/// The feedback for a step.
+	pub step: Haptic,
+	/// The feedback when the share is reached; absent plays none.
+	pub reach: Option<Haptic>,
+}
+
+impl MaskHaptics {
+	/// How many steps lie between a cover of `from` and one of `to`, both in
+	/// thousandths: the host plays `step` once when this is more than zero.
+	pub fn steps_passed(&self, from: u16, to: u16) -> u16 {
+		if self.every_permille == 0 || to <= from {
+			return 0;
+		}
+		to / self.every_permille - from / self.every_permille
+	}
 }
 
 impl ClearedShare {

@@ -369,6 +369,7 @@ fn mask(shapes: Vec<MaskShape>, follow: Option<MaskFollow>, fade_ms: Option<u16>
 		follow,
 		fade_ms,
 		cleared_share: None,
+		haptics: None,
 	}
 }
 
@@ -444,7 +445,13 @@ fn a_masked_node_round_trips_with_every_shape_follow_fade_and_share() {
 			shapes: every_shape(),
 			follow: None,
 			fade_ms: Some(0),
-			cleared_share: Some(ClearedShare { at_permille: 550, action: "cleared".into() }),
+			cleared_share: Some(ClearedShare {
+				at_permille: 550,
+				action: "cleared".into(),
+				while_down: OptionBool(None),
+				rescue: None,
+			}),
+			haptics: None,
 		},
 	] {
 		let node = masked_tree(mask);
@@ -463,20 +470,30 @@ fn a_mask_is_the_modifier_after_exit_fade() {
 		follow: None,
 		fade_ms: None,
 		cleared_share: None,
+		haptics: None,
 	});
-	assert_eq!(empty.encode(), vec![20, 0, 0, 0, 0, 0, 0]);
+	assert_eq!(empty.encode(), vec![20, 0, 0, 0, 0, 0, 0, 0]);
 	let show = Modifier::Mask(Mask {
 		key: Some("k".into()),
 		mode: MaskMode::Show,
 		shapes: vec![MaskShape::All],
 		follow: Some(MaskFollow { pan: "p".into(), width: 100, brush: None }),
 		fade_ms: Some(350),
-		cleared_share: Some(ClearedShare { at_permille: 550, action: "a".into() }),
+		cleared_share: Some(ClearedShare {
+			at_permille: 550,
+			action: "a".into(),
+			while_down: OptionBool(None),
+			rescue: None,
+		}),
+		haptics: None,
 	});
 	// The share follows the fade: present, 550 as a little-endian u16, the action.
 	assert_eq!(
 		show.encode(),
-		vec![20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, b'a']
+		vec![
+			20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4, b'a', 0,
+			0, 0
+		]
 	);
 	assert_eq!(Modifier::decode(&mut show.encode().as_slice()).unwrap(), show);
 }
@@ -492,7 +509,13 @@ fn a_masked_box_has_the_bytes_the_client_pins() {
 			shapes: vec![MaskShape::All],
 			follow: Some(MaskFollow { pan: "p".into(), width: 100, brush: None }),
 			fade_ms: Some(350),
-			cleared_share: Some(ClearedShare { at_permille: 550, action: "a".into() }),
+			cleared_share: Some(ClearedShare {
+				at_permille: 550,
+				action: "a".into(),
+				while_down: OptionBool(None),
+				rescue: None,
+			}),
+			haptics: None,
 		})],
 		props: BoxProps { content_alignment: None },
 		children: Vec::new(),
@@ -501,7 +524,7 @@ fn a_masked_box_has_the_bytes_the_client_pins() {
 		node.encode(),
 		vec![
 			2, 4, 20, 1, 4, b'k', 1, 4, 0, 1, 4, b'p', 100, 0, 0, 0, 0, 1, 94, 1, 1, 38, 2, 4,
-			b'a', 0, 0
+			b'a', 0, 0, 0, 0, 0
 		]
 	);
 }
@@ -615,6 +638,7 @@ fn full_feel() -> PanFeel {
 		approach_reference: 4200,
 		pop_permille: vec![1059, 1132, 1192, 1237, 1000],
 		pop_offset: 333,
+		press_scale_y_permille: None,
 	}
 }
 
@@ -698,7 +722,12 @@ fn a_shape_covers_the_samples_on_its_edge_and_not_one_past_it() {
 
 #[test]
 fn a_cleared_share_is_reached_exactly_at_its_line() {
-	let share = |at_permille| ClearedShare { at_permille, action: "a".into() };
+	let share = |at_permille| ClearedShare {
+		at_permille,
+		action: "a".into(),
+		while_down: OptionBool(None),
+		rescue: None,
+	};
 	assert!(share(550).reached(713, 1295));
 	assert!(!share(550).reached(712, 1295));
 	assert!(share(500).reached(2, 4));
@@ -806,4 +835,92 @@ fn a_stamp_covers_the_samples_its_turned_tip_covers() {
 	};
 	assert_eq!(cleared_share(&[flat(MaskBrushTip::Ellipse)], 1000, 400), (2, 10));
 	assert_eq!(cleared_share(&[flat(MaskBrushTip::Capsule)], 1000, 400), (6, 10));
+}
+
+/// A share with every progress option set.
+fn eager_share() -> ClearedShare {
+	ClearedShare {
+		at_permille: 600,
+		action: "done".into(),
+		while_down: OptionBool(Some(true)),
+		rescue: Some(ShareRescue { after_ms: 1500, from_permille: 450 }),
+	}
+}
+
+/// The progress options follow the action: the mid-stroke flag as one byte,
+/// then the rescue's time and lower share. Haptics are the mask's last field.
+#[test]
+fn mask_progress_options_follow_what_they_extend_on_the_wire() {
+	assert_eq!(
+		eager_share().encode(),
+		vec![88, 2, 16, b'd', b'o', b'n', b'e', 1, 1, 0xDC, 0x05, 0, 0, 0xC2, 0x01]
+	);
+	let haptics =
+		MaskHaptics { every_permille: 100, step: Haptic::Tick, reach: Some(Haptic::Success) };
+	assert_eq!(haptics.encode(), vec![100, 0, 0, 1, 4]);
+	let mask = Mask {
+		haptics: Some(haptics),
+		cleared_share: Some(eager_share()),
+		..mask(every_shape(), None, None)
+	};
+	let bytes = Modifier::Mask(mask.clone()).encode();
+	assert!(bytes.ends_with(&[1, 100, 0, 0, 1, 4]));
+	assert_eq!(Modifier::decode(&mut bytes.as_slice()).unwrap(), Modifier::Mask(mask));
+}
+
+#[test]
+fn mask_progress_options_read_from_json_and_are_off_when_left_out() {
+	let bare: ClearedShare = serde_json::from_str(r#"{"atPermille":600,"action":"done"}"#).unwrap();
+	assert_eq!(bare, ClearedShare { while_down: OptionBool(None), rescue: None, ..eager_share() });
+	let json = r#"{"atPermille":600,"action":"done","whileDown":true,
+		"rescue":{"afterMs":1500,"fromPermille":450}}"#;
+	assert_eq!(serde_json::from_str::<ClearedShare>(json).unwrap(), eager_share());
+	let haptics: MaskHaptics =
+		serde_json::from_str(r#"{"everyPermille":100,"step":"Tick","reach":"Success"}"#).unwrap();
+	assert_eq!(
+		haptics,
+		MaskHaptics { every_permille: 100, step: Haptic::Tick, reach: Some(Haptic::Success) }
+	);
+}
+
+/// A step plays once for a frame however many it passed, counted from
+/// multiples of the step, never for a cover that stood still or shrank.
+#[test]
+fn a_step_plays_when_the_cover_passes_a_multiple_of_the_step() {
+	let every = |every_permille| MaskHaptics { every_permille, step: Haptic::Tick, reach: None };
+	assert_eq!(every(100).steps_passed(95, 105), 1);
+	assert_eq!(every(100).steps_passed(100, 199), 0);
+	assert_eq!(every(100).steps_passed(99, 100), 1);
+	assert_eq!(every(100).steps_passed(0, 1000), 10);
+	assert_eq!(every(100).steps_passed(500, 400), 0);
+	assert_eq!(every(0).steps_passed(0, 1000), 0);
+}
+
+#[test]
+fn a_press_can_scale_each_axis_and_reads_from_json() {
+	let squash =
+		PanFeel { press_scale_permille: 1080, press_scale_y_permille: Some(920), ..full_feel() };
+	let bytes = squash.encode();
+	assert!(bytes.ends_with(&[1, 0x98, 0x03]));
+	assert!(full_feel().encode().ends_with(&[0]));
+	assert_eq!(PanFeel::decode(&mut bytes.as_slice()).unwrap(), squash);
+	let json = r#"{"pressScalePermille":1080,"pressMs":133,"unpressMs":150,"springOmegaCenti":1800,
+		"springDampingCenti":80,"approachMs":117,"approachReference":4200,"popPermille":[1059,1132,1192,1237,1000],
+		"popOffset":333,"pressScaleYPermille":920}"#;
+	assert_eq!(serde_json::from_str::<PanFeel>(json).unwrap(), squash);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn mask_progress_and_an_axis_press_round_trip_through_uniffi() {
+	let mask = Modifier::Mask(Mask {
+		haptics: Some(MaskHaptics { every_permille: 50, step: Haptic::Light, reach: None }),
+		cleared_share: Some(eager_share()),
+		..mask(every_shape(), None, None)
+	});
+	let ffi = <Modifier as uniffi::Lower<crate::UniFfiTag>>::lower(mask.clone());
+	assert_eq!(<Modifier as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), mask);
+	let feel = PanFeel { press_scale_y_permille: Some(920), ..full_feel() };
+	let ffi = <PanFeel as uniffi::Lower<crate::UniFfiTag>>::lower(feel.clone());
+	assert_eq!(<PanFeel as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap(), feel);
 }
