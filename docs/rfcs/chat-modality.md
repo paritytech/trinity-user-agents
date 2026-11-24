@@ -803,6 +803,11 @@ A Product refuses an action over a limit, and a reader drops a record over it.
 | One reaction (`Emoji`) | 64 bytes |
 | Distinct reactions on one message | 64 |
 | The text of a message | 16 KiB |
+| An id, a name or another one-line text | 256 bytes |
+| A room `description` or the text of the chat placeholder | 1 KiB |
+| An inline room avatar or badge image (`ResourceUri::Inline`) | 64 KiB |
+| Media items on one message | 32 |
+| The payload of a `Custom` message | 256 KiB |
 
 ## Drawbacks
 
