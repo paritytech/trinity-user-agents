@@ -169,13 +169,7 @@ private extension [Modifier] {
         var fillHeight = false
         var opacity: CGFloat?
         var blendingMode: BlendMode?
-        var shadow: CustomMessageWidgetNode.Shadow?
-        var translate = CGSize.zero
-        var font: CustomMessageWidgetNode.TextFont?
-        var panFade: CustomMessageWidgetNode.PanFade?
-        var shimmer: CustomMessageWidgetNode.Shimmer?
-        var spinPeriod: TimeInterval?
-        var exitFade: TimeInterval?
+        var style = NodeStyleByValue()
 
         for modifier in self {
             switch modifier {
@@ -216,38 +210,14 @@ private extension [Modifier] {
                     color: Color(rgba: value.color),
                     shape: value.shape.map { resolver.shape(for: $0.toScale()) }
                 )
-            case let .shadow(value):
-                shadow = CustomMessageWidgetNode.Shadow(
-                    color: Color(rgba: value.color),
-                    x: CGFloat(value.x) / 100,
-                    y: CGFloat(value.y) / 100,
-                    blur: CGFloat(value.blur) / 100
-                )
-            case let .translate(value):
-                translate = CGSize(width: CGFloat(value.x) / 100, height: CGFloat(value.y) / 100)
-            case let .font(value):
-                font = CustomMessageWidgetNode.TextFont(
-                    size: CGFloat(value.size) / 100,
-                    lineHeight: CGFloat(value.lineHeight) / 100,
-                    weight: Int(value.weight),
-                    color: Color(rgba: value.color),
-                    letterSpacing: CGFloat(value.letterSpacing) / 100
-                )
-            case let .fadeWithPan(value):
-                panFade = CustomMessageWidgetNode.PanFade(key: value.key, rate: CGFloat(value.ratePermille) / 1_000)
-            case let .shimmer(value):
-                shimmer = CustomMessageWidgetNode.Shimmer(
-                    color: Color(rgba: value.color | 0xFF),
-                    stops: value.stops.map { CGFloat($0) / 255 },
-                    band: CGFloat(value.band) / 100,
-                    lead: CGFloat(value.lead) / 100,
-                    speed: CGFloat(value.speed) / 100,
-                    rest: TimeInterval(value.restMs) / 1_000
-                )
-            case let .spin(periodMs):
-                spinPeriod = periodMs > 0 ? TimeInterval(periodMs) / 1_000 : nil
-            case let .exitFade(ms):
-                exitFade = TimeInterval(ms) / 1_000
+            case .shadow,
+                 .translate,
+                 .font,
+                 .fadeWithPan,
+                 .shimmer,
+                 .spin,
+                 .exitFade:
+                style.take(modifier)
             }
         }
 
@@ -264,13 +234,13 @@ private extension [Modifier] {
             fillHeight: fillHeight,
             opacity: opacity,
             blendingMode: blendingMode,
-            shadow: shadow,
-            translate: translate,
-            font: font,
-            panFade: panFade,
-            shimmer: shimmer,
-            spinPeriod: spinPeriod,
-            exitFade: exitFade
+            shadow: style.shadow,
+            translate: style.translate,
+            font: style.font,
+            panFade: style.panFade,
+            shimmer: style.shimmer,
+            spinPeriod: style.spinPeriod,
+            exitFade: style.exitFade
         )
     }
 }
@@ -474,67 +444,7 @@ private extension BlendingMode {
     }
 }
 
-private extension GestureProps {
-    var nodeProps: CustomMessageWidgetNode.GestureProps {
-        var value = CustomMessageWidgetNode.GestureProps { phase, position, fraction in
-            let nativePhase: GesturePhase =
-                switch phase {
-                case .tap: .tap
-                case .started: .started
-                case .moved: .moved
-                case .ended: .ended
-                case .cancelled: .cancelled
-                case .completed: .completed
-                }
-            // Positions travel in hundredths of a logical pixel, so a slow drag still reports every frame's move.
-            return Data(encodeGestureEvent(event: GestureEvent(
-                phase: nativePhase,
-                x: Int32(clamping: Int((position.x * 100).rounded())),
-                y: Int32(clamping: Int((position.y * 100).rounded())),
-                fractionPermille: fraction
-            )))
-        }
-        value.tapAction = tapAction
-        value.pan = pan?.nodeProps
-        value.accessibilityLabel = accessibilityLabel
-        value.isEnabled = enabled ?? true
-        value.hapticOnComplete = hapticOnComplete ?? false
-        value.key = key
-        value.feel = feel?.nodeFeel
-        return value
-    }
-}
-
-private extension PanFeel {
-    var nodeFeel: CustomMessageWidgetNode.PanFeel {
-        var value = CustomMessageWidgetNode.PanFeel()
-        value.pressScale = CGFloat(pressScalePermille) / 1_000
-        value.pressDuration = TimeInterval(pressMs) / 1_000
-        value.unpressDuration = TimeInterval(unpressMs) / 1_000
-        value.springOmega = CGFloat(springOmegaCenti) / 100
-        value.springDamping = CGFloat(springDampingCenti) / 100
-        value.approachDuration = TimeInterval(approachMs) / 1_000
-        value.approachReference = max(CGFloat(approachReference) / 100, 1)
-        value.pop = popPermille.map { CGFloat($0) / 1_000 }
-        value.popOffset = CGFloat(popOffset) / 100
-        return value
-    }
-}
-
-extension Color {
-    /// A colour given by value on the wire: `0xRRGGBBAA`, sRGB, straight alpha.
-    init(rgba: UInt32) {
-        self.init(
-            .sRGB,
-            red: Double((rgba >> 24) & 0xFF) / 255,
-            green: Double((rgba >> 16) & 0xFF) / 255,
-            blue: Double((rgba >> 8) & 0xFF) / 255,
-            opacity: Double(rgba & 0xFF) / 255
-        )
-    }
-}
-
-private extension PanGesture {
+extension PanGesture {
     var nodeProps: CustomMessageWidgetNode.PanGesture {
         var value = CustomMessageWidgetNode.PanGesture()
         switch axis {
