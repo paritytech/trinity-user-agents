@@ -20,6 +20,14 @@ pub trait StackRecords: Send + Sync {
 	/// there. Two runtimes can refresh at once while a host rebuilds its
 	/// runtime, and the slower one must not put an older copy back. A store
 	/// checks and writes in one transaction where it can.
+	///
+	/// That holds between runtimes of one build. `check` judges the stored
+	/// record under the writing build's rules and replaces one they refuse,
+	/// so two builds with different reserved values or bundled copies that
+	/// share a store, such as two deployments on one web origin, can each put
+	/// an older copy back over a record only the other takes. A build writes
+	/// such a record after a refused or failed fetch, when it stores its own
+	/// copy again without the `ETag`.
 	async fn write_stack_record(
 		&self,
 		stack_id: &str,
