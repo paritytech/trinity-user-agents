@@ -139,8 +139,19 @@ impl StackRun {
 	/// The value [`Self::stamp`] stored in `stamped`, or `None` when another
 	/// run stamped it or nothing did: the chains it was read from are gone.
 	pub fn read_stamped<'a>(&self, stamped: &'a [u8]) -> Option<&'a [u8]> {
+		Self::split_stamped(stamped).and_then(|(run, value)| (run == *self).then_some(value))
+	}
+
+	/// The run that stamped `stamped` and the value it leads, or `None` when
+	/// no run did.
+	pub fn split_stamped(stamped: &[u8]) -> Option<(Self, &[u8])> {
 		let mut value = stamped;
-		(Self::decode(&mut value).ok()? == *self).then_some(value)
+		Some((Self::decode(&mut value).ok()?, value))
+	}
+
+	/// Whether one of the chains of this run has `genesis_hash`.
+	pub fn has_chain(&self, genesis_hash: [u8; 32]) -> bool {
+		[self.asset_hub, self.people, self.bulletin].contains(&genesis_hash)
 	}
 }
 

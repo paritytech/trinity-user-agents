@@ -89,8 +89,8 @@ After a wipe a stack has the same id and new chains. The core sees that at its
 next start by the `generation` and the Asset Hub, People and Bulletin genesis
 hashes, and stops using what it read from the old chains: a cached manifest is
 ignored until it is read again, allowance keys until the wallet grants them
-again, the ring-VRF registry keeps only the rings on chains the stack lists,
-and the session's usernames are looked up again. The session and stored
+again, the ring-VRF registry loses the rings on chains the stack no longer
+runs, and the session's usernames are looked up again. The session and stored
 permissions are kept. A session restored from storage or passed to
 `activateExternalSession` is installed at once and its usernames are looked up
 afterwards. A lookup that fails, as on a device that is offline, changes
@@ -107,8 +107,9 @@ its usernames are shown until that lookup answers.
 An install updated to this version with no wipe loses this: cached manifests
 are read again, so a grant that rests on one is refused until the device is
 online; a pairing host asks for each product's allowance again, because the
-stored keys carry no run; and the stored session's usernames are looked up in
-the background.
+stored keys carry no run; a stored ring-VRF registry keeps only the rings on
+the stack's chains; and the stored session's usernames are looked up in the
+background.
 
 ## Bundler requirements
 

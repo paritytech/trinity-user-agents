@@ -488,8 +488,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Bulletin genesis hashes. Cached manifests and allowance keys are stored
   with the run they were read in; one from another run, or stored without a
   run, is ignored until it is written again. The ring-VRF registry is the
-  wallet's own record, so it is kept, without the rings on chains the stack
-  does not list. The `SessionUsernamesRun` slot records the run in which the
+  wallet's own record, so it is kept. It is stored with its run as well, and
+  loses only the rings on chains of that run which the stack no longer has.
+  The `SessionUsernamesRun` slot records the run in which the
   usernames of the `AuthSession` blob were read, with a hash of that blob.
   A session is installed without waiting on dotNS, whether it is restored
   from the slot or passed to `activate_external_session`. When the record
