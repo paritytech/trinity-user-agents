@@ -49,10 +49,12 @@ use truapi::{
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod dotns_usernames;
 mod legacy_asset_hub;
 mod scripted_chain;
 mod tests;
 
+pub use dotns_usernames::{DOTNS_NAMED_ACCOUNT, DOTNS_SQUATTER, dotns_usernames_frames};
 pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
 pub use scripted_chain::{

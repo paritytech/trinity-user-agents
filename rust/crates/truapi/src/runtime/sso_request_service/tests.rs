@@ -2,7 +2,10 @@ use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{HostRole, ProductRuntimeHost, allowances},
-	test_support::{StubPlatform, external_sso_session_info, paseo_test_stack, sso_session_info},
+	test_support::{
+		DOTNS_NAMED_ACCOUNT, StubPlatform, dotns_usernames_frames, external_sso_session_info,
+		legacy_asset_hub_frames, paseo_test_stack, sso_session_info, usernames_record,
+	},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -330,7 +333,7 @@ fn naming_a_session_waits_for_an_activation_in_progress() {
 			Ok(()),
 			Some(named),
 			Some(named_blob.clone()),
-			Some(crate::test_support::usernames_record(&paseo_test_stack(), &named_blob)),
+			Some(usernames_record(&paseo_test_stack(), &named_blob)),
 		)
 	);
 }
@@ -357,5 +360,57 @@ fn naming_a_session_leaves_a_slot_another_writer_replaced() {
 			read(CoreStorageKey::SessionUsernamesRun),
 		),
 		(Some(named), Some(replaced), None)
+	);
+}
+
+/// A lookup that answers puts what it found in the session and in the stored
+/// blob, and records the run for that blob, so the next start takes the
+/// usernames as they are. One that finds a username names the session. One
+/// that finds none, as on chains where the account never registered, clears a
+/// username stored from other chains.
+#[test]
+fn a_lookup_that_answers_names_the_session_and_the_stored_blob() {
+	let unnamed = SessionInfo {
+		identity_account_id: Some(DOTNS_NAMED_ACCOUNT),
+		..external_sso_session_info()
+	};
+	let stale =
+		SessionInfo { lite_username: Some("stale.07".to_string()), ..external_sso_session_info() };
+	let no_dotns: fn(&str) -> Vec<String> = |request| {
+		legacy_asset_hub_frames(request, |_| None, |_, _| panic!("no contract is deployed"))
+	};
+	let looked_up = |asset_hub: fn(&str) -> Vec<String>, installed: SessionInfo| {
+		let storage = Arc::new(CleanupStorage::default());
+		let platform = Arc::new(StubPlatform {
+			core_storage_override: Some(storage.clone()),
+			rpc_responder: Some(Arc::new(asset_hub)),
+			..Default::default()
+		});
+		let (_, pairing) =
+			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
+		let host = pairing.session().clone();
+		let blob = encode_persisted_session(&installed);
+		block_on(storage.write_core_storage(CoreStorageKey::AuthSession, blob.clone())).unwrap();
+		block_on(host.set_connected_session_for_tests(installed.clone()));
+
+		block_on(host.look_up_usernames(installed, Some(blob)));
+
+		let session = host.session_state.current().expect("the session stays installed");
+		let read = |key| block_on(storage.read_core_storage(key)).unwrap();
+		let stored = read(CoreStorageKey::AuthSession).expect("the session stays stored");
+		(
+			(session.lite_username.clone(), session.full_username.clone()),
+			stored == encode_persisted_session(&session),
+			read(CoreStorageKey::SessionUsernamesRun) ==
+				Some(usernames_record(&paseo_test_stack(), &stored)),
+		)
+	};
+
+	assert_eq!(
+		[looked_up(dotns_usernames_frames, unnamed), looked_up(no_dotns, stale)],
+		[
+			((Some("alice.01".to_string()), Some("myproject".to_string())), true, true),
+			((None, None), true, true),
+		]
 	);
 }
