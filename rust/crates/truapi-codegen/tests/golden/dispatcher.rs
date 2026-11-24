@@ -33,7 +33,6 @@ use truapi::api::{
     StatementStore,
     System,
     Theme,
-    Worker,
 };
 use truapi::versioned::{self, Versioned};
 use crate::platform::ExecutableKind;
@@ -75,8 +74,7 @@ where
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
     register_system(dispatcher, host.clone());
-    register_theme(dispatcher, host.clone());
-    register_worker(dispatcher, host);
+    register_theme(dispatcher, host);
 }
 
 /// Call the product's `chat_messages_query` handler and await its response.
@@ -2723,62 +2721,6 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
-            })
-        });
-    }
-}
-
-fn register_worker<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
-where
-    P: Worker + Send + Sync + 'static,
-{
-    {
-        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host.clone();
-        dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerBeginOperationRequest, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerBeginOperationError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> =
-                    match host.begin_operation(&cx, request).await {
-                        Ok(response) => Ok(<versioned::worker::HostWorkerBeginOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            truapi::versioned::IntoLatest::into_latest(response),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
-            })
-        });
-    }
-    {
-        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
-        dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerEndOperationRequest, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerEndOperationError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> =
-                    match host.end_operation(&cx, request).await {
-                        Ok(_) => Ok(<versioned::worker::HostWorkerEndOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            (),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
             })
         });
     }
